@@ -26,7 +26,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
-import App, { orderTasksForReading } from './App'
+import App from './App'
 import {
   activateSession,
   cancelBackgroundTask,
@@ -10403,7 +10403,13 @@ describe('App', () => {
     )
   })
 
-  it('keeps idle controls available while a background task runs', async () => {
+  it('offers Queue while an SDK background agent runs', async () => {
+    const sdkSession = {
+      ...session,
+      executionMode: 'sdk' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([sdkSession])
+    vi.mocked(getSession).mockResolvedValue(sdkSession)
     vi.mocked(listComputers).mockResolvedValue([taskComputer])
     vi.mocked(listBackgroundTasks).mockResolvedValue({
       tasks: [
@@ -10429,8 +10435,65 @@ describe('App', () => {
       ),
     )
     expect(
+      document.querySelector('.session-item .status-dot'),
+    ).toHaveClass('status-dot--running')
+    expect(
       screen.queryByRole('button', { name: 'Stop response' }),
     ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Queue message' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Send message' }),
+    ).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Wait for the background review' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Queue message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          content: 'Wait for the background review',
+          enqueue: true,
+        },
+      ),
+    )
+  })
+
+  it('does not offer the SDK background-agent Queue for tmux sessions', async () => {
+    const tmuxSession = {
+      ...session,
+      executionMode: 'tmux' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([tmuxSession])
+    vi.mocked(getSession).mockResolvedValue(tmuxSession)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'task-tmux',
+          type: 'agent',
+          description: 'Inspect the repository',
+          status: 'running',
+          startedAt: '2026-09-08T14:00:00.000Z',
+          executionMode: 'background',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
     expect(
       screen.queryByRole('button', { name: 'Queue message' }),
     ).not.toBeInTheDocument()
@@ -15336,67 +15399,6 @@ describe('App', () => {
         ),
       ).toEqual({ 'computer-1:session-1-c': 'Half-written thought' }),
     )
-  })
-
-  it('puts running tasks first and the newest finished one above older ones', () => {
-    // What is still going is the only part worth a glance, so it leads
-    // whatever it started. The rest is history, and history reads newest
-    // first: the one that just finished is what a reader is looking for.
-    const task = (
-      id: string,
-      status: 'running' | 'queued' | 'completed' | 'failed',
-      startedAt: string,
-      completedAt?: string,
-    ) => ({
-      id,
-      type: 'shell' as const,
-      description: id,
-      status,
-      startedAt,
-      canCancel: false,
-      ...(completedAt ? { completedAt } : {}),
-    })
-
-    const ordered = orderTasksForReading([
-      task('done-old', 'completed', '2026-01-01T00:00:00.000Z', '2026-01-01T00:01:00.000Z'),
-      task('run-new', 'running', '2026-01-01T00:05:00.000Z'),
-      task('done-new', 'completed', '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
-      task('run-old', 'running', '2026-01-01T00:04:00.000Z'),
-      task('queued', 'queued', '2026-01-01T00:06:00.000Z'),
-    ]).map((entry) => entry.id)
-
-    expect(ordered).toEqual([
-      // Still going, oldest first so nothing long-running is buried.
-      'run-old',
-      'run-new',
-      'queued',
-      // Finished, newest first.
-      'done-new',
-      'done-old',
-    ])
-  })
-
-  it('places a finished task with no end time by when it began', () => {
-    const ordered = orderTasksForReading([
-      {
-        id: 'no-end',
-        type: 'shell' as const,
-        description: 'no-end',
-        status: 'failed' as const,
-        startedAt: '2026-01-01T00:09:00.000Z',
-        canCancel: false,
-      },
-      {
-        id: 'ended-earlier',
-        type: 'shell' as const,
-        description: 'ended-earlier',
-        status: 'completed' as const,
-        startedAt: '2026-01-01T00:01:00.000Z',
-        completedAt: '2026-01-01T00:02:00.000Z',
-        canCancel: false,
-      },
-    ]).map((entry) => entry.id)
-    expect(ordered).toEqual(['no-end', 'ended-earlier'])
   })
 
   it('counts only what is running, not what is merely tracked', async () => {

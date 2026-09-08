@@ -1341,6 +1341,402 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('holds an SDK queue behind a running background agent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const backgroundAgent = {
+      type: 'agent' as const,
+      id: 'task-queue',
+      description: 'Review the repository',
+      status: 'running' as const,
+      startedAt: '2026-09-07T20:00:00.000Z',
+      agentType: 'general-purpose',
+      executionMode: 'background' as const,
+    }
+    client.session.backgroundTasks.push(backgroundAgent)
+    await service.listBackgroundTasks(created.id)
+
+    const queued = await service.sendMessage(
+      created.id,
+      'Continue after the review',
+      true,
+    )
+    expect(queued.queuedPrompts).toEqual([
+      expect.objectContaining({ content: 'Continue after the review' }),
+    ])
+    expect(client.session.sentPrompts).toEqual([])
+
+    Object.assign(backgroundAgent, {
+      status: 'completed',
+      completedAt: '2026-09-07T20:01:00.000Z',
+    })
+    client.session.emit({
+      type: 'session.background_tasks_changed',
+      id: 'tasks-changed',
+      parentId: null,
+      timestamp: '2026-09-07T20:01:00.000Z',
+      data: {},
+    } as SessionEvent)
+
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toEqual([
+        'Continue after the review',
+      ]),
+    )
+    expect(service.store.get(created.id)?.queuedCount).toBe(0)
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('waits for the final task resync before waking an SDK queue', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-old',
+      description: 'Old review',
+      status: 'running',
+      startedAt: '2026-09-08T14:00:00.000Z',
+      executionMode: 'background',
+    })
+    await service.listBackgroundTasks(created.id)
+    await service.sendMessage(created.id, 'Continue after every review', true)
+
+    let releaseFirst!: () => void
+    const firstRead = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let reads = 0
+    const replacementAgent = {
+      type: 'agent' as const,
+      id: 'task-new',
+      description: 'New review',
+      status: 'running' as const,
+      startedAt: '2026-09-08T14:01:00.000Z',
+      executionMode: 'background' as const,
+    }
+    client.session.rpc.tasks.list = async () => {
+      reads += 1
+      if (reads === 1) {
+        await firstRead
+        return { tasks: [] }
+      }
+      return { tasks: [replacementAgent] }
+    }
+
+    const completionSync = service['syncBackgroundTasks'](
+      created.id,
+      client.session,
+    )
+    await vi.waitFor(() => expect(reads).toBe(1))
+    void service['syncBackgroundTasks'](created.id, client.session)
+    releaseFirst()
+    await completionSync
+
+    expect(client.session.sentPrompts).toEqual([])
+    expect(service.store.get(created.id)?.queuedCount).toBe(1)
+    expect(
+      service['backgroundTaskTracker'].get(created.id).tasks,
+    ).toEqual([
+      expect.objectContaining({ id: 'task-new', status: 'running' }),
+    ])
+
+    Object.assign(replacementAgent, {
+      status: 'completed',
+      completedAt: '2026-09-08T14:02:00.000Z',
+    })
+    await service['syncBackgroundTasks'](created.id, client.session)
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toEqual([
+        'Continue after every review',
+      ]),
+    )
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('clears stale SDK task state before draining a queue after restart', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-restart',
+      description: 'Review before restart',
+      status: 'running',
+      startedAt: '2026-09-08T14:00:00.000Z',
+      executionMode: 'background',
+    })
+    await service.listBackgroundTasks(created.id)
+    await service.sendMessage(created.id, 'Continue after restart', true)
+    await vi.waitFor(() => {
+      expect(service.store.get(created.id)?.status).toBe('idle')
+      expect(service['drainingSessions'].has(created.id)).toBe(false)
+    })
+    client.session.backgroundTasks.length = 0
+
+    await service.restartSession(created.id)
+
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toEqual(['Continue after restart']),
+    )
+    expect(service.store.get(created.id)?.queuedCount).toBe(0)
+    expect(
+      service['backgroundTaskTracker'].get(created.id).tasks,
+    ).toEqual([])
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('drops a task read that a restart has already overtaken', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stale-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // Only the first read is held: it is the one already in flight when the
+    // runtime is replaced, and it still answers for the agent running in it.
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call > 1) return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+      await held
+      return { tasks: [{
+        type: 'agent', id: 'task-stale', description: 'Overtaken review',
+        status: 'running', startedAt: '2026-09-08T14:00:00.000Z',
+        executionMode: 'background',
+      }] } as Awaited<ReturnType<typeof listed>>
+    }
+    const reading = service['syncBackgroundTasks'](created.id)
+    // The restart completes first, on its own read, and only then does the
+    // overtaken answer arrive -- which is the order that reinstated it.
+    await service.restartSession(created.id)
+    release()
+    await reading
+
+    // The restarted runtime has no agent, so the retired answer must not put
+    // one back and hold the queue closed again.
+    expect(service['backgroundTaskTracker'].get(created.id).tasks).toEqual([])
+    await service.stop()
+  })
+
+  it('wakes a queue for an agent that began and finished inside one sync', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-coalesced-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // Reads are coalesced. This sync opens with nothing running, sees an agent
+    // running, and closes with nothing running again, so the whole run happens
+    // inside it. Judging the release by the state it opened on missed that.
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call === 1) {
+        service['backgroundTaskResyncNeeded'].add(created.id)
+        return { tasks: [{
+          type: 'agent', id: 'task-coalesced', description: 'Brief review',
+          status: 'running', startedAt: '2026-09-08T14:00:00.000Z',
+          executionMode: 'background',
+        }] } as Awaited<ReturnType<typeof listed>>
+      }
+      return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+    }
+    const wake = vi.spyOn(
+      service as unknown as { wakeSdkQueue: (id: string) => void },
+      'wakeSdkQueue',
+    )
+
+    await service['syncBackgroundTasks'](created.id)
+
+    expect(call).toBeGreaterThan(1)
+    expect(wake).toHaveBeenCalledWith(created.id)
+    await service.stop()
+  })
+
+  it('does not drain a restarted tmux queue through the SDK', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tmux-restart-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      undefined,
+      {
+        restart: vi.fn(async () => true),
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+      },
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // Owned by tmux, which keeps its own runtime across a restart.
+    service['externalSessionIds'].add(created.id)
+    await service.store.update(created.id, (session) => {
+      session.queuedPrompts = [{
+        id: 'queued-tmux', content: 'Belongs to the terminal',
+        createdAt: new Date().toISOString(),
+      }]
+      session.queuedCount = 1
+    })
+    const wake = vi.spyOn(
+      service as unknown as { wakeSdkQueue: (id: string) => void },
+      'wakeSdkQueue',
+    )
+
+    await service.restartSession(created.id)
+
+    // Draining it here would start a second owner beside the pane's own.
+    expect(wake).not.toHaveBeenCalled()
+    expect(client.session.sentPrompts).toEqual([])
+    await service.stop()
+  })
+
+  it('does not release the queue from a read settling during the disconnect', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-disconnect-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // Something was running when this read began, so its answer would look
+    // like a release if it were still allowed to speak.
+    service['backgroundTaskTracker'].replace(created.id, [{
+      id: 'task-disconnecting', type: 'agent',
+      description: 'Review in the old runtime', status: 'running',
+      startedAt: '2026-09-08T14:00:00.000Z', executionMode: 'background',
+      canCancel: false,
+    }], true)
+
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call > 1) return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+      await held
+      return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+    }
+    const reading = service['syncBackgroundTasks'](created.id)
+    const wake = vi.spyOn(
+      service as unknown as { wakeSdkQueue: (id: string) => void },
+      'wakeSdkQueue',
+    )
+
+    // The read settles part-way through the teardown, while the old runtime
+    // is being disconnected and before anything has replaced it.
+    const disconnect = client.session.disconnect.bind(client.session)
+    client.session.disconnect = async () => {
+      release()
+      await reading
+      await disconnect()
+    }
+    await service.restartSession(created.id)
+    await reading
+
+    // Its answer describes the runtime that was replaced, so it cannot send a
+    // prompt into the one being built.
+    expect(wake).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('leaves the resync request of the sync that replaced it alone', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-resync-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call > 1) return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+      await held
+      return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+    }
+    const stale = service['syncBackgroundTasks'](created.id)
+
+    await service.restartSession(created.id)
+    // The runtime that replaced it has work of its own to re-read.
+    service['backgroundTaskResyncNeeded'].add(created.id)
+    release()
+    await stale
+
+    // A retired sync settling must not take that request away, or the agent
+    // it finished with stays recorded as running.
+    expect(service['backgroundTaskResyncNeeded'].has(created.id)).toBe(true)
+    await service.stop()
+  })
+
   it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
     directories.push(directory)

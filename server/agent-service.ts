@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { SubmissionError } from '../shared/submission-error.js'
+import { hasRunningBackgroundAgent } from '../shared/background-tasks.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
   CopilotClient,
@@ -1631,6 +1632,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     Promise<BackgroundTaskSnapshot>
   >()
   private readonly backgroundTaskResyncNeeded = new Set<string>()
+  // Bumped whenever the runtime a session's tasks describe is replaced. A read
+  // already in flight then answers for a runtime that is gone, and installing
+  // it would put a finished agent back and hold the queue closed again.
+  private readonly backgroundTaskGenerations = new Map<string, number>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly acceptedSdkReplies = new Map<string, AcceptedSdkReply>()
@@ -2969,12 +2974,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error('External terminal is no longer available')
       }
     } else {
+      // Retired before anything is torn down. A read that settles while the
+      // old runtime is being disconnected still answers for it, and releasing
+      // the queue on that answer sends the prompt into the runtime being
+      // replaced.
+      this.backgroundTaskGenerations.set(
+        id, (this.backgroundTaskGenerations.get(id) ?? 0) + 1,
+      )
       const active = this.sessions.get(id)
       if (active) {
         await active.disconnect()
         this.sessions.delete(id)
       }
-      await this.attachSdkSession(id)
+      const previousTasks = this.backgroundTaskTracker.get(id)
+      this.backgroundTaskSyncs.delete(id)
+      this.backgroundTaskResyncNeeded.delete(id)
+      this.backgroundTaskTracker.remove(id)
+      this.replaceBackgroundTasks(id, [], previousTasks.supported)
+      const attached = await this.attachSdkSession(id)
+      await this.syncBackgroundTasks(id, attached).catch((error: unknown) =>
+        this.publishError(id, error),
+      )
     }
     const restarted = await this.store.update(id, (session) => {
       session.status = 'idle'
@@ -2983,6 +3003,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session.updatedAt = new Date().toISOString()
     })
     this.publish(restarted)
+    // Only an SDK session drains through this path. A tmux session keeps its
+    // own runtime, and waking it here would start a second owner beside it.
+    if (restarted.queuedPrompts?.length && !this.externalSessionIds.has(id)) {
+      this.wakeSdkQueue(id)
+    }
     return restarted
   }
 
@@ -4054,14 +4079,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(untracked)
       return untracked
     }
+    const sdkBackgroundAgentRunning =
+      !terminalBacked &&
+      hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId))
+    if (
+      enqueue &&
+      (this.activePrompts.has(sessionId) ||
+        this.drainingSessions.has(sessionId) ||
+        sdkBackgroundAgentRunning)
+    ) {
+      return this.enqueuePrompt(sessionId, content, false, answers, delivery)
+    }
     if (
       this.activePrompts.has(sessionId) ||
       this.drainingSessions.has(sessionId)
     ) {
-      if (!enqueue) {
-        throw new Error('This session is already responding')
-      }
-      return this.enqueuePrompt(sessionId, content, false, answers, delivery)
+      throw new Error('This session is already responding')
     }
 
     return this.startMessage(sessionId, content, false, undefined, answers, delivery)
@@ -6757,19 +6790,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.backgroundTaskResyncNeeded.add(sessionId)
       return existing
     }
+    const previous = this.backgroundTaskTracker.get(sessionId)
+    const generation = this.backgroundTaskGenerations.get(sessionId) ?? 0
     let sync: Promise<BackgroundTaskSnapshot>
     sync = (async () => {
       let snapshot: BackgroundTaskSnapshot
+      // Reads are coalesced, so a whole run of an agent can begin and end
+      // inside one sync. Whether anything was seen running is carried across
+      // the loop: judging it by the state this sync opened on missed a turn
+      // that started and finished within it, and the prompt queued behind
+      // that agent was never woken.
+      let sawRunning = hasRunningBackgroundAgent(previous)
+      // Everything this sync does belongs to the runtime it opened on. Once
+      // that runtime is replaced it stops reading, stops answering, and stops
+      // taking the resync request the sync that replaced it is waiting on.
+      const owns = () =>
+        (this.backgroundTaskGenerations.get(sessionId) ?? 0) === generation
       do {
-        this.backgroundTaskResyncNeeded.delete(sessionId)
-        snapshot = await this.readBackgroundTasks(sessionId, sdkSession)
-      } while (this.backgroundTaskResyncNeeded.has(sessionId))
+        if (owns()) {
+          this.backgroundTaskResyncNeeded.delete(sessionId)
+        }
+        snapshot = await this.readBackgroundTasks(sessionId, sdkSession, generation)
+        sawRunning = sawRunning || hasRunningBackgroundAgent(snapshot)
+      } while (owns() && this.backgroundTaskResyncNeeded.has(sessionId))
+      if (
+        !this.externalSessionIds.has(sessionId) &&
+        owns() &&
+        sawRunning &&
+        !hasRunningBackgroundAgent(snapshot)
+      ) {
+        this.wakeSdkQueue(sessionId)
+      }
       return snapshot
     })().finally(() => {
       if (this.backgroundTaskSyncs.get(sessionId) === sync) {
         this.backgroundTaskSyncs.delete(sessionId)
+        this.backgroundTaskResyncNeeded.delete(sessionId)
       }
-      this.backgroundTaskResyncNeeded.delete(sessionId)
     })
     this.backgroundTaskSyncs.set(sessionId, sync)
     return sync
@@ -6778,10 +6835,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async readBackgroundTasks(
     sessionId: string,
     sdkSession = this.sessions.get(sessionId),
+    generation = this.backgroundTaskGenerations.get(sessionId) ?? 0,
   ): Promise<BackgroundTaskSnapshot> {
+    const install = (tasks: BackgroundTask[], supported: boolean) =>
+      (this.backgroundTaskGenerations.get(sessionId) ?? 0) === generation
+        ? this.replaceBackgroundTasks(sessionId, tasks, supported)
+        : this.backgroundTaskTracker.get(sessionId)
     const tasks = sdkSession?.rpc.tasks
     if (!tasks?.list) {
-      return this.replaceBackgroundTasks(sessionId, [], false)
+      return install([], false)
     }
 
     try {
@@ -6797,7 +6859,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       listed = await tasks.list()
     } catch (error) {
       if (isUnsupportedBackgroundTaskError(error)) {
-        return this.replaceBackgroundTasks(sessionId, [], false)
+        return install([], false)
       }
       throw error
     }
@@ -6837,7 +6899,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
       }),
     )
-    return this.replaceBackgroundTasks(sessionId, normalized, true)
+    return install(normalized, true)
   }
 
   private replaceBackgroundTasks(
@@ -7353,6 +7415,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (current.suspended || this.suspendingSessions.has(sessionId) ||
             current.pendingPermission || current.pendingUserInput || current.failedPrompt ||
             this.activePrompts.has(sessionId) ||
+            hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId)) ||
             (current.status !== 'idle' && current.status !== 'error')) return
         const assertIdle = (session: SessionDetail) => {
           if (

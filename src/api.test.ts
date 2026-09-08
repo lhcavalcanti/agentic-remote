@@ -83,7 +83,8 @@ describe('API request headers', () => {
   })
 
   it.each([
-    [409, false],
+    [400, false],
+    [409, true],
     [500, true],
   ] as const)('infers legacy HTTP %i delivery uncertainty=%s', async (status, uncertainDelivery) => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
@@ -399,7 +400,7 @@ describe('Queued dispatch confirmations', () => {
       .rejects.toMatchObject({ uncertainDelivery: true })
   })
 
-  it.each([400, 401, 403, 404, 409, 422, 429])('recognizes an HTTP %i admission refusal', async (status) => {
+  it.each([400, 401, 403, 404, 422, 429])('recognizes an HTTP %i admission refusal', async (status) => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Not admitted' }, { status })))
     await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
       .rejects.toMatchObject({ uncertainDelivery: false })
@@ -412,6 +413,15 @@ describe('Queued dispatch confirmations', () => {
     }, { status: 409 })))
     await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
       .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: true })
+  })
+
+  it('recognizes an explicit definitive HTTP 409 queued refusal', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'The terminal is busy',
+      uncertainDelivery: false,
+    }, { status: 409 })))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
   })
 
   it('never retries a lost transport acknowledgment', async () => {

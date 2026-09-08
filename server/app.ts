@@ -121,7 +121,7 @@ export async function buildApp(
     }
     app.log.error(error)
     const submission = error instanceof SubmissionError ? error.submission : undefined
-    const uncertainDelivery = deliveryUncertaintyFromError(error)
+    const explicitUncertainty = deliveryUncertaintyFromError(error)
     if (error instanceof TranscriptionError || error instanceof FileUploadError) {
       return reply.code(error.statusCode).send({ error: error.message })
     }
@@ -134,7 +134,9 @@ export async function buildApp(
       return reply.code(explicitStatusCode).send({
         error: error instanceof Error ? error.message : 'Request failed',
         ...(submission ? { submission } : {}),
-        ...(uncertainDelivery === undefined ? {} : { uncertainDelivery }),
+        ...(explicitUncertainty === undefined
+          ? {}
+          : { uncertainDelivery: explicitUncertainty }),
       })
     }
     const message = error instanceof Error ? error.message : 'Unexpected server error'
@@ -147,7 +149,9 @@ export async function buildApp(
     return reply.code(statusCode).send({
       error: statusCode === 500 ? 'Unexpected server error' : message,
       ...(submission ? { submission } : {}),
-      ...(uncertainDelivery === undefined ? {} : { uncertainDelivery }),
+      ...(explicitUncertainty === undefined
+        ? {}
+        : { uncertainDelivery: explicitUncertainty }),
     })
   })
 

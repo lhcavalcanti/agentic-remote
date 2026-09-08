@@ -41,4 +41,27 @@ describe('submission error HTTP contract', () => {
       await runtime.app.close()
     }
   })
+
+  it.each([409, 500])('does not add submission metadata to an ordinary HTTP %i error', async (statusCode) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'submission-http-'))
+    directories.push(directory)
+    const runtime = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      role: 'node',
+    })
+    runtime.app.get('/synthetic-submission-error', async () => {
+      throw Object.assign(new Error('Synthetic refusal'), { statusCode })
+    })
+
+    try {
+      const response = await runtime.app.inject('/synthetic-submission-error')
+      expect(response.statusCode).toBe(statusCode)
+      expect(response.json()).toEqual({
+        error: 'Synthetic refusal',
+      })
+    } finally {
+      await runtime.app.close()
+    }
+  })
 })

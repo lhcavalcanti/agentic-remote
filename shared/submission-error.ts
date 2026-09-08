@@ -28,8 +28,8 @@ export function deliveryUncertaintyFromError(error: unknown): boolean | undefine
   return typeof uncertain === 'boolean' ? uncertain : undefined
 }
 
-const definitiveHttpRefusals = new Set([
-  400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429,
+const legacyDefinitiveHttpRefusals = new Set([
+  400, 401, 403, 404, 405, 410, 413, 415, 422, 429,
 ])
 
 export function httpDeliveryUncertain(
@@ -39,7 +39,10 @@ export function httpDeliveryUncertain(
 ): boolean {
   if (typeof explicit === 'boolean') return explicit
   if (submission?.accepted) return true
-  return !definitiveHttpRefusals.has(statusCode)
+  // Older runtimes did not serialize uncertainty. Their HTTP 409 covered both
+  // preflight conflicts and failures after native paste, so absence must stay
+  // conservative until the peer sends an explicit value.
+  return !legacyDefinitiveHttpRefusals.has(statusCode)
 }
 
 export class SubmissionError extends Error {

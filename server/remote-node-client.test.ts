@@ -176,11 +176,28 @@ describe('paired-node redirect isolation', () => {
         }))
       })
     })
+
     await expect(client(node).sendMessage('remote-session', { content: 'Direct request' }))
       .rejects.toMatchObject({
         statusCode: 409,
         uncertainDelivery,
         message: 'Synthetic node refusal',
+      })
+  })
+
+  it('keeps a legacy paired-node HTTP 409 conservative', async () => {
+    const node = await listen((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        response.writeHead(409, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: 'Legacy node conflict' }))
+      })
+    })
+    await expect(client(node).sendMessage('remote-session', { content: 'Direct request' }))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: true,
+        message: 'Legacy node conflict',
       })
   })
 

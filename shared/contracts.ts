@@ -11,6 +11,7 @@ export interface AgentProviderCapability {
   terminalBacked: boolean
   supportsTmuxMigration?: boolean
   supportsBackgroundTasks?: boolean
+  supportsQueuedPromptDispatch?: boolean
   unavailableReason?: string
 }
 
@@ -89,6 +90,41 @@ export interface QueuedPrompt {
   // A slash command reports what it printed rather than starting a turn, so
   // draining it has to follow the command path and not the prompt one.
   command?: boolean
+}
+
+export interface QueuedPromptDispatch {
+  attemptId: string
+  promptId: string
+  content: string
+  command?: boolean
+  startedAt: string
+  state: 'dispatching' | 'uncertain'
+  message?: string
+  original?: QueuedPrompt
+  originalIndex?: number
+  recoveryFailedAt?: string
+  prepared?: {
+    status: SessionStatus
+    activity?: string
+    updatedAt: string
+    revision: number
+  }
+}
+
+export interface DispatchQueuedPromptInput {
+  content: string
+}
+
+export interface QueuedPromptDispatchResult {
+  promptId: string
+  attemptId?: string
+  outcome: 'sent' | 'refused' | 'uncertain'
+  session?: SessionDetail
+  message?: string
+  /** True only after the original queue item has durably been released. */
+  restored?: boolean
+  /** An accepted delivery can still have an uncommitted queue disposition. */
+  delivery?: 'accepted' | 'unknown'
 }
 
 export interface SessionRuntimeInfo {
@@ -197,6 +233,8 @@ export interface SessionSummary {
   isOpen?: boolean
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
+  /** A durable dispatch intent. It must never be retried automatically. */
+  queuedDispatch?: QueuedPromptDispatch
   /**
    * A prompt the queue accepted and then could not deliver.
    *
@@ -266,6 +304,11 @@ export interface ManagedSession extends SessionDetail {
 export interface ManagedRemovedQueuedPrompt {
   session: ManagedSession
   prompt: QueuedPrompt
+}
+
+export interface ManagedQueuedPromptDispatchResult
+  extends Omit<QueuedPromptDispatchResult, 'session'> {
+  session?: ManagedSession
 }
 
 export interface PushSettings {

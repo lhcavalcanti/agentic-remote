@@ -1593,7 +1593,7 @@ describe('PR162 final root integration', () => {
 describe('Review 5125727881 runtime boundaries', () => {
   type PublicSessionValue = SessionDetail | SessionDetail[] | RemovedQueuedPrompt | undefined
   type SessionMethod = {
-    [Key in keyof SessionService]: SessionService[Key] extends (...args: never[]) => infer Result
+    [Key in keyof SessionService]-?: NonNullable<SessionService[Key]> extends (...args: never[]) => infer Result
       ? Awaited<Result> extends PublicSessionValue ? Key : never
       : never
   }[keyof SessionService]
@@ -1644,6 +1644,21 @@ describe('Review 5125727881 runtime boundaries', () => {
         id: 'editable', content: 'Keep the removed draft', createdAt: originalToken,
       })
       return service.removeQueuedPrompt(sessionId, 'editable')
+    },
+    updateQueuedPrompt: async ({ service }) => {
+      await service.store.enqueuePrompt(sessionId, {
+        id: 'editable', content: 'Keep the editable draft', createdAt: originalToken,
+      })
+      return service.updateQueuedPrompt(sessionId, 'editable', 'Updated draft')
+    },
+    reorderQueuedPrompts: async ({ service }) => {
+      await service.store.enqueuePrompt(sessionId, {
+        id: 'first', content: 'First queued draft', createdAt: originalToken,
+      })
+      await service.store.enqueuePrompt(sessionId, {
+        id: 'second', content: 'Second queued draft', createdAt: originalToken,
+      })
+      return service.reorderQueuedPrompts(sessionId, ['second', 'first'])
     },
     sendMessage: async ({ service }, snapshot) => {
       service['sendAdmittedMessage'] = async () => snapshot
@@ -1753,7 +1768,11 @@ describe('Review 5125727881 runtime boundaries', () => {
       expect(sessions.length).toBeGreaterThan(0)
       for (const session of sessions) expect(session.failedPrompt).toBeUndefined()
       if (response && !Array.isArray(response) && 'prompt' in response) {
-        expect(response.prompt.content).toBe('Keep the removed draft')
+        expect(response.prompt.content).toBe(
+          method === 'updateQueuedPrompt'
+            ? 'Updated draft'
+            : 'Keep the removed draft',
+        )
       }
       expect(snapshot.failedPrompt?.failedAt).toBe(token)
       expect(context.service.store.failedPrompt(sessionId)?.failedAt).toBe(token)

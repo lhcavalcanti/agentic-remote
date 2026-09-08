@@ -64,6 +64,22 @@ const userInputReplySchema = z.object({
   action: z.enum(['accept', 'decline', 'cancel']).optional(),
 })
 
+const updateQueuedPromptSchema = z.object({
+  // The same shape a message has to take. Without it a whitespace-only edit
+  // became a generic server error, and an edit could hold more than any
+  // message was ever allowed to.
+  content: z.string().max(200_000)
+    .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
+})
+
+const discardQueuedDispatchSchema = z.object({
+  acknowledgesDispatch: z.string().uuid().optional(),
+})
+
+const reorderQueueSchema = z.object({
+  order: z.array(z.string().min(1)),
+})
+
 const executeCommandSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
   command: z.string().trim().startsWith('/').max(10_000),
@@ -593,12 +609,55 @@ export async function registerHubRoutes(
 
   app.delete<{ Params: SessionParams & { promptId: string } }>(
     '/api/computers/:computerId/sessions/:sessionId/queue/:promptId',
-    async (request) =>
-      manager.removeQueuedPrompt(
+    async (request) => {
+      const input = discardQueuedDispatchSchema.parse(request.body ?? {})
+      return manager.removeQueuedPrompt(
         request.params.computerId,
         request.params.sessionId,
         request.params.promptId,
-      ),
+        input.acknowledgesDispatch,
+      )
+    },
+  )
+
+  app.post<{ Params: SessionParams & { promptId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId/dispatch',
+    async (request) => {
+      const input = updateQueuedPromptSchema.parse(request.body)
+      return manager.dispatchQueuedPrompt(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.promptId,
+        input.content,
+      )
+    },
+  )
+
+  app.patch<{ Params: SessionParams & { promptId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId',
+    async (request) => {
+      const input = updateQueuedPromptSchema.parse(request.body)
+      return manager.updateQueuedPrompt(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.promptId,
+        input.content,
+      )
+    },
+  )
+
+  app.put<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue',
+    async (request) => {
+      const input = reorderQueueSchema.parse(request.body)
+      return {
+        session: await manager.reorderQueuedPrompts(
+          request.params.computerId,
+          request.params.sessionId,
+          input.order,
+        ),
+      }
+    },
   )
 
   app.post<{ Params: SessionParams }>(

@@ -739,8 +739,33 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(session.id)?.messages.length).toBe(before)
   })
 
-  it('restarts a queue left standing by a drain that failed', async () => {
+  it('refuses to rewrite a queued message into a command', async () => {
+    // Claude has no commands of its own, and the store marks slash-prefixed
+    // text as one. Stored that way it reaches a drain that refuses every
+    // command and puts it straight back, so nothing behind it ever moves
+    // again -- and a restart reads the same queue and stops there too.
     const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    await service.store.enqueuePrompt(session.id, {
+      id: 'waiting-1',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    await expect(
+      service.updateQueuedPrompt(session.id, 'waiting-1', '/plan the work'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+
+    const queued = service.getSession(session.id)?.queuedPrompts
+    expect(queued?.map((prompt) => prompt.id)).toEqual(['waiting-1'])
+    expect(queued?.[0].content).toBe('the one that was waiting')
+    expect(queued?.[0].command).toBeUndefined()
+  })
+
+  it('restarts a queue left standing by a drain that failed', async () => {
+    const { directory, service } = await fixture(async function* () {
+      yield* textResult('fixture-session')
+    })
     const session = await service.createSession(directory, false, true, 'claude')
     // A queue left standing: the prompt is back on it and the session is idle,
     // with no query running to take it off again.
@@ -769,7 +794,9 @@ describe('ClaudeAgentService', () => {
   })
 
   it('drains a standing queue once however many sends arrive', async () => {
-    const { directory, service } = await fixture(async function* () {})
+    const { directory, service } = await fixture(async function* () {
+      yield* textResult('fixture-session')
+    })
     const session = await service.createSession(directory, false, true, 'claude')
     await service.store.enqueuePrompt(session.id, {
       id: 'waiting-1',

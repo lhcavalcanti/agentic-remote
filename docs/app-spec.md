@@ -395,7 +395,49 @@ MUST remain explicitly uncertain; the supplied token is not proof of delivery.
 If provider lookup fails before a query is registered, its unstarted queued
 admission MUST be restored before completion cleanup can erase it. Refused
 restoration MUST retain durable recovery, and cleanup MUST preserve newer owners.
+Editing a queued prompt MUST leave the original in place until a save or
+dispatch is accepted. Desktop Enter and Save to queue update that exact item
+without moving it. When the owning provider advertises targeted dispatch,
+the explicit Send action MUST send the named item and its rewritten contents,
+not the queue head or a newly appended copy. Without that capability the UI
+MUST offer an explicitly labelled save, not pretend to send immediately.
+History previews MUST NOT be saved or dispatched as queued rewrites. Command
+validation MUST use the owning session's current catalog and expanded paste
+contents; app-only commands MUST NOT run as a side effect of editing.
 
+An unclaimed missing queue row MUST NOT turn a queued rewrite into an ordinary
+sendable draft. Older runtimes can publish that absence while provider loading
+is still pending and restore the original after refusal; capability metadata,
+elapsed time, and matching transcript text are not delivery receipts. The edit
+identity MUST survive reload and navigation. The UI MUST explain the uncertainty,
+allow checking the owning queue, and require an explicit provider-check
+confirmation before keeping the rewrite as a new draft or discarding it.
+An accepted owned operation or explicit Clear may release the corresponding
+identity; Clear MUST still preserve in-flight save and uncertain-dispatch
+ownership until the appropriate completion or explicit resolution.
+
+Absence of targeted-dispatch support MUST NOT hide Save-only editing where the
+owning runtime implements it. A missing or refused editing route MUST preserve
+the rewrite and explain that the runtime may need updating; it MUST NOT silently
+fall back to sending a new message. Queue-operation errors MUST remain scoped
+to the owning computer and session rather than appearing on a different selection.
+
+Targeted queue delivery MUST be admitted only while the session is available
+and idle. Its claim MUST be durable before provider invocation, preserve the
+original item and queue position in public snapshots, and exclude that item
+from automatic draining. A definitive refusal MUST restore the original,
+unchanged item. An accepted receipt settles delivery independently of turn
+completion. Missing receipts, transport timeouts, and failed outcome writes
+MUST remain visibly unconfirmed and MUST NOT trigger automatic retry.
+Discarding an unconfirmed claim MUST require explicit confirmation and its
+exact attempt identity; discarding MUST neither resend nor cancel provider work.
+
+Claims MUST remain safe across restart and rollback. The attempted item is
+removed from the persisted runnable queue and retained in the existing
+uncertain failed-prompt recovery format, with the original item recorded in
+claim metadata for current readers. An older runtime therefore sees recovery
+work, not an automatically runnable duplicate. The app does not claim an
+atomic transaction with an external provider.
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 Recalling history MUST preserve the unsent draft durably; a reload restores that
@@ -403,11 +445,6 @@ draft, not the historical preview. Sending a preview MUST NOT discard the draft
 behind it or acknowledge a failed prompt owned by that hidden draft. This also
 applies to local `/statusline`, `/clear`, `/restart`, and argumentless `/cwd`
 previews, including any replacement session created by clearing.
-Transcription, recording, upload, and other append completions MUST append to
-the originating session's durable draft, not a history preview. They MUST keep
-its text and paste metadata while leaving another selected session unchanged.
-Text follows replacement lineage; attachment paths remain with the session
-that owns the uploaded file.
 
 A pending submission MUST retain its complete text and paste metadata until its
 request is accepted, independently of anything written in the meantime. Reloads
@@ -416,6 +453,15 @@ sending or queuing it. When delivery cannot be confirmed, the composer MUST warn
 that the message may already have been sent or queued. Matching transcript text
 or the absence of a previous failure marker MUST NOT be treated as acceptance of
 an unconfirmed request.
+
+Queued-edit identity and pending-dispatch state MUST be stored with the
+versioned composer draft, including collapsed-paste payloads. Starting a
+targeted send MUST move its text into an owned pending submission, leaving new
+writing independent. Acceptance uses the same durable receipt rules as an
+ordinary send. A reload with unconfirmed queued delivery MUST keep the rewrite
+attached to its target and block resending even if a later snapshot has an empty
+queue. Compatibility text MUST not outlive the ownership protecting it during
+partial browser writes.
 
 A failure to save composer state MUST leave the current text editable and warn
 that the saved copy may be out of date. Message and queue admission MUST require
@@ -440,9 +486,7 @@ still take precedence over an old snapshot.
 
 If acceptance evidence cannot be written, the tab MUST retain the accepted
 submission and newer editable draft in memory and explicitly warn that its
-confirmation is not saved. The warning MUST identify every affected session
-and remain visible across session selection changes until its receipt is
-durable. A reload may then restore the submission as
+confirmation is not saved. A reload may then restore the submission as
 unconfirmed; it MUST NOT be automatically resent or presented as definitely
 unsent. Definitive recovery when all browser writes are denied requires server
 support: a client request ID bound to the payload and logical session lineage,
@@ -454,13 +498,6 @@ Best-effort preference storage MUST NOT authorize composer submission or retire
 delivery receipts. If saved draft storage cannot be read at startup, typing
 remains available but sends and draft writes stay blocked until a reload can
 recover the saved state. The UI MUST warn the user to copy new text first.
-Composer-owned JSON and its record shapes MUST be validated before reconciliation
-or writes; only a missing key means missing state. Invalid JSON or schemas in
-drafts, legacy paste copies, receipt markers, or recovery identity maps MUST
-enter that read-failure lock without overwriting any saved composer data.
-Corruption discovered after startup also requires a reload after repair; it
-MUST NOT be interpreted as rollback deletion. Well-formed payloads with an
-unmatched or ambiguous label remain eligible for explicit paste recovery.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact
@@ -468,32 +505,6 @@ pasted text MUST remain embedded in the draft and replace its label when the
 message is sent or queued. Shorter pastes MUST remain ordinary editable text.
 Collapsed pastes MUST survive reloads, session switches, failed sends, and
 clear replacement IDs without losing, duplicating, or reordering content.
-Editing or deleting only part of a generated label MUST reveal the complete
-stored payload instead of deleting hidden characters. Inserted text is retained
-at the revealed paste's boundary. Selecting and replacing or deleting the
-complete label intentionally removes that paste. Literal lookalike labels MUST
-remain ordinary text, including clipboard copies and queue round-trips.
-Cut MUST capture the actual clipboard selection before deletion; it MUST NOT
-depend on React delivering a `beforeinput` event for `deleteByCut`. Empty or
-canceled cuts must not change ownership or supply a range for a later edit.
-When no trustworthy range exists and repeated text permits different paste
-owners, the payload MUST remain in explicit recovery instead of being assigned
-or deleted by a longest-prefix guess.
-
-Saved paste metadata whose label is missing, duplicated, or claimed by competing
-payloads MUST remain available for explicit recovery, not be guessed into a
-literal label or silently discarded. The composer MUST let the user inspect,
-insert, or explicitly discard each saved copy. Unresolved copies persist with
-their computer/session draft, including an empty editor and replacement IDs;
-editing the visible text alone does not resolve their ownership. Delivery of
-that draft waits for these decisions, while a history preview preserves the
-hidden recovery state. Legacy payload copies are retired only after the current
-recovery inventory and compatible draft copies have been saved.
-
-Emptiness MUST be checked on the expanded payload before submission admission.
-A whitespace-only collapsed paste MUST stay editable with an actionable error;
-neither Send nor Queue may dispatch it. Nonempty payloads keep their original
-whitespace.
 
 ### 6.3 Recording state
 

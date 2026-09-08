@@ -1179,10 +1179,6 @@ button {
   font-size: 10.5px;
 }
 
-.conversation-notices {
-  grid-area: banner;
-}
-
 .error-banner {
   grid-area: banner;
   display: flex;
@@ -2174,11 +2170,64 @@ button {
 
 .queued-prompt {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px 30px;
+  /* Handle, the message, and the two controls. The handle is what the queue
+     is put in order by, so it comes first and stays the same width. */
+  grid-template-columns: 16px minmax(0, 1fr) 30px 30px;
   align-items: center;
   gap: 4px;
-  padding: 6px 7px 6px 10px;
+  padding: 6px 7px 6px 6px;
   border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+
+/* The one the composer is currently rewriting, so it is clear which message
+   Enter is about to go back into. */
+.queued-prompt--editing {
+  background: rgba(110, 168, 254, 0.1);
+  box-shadow: inset 2px 0 0 #6ea8fe;
+}
+
+.queued-edit-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  margin: 0 0 6px;
+  border: 1px solid rgba(110, 168, 254, 0.35);
+  border-radius: 9px;
+  background: rgba(110, 168, 254, 0.1);
+  color: var(--muted-strong);
+  font-size: 11.5px;
+}
+
+.queued-edit-banner span {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.queued-edit-banner strong {
+  color: var(--text);
+}
+
+/* A way to put the message back that does not depend on Enter, which makes a
+   newline on a phone. */
+.queued-edit-banner__save {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(110, 168, 254, 0.5);
+  background: rgba(110, 168, 254, 0.16);
+  color: #cfe0ff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.queued-edit-banner__save:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .queued-prompt:last-child {
@@ -2199,48 +2248,6 @@ button {
 .queued-prompt .icon-button {
   width: 30px;
   height: 30px;
-}
-
-.composer-paste-recovery {
-  max-width: var(--composer-max-width);
-  margin: 0 auto 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--panel-raised);
-  font-size: 13px;
-}
-
-.composer-paste-recovery p {
-  margin: 6px 0 10px;
-  color: var(--muted);
-}
-
-.composer-paste-recovery__list {
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.composer-paste-recovery summary {
-  cursor: pointer;
-}
-
-.composer-paste-recovery pre {
-  max-height: 160px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.composer-paste-recovery__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 8px 0;
-}
-
-.composer-paste-recovery__actions button {
-  min-height: 40px;
 }
 
 .web-statusline {
@@ -4338,6 +4345,21 @@ button {
 
   .queued-prompts__list {
     max-height: 82px;
+  }
+
+  .queued-edit-banner {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .queued-edit-banner__save,
+  .queued-edit-banner > .icon-button {
+    min-height: 44px;
+  }
+
+  .queued-edit-banner > .icon-button {
+    min-width: 44px;
+    margin-left: auto;
   }
 
   .command-menu {

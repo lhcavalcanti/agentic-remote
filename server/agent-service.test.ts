@@ -28,7 +28,7 @@ import type {
   CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
-import { parseTerminalPermission } from './terminal-session.js'
+import { parseTerminalPermission, TmuxTerminalSessionController } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId: string
@@ -174,11 +174,29 @@ class DeferredSession implements CopilotSessionLike {
     }
   }
 
+  sendError?: Error
   sendAndWait(content: string): Promise<AssistantMessageEvent | undefined> {
     this.sentPrompts.push(content)
+    if (this.sendError) {
+      return Promise.reject(this.sendError)
+    }
     return new Promise((resolve) => {
       this.responseResolvers.push(resolve)
     })
+  }
+
+  async send({ prompt, mode }: { prompt: string; mode: 'immediate' }): Promise<string> {
+    expect(mode).toBe('immediate')
+    this.sentPrompts.push(prompt)
+    if (this.sendError) throw this.sendError
+    this.responseResolvers.push((response) => {
+      if (response) this.emit(response)
+      this.emit({
+        id: randomUUID(), type: 'session.idle', timestamp: new Date().toISOString(),
+        parentId: null, data: {},
+      } as SessionEvent)
+    })
+    return randomUUID()
   }
 
   resolvePrompt(response?: AssistantMessageEvent): void {
@@ -259,6 +277,8 @@ class FakeCopilotClient implements CopilotClientLike {
 }
 
 const directories: string[] = []
+const services = new Set<AgentService>()
+const startService = AgentService.prototype.start
 
 function configurableModel(): ModelInfo {
   return {
@@ -297,17 +317,30 @@ function configurableModel(): ModelInfo {
 }
 
 afterEach(async () => {
+  await Promise.allSettled([...services].map((service) => service.stop()))
+  services.clear()
   vi.unstubAllEnvs()
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   )
+  vi.restoreAllMocks()
 })
 
 // Sessions are confined to the home directory; these fixtures run in tmpdir.
 beforeEach(() => {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', tmpdir())
+  vi.spyOn(AgentService.prototype, 'start').mockImplementation(function (this: AgentService) {
+    services.add(this)
+    return startService.call(this)
+  })
+  // SDK fixtures must never inspect or type into the developer's tmux server.
+  // Terminal behavior is exercised with the explicit controllers below.
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'has').mockResolvedValue(false)
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'send').mockResolvedValue(false)
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'capture').mockResolvedValue(undefined)
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'cancel').mockResolvedValue(false)
 })
 
 describe('AgentService deletion', () => {
@@ -4687,10 +4720,251 @@ describe('AgentService deletion', () => {
     expect(service.store.get(created.id)?.failedPrompt?.content).toBe('ship it')
   })
 
-  it('gives back a queued prompt whose send failed', async () => {
-    // The browser cleared its draft the moment the queue accepted this, so the
-    // text only exists on the queue. Taking it off without handing it back
-    // loses what the reader wrote.
+  it('rewrites a queued prompt where it stands and reorders the queue', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-queue-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    for (const content of ['first', 'second', 'third']) {
+      await service.store.enqueuePrompt(created.id, {
+        id: content,
+        content,
+        createdAt: '2026-09-02T00:00:00.000Z',
+      })
+    }
+
+    // Rewriting keeps its place in line rather than sending it to the back.
+    const edited = await service.updateQueuedPrompt(created.id, 'first', 'first, edited')
+    expect(edited.prompt.content).toBe('first, edited')
+    expect(edited.session.queuedPrompts?.map((p) => p.id)).toEqual([
+      'first',
+      'second',
+      'third',
+    ])
+
+    const reordered = await service.reorderQueuedPrompts(created.id, [
+      'third',
+      'first',
+      'second',
+    ])
+    expect(reordered.queuedPrompts?.map((p) => p.id)).toEqual([
+      'third',
+      'first',
+      'second',
+    ])
+    // The text moved with it.
+    expect(reordered.queuedPrompts?.[1].content).toBe('first, edited')
+    expect(service.getSession(created.id)?.queuedPrompts?.map((prompt) => prompt.id))
+      .toEqual(['third', 'first', 'second'])
+  })
+
+  it('decides what a rewritten prompt is from what it now says', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-kind-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'p1',
+      content: 'plain text',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // Rewritten into a command, it has to wait as one: kept as it was, the
+    // queue ran it as the kind it used to be.
+    const asCommand = await service.updateQueuedPrompt(created.id, 'p1', '/usage')
+    expect(asCommand.prompt.command).toBe(true)
+
+    // A command this session does not have would stop the drain when it was
+    // reached, with everything behind it waiting. Refused before it is stored,
+    // however it arrives -- this is reachable without the browser, and a
+    // client can be holding the list of a session it no longer has open.
+    await expect(
+      service.updateQueuedPrompt(created.id, 'p1', '/nosuchcommand'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+
+    // A catalog that cannot be read is not permission to store anything: an
+    // invalid command goes back to the head after every failed drain, and
+    // nothing behind it moves again. Refusing a rewrite the reader can repeat
+    // is the cheaper of the two.
+    // A lone slash names nothing, and every single-word command has an empty
+    // shortcut -- so an empty name matched the first of them and would have
+    // been stored, and run, as that command.
+    await expect(
+      service.updateQueuedPrompt(created.id, 'p1', '/'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+
+    const listing = vi
+      .spyOn(service, 'listCommands')
+      .mockRejectedValue(new Error('runtime unreachable'))
+    await expect(
+      service.updateQueuedPrompt(created.id, 'p1', '/usage'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    listing.mockRestore()
+
+    // A shortcut is written out in full: the queue's drain expands nothing, so
+    // one stored as typed reached the runtime as a command it never heard of.
+    const expanded = await service.updateQueuedPrompt(created.id, 'p1', '/aa on')
+    expect(expanded.prompt.content).toBe('/allow-all on')
+
+    // And back again.
+    const asText = await service.updateQueuedPrompt(created.id, 'p1', 'plain again')
+    expect(asText.prompt.command).toBeUndefined()
+  })
+
+  it('runs a queued slash command as a command when the queue drains', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-qcmd-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // Queued as a command, it has to run as one. Handed to the ordinary
+    // message path it reaches the model as text, so the command was never
+    // carried out.
+    await service.store.enqueuePrompt(created.id, {
+      id: 'cmd-1',
+      content: '/plan',
+      createdAt: '2026-09-02T00:00:00.000Z',
+      command: true,
+    })
+    await service.sendMessage(created.id, 'wake the queue', true)
+
+    await vi.waitFor(() => {
+      expect(client.session.invokedCommands).toContain('plan')
+    })
+    expect(client.session.sentPrompts).not.toContain('/plan')
+  })
+
+  it('keeps draining after a command that started no turn', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-qrest-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // `/usage` answers with text rather than starting a turn, so nothing comes
+    // back later to take the next prompt off the queue.
+    await service.store.enqueuePrompt(created.id, {
+      id: 'cmd-1',
+      content: '/usage',
+      createdAt: '2026-09-02T00:00:00.000Z',
+      command: true,
+    })
+    await service.store.enqueuePrompt(created.id, {
+      id: 'after',
+      content: 'the one behind it',
+      createdAt: '2026-09-02T00:00:01.000Z',
+    })
+
+    await service.sendMessage(created.id, 'wake the queue', true)
+
+    // Everything queued behind the command goes out too, instead of waiting
+    // for an unrelated send to start another drain.
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('the one behind it')
+    })
+  })
+
+  it('does not announce a dequeue it may have to undo', async () => {
+    // The drain takes the prompt in hand before it dispatches and puts it back
+    // if it cannot go. Announcing the shorter queue in between told the
+    // browser the message was gone, and there was no way there to tell that
+    // moment from the message really being gone -- so anything holding a
+    // rewrite of it let go, and the rewrite came adrift from the message that
+    // came back.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-drain-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'waiting',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    const announced: { ids: string[]; status: string }[] = []
+    service.on('event', (event) => {
+      if (event.type === 'session.upserted' && event.session.id === created.id) {
+        announced.push({
+          ids: (event.session.queuedPrompts || []).map((prompt) => prompt.id),
+          status: event.session.status,
+        })
+      }
+    })
+
+    await service.sendMessage(created.id, 'written afterwards', true)
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('the one that was waiting')
+    })
+
+    // The prompt leaves the queue and the turn begins in the same breath. An
+    // announcement that has let go of it while the session is still idle is
+    // the moment that cannot be told from the message being gone.
+    const heldButIdle = announced.some(
+      (state) => !state.ids.includes('waiting') && state.status === 'idle',
+    )
+    expect(heldButIdle).toBe(false)
+  })
+
+  it('refuses an order built from a queue that has since changed', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-order-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'only',
+      content: 'only',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // A prompt sent or removed while the reader was dragging. Applying an
+    // order built from the list they were looking at would drop work, or
+    // bring back something already gone.
+    await expect(
+      service.reorderQueuedPrompts(created.id, ['only', 'vanished']),
+    ).rejects.toThrow(/changed while it was being reordered/)
+    expect(
+      service.getSession(created.id)?.queuedPrompts?.map((p) => p.id),
+    ).toEqual(['only'])
+  })
+
+  it('restores a definitively refused queued prompt unchanged', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -4762,23 +5036,16 @@ describe('AgentService deletion', () => {
     eventVersion = 'events-v1'
     await service.refreshTranscripts()
 
-    // Off the retryable queue, so nothing sends it a second time by itself.
     expect(
       service.store
         .get(client.session.sessionId)
-        ?.queuedPrompts?.map((prompt) => prompt.content) ?? [],
-    ).not.toContain('work the queue lost')
-    // ...and handed back, so the draft can be restored.
-    expect(
-      errors.map((event) => event.failedPrompt),
-    ).toContain('work the queue lost')
-    // Also recorded on the session, so a browser that was not listening when
-    // it failed still finds it in the next snapshot it reads.
-    expect(
-      service.store.get(client.session.sessionId)?.failedPrompt?.content,
-    ).toBe('work the queue lost')
+        ?.queuedPrompts,
+    ).toEqual(queued.queuedPrompts)
+    expect(errors.map((event) => event.message).join('\n')).toContain('original queued message is unchanged')
+    expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
+    expect(service.store.get(client.session.sessionId)?.queuedDispatch).toBeUndefined()
+    expect(terminal.send).toHaveBeenCalledTimes(1)
 
-    // Recorded and dequeued in one write, so a restart can never find both.
     const onDisk = JSON.parse(
       await readFile(
         path.join(directory, 'state', 'state.json'),
@@ -4786,8 +5053,8 @@ describe('AgentService deletion', () => {
       ),
     ) as { sessions: Record<string, { queuedPrompts?: unknown[]; failedPrompt?: unknown }> }
     const persisted = onDisk.sessions[client.session.sessionId]
-    expect(persisted?.failedPrompt).toBeTruthy()
-    expect(persisted?.queuedPrompts ?? []).toHaveLength(0)
+    expect(persisted?.failedPrompt).toBeUndefined()
+    expect(persisted?.queuedPrompts).toEqual(queued.queuedPrompts)
     await service.stop()
   })
 

@@ -10,7 +10,8 @@ import {
   type CopilotSessionLike,
 } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
-import { SessionStore, type QueuedPromptReservation } from './session-store.js'
+import { SessionStore } from './session-store.js'
+import { QueuedDelivery } from './queued-dispatch.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
@@ -757,21 +758,38 @@ describe('Provider queue persistence boundaries', () => {
         await (runtime.service as unknown as { drainSdkQueue(id: string): Promise<void> }).drainSdkQueue('session')
         expect(sdk.sendAndWait).not.toHaveBeenCalled()
       } else {
-        await expect((runtime.service as unknown as { drainQueue(id: string): Promise<void> }).drainQueue('session'))
-          .rejects.toBe(failure)
+        await expect((runtime.service as unknown as {
+          drainQueue(id: string): Promise<unknown>
+        }).drainQueue('session')).resolves.toMatchObject({
+          outcome: 'refused', restored: false,
+        })
         expect(runtime.query).not.toHaveBeenCalled()
       }
-      expect(store.get('session')).toMatchObject({
+      // The current public projection retains the exact FIFO while the durable
+      // claim prevents an older runtime from replaying it automatically.
+      expect(runtime.service.getSession('session')).toMatchObject({
         queuedPrompts: [{ id: 'first', content: 'first' }, { id: 'second', content: 'second' }],
         queuedCount: 2,
         messages: [],
       })
+      expect(store.get('session')).toMatchObject({
+        queuedPrompts: [{ id: 'second', content: 'second' }],
+        failedPrompt: { content: 'first', uncertain: true },
+        queuedDispatch: {
+          promptId: 'first',
+          original: { id: 'first', content: 'first' },
+        },
+      })
       const persisted = JSON.parse(await readFile(path.join(directory, 'state.json'), 'utf8'))
       expect(persisted.sessions.session.queuedPrompts.map((entry: { id: string }) => entry.id))
-        .toEqual(['first', 'second'])
+        .toEqual(['second'])
+      expect(persisted.sessions.session.queuedDispatch.original)
+        .toMatchObject({ id: 'first', content: 'first' })
       const reloaded = new SessionStore(directory)
       await reloaded.initialize()
-      expect(reloaded.get('session')?.queuedPrompts?.map((entry) => entry.id)).toEqual(['first', 'second'])
+      expect(reloaded.get('session')?.queuedPrompts?.map((entry) => entry.id)).toEqual(['second'])
+      expect(reloaded.get('session')?.queuedDispatch?.original)
+        .toMatchObject({ id: 'first', content: 'first' })
       expect(reloaded.get('session')).not.toHaveProperty('queuedPromptReservation')
     },
   )
@@ -1049,6 +1067,17 @@ describe('Provider queue persistence boundaries', () => {
       if (outcome === 'accepted') {
         expect(reloaded.get('session')?.failedPrompt).toBeUndefined()
         expect(store.get('session')?.status).toBe('running')
+      } else if (outcome === 'refused') {
+        expect(reloaded.get('session')?.failedPrompt).toBeUndefined()
+        expect(reloaded.get('session')?.queuedPrompts?.map(({ id }) => id))
+          .toEqual(['first', 'second'])
+        expect(store.get('session')?.status).toBe('idle')
+        expect(published.filter((value) => value.type === 'error').at(-1))
+          .toMatchObject({
+            message: expect.stringContaining(
+              'The original queued message is unchanged',
+            ),
+          })
       } else {
         expect(reloaded.get('session')?.failedPrompt).toMatchObject({
           content: 'first',
@@ -1202,8 +1231,9 @@ describe('Provider queue persistence boundaries', () => {
     await Promise.all([draining, suspension])
     expect(terminal.send).not.toHaveBeenCalled()
     expect(store.terminalQueueDispatch('session')).toBeUndefined()
-    expect(store.get('session')?.failedPrompt).toMatchObject({ content: 'first' })
-    expect(store.get('session')?.failedPrompt?.uncertain).toBeUndefined()
+    expect(store.get('session')?.failedPrompt).toBeUndefined()
+    expect(store.get('session')?.queuedPrompts?.map(({ id }) => id))
+      .toEqual(['first', 'second'])
   })
 
   it.each([
@@ -1710,8 +1740,8 @@ describe('Provider queue persistence boundaries', () => {
     const before = service.getSession('session')
     await block()
     await expect((service as unknown as {
-      drainQueue(id: string): Promise<void>
-    }).drainQueue('session')).rejects.toThrow('EISDIR')
+      drainQueue(id: string): Promise<unknown>
+    }).drainQueue('session')).resolves.toMatchObject({ outcome: 'refused', restored: true })
     expect(query).not.toHaveBeenCalled()
     expect(service.getSession('session')).toEqual(before)
   })
@@ -1721,19 +1751,29 @@ describe('Provider queue persistence boundaries', () => {
     const { service, query } = claude(store)
     const internals = service as unknown as {
       drainQueue(id: string): Promise<void>
-      dispatchQueued(id: string, content: string, enqueue: boolean, fromQueue: boolean, reservation?: QueuedPromptReservation): Promise<unknown>
+      dispatchQueued(
+        id: string,
+        content: string,
+        enqueue: boolean,
+        fromQueue: boolean,
+        reservation: undefined,
+        delivery: QueuedDelivery,
+      ): Promise<unknown>
     }
     const dispatch = vi.spyOn(internals, 'dispatchQueued').mockImplementation(
-      async (id, content, _enqueue, _fromQueue, reservation) =>
-        store.beginPrompt(id, content, 'assistant', () => true, reservation),
+      async (id, _content, _enqueue, _fromQueue, _reservation, delivery) => {
+        delivery.submit()
+        const updated = await store.updateStatus(id, 'running')
+        delivery.accept()
+        return updated
+      },
     )
     const removing = service.removeQueuedPrompt('session', 'first')
     const draining = internals.drainQueue('session')
     const [removed] = await Promise.all([removing, draining])
     expect(removed.prompt.id).toBe('first')
     expect(dispatch).toHaveBeenCalledExactlyOnceWith(
-      'session', 'second', false, true,
-      expect.objectContaining({ prompt: expect.objectContaining({ id: 'second' }) }),
+      'session', 'second', false, true, undefined, expect.any(QueuedDelivery),
     )
     expect(query).not.toHaveBeenCalled()
     expect(service.getSession('session')?.queuedPrompts).toEqual([])
@@ -1745,9 +1785,8 @@ describe('Provider queue persistence boundaries', () => {
     const events: ServerEvent[] = []
     service.on('event', (event) => events.push(event))
     await block()
-    await expect(store.update('session', (stored) => {
-      stored.queuedPrompts!.reverse()
-    })).rejects.toThrow('EISDIR')
+    await expect(service.reorderQueuedPrompts('session', ['second', 'first']))
+      .rejects.toThrow('EISDIR')
     await unblock()
     await (service as unknown as {
       drainTerminalQueue(id: string): Promise<void>
@@ -1763,6 +1802,56 @@ describe('Provider queue persistence boundaries', () => {
         queuedPrompts: [expect.objectContaining({ id: 'second' })],
       }),
     })))
+    expect(events.filter((event) => event.type === 'session.upserted')
+      .every((event) => event.session.failedPrompt === undefined)).toBe(true)
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')?.queuedPrompts).toEqual(
+      service.getSession('session')?.queuedPrompts,
+    )
+  })
+
+  it('drains the committed Claude order after rejecting a real reorder', async () => {
+    const { store, directory, block, unblock } = await fixture()
+    const { service, query } = claude(store)
+    const events: ServerEvent[] = []
+    service.on('event', (incoming) => events.push(incoming))
+    await store.updateStatus('session', 'running')
+    const before = service.getSession('session')
+    await block()
+    await expect(service.reorderQueuedPrompts('session', ['second', 'first']))
+      .rejects.toThrow('EISDIR')
+    expect(events).toEqual([])
+    expect(service.getSession('session')).toEqual(before)
+    expect(query).not.toHaveBeenCalled()
+    await unblock()
+    await store.updateStatus('session', 'idle')
+    const internals = service as unknown as {
+      drainQueue(id: string): Promise<void>
+      dispatchQueued(
+        id: string,
+        content: string,
+        enqueue: boolean,
+        fromQueue: boolean,
+        reservation: undefined,
+        delivery: QueuedDelivery,
+      ): Promise<unknown>
+    }
+    const dispatch = vi.spyOn(internals, 'dispatchQueued').mockImplementation(
+      async (id, _content, _enqueue, _fromQueue, _reservation, delivery) => {
+        delivery.submit()
+        const updated = await store.updateStatus(id, 'running')
+        delivery.accept()
+        return updated
+      },
+    )
+    await internals.drainQueue('session')
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+      'session', 'first', false, true, undefined, expect.any(QueuedDelivery),
+    )
+    expect(query).not.toHaveBeenCalled()
+    expect(service.getSession('session')?.queuedPrompts?.map(({ id }) => id))
+      .toEqual(['second'])
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     expect(reloaded.get('session')?.queuedPrompts).toEqual(

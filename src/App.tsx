@@ -221,6 +221,7 @@ import {
 import {
   currentSessionEventSequence,
   nextSessionEventSequence,
+  carrySnapshotTranscripts,
   projectSessionResponse,
   sessionResponseStartedAt,
 } from './session-response-order'
@@ -9326,7 +9327,7 @@ function App() {
         // already gone, where its own replacement never looks.
         const reconcile = (existingSessions: ManagedSession[]) => {
           let reconciled = sortSessions(
-            loadedSessions.filter(
+            carrySnapshotTranscripts(loadedSessions, existingSessions).filter(
               (session) =>
                 (sessionEventSequenceRef.current.get(sessionKey(session)) ||
                   0) <= startedAtSequence &&
@@ -9652,7 +9653,7 @@ function App() {
               (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) >
                 startedAtSequence,
           )
-          for (const session of snapshotSessions) {
+          for (const session of carrySnapshotTranscripts(snapshotSessions, current)) {
             if (claim.speaksFor.has(session.computerId)) {
               merged = upsertSession(merged, session)
             }
@@ -9673,8 +9674,8 @@ function App() {
         // can refill that cache after a live removal, so a cached row here put
         // a cleared session back and gave stale lineage a say in selection.
         let reconciled = sortSessions(
-          snapshotSessions.filter((session) =>
-            answeredFor.has(session.computerId),
+          carrySnapshotTranscripts(snapshotSessions, existingSessions).filter(
+            (session) => answeredFor.has(session.computerId),
           ),
         )
         for (const existing of existingSessions) {

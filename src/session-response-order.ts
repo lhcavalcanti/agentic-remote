@@ -59,3 +59,41 @@ export function projectSessionResponse(
     failedPrompt: current.failedPrompt,
   }, startedAt)
 }
+
+/**
+ * Carries a transcript the browser already holds onto the snapshot rows that
+ * arrive without one.
+ *
+ * A listing answers with summaries, and a summary never carries messages. Its
+ * empty transcript is therefore silence rather than a statement that the
+ * conversation is empty, and installing it blanks the open conversation until
+ * the next full read refills it -- which the reader sees as the transcript
+ * disappearing and coming back.
+ *
+ * A conversation that really was emptied says so through its own response or
+ * event, which is authoritative and carries the emptiness before any snapshot
+ * built from it can arrive.
+ */
+export function carrySnapshotTranscripts(
+  rows: ManagedSession[],
+  existing: ManagedSession[],
+): ManagedSession[] {
+  if (!rows.some((row) => row.messages.length === 0)) {
+    return rows
+  }
+  const held = new Map(
+    existing
+      .filter((entry) => entry.messages.length > 0)
+      .map((entry) => [`${entry.computerId}:${entry.id}`, entry.messages]),
+  )
+  if (held.size === 0) {
+    return rows
+  }
+  return rows.map((row) => {
+    if (row.messages.length > 0) {
+      return row
+    }
+    const messages = held.get(`${row.computerId}:${row.id}`)
+    return messages ? { ...row, messages } : row
+  })
+}

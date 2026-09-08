@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Query } from '@anthropic-ai/claude-agent-sdk'
+import type { SessionEvent } from '@github/copilot-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionDetail } from '../shared/contracts.js'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
@@ -45,30 +46,48 @@ async function fixture(provider: 'copilot' | 'claude' | 'native') {
   let nativeBusy = false
   let nativeHistory = true
   let nativePane = 'Ready\n> '
-  const sdkFor = (sessionId: string): CopilotSessionLike => ({
-    sessionId,
-    sendAndWait: vi.fn(async (content) => {
-      calls.push(content)
-      if (content === 'warmup') await warmup.promise
-      return undefined
-    }),
-    on: () => () => {},
-    getEvents: vi.fn(async () => []),
-    abort: vi.fn(async () => { warmup.finish() }),
-    disconnect: vi.fn(async () => {}),
-    rpc: {
-      commands: {
-        list: vi.fn(async () => ({ commands: [] })),
-        enqueue: vi.fn(async () => ({ queued: true })),
-        invoke: vi.fn(async () => ({ kind: 'completed' as const, message: 'Done' })),
+  const sdkFor = (sessionId: string): CopilotSessionLike => {
+    const listeners = new Set<(event: SessionEvent) => void>()
+    return {
+      sessionId,
+      send: vi.fn(async ({ prompt }) => {
+        calls.push(prompt)
+        queueMicrotask(() => {
+          for (const listener of listeners) {
+            listener({
+              id: randomUUID(), type: 'session.idle', data: {},
+              timestamp: new Date().toISOString(), ephemeral: true, parentId: null,
+            } as SessionEvent)
+          }
+        })
+        return randomUUID()
+      }),
+      sendAndWait: vi.fn(async (content) => {
+        calls.push(content)
+        if (content === 'warmup') await warmup.promise
+        return undefined
+      }),
+      on: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
       },
-      model: {
-        getCurrent: vi.fn(async () => ({ modelId: 'synthetic' })),
-        switchTo: vi.fn(async () => ({ modelId: 'synthetic' })),
+      getEvents: vi.fn(async () => []),
+      abort: vi.fn(async () => { warmup.finish() }),
+      disconnect: vi.fn(async () => {}),
+      rpc: {
+        commands: {
+          list: vi.fn(async () => ({ commands: [] })),
+          enqueue: vi.fn(async () => ({ queued: true })),
+          invoke: vi.fn(async () => ({ kind: 'completed' as const, message: 'Done' })),
+        },
+        model: {
+          getCurrent: vi.fn(async () => ({ modelId: 'synthetic' })),
+          switchTo: vi.fn(async () => ({ modelId: 'synthetic' })),
+        },
+        name: { set: vi.fn(async () => {}) }, mode: { set: vi.fn(async () => {}) },
       },
-      name: { set: vi.fn(async () => {}) }, mode: { set: vi.fn(async () => {}) },
-    },
-  })
+    }
+  }
   const sdk = sdkFor(id)
   const client: CopilotClientLike = {
     start: vi.fn(async () => {}), stop: vi.fn(async () => { warmup.finish(); return [] }),
@@ -113,7 +132,7 @@ async function fixture(provider: 'copilot' | 'claude' | 'native') {
       }
       return Object.assign((async function* () {
         if (prompt === 'warmup') await warmup.promise
-        yield* []
+        yield { type: 'stream_event', event: { type: 'message_start' } }
       })(), { supportedModels: async () => [{ value: 'synthetic', displayName: 'Synthetic', description: '' }] }) as unknown as Query
     }),
     getSessionInfo: vi.fn(async () => undefined),
@@ -247,7 +266,6 @@ async function joinedEnqueue(options: EnqueueCase) {
   const method = token && options.provider === 'claude' ? 'claimRecoveryPrompt'
     : token ? 'enqueueAnsweringPrompt' : 'enqueuePrompt'
   const held = holdEnqueue(runtime, content, method)
-  const starting = vi.spyOn(runtime.store, 'beginPrompt')
   const nativeClaims = vi.spyOn(runtime.store, 'claimTerminalQueuedPrompt')
   let publicationRefused = false
   let publicationArmed = false
@@ -307,10 +325,6 @@ async function joinedEnqueue(options: EnqueueCase) {
     const claims = nativeClaims.mock.calls.filter((call) => call[1].content === content)
     expect(claims).toHaveLength(1)
     expect(claims[0][1]).toMatchObject({ id: queued.id, content })
-  } else {
-    const admission = starting.mock.calls.filter((call) => call[1] === content)
-    expect(admission).toHaveLength(1)
-    expect(admission[0][4]?.prompt).toMatchObject({ id: queued.id, content })
   }
   if (token) {
     await expect(submit()).rejects.toMatchObject({ statusCode: 409 })

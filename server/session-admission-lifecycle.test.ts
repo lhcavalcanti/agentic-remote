@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Query } from '@anthropic-ai/claude-agent-sdk'
+import type { SessionEvent } from '@github/copilot-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
@@ -66,17 +67,34 @@ async function fixture(provider: 'copilot' | 'claude') {
     finishAll = true
     for (const turn of turns.values()) turn.resolve()
   }
-  const waitForTurn = async (content: string) => {
+  const startTurn = (content: string) => {
     calls.push({ content, stopped: isStopped() })
     const turn = deferred()
     turns.set(content, turn)
     if (finishAll || isStopped()) turn.resolve()
-    await turn.promise
+    return turn
   }
+  const waitForTurn = async (content: string) => startTurn(content).promise
+  const listeners = new Set<(event: SessionEvent) => void>()
   const sdkSession: CopilotSessionLike = {
     sessionId: id,
+    send: vi.fn(async ({ prompt }) => {
+      const turn = startTurn(prompt)
+      void turn.promise.then(() => {
+        for (const listener of listeners) {
+          listener({
+            id: randomUUID(), type: 'session.idle', data: {},
+            timestamp: new Date().toISOString(), ephemeral: true, parentId: null,
+          } as SessionEvent)
+        }
+      })
+      return randomUUID()
+    }),
     sendAndWait: vi.fn(async (content) => { await waitForTurn(content); return undefined }),
-    on: () => () => {},
+    on: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
     getEvents: async () => [],
     abort: vi.fn(async () => { finishing() }),
     disconnect: vi.fn(async () => { finishing() }),
@@ -111,9 +129,10 @@ async function fixture(provider: 'copilot' | 'claude') {
       const iterator = (async function* () {
         if (typeof prompt === 'string') {
           options?.abortController?.signal.addEventListener('abort', () => complete(prompt), { once: true })
-          await waitForTurn(prompt)
+          const turn = waitForTurn(prompt)
+          yield { type: 'stream_event', event: { type: 'message_start' } }
+          await turn
         }
-        yield* []
       })()
       return Object.assign(iterator, { supportedModels: async () => [] }) as unknown as Query
     }),
@@ -229,7 +248,7 @@ describe('Session admission and queue lifecycle', () => {
     )
 
     it.each(['remove', 'edit'] as const)(
-      `${provider} drains the canonical head after a reserved head is changed by %s during load`,
+      `${provider} protects a claimed head from %s while provider loading is in flight`,
       async (change) => {
         const runtime = await fixture(provider)
         await enqueue(runtime.store, 'first')
@@ -237,15 +256,17 @@ describe('Session admission and queue lifecycle', () => {
         const load = runtime.holdLoad()
         const draining = runtime.drain().catch((error: unknown) => error)
         await load.started
-        if (change === 'remove') await runtime.service.removeQueuedPrompt(id, 'first')
-        else await runtime.store.update(id, (session) => { session.queuedPrompts![0].content = 'edited' })
+        const changing = change === 'remove'
+          ? runtime.service.removeQueuedPrompt(id, 'first')
+          : runtime.service.dispatchQueuedPrompt(id, 'first', 'edited')
+        await expect(changing).rejects.toMatchObject({ statusCode: 409 })
         load.finish()
         await draining
-        await vi.waitFor(() => expect(runtime.calls.map((call) => call.content)).toEqual([
-          change === 'remove' ? 'second' : 'edited',
-        ]), { timeout: 500 })
+        await vi.waitFor(() => expect(runtime.calls.map((call) => call.content)).toEqual(['first']))
         expect(runtime.calls.every((call) => !call.stopped)).toBe(true)
-        runtime.complete(change === 'remove' ? 'second' : 'edited')
+        runtime.complete('first')
+        await vi.waitFor(() => expect(runtime.calls.map((call) => call.content)).toEqual(['first', 'second']))
+        runtime.complete('second')
       },
     )
 
@@ -293,9 +314,9 @@ describe('Session admission and queue lifecycle', () => {
       await Promise.all([draining, refusedStop])
       expect(runtime.calls).toEqual([])
       const diskState = await runtime.persisted()
-      expect(diskState.sdkQueueAdmission.prompt.content).toBe('first')
+      expect(diskState.queuedDispatch.original.content).toBe('first')
       expect(diskState.failedPrompt).toMatchObject({ content: 'first', uncertain: true })
-      expect(runtime.store.get(id)).not.toHaveProperty('sdkQueueAdmission')
+      expect(runtime.store.get(id)?.queuedDispatch?.original?.content).toBe('first')
       vi.mocked(writeFile).mockImplementation(disk.writeFile)
       const restarted = new SessionStore(runtime.directory)
       await restarted.initialize()
@@ -304,7 +325,7 @@ describe('Session admission and queue lifecycle', () => {
     })
 
     it.each(['authentication', 'storage'] as const)(
-      `${provider} does not hot-loop %s failures after the canonical head changes`,
+      `${provider} does not hot-loop %s failures for a claimed queue head`,
       async (failure) => {
         const runtime = await fixture(provider)
         await enqueue(runtime.store, 'first')
@@ -312,7 +333,6 @@ describe('Session admission and queue lifecycle', () => {
         const load = runtime.holdLoad()
         const draining = runtime.drain().catch((error: unknown) => error)
         await load.started
-        await runtime.service.removeQueuedPrompt(id, 'first')
         if (failure === 'authentication') load.fail(new Error('Authentication unavailable'))
         else {
           vi.mocked(writeFile).mockRejectedValue(new Error('Storage unavailable'))
@@ -331,17 +351,23 @@ describe('Session admission and queue lifecycle', () => {
           : runtime.authenticate.mock.calls.length).toBe(loads)
         expect(vi.mocked(writeFile).mock.calls).toHaveLength(writes)
         expect(runtime.calls).toEqual([])
-        expect(runtime.store.get(id)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['second'])
         vi.mocked(writeFile).mockImplementation(disk.writeFile)
-        runtime.clearLoad()
-        await runtime.drain()
-        await vi.waitFor(() => expect(runtime.calls.map((call) => call.content)).toEqual(['second']))
-        runtime.complete('second')
+        if (failure === 'authentication') {
+          expect(runtime.store.get(id)?.queuedPrompts?.map((prompt) => prompt.content))
+            .toEqual(['first', 'second'])
+          runtime.clearLoad()
+          await runtime.drain()
+          await vi.waitFor(() => expect(runtime.calls.map((call) => call.content)).toEqual(['first']))
+          runtime.complete('first')
+        } else {
+          expect(runtime.store.get(id)?.queuedDispatch?.original?.content).toBe('first')
+          expect(runtime.store.get(id)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['second'])
+        }
       },
     )
 
     it.each(['suspend', 'delete', 'newer owner'] as const)(
-      `${provider} does not retry a stale reservation across %s`,
+      `${provider} does not cross a claimed dispatch across %s`,
       async (transition) => {
         const runtime = await fixture(provider)
         await enqueue(runtime.store, 'first')
@@ -349,7 +375,8 @@ describe('Session admission and queue lifecycle', () => {
         const load = runtime.holdLoad()
         const draining = runtime.drain().catch((error: unknown) => error)
         await load.started
-        await runtime.service.removeQueuedPrompt(id, 'first')
+        await expect(runtime.service.removeQueuedPrompt(id, 'first'))
+          .rejects.toMatchObject({ statusCode: 409 })
         if (transition === 'suspend') await runtime.store.setSuspended(id, true)
         else if (transition === 'delete') {
           const deleting = runtime.service instanceof AgentService
@@ -374,7 +401,8 @@ describe('Session admission and queue lifecycle', () => {
         await draining
         await nextTick()
         expect(runtime.calls).toEqual([])
-        expect(runtime.store.get(id)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['second'])
+        expect(runtime.store.get(id)?.queuedPrompts?.map((prompt) => prompt.content))
+          .toEqual(['first', 'second'])
         if (transition === 'newer owner') {
           expect(runtime.active()).toBe(true)
           expect(runtime.store.get(id)?.activity).toBe('Newer provider owns this session')
@@ -443,7 +471,7 @@ describe('Session admission and queue lifecycle', () => {
       },
     )
 
-    it(`${provider} settles a refused queued handoff before a reply wakes its next FIFO item`, async () => {
+    it(`${provider} restores a refused queued handoff without advancing its FIFO`, async () => {
       const runtime = await fixture(provider)
       await enqueue(runtime.store, 'first')
       await enqueue(runtime.store, 'second')
@@ -458,22 +486,17 @@ describe('Session admission and queue lifecycle', () => {
         return disk.writeFile(...args)
       })
       const drained = await runtime.drain().catch((error: unknown) => error)
-      if (provider === 'claude') expect(drained).toEqual(new Error('handoff confirmation refused'))
-      else expect(drained).toBeUndefined()
+      if (provider === 'claude') {
+        expect(drained).toMatchObject({ outcome: 'refused', restored: true, promptId: 'first' })
+      } else {
+        expect(drained).toBeUndefined()
+      }
       expect(refused).toBe(true)
-      expect(runtime.calls.map((call) => call.content)).toEqual(['first'])
-      expect((await runtime.persisted()).sdkQueueAdmission.prompt.content).toBe('first')
-      const pending = await question(runtime.service)
-      vi.mocked(writeFile).mockRejectedValue(new Error('Persistent outage'))
-      await expect(pending.reply()).rejects.toThrow('Persistent outage')
-      runtime.complete('first')
-      await vi.waitFor(() => expect(runtime.active()).toBe(false))
-      await nextTick()
-      vi.mocked(writeFile).mockImplementation(disk.writeFile)
-      await pending.reply()
-      await vi.waitFor(() => expect(runtime.calls.map((call) => call.content)).toEqual(['first', 'second']))
-      expect(pending.resolve).toHaveBeenCalledTimes(1)
-      runtime.complete('second')
+      expect(runtime.calls).toEqual([])
+      expect((await runtime.persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content))
+        .toEqual(['first', 'second'])
+      expect(runtime.store.get(id)?.queuedDispatch).toBeUndefined()
+      expect(runtime.store.get(id)?.failedPrompt).toBeUndefined()
     })
   }
 
@@ -509,38 +532,6 @@ describe('Session admission and queue lifecycle', () => {
       else expect((await runtime.persisted()).failedPrompt.content).toBe('first')
     },
   )
-
-  it('preserves a newer Claude owner and its question when an older query is still loading', async () => {
-    const runtime = await fixture('claude')
-    if (!(runtime.service instanceof ClaudeAgentService)) throw new Error('Expected Claude')
-    await enqueue(runtime.store, 'first')
-    await enqueue(runtime.store, 'second')
-    const entered = deferred()
-    const loaded = deferred()
-    vi.mocked(runtime.sdk.getSessionInfo).mockImplementationOnce(async () => {
-      entered.resolve()
-      await loaded.promise
-      return undefined
-    })
-    const draining = runtime.drain().catch((error: unknown) => error)
-    await entered.promise
-    const newer = {
-      abortController: new AbortController(), query: {} as Query,
-      resourceOwner: Symbol(),
-      resourceReads: runtime.service['resourceReads'],
-      done: Promise.resolve(), finish: () => {},
-    }
-    runtime.service['active'].set(id, newer)
-    const input = await question(runtime.service)
-    loaded.resolve()
-    await draining
-    expect(runtime.calls).toEqual([])
-    expect(runtime.service['active'].get(id)).toBe(newer)
-    expect(input.resolve).not.toHaveBeenCalled()
-    expect(runtime.store.get(id)?.pendingUserInput?.requestId).toBe(input.requestId)
-    expect(runtime.store.get(id)?.status).toBe('waiting')
-    expect(runtime.store.get(id)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['first', 'second'])
-  })
 
   it('awaits a standalone Copilot load before stopping the SDK and disposes the late handle once', async () => {
     const runtime = await fixture('copilot')

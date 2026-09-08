@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import type { SessionEvent } from '@github/copilot-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { SessionStore } from './session-store.js'
@@ -192,15 +194,39 @@ async function sdkFixture(kind: SendKind = 'message') {
   const turn = gate()
   const calls: string[] = []
   const generated = 'Generated from the edited recovery command'
+  const listeners = new Set<(event: SessionEvent) => void>()
+  let turnFinished = false
+  const emitIdle = () => {
+    for (const listener of listeners) {
+      listener({
+        id: randomUUID(), type: 'session.idle', data: {},
+        timestamp: new Date().toISOString(), ephemeral: true, parentId: null,
+      } as SessionEvent)
+    }
+  }
+  const finishTurn = () => {
+    turnFinished = true
+    turn.release()
+    queueMicrotask(emitIdle)
+  }
   const sdk: CopilotSessionLike = {
     ...context.catalog,
     sessionId,
+    send: vi.fn(async ({ prompt }) => {
+      calls.push(prompt)
+      if (turnFinished) queueMicrotask(emitIdle)
+      return randomUUID()
+    }),
+    on: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
     sendAndWait: vi.fn(async (content) => {
       calls.push(content)
       await turn.pending
       return undefined
     }),
-    disconnect: vi.fn(async () => { turn.release() }),
+    disconnect: vi.fn(async () => { finishTurn() }),
     rpc: {
       ...context.catalog.rpc,
       commands: {
@@ -212,8 +238,8 @@ async function sdkFixture(kind: SendKind = 'message') {
     },
   }
   context.client.resumeSession = vi.fn(async () => sdk)
-  context.client.stop = vi.fn(async () => { turn.release(); return [] })
-  return { ...context, sdk, calls, generated, finishTurn: turn.release }
+  context.client.stop = vi.fn(async () => { finishTurn(); return [] })
+  return { ...context, sdk, calls, generated, finishTurn }
 }
 
 describe('Durable recovery resend ownership', () => {
@@ -1261,7 +1287,7 @@ describe('Recovery and admission integration', () => {
       const expected = kind === 'command' ? context.generated : context.submitted
       expect(context.service.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.content))
         .toEqual([expected])
-      expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined()
+      expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
       await expect(context.send(context.service)).rejects.toMatchObject({ statusCode: 409 })
       context.finishTurn()
       await vi.waitFor(() => expect(context.calls).toEqual(['Older queued prompt', expected]))
@@ -1282,7 +1308,7 @@ describe('Recovery and admission integration', () => {
       let holding = false
       vi.mocked(writeFile).mockImplementation(async (...args) => {
         if (args[0] === `${context.statePath}.tmp` && !holding &&
-            JSON.parse(String(args[1])).sessions[sessionId]?.sdkQueueAdmission) {
+            JSON.parse(String(args[1])).sessions[sessionId]?.queuedDispatch?.prepared) {
           holding = true
           held.opened()
           await held.pending

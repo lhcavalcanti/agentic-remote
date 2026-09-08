@@ -62,7 +62,9 @@ async function connect(directory: string, store: SessionStore) {
     getSessionInfo: vi.fn(async () => undefined),
     query: vi.fn(({ prompt }) => {
       if (typeof prompt === 'string') calls.push(prompt)
-      return (async function* () {})() as unknown as Query
+      return (async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } }
+      })() as unknown as Query
     }),
     deleteSession: vi.fn(async () => {}),
     renameSession: vi.fn(async () => {}),
@@ -284,7 +286,7 @@ describe('Claude recovered draft admission', () => {
       options?.abortController?.signal.addEventListener('abort', busy.resolve, { once: true })
       return (async function* () {
         if (prompt === 'busy') await busy.promise
-        yield* []
+        yield { type: 'stream_event', event: { type: 'message_start' } }
       })() as unknown as Query
     })
     await runtime.combined.sendMessage(id, 'busy')
@@ -315,34 +317,20 @@ describe('Claude recovered draft admission', () => {
     await idle(runtime)
   })
 
-  it('retains fresh uncertainty after a refused handoff acknowledgement and rejects the old token', async () => {
+  it('retains fresh uncertainty after a lost provider-start outcome and rejects the old token', async () => {
     const runtime = await fixture(true, false)
-    const running = deferred()
-    vi.mocked(runtime.sdk.query).mockImplementation(({ prompt, options }) => {
+    vi.mocked(runtime.sdk.query).mockImplementationOnce(({ prompt }) => {
       if (typeof prompt === 'string') runtime.calls.push(prompt)
-      options?.abortController?.signal.addEventListener('abort', running.resolve, { once: true })
-      return (async function* () { await running.promise; yield* [] })() as unknown as Query
-    })
-    let refused = false
-    vi.mocked(writeFile).mockImplementation(async (...args) => {
-      const session = JSON.parse(String(args[1])).sessions[id]
-      if (!refused && session?.lastClaimedRecovery === runtime.token &&
-          session.messages.length > 2 && !session.sdkQueueAdmission) {
-        refused = true
-        throw new Error('Handoff acknowledgement refused')
-      }
-      return disk.writeFile(...args)
+      throw new Error('Provider start outcome lost')
     })
     await runtime.combined.sendMessage(id, 'A', false, runtime.token)
-    await vi.waitFor(() => expect(refused).toBe(true))
+    await vi.waitFor(() => expect(runtime.store.get(id)?.queuedDispatch?.state).toBe('uncertain'))
     expect(runtime.calls).toEqual(['A'])
     const admitted = await runtime.persisted()
-    expect(admitted.sdkQueueAdmission).toBeDefined()
+    expect(admitted.queuedDispatch).toBeDefined()
     expect(admitted.failedPrompt.uncertain).toBe(true)
     expect(admitted.failedPrompt.failedAt).not.toBe(runtime.token)
-    vi.mocked(writeFile).mockRejectedValue(new Error('Persistent acknowledgement outage'))
-    await expect(runtime.combined.stop()).rejects.toThrow()
-    vi.mocked(writeFile).mockImplementation(disk.writeFile)
+    await runtime.combined.stop()
     const store = new SessionStore(runtime.directory)
     await store.initialize()
     const restarted = await connect(runtime.directory, store)
@@ -350,6 +338,8 @@ describe('Claude recovered draft admission', () => {
       content: 'A', uncertain: true, failedAt: admitted.failedPrompt.failedAt,
     })
     await expect(restarted.combined.sendMessage(id, 'A', false, runtime.token))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(restarted.combined.sendMessage(id, 'A', false, admitted.failedPrompt.failedAt))
       .rejects.toMatchObject({ statusCode: 409 })
     expect(restarted.calls).toEqual([])
   })
@@ -411,7 +401,7 @@ describe('Claude unregistered query recovery', () => {
     const finishing = vi.spyOn(store, 'finishMessage')
     const draining = claude['drainQueue'](id).catch((error: unknown) => error)
     await entered.promise
-    expect((await persisted()).sdkQueueAdmission.prompt.content).toBe('A')
+    expect((await persisted()).queuedDispatch.original.content).toBe('A')
     const stopping = stop ? claude.stop() : Promise.resolve()
     lookup.reject(new Error('Metadata lookup rejected'))
     await Promise.all([draining, stopping])
@@ -463,7 +453,7 @@ describe('Claude unregistered query recovery', () => {
     expect(runtime.calls).toEqual([])
     expect(finishing).not.toHaveBeenCalled()
     const persisted = await runtime.persisted()
-    expect(persisted.sdkQueueAdmission.prompt.content).toBe('A')
+    expect(persisted.queuedDispatch.original.content).toBe('A')
     expect(persisted.failedPrompt).toMatchObject({ content: 'A', uncertain: true })
     vi.mocked(writeFile).mockImplementation(disk.writeFile)
     if (stop) {
@@ -472,8 +462,8 @@ describe('Claude unregistered query recovery', () => {
       expect(store.get(id)?.failedPrompt?.content).toBe('A')
     } else {
       await runtime.claude['drainQueue'](id)
-      await vi.waitFor(() => expect(runtime.calls).toEqual(['A', 'B']))
-      await idle(runtime)
+      expect(runtime.calls).toEqual([])
+      expect(runtime.store.get(id)?.queuedDispatch).toBeDefined()
     }
   })
 
@@ -548,8 +538,8 @@ describe('Claude unregistered query recovery', () => {
     expect(vi.mocked(runtime.sdk.query)).toHaveBeenCalledTimes(1)
     await expect(runtime.combined.sendMessage(id, 'A', false, runtime.token)).rejects.toMatchObject({ statusCode: 409 })
     expect(runtime.store.get(id)?.messages.at(-1)?.content).toContain('uncertain')
-    await runtime.combined.sendMessage(id, 'A', false, recovered.failedAt)
-    await vi.waitFor(() => expect(runtime.calls).toEqual(['A']))
-    await idle(runtime)
+    await expect(runtime.combined.sendMessage(id, 'A', false, recovered.failedAt))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(runtime.store.get(id)?.queuedDispatch?.state).toBe('uncertain')
   })
 })

@@ -12030,9 +12030,12 @@ function App() {
           ...(preview && current[targetKey]?.deliveryUncertain
             ? { deliveryUncertain: true }
             : {}),
+          ...(preview && current[targetKey]?.unresolvedPastes
+            ? { unresolvedPastes: current[targetKey].unresolvedPastes }
+            : {}),
           pendingSubmission: submission,
         },
-      }), true, Boolean(submission.acknowledgesFailure))
+      }), true)
       if (!admitted) {
         return
       }

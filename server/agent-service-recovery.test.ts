@@ -24,9 +24,24 @@ function gate<T>(fallback: T) {
 }
 
 function sdkSession(sessionId: string): CopilotSessionLike {
+  const listeners = new Set<Parameters<CopilotSessionLike['on']>[0]>()
   return {
     sessionId,
-    on: () => () => {},
+    on: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    send: vi.fn(async () => {
+      queueMicrotask(() => {
+        for (const listener of listeners) {
+          listener({
+            id: randomUUID(), type: 'session.idle', data: {},
+            timestamp: new Date().toISOString(), ephemeral: true, parentId: null,
+          })
+        }
+      })
+      return randomUUID()
+    }),
     sendAndWait: vi.fn(async () => undefined),
     getEvents: async () => [],
     abort: async () => {},
@@ -563,12 +578,12 @@ describe('Deferred terminal ownership recovery', () => {
     f.ownership.probeErrors.set('pending', new Error('Socket unreadable'))
 
     await f.service.refreshDiscovery()
-    await vi.waitFor(() => { expect(sdk.sendAndWait).toHaveBeenCalledOnce() })
+    await vi.waitFor(() => { expect(sdk.send).toHaveBeenCalledOnce() })
     expect(f.client.resumeSession).toHaveBeenCalledExactlyOnceWith('sdk', expect.any(Object))
     expect(f.store.get('pending')?.queuedPrompts).toEqual([prompt('Terminal work')])
     expect(f.terminal.send).not.toHaveBeenCalled()
     await f.service.refreshDiscovery()
-    expect(sdk.sendAndWait).toHaveBeenCalledOnce()
+    expect(sdk.send).toHaveBeenCalledOnce()
   })
 
   it.each([true, false])(

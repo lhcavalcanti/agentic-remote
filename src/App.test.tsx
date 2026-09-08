@@ -6433,7 +6433,7 @@ describe('App', () => {
       ...computer, id: 'computer-2', name: 'worker-node', isLocal: false,
     }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
     let finishFolder!: (listing: WorkspaceListing) => void
     vi.mocked(listKnowledgeEntries).mockImplementation(async (_rootId, path = '.') => {
       if (path === '.') {
@@ -8422,7 +8422,7 @@ describe('App', () => {
         const editor = await screen.findByLabelText('Message')
         await waitFor(() => expect(editor).toHaveValue(recovery.content))
         if (surface === 'rename') {
-          fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+          fireEvent.click(sessionAction('Rename session'))
           fireEvent.change(screen.getByLabelText('Session name'), { target: { value: returned.title } })
           fireEvent.submit(screen.getByLabelText('Session name').closest('form')!)
         } else if (surface === 'queue removal') {
@@ -8520,7 +8520,7 @@ describe('App', () => {
       try {
         render(<App />)
         await screen.findByLabelText('Message')
-        fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+        fireEvent.click(sessionAction('Rename session'))
         fireEvent.change(screen.getByLabelText('Session name'), { target: { value: 'Held serialized rename' } })
         fireEvent.submit(screen.getByLabelText('Session name').closest('form')!)
         await waitFor(() => expect(release).toBeDefined())
@@ -14290,7 +14290,7 @@ describe('App', () => {
       fireEvent.change(textarea, { target: { value: 'Continue after clear' } })
       await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
       if (localClear) {
-        fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+        fireEvent.click(sessionAction('Clear conversation'))
         await waitFor(() => expect(answerClear).toBeDefined())
       }
       // This earlier effect delivers the next frame after removal rendered,
@@ -14346,7 +14346,7 @@ describe('App', () => {
       }))
       render(<App />)
       await screen.findAllByText('Project chat')
-      fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+      fireEvent.click(sessionAction('Clear conversation'))
       await waitFor(() => expect(accept).toBeDefined())
       if (source === 'removal') {
         await act(async () => {

@@ -63,6 +63,10 @@ async function fixture(loaded = true) {
   const sent: string[] = []
   const runtime = (sessionId: string): CopilotSessionLike => ({
     sessionId,
+    send: vi.fn(async ({ prompt }) => {
+      sent.push(prompt)
+      return randomUUID()
+    }),
     sendAndWait: vi.fn(async (content) => { sent.push(content); await turn.promise; return undefined }),
     on: () => () => {},
     getEvents: vi.fn(async () => []),

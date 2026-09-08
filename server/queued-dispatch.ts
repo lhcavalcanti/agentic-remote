@@ -280,7 +280,15 @@ export class QueuedDispatches {
       () => normalize(target?.content ?? original.content, command), deadline,
     )
     const attemptId = randomUUID()
-    this.lastRecoveryAt = Math.max(Date.now(), this.lastRecoveryAt + 1)
+    const previousRecoveryAt = Math.max(
+      Date.parse(before.failedPrompt?.failedAt || '') || 0,
+      Date.parse(original.createdAt) || 0,
+    )
+    this.lastRecoveryAt = Math.max(
+      Date.now(),
+      this.lastRecoveryAt + 1,
+      previousRecoveryAt + 1,
+    )
     const recoveryFailedAt = new Date(this.lastRecoveryAt).toISOString()
     let originalIndex = before.queuedPrompts!.findIndex((entry) => entry.id === original.id)
     const prompt: QueuedPrompt = {

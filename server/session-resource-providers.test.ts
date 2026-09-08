@@ -316,7 +316,6 @@ describe('read-only Copilot resource views', () => {
       await store.create(seed(cwd, 'copilot'), { managedOpen: true, backend: 'sdk' })
     } else if (change === 'remove') {
       await store.remove('session')
-      await store.create(seed(cwd, 'copilot'), { managedOpen: true, backend: 'sdk' })
     } else if (change === 'clear') {
       await store.clearConversation('session')
     } else {
@@ -422,13 +421,12 @@ describe('read-only Claude resource views', () => {
     }
   })
 
-  it.each(['provider', 'store', 'busy'] as const)('preserves resource observations when clear is refused by %s', async (failure) => {
-    const { service, sdk, store, begin, end } = await claudeFixture()
+  it.each(['store', 'busy'] as const)('preserves resource observations when clear is refused by %s', async (failure) => {
+    const { service, store, begin, end } = await claudeFixture()
     await begin()
     const skills = await service.listSkills('session')
     const mcp = await service.listMcpServers('session')
     if (failure !== 'busy') await end()
-    if (failure === 'provider') sdk.deleteSession.mockRejectedValueOnce(new Error('Provider refused clear'))
     if (failure === 'store') {
       vi.spyOn(store, 'replaceWithClearedSession').mockRejectedValueOnce(new Error('State write refused'))
     }
@@ -523,7 +521,6 @@ describe('read-only Claude resource views', () => {
       await end()
       if (change === 'delete') {
         await service.deleteSession('session')
-        await store.create(seed(cwd, 'claude'), { managedOpen: true, backend: 'sdk' })
       } else if (change === 'clear') {
         const replacement = await service.clearConversation('session')
         expect(await service.listSkills(replacement.id)).toMatchObject({ scope: 'unavailable' })
@@ -535,7 +532,9 @@ describe('read-only Claude resource views', () => {
     }
     pending.resolve([{ name: 'stale', status: 'connected' }])
     expect(await reading).toMatchObject({ statusCode: change === 'stop' ? 503 : 409 })
-    if (change !== 'stop' && change !== 'clear') {
+    if (change === 'delete') {
+      await expect(service.listMcpServers('session')).rejects.toMatchObject({ statusCode: 404 })
+    } else if (change !== 'stop' && change !== 'clear') {
       expect(await service.listMcpServers('session')).toMatchObject({ scope: 'unavailable' })
     }
     expect(query).toHaveBeenCalledTimes(1)

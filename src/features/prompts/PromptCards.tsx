@@ -448,12 +448,6 @@ export function UserInputCard({
     () => initialUserInputValues(request.form),
   )
 
-  useEffect(() => {
-    setSelected([])
-    setAnswer('')
-    setValues(initialUserInputValues(request.form))
-  }, [request.requestId, request.form])
-
   if (request.form) {
     const canSubmit = request.form.fields.every(
       (field) =>

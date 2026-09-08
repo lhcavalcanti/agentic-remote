@@ -3187,6 +3187,64 @@ describe('forms whose focused tab is marked', () => {
     ).toBe(false)
   })
 
+  it('matches a token broken with a wide gap left behind', () => {
+    // The CLI breaks a token when what follows will not fit, so the row it
+    // leaves can stop well short of the edge. The gap is not evidence of a
+    // space; the length of what continues on the next row is.
+    const question =
+      'Please review `docs/visual-design-spec-v0.2.md` and its linked ' +
+      '`docs/mockups/*.html` files before planning.'
+    const rule = '\u2500'.repeat(80)
+    const pad = (line: string) => line.padEnd(80, ' ')
+    const pane = [
+      rule,
+      pad(' Copilot needs information.'),
+      // Stops two columns short: `*.html`` could not have fitted there.
+      pad(' Please review `docs/visual-design-spec-v0.2.md` and its linked `docs/mockups/'),
+      pad(' *.html` files before planning.'),
+      '',
+      '  Written UX specification   Requested changes',
+      '',
+      ' Written UX specification:',
+      ' \u276F Approve',
+      '   Request changes',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+      rule,
+    ].join('\n')
+    const wide = {
+      question,
+      fields: ['Written UX specification', 'Requested changes'],
+    }
+
+    expect(terminalFormShowsFields(pane, wide)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, wide)).toBe(0)
+  })
+
+  it('still reads a wide gap as a space when the continuation would have fitted', () => {
+    const rule = '\u2500'.repeat(80)
+    const pad = (line: string) => line.padEnd(80, ' ')
+    const pane = [
+      rule,
+      pad(' Copilot needs information.'),
+      pad(' Choose user'),
+      pad(' name'),
+      '',
+      '  Written UX specification   Requested changes',
+      '',
+      ' Written UX specification:',
+      ' \u276F Approve',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+      rule,
+    ].join('\n')
+    const fields = ['Written UX specification', 'Requested changes']
+
+    // "name" had ample room on the row above, so the break was a space.
+    expect(terminalFormShowsFields(pane, { question: 'Choose username', fields })).toBe(false)
+    expect(terminalFormShowsFields(pane, { question: 'Choose user name', fields })).toBe(true)
+  })
+
   it('keeps a title that is written in brackets of its own', () => {
     const pane = [
       ' Copilot needs information.',

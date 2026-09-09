@@ -9293,6 +9293,32 @@ describe('App', () => {
       ),
     )
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
+  })
+
+  it('lets an errored session restart from the session actions', async () => {
+    const errored = {
+      ...session,
+      status: 'error' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([errored])
+    vi.mocked(getSession).mockResolvedValue(errored)
+    vi.mocked(restartSession).mockResolvedValue({
+      ...errored,
+      status: 'idle',
+    })
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    const restart = sessionAction('Restart session')
+    expect(restart).toBeEnabled()
+    fireEvent.click(restart)
+
+    await waitFor(() =>
+      expect(restartSession).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
 
     vi.mocked(restartSession).mockClear()
     const textarea = screen.getByLabelText('Message')

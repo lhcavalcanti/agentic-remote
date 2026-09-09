@@ -139,6 +139,14 @@ interface ActivePrompt {
   assistantMessageId: string
 }
 
+interface PendingSdkFollowUp {
+  settled: Promise<void>
+  resolve: () => void
+  previousCompleted: boolean
+  /** Stopped while it was still being handed over, before it had a tracker. */
+  stopped?: boolean
+}
+
 class TerminalDiscoveryError extends Error {
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
@@ -1594,6 +1602,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   >()
   private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
+  private readonly pendingSdkFollowUps = new Map<
+    string,
+    PendingSdkFollowUp
+  >()
+  // Sessions whose original turn is still being awaited, and the tracker the
+  // live follow-up is watching with. The turn closes the assistant of a
+  // follow-up accepted while it runs; once it has returned the follow-up has
+  // to close its own, and one it supersedes must stop watching.
+  private readonly sdkTurnsAwaited = new Set<string>()
+  private readonly sdkFollowUpTrackers = new Map<
+    string,
+    { settleWhenIdle: () => void; cancel: () => void }
+  >()
   private readonly drainingSessions = new Set<string>()
   /** Old and replacement recovery tokens held by an in-flight dispatch. */
   private readonly claimedFailures = new Set<string>()
@@ -2053,6 +2074,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.sessions.clear()
     const runtimeErrors = await this.client.stop()
     this.activePrompts.clear()
+    for (const pending of this.pendingSdkFollowUps.values()) {
+      pending.resolve()
+    }
+    this.pendingSdkFollowUps.clear()
     const synchronized = await Promise.allSettled([
       this.discoveryInFlight,
       this.transcriptInFlight,
@@ -2766,6 +2791,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await active.disconnect()
         this.sessions.delete(id)
       }
+      this.activePrompts.delete(id)
       this.hydratedSessions.delete(id)
     }
     // Tearing the runtime down was awaited too. Recording a suspension over
@@ -2993,6 +3019,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await active.disconnect()
         this.sessions.delete(id)
       }
+      this.activePrompts.delete(id)
       const previousTasks = this.backgroundTaskTracker.get(id)
       this.backgroundTaskSyncs.delete(id)
       this.backgroundTaskResyncNeeded.delete(id)
@@ -3002,6 +3029,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.syncBackgroundTasks(id, attached, false).catch((error: unknown) =>
         this.publishError(id, error),
       )
+    }
+    if (stored.failedPrompt) {
+      await this.store.clearFailedPrompt(id, stored.failedPrompt.failedAt)
     }
     const restarted = await this.store.update(id, (session) => {
       session.status = 'idle'
@@ -3928,6 +3958,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // it, and nothing says the prompt was never delivered. Refusing is
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
+      terminalWorking = Boolean(pane && isTerminalAgentWorking(pane))
       if (
         !startupLocked &&
         this.terminalAdmissionOperations.has(sessionId)
@@ -4030,6 +4061,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       terminalBacked &&
       !enqueue &&
       current.queuedPrompts?.length &&
+      !terminalWorking &&
       (answers === undefined || current.failedPrompt?.failedAt !== answers)
     ) {
       throw Object.assign(
@@ -4076,7 +4108,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         content,
         nativeEnqueue,
-        !nativeEnqueue && current.status === 'running'
+        !nativeEnqueue && terminalWorking
           ? { allowDuringAgentExecution: true }
           : undefined,
       )
@@ -4120,6 +4152,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const sdkBackgroundAgentRunning =
       !terminalBacked &&
       hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId))
+    if (
+      !terminalBacked &&
+      current.status === 'error' &&
+      current.failedPrompt?.uncertain &&
+      current.failedPrompt.failedAt !== answers
+    ) {
+      throw Object.assign(
+        new Error(
+          'The previous SDK follow-up may already have been accepted. Resolve it or restart the session before sending again.',
+        ),
+        { statusCode: 409 },
+      )
+    }
     if (
       !terminalBacked &&
       !enqueue &&
@@ -4176,45 +4221,278 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         delivery,
       )
     }
-    let messageId: Awaited<ReturnType<typeof sdkSession.send>>
+    if (this.pendingSdkFollowUps.has(sessionId)) {
+      // Two follow-ups admitted at once would share one pending slot, so each
+      // would take the turn the other is steering and the replies would attach
+      // to whichever assistant message won the race. Nothing has been handed
+      // over yet, so this is a plain refusal.
+      throw Object.assign(
+        new Error(
+          'A follow-up prompt is already being sent. Wait for it, or use Queue to add this message after it.',
+        ),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
+    let resolvePending = () => {}
+    const pending: PendingSdkFollowUp = {
+      settled: new Promise<void>((resolve) => {
+        resolvePending = resolve
+      }),
+      resolve: () => resolvePending(),
+      previousCompleted: false,
+    }
+    this.pendingSdkFollowUps.set(sessionId, pending)
+    // Only ever releases this follow-up's own slot, so a release cannot take
+    // away the one a later follow-up is relying on.
+    const releasePending = () => {
+      pending.resolve()
+      if (this.pendingSdkFollowUps.get(sessionId) === pending) {
+        this.pendingSdkFollowUps.delete(sessionId)
+      }
+    }
+    const assistantId = randomUUID()
+    let prepared: SessionDetail
     try {
-      messageId = await sdkSession.send({
+      prepared = await this.store.beginSdkFollowUp(
+        sessionId,
+        content,
+        assistantId,
+        active.assistantMessageId,
+        () =>
+          this.pendingSdkFollowUps.get(sessionId) === pending &&
+          this.activePrompts.get(sessionId)?.assistantMessageId ===
+            active.assistantMessageId,
+      )
+    } catch (error) {
+      releasePending()
+      throw error
+    }
+    this.publish(prepared)
+    const tracker = this.trackSdkFollowUp(sdkSession, assistantId)
+    try {
+      const messageId = await sdkSession.send({
         prompt: content,
         mode: 'immediate',
       })
-    } catch (error) {
-      // The prompt was handed to the SDK before this failed, so it may already
-      // be steering the turn. The admission is committed and the reply left
-      // uncertain, which stops the same steering being sent twice and stops a
-      // clear from assuming nothing ran.
+      if (!messageId) {
+        throw new Error('The SDK did not confirm the follow-up prompt')
+      }
       this.admissions.markCommitted(sessionId)
-      if (
-        error &&
-        typeof error === 'object' &&
-        deliveryUncertaintyFromError(error) === undefined
-      ) {
-        Reflect.set(error, 'uncertainDelivery', true)
+      if (delivery) delivery.accepted = true
+      this.activePrompts.set(sessionId, {
+        assistantMessageId: assistantId,
+      })
+      if (pending.previousCompleted || !this.sdkTurnsAwaited.has(sessionId)) {
+        tracker.activate()
+        // Stopped while it was being handed over, so it may never write
+        // anything and the idle is all that is left to end it.
+        if (pending.stopped) tracker.settleWhenIdle()
+        this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+        this.sdkFollowUpTrackers.set(sessionId, tracker)
+      } else {
+        tracker.cancel()
+      }
+      releasePending()
+      await this.recordDelivery(sessionId, answers, delivery)
+      return this.store.get(sessionId) || prepared
+    } catch (error) {
+      if (delivery?.accepted) {
+        throw error
+      }
+      try {
+        const definitive = explicitlyRefused(error)
+        if (definitive) {
+          tracker.cancel()
+          const restored = await this.store.cancelSdkFollowUp(
+            sessionId,
+            assistantId,
+            active.assistantMessageId,
+          )
+          this.publish(restored)
+        } else {
+          // Handed to the SDK before this failed, so it may already be
+          // steering the turn. Committing the admission stops the same
+          // steering going out twice, and stops a clear assuming nothing ran.
+          this.admissions.markCommitted(sessionId)
+          this.activePrompts.set(sessionId, {
+            assistantMessageId: assistantId,
+          })
+          if (pending.previousCompleted || !this.sdkTurnsAwaited.has(sessionId)) {
+            tracker.activate()
+            if (pending.stopped) tracker.settleWhenIdle()
+            this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+            this.sdkFollowUpTrackers.set(sessionId, tracker)
+          } else {
+            tracker.cancel()
+          }
+          if (
+            error &&
+            typeof error === 'object' &&
+            deliveryUncertaintyFromError(error) === undefined
+          ) {
+            Reflect.set(error, 'uncertainDelivery', true)
+          }
+          const failed = await this.store.failSdkFollowUp(
+            sessionId,
+            assistantId,
+            error instanceof Error ? error.message : String(error),
+            content,
+          )
+          this.publish(failed)
+        }
+      } finally {
+        releasePending()
       }
       throw error
     }
-    if (!messageId) {
-      // Handed over and unacknowledged is not the same as never sent.
-      this.admissions.markCommitted(sessionId)
-      throw Object.assign(
-        new Error('The SDK did not confirm the follow-up prompt'),
-        { uncertainDelivery: true },
-      )
-    }
-    this.admissions.markCommitted(sessionId)
-    await this.recordDelivery(sessionId, answers, delivery)
-    const updated = await this.store.addMessage(sessionId, {
-      id: messageId,
-      role: 'user',
-      content,
-      createdAt: new Date().toISOString(),
+  }
+
+  private trackSdkFollowUp(
+    sdkSession: CopilotSessionLike,
+    assistantMessageId: string,
+  ): { activate: () => void; settleWhenIdle: () => void; cancel: () => void } {
+    const sessionId = sdkSession.sessionId
+    let active = false
+    let closed = false
+    let responseStarted = false
+    const unsubscribe = sdkSession.on((event) => {
+      if (!active || closed || eventAgentId(event)) return
+      if (
+        event.type === 'assistant.message_delta' ||
+        event.type === 'assistant.message' ||
+        event.type === 'tool.execution_start' ||
+        event.type === 'tool.execution_complete'
+      ) {
+        responseStarted = true
+      }
+      if (event.type === 'session.idle') {
+        if (!responseStarted) return
+        closed = true
+        unsubscribe()
+        forget()
+        void this.finishSdkFollowUp(
+          sessionId,
+          assistantMessageId,
+        ).catch((error: unknown) => this.publishError(sessionId, error))
+      } else if (
+        event.type === 'session.error' ||
+        event.type === 'session.shutdown'
+      ) {
+        closed = true
+        unsubscribe()
+        forget()
+        const message =
+          event.type === 'session.error'
+            ? event.data.message
+            : 'The SDK session shut down.'
+        void this.failTrackedSdkFollowUp(
+          sessionId,
+          assistantMessageId,
+          message,
+        ).catch((error: unknown) => this.publishError(sessionId, error))
+      }
     })
-    this.publish(updated)
-    return updated
+    // Whatever ends this tracker -- an idle, a shutdown, or being superseded
+    // -- it stops being the session's live one. Left behind it would hold the
+    // SDK session for a conversation that has finished.
+    const forget = () => {
+      if (this.sdkFollowUpTrackers.get(sessionId) === handle) {
+        this.sdkFollowUpTrackers.delete(sessionId)
+      }
+    }
+    const handle = {
+      activate: () => {
+        active = true
+      },
+      // After an explicit Stop the turn may end without ever producing
+      // anything, and an idle is then the only thing that will arrive. Waiting
+      // for output first would keep the follow-up owning the session, leaving
+      // it running with Restart blocked.
+      settleWhenIdle: () => {
+        responseStarted = true
+      },
+      cancel: () => {
+        forget()
+        if (closed) return
+        closed = true
+        unsubscribe()
+      },
+    }
+    return handle
+  }
+
+  private async finishSdkFollowUp(
+    sessionId: string,
+    assistantMessageId: string,
+  ): Promise<void> {
+    await this.store.finishMessage(sessionId, assistantMessageId)
+    const updated = await this.store.updateIf(sessionId, (session) => {
+      if (
+        this.activePrompts.get(sessionId)?.assistantMessageId !==
+        assistantMessageId
+      ) {
+        return false
+      }
+      for (const message of session.messages) {
+        if (
+          message.role === 'activity' &&
+          message.activityStatus === 'running'
+        ) {
+          message.activityStatus = 'completed'
+        }
+      }
+      if (session.failedPrompt?.uncertain) {
+        session.failedPrompt = undefined
+      }
+      session.status = 'idle'
+      session.activity = undefined
+      return true
+    })
+    if (updated) this.publish(updated)
+    if (
+      this.activePrompts.get(sessionId)?.assistantMessageId ===
+      assistantMessageId
+    ) {
+      this.activePrompts.delete(sessionId)
+      this.wakeSdkQueue(sessionId)
+    }
+  }
+
+  private async failTrackedSdkFollowUp(
+    sessionId: string,
+    assistantMessageId: string,
+    message: string,
+  ): Promise<void> {
+    const updated = await this.store.updateIf(sessionId, (session) => {
+      if (
+        this.activePrompts.get(sessionId)?.assistantMessageId !==
+        assistantMessageId
+      ) {
+        return false
+      }
+      const assistant = session.messages.find(
+        (entry) => entry.id === assistantMessageId,
+      )
+      if (assistant) {
+        assistant.streaming = false
+        if (!assistant.content) {
+          assistant.content = `Unable to complete the response: ${message}`
+        }
+      }
+      session.status = 'error'
+      session.activity = undefined
+      return true
+    })
+    if (updated) {
+      this.publish(updated)
+      this.publishError(sessionId, new Error(message))
+    }
+    if (
+      this.activePrompts.get(sessionId)?.assistantMessageId ===
+      assistantMessageId
+    ) {
+      this.activePrompts.delete(sessionId)
+    }
   }
 
   private async sendTerminalInput(
@@ -5421,6 +5699,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!session || !this.activePrompts.has(sessionId)) {
       return
     }
+    // Marked before the abort, so an idle that arrives straight after it
+    // cannot reach the tracker while it is still waiting for output. A
+    // follow-up still being handed over has no tracker yet, so the stop is
+    // recorded on the admission it will be built from.
+    const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
+    if (pendingFollowUp) pendingFollowUp.stopped = true
+    this.sdkFollowUpTrackers.get(sessionId)?.settleWhenIdle()
     await session.abort()
   }
 
@@ -5526,6 +5811,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await active.disconnect()
         this.sessions.delete(sessionId)
       }
+      // Retired once the runtime is actually gone. Doing it earlier left the
+      // door open for a follow-up already being admitted to install its own
+      // tracker afterwards, and disconnecting does not always announce itself,
+      // so waiting for a shutdown event would leak the SDK session.
+      this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+      this.sdkFollowUpTrackers.delete(sessionId)
       for (const [requestId, permission] of this.permissions) {
         if (permission.sessionId === sessionId) {
           permission.resolve({ kind: 'user-not-available' })
@@ -7378,6 +7669,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     receipt?: ReturnType<typeof acceptanceReceipt>,
   ): Promise<void> {
     const sessionId = sdkSession.sessionId
+    let completionAssistantMessageId = assistantMessageId
+    this.sdkTurnsAwaited.add(sessionId)
     try {
       if (this.stopped) return
       const response = delivery && receipt
@@ -7394,16 +7687,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
+      const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
+      if (pendingFollowUp) pendingFollowUp.previousCompleted = true
+      await pendingFollowUp?.settled
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        return
+      }
+      completionAssistantMessageId = pendingFollowUp
+        ? assistantMessageId
+        : this.activePrompts.get(sessionId)?.assistantMessageId ||
+          assistantMessageId
       if (response?.data.content) {
         this.store.setMessageContent(
           sessionId,
-          assistantMessageId,
+          completionAssistantMessageId,
           response.data.content,
         )
       }
-      await this.store.finishMessage(sessionId, assistantMessageId)
+      await this.store.finishMessage(sessionId, completionAssistantMessageId)
       const updated = await this.store.updateIf(sessionId, (session) => {
-        if (this.activePrompts.get(sessionId)?.assistantMessageId !== assistantMessageId) return false
+        if (this.activePrompts.get(sessionId)?.assistantMessageId !== completionAssistantMessageId) return false
         for (const message of session.messages) {
           if (
             message.role === 'activity' &&
@@ -7411,6 +7714,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           ) {
             message.activityStatus = 'completed'
           }
+        }
+        if (
+          completionAssistantMessageId !== assistantMessageId &&
+          session.failedPrompt?.uncertain
+        ) {
+          session.failedPrompt = undefined
         }
         session.status = 'idle'
         session.activity = undefined
@@ -7427,8 +7736,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
+      const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
+      if (pendingFollowUp) pendingFollowUp.previousCompleted = true
+      await pendingFollowUp?.settled
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        return
+      }
+      completionAssistantMessageId = pendingFollowUp
+        ? assistantMessageId
+        : this.activePrompts.get(sessionId)?.assistantMessageId ||
+          assistantMessageId
       const updated = await this.store.updateIf(sessionId, (session) => {
-        if (this.activePrompts.get(sessionId)?.assistantMessageId !== assistantMessageId) return false
+        if (this.activePrompts.get(sessionId)?.assistantMessageId !== completionAssistantMessageId) return false
         for (const entry of session.messages) {
           if (
             entry.role === 'activity' &&
@@ -7439,7 +7758,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
         }
         const assistant = session.messages.find(
-          (entry) => entry.id === assistantMessageId,
+          (entry) => entry.id === completionAssistantMessageId,
         )
         if (assistant) {
           assistant.streaming = false
@@ -7456,7 +7775,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publishError(sessionId, new Error(message))
       }
     } finally {
-      if (this.activePrompts.get(sessionId)?.assistantMessageId === assistantMessageId) {
+      // Released last: a follow-up accepted while this turn was awaited is
+      // closed by it, and one accepted afterwards has to close itself.
+      this.sdkTurnsAwaited.delete(sessionId)
+      if (this.activePrompts.get(sessionId)?.assistantMessageId === completionAssistantMessageId) {
         this.activePrompts.delete(sessionId)
         if (!delivery || delivery.accepted) this.wakeSdkQueue(sessionId)
       }

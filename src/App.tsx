@@ -7188,6 +7188,10 @@ function App() {
     selected?.status !== 'idle' ||
     selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
+  const selectedRestartBlocked = !selectedComputerOnline ||
+    (selected?.status !== 'idle' && selected?.status !== 'error') ||
+    selected?.suspended === true ||
+    Boolean(selected?.pendingUserInput || selected?.pendingPermission)
   const workspaceInsertUnavailableReason = selected && !selectedComputerOnline
     ? `Reconnect ${selected.computerName} to add a file reference.`
     : undefined
@@ -13363,7 +13367,7 @@ function App() {
                 aria-label="Restart session"
                 className="session-action"
                 disabled={
-                  restarting || selectedLifecycleBlocked
+                  restarting || selectedRestartBlocked
                 }
                 onClick={() => void restartSelectedSession()}
                 type="button"

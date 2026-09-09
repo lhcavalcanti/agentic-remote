@@ -158,6 +158,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   supported.
 - Restart MUST preserve session ID, title, working folder, transcript, queue,
   runtime settings, and tmux window.
+- Restart MUST remain available for an online session in `error` state. Error
+  recovery MUST NOT require a direct API call.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.

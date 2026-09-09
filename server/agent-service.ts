@@ -5715,6 +5715,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
+    // Nothing is left to watch for. Disconnecting does not always announce
+    // itself, so the tracker is retired here rather than waiting for a
+    // shutdown event that may never arrive.
+    this.sdkFollowUpTrackers.get(sessionId)?.cancel()
     forgetSessionEvents(sessionId)
     let completed = false
     try {

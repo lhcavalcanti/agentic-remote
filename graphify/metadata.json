@@ -205,7 +205,7 @@
   ],
   "communities": 127,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9056,
+  "edges": 9057,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -277,8 +277,8 @@
     "server/active-sessions.ts": "872f54657ac39271fb18b7b44fc01db06c693c101641e4147a16797fe16941fc",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "21dc12050ab5d7ff5595fc96cb0f4e31adce432caf3353da92ad5e3695e035e4",
-    "server/agent-service.test.ts": "e49c9f3ef301d93855ee4c354ca01222d22b635b470b86dff9d01f1d5f0b9929",
-    "server/agent-service.ts": "df1171e7d7e99f77ebb1046070ebe3f6da86b946f2d47346593b7850a4603d0d",
+    "server/agent-service.test.ts": "7e88e6c2b19cfc995cd8a5143fef4a5e2ac12c3c26271f4751d6d0327aefc9ff",
+    "server/agent-service.ts": "28bdc21a657ce4da54cabe0e23393aa941b40d179d2903a15f774241e3974098",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "0cb00fcfecf02418c8c08e12fd259d10a893544af1f91c36e6f9537f26ad1f65",
@@ -523,14 +523,14 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "164d7b091bc8396077a9c2e0dd9d326f2ca649eab5379cc605e5b6dd267f6ec1",
-    "communities.json": "0d6e22c51b7af8ca4dd48ade7072af4993da28dce3b45c17958bbfa400299f5b",
-    "graph.html": "c02399ff0c7cd529b20ffac04fb6d5e4542e0a31a1bc2d78572b1d172ac4f3c1",
-    "graph.json": "52a4c3c82e1f6b500e0d4857e6e30f71b0df2dda798cbfa0538b4bb141b1ab05"
+    "GRAPH_REPORT.md": "660924a868d9dbefac6cf289409ce76ee1c216701cd4bc8c15c807875363f259",
+    "communities.json": "d487a4ad4b46854428fb7635c654b788fcfbf6401e3e02f68789a936b07476aa",
+    "graph.html": "a8fceb11a9a79e50fc1ad36bb59aca5dcba983783ebd73e406d8e4001b59f3ea",
+    "graph.json": "3fa61d985c8b8768effc88a0013569e6cffd5a35a184503d4b68962d627b33e9"
   },
   "schema_version": 1,
-  "source_commit": "770cdf3b03b04dad894af5628891abe4137d143a",
-  "source_fingerprint": "4167435b0c4b5c733d49beb1754d7d5436c679316d0ceb9acc03e9c9a137bdf6",
+  "source_commit": "cce2ee7777ea9b94ed7b3772eb1afb18124e6382",
+  "source_fingerprint": "cbcafc46ff903b9997f6d8ae5d99ca861e69379cf57cd367f2ce8cb5a6eaa94c",
   "working_tree_changes": [
     "server/agent-service.test.ts",
     "server/agent-service.ts"

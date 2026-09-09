@@ -4671,6 +4671,48 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('lets go of a follow-up tracker when its session is deleted', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tracker-delete-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => { acceptFollowUp = resolve })
+    })
+    const steering = service.sendMessage(created.id, 'Steer the turn')
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('Steer the turn')
+    })
+    client.session.resolvePrompt({
+      id: randomUUID(), type: 'assistant.message',
+      timestamp: new Date().toISOString(), parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    acceptFollowUp('follow-up-message')
+    await steering
+    await vi.waitFor(() => {
+      expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+    })
+
+    await service.deleteSession(created.id)
+
+    // Disconnecting does not always announce itself, so a deleted session
+    // must not be left holding its tracker, and through it an SDK session.
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+    await service.stop()
+  })
+
   it('lets a second follow-up close its own turn once nothing else will', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-second-followup-'))
     directories.push(directory)

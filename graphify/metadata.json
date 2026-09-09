@@ -277,8 +277,8 @@
     "server/active-sessions.ts": "872f54657ac39271fb18b7b44fc01db06c693c101641e4147a16797fe16941fc",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "21dc12050ab5d7ff5595fc96cb0f4e31adce432caf3353da92ad5e3695e035e4",
-    "server/agent-service.test.ts": "832ad346c1c96c7d8b4fdd68ed2dd54923b3268aceee18285f31e333ee8b2923",
-    "server/agent-service.ts": "6b60bd98d2448d35429fa66664e27c2f03c074701255936ad5b46be96b9db9bd",
+    "server/agent-service.test.ts": "cc6b5da233b97fa21ddd057bee83d865f74301283480790092c1d9f09d454d16",
+    "server/agent-service.ts": "8ca56fa0083bbc6c3bebfa73c8811c45f497f8c1c52e5412db14908f86d7e182",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "0cb00fcfecf02418c8c08e12fd259d10a893544af1f91c36e6f9537f26ad1f65",
@@ -523,14 +523,14 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "21ce5730db6ee5a8e94c8336e1d6328f1c4fee3db2f2d318d16e24d89116b0d3",
+    "GRAPH_REPORT.md": "804e0e549c9c6baecb19a1c3bbfc37b9a145dd42dc5c386e8a74abd7c581ff54",
     "communities.json": "0d6e22c51b7af8ca4dd48ade7072af4993da28dce3b45c17958bbfa400299f5b",
-    "graph.html": "8aeeeddf32ed30a187efc2ead37ff9ecdba5cb517b17a747b5f4280f7f0b9e96",
-    "graph.json": "9ba90c6fb2098b42743ac271c077084b2944b847443385887650cf37022470b1"
+    "graph.html": "65c5b2a547b4823ade6f99d6e9dd397d2867cfdfe65e39e583675fbc51d7f410",
+    "graph.json": "7dc13a5dbb9f76a422b6fc867e3979a97f184f2377ebcf018062bc730dda6f26"
   },
   "schema_version": 1,
-  "source_commit": "e22ea9e6d58611de860bbe203818478abd2d1aee",
-  "source_fingerprint": "82d4c8b72e5eea996d4b1f7a684714287daecf88c727298a2a81e02a733b05eb",
+  "source_commit": "f82802097e661a62611b88243703093db3e3f7b9",
+  "source_fingerprint": "c48db39cafa539cf7c43e96ae4fa77dc6e6b338e2094d56a1a5c68a3ffbb331f",
   "working_tree_changes": [
     "server/agent-service.test.ts",
     "server/agent-service.ts"

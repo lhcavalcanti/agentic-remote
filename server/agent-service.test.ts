@@ -4671,6 +4671,74 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('lets a second follow-up close its own turn once nothing else will', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-second-followup-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+
+    // The turn ends before the first follow-up is accepted, so that follow-up
+    // takes the turn over and the turn's own handler returns.
+    let acceptFirst!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => { acceptFirst = resolve })
+    })
+    const first = service.sendMessage(created.id, 'Steer once')
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('Steer once')
+    })
+    client.session.resolvePrompt({
+      id: randomUUID(), type: 'assistant.message',
+      timestamp: new Date().toISOString(), parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    acceptFirst('first-follow-up')
+    await first
+    await vi.waitFor(() => {
+      expect(service['sdkTurnsAwaited'].has(created.id)).toBe(false)
+    })
+
+    // Nothing is left awaiting the turn, so this one closes itself -- and the
+    // follow-up it supersedes must stop watching, or it answers this idle for
+    // an assistant that has already finished.
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return 'second-follow-up'
+    })
+    await service.sendMessage(created.id, 'Steer again')
+    const secondAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+
+    client.session.emit({
+      id: randomUUID(), type: 'assistant.message',
+      timestamp: new Date().toISOString(), parentId: null,
+      data: { messageId: 'second-response', content: 'second answer' },
+    } as AssistantMessageEvent)
+    client.session.emit({
+      id: randomUUID(), type: 'session.idle',
+      timestamp: new Date().toISOString(), parentId: null, data: {},
+    } as SessionEvent)
+    await vi.waitFor(() => {
+      expect(
+        service.store.get(created.id)?.messages.find(
+          (message) => message.id === secondAssistant,
+        ),
+      ).toMatchObject({ streaming: false })
+    })
+    expect(service.store.get(created.id)?.status).toBe('idle')
+    await service.stop()
+  })
+
   it('keeps SDK follow-up ownership when the original turn idles before acceptance', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

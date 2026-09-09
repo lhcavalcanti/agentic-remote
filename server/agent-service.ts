@@ -1601,6 +1601,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     string,
     PendingSdkFollowUp
   >()
+  // Sessions whose original turn is still being awaited, and the tracker the
+  // live follow-up is watching with. The turn closes the assistant of a
+  // follow-up accepted while it runs; once it has returned the follow-up has
+  // to close its own, and one it supersedes must stop watching.
+  private readonly sdkTurnsAwaited = new Set<string>()
+  private readonly sdkFollowUpTrackers = new Map<string, { cancel: () => void }>()
   private readonly drainingSessions = new Set<string>()
   /** Old and replacement recovery tokens held by an in-flight dispatch. */
   private readonly claimedFailures = new Set<string>()
@@ -4240,8 +4246,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.set(sessionId, {
         assistantMessageId: assistantId,
       })
-      if (pending.previousCompleted) tracker.activate()
-      else tracker.cancel()
+      if (pending.previousCompleted || !this.sdkTurnsAwaited.has(sessionId)) {
+        tracker.activate()
+        this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+        this.sdkFollowUpTrackers.set(sessionId, tracker)
+      } else {
+        tracker.cancel()
+      }
       pending.resolve()
       this.pendingSdkFollowUps.delete(sessionId)
       await this.recordDelivery(sessionId, answers, delivery)
@@ -4264,8 +4275,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.activePrompts.set(sessionId, {
             assistantMessageId: assistantId,
           })
-          if (pending.previousCompleted) tracker.activate()
-          else tracker.cancel()
+          if (pending.previousCompleted || !this.sdkTurnsAwaited.has(sessionId)) {
+            tracker.activate()
+            this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+            this.sdkFollowUpTrackers.set(sessionId, tracker)
+          } else {
+            tracker.cancel()
+          }
           if (
             error &&
             typeof error === 'object' &&
@@ -7556,6 +7572,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<void> {
     const sessionId = sdkSession.sessionId
     let completionAssistantMessageId = assistantMessageId
+    this.sdkTurnsAwaited.add(sessionId)
     try {
       if (this.stopped) return
       const response = delivery && receipt
@@ -7660,6 +7677,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publishError(sessionId, new Error(message))
       }
     } finally {
+      // Released last: a follow-up accepted while this turn was awaited is
+      // closed by it, and one accepted afterwards has to close itself.
+      this.sdkTurnsAwaited.delete(sessionId)
       if (this.activePrompts.get(sessionId)?.assistantMessageId === completionAssistantMessageId) {
         this.activePrompts.delete(sessionId)
         if (!delivery || delivery.accepted) this.wakeSdkQueue(sessionId)

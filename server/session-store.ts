@@ -877,7 +877,7 @@ export class SessionStore {
       )
       const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
       if (session.suspended) {
-        throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409 })
+        throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409, uncertainDelivery: false })
       }
       if (!isCurrent()) {
         throw Object.assign(new Error('The session changed before turn admission; nothing was sent'), { statusCode: 409 })

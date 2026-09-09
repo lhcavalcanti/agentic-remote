@@ -1477,6 +1477,77 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('wakes a queue when a coalesced task sync began idle and ended idle', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let releaseRunning!: () => void
+    let releaseIdle!: () => void
+    const runningRead = new Promise<void>((resolve) => {
+      releaseRunning = resolve
+    })
+    const idleRead = new Promise<void>((resolve) => {
+      releaseIdle = resolve
+    })
+    let reads = 0
+    client.session.rpc.tasks.list = async () => {
+      reads += 1
+      if (reads === 1) {
+        await runningRead
+        return {
+          tasks: [
+            {
+              type: 'agent',
+              id: 'task-interim',
+              description: 'Interim review',
+              status: 'running',
+              startedAt: '2026-09-08T14:00:00.000Z',
+              executionMode: 'background',
+            },
+          ],
+        }
+      }
+      await idleRead
+      return { tasks: [] }
+    }
+
+    const syncing = service['syncBackgroundTasks'](
+      created.id,
+      client.session,
+    )
+    await vi.waitFor(() => expect(reads).toBe(1))
+    void service['syncBackgroundTasks'](created.id, client.session)
+    releaseRunning()
+    await vi.waitFor(() => expect(reads).toBe(2))
+    await service.sendMessage(
+      created.id,
+      'Continue after the coalesced review',
+      true,
+    )
+    expect(service.store.get(created.id)?.queuedCount).toBe(1)
+    expect(client.session.sentPrompts).toEqual([])
+
+    releaseIdle()
+    await syncing
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toEqual([
+        'Continue after the coalesced review',
+      ]),
+    )
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
   it('clears stale SDK task state before draining a queue after restart', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
     directories.push(directory)
@@ -1505,8 +1576,39 @@ describe('AgentService deletion', () => {
       expect(service['drainingSessions'].has(created.id)).toBe(false)
     })
     client.session.backgroundTasks.length = 0
+    let releaseOldSync!: () => void
+    const oldSyncRead = new Promise<void>((resolve) => {
+      releaseOldSync = resolve
+    })
+    let reads = 0
+    client.session.rpc.tasks.list = async () => {
+      reads += 1
+      if (reads === 1) {
+        await oldSyncRead
+        return {
+          tasks: [
+            {
+              type: 'agent',
+              id: 'task-stale',
+              description: 'Stale review',
+              status: 'running',
+              startedAt: '2026-09-08T14:01:00.000Z',
+              executionMode: 'background',
+            },
+          ],
+        }
+      }
+      return { tasks: [] }
+    }
+    const staleSync = service['syncBackgroundTasks'](
+      created.id,
+      client.session,
+    )
+    await vi.waitFor(() => expect(reads).toBe(1))
 
     await service.restartSession(created.id)
+    releaseOldSync()
+    await staleSync
 
     await vi.waitFor(() =>
       expect(client.session.sentPrompts).toEqual(['Continue after restart']),
@@ -1734,6 +1836,111 @@ describe('AgentService deletion', () => {
     // A retired sync settling must not take that request away, or the agent
     // it finished with stays recorded as running.
     expect(service['backgroundTaskResyncNeeded'].has(created.id)).toBe(true)
+    await service.stop()
+  })
+
+  it('keeps a refusal definite when it is answering a recovery resend', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-resend-definite-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.failedPrompt = {
+        content: '/model',
+        failedAt: 'resend:definite',
+        uncertain: true,
+      }
+    })
+    await service.store.setSuspended(created.id, true)
+
+    // Refused before dispatch while answering a failure. Saying so must not
+    // be read back as doubt: the mark carries a value, not just a presence.
+    // A command takes the failure's claim before the refusal is raised, so the
+    // refusal is reported through the claim-answering path.
+    await expect(
+      service.executeCommand(created.id, '/model', false, 'resend:definite'),
+    ).rejects.toMatchObject({ uncertainDelivery: false })
+    await service.stop()
+  })
+
+  it('leaves a lost command result uncertain rather than definitely unsent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-invoke-lost-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // The command was handed over and the reply never came back. It may well
+    // have run, so reporting it as definitely unsent invites resending it.
+    client.session.rpc.commands.invoke = async () => {
+      throw new Error('socket hang up')
+    }
+
+    await expect(
+      service.executeCommand(created.id, '/model'),
+    ).rejects.toMatchObject({ uncertainDelivery: true })
+    await service.stop()
+  })
+
+  it('reports a refusal that never reached the provider as definite', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-preflight-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.setSuspended(created.id, true)
+
+    // Nothing was handed over, so the reader can retype it safely. Without
+    // saying so the client has to treat it as possibly delivered.
+    await expect(
+      service.sendMessage(created.id, 'Held behind a suspended session'),
+    ).rejects.toMatchObject({ uncertainDelivery: false })
+    await service.stop()
+  })
+
+  it('leaves an unconfirmed follow-up uncertain rather than definitely unsent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-followup-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Open the turn')
+    await vi.waitFor(() => {
+      expect(service['activePrompts'].has(created.id)).toBe(true)
+    })
+    // The prompt reached the SDK; only its acknowledgement is missing. It may
+    // already be steering the turn, so sending it again would steer twice.
+    client.session.send = async () => undefined as unknown as string
+
+    await expect(
+      service.sendMessage(created.id, 'Steer the open turn'),
+    ).rejects.toMatchObject({ uncertainDelivery: true })
+
+    client.session.resolvePrompt()
     await service.stop()
   })
 
@@ -7064,7 +7271,14 @@ describe('AgentService deletion', () => {
         await send
         expect((await persisted()).failedPrompt).toBeUndefined()
         if (!enqueue) {
-          expect(terminal.send).toHaveBeenCalledExactlyOnceWith(sessionId, submitted, false)
+          // The fixture's pane is an idle composer throughout, so there is
+          // never a running turn to steer past however the stored status
+          // reads.
+          expect(terminal.send).toHaveBeenCalledExactlyOnceWith(
+            sessionId,
+            submitted,
+            false,
+          )
           expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
         } else {
           const queued = (await persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content)
@@ -8777,7 +8991,14 @@ describe('AgentService deletion', () => {
         sessionId, request, 'terminal:allow',
       )
       await service.sendMessage(sessionId, 'Continue')
-      expect(terminal.send).toHaveBeenCalledWith(sessionId, 'Continue', false)
+      // The resumed pane is an idle composer, so there is no execution to
+      // steer past: the stored status still says running only because nothing
+      // has re-read the pane yet.
+      expect(terminal.send).toHaveBeenCalledWith(
+        sessionId,
+        'Continue',
+        false,
+      )
     } finally {
       await service.stop()
     }

@@ -116,6 +116,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Background task reads and cancellation MUST remain scoped to the owning
   computer and session. Task state MUST resynchronize after a reconnect
   instead of relying on a transient event count.
+- Every queued or running task MUST expose a visible management area. When the
+  owning runtime provides a live cancellation handle, the panel MUST offer a
+  confirmed Stop task action. When it does not, the panel MUST explain why
+  stopping is unavailable rather than hiding the management state or guessing
+  at an operating-system process.
 
 ### 3.2 Creation
 

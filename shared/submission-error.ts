@@ -36,9 +36,14 @@ export function httpDeliveryUncertain(
   statusCode: number,
   explicit: unknown,
   submission?: SubmissionReceipt,
+  // Statuses this endpoint only answers with before anything is handed over.
+  // The conservative default below is for peers that say nothing, and it is
+  // wrong for a route that reports doubt in its body rather than its status.
+  definiteStatuses?: ReadonlySet<number>,
 ): boolean {
   if (typeof explicit === 'boolean') return explicit
   if (submission?.accepted) return true
+  if (definiteStatuses?.has(statusCode)) return false
   // Older runtimes did not serialize uncertainty. Their HTTP 409 covered both
   // preflight conflicts and failures after native paste, so absence must stay
   // conservative until the peer sends an explicit value.

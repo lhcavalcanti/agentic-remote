@@ -6521,8 +6521,8 @@ function App() {
   const [backgroundTaskRefreshVersion, setBackgroundTaskRefreshVersion] =
     useState(0)
   const [loadingBackgroundTasks, setLoadingBackgroundTasks] = useState(false)
-  const [cancellingBackgroundTaskId, setCancellingBackgroundTaskId] =
-    useState<string>()
+  const [cancellingBackgroundTask, setCancellingBackgroundTask] =
+    useState<{ ownerKey: string; taskId: string }>()
   const [mutedSessions, setMutedSessions] = useState<string[]>([])
   const mutedSessionsRef = useRef<string[]>([])
   const [mutingSession, setMutingSession] = useState(false)
@@ -10980,11 +10980,23 @@ function App() {
   }
 
   async function cancelSelectedBackgroundTask(taskId: string) {
-    if (!selected || cancellingBackgroundTaskId) {
+    if (!selected || cancellingBackgroundTask) {
+      return
+    }
+    const task = selectedBackgroundTasks?.tasks.find(
+      (candidate) => candidate.id === taskId,
+    )
+    if (
+      !task?.canCancel ||
+      !window.confirm(
+        `Stop "${task.description}"?\n\nAny in-progress work from this task may be lost.`,
+      )
+    ) {
       return
     }
     const target = selected
-    setCancellingBackgroundTaskId(taskId)
+    const ownerKey = sessionKey(target)
+    setCancellingBackgroundTask({ ownerKey, taskId })
     setError(undefined)
     const startedAtSequence = eventSequenceRef.current
     try {
@@ -10999,7 +11011,11 @@ function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setCancellingBackgroundTaskId(undefined)
+      setCancellingBackgroundTask((current) =>
+        current?.ownerKey === ownerKey && current.taskId === taskId
+          ? undefined
+          : current,
+      )
     }
   }
 
@@ -14241,7 +14257,11 @@ function App() {
       />
       {selected ? (
         <BackgroundTasksDialog
-          cancellingTaskId={cancellingBackgroundTaskId}
+          cancellingTaskId={
+            cancellingBackgroundTask?.ownerKey === sessionKey(selected)
+              ? cancellingBackgroundTask.taskId
+              : undefined
+          }
           loading={loadingBackgroundTasks}
           onCancel={(taskId) => void cancelSelectedBackgroundTask(taskId)}
           onClose={() => setBackgroundTasksOpen(false)}
@@ -14255,6 +14275,7 @@ function App() {
               supported: selectedSupportsBackgroundTasks,
             }
           }
+          stopActionsDisabled={Boolean(cancellingBackgroundTask)}
         />
       ) : null}
       <AppSettingsDialog

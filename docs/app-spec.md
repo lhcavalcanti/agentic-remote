@@ -689,11 +689,25 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - The reader MUST reopen the root, folder, and document last being read, so
   returning does not mean choosing them again. Changing folder MUST remain an
   explicit action.
+- A URL MAY name a Knowledge document with `computer`, `session`, and a
+  root-relative `file` query parameter. Opening or changing that URL MUST select
+  the session, use its authoritative root association, load the document's
+  ancestor folders, and open the document. File paths MUST continue through the
+  owning computer's normal root-confinement validation.
+- User-driven Knowledge file navigation MUST update `file` in the address.
+  Closing the panel or returning to its folder MUST remove `file`; reopening a
+  remembered document MUST restore it. Browser Back, Forward, reload, and a
+  manually edited `file` value MUST update the reader without creating
+  duplicate history entries during restoration.
 - Knowledge MUST open as a panel beside the selected session, docked next to
   the conversation or expanded over it, and MUST NOT be a second sidebar tab.
 - Whether the panel is open, and how much room it takes, is a workspace mode:
   it MUST persist across session switches, so a document being read is not
   dismissed by moving to another session.
+- Hiding Knowledge MUST remember its last visible mode. The open/close shortcut
+  MUST reopen an expanded panel as expanded and a docked panel as docked,
+  retaining the docked reader's saved width. Hiding the panel MUST NOT replace
+  that remembered visible mode.
 - The docked desktop reader MUST support resizing its left edge with a pointer
   or the arrow keys, with Shift taking larger steps. Home or a double-click
   MUST restore the responsive default width. The preferred width MUST persist

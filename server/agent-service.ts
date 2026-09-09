@@ -5715,10 +5715,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
-    // Nothing is left to watch for. Disconnecting does not always announce
-    // itself, so the tracker is retired here rather than waiting for a
-    // shutdown event that may never arrive.
-    this.sdkFollowUpTrackers.get(sessionId)?.cancel()
     forgetSessionEvents(sessionId)
     let completed = false
     try {
@@ -5737,6 +5733,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await active.disconnect()
         this.sessions.delete(sessionId)
       }
+      // Retired once the runtime is actually gone. Doing it earlier left the
+      // door open for a follow-up already being admitted to install its own
+      // tracker afterwards, and disconnecting does not always announce itself,
+      // so waiting for a shutdown event would leak the SDK session.
+      this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+      this.sdkFollowUpTrackers.delete(sessionId)
       for (const [requestId, permission] of this.permissions) {
         if (permission.sessionId === sessionId) {
           permission.resolve({ kind: 'user-not-available' })

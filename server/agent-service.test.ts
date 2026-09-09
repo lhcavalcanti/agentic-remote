@@ -5038,6 +5038,57 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('lets Stop end a follow-up that is still being handed over', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-pending-followup-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => { acceptFollowUp = resolve })
+    })
+    const steering = service.sendMessage(created.id, 'Steer the turn')
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('Steer the turn')
+    })
+
+    // Stopped before the send is acknowledged, so there is no tracker yet to
+    // tell. The admission it will be built from has to carry the stop.
+    await service.cancel(created.id)
+
+    client.session.resolvePrompt({
+      id: randomUUID(), type: 'assistant.message',
+      timestamp: new Date().toISOString(), parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    acceptFollowUp('follow-up-message')
+    await steering
+    await vi.waitFor(() => {
+      expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+    })
+    client.session.emit({
+      id: randomUUID(), type: 'session.idle',
+      timestamp: new Date().toISOString(), parentId: null, data: {},
+    } as SessionEvent)
+
+    await vi.waitFor(() => {
+      expect(service.store.get(created.id)?.status).toBe('idle')
+    })
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+    await service.stop()
+  })
+
   it('lets Stop end a follow-up that never produced anything', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-followup-'))
     directories.push(directory)

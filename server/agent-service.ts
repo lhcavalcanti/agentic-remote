@@ -143,6 +143,8 @@ interface PendingSdkFollowUp {
   settled: Promise<void>
   resolve: () => void
   previousCompleted: boolean
+  /** Stopped while it was still being handed over, before it had a tracker. */
+  stopped?: boolean
 }
 
 class TerminalDiscoveryError extends Error {
@@ -4282,6 +4284,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       if (pending.previousCompleted || !this.sdkTurnsAwaited.has(sessionId)) {
         tracker.activate()
+        // Stopped while it was being handed over, so it may never write
+        // anything and the idle is all that is left to end it.
+        if (pending.stopped) tracker.settleWhenIdle()
         this.sdkFollowUpTrackers.get(sessionId)?.cancel()
         this.sdkFollowUpTrackers.set(sessionId, tracker)
       } else {
@@ -4314,6 +4319,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           })
           if (pending.previousCompleted || !this.sdkTurnsAwaited.has(sessionId)) {
             tracker.activate()
+            if (pending.stopped) tracker.settleWhenIdle()
             this.sdkFollowUpTrackers.get(sessionId)?.cancel()
             this.sdkFollowUpTrackers.set(sessionId, tracker)
           } else {
@@ -5694,7 +5700,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     // Marked before the abort, so an idle that arrives straight after it
-    // cannot reach the tracker while it is still waiting for output.
+    // cannot reach the tracker while it is still waiting for output. A
+    // follow-up still being handed over has no tracker yet, so the stop is
+    // recorded on the admission it will be built from.
+    const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
+    if (pendingFollowUp) pendingFollowUp.stopped = true
     this.sdkFollowUpTrackers.get(sessionId)?.settleWhenIdle()
     await session.abort()
   }

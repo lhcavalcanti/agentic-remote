@@ -439,7 +439,7 @@
     "src/features/background-tasks/BackgroundTasksDialog.tsx": "e28b4ea344d0e319527e9943de9caa7d12b424457da9c78618e61f4862697157",
     "src/features/background-tasks/task-order.ts": "bb94959503f5e40b4bd52d789c8b5f460d32b830c1eb7f2a3bd28f3dcf2d2a23",
     "src/features/prompts/PromptCards.tsx": "b866793b9c05ac80c05941ffad9bb35be4f889c26cca6eb31d6ea91c0ef66e26",
-    "src/index.css": "d07ab36da237aa53e891193d894e6099f5a348f427bd718bd29cb1ffc788dea3",
+    "src/index.css": "5b139b51abcb64c8fdb20d853920161897b5d0171bc4d6c602ef17c08c512620",
     "src/knowledge-position.ts": "ae9592b0d6d4824a37731ddf7d23ee011c7bcc7875848269ffff3d3abe74b6b2",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -529,22 +529,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f66cfbd0fbb0908557eee654790e39d467141a2659438acf1f28fd4284dc262f",
+    "GRAPH_REPORT.md": "b20853ad6eef7828269045bc7d46503ecdbe6902fb958319b7e2aaff70c3d450",
     "communities.json": "59551466dcd73e6a784c5e2bb54a800d5213675280dd38b9369b2688c8994049",
-    "graph.html": "d3550efc1bd745d2f64ae70049fff7babab71986c4ce957fb209e9b1b3af14f7",
-    "graph.json": "df3274aaec2c9618095846b5be2047d1b61f04e289ac454b31d30a9302c647b4"
+    "graph.html": "bce3d6631efbf0548fbd9c8810d2a6d3d30e306a8a312c5e23018e1532d945fc",
+    "graph.json": "38016b0dcb0964e9620b17b324138df586281437f9c117d20e82295a5d4f6146"
   },
   "schema_version": 1,
-  "source_commit": "d6f47f30545cd7814f771ba0c791aebea31af88f",
-  "source_fingerprint": "d75a2cee1beb7a7791f5fc0f32bbfc7f559b58598e46102d7317c405d7a3a7a7",
+  "source_commit": "09bc06b260946c59e8d399783b79c7f54d194180",
+  "source_fingerprint": "d3dae9e6535c7deea81fee936699eaf4b54091af174783f84f0f9049e3e26be3",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "docs/provider-compatibility.md",
-    "server/agent-service-recovery.test.ts",
-    "server/agent-service.ts",
-    "server/conversation-recovery.test.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts"
+    "src/index.css"
   ]
 }

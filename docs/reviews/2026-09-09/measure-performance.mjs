@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -7,13 +6,15 @@ import path from 'node:path'
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { gzipSync } from 'node:zlib'
+import { measurementBundle, measurementSource } from './measurement-provenance.mjs'
 
 // Run from an installed checkout with node --import tsx --expose-gc.
 // --smoke checks summary projection with three small synthetic sessions, without timed samples.
 // Only this process's newly created fixture directory is read or removed.
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const smoke = process.argv.includes('--smoke')
+const sourceProvenance = await measurementSource(root)
+const bundleProvenance = smoke ? undefined : await measurementBundle(root)
 const source = (name) => import(pathToFileURL(path.join(root, name)).href)
 const { SessionStore } = await source('server/session-store.ts')
 const { AgentService } = await source('server/agent-service.ts')
@@ -304,35 +305,13 @@ async function workspaceCase() {
   }
 }
 
-async function bundleSizes() {
-  const directory = path.join(root, 'dist')
-  let html
-  try {
-    html = await readFile(path.join(directory, 'index.html'), 'utf8')
-  } catch (error) {
-    if (error.code === 'ENOENT') return { available: false, reason: 'Run pnpm build first' }
-    throw error
-  }
-  const urls = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+\.(?:js|css))"/g)]
-    .map((match) => match[1])
-  const assets = []
-  for (const url of [...new Set(urls)]) {
-    const data = await readFile(path.join(directory, url))
-    assets.push({ asset: url, bytes: data.length, gzipBytes: gzipSync(data).length })
-  }
-  return {
-    available: true,
-    scope: 'Assets referenced by built HTML, not lazy chunks, compression on the server, or field load time',
-    assets,
-  }
-}
-
 try {
   const report = {
     mode: smoke ? 'correctness-smoke' : 'performance',
     methodology: 'real-AgentService-summary-projection-v3',
     capturedAt: new Date().toISOString(),
-    sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+    sourceCommit: sourceProvenance.sourceCommit,
+    sourceProvenance,
     packageVersion: JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version,
     environment: {
       node: process.version,
@@ -371,8 +350,12 @@ try {
   if (!smoke) {
     for (const count of [100, 1000, 10_000]) report.eventLogs.push(await eventLogCase(count))
     report.workspace = await workspaceCase()
-    report.bundle = await bundleSizes()
+    report.bundle = bundleProvenance
+    assert.deepEqual(await measurementBundle(root), bundleProvenance,
+      'Built assets changed during measurement; discard this run')
   }
+  assert.equal((await measurementSource(root)).snapshotSha256, sourceProvenance.snapshotSha256,
+    'Measured sources changed during measurement; discard this run')
   report.environment.loadAverageAtEnd = os.loadavg()
   console.log(JSON.stringify(report, null, 2))
 } finally {

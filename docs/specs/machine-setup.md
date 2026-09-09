@@ -320,8 +320,14 @@ or clear prior cookies. A changed shortcut is registered on the next launch.
 Normal URL/cookie origin rules still apply; no cross-host cookie isolation was
 proven by this Linux source audit.
 
-Remote IPC grants only badge/notify/withdraw/open-settings/bridge-ready commands
-to configured origins; configuration read/write belongs to local settings.
+Remote IPC grants only badge/notify/withdraw/open-settings/bridge-ready commands;
+configuration read/write belongs to local settings. Saving a new hub configuration
+adds grants to the existing shell process without revoking previously added
+origins. Earlier hub origins therefore retain those bridge permissions in the
+main webview for that process; the currently saved URLs are not the complete
+effective grant list. Changing the URL is not revocation. A fresh shell process
+initializes grants from the saved configuration, but this audit did not exercise
+that lifecycle on a physical device.
 There is no remote filesystem/shell/process grant. Use plain trusted HTTP(S)
 origins, not wildcards or embedded credentials. The current normalizer is not strict
 general URL/origin validation; the intended boundary needs stronger input checks.

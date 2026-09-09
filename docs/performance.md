@@ -42,6 +42,7 @@ From a checkout with the lockfile's dependencies installed:
 
 ```bash
 pnpm build
+node --test docs/reviews/2026-09-09/check-measurement-provenance.mjs
 node --import tsx --expose-gc \
   docs/reviews/2026-09-09/measure-performance.mjs --smoke
 timeout 120s node --import tsx --expose-gc --max-old-space-size=768 \
@@ -59,6 +60,17 @@ provider history, contact a provider, register a real computer, invoke tmux,
 restart a service or use production ports. The node-delay program verifies a
 temporary listener on an OS-assigned loopback port and closes it afterwards.
 Use a new output filename when preserving earlier results.
+
+New measurement runs record the relevant tracked and untracked source-file
+hashes, the checkout HEAD, and dirty status before importing application code.
+`sourceCommit` is null when those measured inputs differ from HEAD; use the
+recorded snapshot hash instead of attributing that run to a clean commit.
+The program rejects source or measured-bundle changes during a run.
+Bundle sizes independently record `dist/build-info.json`, HTML and asset hashes;
+they do not assert that a pre-existing `dist` was built from the measured source.
+Rebuild first and retain build provenance when that association matters.
+The historical baseline files predate this additional provenance and are not
+retroactively claimed to contain it.
 
 ### Environment and limitations
 

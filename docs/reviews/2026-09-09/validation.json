@@ -73,12 +73,29 @@
     }
   },
   "scope": {
-    "runtimeBehaviorChanged": false,
+    "runtimeBehaviorChanged": true,
+    "runtimeBehaviorChangedScope": "The applicationSourceCommit-to-publication range includes PR 243's responsive Markdown padding and version 1.1.1. The audit-only delta from publicationBaseCommit changes documentation and investigation tooling, not application runtime behavior.",
+    "auditOnlyRuntimeBehaviorChanged": false,
     "liveProviderInvokedByInvestigationPrograms": false,
     "manualDeploymentOrRestartPerformed": false,
     "physicalDeviceAcceptancePerformed": false,
     "productionLoadTestPerformed": false,
     "inheritedProductionEnvironmentGateRepeated": true
+  },
+  "reviewFollowup": {
+    "date": "2026-09-09",
+    "reviewedHead": "2d0c448559c2aeef674cfafbbe5d77b62a2af30e",
+    "changes": [
+      "Document retained bridge grants after saving another hub origin.",
+      "Separate the audit-only runtime scope from the application-baseline-to-publication range.",
+      "Record dirty source snapshots and independently hashed bundle identity; refuse inputs changing during a measurement."
+    ],
+    "applicationRuntimeBehaviorChanged": false,
+    "provenanceRegressionsPassed": 3,
+    "graphifyHelperTestsPassed": 11,
+    "correctnessSmoke": "Two synthetic store cases passed with sourceCommit null and explicit dirty-source attribution.",
+    "fullApplicationGateRepeatedForDocumentationFollowup": false,
+    "historicalPerformanceSamplesRegenerated": false
   },
   "limits": [
     "One passing gate does not establish a current flake rate or close issue 169.",

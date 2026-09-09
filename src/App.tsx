@@ -6267,6 +6267,8 @@ function App() {
   const knowledgeFileStateRef = useRef(knowledgeFile)
   knowledgeFileStateRef.current = knowledgeFile
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
+  const knowledgeLoadingRef = useRef(knowledgeLoading)
+  knowledgeLoadingRef.current = knowledgeLoading
   const [addRootOpen, setAddRootOpen] = useState(false)
   const [rootPicker, setRootPicker] = useState<{
     id: number
@@ -7556,9 +7558,17 @@ function App() {
         }
       } else {
         setLocationKnowledgeTarget(undefined)
+        // A read that has not landed yet still counts as a reader to close.
+        // Waiting for a rendered file would let the read arrive afterwards
+        // and reopen the document the reader just went back from, so the
+        // generation is retired here as well: a restore is in flight while it
+        // owns this key, and any file read while `knowledgeLoading` is set.
+        const readPending =
+          knowledgeRestoreStartedKey.current === key ||
+          knowledgeLoadingRef.current
         if (
           key === selectedKeyStateRef.current &&
-          knowledgeFileStateRef.current
+          (knowledgeFileStateRef.current || readPending)
         ) {
           knowledgeRequest.current += 1
           knowledgePendingScrollKey.current = undefined

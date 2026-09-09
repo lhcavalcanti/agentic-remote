@@ -433,7 +433,7 @@
     "src/features/background-tasks/BackgroundTasksDialog.tsx": "e28b4ea344d0e319527e9943de9caa7d12b424457da9c78618e61f4862697157",
     "src/features/background-tasks/task-order.ts": "bb94959503f5e40b4bd52d789c8b5f460d32b830c1eb7f2a3bd28f3dcf2d2a23",
     "src/features/prompts/PromptCards.tsx": "a01707a24da38aac0ee0ec84dcda7b8e3fbdec7ad49fb82f27265220b943fb2b",
-    "src/index.css": "3e4a19a6fb059d5a6bc221f04339e175209358fc117a9e6dd3476262767aa38d",
+    "src/index.css": "faa4343a40d8de951a1e5d652c04fe67f53076aa3e0d214dda43f780045b7391",
     "src/knowledge-position.ts": "ae9592b0d6d4824a37731ddf7d23ee011c7bcc7875848269ffff3d3abe74b6b2",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -523,20 +523,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b33a2c11a142b809427182df366bb903903e5f7c2bf355656c008599cc52dee0",
+    "GRAPH_REPORT.md": "73ca6ee6b9f234b3ad4f63cc759d753f5cf7e1fa095b5317f8a64c394a34540a",
     "communities.json": "32cb073ba8afb65b82fcaf60f67b7c9c5a745445f50b994ccd4e47afb2f64b17",
-    "graph.html": "63da8c3ae60a58940172824d5a0d46b0e1506688221c647a943e4c833f80b68d",
-    "graph.json": "f1e8db6de66f14c7789010de241ae44a1dada16e2c5c2cb4359bb819a8c4c66d"
+    "graph.html": "43d4d94fb7387f6a770c0479618b724102fd59c5243ee174a5aa2147a89d9d26",
+    "graph.json": "7628d7c671646b7220e8912af05d574738ae4985af02d993291f3cb24ed887a3"
   },
   "schema_version": 1,
-  "source_commit": "15a043e57234f7addfd8160f990dd22b38f1882a",
-  "source_fingerprint": "9244e0fad271dbd2defe0f0fde93cb481830ed5fefc0b002ca0f5310538c718b",
+  "source_commit": "b94fed79b8012fc70a0b7f8b38ac134bfbf160f0",
+  "source_fingerprint": "28d497f90b85016c1e916debd6474d46064a976171517cd5c8a77b6ff700d042",
   "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/index.css"
   ]
 }

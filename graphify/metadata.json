@@ -205,9 +205,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 141,
+  "communities": 136,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9128,
+  "edges": 9130,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -435,8 +435,8 @@
     "src/features/background-tasks/BackgroundTasksDialog.test.ts": "8411bd3dbac6983e5818e2ec97f193a7e24d468bac8dce8f81aedf3ce17ce003",
     "src/features/background-tasks/BackgroundTasksDialog.tsx": "e28b4ea344d0e319527e9943de9caa7d12b424457da9c78618e61f4862697157",
     "src/features/background-tasks/task-order.ts": "bb94959503f5e40b4bd52d789c8b5f460d32b830c1eb7f2a3bd28f3dcf2d2a23",
-    "src/features/prompts/PromptCards.test.tsx": "f914aaeb6fb4fe997713d054b82a84cb739938ec4ce717c1a5a244c595bbd562",
-    "src/features/prompts/PromptCards.tsx": "698066adc04b467d9df312442eb3c9c8a5bfbe43c9ea9aebf2c7eaa92bb9ea92",
+    "src/features/prompts/PromptCards.test.tsx": "1e19ca903495ec033c173be09155849bfd17e4189cf4e03ee51b554a5df6dcfd",
+    "src/features/prompts/PromptCards.tsx": "fce020a625a934ed57a4f771c5d7bc6824686f3d0da21edf4a8b5251fd40ebae",
     "src/index.css": "8de0d3bec0096f2d25142ae70f3292ef104688bdd687a16af474dda410996015",
     "src/knowledge-position.ts": "ae9592b0d6d4824a37731ddf7d23ee011c7bcc7875848269ffff3d3abe74b6b2",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
@@ -470,7 +470,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 3261,
+  "nodes": 3262,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -527,28 +527,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "02251eb6c8484bc06ca599fcda201068b0c48d814b9a1aece45116ea0a0b0046",
-    "communities.json": "0cadd0a57164b6928516bf1f5313ff722600fb3f85d1533f0101c5a13ac746c3",
-    "graph.html": "912f5df212f648141f1b37dbc361305a6e041e571de3b2e219576935a27181c2",
-    "graph.json": "2778f66576da6e76a5bded802fbf13b0e3f7cfb0d2eb417536a644a62ca96ab3"
+    "GRAPH_REPORT.md": "a28e94ffccc5f8eec66ca7bc11c2b137e37cc5ff396ca34b802b2e536529f0d7",
+    "communities.json": "a906baf40ff0213877f9181dd9407875a524ede931fd23fb4f64a29d46951bac",
+    "graph.html": "4189d262ede915feb708b8919d5a572d9eedaa655f16e475db8cb690cd83ff1d",
+    "graph.json": "08fd1f6e5a68f624b85b1bc516e4debb515babc6efa7a4d51fbd753b98b46704"
   },
   "schema_version": 1,
-  "source_commit": "46a4d04ab8af27effc6ade29d2fa5d72e45cb321",
-  "source_fingerprint": "12ab8087242584ba9c942763d01ae3e85d0c5230997b043b57448dcf47950b1b",
+  "source_commit": "81078474070fdcee0d492630a13595e26302f018",
+  "source_fingerprint": "e93ad46488f5d2e4aad051b53d24e1875b24b5b5ecdae936b962eb5de3eb90e1",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/session-reply-durability.test.ts",
-    "server/terminal-form-viewport.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/features/prompts/PromptCards.test.tsx",
-    "src/features/prompts/PromptCards.tsx",
-    "src/index.css"
+    "src/features/prompts/PromptCards.tsx"
   ]
 }

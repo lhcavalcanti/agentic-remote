@@ -60,7 +60,7 @@ describe('agent question Markdown', () => {
   it('keeps ordinary choices and freeform answers unchanged', () => {
     const onReply = vi.fn()
     render(<UserInputCard request={{ ...request, question: 'Which option?' }} disabled={false} onReply={onReply} />)
-    expect(screen.getByText('Which option?')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Which option?', level: 3 })).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
     expect(onReply).toHaveBeenLastCalledWith({ answer: 'Confirm', wasFreeform: false })
     const input = screen.getByRole('textbox')

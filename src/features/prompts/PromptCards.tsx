@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { ChevronDown } from 'lucide-react'
+import type { Root } from 'mdast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
@@ -435,10 +436,21 @@ export function UserInputFieldControl({
   )
 }
 
+function singleParagraphQuestionHeading() {
+  return (tree: Root) => {
+    const paragraph = tree.children[0]
+    if (tree.children.length === 1 && paragraph?.type === 'paragraph') {
+      paragraph.data = { ...paragraph.data, hName: 'h3' }
+    }
+  }
+}
+
 const UserInputQuestion = memo(function UserInputQuestion({ question }: { question: string }) {
   return (
     <div className="user-input-card__question markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{question}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, singleParagraphQuestionHeading]}>
+        {question}
+      </ReactMarkdown>
     </div>
   )
 })

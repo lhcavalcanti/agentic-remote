@@ -14378,6 +14378,74 @@ describe('App', () => {
     )
   })
 
+  it('does not reopen a file whose read lands after going back to the folder', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: { path: 'guides', parent: '.', entries: [] },
+      }),
+    )
+    let releaseRead: (() => void) | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_rootId, path) => {
+      await new Promise<void>((resolve) => {
+        releaseRead = resolve
+      })
+      return {
+        path,
+        name: path.split('/').at(-1) || path,
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Held open',
+      }
+    })
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1',
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1&file=guides%2Fheld.md',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(releaseRead).toBeDefined())
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    // The read the reader walked away from only answers now. Going back must
+    // hold, rather than being undone by work it already abandoned.
+    await act(async () => {
+      releaseRead?.()
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+    expect(
+      screen.queryByRole('heading', { name: 'Held open' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('forgets the knowledge state of a closed session', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)

@@ -203,9 +203,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 127,
+  "communities": 143,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9016,
+  "edges": 9017,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -398,8 +398,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "5180f4820af48bf113ccf7783efa714a6175fbe8cff6ad426da85047daf763bc",
-    "src/App.tsx": "e094fdbe9003310e3c01a753efaff63cb9e55073deb0539d8d1391d490adc189",
+    "src/App.test.tsx": "74970e4a95d19b212982c6ca2b2266908997197519821020e40efdf97ba4a001",
+    "src/App.tsx": "14bcbfb1d25873c9be00e3ff7953904d2d27b2e23b21a0d0c695791116fd3005",
     "src/DocumentViewControls.test.tsx": "3688110dc748a313bb0568e1ed693377e4effdbeecfa91864d5fd3abdf063b7b",
     "src/DocumentViewControls.tsx": "ce73b7ea6f5cb6b93b74bbe6d3a2ed3f490520ec19cf7649c997d191946bdefd",
     "src/KnowledgeRootChoices.test.tsx": "885ba0e9b94d09726a5e314359dc9a63d9eeea0c82731290f7b45681c196f310",
@@ -430,7 +430,7 @@
     "src/composer-sizing.ts": "287d9a67a40dffb32161e6867173ffd3d51ae35d7942b7b0c456478bf2082d8d",
     "src/env.d.ts": "7dfb7763ec2101e5d66963c95cb8f938ea84fa576f0055dcd1922f6572add894",
     "src/features/background-tasks/BackgroundTasksDialog.test.ts": "8411bd3dbac6983e5818e2ec97f193a7e24d468bac8dce8f81aedf3ce17ce003",
-    "src/features/background-tasks/BackgroundTasksDialog.tsx": "137fe22c0a8a05af8c71568e8f964b50e8427f3815e2c08ae49f1f8f34bdfe27",
+    "src/features/background-tasks/BackgroundTasksDialog.tsx": "e28b4ea344d0e319527e9943de9caa7d12b424457da9c78618e61f4862697157",
     "src/features/background-tasks/task-order.ts": "bb94959503f5e40b4bd52d789c8b5f460d32b830c1eb7f2a3bd28f3dcf2d2a23",
     "src/features/prompts/PromptCards.tsx": "a01707a24da38aac0ee0ec84dcda7b8e3fbdec7ad49fb82f27265220b943fb2b",
     "src/index.css": "9680ea0f342770b40c599c306375d507369b94b388f356b331d4ba8819ca3ebb",
@@ -523,25 +523,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "186ad6a997b5a069bd391c676c90a493bb1951c27131de5bcd9fab0d6c95e233",
-    "communities.json": "a51c454fbc74d2b664a7691f3d2eca9f927969ea18a44ebf6299f6fe25e76d93",
-    "graph.html": "31eff91d325ae563caabdfc373c9ae14f5f0dda37ed255b8509a3ec166bb4266",
-    "graph.json": "0819dd1d97664707f86ea77754479e1ba28e59ae3f0bc5585e1af14115e1296c"
+    "GRAPH_REPORT.md": "8b8dbc61029873bae32fb98c9d25944d61b926dd396b65d933eb69a429708ff4",
+    "communities.json": "6aed4214bed29c108738a15c2abcf528f04b19624cf339fb8efc9284b7b0616f",
+    "graph.html": "3ebf17cbf0b9a8c6a0c9a9dc1ab4aee3f8cd4a0f764d73e11c35acd097da59bd",
+    "graph.json": "0911852bd63ca9d574fbf97c4c5b053a70c524d7a39baea18885a149747049f4"
   },
   "schema_version": 1,
-  "source_commit": "0804c890c70b297236ff9bd5063ee2344a427264",
-  "source_fingerprint": "489ee316f21bdfa59c02f066653881164dbbf7b9b8b3407d13279d4656f8ac41",
+  "source_commit": "39a70eb4309093318a0d072243958172110ca446",
+  "source_fingerprint": "ee82a1c4577fc96f46b45c0891d8635484f2dad1541df330a711f22cd536e7d9",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "e2e/workspace-fixtures.ts",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/App.test.tsx",
     "src/App.tsx",
-    "src/features/background-tasks/BackgroundTasksDialog.tsx",
-    "src/index.css"
+    "src/features/background-tasks/BackgroundTasksDialog.tsx"
   ]
 }

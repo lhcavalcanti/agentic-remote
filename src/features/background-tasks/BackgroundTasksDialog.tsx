@@ -61,10 +61,12 @@ function stopUnavailableReason(task: BackgroundTask): string {
 function BackgroundTaskCard({
   task,
   cancelling,
+  stopDisabled,
   onCancel,
 }: {
   task: BackgroundTask
   cancelling: boolean
+  stopDisabled: boolean
   onCancel: () => void
 }) {
   const statusIcon =
@@ -180,9 +182,13 @@ function BackgroundTaskCard({
             <>
               <p>Requests a clean stop from the owning runtime.</p>
               <button
-                aria-label={`Stop ${task.description}`}
+                aria-label={
+                  cancelling
+                    ? `Stopping task: ${task.description}`
+                    : `Stop task: ${task.description}`
+                }
                 className="secondary-button background-task__stop"
-                disabled={cancelling}
+                disabled={stopDisabled}
                 onClick={onCancel}
                 type="button"
               >
@@ -195,7 +201,7 @@ function BackgroundTaskCard({
                 ) : (
                   <Square aria-hidden="true" size={12} />
                 )}
-                {cancelling ? 'Stopping…' : 'Stop task'}
+                {cancelling ? 'Stopping task…' : 'Stop task'}
               </button>
             </>
           ) : (
@@ -216,6 +222,7 @@ export function BackgroundTasksDialog({
   snapshot,
   loading,
   cancellingTaskId,
+  stopActionsDisabled,
   onClose,
   onRefresh,
   onCancel,
@@ -225,6 +232,7 @@ export function BackgroundTasksDialog({
   snapshot: BackgroundTaskSnapshot
   loading: boolean
   cancellingTaskId?: string
+  stopActionsDisabled: boolean
   onClose: () => void
   onRefresh: () => void
   onCancel: (taskId: string) => void
@@ -274,6 +282,7 @@ export function BackgroundTasksDialog({
               cancelling={cancellingTaskId === task.id}
               key={task.id}
               onCancel={() => onCancel(task.id)}
+              stopDisabled={stopActionsDisabled}
               task={task}
             />
           ))}

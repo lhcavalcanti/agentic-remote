@@ -1737,6 +1737,37 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('keeps a refusal definite when it is answering a recovery resend', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-resend-definite-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.failedPrompt = {
+        content: '/model',
+        failedAt: 'resend:definite',
+        uncertain: true,
+      }
+    })
+    await service.store.setSuspended(created.id, true)
+
+    // Refused before dispatch while answering a failure. Saying so must not
+    // be read back as doubt: the mark carries a value, not just a presence.
+    // A command takes the failure's claim before the refusal is raised, so the
+    // refusal is reported through the claim-answering path.
+    await expect(
+      service.executeCommand(created.id, '/model', false, 'resend:definite'),
+    ).rejects.toMatchObject({ uncertainDelivery: false })
+    await service.stop()
+  })
+
   it('leaves a lost command result uncertain rather than definitely unsent', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-invoke-lost-'))
     directories.push(directory)

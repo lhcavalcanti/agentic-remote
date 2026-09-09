@@ -272,7 +272,10 @@ function isRuntimeReasoningEffort(
 }
 
 function isUncertainDelivery(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && 'uncertainDelivery' in error)
+  // The value, not the key. A refusal that says delivery was definite carries
+  // the mark too, and reading its presence as doubt turned "this was not sent"
+  // into "this may have been sent" for every producer honest enough to say so.
+  return deliveryUncertaintyFromError(error) === true
 }
 
 const sessionInUseMessage =

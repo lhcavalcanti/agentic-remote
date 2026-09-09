@@ -4736,6 +4736,9 @@ describe('AgentService deletion', () => {
       ).toMatchObject({ streaming: false })
     })
     expect(service.store.get(created.id)?.status).toBe('idle')
+    // Nothing is watching once the turn has ended, so the session is not left
+    // holding a tracker -- and through it an SDK session -- for good.
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
     await service.stop()
   })
 

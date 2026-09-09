@@ -4327,6 +4327,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (!responseStarted) return
         closed = true
         unsubscribe()
+        forget()
         void this.finishSdkFollowUp(
           sessionId,
           assistantMessageId,
@@ -4337,6 +4338,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ) {
         closed = true
         unsubscribe()
+        forget()
         const message =
           event.type === 'session.error'
             ? event.data.message
@@ -4348,16 +4350,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ).catch((error: unknown) => this.publishError(sessionId, error))
       }
     })
-    return {
+    // Whatever ends this tracker -- an idle, a shutdown, or being superseded
+    // -- it stops being the session's live one. Left behind it would hold the
+    // SDK session for a conversation that has finished.
+    const forget = () => {
+      if (this.sdkFollowUpTrackers.get(sessionId) === handle) {
+        this.sdkFollowUpTrackers.delete(sessionId)
+      }
+    }
+    const handle = {
       activate: () => {
         active = true
       },
       cancel: () => {
+        forget()
         if (closed) return
         closed = true
         unsubscribe()
       },
     }
+    return handle
   }
 
   private async finishSdkFollowUp(

@@ -2770,11 +2770,19 @@ button {
 }
 
 .permission-card h3,
-.user-input-card h3 {
+.user-input-card > h3 {
   margin: 0;
   font-size: 13px;
   font-weight: 570;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.user-input-card__question {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 

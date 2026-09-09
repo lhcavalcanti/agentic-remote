@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { ChevronDown } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type {
   PendingPermission,
   PendingUserInput,
@@ -433,6 +435,14 @@ export function UserInputFieldControl({
   )
 }
 
+const UserInputQuestion = memo(function UserInputQuestion({ question }: { question: string }) {
+  return (
+    <div className="user-input-card__question markdown-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{question}</ReactMarkdown>
+    </div>
+  )
+})
+
 export function UserInputCard({
   request,
   disabled,
@@ -456,7 +466,7 @@ export function UserInputCard({
     return (
       <section className="user-input-card">
         <p className="eyebrow">Agent input</p>
-        <h3>{request.question}</h3>
+        <UserInputQuestion question={request.question} />
         <form
           aria-keyshortcuts="Control+Enter Enter Escape"
           className="user-input-card__structured-form"
@@ -562,7 +572,7 @@ export function UserInputCard({
   return (
     <section className="user-input-card">
       <p className="eyebrow">Agent question</p>
-      <h3>{request.question}</h3>
+      <UserInputQuestion question={request.question} />
       {multiSelect && request.choices.length > 0 ? (
         <div className="user-input-card__options">
           {request.choices.map((choice) => (

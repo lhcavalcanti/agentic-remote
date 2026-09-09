@@ -7,6 +7,7 @@ import type { UserInputReplyInput } from '../shared/contracts.js'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
 import { SessionStore } from './session-store.js'
+import { TerminalFormReplyError } from './terminal-session.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
@@ -84,6 +85,29 @@ async function copilotFixture() {
   ownPrompt(service)
   fixtures.push({ directory: setup.directory, service })
   return { ...setup, service }
+}
+
+async function terminalFormFixture() {
+  const setup = await copilotFixture()
+  const requestId = 'persisted-user-input:form-call'
+  await setup.store.update(sessionId, (session) => {
+    session.status = 'waiting'
+    session.pendingUserInput = {
+      requestId, question: 'Confirm the full synthetic question?', choices: [], allowFreeform: false,
+      form: { fields: [{ name: 'confirm', title: 'Confirm', type: 'boolean', required: true }] },
+    }
+  })
+  const terminal = setup.service['terminalController']
+  terminal.has = vi.fn(async () => true)
+  const fill = vi.fn(async () => true)
+  const dismiss = vi.fn(async () => true)
+  terminal.fillUserInputForm = fill
+  terminal.dismissUserInput = dismiss
+  const complete = vi.fn(async () => false)
+  setup.service['isToolCallComplete'] = complete
+  const input = { answer: '{"confirm":true}', wasFreeform: false, values: { confirm: true } }
+  const reply = (value: UserInputReplyInput = input) => setup.service.replyUserInput(sessionId, requestId, value)
+  return { ...setup, terminal, fill, dismiss, complete, requestId, input, reply }
 }
 
 async function claudeFixture() {
@@ -320,6 +344,112 @@ afterEach(async () => {
 })
 
 describe('Reply durability regressions', () => {
+  it('retains the accepted terminal answer across restoration and confirmation-write failures', async () => {
+    const f = await terminalFormFixture()
+    const notices: string[] = []
+    f.service.on('event', (event) => {
+      if (event.type === 'error') notices.push(event.message)
+    })
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'The terminal reply was submitted, but size restoration failed', 'submitted',
+    ))
+    vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(f.reply()).rejects.toMatchObject({
+      statusCode: 503, message: expect.stringContaining('reply was accepted'),
+    })
+    expect(f.fill).toHaveBeenCalledOnce()
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(notices).toContain('The terminal reply was submitted, but size restoration failed')
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.fill).toHaveBeenCalledOnce()
+  })
+
+  it('does not dismiss, resend, or claim non-delivery after an uncertain terminal Enter', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'The terminal reply may have been submitted; do not resend it', 'uncertain',
+    ))
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    await expect(f.reply({ ...f.input, values: { confirm: false } })).rejects
+      .toMatchObject({ statusCode: 409, uncertainDelivery: true })
+    expect(f.fill).toHaveBeenCalledOnce()
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+
+    f.complete.mockResolvedValue(true)
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.fill).toHaveBeenCalledOnce()
+  })
+
+  it('retires terminal uncertainty even when no accepted SDK reply is present', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError('Unconfirmed Enter', 'uncertain'))
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(f.service['terminalFormUncertainty'].size).toBe(1)
+    f.service['forgetSdkReplies'](sessionId)
+    expect(f.service['terminalFormUncertainty'].size).toBe(0)
+  })
+
+  it.each(['cancel', 'decline'] as const)('does not duplicate an uncertain terminal %s', async (action) => {
+    const f = await terminalFormFixture()
+    f.dismiss.mockRejectedValueOnce(new TerminalFormReplyError(
+      'The terminal dismissal may have been submitted', 'uncertain',
+    ))
+    const input = { ...f.input, action }
+    await expect(f.reply(input)).rejects.toMatchObject({ uncertainDelivery: true })
+    await expect(f.reply(input)).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.fill).not.toHaveBeenCalled()
+    f.complete.mockResolvedValue(true)
+    await expect(f.reply(input)).resolves.toMatchObject({ pendingUserInput: undefined })
+  })
+
+  it.each(['cancel', 'decline'] as const)('retains accepted %s across a restoration error and failed confirmation write', async (action) => {
+    const f = await terminalFormFixture()
+    f.dismiss.mockImplementationOnce(async () => {
+      f.complete.mockResolvedValue(true)
+      throw new TerminalFormReplyError('Terminal dismissal was submitted, but cleanup failed', 'submitted')
+    })
+    vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+    const input = { ...f.input, action }
+    await expect(f.reply(input)).rejects.toMatchObject({ statusCode: 503 })
+    await expect(f.reply(input)).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.fill).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it('joins concurrent identical terminal replies and refuses a conflicting answer', async () => {
+    const f = await terminalFormFixture()
+    const held = holdCompletion()
+    f.fill.mockImplementation(async () => { await held.done; return true })
+    const first = f.reply()
+    await vi.waitFor(() => expect(f.fill).toHaveBeenCalledOnce())
+    const second = f.reply()
+    await expect(f.reply({ ...f.input, values: { confirm: false } })).rejects
+      .toMatchObject({ statusCode: 409 })
+    held.finish()
+    await Promise.all([first, second])
+    expect(f.fill).toHaveBeenCalledOnce()
+    expect(f.dismiss).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a geometry refusal without falling back to dismissal or a message', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'The terminal form could not be safely answered: owner changed', 'not-submitted',
+    ))
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: false })
+    expect(f.service['answeredPersistedInputs'].has(sessionId)).toBe(false)
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
   it('keeps the original Claude question answerable when advancing its card is refused', async () => {
     const { service, store, contents } = await claudeFixture()
     const { requestId, response, resolve } = await claudeQuestions(service)

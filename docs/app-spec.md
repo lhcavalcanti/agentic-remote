@@ -269,6 +269,10 @@ Questions and permissions are the highest-priority UI state.
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot
   runtimes.
+- Question messages MUST render Markdown, including tables, emphasis, inline
+  code, and fenced code blocks, without changing the original message or reply
+  values. Raw HTML and unsafe link schemes MUST NOT execute. Wide tables and
+  code blocks MUST scroll within the card rather than overflow the page.
 - Terminal ask-user and permission dialogs MUST be parsed from the live pane.
 - CLI folder-trust prompts MUST be shown as permission cards with the folder
   path, an explicit one-session trust action, and Stop. The app MUST NOT
@@ -283,6 +287,12 @@ Questions and permissions are the highest-priority UI state.
   breaks within words, while still requiring the complete question and field
   headings. A failed match MUST preserve the pending request and surface an
   actionable error instead of typing into an unverified dialog.
+- If the CLI clips a long form, answering or dismissing it MAY temporarily
+  enlarge its owning single-pane window within a bounded limit. The complete
+  question and fields MUST still be verified before sending keys. The app MUST
+  restore the previous size and sizing policy on completion or failure without
+  overwriting intervening operator changes; it MUST NOT resize shared windows
+  or a window whose ownership changed.
 - Safe Yes/choice and Stop actions MUST be available.
 - Cancelling or declining a persisted terminal question MUST dismiss the
   matching live form and confirm completion before hiding its card. A failed

@@ -335,6 +335,7 @@ describe('TmuxTerminalSessionController', () => {
     ['Fixture Model · Medium · 262,144 context (100%)', false, false],
     ['Fixture Model · High · 1.1M context (7.5%)', true, true],
     ['ctrl+t show reasoning · GPT-5.6 Sol Fast (Internal only) · 1.1M context', false, false],
+    ['GPT-5.6 Sol Fast (Internal only)', false, false],
   ] as const)('admits a complete model/context footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
     const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
     expect(await controller.capture(sessionId)).toContain(footer)
@@ -348,8 +349,10 @@ describe('TmuxTerminalSessionController', () => {
     })
   }, 15_000)
 
-  it('returns a fresh owned session with the complete model/context footer', async () => {
-    const footer = 'Fixture Model · High · 1.1M context (0%)'
+  it.each([
+    'Fixture Model · High · 1.1M context (0%)',
+    'GPT-5.6 Sol Fast (Internal only)',
+  ])('returns a fresh owned session with footer: %s', async (footer) => {
     const { controller, sessionId } = await ownedStartupFixture(undefined, footer)
     expect(await controller.capture(sessionId)).toContain(footer)
     expect(await controller.inputReady(sessionId)).toBe(true)

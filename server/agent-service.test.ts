@@ -4661,9 +4661,151 @@ describe('AgentService deletion', () => {
     ).toMatchObject({ content: 'Focus on the queue race first' })
     expect(
       service['activePrompts'].get(created.id)?.assistantMessageId,
-    ).toBe(activeAssistant)
+    ).not.toBe(activeAssistant)
+    expect(steered.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      streaming: true,
+    })
 
     client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('keeps SDK follow-up ownership when the original turn idles before acceptance', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+    const originalAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+
+    const sending = service.sendMessage(
+      created.id,
+      'Focus on the queue race first',
+    )
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain(
+        'Focus on the queue race first',
+      )
+    })
+    const followUpAssistant =
+      service.store.get(created.id)?.messages.at(-1)?.id
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'follow-up-response', content: 'steered answer' },
+    } as AssistantMessageEvent)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(service.store.get(created.id)?.status).toBe('running')
+    expect(followUpAssistant).toBeTruthy()
+    expect(followUpAssistant).not.toBe(originalAssistant)
+    expect(
+      service['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(originalAssistant)
+
+    acceptFollowUp('follow-up-message')
+    await sending
+    expect(
+      service['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(followUpAssistant)
+    await vi.waitFor(() => {
+      expect(service.store.get(created.id)?.status).toBe('idle')
+    })
+    expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: 'steered answer',
+      streaming: false,
+    })
+    await service.stop()
+  })
+
+  it('preserves an uncertain SDK follow-up without making it safe to duplicate', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      throw Object.assign(new Error('connection closed after submission'), {
+        code: 'ECONNRESET',
+      })
+    })
+
+    await expect(
+      service.sendMessage(created.id, 'Potentially accepted follow-up'),
+    ).rejects.toMatchObject({ uncertainDelivery: true })
+
+    const failed = service.store.get(created.id)
+    expect(failed).toMatchObject({
+      status: 'error',
+      failedPrompt: {
+        content: 'Potentially accepted follow-up',
+        uncertain: true,
+      },
+    })
+    expect(
+      failed?.messages.filter(
+        (message) =>
+          message.role === 'user' &&
+          message.content === 'Potentially accepted follow-up',
+      ),
+    ).toHaveLength(1)
+    expect(service['activePrompts'].has(created.id)).toBe(true)
+
+    await expect(
+      service.sendMessage(
+        created.id,
+        'Do not duplicate while delivery is uncertain',
+      ),
+    ).rejects.toThrow('may already have been accepted')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(service.store.get(created.id)?.failedPrompt).toMatchObject({
+      content: 'Potentially accepted follow-up',
+      uncertain: true,
+    })
+
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'accepted-response', content: 'accepted once' },
+    } as AssistantMessageEvent)
+    await vi.waitFor(() => {
+      expect(service.store.get(created.id)?.status).toBe('idle')
+    })
+    expect(service.store.get(created.id)?.failedPrompt).toBeUndefined()
+    expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: 'accepted once',
+      streaming: false,
+    })
     await service.stop()
   })
 
@@ -4976,6 +5118,12 @@ describe('AgentService deletion', () => {
     await service.store.update(client.session.sessionId, (session) => {
       session.status = 'running'
       session.activity = 'Working in terminal'
+      session.queuedPrompts = [{
+        id: randomUUID(),
+        content: 'Run this after the current turn',
+        createdAt: new Date().toISOString(),
+      }]
+      session.queuedCount = 1
     })
 
     await service.sendMessage(
@@ -4990,6 +5138,9 @@ describe('AgentService deletion', () => {
       { allowDuringAgentExecution: true },
     )
     expect(client.session.sentPrompts).toEqual([])
+    expect(
+      service.store.get(client.session.sessionId)?.queuedPrompts,
+    ).toMatchObject([{ content: 'Run this after the current turn' }])
     await service.stop()
   })
 

@@ -1587,32 +1587,40 @@ export class TmuxTerminalSessionController
       for (let attempt = 0; attempt < 60; attempt += 1) {
         const owner = await this.owner(sessionId, expectedTarget)
         if (owner) {
+          let validatedOwner = owner
           const startup = await waitForTerminalStartup(
             owner.target,
             true,
             async () => {
               const current = await this.owner(
                 sessionId,
-                owner.target,
+                validatedOwner.target,
                 true,
               )
-              if (!current || current.pid !== owner.pid) {
+              if (
+                !current ||
+                current.target !== validatedOwner.target ||
+                current.rootPid !== validatedOwner.rootPid
+              ) {
                 throw new Error(
                   'The terminal owner changed during startup',
                 )
               }
+              // The CLI may replace its process while preserving the same
+              // tmux pane and session identity during startup.
+              validatedOwner = current
             },
           )
           if (startup === 'ready') {
             this.inputReadySessions.set(sessionId, {
-              pid: owner.pid,
-              target: owner.target,
+              pid: validatedOwner.pid,
+              target: validatedOwner.target,
             })
             this.automaticStartupSessions.delete(sessionId)
           } else {
             this.automaticStartupSessions.set(sessionId, {
-              pid: owner.pid,
-              target: owner.target,
+              pid: validatedOwner.pid,
+              target: validatedOwner.target,
             })
           }
           return { sessionName, windowId }
@@ -1992,6 +2000,17 @@ function isTerminalContextFooter(line: string): boolean {
   )
 }
 
+function isTerminalModelFooter(line: string, previousLine = ''): boolean {
+  const trimmed = line.trim()
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= 160 &&
+    /(?:open sidebar|\/\s*commands|tab next tab)/iu.test(previousLine) &&
+    /^(?:Auto$|Claude\b|Copilot\b|Gemini\b|GPT(?:\b|-)|Grok\b|MAI\b|o\d\b|Raptor\b)/iu
+      .test(trimmed)
+  )
+}
+
 function hasLiveTerminalComposer(pane: string): boolean {
   const lines = pane.split('\n')
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
@@ -2020,10 +2039,12 @@ function hasLiveTerminalComposer(pane: string): boolean {
       return false
     }
   }
-  return lines.slice(bottom + 1).every(
-    (line) =>
+  const footer = lines.slice(bottom + 1)
+  return footer.every(
+    (line, index) =>
       isTerminalChrome(line) ||
       isTerminalContextFooter(line) ||
+      isTerminalModelFooter(line, footer[index - 1]) ||
       /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||

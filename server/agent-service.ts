@@ -3486,6 +3486,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // unclassified it was reported as a generic server error,
         // which says nothing about what to do next.
         statusCode: 409,
+        // Refused before anything was handed over, so what was written is
+        // safe to send again. Saying nothing leaves the reader with a warning
+        // that it might already have gone.
+        uncertainDelivery: false,
       })
     }
     if (this.admissionClosed.has(sessionId)) {
@@ -3829,7 +3833,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw queueConflict('The queue is dispatching or awaiting delivery confirmation. This message was not sent.')
     }
     if (this.admissionClosed.has(sessionId)) {
-      throw Object.assign(new Error('The session is still resuming'), { statusCode: 409 })
+      throw Object.assign(new Error('The session is still resuming'), { statusCode: 409, uncertainDelivery: false })
     }
     if (
       this.terminalController.ownsStartupPrompt?.(sessionId) ||
@@ -3889,6 +3893,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // unclassified it was reported as a generic server error,
         // which says nothing about what to do next.
         statusCode: 409,
+        // Refused before anything was handed over, so what was written is
+        // safe to send again. Saying nothing leaves the reader with a warning
+        // that it might already have gone.
+        uncertainDelivery: false,
       })
     }
     let resolvedStartup = false
@@ -4009,7 +4017,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const current = await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
     if (current.suspended || this.suspendingSessions.has(sessionId) || this.deletingSessions.has(sessionId)) {
-      throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409 })
+      throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409, uncertainDelivery: false })
     }
     if (terminalBacked) this.assertStartupDispatchSettled(sessionId, enqueue)
     // Startup and owner detection are awaited, so FIFO may have grown meanwhile.
@@ -4834,6 +4842,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // unclassified it was reported as a generic server error,
         // which says nothing about what to do next.
         statusCode: 409,
+        // Refused before anything was handed over, so what was written is
+        // safe to send again. Saying nothing leaves the reader with a warning
+        // that it might already have gone.
+        uncertainDelivery: false,
       })
     }
     if (!fromQueue && this.admissionClosed.has(sessionId)) {
@@ -5042,10 +5054,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const now = await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
     if (now.suspended || this.suspendingSessions.has(sessionId)) {
-      throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409 })
+      throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409, uncertainDelivery: false })
     }
     if (this.admissionClosed.has(sessionId) || this.deletingSessions.has(sessionId)) {
-      throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409 })
+      throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409, uncertainDelivery: false })
     }
     if (!catalog.session) this.assertStartupDispatchSettled(sessionId, enqueue)
     if (!nativeEnqueue && !enqueue && !commandInfo?.allowDuringAgentExecution) {
@@ -5158,10 +5170,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } else {
       this.admissions.markCommitted(sessionId)
       queuedDelivery?.submit()
-      const result = await session.rpc.commands.invoke({
-        name: canonicalName,
-        input: argument,
-      })
+      let result: Awaited<ReturnType<typeof session.rpc.commands.invoke>>
+      try {
+        result = await session.rpc.commands.invoke({
+          name: canonicalName,
+          input: argument,
+        })
+      } catch (error) {
+        // The command was handed over before this failed. A lost result says
+        // nothing about whether it ran, and only an explicit refusal proves it
+        // did not, so the reply is left uncertain rather than reported as
+        // definitely unsent -- which is what invites resending work the
+        // provider already accepted.
+        if (
+          error &&
+          typeof error === 'object' &&
+          !explicitlyRefused(error) &&
+          deliveryUncertaintyFromError(error) === undefined
+        ) {
+          Reflect.set(error, 'uncertainDelivery', true)
+        }
+        throw error
+      }
       queuedDelivery?.accept()
       if (result.kind === 'agent-prompt') {
         const notice = await this.store.addMessage(sessionId, {

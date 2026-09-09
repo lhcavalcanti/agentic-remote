@@ -3916,6 +3916,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // it, and nothing says the prompt was never delivered. Refusing is
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
+      terminalWorking = Boolean(pane && isTerminalAgentWorking(pane))
       if (
         !startupLocked &&
         this.terminalAdmissionOperations.has(sessionId)
@@ -4059,7 +4060,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue && !startupReady,
     )
     const dispatchedAt = new Date().toISOString()
-    if (await this.sendTerminalInput(sessionId, content, nativeEnqueue)) {
+    if (
+      await this.sendTerminalInput(
+        sessionId,
+        content,
+        nativeEnqueue,
+        !nativeEnqueue && terminalWorking
+          ? { allowDuringAgentExecution: true }
+          : undefined,
+      )
+    ) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
       if (startupLocked && !nativeEnqueue) {
@@ -4100,6 +4110,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !terminalBacked &&
       hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId))
     if (
+      !terminalBacked &&
+      !enqueue &&
+      this.activePrompts.has(sessionId)
+    ) {
+      return this.sendSdkFollowUp(
+        sessionId,
+        content,
+        answers,
+        delivery,
+      )
+    }
+    if (
       enqueue &&
       (this.activePrompts.has(sessionId) ||
         this.drainingSessions.has(sessionId) ||
@@ -4115,6 +4137,50 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     return this.startMessage(sessionId, content, false, undefined, answers, delivery)
+  }
+
+  private async sendSdkFollowUp(
+    sessionId: string,
+    content: string,
+    answers?: string,
+    delivery?: DeliveryBoundary,
+  ): Promise<SessionDetail> {
+    const sdkSession = await this.ensureLoaded(sessionId)
+    if (!sdkSession.send) {
+      throw Object.assign(
+        new Error(
+          'This SDK runtime does not support immediate follow-up prompts. Use Queue instead.',
+        ),
+        { statusCode: 409 },
+      )
+    }
+    if (!this.activePrompts.has(sessionId)) {
+      return this.startMessage(
+        sessionId,
+        content,
+        false,
+        undefined,
+        answers,
+        delivery,
+      )
+    }
+    const messageId = await sdkSession.send({
+      prompt: content,
+      mode: 'immediate',
+    })
+    if (!messageId) {
+      throw new Error('The SDK did not confirm the follow-up prompt')
+    }
+    this.admissions.markCommitted(sessionId)
+    await this.recordDelivery(sessionId, answers, delivery)
+    const updated = await this.store.addMessage(sessionId, {
+      id: messageId,
+      role: 'user',
+      content,
+      createdAt: new Date().toISOString(),
+    })
+    this.publish(updated)
+    return updated
   }
 
   private async sendTerminalInput(

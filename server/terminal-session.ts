@@ -1190,9 +1190,7 @@ export class TmuxTerminalSessionController
       }
       const allowWorking =
         !idleOnly &&
-        (enqueue ||
-          (options.allowDuringAgentExecution === true &&
-            /^\/\S/u.test(content.trimStart())))
+        (enqueue || options.allowDuringAgentExecution === true)
       if (!terminalInputReady(paneBeforePaste, allowWorking)) {
         throw Object.assign(
           new Error(

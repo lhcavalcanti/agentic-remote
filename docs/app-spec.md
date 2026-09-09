@@ -392,9 +392,12 @@ Questions and permissions are the highest-priority UI state.
 | Phone/coarse pointer | Insert newline | Insert newline | Queue when available |
 | Desktop | Send immediately | Insert newline | Queue |
 
-The Send button MUST request immediate delivery. If immediate SDK steering is
-unsupported, the app MUST surface an error and restore the draft; it MUST NOT
-silently queue.
+The Send button MUST request immediate delivery. While a Copilot SDK or tmux
+turn is running, immediate delivery MUST use the provider's native steering
+path so the follow-up reaches the current turn rather than waiting behind it.
+If immediate steering is unsupported, the app MUST surface an error and
+restore the draft; it MUST NOT silently queue. Stop remains the explicit way
+to abort the current turn; sending after Stop begins a new turn.
 On phone, the composer MUST label the explicit Send action and explain that
 keyboard Return inserts a newline.
 

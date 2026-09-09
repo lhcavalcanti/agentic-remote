@@ -4630,6 +4630,77 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('steers an active SDK turn with an immediate follow-up prompt', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    await service.sendMessage(created.id, 'Start the investigation')
+    const activeAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    const steered = await service.sendMessage(
+      created.id,
+      'Focus on the queue race first',
+    )
+
+    expect(client.session.sentPrompts).toEqual([
+      'Start the investigation',
+      'Focus on the queue race first',
+    ])
+    expect(steered.status).toBe('running')
+    expect(
+      steered.messages.filter((message) => message.role === 'user').at(-1),
+    ).toMatchObject({ content: 'Focus on the queue race first' })
+    expect(
+      service['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(activeAssistant)
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('restores an immediate SDK follow-up when steering is unavailable', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+    Object.defineProperty(client.session, 'send', {
+      configurable: true,
+      value: undefined,
+    })
+
+    await expect(
+      service.sendMessage(created.id, 'Steer this turn'),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('Use Queue instead'),
+      statusCode: 409,
+    })
+    expect(
+      service.store
+        .get(created.id)
+        ?.messages.some((message) => message.content === 'Steer this turn'),
+    ).toBe(false)
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
   it('processes queued prompts in FIFO order', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -4856,6 +4927,68 @@ describe('AgentService deletion', () => {
     expect(
       service.store.get(client.session.sessionId)?.queuedCount ?? 0,
     ).toBe(0)
+    expect(client.session.sentPrompts).toEqual([])
+    await service.stop()
+  })
+
+  it('steers a running tmux turn through the live composer', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => [
+        '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+        '┃',
+        '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+        ' ◉ Working · esc interrupt',
+      ].join('\n')),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+      session.activity = 'Working in terminal'
+    })
+
+    await service.sendMessage(
+      client.session.sessionId,
+      'Focus on the queue race first',
+    )
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Focus on the queue race first',
+      false,
+      { allowDuringAgentExecution: true },
+    )
     expect(client.session.sentPrompts).toEqual([])
     await service.stop()
   })

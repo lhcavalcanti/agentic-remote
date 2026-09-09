@@ -592,6 +592,7 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
 
   it.each([
     ['queued prompt', 'Continue after this turn', true, undefined, 'queue'],
+    ['steering prompt', 'Refine the current turn', false, { allowDuringAgentExecution: true }, 'enter'],
     ['permitted slash command', '/usage', false, { allowDuringAgentExecution: true }, 'enter'],
   ] as const)('delivers a %s to a working composer exactly once', async (_name, content, enqueue, options, key) => {
     const { controller, sessionId, output } = await deliveryFixture(true)
@@ -607,7 +608,6 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
   it.each([
     ['ordinary message while working', readyComposer('', true), 'Do not interrupt', false, undefined],
     ['unapproved slash command while working', readyComposer('', true), '/model', false, undefined],
-    ['ordinary text with a command allowance', readyComposer('', true), 'Do not interrupt', false, { allowDuringAgentExecution: true }],
     ['an existing draft', readyComposer('unfinished draft', true), 'Queue this', true, undefined],
     ['an uncertain paste', readyComposer('[Paste #1 - 32 lines]', true), '/usage', false, { allowDuringAgentExecution: true }],
     ['a settings overlay', 'Settings\n↑/↓ navigate · enter edit · esc close', 'Queue this', true, undefined],

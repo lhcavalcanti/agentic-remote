@@ -1609,7 +1609,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // follow-up accepted while it runs; once it has returned the follow-up has
   // to close its own, and one it supersedes must stop watching.
   private readonly sdkTurnsAwaited = new Set<string>()
-  private readonly sdkFollowUpTrackers = new Map<string, { cancel: () => void }>()
+  private readonly sdkFollowUpTrackers = new Map<
+    string,
+    { settleWhenIdle: () => void; cancel: () => void }
+  >()
   private readonly drainingSessions = new Set<string>()
   /** Old and replacement recovery tokens held by an in-flight dispatch. */
   private readonly claimedFailures = new Set<string>()
@@ -4216,6 +4219,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         delivery,
       )
     }
+    if (this.pendingSdkFollowUps.has(sessionId)) {
+      // Two follow-ups admitted at once would share one pending slot, so each
+      // would take the turn the other is steering and the replies would attach
+      // to whichever assistant message won the race. Nothing has been handed
+      // over yet, so this is a plain refusal.
+      throw Object.assign(
+        new Error(
+          'A follow-up prompt is already being sent. Wait for it, or use Queue to add this message after it.',
+        ),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
     let resolvePending = () => {}
     const pending: PendingSdkFollowUp = {
       settled: new Promise<void>((resolve) => {
@@ -4225,6 +4240,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       previousCompleted: false,
     }
     this.pendingSdkFollowUps.set(sessionId, pending)
+    // Only ever releases this follow-up's own slot, so a release cannot take
+    // away the one a later follow-up is relying on.
+    const releasePending = () => {
+      pending.resolve()
+      if (this.pendingSdkFollowUps.get(sessionId) === pending) {
+        this.pendingSdkFollowUps.delete(sessionId)
+      }
+    }
     const assistantId = randomUUID()
     let prepared: SessionDetail
     try {
@@ -4239,8 +4262,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             active.assistantMessageId,
       )
     } catch (error) {
-      pending.resolve()
-      this.pendingSdkFollowUps.delete(sessionId)
+      releasePending()
       throw error
     }
     this.publish(prepared)
@@ -4265,8 +4287,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } else {
         tracker.cancel()
       }
-      pending.resolve()
-      this.pendingSdkFollowUps.delete(sessionId)
+      releasePending()
       await this.recordDelivery(sessionId, answers, delivery)
       return this.store.get(sessionId) || prepared
     } catch (error) {
@@ -4314,8 +4335,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.publish(failed)
         }
       } finally {
-        pending.resolve()
-        this.pendingSdkFollowUps.delete(sessionId)
+        releasePending()
       }
       throw error
     }
@@ -4324,7 +4344,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private trackSdkFollowUp(
     sdkSession: CopilotSessionLike,
     assistantMessageId: string,
-  ): { activate: () => void; cancel: () => void } {
+  ): { activate: () => void; settleWhenIdle: () => void; cancel: () => void } {
     const sessionId = sdkSession.sessionId
     let active = false
     let closed = false
@@ -4377,6 +4397,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const handle = {
       activate: () => {
         active = true
+      },
+      // After an explicit Stop the turn may end without ever producing
+      // anything, and an idle is then the only thing that will arrive. Waiting
+      // for output first would keep the follow-up owning the session, leaving
+      // it running with Restart blocked.
+      settleWhenIdle: () => {
+        responseStarted = true
       },
       cancel: () => {
         forget()
@@ -5666,6 +5693,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!session || !this.activePrompts.has(sessionId)) {
       return
     }
+    // Marked before the abort, so an idle that arrives straight after it
+    // cannot reach the tracker while it is still waiting for output.
+    this.sdkFollowUpTrackers.get(sessionId)?.settleWhenIdle()
     await session.abort()
   }
 

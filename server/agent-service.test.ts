@@ -4991,6 +4991,103 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('refuses a second follow-up while the first is still being sent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-overlap-followup-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+    let acceptFirst!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => { acceptFirst = resolve })
+    })
+    const first = service.sendMessage(created.id, 'Steer once')
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('Steer once')
+    })
+
+    // Both would take the same pending slot, so the turn one is steering is
+    // the turn the other would close, and replies would land on whichever
+    // assistant message won the race.
+    await expect(
+      service.sendMessage(created.id, 'Steer twice'),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: false,
+      message: expect.stringContaining('already being sent'),
+    })
+    expect(client.session.sentPrompts).not.toContain('Steer twice')
+
+    client.session.resolvePrompt({
+      id: randomUUID(), type: 'assistant.message',
+      timestamp: new Date().toISOString(), parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    acceptFirst('first-follow-up')
+    await first
+    expect(service['pendingSdkFollowUps'].has(created.id)).toBe(false)
+    await service.stop()
+  })
+
+  it('lets Stop end a follow-up that never produced anything', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-followup-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Start the investigation')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => { acceptFollowUp = resolve })
+    })
+    const steering = service.sendMessage(created.id, 'Steer the turn')
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('Steer the turn')
+    })
+    client.session.resolvePrompt({
+      id: randomUUID(), type: 'assistant.message',
+      timestamp: new Date().toISOString(), parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    acceptFollowUp('follow-up-message')
+    await steering
+    await vi.waitFor(() => {
+      expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+    })
+
+    // Stopped before it wrote anything, so the only event still to come is the
+    // idle. Ignoring it would leave the session running and Restart blocked.
+    await service.cancel(created.id)
+    client.session.emit({
+      id: randomUUID(), type: 'session.idle',
+      timestamp: new Date().toISOString(), parentId: null, data: {},
+    } as SessionEvent)
+
+    await vi.waitFor(() => {
+      expect(service.store.get(created.id)?.status).toBe('idle')
+    })
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+    await service.stop()
+  })
+
   it('keeps SDK follow-up ownership when the original turn idles before acceptance', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

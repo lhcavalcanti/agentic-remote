@@ -680,7 +680,7 @@ export async function setupWorkspaceFixture(
       return
     }
     if (method === 'GET' && path === '/api/version') {
-      await respond({ version: '1.0.0', buildId: '1.0.0' })
+      await respond({ version: '1.1.0', buildId: '1.1.0' })
       return
     }
     if (method === 'GET' && path === '/api/knowledge/roots') {

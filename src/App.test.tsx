@@ -10326,7 +10326,27 @@ describe('App', () => {
     ).toHaveTextContent('Review the implementation')
     expect(screen.getByText('Inspecting changed files')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }))
+    const confirm = vi
+      .spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true)
+    expect(
+      screen.getByRole('region', { name: 'Manage Review the implementation' }),
+    ).toHaveTextContent('Requests a clean stop from the owning runtime.')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Stop task: Review the implementation',
+      }),
+    )
+    expect(cancelBackgroundTask).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Stop task: Review the implementation',
+      }),
+    )
+    expect(confirm).toHaveBeenCalledWith(
+      'Stop "Review the implementation"?\n\nAny in-progress work from this task may be lost.',
+    )
     await waitFor(() =>
       expect(cancelBackgroundTask).toHaveBeenCalledWith(
         'computer-1',
@@ -10342,6 +10362,136 @@ describe('App', () => {
     expect(document.querySelector('.session-item')).not.toHaveClass(
       'session-item--background-running',
     )
+    confirm.mockRestore()
+  })
+
+  it('explains why a tracked running task cannot be stopped safely', async () => {
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'detached-shell',
+          type: 'shell',
+          description: 'Long-running server',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          command: 'pnpm dev',
+          executionMode: 'background',
+          attachmentMode: 'detached',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({
+      ...session,
+      executionMode: 'sdk',
+    })
+
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View background tasks' }),
+    )
+
+    const management = await screen.findByRole('region', {
+      name: 'Manage Long-running server',
+    })
+    expect(management).toHaveTextContent('Stop unavailable.')
+    expect(management).toHaveTextContent(
+      'This detached task has no live stop handle.',
+    )
+    expect(
+      within(management).queryByRole('button', {
+        name: 'Stop task: Long-running server',
+      }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps a pending stop owned by its session and locks other stop actions', async () => {
+    const task = (description: string) => ({
+      id: 'shared-task-id',
+      type: 'agent' as const,
+      description,
+      status: 'running' as const,
+      startedAt: '2026-08-31T18:00:00.000Z',
+      canCancel: true,
+    })
+    const firstTask = task('First session task')
+    const secondTask = task('Second session task')
+    const snapshot = (backgroundTask: typeof firstTask): BackgroundTaskSnapshot => ({
+      tasks: [backgroundTask],
+      runningCount: 1,
+      supported: true,
+    })
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id
+        ? { ...secondSession, executionMode: 'sdk' }
+        : { ...session, executionMode: 'sdk' },
+    )
+    vi.mocked(listBackgroundTasks).mockImplementation(
+      async (_computerId, sessionId) =>
+        snapshot(sessionId === secondSession.id ? secondTask : firstTask),
+    )
+    let finishStop!: (value: BackgroundTaskSnapshot) => void
+    vi.mocked(cancelBackgroundTask).mockReturnValue(
+      new Promise((resolve) => {
+        finishStop = resolve
+      }),
+    )
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View background tasks' }),
+    )
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Stop task: First session task',
+      }),
+    )
+    expect(
+      await screen.findByRole('button', {
+        name: 'Stopping task: First session task',
+      }),
+    ).toBeDisabled()
+
+    fireEvent.click(
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
+    )
+    const secondStop = await screen.findByRole('button', {
+      name: 'Stop task: Second session task',
+    })
+    expect(secondStop).toBeDisabled()
+    expect(
+      screen.queryByRole('button', {
+        name: 'Stopping task: Second session task',
+      }),
+    ).not.toBeInTheDocument()
+
+    await act(async () => {
+      finishStop({
+        tasks: [{ ...firstTask, status: 'cancelled', canCancel: false }],
+        runningCount: 0,
+        supported: true,
+      })
+    })
+    await waitFor(() => expect(secondStop).toBeEnabled())
+    confirm.mockRestore()
   })
 
   it('updates failed background task details from a live event', async () => {

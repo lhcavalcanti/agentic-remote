@@ -9775,7 +9775,7 @@ describe('App', () => {
     )
     expect(
       screen.getByRole('button', { name: 'Send message' }),
-    ).toHaveAttribute('title', 'Send immediately')
+    ).toHaveAttribute('title', 'Send into the current response')
     expect(
       screen.getByRole('button', { name: 'Stop response' }),
     ).toBeInTheDocument()

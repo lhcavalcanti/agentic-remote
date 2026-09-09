@@ -2031,6 +2031,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.answeredTerminalInputs.clear()
     this.backgroundTaskSyncs.clear()
     this.backgroundTaskResyncNeeded.clear()
+    this.backgroundTaskGenerations.clear()
     await Promise.all([...this.sessionCreations])
     await Promise.all([...this.lifecycleLocks.values()])
     await Promise.allSettled([...this.queueOperations.values()])
@@ -2998,7 +2999,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.backgroundTaskTracker.remove(id)
       this.replaceBackgroundTasks(id, [], previousTasks.supported)
       const attached = await this.attachSdkSession(id)
-      await this.syncBackgroundTasks(id, attached).catch((error: unknown) =>
+      await this.syncBackgroundTasks(id, attached, false).catch((error: unknown) =>
         this.publishError(id, error),
       )
     }
@@ -4070,7 +4071,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue && !startupReady,
     )
     const dispatchedAt = new Date().toISOString()
-    if (await this.sendTerminalInput(sessionId, content, nativeEnqueue)) {
+    if (
+      await this.sendTerminalInput(
+        sessionId,
+        content,
+        nativeEnqueue,
+        !nativeEnqueue && current.status === 'running'
+          ? { allowDuringAgentExecution: true }
+          : undefined,
+      )
+    ) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
       if (startupLocked && !nativeEnqueue) {
@@ -4111,6 +4121,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !terminalBacked &&
       hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId))
     if (
+      !terminalBacked &&
+      !enqueue &&
+      this.activePrompts.has(sessionId)
+    ) {
+      return this.sendSdkFollowUp(
+        sessionId,
+        content,
+        answers,
+        delivery,
+      )
+    }
+    if (
       enqueue &&
       (this.activePrompts.has(sessionId) ||
         this.drainingSessions.has(sessionId) ||
@@ -4126,6 +4148,73 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     return this.startMessage(sessionId, content, false, undefined, answers, delivery)
+  }
+
+  private async sendSdkFollowUp(
+    sessionId: string,
+    content: string,
+    answers?: string,
+    delivery?: DeliveryBoundary,
+  ): Promise<SessionDetail> {
+    const sdkSession = await this.ensureLoaded(sessionId)
+    if (!sdkSession.send) {
+      throw Object.assign(
+        new Error(
+          'This SDK runtime does not support immediate follow-up prompts. Use Queue instead.',
+        ),
+        { statusCode: 409 },
+      )
+    }
+    const active = this.activePrompts.get(sessionId)
+    if (!active) {
+      return this.startMessage(
+        sessionId,
+        content,
+        false,
+        undefined,
+        answers,
+        delivery,
+      )
+    }
+    let messageId: Awaited<ReturnType<typeof sdkSession.send>>
+    try {
+      messageId = await sdkSession.send({
+        prompt: content,
+        mode: 'immediate',
+      })
+    } catch (error) {
+      // The prompt was handed to the SDK before this failed, so it may already
+      // be steering the turn. The admission is committed and the reply left
+      // uncertain, which stops the same steering being sent twice and stops a
+      // clear from assuming nothing ran.
+      this.admissions.markCommitted(sessionId)
+      if (
+        error &&
+        typeof error === 'object' &&
+        deliveryUncertaintyFromError(error) === undefined
+      ) {
+        Reflect.set(error, 'uncertainDelivery', true)
+      }
+      throw error
+    }
+    if (!messageId) {
+      // Handed over and unacknowledged is not the same as never sent.
+      this.admissions.markCommitted(sessionId)
+      throw Object.assign(
+        new Error('The SDK did not confirm the follow-up prompt'),
+        { uncertainDelivery: true },
+      )
+    }
+    this.admissions.markCommitted(sessionId)
+    await this.recordDelivery(sessionId, answers, delivery)
+    const updated = await this.store.addMessage(sessionId, {
+      id: messageId,
+      role: 'user',
+      content,
+      createdAt: new Date().toISOString(),
+    })
+    this.publish(updated)
+    return updated
   }
 
   private async sendTerminalInput(
@@ -6834,6 +6923,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private syncBackgroundTasks(
     sessionId: string,
     sdkSession = this.sessions.get(sessionId),
+    wakeQueue = true,
   ): Promise<BackgroundTaskSnapshot> {
     const existing = this.backgroundTaskSyncs.get(sessionId)
     if (existing) {
@@ -6865,6 +6955,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } while (owns() && this.backgroundTaskResyncNeeded.has(sessionId))
       if (
         !this.externalSessionIds.has(sessionId) &&
+        wakeQueue &&
         owns() &&
         sawRunning &&
         !hasRunningBackgroundAgent(snapshot)

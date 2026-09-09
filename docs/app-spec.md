@@ -826,7 +826,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Notification settings MUST be discoverable under App settings.
 - Per-session mute MUST persist on the hub and synchronize across devices.
 - Question and permission notifications MUST use high urgency.
-- Completion notifications MUST use low/very-low urgency.
+- Completion notifications MUST use low urgency. RFC 8030 also defines
+  `very-low`, but FCM rejects it, so `low` is the lowest portable value.
 - Every notification MUST include computer, session name, and a concise brief.
 - Completion notifications MUST say that no action is needed.
 - Opening the related chat MUST clear question, permission, and completion

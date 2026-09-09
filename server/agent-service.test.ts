@@ -1916,6 +1916,34 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('leaves an unconfirmed follow-up uncertain rather than definitely unsent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-followup-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.sendMessage(created.id, 'Open the turn')
+    await vi.waitFor(() => {
+      expect(service['activePrompts'].has(created.id)).toBe(true)
+    })
+    // The prompt reached the SDK; only its acknowledgement is missing. It may
+    // already be steering the turn, so sending it again would steer twice.
+    client.session.send = async () => undefined as unknown as string
+
+    await expect(
+      service.sendMessage(created.id, 'Steer the open turn'),
+    ).rejects.toMatchObject({ uncertainDelivery: true })
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
   it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
     directories.push(directory)

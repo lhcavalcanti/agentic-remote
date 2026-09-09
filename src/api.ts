@@ -40,7 +40,10 @@ import {
 } from '../shared/submission-error'
 import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 
-async function responseError(response: Response): Promise<Error> {
+async function responseError(
+  response: Response,
+  definiteStatuses?: ReadonlySet<number>,
+): Promise<Error> {
   const payload = (await response.json().catch(() => null)) as
     | {
         error?: string
@@ -57,6 +60,7 @@ async function responseError(response: Response): Promise<Error> {
       response.status,
       payload?.uncertainDelivery,
       submission,
+      definiteStatuses,
     ),
   }
   if (!payload) {
@@ -579,7 +583,11 @@ export async function dispatchQueuedPrompt(
     ), { uncertainDelivery: true })
   }
   if (!response.ok) {
-    throw await responseError(response)
+    // A dispatch that might have gone is answered in the body, as an uncertain
+    // outcome. A 409 is the queue refusing before anything was handed over, so
+    // it is definite -- left to the conservative default it stranded a rewrite
+    // that was plainly rejected behind a warning offering only to discard it.
+    throw await responseError(response, definiteDispatchRefusals)
   }
   const result: unknown = await response.json().catch(() => null)
   if (!isQueuedDispatchResult(result, computerId, sessionId, promptId)) {
@@ -589,6 +597,8 @@ export async function dispatchQueuedPrompt(
   }
   return result
 }
+
+const definiteDispatchRefusals: ReadonlySet<number> = new Set([409])
 
 function isQueuedDispatchResult(
   result: unknown,

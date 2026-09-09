@@ -400,6 +400,22 @@ describe('Queued dispatch confirmations', () => {
       .rejects.toMatchObject({ uncertainDelivery: true })
   })
 
+  it('treats a bare 409 refusal from this route as definite', async () => {
+    // Doubt about this route is answered in the body, as an uncertain outcome.
+    // A 409 is the queue refusing before anything was handed over, so the
+    // rewrite it refused is still safe to send again.
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Queue refused' }, { status: 409 })))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ uncertainDelivery: false })
+  })
+
+  it('still believes a 409 that says delivery was uncertain', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      Response.json({ error: 'Refused after paste', uncertainDelivery: true }, { status: 409 })))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ uncertainDelivery: true })
+  })
+
   it.each([400, 401, 403, 404, 422, 429])('recognizes an HTTP %i admission refusal', async (status) => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Not admitted' }, { status })))
     await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))

@@ -4176,12 +4176,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         delivery,
       )
     }
-    const messageId = await sdkSession.send({
-      prompt: content,
-      mode: 'immediate',
-    })
+    let messageId: Awaited<ReturnType<typeof sdkSession.send>>
+    try {
+      messageId = await sdkSession.send({
+        prompt: content,
+        mode: 'immediate',
+      })
+    } catch (error) {
+      // The prompt was handed to the SDK before this failed, so it may already
+      // be steering the turn. The admission is committed and the reply left
+      // uncertain, which stops the same steering being sent twice and stops a
+      // clear from assuming nothing ran.
+      this.admissions.markCommitted(sessionId)
+      if (
+        error &&
+        typeof error === 'object' &&
+        deliveryUncertaintyFromError(error) === undefined
+      ) {
+        Reflect.set(error, 'uncertainDelivery', true)
+      }
+      throw error
+    }
     if (!messageId) {
-      throw new Error('The SDK did not confirm the follow-up prompt')
+      // Handed over and unacknowledged is not the same as never sent.
+      this.admissions.markCommitted(sessionId)
+      throw Object.assign(
+        new Error('The SDK did not confirm the follow-up prompt'),
+        { uncertainDelivery: true },
+      )
     }
     this.admissions.markCommitted(sessionId)
     await this.recordDelivery(sessionId, answers, delivery)

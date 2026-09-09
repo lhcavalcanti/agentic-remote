@@ -1573,20 +1573,55 @@ function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
 }
 
 type KnowledgePanelMode = 'hidden' | 'docked' | 'expanded'
+type VisibleKnowledgePanelMode = Exclude<KnowledgePanelMode, 'hidden'>
+
+type LocationSelection = {
+  selection?: string
+  file?: string
+}
 
 /** Panel state when no session is selected, so roots stay browsable. */
 const sessionlessKnowledgeKey = 'knowledge:no-session'
 
-function readSelectionFromLocation(): string | undefined {
+function readSelectionFromLocation(): LocationSelection {
   if (typeof window === 'undefined') {
-    return undefined
+    return {}
   }
   const parameters = new URLSearchParams(window.location.search)
   const computerId = parameters.get('computer')
   const sessionId = parameters.get('session')
-  return computerId && sessionId
+  const selection = computerId && sessionId
     ? sessionKey({ computerId, id: sessionId })
     : undefined
+  return {
+    selection,
+    file: selection ? parameters.get('file') || undefined : undefined,
+  }
+}
+
+function readVisibleKnowledgeMode(): VisibleKnowledgePanelMode {
+  return readStoredOrder<unknown>(
+    'agentic-remote:knowledge-open-mode',
+    'docked',
+  ) === 'expanded'
+    ? 'expanded'
+    : 'docked'
+}
+
+function readKnowledgeMode(file?: string): KnowledgePanelMode {
+  const stored = readStoredOrder<unknown>(
+    'agentic-remote:knowledge-mode',
+    'hidden',
+  )
+  if (stored === 'docked' || stored === 'expanded') {
+    return stored
+  }
+  return file ? readVisibleKnowledgeMode() : 'hidden'
+}
+
+function knowledgeFolderForFile(path: string) {
+  const separator = path.lastIndexOf('/')
+  return separator < 0 ? knowledgeRootPath : path.slice(0, separator) || knowledgeRootPath
 }
 
 /**
@@ -6139,6 +6174,7 @@ function WorkspaceDialog({
 
 
 function App() {
+  const initialLocationSelection = useRef(readSelectionFromLocation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
   const [backgroundTaskSnapshots, setBackgroundTaskSnapshots] = useState<
@@ -6197,8 +6233,16 @@ function App() {
   // Reading is a workspace mode: it survives a session switch so a document
   // being read full width is not dismissed by moving to another session.
   const [knowledgeMode, setKnowledgeModeState] = useState<KnowledgePanelMode>(
-    () => readStoredOrder('agentic-remote:knowledge-mode', 'hidden'),
+    () => readKnowledgeMode(initialLocationSelection.current.file),
   )
+  const [locationKnowledgeTarget, setLocationKnowledgeTarget] = useState<
+    { key: string; file: string } | undefined
+  >(() => {
+    const target = initialLocationSelection.current
+    return target.selection && target.file
+      ? { key: target.selection, file: target.file }
+      : undefined
+  })
   const [knowledgePositions, setKnowledgePositions] = useState<
     Record<string, KnowledgePosition>
   >(() => readStoredOrder('agentic-remote:knowledge-session-positions', {}))
@@ -6220,6 +6264,8 @@ function App() {
   const [knowledgePath, setKnowledgePath] = useState(knowledgeRootPath)
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
+  const knowledgeFileStateRef = useRef(knowledgeFile)
+  knowledgeFileStateRef.current = knowledgeFile
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
   const [rootPicker, setRootPicker] = useState<{
@@ -6281,6 +6327,9 @@ function App() {
   const knowledgeOwnerKey = useRef<string>(undefined)
   // The session whose content the panel is actually showing.
   const knowledgeViewOwnerKey = useRef<string>(undefined)
+  const knowledgeOpenModeRef = useRef<VisibleKnowledgePanelMode>(
+    knowledgeMode === 'hidden' ? readVisibleKnowledgeMode() : knowledgeMode,
+  )
   // Sessions being cleared. Clear removes a session and creates a replacement,
   // and the removal reaches this client before the replacement id does, so
   // pruning has to wait or the position is lost on the way through.
@@ -6381,7 +6430,7 @@ function App() {
   const knowledgeRootLoadGeneration = useRef(-1)
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
-  const initialUrlSelection = useRef(readSelectionFromLocation())
+  const initialUrlSelection = useRef(initialLocationSelection.current.selection)
   const knowledgeRestoreStartedKey = useRef<string>(undefined)
   const applyKnowledgeScrollRef = useRef<(key: string) => void>(() => {})
   // Whether the next selection change is the user navigating (a new history
@@ -6416,7 +6465,9 @@ function App() {
     ),
   )
   const legacyKnowledgeAdopted = useRef(false)
-  const openedFromLink = useRef(readSelectionFromLocation() !== undefined)
+  const openedFromLink = useRef(
+    initialLocationSelection.current.selection !== undefined,
+  )
   const restoredKnowledgeExpansion = useRef(
     readStoredOrder<Record<string, string[]>>(
       'agentic-remote:knowledge-expanded',
@@ -6470,8 +6521,8 @@ function App() {
   const [backgroundTaskRefreshVersion, setBackgroundTaskRefreshVersion] =
     useState(0)
   const [loadingBackgroundTasks, setLoadingBackgroundTasks] = useState(false)
-  const [cancellingBackgroundTaskId, setCancellingBackgroundTaskId] =
-    useState<string>()
+  const [cancellingBackgroundTask, setCancellingBackgroundTask] =
+    useState<{ ownerKey: string; taskId: string }>()
   const [mutedSessions, setMutedSessions] = useState<string[]>([])
   const mutedSessionsRef = useRef<string[]>([])
   const [mutingSession, setMutingSession] = useState(false)
@@ -6698,6 +6749,11 @@ function App() {
         if (initialUrlSelection.current === ancestor) {
           initialUrlSelection.current = followReplacementsRef.current(ancestor)
         }
+        setLocationKnowledgeTarget((current) =>
+          current?.key === ancestor
+            ? { ...current, key: followReplacementsRef.current(ancestor) }
+            : current,
+        )
       }
     }
   }, [])
@@ -6730,6 +6786,9 @@ function App() {
         if (initialUrlSelection.current === ancestor) {
           initialUrlSelection.current = replacement
         }
+        setLocationKnowledgeTarget((current) =>
+          current?.key === ancestor ? { ...current, key: replacement } : current,
+        )
       }
     }
   }, [])
@@ -6913,7 +6972,22 @@ function App() {
   const sessionKnowledgeRoot = useSessionKnowledgeRoot(selected, knowledgeMode !== 'hidden' || addRootOpen, acceptKnowledgeRoot)
   const sessionKnowledgeRootRef = useRef(sessionKnowledgeRoot)
   sessionKnowledgeRootRef.current = sessionKnowledgeRoot
-  const rememberedKnowledgePosition = selectedKey ? knowledgePositions[selectedKey] : undefined
+  const locationKnowledgeFile =
+    locationKnowledgeTarget &&
+    locationKnowledgeTarget.key === selectedKey
+      ? locationKnowledgeTarget.file
+      : undefined
+  const rememberedKnowledgePosition = locationKnowledgeFile
+    ? {
+        rootId:
+          sessionKnowledgeRoot.binding?.rootId ||
+          (selectedKey ? knowledgePositions[selectedKey]?.rootId : undefined),
+        path: knowledgeFolderForFile(locationKnowledgeFile),
+        file: locationKnowledgeFile,
+      }
+    : selectedKey
+      ? knowledgePositions[selectedKey]
+      : undefined
   const resolvedKnowledgePosition = useMemo(
     () => knowledgePositionForBinding(sessionKnowledgeRoot.binding, rememberedKnowledgePosition),
     [sessionKnowledgeRoot.binding, rememberedKnowledgePosition],
@@ -7025,6 +7099,7 @@ function App() {
     () =>
       onShellDeepLink((target) => {
         historyIntentRef.current = 'push'
+        setLocationKnowledgeTarget(undefined)
         // A link written before a clear names a session that is gone, exactly
         // as a Back entry can, so it follows the same lineage rather than
         // falling through to whichever session happens to be first.
@@ -7351,8 +7426,8 @@ function App() {
     )
   }, [knowledgeMode])
 
-  // The session lives in the URL, so a reload reopens it, a link opens it, and
-  // back and forward move between the sessions that were visited.
+  // The session and open Knowledge file live in the URL, so reloads, links,
+  // and browser history return to the same reading context.
   useEffect(() => {
     syncSelectionAddressRef.current = () => {
       // Rewriting while sessions are still loading would drop the deep link
@@ -7379,9 +7454,26 @@ function App() {
       const named = selectedSession
         ? { computer: selectedSession.computerId, session: selectedSession.id }
         : unresolved
+      const namedKey = selectedSession
+        ? sessionKey(selectedSession)
+        : selectedKey
+      const pendingFile =
+        locationKnowledgeTarget &&
+        locationKnowledgeTarget.key === namedKey
+          ? locationKnowledgeTarget.file
+          : undefined
+      const openFile =
+        knowledgeViewOwnerKey.current === namedKey
+          ? knowledgeFile?.path
+          : undefined
+      const file =
+        knowledgeMode === 'hidden' ? undefined : pendingFile || openFile
       const next = named
         ? `${window.location.pathname}?${new URLSearchParams(
-            named,
+            {
+              ...named,
+              ...(file ? { file } : {}),
+            },
           ).toString()}`
         : window.location.pathname
       const intent = historyIntentRef.current
@@ -7401,15 +7493,21 @@ function App() {
 
   useEffect(() => {
     syncSelectionAddressRef.current()
-  }, [loading, selectedKey, sessions])
+  }, [
+    knowledgeFile?.path,
+    knowledgeMode,
+    loading,
+    locationKnowledgeTarget,
+    selectedKey,
+    sessions,
+  ])
 
   useEffect(() => {
     const followHistory = () => {
-      const parameters = new URLSearchParams(window.location.search)
-      const computerId = parameters.get('computer')
-      const sessionId = parameters.get('session')
+      const target = readSelectionFromLocation()
       historyIntentRef.current = 'replace'
-      if (!computerId || !sessionId) {
+      if (!target.selection) {
+        setLocationKnowledgeTarget(undefined)
         // An entry that names no session cannot select one, so the address is
         // brought back in step with what is actually open.
         syncSelectionAddressRef.current()
@@ -7417,9 +7515,58 @@ function App() {
       }
       // Going back to a session that has since been cleared should open what
       // it became rather than nothing.
-      setSelectedKey(
-        followReplacementsRef.current(sessionKey({ computerId, id: sessionId })),
-      )
+      const key = followReplacementsRef.current(target.selection)
+      if (target.file) {
+        setLocationKnowledgeTarget({ key, file: target.file })
+        knowledgeRequest.current += 1
+        const binding = sessionKnowledgeRootRef.current.binding
+        const restoreCurrentSession = Boolean(
+          key === selectedKeyStateRef.current &&
+          binding?.rootId &&
+          binding.available &&
+          sessionKey({
+            computerId: binding.computerId,
+            id: binding.sessionId,
+          }) === key,
+        )
+        knowledgePendingScrollKey.current = key
+        knowledgeRestoreStartedKey.current = restoreCurrentSession
+          ? key
+          : undefined
+        knowledgeRestoredKey.current = undefined
+        knowledgeViewOwnerKey.current = restoreCurrentSession ? key : undefined
+        setKnowledgeLoading(false)
+        setKnowledgeFile(undefined)
+        setKnowledgeFragment(undefined)
+        setKnowledgeModeState(knowledgeOpenModeRef.current)
+        if (restoreCurrentSession && binding?.rootId) {
+          restoreKnowledgeRef.current(
+            {
+              rootId: binding.rootId,
+              path: knowledgeFolderForFile(target.file),
+              file: target.file,
+            },
+            key,
+            false,
+          )
+        }
+      } else {
+        setLocationKnowledgeTarget(undefined)
+        if (
+          key === selectedKeyStateRef.current &&
+          knowledgeFileStateRef.current
+        ) {
+          knowledgeRequest.current += 1
+          knowledgePendingScrollKey.current = undefined
+          knowledgeRestoreStartedKey.current = undefined
+          knowledgeRestoredKey.current = key
+          knowledgeViewOwnerKey.current = key
+          setKnowledgeLoading(false)
+          setKnowledgeFile(undefined)
+          setKnowledgeFragment(undefined)
+        }
+      }
+      setSelectedKey(key)
     }
     window.addEventListener('popstate', followHistory)
     return () => window.removeEventListener('popstate', followHistory)
@@ -7731,12 +7878,7 @@ function App() {
     // Owner changes were cancelled by the layout effect. Wait for this
     // session's metadata only while open; closing must still reset a restore.
     if (hasSelectedSession && knowledgeMode !== 'hidden' && !sessionRootReady) return
-    const position = selectedKey
-      ? knowledgePositionForBinding(
-          sessionKnowledgeRoot.binding,
-          knowledgePositionsRef.current[selectedKey],
-        )
-      : undefined
+    const position = selectedKey ? resolvedKnowledgePosition : undefined
     const action = knowledgeRestoreAction({
       selectedKey,
 
@@ -7808,9 +7950,27 @@ function App() {
     setKnowledgeLoading(false)
     restoreKnowledgeRef.current(action.position, action.key, sameViewOwner)
   }, [
-    knowledgeMode, hasSelectedSession, selectedKey, roots, knowledgePositions,
-    sessionKnowledgeRoot.binding, sessionRootReady, sessionRootUnavailable,
+    knowledgeMode, hasSelectedSession, selectedKey, roots,
+    resolvedKnowledgePosition, sessionRootReady, sessionRootUnavailable,
   ])
+
+  useEffect(() => {
+    if (
+      !locationKnowledgeTarget ||
+      locationKnowledgeTarget.key !== selectedKey ||
+      knowledgeViewOwnerKey.current !== selectedKey ||
+      knowledgeRestoredKey.current !== selectedKey ||
+      knowledgeFile?.path !== locationKnowledgeTarget.file
+    ) {
+      return
+    }
+    setLocationKnowledgeTarget((current) =>
+      current?.key === locationKnowledgeTarget.key &&
+      current.file === locationKnowledgeTarget.file
+        ? undefined
+        : current,
+    )
+  }, [knowledgeFile?.path, locationKnowledgeTarget, selectedKey])
 
   // Reopening the panel puts the tree back where it was left, so switching
   // between a session and its files does not lose the reader's place.
@@ -9787,6 +9947,9 @@ function App() {
     if (knowledgeRestoreStartedKey.current === key) {
       knowledgeRestoreStartedKey.current = undefined
     }
+    setLocationKnowledgeTarget((current) =>
+      current?.key === key ? undefined : current,
+    )
     setKnowledgePositions((current) => {
       if (!(key in current)) {
         return current
@@ -9846,6 +10009,9 @@ function App() {
     if (knowledgeOwnerKey.current === fromKey) {
       knowledgeOwnerKey.current = takesPosition ? toKey : undefined
     }
+    setLocationKnowledgeTarget((current) =>
+      current?.key === fromKey ? { ...current, key: toKey } : current,
+    )
     setKnowledgePositions((current) => {
       const position = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
@@ -10032,6 +10198,13 @@ function App() {
     } else if (mode === 'hidden') {
       promptForEmptyKnowledgeRoot.current = false
     }
+    if (mode !== 'hidden') {
+      knowledgeOpenModeRef.current = mode
+      writeStored(
+        'agentic-remote:knowledge-open-mode',
+        JSON.stringify(mode),
+      )
+    }
     setKnowledgeModeState(mode)
   }
 
@@ -10138,7 +10311,9 @@ function App() {
   }
 
   function toggleKnowledgePanel() {
-    setKnowledgeMode(knowledgeMode === 'hidden' ? 'docked' : 'hidden')
+    setKnowledgeMode(
+      knowledgeMode === 'hidden' ? knowledgeOpenModeRef.current : 'hidden',
+    )
   }
 
   function toggleKnowledgeExpanded() {
@@ -10383,6 +10558,14 @@ function App() {
       return false
     }
     if (!fromRestore) {
+      if (
+        knowledgeFileStateRef.current ||
+        (locationKnowledgeTarget &&
+          locationKnowledgeTarget.key === selectedKey)
+      ) {
+        historyIntentRef.current = 'push'
+        setLocationKnowledgeTarget(undefined)
+      }
       // A file still being read belongs to where the reader just left, so it
       // is abandoned rather than allowed to arrive over the new folder. A
       // restore navigating its own steps must not invalidate itself.
@@ -10526,6 +10709,10 @@ function App() {
       if (request !== knowledgeRequest.current) {
         return false
       }
+      if (!fromRestore) {
+        historyIntentRef.current = 'push'
+        setLocationKnowledgeTarget(undefined)
+      }
       setKnowledgeFile(opened)
       setKnowledgeFragment(fragment)
       // Reading is full-screen on a phone, matching how selecting a session
@@ -10550,6 +10737,14 @@ function App() {
   ): Promise<KnowledgeFolders | undefined> {
     knowledgeHydrated.current = true
     if (!fromRestore) {
+      if (
+        knowledgeFileStateRef.current ||
+        (locationKnowledgeTarget &&
+          locationKnowledgeTarget.key === selectedKey)
+      ) {
+        historyIntentRef.current = 'push'
+        setLocationKnowledgeTarget(undefined)
+      }
       // Changing root invalidates the file being read as well as its folders,
       // or the old document would resolve its assets against the new root.
       cancelKnowledgeRestore()
@@ -10739,6 +10934,7 @@ function App() {
 
   function selectSession(session: ManagedSession) {
     historyIntentRef.current = 'push'
+    setLocationKnowledgeTarget(undefined)
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
     setError(undefined)
@@ -10780,11 +10976,23 @@ function App() {
   }
 
   async function cancelSelectedBackgroundTask(taskId: string) {
-    if (!selected || cancellingBackgroundTaskId) {
+    if (!selected || cancellingBackgroundTask) {
+      return
+    }
+    const task = selectedBackgroundTasks?.tasks.find(
+      (candidate) => candidate.id === taskId,
+    )
+    if (
+      !task?.canCancel ||
+      !window.confirm(
+        `Stop "${task.description}"?\n\nAny in-progress work from this task may be lost.`,
+      )
+    ) {
       return
     }
     const target = selected
-    setCancellingBackgroundTaskId(taskId)
+    const ownerKey = sessionKey(target)
+    setCancellingBackgroundTask({ ownerKey, taskId })
     setError(undefined)
     const startedAtSequence = eventSequenceRef.current
     try {
@@ -10799,7 +11007,11 @@ function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setCancellingBackgroundTaskId(undefined)
+      setCancellingBackgroundTask((current) =>
+        current?.ownerKey === ownerKey && current.taskId === taskId
+          ? undefined
+          : current,
+      )
     }
   }
 
@@ -10853,6 +11065,7 @@ function App() {
   function created(session: ManagedSession) {
     setSessions((current) => upsertSession(current, session))
     historyIntentRef.current = 'push'
+    setLocationKnowledgeTarget(undefined)
     setSelectedKey(sessionKey(session))
     setNewSessionOpen(false)
     setSidebarOpen(false)
@@ -14040,7 +14253,11 @@ function App() {
       />
       {selected ? (
         <BackgroundTasksDialog
-          cancellingTaskId={cancellingBackgroundTaskId}
+          cancellingTaskId={
+            cancellingBackgroundTask?.ownerKey === sessionKey(selected)
+              ? cancellingBackgroundTask.taskId
+              : undefined
+          }
           loading={loadingBackgroundTasks}
           onCancel={(taskId) => void cancelSelectedBackgroundTask(taskId)}
           onClose={() => setBackgroundTasksOpen(false)}
@@ -14054,6 +14271,7 @@ function App() {
               supported: selectedSupportsBackgroundTasks,
             }
           }
+          stopActionsDisabled={Boolean(cancellingBackgroundTask)}
         />
       ) : null}
       <AppSettingsDialog

@@ -1839,6 +1839,83 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('keeps a refusal definite when it is answering a recovery resend', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-resend-definite-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.failedPrompt = {
+        content: '/model',
+        failedAt: 'resend:definite',
+        uncertain: true,
+      }
+    })
+    await service.store.setSuspended(created.id, true)
+
+    // Refused before dispatch while answering a failure. Saying so must not
+    // be read back as doubt: the mark carries a value, not just a presence.
+    // A command takes the failure's claim before the refusal is raised, so the
+    // refusal is reported through the claim-answering path.
+    await expect(
+      service.executeCommand(created.id, '/model', false, 'resend:definite'),
+    ).rejects.toMatchObject({ uncertainDelivery: false })
+    await service.stop()
+  })
+
+  it('leaves a lost command result uncertain rather than definitely unsent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-invoke-lost-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // The command was handed over and the reply never came back. It may well
+    // have run, so reporting it as definitely unsent invites resending it.
+    client.session.rpc.commands.invoke = async () => {
+      throw new Error('socket hang up')
+    }
+
+    await expect(
+      service.executeCommand(created.id, '/model'),
+    ).rejects.toMatchObject({ uncertainDelivery: true })
+    await service.stop()
+  })
+
+  it('reports a refusal that never reached the provider as definite', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-preflight-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.setSuspended(created.id, true)
+
+    // Nothing was handed over, so the reader can retype it safely. Without
+    // saying so the client has to treat it as possibly delivered.
+    await expect(
+      service.sendMessage(created.id, 'Held behind a suspended session'),
+    ).rejects.toMatchObject({ uncertainDelivery: false })
+    await service.stop()
+  })
+
   it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
     directories.push(directory)

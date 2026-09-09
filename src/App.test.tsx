@@ -10326,7 +10326,27 @@ describe('App', () => {
     ).toHaveTextContent('Review the implementation')
     expect(screen.getByText('Inspecting changed files')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }))
+    const confirm = vi
+      .spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true)
+    expect(
+      screen.getByRole('region', { name: 'Manage Review the implementation' }),
+    ).toHaveTextContent('Requests a clean stop from the owning runtime.')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Stop task: Review the implementation',
+      }),
+    )
+    expect(cancelBackgroundTask).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Stop task: Review the implementation',
+      }),
+    )
+    expect(confirm).toHaveBeenCalledWith(
+      'Stop "Review the implementation"?\n\nAny in-progress work from this task may be lost.',
+    )
     await waitFor(() =>
       expect(cancelBackgroundTask).toHaveBeenCalledWith(
         'computer-1',
@@ -10342,6 +10362,136 @@ describe('App', () => {
     expect(document.querySelector('.session-item')).not.toHaveClass(
       'session-item--background-running',
     )
+    confirm.mockRestore()
+  })
+
+  it('explains why a tracked running task cannot be stopped safely', async () => {
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'detached-shell',
+          type: 'shell',
+          description: 'Long-running server',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          command: 'pnpm dev',
+          executionMode: 'background',
+          attachmentMode: 'detached',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({
+      ...session,
+      executionMode: 'sdk',
+    })
+
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View background tasks' }),
+    )
+
+    const management = await screen.findByRole('region', {
+      name: 'Manage Long-running server',
+    })
+    expect(management).toHaveTextContent('Stop unavailable.')
+    expect(management).toHaveTextContent(
+      'This detached task has no live stop handle.',
+    )
+    expect(
+      within(management).queryByRole('button', {
+        name: 'Stop task: Long-running server',
+      }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps a pending stop owned by its session and locks other stop actions', async () => {
+    const task = (description: string) => ({
+      id: 'shared-task-id',
+      type: 'agent' as const,
+      description,
+      status: 'running' as const,
+      startedAt: '2026-08-31T18:00:00.000Z',
+      canCancel: true,
+    })
+    const firstTask = task('First session task')
+    const secondTask = task('Second session task')
+    const snapshot = (backgroundTask: typeof firstTask): BackgroundTaskSnapshot => ({
+      tasks: [backgroundTask],
+      runningCount: 1,
+      supported: true,
+    })
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id
+        ? { ...secondSession, executionMode: 'sdk' }
+        : { ...session, executionMode: 'sdk' },
+    )
+    vi.mocked(listBackgroundTasks).mockImplementation(
+      async (_computerId, sessionId) =>
+        snapshot(sessionId === secondSession.id ? secondTask : firstTask),
+    )
+    let finishStop!: (value: BackgroundTaskSnapshot) => void
+    vi.mocked(cancelBackgroundTask).mockReturnValue(
+      new Promise((resolve) => {
+        finishStop = resolve
+      }),
+    )
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View background tasks' }),
+    )
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Stop task: First session task',
+      }),
+    )
+    expect(
+      await screen.findByRole('button', {
+        name: 'Stopping task: First session task',
+      }),
+    ).toBeDisabled()
+
+    fireEvent.click(
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
+    )
+    const secondStop = await screen.findByRole('button', {
+      name: 'Stop task: Second session task',
+    })
+    expect(secondStop).toBeDisabled()
+    expect(
+      screen.queryByRole('button', {
+        name: 'Stopping task: Second session task',
+      }),
+    ).not.toBeInTheDocument()
+
+    await act(async () => {
+      finishStop({
+        tasks: [{ ...firstTask, status: 'cancelled', canCancel: false }],
+        runningCount: 0,
+        supported: true,
+      })
+    })
+    await waitFor(() => expect(secondStop).toBeEnabled())
+    confirm.mockRestore()
   })
 
   it('updates failed background task details from a live event', async () => {
@@ -10742,11 +10892,14 @@ describe('App', () => {
     const heading = await screen.findByRole('heading', { name: 'R\u00e9sum\u00e9' })
     await waitFor(() => expect(heading).toHaveFocus())
     expect(readKnowledgeFile).toHaveBeenLastCalledWith('root-1', 'guides/setup.md')
-    expect(window.location.href).toBe(location)
+    const linkedLocation = new URL(location)
+    linkedLocation.searchParams.set('file', 'guides/setup.md')
+    expect(window.location.href).toBe(linkedLocation.toString())
     expect(sendMessage).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('link', { name: 'Missing file' }))
     expect(await screen.findAllByText('Document was not found')).not.toHaveLength(0)
     expect(heading).toBeInTheDocument()
+    expect(window.location.href).toBe(linkedLocation.toString())
   })
 
   it('navigates with breadcrumbs and offers a document outline', async () => {
@@ -13167,6 +13320,15 @@ describe('App', () => {
     ).toBe('docked')
     expect(screen.getByRole('separator', { name: 'Resize reader' }))
       .toHaveAttribute('aria-valuenow', '420')
+
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+    expect(screen.getByRole('separator', { name: 'Resize reader' }))
+      .toHaveAttribute('aria-valuenow', '420')
   })
 
   it('expands the knowledge panel over the conversation', async () => {
@@ -13212,6 +13374,41 @@ describe('App', () => {
     expect(screen.getByRole('separator', { name: 'Resize reader' }))
       .toBeInTheDocument()
   })
+
+  it.each(['docked', 'expanded'] as const)(
+    'reopens Knowledge in its persisted %s mode',
+    async (mode) => {
+      localStorage.setItem(
+        'agentic-remote:knowledge-mode',
+        JSON.stringify('hidden'),
+      )
+      localStorage.setItem(
+        'agentic-remote:knowledge-open-mode',
+        JSON.stringify(mode),
+      )
+      localStorage.setItem('agentic-remote:reader-width', '420')
+      mockKnowledgeRoots([knowledgeRoot])
+      vi.mocked(listKnowledgeEntries).mockResolvedValue({
+        path: '.',
+        entries: [],
+      })
+
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+
+      expect(document.querySelector('.workspace')).toHaveClass(
+        `workspace--${mode}`,
+      )
+      if (mode === 'docked') {
+        expect(screen.getByRole('separator', { name: 'Resize reader' }))
+          .toHaveAttribute('aria-valuenow', '420')
+      } else {
+        expect(screen.queryByRole('separator', { name: 'Resize reader' }))
+          .not.toBeInTheDocument()
+      }
+    },
+  )
 
   it('restores the knowledge scroll position when the panel reopens', async () => {
     mockKnowledgeRoots([
@@ -13792,6 +13989,10 @@ describe('App', () => {
     )
     fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
     expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+    fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--expanded',
+    )
   })
 
   it('lists the keyboard shortcuts in app settings', async () => {
@@ -14026,6 +14227,154 @@ describe('App', () => {
     )
     expect(window.location.search).toBe(
       '?computer=computer-1&session=session-2',
+    )
+  })
+
+  it('opens a Knowledge file from the URL and restores its link after reopening', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(secondSession)
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [
+            {
+              name: 'setup.md',
+              path: 'guides/setup.md',
+              kind: 'markdown',
+            },
+          ],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      path: 'guides/setup.md',
+      name: 'setup.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: '# Deep-linked setup',
+    })
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2&file=guides%2Fsetup.md',
+    )
+
+    render(<App />)
+
+    expect(
+      await screen.findByRole('heading', { name: 'Deep-linked setup' }),
+    ).toBeInTheDocument()
+    expect(readKnowledgeFile).toHaveBeenCalledWith(
+      'root-1',
+      'guides/setup.md',
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-2&file=guides%2Fsetup.md',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-2',
+      ),
+    )
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-2&file=guides%2Fsetup.md',
+      ),
+    )
+  })
+
+  it('follows Knowledge file changes from browser history', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'guides', path: 'guides', kind: 'directory' },
+            { name: 'notes', path: 'notes', kind: 'directory' },
+          ],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [],
+        },
+        notes: {
+          path: 'notes',
+          parent: '.',
+          entries: [],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_rootId, path) => ({
+      path,
+      name: path.split('/').at(-1) || path,
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: path === 'guides/setup.md' ? '# Setup' : '# Changed from URL',
+    }))
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1&file=guides%2Fsetup.md',
+    )
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Setup' })
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1&file=notes%2Fchanged.md',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(readKnowledgeFile).toHaveBeenLastCalledWith(
+        'root-1',
+        'notes/changed.md',
+      ),
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'Changed from URL' }),
+    ).toBeInTheDocument()
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-1&file=notes%2Fchanged.md',
+    )
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Changed from URL' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-1',
     )
   })
 

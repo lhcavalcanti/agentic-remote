@@ -3521,14 +3521,66 @@ button {
   cursor: pointer;
 }
 
-.background-task__cancel {
-  min-height: 30px;
+.background-task__management {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 12px 0 0 22px;
-  padding: 0 10px;
-  color: #b8d5ff;
-  border-color: rgba(110, 168, 254, 0.35);
-  background: rgba(110, 168, 254, 0.08);
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.background-task__management > strong {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.background-task__management > p {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
   font-size: 10px;
+  line-height: 1.35;
+}
+
+.background-task__stop {
+  display: inline-flex;
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0 10px;
+  color: #f3ada1;
+  border-color: rgba(239, 129, 111, 0.35);
+  background: rgba(239, 129, 111, 0.08);
+  font-size: 10px;
+}
+
+.background-task__stop-unavailable {
+  margin-left: auto;
+  text-align: right;
+}
+
+.background-task__stop-unavailable strong {
+  color: var(--muted-strong);
+}
+
+@media (max-width: 560px) {
+  .background-task__management {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .background-task__stop,
+  .background-task__stop-unavailable {
+    align-self: stretch;
+    margin-left: 0;
+    text-align: left;
+  }
 }
 
 .update-toast {

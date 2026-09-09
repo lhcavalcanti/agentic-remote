@@ -286,7 +286,7 @@ describe('paired-node redirect isolation', () => {
         response.end()
       } else {
         response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ id: 'paired-node', name: 'Redirected node', version: '0.35.0' }))
+        response.end(JSON.stringify({ id: 'paired-node', name: 'Redirected node', version: '1.0.0' }))
       }
     })
 

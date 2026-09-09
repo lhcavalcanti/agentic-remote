@@ -239,6 +239,29 @@ NODE_ENV=production pnpm check  # guards the inherited-env regression
 Work is tracked in GitHub issues and lands through pull requests. **Do not push
 directly to `main`.**
 
+### Versioning releases
+
+Treat `package.json` as the authoritative application version and apply one
+SemVer bump for every release candidate:
+
+- **PATCH** (`1.0.0` → `1.0.1`) for fixes and hotfixes.
+- **MINOR** (`1.0.0` → `1.1.0`) for features and code refactoring.
+- **MAJOR** (`1.0.0` → `2.0.0`) for redesigns and breaking changes.
+
+When a release contains more than one kind of change, use the highest applicable
+bump. Documentation, tests, and build-only maintenance do not bump the version
+unless they change shipped behavior or packaging. Rebase onto the target branch
+before choosing the next number; do not reserve versions on concurrent,
+unmerged branches or bump again when the current release candidate already
+contains the required increment.
+
+Keep every shipped shell version synchronized with the application version:
+update `package.json`, `shell/package.json`,
+`shell/src-tauri/tauri.conf.json`, `shell/src-tauri/Cargo.toml`, the local shell
+package entry in `shell/src-tauri/Cargo.lock`, and versioned bundle examples.
+Run the version-policy test before handoff. The build identity remains separate
+and must still change on every build.
+
 1. **Start from an issue.** File one first if the work is not already tracked,
    so the change has a rationale to link to.
 2. **Branch** with a short prefixed name: `fix/…`, `feat/…`, `perf/…`,

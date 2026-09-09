@@ -1197,6 +1197,120 @@ export class SessionStore {
     })
   }
 
+  async beginSdkFollowUp(
+    sessionId: string,
+    content: string,
+    assistantId: string,
+    previousAssistantId: string,
+    isCurrent: () => boolean,
+  ): Promise<SessionDetail> {
+    const userId = randomUUID()
+    return this.mutate(sessionId, (session) => {
+      this.lastSdkAdmissionAt = Math.max(
+        Date.now(),
+        this.lastSdkAdmissionAt + 1,
+      )
+      const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
+      if (session.suspended) {
+        throw Object.assign(
+          new Error('Resume the session before sending to it'),
+          { statusCode: 409 },
+        )
+      }
+      if (!isCurrent()) {
+        throw Object.assign(
+          new Error(
+            'The session changed before follow-up admission; nothing was sent',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      const previous = session.messages.find(
+        (message) => message.id === previousAssistantId,
+      )
+      if (!previous || previous.role !== 'assistant') {
+        throw Object.assign(
+          new Error('The active response changed before follow-up admission'),
+          { statusCode: 409 },
+        )
+      }
+      previous.streaming = false
+      session.messages.push(
+        { id: userId, role: 'user', content, createdAt },
+        {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          createdAt,
+          streaming: true,
+        },
+      )
+      session.transcriptEpoch = assistantId
+      session.updatedAt = createdAt
+      session.status = 'running'
+      session.activity = 'Thinking'
+    })
+  }
+
+  async cancelSdkFollowUp(
+    sessionId: string,
+    assistantId: string,
+    previousAssistantId: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const assistantIndex = session.messages.findIndex(
+        (message) => message.id === assistantId,
+      )
+      if (assistantIndex < 1) {
+        throw new Error('The follow-up admission is no longer current')
+      }
+      const user = session.messages[assistantIndex - 1]
+      if (user?.role !== 'user') {
+        throw new Error('The follow-up admission has no matching user message')
+      }
+      session.messages.splice(assistantIndex - 1, 2)
+      const previous = session.messages.find(
+        (message) => message.id === previousAssistantId,
+      )
+      if (previous?.role === 'assistant') {
+        previous.streaming = true
+      }
+      session.transcriptEpoch = previousAssistantId
+      session.status = 'running'
+      session.activity = 'Thinking'
+      session.updatedAt = new Date().toISOString()
+    })
+  }
+
+  async failSdkFollowUp(
+    sessionId: string,
+    assistantId: string,
+    message: string,
+    uncertainContent?: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const assistant = session.messages.find(
+        (entry) => entry.id === assistantId,
+      )
+      if (assistant?.role === 'assistant') {
+        assistant.streaming = false
+        assistant.content =
+          `Follow-up delivery is uncertain: ${message}`
+      }
+      if (uncertainContent) {
+        session.failedPrompt = {
+          content: uncertainContent,
+          failedAt: randomUUID(),
+          uncertain: true,
+        }
+        session.recoveryResend = undefined
+      }
+      session.status = 'error'
+      session.activity = undefined
+      session.updatedAt = new Date().toISOString()
+    })
+  }
+
   async settleSdkQueueAdmission(
     sessionId: string,
     assistantId: string,

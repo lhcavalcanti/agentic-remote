@@ -9308,6 +9308,32 @@ describe('App', () => {
       ),
     )
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
+  })
+
+  it('lets an errored session restart from the session actions', async () => {
+    const errored = {
+      ...session,
+      status: 'error' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([errored])
+    vi.mocked(getSession).mockResolvedValue(errored)
+    vi.mocked(restartSession).mockResolvedValue({
+      ...errored,
+      status: 'idle',
+    })
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    const restart = sessionAction('Restart session')
+    expect(restart).toBeEnabled()
+    fireEvent.click(restart)
+
+    await waitFor(() =>
+      expect(restartSession).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
 
     vi.mocked(restartSession).mockClear()
     const textarea = screen.getByLabelText('Message')
@@ -14469,6 +14495,74 @@ describe('App', () => {
     expect(window.location.search).toBe(
       '?computer=computer-1&session=session-1',
     )
+  })
+
+  it('does not reopen a file whose read lands after going back to the folder', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: { path: 'guides', parent: '.', entries: [] },
+      }),
+    )
+    let releaseRead: (() => void) | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_rootId, path) => {
+      await new Promise<void>((resolve) => {
+        releaseRead = resolve
+      })
+      return {
+        path,
+        name: path.split('/').at(-1) || path,
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Held open',
+      }
+    })
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1',
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1&file=guides%2Fheld.md',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(releaseRead).toBeDefined())
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    // The read the reader walked away from only answers now. Going back must
+    // hold, rather than being undone by work it already abandoned.
+    await act(async () => {
+      releaseRead?.()
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+    expect(
+      screen.queryByRole('heading', { name: 'Held open' }),
+    ).not.toBeInTheDocument()
   })
 
   it('forgets the knowledge state of a closed session', async () => {

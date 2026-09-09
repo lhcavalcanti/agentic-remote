@@ -260,7 +260,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "4cbfe95b106a1127adae54d56f90f67509666a0b5011e6d5376b21709c986f36",
     "index.html": "dd40370c1e575f22efc5df1845898b7183087b9b0696bc52de52fcd13442335a",
-    "package.json": "08c206b616078fbc9f56f35cc1eb6c3e1f1949e27f33e9ad2b54a2930111d78e",
+    "package.json": "6ca46171dced6e670ff51c2669747b19648b652ae1d5b188869d0df787625be2",
     "public/apple-touch-icon-precomposed.png": "9358cf47aba927d07ecc9fafff9788778808af66df52f61112cca31485d77923",
     "public/apple-touch-icon.png": "9358cf47aba927d07ecc9fafff9788778808af66df52f61112cca31485d77923",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
@@ -382,10 +382,10 @@
     "shared/queued-commands.ts": "95db5810221a9ff989f6a741d7588a4a9d604e3cd683214feff0284957e15a10",
     "shared/submission-error.ts": "957e8f52dd9dfe99ba7054c6e5285842789a772a5246211c19471e7f44ddc7b8",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "f6732ae6e92735b7bb3ff4ddde925e563f2f0c7aa08046a619dd858cc47575ad",
+    "shell/README.md": "27307395cf73830bada21b118f7e5a924811423fe52bf30852eff64324e36b60",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "c6089bd21f22a89f9a2c202213b5ef9d859b0b3e5f9b50dde3ff078b3e5664b6",
-    "shell/src-tauri/Cargo.toml": "d771d6af3a40d554eea2a2b05219da14f8e8f2e690fa9029ed4923667308c081",
+    "shell/package.json": "c4db0da7fb184f77afdfaf5dc1f2766cb1ba2905ca5e6ea886ce0b4a987c0fb4",
+    "shell/src-tauri/Cargo.toml": "b7eb038e5371d73fb87406b21efb8f8a41b1214e0b88fa9b21621c1ea20c3f26",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -393,13 +393,13 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "2c859a217f17969d0477b6ae9bb0aabb1c72a234fcc1b336db0fec062882031f",
+    "shell/src-tauri/tauri.conf.json": "c37e95c5e3e0dc99969893b7990abd461ba9b68321350743c5997b100c5762c9",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "2563171df8e027b1bfba52d714e4f6ac239b4ecf767f481310283a1e935d4c87",
-    "src/App.tsx": "b3030f82840ad199c0a39af2e0327cdcf97a1d87b0d8ea73dedc8368eb7b85e5",
+    "src/App.test.tsx": "01a5892f22527e0636510c0e5e13eb546564e195df7d8749a782941ad74a3edd",
+    "src/App.tsx": "9d400bb546c63b3b8a115af96381ec342789874faa3b16b8d9b39f5465f70985",
     "src/DocumentViewControls.test.tsx": "3688110dc748a313bb0568e1ed693377e4effdbeecfa91864d5fd3abdf063b7b",
     "src/DocumentViewControls.tsx": "ce73b7ea6f5cb6b93b74bbe6d3a2ed3f490520ec19cf7649c997d191946bdefd",
     "src/KnowledgeRootChoices.test.tsx": "885ba0e9b94d09726a5e314359dc9a63d9eeea0c82731290f7b45681c196f310",
@@ -433,7 +433,7 @@
     "src/features/background-tasks/BackgroundTasksDialog.tsx": "e28b4ea344d0e319527e9943de9caa7d12b424457da9c78618e61f4862697157",
     "src/features/background-tasks/task-order.ts": "bb94959503f5e40b4bd52d789c8b5f460d32b830c1eb7f2a3bd28f3dcf2d2a23",
     "src/features/prompts/PromptCards.tsx": "a01707a24da38aac0ee0ec84dcda7b8e3fbdec7ad49fb82f27265220b943fb2b",
-    "src/index.css": "9680ea0f342770b40c599c306375d507369b94b388f356b331d4ba8819ca3ebb",
+    "src/index.css": "faa4343a40d8de951a1e5d652c04fe67f53076aa3e0d214dda43f780045b7391",
     "src/knowledge-position.ts": "ae9592b0d6d4824a37731ddf7d23ee011c7bcc7875848269ffff3d3abe74b6b2",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -523,16 +523,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "a143b13c1d8d3e3d09f3caeaca6fb7655913f6441be3bdbc3cbbe604a8affd60",
+    "GRAPH_REPORT.md": "73ca6ee6b9f234b3ad4f63cc759d753f5cf7e1fa095b5317f8a64c394a34540a",
     "communities.json": "32cb073ba8afb65b82fcaf60f67b7c9c5a745445f50b994ccd4e47afb2f64b17",
-    "graph.html": "fa3a81ca5180b3f1acc6035e5333432b4159acf10979a68d0b50cffca012b9c2",
-    "graph.json": "d7fb1b57095149d4459ffd75142c2f8bfd948c84938d3f4d1035fd5148566c53"
+    "graph.html": "43d4d94fb7387f6a770c0479618b724102fd59c5243ee174a5aa2147a89d9d26",
+    "graph.json": "7628d7c671646b7220e8912af05d574738ae4985af02d993291f3cb24ed887a3"
   },
   "schema_version": 1,
-  "source_commit": "e8ce1fdfc2c083255ea7f650f5e1dbbf966af6db",
-  "source_fingerprint": "9086731b7905390a54b6238657d209b7f77e575cf44f8791219fdcf17bb0acc0",
+  "source_commit": "b94fed79b8012fc70a0b7f8b38ac134bfbf160f0",
+  "source_fingerprint": "28d497f90b85016c1e916debd6474d46064a976171517cd5c8a77b6ff700d042",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
-    "server/agent-service.ts"
+    "src/index.css"
   ]
 }

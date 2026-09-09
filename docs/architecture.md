@@ -477,6 +477,23 @@ is additive persistent metadata. A runtime predating retirement support can
 ignore it; rollout and rollback of this stateful change require explicit review
 rather than assuming an older binary preserves retirement.
 
+### Context recovery dispatch
+
+Conversation replacement atomically retains archived history, lineage, uploads,
+and FIFO together with a pending text-only seed. The recovery response returns
+that durable identity immediately; neither the hub's Knowledge/mute carry-over
+nor runtime startup waits for the provider turn. Session activity distinguishes
+pending rebuilding from a later failed or uncertain seed.
+
+`AgentService` tracks one seed dispatch per session and joins it during shutdown.
+Startup and successful discovery schedule eligible pending seeds independently,
+including terminal seeds previously deferred by aggregate or per-owner
+discovery. A later discovery pass joins an existing dispatch rather than
+claiming it twice. The durable pending/dispatching/failed state remains the
+crash boundary: a restarted dispatching seed becomes uncertain and is not
+resent. Preserved and newly queued work stay blocked until seed admission;
+immediate sends cannot bypass the seed and replacement cannot race its handoff.
+
 ## Pairing flow
 
 1. Install the second computer with `--role node`.

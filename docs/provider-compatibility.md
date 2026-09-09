@@ -90,6 +90,12 @@ history is not transferred between providers.
   bounded earliest-and-latest text context before the preserved queue, and does
   not transfer provider event IDs, permissions, or connection-specific tool
   state.
+- Recovery returns the committed replacement before the seed turn completes,
+  allowing the hub to carry Knowledge and notification metadata immediately.
+  Pending context rebuilding and later failure remain visible in session
+  activity; queued work stays blocked until seed admission. Discovery retries
+  pending terminal seeds only after ownership settles, without delaying other
+  sessions. A seed with uncertain delivery is never automatically retried.
 - A service restart marks persisted SDK approval/question requests stale and
   recoverable because their callbacks no longer exist. Replies receive `409`
   rather than claiming the old callback resumed. Terminal-backed prompts keep

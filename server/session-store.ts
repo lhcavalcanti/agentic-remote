@@ -188,6 +188,10 @@ function cloneSession(session: StoredSession): SessionDetail {
     detail.status = 'error'
     detail.activity = recoverySeed.error ||
       'Recovery brief delivery failed. The preserved queue is blocked.'
+  } else if (recoverySeed?.state === 'pending') {
+    detail.activity = 'Waiting to rebuild provider context. Preserved queued work is blocked.'
+  } else if (recoverySeed?.state === 'dispatching' && detail.status === 'idle') {
+    detail.activity = 'Rebuilding provider context. Preserved queued work is blocked.'
   }
   return {
     ...detail,
@@ -958,7 +962,7 @@ export class SessionStore {
       const boundary: ChatMessage = {
         id: randomUUID(),
         role: 'notice',
-        content: 'Provider context was rebuilt. Earlier messages are read-only history; a bounded text-only recovery brief was sent to the fresh conversation. Connection-specific tool state was not restored.',
+        content: 'Provider conversation was replaced. Earlier messages are read-only history; a bounded text-only recovery brief must be admitted before preserved queued work can continue. Connection-specific tool state is not restored.',
         createdAt: recoveredAt,
       }
       state.sessions[replacementId] = {

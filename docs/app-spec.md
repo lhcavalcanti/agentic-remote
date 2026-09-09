@@ -173,9 +173,16 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Recover MUST seed the fresh provider before queued work with a deterministic,
   bounded, text-only brief containing earliest goal and newest context. The
   brief MUST report included message count and truncation and MUST exclude
-  activities, opaque provider IDs, permissions, and tool state. If seed
-  admission fails after replacement commits, the replacement ID and explicit
-  error MUST still be returned and published.
+  activities, opaque provider IDs, permissions, and tool state.
+- After replacement commits, Recover MUST return the replacement ID with
+  pending context-rebuild activity without waiting for the provider seed turn.
+  The hub MUST carry Knowledge and notification metadata to that replacement
+  independently of seed completion. Seed admission failures MUST be published
+  and remain visible on subsequent session reads with the preserved queue
+  blocked; delivery uncertainty MUST NOT cause an automatic resend.
+- Pending seeds deferred by terminal ownership discovery MUST be reconsidered
+  when discovery settles. Seed dispatch MUST NOT block startup, discovery, or
+  another session's seed, and concurrent discovery MUST NOT dispatch it twice.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.

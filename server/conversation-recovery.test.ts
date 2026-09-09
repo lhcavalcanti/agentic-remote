@@ -2,16 +2,31 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionDetail } from '../shared/contracts.js'
+import type { SessionDetail, SessionRecoveryReason } from '../shared/contracts.js'
 import {
   AgentService,
   type CopilotClientLike,
   type CopilotSessionLike,
 } from './agent-service.js'
 import { SessionStore } from './session-store.js'
+import { buildApp } from './app.js'
 import type { TerminalSessionController } from './terminal-session.js'
 
 const fixtures: Array<{ directory: string; store: SessionStore; service?: AgentService }> = []
+const releases: Array<() => void> = []
+
+function gate() {
+  let release!: () => void
+  const promise = new Promise<void>((resolve) => { release = resolve })
+  releases.push(release)
+  return { promise, release }
+}
+
+async function recoverAndSeed(service: AgentService, reason: SessionRecoveryReason) {
+  fixtures.find((fixture) => fixture.store === service.store)!.service = service
+  const recovered = await service.recoverConversation('broken', reason)
+  return await service['recoverySeedDispatches'].get(recovered.id) || recovered
+}
 
 function sdkSession(
   sessionId: string,
@@ -109,14 +124,203 @@ function client(createSession: CopilotClientLike['createSession']): CopilotClien
 }
 
 afterEach(async () => {
+  releases.splice(0).forEach((release) => release())
   await Promise.all(fixtures.splice(0).map(async ({ directory, store, service }) => {
     await service?.stop().catch(() => undefined)
     await store.close().catch(() => undefined)
     await rm(directory, { recursive: true, force: true })
   }))
+  vi.unstubAllEnvs()
 })
 
 describe('conversation recovery', () => {
+  it.each(['complete', 'fail'])(
+    'returns a remote replacement and carries hub metadata before a held seed can %s',
+    async (outcome) => {
+      vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+      const { directory, store, cleanup } = await recoveryFixture('sdk')
+      const prompts: string[] = []
+      const seed = gate()
+      const service = new AgentService(
+        store,
+        client(async (config) => {
+          const session = sdkSession(config.sessionId!, prompts)
+          session.sendAndWait = vi.fn(async (content) => {
+            prompts.push(content)
+            if (content !== 'Queued after seed') {
+              await seed.promise
+              if (outcome === 'fail') throw new Error('Delayed seed failure')
+            }
+            return undefined
+          })
+          return session
+        }),
+      )
+      cleanup.service = service
+      const hubService = new AgentService(
+        new SessionStore(path.join(directory, 'hub-state')),
+        client(async () => { throw new Error('Recovery must stay on its node') }),
+      )
+      const hub = await buildApp({
+        dataDirectory: path.join(directory, 'hub'),
+        logger: false, role: 'hub', service: hubService,
+      })
+      const node = await buildApp({
+        dataDirectory: path.join(directory, 'node'),
+        logger: false, role: 'node', service,
+      })
+      try {
+        await node.app.listen({ host: '127.0.0.1', port: 0 })
+        const address = node.app.server.address()
+        if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+        const paired = await hub.app.inject({
+          method: 'POST', url: '/api/computers',
+          payload: {
+            baseUrl: `http://127.0.0.1:${address.port}`,
+            token: node.identity.token, name: 'isolated-recovery-node',
+          },
+        })
+        expect(paired.statusCode).toBe(201)
+        const computerId = node.identity.info.id
+        const root = await hub.knowledgeStore!.addRoot({
+          computerId, computerName: 'isolated-recovery-node',
+          path: directory, name: 'Recovery notes',
+        })
+        await hub.sessionKnowledgeStore!.update(computerId, 'broken', {
+          rootId: root.id, expectedRevision: 0,
+        })
+        await hub.pushService!.setSessionMuted(computerId, 'broken', true)
+        let recovered: SessionDetail | undefined
+        const recovering = hub.app.inject({
+          method: 'POST',
+          url: `/api/computers/${computerId}/sessions/broken/recover`,
+          payload: { reason: 'provider-error' },
+        }).then((response) => {
+          expect(response.statusCode).toBe(200)
+          recovered = response.json().session
+        })
+        await vi.waitFor(() => expect(recovered?.id).toBeDefined())
+        await recovering
+        await vi.waitFor(() => expect(prompts).toHaveLength(1))
+        expect(recovered).toMatchObject({
+          activity: 'Waiting to rebuild provider context. Preserved queued work is blocked.',
+          title: 'Broken session', cwd: directory, replacedSessionIds: ['broken'],
+          queuedPrompts: [{ content: 'Queued after seed' }],
+        })
+        const id = recovered!.id
+        expect(store.recoverySeed(id)?.state).toBe('dispatching')
+        expect(hub.sessionKnowledgeStore!.get(computerId, id).rootId).toBe(root.id)
+        expect(hub.pushService!.settings().mutedSessions).toContain(`${computerId}:${id}`)
+        expect(hub.manager!.listComputers().find((computer) => computer.id === computerId)?.online)
+          .toBe(true)
+        expect((await node.app.inject('/health')).statusCode).toBe(200)
+        seed.release()
+        await vi.waitFor(() => {
+          if (outcome === 'complete') {
+            expect(store.recoverySeed(id)).toBeUndefined()
+            expect(prompts).toHaveLength(2)
+          } else {
+            expect(store.recoverySeed(id)).toMatchObject({
+              state: 'failed', error: expect.stringContaining('Delayed seed failure'),
+            })
+            expect(prompts).toHaveLength(1)
+          }
+        })
+        const snapshot = await hub.app.inject(`/api/computers/${computerId}/sessions/${id}`)
+        expect(snapshot.statusCode).toBe(200)
+        if (outcome === 'fail') {
+          expect(snapshot.json().session).toMatchObject({
+            id, status: 'error',
+            activity: expect.stringContaining('delivery is uncertain'),
+            queuedPrompts: [{ content: 'Queued after seed' }],
+          })
+        }
+      } finally {
+        seed.release()
+        await Promise.all([hub.app.close(), node.app.close()])
+      }
+    },
+  )
+
+  it('dispatches independent pending seeds without waiting for a slow provider turn', async () => {
+    const { store, cleanup } = await recoveryFixture('sdk')
+    await store.replaceWithRecoveredSession('broken', 'replacement', 'manual', 1, false, 'Slow seed')
+    await store.create({
+      id: 'other', cwd: store.get('replacement')!.cwd, title: 'Other recovery',
+      updatedAt: '2026-09-09T00:00:00.000Z', status: 'error', messages: [],
+    }, { backend: 'sdk', managedOpen: true })
+    await store.replaceWithRecoveredSession('other', 'other-replacement', 'manual', 0, false, 'Fast seed')
+    await store.update('replacement', (session) => {
+      session.updatedAt = '2026-09-10T00:00:00.000Z'
+    })
+    const seed = gate()
+    const prompts: string[] = []
+    const sdkClient = client(async () => { throw new Error('Unexpected SDK creation') })
+    sdkClient.resumeSession = async (id) => {
+      const session = sdkSession(id, prompts)
+      session.sendAndWait = async (content) => {
+        prompts.push(content)
+        if (content === 'Slow seed') await seed.promise
+        return undefined
+      }
+      return session
+    }
+    const service = new AgentService(store, sdkClient)
+    cleanup.service = service
+    expect(store.list()[0].id).toBe('replacement')
+
+    await service.start()
+
+    await vi.waitFor(() => expect(prompts).toEqual(['Slow seed', 'Fast seed']))
+    await vi.waitFor(() => expect(store.recoverySeed('other-replacement')).toBeUndefined())
+    expect(store.recoverySeed('replacement')?.state).toBe('dispatching')
+    expect(store.get('replacement')?.queuedPrompts).toHaveLength(1)
+    seed.release()
+    await vi.waitFor(() => expect(prompts).toEqual(['Slow seed', 'Fast seed', 'Queued after seed']))
+  })
+
+  it('returns a pending terminal replacement without letting new work bypass its held seed', async () => {
+    const { store, cleanup } = await recoveryFixture('terminal')
+    const seed = gate()
+    const send = vi.fn(async () => {
+      await seed.promise
+      return true
+    })
+    const service = new AgentService(
+      store,
+      client(async () => { throw new Error('Unexpected SDK creation') }),
+      async () => [], async () => {}, async () => [], async () => undefined,
+      {
+        has: async () => true,
+        reset: async (_id, _replacement, _cwd, _runtime, commit) => {
+          await commit()
+          return true
+        },
+        sendWhenIdle: send, send, cancel: async () => true,
+      },
+    )
+    cleanup.service = service
+    service['externalSessionIds'].add('broken')
+
+    const recovered = await service.recoverConversation('broken', 'manual')
+
+    expect(recovered.activity).toContain('Waiting to rebuild provider context')
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+    await expect(service.sendMessage(recovered.id, 'Must not bypass')).rejects
+      .toMatchObject({ statusCode: 409, message: expect.stringContaining('recovery brief') })
+    await expect(service.clearConversation(recovered.id)).rejects
+      .toMatchObject({ statusCode: 409 })
+    const queued = await service.sendMessage(recovered.id, 'Added after recovery', true)
+    expect(queued.queuedPrompts?.map((prompt) => prompt.content)).toEqual([
+      'Queued after seed', 'Added after recovery',
+    ])
+    expect(send).toHaveBeenCalledOnce()
+    seed.release()
+    await service['recoverySeedDispatches'].get(recovered.id)
+    expect(store.recoverySeed(recovered.id)).toBeUndefined()
+    expect(store.get(recovered.id)?.queuedPrompts).toHaveLength(2)
+  })
+
   it('replaces and seeds an SDK conversation before preserving its existing queue', async () => {
     const { store } = await recoveryFixture('sdk')
     const prompts: string[] = []
@@ -134,7 +338,7 @@ describe('conversation recovery', () => {
       },
     )
 
-    const recovered = await service.recoverConversation('broken', 'provider-error')
+    const recovered = await recoverAndSeed(service, 'provider-error')
 
     expect(recovered.id).not.toBe('broken')
     expect(recovered.title).toBe('Broken session')
@@ -181,7 +385,7 @@ describe('conversation recovery', () => {
     )
     service['externalSessionIds'].add('broken')
 
-    const recovered = await service.recoverConversation('broken', 'provider-error')
+    const recovered = await recoverAndSeed(service, 'provider-error')
 
     expect(recovered.executionMode).toBe('tmux')
     expect(recovered.status).toBe('running')
@@ -216,7 +420,7 @@ describe('conversation recovery', () => {
     )
     service['externalSessionIds'].add('broken')
 
-    const recovered = await service.recoverConversation('broken', 'provider-error')
+    const recovered = await recoverAndSeed(service, 'provider-error')
 
     expect(recovered.id).not.toBe('broken')
     expect(recovered.status).toBe('error')
@@ -270,7 +474,7 @@ describe('conversation recovery', () => {
       client(async (config) => sdkSession(config.sessionId!, prompts)),
     )
 
-    await service.recoverConversation('broken', 'stale-sdk-interaction')
+    await recoverAndSeed(service, 'stale-sdk-interaction')
 
     expect(prompts).toHaveLength(1)
     expect(prompts[0]).toContain(
@@ -298,7 +502,7 @@ describe('conversation recovery', () => {
       client(async (config) => sdkSession(config.sessionId!, prompts)),
     )
 
-    await service.recoverConversation('broken', 'stale-sdk-interaction')
+    await recoverAndSeed(service, 'stale-sdk-interaction')
 
     expect(prompts).toHaveLength(1)
     expect(prompts[0]).not.toContain('Run dangerous stale command')
@@ -314,7 +518,7 @@ describe('conversation recovery', () => {
       client(async (config) => sdkSession(config.sessionId!, prompts)),
     )
 
-    const recovered = await service.recoverConversation('broken', 'manual')
+    const recovered = await recoverAndSeed(service, 'manual')
 
     expect(recovered.title).toBe('My custom recovery title')
     expect(prompts).toHaveLength(1)
@@ -329,7 +533,7 @@ describe('conversation recovery', () => {
       client(async (config) => sdkSession(config.sessionId!, prompts)),
     )
 
-    const recovered = await service.recoverConversation('broken', 'manual')
+    const recovered = await recoverAndSeed(service, 'manual')
     await store.updateAutomaticTitle(
       recovered.id,
       'Conversation recovery context',
@@ -354,7 +558,7 @@ describe('conversation recovery', () => {
       }),
     )
 
-    const recovered = await service.recoverConversation('broken', 'provider-error')
+    const recovered = await recoverAndSeed(service, 'provider-error')
 
     expect(prompts).toHaveLength(1)
     expect(recovered).toMatchObject({
@@ -378,7 +582,7 @@ describe('conversation recovery', () => {
     )
     service['runPrompt'] = vi.fn(async () => undefined)
 
-    const recovered = await service.recoverConversation('broken', 'provider-error')
+    const recovered = await recoverAndSeed(service, 'provider-error')
 
     expect(recovered).toMatchObject({
       status: 'error',

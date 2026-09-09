@@ -93,7 +93,7 @@ describe('SessionStore', () => {
     expect(projected.messages.map((entry) => entry.content)).toEqual([
       'Keep the original goal',
       'Old tool state',
-      expect.stringContaining('Provider context was rebuilt'),
+      expect.stringContaining('Provider conversation was replaced'),
       'Fresh provider response',
     ])
     expect(projected.queuedPrompts?.map((entry) => entry.content)).toEqual([
@@ -122,6 +122,9 @@ describe('SessionStore', () => {
       reason: 'provider-error',
     })
     expect(projected).not.toHaveProperty('recoverySeed')
+    expect(projected.activity).toBe(
+      'Waiting to rebuild provider context. Preserved queued work is blocked.',
+    )
     expect(store.recoverySeed('after-recovery')).toEqual({
       prompt: 'Persisted recovery seed',
       state: 'pending',

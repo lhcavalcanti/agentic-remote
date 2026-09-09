@@ -1596,7 +1596,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly queuedPromptStops = new Map<string, () => void>()
   private readonly queuedPromptRuns = new Map<string, Promise<void>>()
   private readonly recoverySeedPromptRuns = new Map<string, Promise<void>>()
-  private readonly recoverySeedDispatches = new Set<Promise<SessionDetail | undefined>>()
+  private readonly recoverySeedDispatches = new Map<string, Promise<SessionDetail | undefined>>()
   private readonly pendingSessionMetadata = new Map<string, SessionEvent[]>()
   private readonly sessionCreations = new Set<Promise<void>>()
   private readonly hydratedSessions = new Set<string>()
@@ -1895,9 +1895,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     void starting.then(
       () => {
         if (this.stopped) return
-        void this.dispatchReadyRecoverySeeds(true).catch(
-          (error: unknown) => this.publishError('', error),
-        )
+        this.dispatchReadyRecoverySeeds()
       },
       () => undefined,
     )
@@ -1996,25 +1994,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private async dispatchReadyRecoverySeeds(includeTerminal: boolean): Promise<void> {
+  private dispatchReadyRecoverySeeds(): void {
     if (this.stopped) return
     for (const session of this.store.list()) {
       const seed = this.store.recoverySeed(session.id)
       if (seed?.state !== 'pending') continue
       const terminal = this.store.backend(session.id) === 'terminal'
-      if (terminal && (!includeTerminal || this.isTerminalRecoveryPending(session.id))) continue
-      await this.runRecoverySeedDispatch(session.id)
+      if (terminal && this.isTerminalRecoveryPending(session.id)) continue
+      this.scheduleRecoverySeedDispatch(session.id)
     }
+  }
+
+  private scheduleRecoverySeedDispatch(sessionId: string): void {
+    void this.runRecoverySeedDispatch(sessionId).catch(
+      (error: unknown) => this.publishError(sessionId, error),
+    )
   }
 
   private runRecoverySeedDispatch(
     sessionId: string,
   ): Promise<SessionDetail | undefined> {
+    const existing = this.recoverySeedDispatches.get(sessionId)
+    if (existing) return existing
+    if (this.stopped) return Promise.resolve(undefined)
     const dispatch = this.dispatchRecoverySeed(sessionId)
-    this.recoverySeedDispatches.add(dispatch)
+    this.recoverySeedDispatches.set(sessionId, dispatch)
     void dispatch.then(
-      () => this.recoverySeedDispatches.delete(dispatch),
-      () => this.recoverySeedDispatches.delete(dispatch),
+      () => this.recoverySeedDispatches.delete(sessionId),
+      () => this.recoverySeedDispatches.delete(sessionId),
     )
     return dispatch
   }
@@ -2222,7 +2229,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await Promise.allSettled([
       ...this.queuedPromptRuns.values(),
       ...this.recoverySeedPromptRuns.values(),
-      ...this.recoverySeedDispatches,
+      ...this.recoverySeedDispatches.values(),
       ...this.queueOperations.values(),
     ])
     await this.store.close()
@@ -3306,8 +3313,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       this.wakeDeferredQueue(id)
     }
-    const seeded = await this.runRecoverySeedDispatch(recovered.id)
-    return this.publicSession(seeded || recovered)
+    // The identity is durable; provider completion must not hold the node
+    // response (and the hub's replacement metadata carry-over) open.
+    this.scheduleRecoverySeedDispatch(recovered.id)
+    return this.publicSession(recovered)
   }
 
   private async clearSerialized(
@@ -3318,6 +3327,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = await this.store.readAfterWrites(id)
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
+    if (this.recoverySeedDispatches.has(id)) {
+      throw queueConflict('The recovery brief is still being dispatched. Wait for it to settle before replacing the conversation.')
+    }
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Clearing builds the replacement a session carries on in, which is a
       // live owner. A later resume would then build a second one beside it.
@@ -4056,6 +4068,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
+    if (this.store.recoverySeed(sessionId)) {
+      if (enqueue) return this.enqueuePrompt(sessionId, content, false, answers, delivery)
+      throw queueConflict('The recovery brief must be admitted before other work can run. Queue this message instead.')
+    }
     if (
       this.drainingSessions.has(sessionId) ||
       this.store.get(sessionId)?.queuedDispatch
@@ -6916,7 +6932,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const refresh = this.discoverSessions()
       .then(async (ready) => {
-        if (ready) await this.finishStartupRecovery()
+        if (ready) {
+          await this.finishStartupRecovery()
+          this.dispatchReadyRecoverySeeds()
+        }
       })
       .catch((error: unknown) => {
         this.publishError('', error)

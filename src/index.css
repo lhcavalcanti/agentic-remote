@@ -37,7 +37,6 @@
   --task: #6ea8fe;
   --radius: 12px;
   --radius-small: 8px;
-  --reading-width: 72ch;
   --shadow-popover: 0 12px 36px rgb(0 0 0 / 35%);
 }
 
@@ -1094,7 +1093,7 @@ button {
 }
 
 .knowledge-reader .workspace-preview__content {
-  padding: 28px max(24px, calc((100% - var(--reading-width)) / 2)) 40px;
+  padding: 28px clamp(24px, 5cqi, 64px) 40px;
   background: var(--panel);
   font-size: 16px;
   line-height: 1.75;

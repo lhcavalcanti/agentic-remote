@@ -419,12 +419,13 @@ describe('conversation recovery', () => {
     cleanup.service = service
 
     const starting = service.start()
+    await starting
     await vi.waitFor(() =>
-      expect(prompts).toEqual(['Persisted seed must run first']))
+      expect(prompts).toEqual(['Persisted seed must run first']),
+    { timeout: 3_000 })
     expect(restarted.get('replacement')?.queuedPrompts?.map((prompt) => prompt.content))
       .toEqual(['Queued after seed'])
     releaseSeed()
-    await starting
     await vi.waitFor(() => expect(prompts).toEqual([
       'Persisted seed must run first',
       'Queued after seed',
@@ -462,8 +463,10 @@ describe('conversation recovery', () => {
     cleanup.service = service
 
     const starting = service.start()
+    await starting
     await vi.waitFor(() =>
-      expect(prompts).toEqual(['Seed interrupted by shutdown']))
+      expect(prompts).toEqual(['Seed interrupted by shutdown']),
+    { timeout: 3_000 })
     await expect(Promise.race([
       service.stop(),
       new Promise((_, reject) => setTimeout(
@@ -566,7 +569,9 @@ describe('conversation recovery', () => {
 
     await service.start()
 
-    expect(sent).toEqual(['Persisted terminal seed'])
+    await vi.waitFor(() =>
+      expect(sent).toEqual(['Persisted terminal seed']),
+    { timeout: 3_000 })
     expect(restarted.get('replacement')?.queuedPrompts?.map((prompt) => prompt.content))
       .toEqual(['Queued after seed'])
   })

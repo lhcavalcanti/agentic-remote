@@ -1869,10 +1869,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.startTask) return this.startTask
     this.resourceReads.start()
     this.resourceEpoch += 1
-    const starting = this.admissions
-      .run('@startup', () => this.startAdmitted())
-      .then(() => this.dispatchReadyRecoverySeeds(true))
+    const starting = this.admissions.run('@startup', () => this.startAdmitted())
     this.startTask = starting
+    void starting.then(
+      () => {
+        if (this.stopped) return
+        void this.dispatchReadyRecoverySeeds(true).catch(
+          (error: unknown) => this.publishError('', error),
+        )
+      },
+      () => undefined,
+    )
     void starting.catch(() => {
       if (this.startTask === starting) this.startTask = undefined
     })
@@ -1903,7 +1910,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         session.id, resend.failedAt, resend.content, this.store.backend(session.id) === 'terminal',
       )
     }
-    await this.dispatchReadyRecoverySeeds(false)
     try {
       if (await this.discoverSessions()) await this.finishStartupRecovery()
     } catch (error) {

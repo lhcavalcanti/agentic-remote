@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
-import { SubmissionError } from '../shared/submission-error.js'
+import {
+  deliveryUncertaintyFromError,
+  SubmissionError,
+} from '../shared/submission-error.js'
 import { hasRunningBackgroundAgent } from '../shared/background-tasks.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
@@ -3675,7 +3678,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     claim: RecoveryResendClaim | undefined,
     accepted: boolean,
   ): unknown {
-    if (!claim && !accepted) return error
+    if (!claim && !accepted) {
+      if (error instanceof SubmissionError) return error
+      if (error && typeof error === 'object') {
+        if (deliveryUncertaintyFromError(error) === undefined) {
+          Reflect.set(error, 'uncertainDelivery', false)
+        }
+        return error
+      }
+      return new SubmissionError(
+        'The request could not be completed. Check the session before retrying.',
+        500,
+        undefined,
+        { uncertainDelivery: false },
+      )
+    }
     const status = error && typeof error === 'object' ? Reflect.get(error, 'statusCode') : undefined
     const statusCode = accepted ? 409 : typeof status === 'number' && status >= 400 && status < 600 ? status : 500
     const message = accepted

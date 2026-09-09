@@ -5243,10 +5243,16 @@ describe('App', () => {
     })
   })
 
-  it('restores a definitively rejected long paste without an uncertainty warning', async () => {
+  it.each([
+    [400, 'Prompt is too long'],
+    [409, 'Queue the message while the agent is working'],
+  ] as const)('restores a definitively rejected HTTP %i long paste without an uncertainty warning', async (statusCode, message) => {
     const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join('\n')
     vi.mocked(sendMessage).mockRejectedValueOnce(
-      Object.assign(new Error('Prompt is too long'), { statusCode: 400 }),
+      Object.assign(new Error(message), {
+        statusCode,
+        uncertainDelivery: false,
+      }),
     )
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
@@ -5254,7 +5260,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
     await waitFor(() => expect(textarea).toHaveValue('[Paste #1 - 21 lines]'))
-    expect(screen.getAllByText('Prompt is too long').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(message).length).toBeGreaterThan(0)
     expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
   })
 
@@ -10736,11 +10742,14 @@ describe('App', () => {
     const heading = await screen.findByRole('heading', { name: 'R\u00e9sum\u00e9' })
     await waitFor(() => expect(heading).toHaveFocus())
     expect(readKnowledgeFile).toHaveBeenLastCalledWith('root-1', 'guides/setup.md')
-    expect(window.location.href).toBe(location)
+    const linkedLocation = new URL(location)
+    linkedLocation.searchParams.set('file', 'guides/setup.md')
+    expect(window.location.href).toBe(linkedLocation.toString())
     expect(sendMessage).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('link', { name: 'Missing file' }))
     expect(await screen.findAllByText('Document was not found')).not.toHaveLength(0)
     expect(heading).toBeInTheDocument()
+    expect(window.location.href).toBe(linkedLocation.toString())
   })
 
   it('navigates with breadcrumbs and offers a document outline', async () => {
@@ -13161,6 +13170,15 @@ describe('App', () => {
     ).toBe('docked')
     expect(screen.getByRole('separator', { name: 'Resize reader' }))
       .toHaveAttribute('aria-valuenow', '420')
+
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+    expect(screen.getByRole('separator', { name: 'Resize reader' }))
+      .toHaveAttribute('aria-valuenow', '420')
   })
 
   it('expands the knowledge panel over the conversation', async () => {
@@ -13206,6 +13224,41 @@ describe('App', () => {
     expect(screen.getByRole('separator', { name: 'Resize reader' }))
       .toBeInTheDocument()
   })
+
+  it.each(['docked', 'expanded'] as const)(
+    'reopens Knowledge in its persisted %s mode',
+    async (mode) => {
+      localStorage.setItem(
+        'agentic-remote:knowledge-mode',
+        JSON.stringify('hidden'),
+      )
+      localStorage.setItem(
+        'agentic-remote:knowledge-open-mode',
+        JSON.stringify(mode),
+      )
+      localStorage.setItem('agentic-remote:reader-width', '420')
+      mockKnowledgeRoots([knowledgeRoot])
+      vi.mocked(listKnowledgeEntries).mockResolvedValue({
+        path: '.',
+        entries: [],
+      })
+
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+
+      expect(document.querySelector('.workspace')).toHaveClass(
+        `workspace--${mode}`,
+      )
+      if (mode === 'docked') {
+        expect(screen.getByRole('separator', { name: 'Resize reader' }))
+          .toHaveAttribute('aria-valuenow', '420')
+      } else {
+        expect(screen.queryByRole('separator', { name: 'Resize reader' }))
+          .not.toBeInTheDocument()
+      }
+    },
+  )
 
   it('restores the knowledge scroll position when the panel reopens', async () => {
     mockKnowledgeRoots([
@@ -13786,6 +13839,10 @@ describe('App', () => {
     )
     fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
     expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+    fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--expanded',
+    )
   })
 
   it('lists the keyboard shortcuts in app settings', async () => {
@@ -14020,6 +14077,154 @@ describe('App', () => {
     )
     expect(window.location.search).toBe(
       '?computer=computer-1&session=session-2',
+    )
+  })
+
+  it('opens a Knowledge file from the URL and restores its link after reopening', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(secondSession)
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [
+            {
+              name: 'setup.md',
+              path: 'guides/setup.md',
+              kind: 'markdown',
+            },
+          ],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      path: 'guides/setup.md',
+      name: 'setup.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: '# Deep-linked setup',
+    })
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2&file=guides%2Fsetup.md',
+    )
+
+    render(<App />)
+
+    expect(
+      await screen.findByRole('heading', { name: 'Deep-linked setup' }),
+    ).toBeInTheDocument()
+    expect(readKnowledgeFile).toHaveBeenCalledWith(
+      'root-1',
+      'guides/setup.md',
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-2&file=guides%2Fsetup.md',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-2',
+      ),
+    )
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-2&file=guides%2Fsetup.md',
+      ),
+    )
+  })
+
+  it('follows Knowledge file changes from browser history', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'guides', path: 'guides', kind: 'directory' },
+            { name: 'notes', path: 'notes', kind: 'directory' },
+          ],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [],
+        },
+        notes: {
+          path: 'notes',
+          parent: '.',
+          entries: [],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_rootId, path) => ({
+      path,
+      name: path.split('/').at(-1) || path,
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: path === 'guides/setup.md' ? '# Setup' : '# Changed from URL',
+    }))
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1&file=guides%2Fsetup.md',
+    )
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Setup' })
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1&file=notes%2Fchanged.md',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(readKnowledgeFile).toHaveBeenLastCalledWith(
+        'root-1',
+        'notes/changed.md',
+      ),
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'Changed from URL' }),
+    ).toBeInTheDocument()
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-1&file=notes%2Fchanged.md',
+    )
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Changed from URL' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-1',
     )
   })
 

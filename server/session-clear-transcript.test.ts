@@ -503,6 +503,8 @@ describe('Transcript and Clear admission serialization', () => {
     release.finish()
     const [send, clear] = await Promise.all([sending, clearing])
     expect(send).toEqual({ error: failure })
+    if (!('error' in send)) throw new Error('The synthetic send unexpectedly succeeded')
+    expect(Reflect.get(Object(send.error), 'uncertainDelivery')).toBe(uncertain)
     expect(terminal.send).toHaveBeenCalledTimes(1)
     expect(delivery).not.toHaveBeenCalled()
     if (uncertain) {

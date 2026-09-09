@@ -757,7 +757,9 @@ describe('PR162 startup pump composition', () => {
           .toEqual([queued])
         expect(claims).toHaveBeenCalledOnce()
         expect(claims.mock.calls[0][3]).toBe(true)
-        expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+        await vi.waitFor(() =>
+          expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false),
+        )
       }
       await expect(runtime.service.sendMessage(native.id, accepted, false, token))
         .rejects.toMatchObject({ statusCode: 409 })

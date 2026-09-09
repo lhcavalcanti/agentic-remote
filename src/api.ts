@@ -33,16 +33,34 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts'
-import { parseSubmissionReceipt, SubmissionError } from '../shared/submission-error'
+import {
+  httpDeliveryUncertain,
+  parseSubmissionReceipt,
+  SubmissionError,
+} from '../shared/submission-error'
 import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 
 async function responseError(response: Response): Promise<Error> {
   const payload = (await response.json().catch(() => null)) as
-    | { error?: string; message?: string; statusCode?: number; submission?: unknown }
+    | {
+        error?: string
+        message?: string
+        statusCode?: number
+        submission?: unknown
+        uncertainDelivery?: unknown
+      }
     | null
   const fallback = `Request failed (${response.status})`
+  const submission = parseSubmissionReceipt(payload?.submission)
+  const options = {
+    uncertainDelivery: httpDeliveryUncertain(
+      response.status,
+      payload?.uncertainDelivery,
+      submission,
+    ),
+  }
   if (!payload) {
-    return new SubmissionError(fallback, response.status)
+    return new SubmissionError(fallback, response.status, undefined, options)
   }
   // Fastify's built-in envelope carries a numeric `statusCode`, a generic
   // `error` label, and the real reason in `message`; the app's own handler
@@ -55,10 +73,16 @@ async function responseError(response: Response): Promise<Error> {
     return new SubmissionError(
       payload.message || payload.error || fallback,
       response.status,
-      parseSubmissionReceipt(payload.submission),
+      submission,
+      options,
     )
   }
-  return new SubmissionError(payload.error || fallback, response.status, parseSubmissionReceipt(payload.submission))
+  return new SubmissionError(
+    payload.error || fallback,
+    response.status,
+    submission,
+    options,
+  )
 }
 
 async function request<TResult>(
@@ -555,10 +579,7 @@ export async function dispatchQueuedPrompt(
     ), { uncertainDelivery: true })
   }
   if (!response.ok) {
-    throw Object.assign(await responseError(response), {
-      // Only explicit request/admission refusals release the pending identity.
-      uncertainDelivery: ![400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429].includes(response.status),
-    })
+    throw await responseError(response)
   }
   const result: unknown = await response.json().catch(() => null)
   if (!isQueuedDispatchResult(result, computerId, sessionId, promptId)) {

@@ -4710,7 +4710,7 @@ describe('AgentService deletion', () => {
       type: 'assistant.message',
       timestamp: new Date().toISOString(),
       parentId: null,
-      data: { messageId: 'follow-up-response', content: 'steered answer' },
+      data: { messageId: 'original-response', content: 'base answer' },
     } as AssistantMessageEvent)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -4723,9 +4723,46 @@ describe('AgentService deletion', () => {
 
     acceptFollowUp('follow-up-message')
     await sending
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(
       service['activePrompts'].get(created.id)?.assistantMessageId,
     ).toBe(followUpAssistant)
+    expect(service.store.get(created.id)?.status).toBe('running')
+    expect(
+      service.store.get(created.id)?.messages.find(
+        (message) => message.id === originalAssistant,
+      ),
+    ).toMatchObject({
+      role: 'assistant',
+      content: 'base answer',
+      streaming: false,
+    })
+    client.session.emit({
+      id: randomUUID(),
+      type: 'session.idle',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: {},
+    } as SessionEvent)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(service.store.get(created.id)?.status).toBe('running')
+    expect(
+      service['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(followUpAssistant)
+    client.session.emit({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'follow-up-response', content: 'steered answer' },
+    } as SessionEvent)
+    client.session.emit({
+      id: randomUUID(),
+      type: 'session.idle',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: {},
+    } as SessionEvent)
     await vi.waitFor(() => {
       expect(service.store.get(created.id)?.status).toBe('idle')
     })

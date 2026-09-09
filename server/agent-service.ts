@@ -142,6 +142,7 @@ interface ActivePrompt {
 interface PendingSdkFollowUp {
   settled: Promise<void>
   resolve: () => void
+  previousCompleted: boolean
 }
 
 class TerminalDiscoveryError extends Error {
@@ -4203,6 +4204,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         resolvePending = resolve
       }),
       resolve: () => resolvePending(),
+      previousCompleted: false,
     }
     this.pendingSdkFollowUps.set(sessionId, pending)
     const assistantId = randomUUID()
@@ -4224,6 +4226,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw error
     }
     this.publish(prepared)
+    const tracker = this.trackSdkFollowUp(sdkSession, assistantId)
     try {
       const messageId = await sdkSession.send({
         prompt: content,
@@ -4237,6 +4240,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.set(sessionId, {
         assistantMessageId: assistantId,
       })
+      if (pending.previousCompleted) tracker.activate()
+      else tracker.cancel()
       pending.resolve()
       this.pendingSdkFollowUps.delete(sessionId)
       await this.recordDelivery(sessionId, answers, delivery)
@@ -4248,6 +4253,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       try {
         const definitive = explicitlyRefused(error)
         if (definitive) {
+          tracker.cancel()
           const restored = await this.store.cancelSdkFollowUp(
             sessionId,
             assistantId,
@@ -4258,6 +4264,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.activePrompts.set(sessionId, {
             assistantMessageId: assistantId,
           })
+          if (pending.previousCompleted) tracker.activate()
+          else tracker.cancel()
           if (
             error &&
             typeof error === 'object' &&
@@ -4278,6 +4286,135 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.pendingSdkFollowUps.delete(sessionId)
       }
       throw error
+    }
+  }
+
+  private trackSdkFollowUp(
+    sdkSession: CopilotSessionLike,
+    assistantMessageId: string,
+  ): { activate: () => void; cancel: () => void } {
+    const sessionId = sdkSession.sessionId
+    let active = false
+    let closed = false
+    let responseStarted = false
+    const unsubscribe = sdkSession.on((event) => {
+      if (!active || closed || eventAgentId(event)) return
+      if (
+        event.type === 'assistant.message_delta' ||
+        event.type === 'assistant.message' ||
+        event.type === 'tool.execution_start' ||
+        event.type === 'tool.execution_complete'
+      ) {
+        responseStarted = true
+      }
+      if (event.type === 'session.idle') {
+        if (!responseStarted) return
+        closed = true
+        unsubscribe()
+        void this.finishSdkFollowUp(
+          sessionId,
+          assistantMessageId,
+        ).catch((error: unknown) => this.publishError(sessionId, error))
+      } else if (
+        event.type === 'session.error' ||
+        event.type === 'session.shutdown'
+      ) {
+        closed = true
+        unsubscribe()
+        const message =
+          event.type === 'session.error'
+            ? event.data.message
+            : 'The SDK session shut down.'
+        void this.failTrackedSdkFollowUp(
+          sessionId,
+          assistantMessageId,
+          message,
+        ).catch((error: unknown) => this.publishError(sessionId, error))
+      }
+    })
+    return {
+      activate: () => {
+        active = true
+      },
+      cancel: () => {
+        if (closed) return
+        closed = true
+        unsubscribe()
+      },
+    }
+  }
+
+  private async finishSdkFollowUp(
+    sessionId: string,
+    assistantMessageId: string,
+  ): Promise<void> {
+    await this.store.finishMessage(sessionId, assistantMessageId)
+    const updated = await this.store.updateIf(sessionId, (session) => {
+      if (
+        this.activePrompts.get(sessionId)?.assistantMessageId !==
+        assistantMessageId
+      ) {
+        return false
+      }
+      for (const message of session.messages) {
+        if (
+          message.role === 'activity' &&
+          message.activityStatus === 'running'
+        ) {
+          message.activityStatus = 'completed'
+        }
+      }
+      if (session.failedPrompt?.uncertain) {
+        session.failedPrompt = undefined
+      }
+      session.status = 'idle'
+      session.activity = undefined
+      return true
+    })
+    if (updated) this.publish(updated)
+    if (
+      this.activePrompts.get(sessionId)?.assistantMessageId ===
+      assistantMessageId
+    ) {
+      this.activePrompts.delete(sessionId)
+      this.wakeSdkQueue(sessionId)
+    }
+  }
+
+  private async failTrackedSdkFollowUp(
+    sessionId: string,
+    assistantMessageId: string,
+    message: string,
+  ): Promise<void> {
+    const updated = await this.store.updateIf(sessionId, (session) => {
+      if (
+        this.activePrompts.get(sessionId)?.assistantMessageId !==
+        assistantMessageId
+      ) {
+        return false
+      }
+      const assistant = session.messages.find(
+        (entry) => entry.id === assistantMessageId,
+      )
+      if (assistant) {
+        assistant.streaming = false
+        if (!assistant.content) {
+          assistant.content = `Unable to complete the response: ${message}`
+        }
+      }
+      session.status = 'error'
+      session.activity = undefined
+      return true
+    })
+    if (updated) {
+      this.publish(updated)
+      this.publishError(sessionId, new Error(message))
+    }
+    if (
+      this.activePrompts.get(sessionId)?.assistantMessageId ===
+      assistantMessageId
+    ) {
+      this.activePrompts.delete(sessionId)
     }
   }
 
@@ -7435,13 +7572,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
-      await this.pendingSdkFollowUps.get(sessionId)?.settled
+      const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
+      if (pendingFollowUp) pendingFollowUp.previousCompleted = true
+      await pendingFollowUp?.settled
       if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
-      completionAssistantMessageId =
-        this.activePrompts.get(sessionId)?.assistantMessageId ||
-        assistantMessageId
+      completionAssistantMessageId = pendingFollowUp
+        ? assistantMessageId
+        : this.activePrompts.get(sessionId)?.assistantMessageId ||
+          assistantMessageId
       if (response?.data.content) {
         this.store.setMessageContent(
           sessionId,
@@ -7481,13 +7621,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
-      await this.pendingSdkFollowUps.get(sessionId)?.settled
+      const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
+      if (pendingFollowUp) pendingFollowUp.previousCompleted = true
+      await pendingFollowUp?.settled
       if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
-      completionAssistantMessageId =
-        this.activePrompts.get(sessionId)?.assistantMessageId ||
-        assistantMessageId
+      completionAssistantMessageId = pendingFollowUp
+        ? assistantMessageId
+        : this.activePrompts.get(sessionId)?.assistantMessageId ||
+          assistantMessageId
       const updated = await this.store.updateIf(sessionId, (session) => {
         if (this.activePrompts.get(sessionId)?.assistantMessageId !== completionAssistantMessageId) return false
         for (const entry of session.messages) {

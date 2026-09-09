@@ -10979,6 +10979,17 @@ function App() {
     if (!selected || cancellingBackgroundTaskId) {
       return
     }
+    const task = selectedBackgroundTasks?.tasks.find(
+      (candidate) => candidate.id === taskId,
+    )
+    if (
+      !task?.canCancel ||
+      !window.confirm(
+        `Stop "${task.description}"?\n\nAny in-progress work from this task may be lost.`,
+      )
+    ) {
+      return
+    }
     const target = selected
     setCancellingBackgroundTaskId(taskId)
     setError(undefined)

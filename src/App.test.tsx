@@ -10326,7 +10326,23 @@ describe('App', () => {
     ).toHaveTextContent('Review the implementation')
     expect(screen.getByText('Inspecting changed files')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }))
+    const confirm = vi
+      .spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true)
+    expect(
+      screen.getByRole('region', { name: 'Manage Review the implementation' }),
+    ).toHaveTextContent('Requests a clean stop from the owning runtime.')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop Review the implementation' }),
+    )
+    expect(cancelBackgroundTask).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop Review the implementation' }),
+    )
+    expect(confirm).toHaveBeenCalledWith(
+      'Stop "Review the implementation"?\n\nAny in-progress work from this task may be lost.',
+    )
     await waitFor(() =>
       expect(cancelBackgroundTask).toHaveBeenCalledWith(
         'computer-1',
@@ -10342,6 +10358,55 @@ describe('App', () => {
     expect(document.querySelector('.session-item')).not.toHaveClass(
       'session-item--background-running',
     )
+    confirm.mockRestore()
+  })
+
+  it('explains why a tracked running task cannot be stopped safely', async () => {
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'detached-shell',
+          type: 'shell',
+          description: 'Long-running server',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          command: 'pnpm dev',
+          executionMode: 'background',
+          attachmentMode: 'detached',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({
+      ...session,
+      executionMode: 'sdk',
+    })
+
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View background tasks' }),
+    )
+
+    const management = await screen.findByRole('region', {
+      name: 'Manage Long-running server',
+    })
+    expect(management).toHaveTextContent('Stop unavailable.')
+    expect(management).toHaveTextContent(
+      'This detached task has no live stop handle.',
+    )
+    expect(
+      within(management).queryByRole('button', {
+        name: 'Stop Long-running server',
+      }),
+    ).not.toBeInTheDocument()
   })
 
   it('updates failed background task details from a live event', async () => {

@@ -3,6 +3,7 @@ import {
   List,
   LoaderCircle,
   RefreshCw,
+  Square,
   XCircle,
 } from 'lucide-react'
 import type {
@@ -44,6 +45,17 @@ function taskDurationLabel(milliseconds: number): string {
   }
   const minutes = Math.floor(seconds / 60)
   return `${minutes}m ${seconds % 60}s`
+}
+
+function taskIsActive(task: BackgroundTask): boolean {
+  return task.status === 'running' || task.status === 'queued'
+}
+
+function stopUnavailableReason(task: BackgroundTask): string {
+  if (task.attachmentMode === 'detached') {
+    return 'This detached task has no live stop handle. End it from the provider or terminal that started it.'
+  }
+  return 'The owning runtime did not expose a live stop handle for this task.'
 }
 
 function BackgroundTaskCard({
@@ -158,15 +170,41 @@ function BackgroundTaskCard({
           <pre>{task.error}</pre>
         </div>
       ) : null}
-      {task.canCancel ? (
-        <button
-          className="secondary-button background-task__cancel"
-          disabled={cancelling}
-          onClick={onCancel}
-          type="button"
+      {taskIsActive(task) ? (
+        <section
+          aria-label={`Manage ${task.description}`}
+          className="background-task__management"
         >
-          {cancelling ? 'Cancelling…' : 'Cancel task'}
-        </button>
+          <strong>Manage task</strong>
+          {task.canCancel ? (
+            <>
+              <p>Requests a clean stop from the owning runtime.</p>
+              <button
+                aria-label={`Stop ${task.description}`}
+                className="secondary-button background-task__stop"
+                disabled={cancelling}
+                onClick={onCancel}
+                type="button"
+              >
+                {cancelling ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="activity-message__spinner"
+                    size={13}
+                  />
+                ) : (
+                  <Square aria-hidden="true" size={12} />
+                )}
+                {cancelling ? 'Stopping…' : 'Stop task'}
+              </button>
+            </>
+          ) : (
+            <p className="background-task__stop-unavailable">
+              <strong>Stop unavailable.</strong>{' '}
+              {stopUnavailableReason(task)}
+            </p>
+          )}
+        </section>
       ) : null}
     </article>
   )

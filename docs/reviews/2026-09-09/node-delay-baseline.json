@@ -1,0 +1,19 @@
+{
+  "scope": "Real hub handlers, ComputerManager and RemoteNodeClient; fake authenticated node on an ephemeral loopback port.",
+  "measured": [
+    {
+      "injectedNodeDelayMs": 0,
+      "samples": 5,
+      "medianHubListMs": 4.099,
+      "maxHubListMs": 12.359
+    },
+    {
+      "injectedNodeDelayMs": 600,
+      "samples": 5,
+      "medianHubListMs": 603.492,
+      "maxHubListMs": 604.305
+    }
+  ],
+  "overlappingHubListsNodeReads": 1,
+  "notes": "No provider or live pairing; not a real WAN, offline timeout, or browser startup measurement."
+}

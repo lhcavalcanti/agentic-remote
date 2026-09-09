@@ -1,0 +1,19 @@
+{
+  "knowledge": {
+    "error": "EISDIR",
+    "visibleRootsAfterRefusal": 1,
+    "retryReturnedSuccessWhileStorageStillBlocked": true,
+    "rootsOnDiskAndAfterReload": 0
+  },
+  "registry": {
+    "error": "EISDIR",
+    "rejectedComputerVisibleInMemory": true,
+    "laterUnrelatedWriteCommittedRejectedComputer": true
+  },
+  "push": {
+    "error": "EISDIR",
+    "rejectedMuteVisibleInMemory": true,
+    "mutedSessionsOnDisk": 0
+  },
+  "privacy": "New synthetic directories only; no provider, network request, live state, or printed secrets."
+}

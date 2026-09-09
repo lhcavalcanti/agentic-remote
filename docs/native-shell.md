@@ -53,8 +53,8 @@ product. Keeping it here means:
   re-derive that coupling across a repository boundary.
 - **One specification.** A desktop regression is an app-spec regression, and
   §16's acceptance matrix should grow desktop rows rather than fork.
-- **Existing workflow.** Issues, PR review, CI, release publication, and
-  rollback tooling already live here.
+- **Existing workflow.** Issues, PR review, local validation, release publication,
+  and rollback tooling already live here.
 - **Shared assets.** Icons in `public/icons`, `shared/contracts.ts`, and the
   bridge module in `src/` are consumed directly.
 
@@ -62,8 +62,9 @@ The one real cost is keeping native build dependencies out of the Linux
 service install. This repository is a single package, not a pnpm workspace, so
 `shell/` carries its own `package.json` and lockfile and is not referenced by
 the root manifest. `bin/agentic-remote setup`, `pnpm install`, and release
-publication therefore never see Tauri, Rust, Xcode, or any Apple tooling, and
-the repository's existing `ubuntu-latest` check is untouched by the shell.
+publication therefore do not install Tauri, Rust, Xcode, or any Apple tooling.
+The root application gate is local `pnpm check`; no hosted CI workflow is
+configured.
 
 ### 2.2 Why the shell loads the remote URL
 
@@ -305,10 +306,10 @@ recovery route back to a corrected address. It is deliberately a connectivity pr
 health check, because the case it exists for is the public hostname being
 unroutable when the tunnel or network is down.
 
-Switching hubs re-points the window and re-grants the capability so one hub's
-IPC grant is never presented to another. Clearing the webview cookie store for
-the previous host is not implemented yet; until it is, switching between hubs
-leaves the old Access cookie in the shared store.
+Switching hubs navigates the existing main webview and requests a capability
+for the configured hub origins. It does not destroy the window. Clearing the
+webview cookie store for the previous host is not implemented; switching
+between hubs leaves the old Access cookie in the shared store.
 
 ## 4. Native integrations
 
@@ -401,11 +402,10 @@ shell code MUST assume nothing from a doc comment and MUST be verified with
 
 - Bundles cannot be cross-compiled, so each platform builds itself. The Linux
   service hosts never build the shell.
-- **The shell is built locally, not in CI.** This is a private repository, where
-  macOS runners bill at ten times the Linux rate and Windows at twice, so a
-  three-platform build cost roughly 60 billable minutes per run and exhausted
-  the account's monthly allowance. Automated shell builds were removed; the
-  repository's existing application check is the only workflow.
+- **The shell is built locally, not in CI.** Automated shell builds were removed
+  after exhausting the account's monthly allowance. No hosted application or
+  shell CI workflow is currently configured; `pnpm check` is the local
+  application gate.
 - Because nothing verifies the shell automatically, a change to platform-specific
   code MUST be checked on a Mac before it is trusted: window or tray APIs,
   capabilities, and the `cfg(desktop)` and `cfg(mobile)` split. Run
@@ -413,17 +413,21 @@ shell code MUST assume nothing from a doc comment and MUST be verified with
   `cargo check --target aarch64-apple-ios`. That last one is what caught a call
   which compiled on every desktop target and not on iOS.
 - The shell is a separate package with its own `package.json` and lockfile, so
-  the existing `pnpm check` job and the service install are unaffected by it.
+  the root `pnpm check` command does not invoke the shell's check script, and
+  service installation remains independent.
 - Bundle icons are generated from `public/icons/icon-512.png` by `pnpm icons`
   rather than committed, so there is one icon source in the repository.
 - Installable bundles are produced by `pnpm build:desktop` on each platform and
   attached to a GitHub release by hand. Build macOS with
   `--target universal-apple-darwin` so one download covers Apple Silicon and
   Intel.
-- Updates use the Tauri updater against a self-hosted JSON manifest, signed with
-  a repository-independent ed25519 key. The **private updater key is a secret**:
-  it lives in GitHub Actions secrets and MUST NOT be committed. The updater
-  plugin is desktop-only; iOS updates come from TestFlight or a rebuilt install.
+- **Automatic desktop shell updates are planned, not shipped** (§6, phase 7).
+  There is no updater plugin or update configuration in the current shell.
+  The design uses a Tauri updater against a self-hosted JSON manifest, signed
+  with a repository-independent ed25519 key. The **private updater key is a
+  secret** and MUST NOT be committed; future GitHub Actions updater jobs must
+  receive it through Actions secrets. Until implemented, install new desktop
+  bundles manually; iOS updates come from TestFlight or a rebuilt install.
 - The shell version MUST track the app version already used by `/api/version` so
   a shell and hub mismatch is visible.
 - The shell MUST tolerate a hub that is newer than itself: the UI comes from the
@@ -435,15 +439,16 @@ shell code MUST assume nothing from a doc comment and MUST be verified with
 A paid Apple Developer Program membership is available, so macOS builds SHOULD
 be signed with a **Developer ID Application** certificate and notarized.
 
-- Signing removes Gatekeeper's manual first-open and, more importantly, makes
-  auto-updates land without a quarantine prompt.
+- Signing removes Gatekeeper's manual first-open and prepares for the planned
+  automatic-update path.
 - It is also the prerequisite for a direct `UNUserNotificationCenter`
   implementation on macOS, which is what unblocks notification actions (§4.1).
-- CI needs `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+- If hosted signing jobs are introduced, they will need
+  `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
   `KEYCHAIN_PASSWORD`, and App Store Connect API key credentials. **All are
   secrets** and MUST live in GitHub Actions secrets only.
-- Tauri's updater verifies with its own ed25519 key and does not depend on
-  Apple signing, so signing is an improvement rather than a new dependency.
+- The planned Tauri updater would verify with its own ed25519 key independently
+  of Apple signing.
 
 ### 5.2 iOS distribution
 

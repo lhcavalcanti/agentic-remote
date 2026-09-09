@@ -1,0 +1,1515 @@
+{
+  "mode": "performance",
+  "methodology": "real-AgentService-summary-projection-v3",
+  "capturedAt": "2026-09-09T19:48:29.953Z",
+  "sourceCommit": "15a043e57234f7addfd8160f990dd22b38f1882a",
+  "packageVersion": "1.1.0",
+  "environment": {
+    "node": "v22.22.1",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD Ryzen AI 7 PRO 350 w/ Radeon 860M",
+    "logicalCpus": 12,
+    "availableParallelism": 12,
+    "totalMemoryMiB": 48175.168,
+    "loadAverageAtStart": [
+      0.83,
+      1.16,
+      1.94
+    ],
+    "gcAvailable": true,
+    "loadAverageAtEnd": [
+      0.94,
+      1.17,
+      1.93
+    ]
+  },
+  "limits": {
+    "maxSessions": 100,
+    "maxTotalMessages": 100000,
+    "maxObservedRssMiB": 1024
+  },
+  "caveats": [
+    "Shared development machine, not an exclusive benchmark host.",
+    "Real SessionStore and AgentService.listSessions/listHistory projection; real buildApp, ComputerManager and Fastify handlers.",
+    "AgentService is never started. Its Copilot client and discovery/terminal adapters are fail-fast fakes; client.stop is a no-op. No authentication, provider query or native terminal runs.",
+    "GET /api/sessions uses shipped summary projection with empty message arrays; raw store.list is benchmarked separately. Projection/count assertions run outside timed samples; each timed response must also be HTTP 200.",
+    "Only one local Copilot service is injected; this excludes ProviderSessionService dual-provider aggregation and remote-node/provider discovery.",
+    "Full session.upserted encoding uses a constructed detail envelope, not a live provider event or WebSocket fan-out.",
+    "Fastify injection excludes sockets, TLS, paired-node transport, and browser rendering.",
+    "Nearest-rank p95 with 5-30 samples is descriptive, not a production SLO.",
+    "Median averages the two middle samples for even counts; samplesMs retains observed-order timings rounded to 0.001 ms.",
+    "Cloned-message counts cover direct session objects with a messages array, not every allocation or nested state object.",
+    "Event-loop histogram includes 2 ms inter-sample yields; resolution is 1 ms."
+  ],
+  "stores": [
+    {
+      "sessions": 10,
+      "openSessions": 10,
+      "messagesPerSession": 100,
+      "contentBytesPerMessage": 256,
+      "initialStateBytes": 377066,
+      "sessionListBytes": 5307,
+      "upsertBytes": 38764,
+      "metrics": [
+        {
+          "name": "store.list",
+          "samples": 15,
+          "samplesMs": [
+            0.831,
+            0.743,
+            0.706,
+            0.757,
+            0.848,
+            0.755,
+            0.708,
+            0.694,
+            0.753,
+            0.668,
+            0.673,
+            0.652,
+            0.631,
+            0.626,
+            0.769
+          ],
+          "medianMs": 0.708,
+          "p95Ms": 0.848,
+          "maxMs": 0.848,
+          "clonesPerSample": [
+            10
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.202,
+          "cpuMs": 13.806,
+          "peakRssMiB": 314.246
+        },
+        {
+          "name": "store.get",
+          "samples": 15,
+          "samplesMs": [
+            0.238,
+            0.363,
+            0.399,
+            0.308,
+            0.217,
+            0.288,
+            0.305,
+            0.254,
+            0.27,
+            0.193,
+            0.224,
+            0.242,
+            0.201,
+            0.091,
+            0.086
+          ],
+          "medianMs": 0.242,
+          "p95Ms": 0.399,
+          "maxMs": 0.399,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            100
+          ],
+          "eventLoopP95Ms": 1.897,
+          "cpuMs": 8.323,
+          "peakRssMiB": 314.371
+        },
+        {
+          "name": "store.backend x1000",
+          "samples": 15,
+          "samplesMs": [
+            0.125,
+            0.058,
+            0.003,
+            0.004,
+            0.006,
+            0.004,
+            0.004,
+            0.003,
+            0.004,
+            0.003,
+            0.004,
+            0.003,
+            0.004,
+            0.003,
+            0.004
+          ],
+          "medianMs": 0.004,
+          "p95Ms": 0.125,
+          "maxMs": 0.125,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 1.226,
+          "cpuMs": 3.872,
+          "peakRssMiB": 314.496
+        },
+        {
+          "name": "store.readAfterWrites",
+          "samples": 15,
+          "samplesMs": [
+            0.251,
+            0.112,
+            0.107,
+            0.11,
+            0.528,
+            0.214,
+            0.358,
+            0.273,
+            0.323,
+            0.117,
+            0.106,
+            0.097,
+            0.097,
+            0.098,
+            0.101
+          ],
+          "medianMs": 0.112,
+          "p95Ms": 0.528,
+          "maxMs": 0.528,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            100
+          ],
+          "eventLoopP95Ms": 1.772,
+          "cpuMs": 4.959,
+          "peakRssMiB": 314.621
+        },
+        {
+          "name": "GET /api/sessions (Fastify inject)",
+          "samples": 10,
+          "samplesMs": [
+            2.239,
+            1.387,
+            1.104,
+            0.977,
+            1.065,
+            1.607,
+            1.205,
+            0.985,
+            0.877,
+            0.912
+          ],
+          "medianMs": 1.085,
+          "p95Ms": 2.239,
+          "maxMs": 2.239,
+          "clonesPerSample": [
+            11
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.556,
+          "cpuMs": 13.861,
+          "peakRssMiB": 314.996
+        },
+        {
+          "name": "store.renameSession (durable)",
+          "samples": 8,
+          "samplesMs": [
+            2.867,
+            2.547,
+            3.094,
+            2.545,
+            2.051,
+            1.899,
+            1.96,
+            1.841
+          ],
+          "medianMs": 2.298,
+          "p95Ms": 3.094,
+          "maxMs": 3.094,
+          "clonesPerSample": [
+            2
+          ],
+          "clonedMessageEntriesPerSample": [
+            200
+          ],
+          "eventLoopP95Ms": 2.148,
+          "cpuMs": 19.252,
+          "peakRssMiB": 317.949
+        },
+        {
+          "name": "store.streamMessage (warm public snapshot)",
+          "samples": 30,
+          "samplesMs": [
+            0.208,
+            0.112,
+            0.127,
+            0.116,
+            0.13,
+            0.111,
+            0.116,
+            0.31,
+            0.156,
+            0.112,
+            0.11,
+            0.107,
+            0.336,
+            0.11,
+            0.105,
+            0.108,
+            0.103,
+            0.105,
+            0.104,
+            0.15,
+            0.111,
+            0.114,
+            0.336,
+            0.329,
+            0.112,
+            0.112,
+            0.324,
+            0.117,
+            0.248,
+            0.324
+          ],
+          "medianMs": 0.115,
+          "p95Ms": 0.336,
+          "maxMs": 0.336,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            100
+          ],
+          "eventLoopP95Ms": 1.646,
+          "cpuMs": 8.936,
+          "peakRssMiB": 315.113
+        },
+        {
+          "name": "encode one full session.upserted",
+          "samples": 15,
+          "samplesMs": [
+            0.088,
+            0.068,
+            0.067,
+            0.067,
+            0.068,
+            0.084,
+            0.074,
+            0.066,
+            0.066,
+            0.067,
+            0.069,
+            0.068,
+            0.21,
+            0.066,
+            0.067
+          ],
+          "medianMs": 0.068,
+          "p95Ms": 0.21,
+          "maxMs": 0.21,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 1.217,
+          "cpuMs": 2.701,
+          "peakRssMiB": 315.238
+        }
+      ]
+    },
+    {
+      "sessions": 10,
+      "openSessions": 10,
+      "messagesPerSession": 1000,
+      "contentBytesPerMessage": 256,
+      "initialStateBytes": 3738566,
+      "sessionListBytes": 5307,
+      "upsertBytes": 374914,
+      "metrics": [
+        {
+          "name": "store.list",
+          "samples": 15,
+          "samplesMs": [
+            7.36,
+            6.863,
+            8.387,
+            7.186,
+            9.91,
+            8.134,
+            9.473,
+            7.376,
+            9.325,
+            10.763,
+            11.798,
+            7.485,
+            9.192,
+            7.469,
+            9.135
+          ],
+          "medianMs": 8.387,
+          "p95Ms": 11.798,
+          "maxMs": 11.798,
+          "clonesPerSample": [
+            10
+          ],
+          "clonedMessageEntriesPerSample": [
+            10000
+          ],
+          "eventLoopP95Ms": 12.083,
+          "cpuMs": 146.915,
+          "peakRssMiB": 321.504
+        },
+        {
+          "name": "store.get",
+          "samples": 15,
+          "samplesMs": [
+            0.798,
+            0.75,
+            0.907,
+            0.734,
+            0.732,
+            0.814,
+            0.713,
+            0.7,
+            0.746,
+            0.7,
+            0.744,
+            0.737,
+            1.011,
+            0.748,
+            0.747
+          ],
+          "medianMs": 0.746,
+          "p95Ms": 1.011,
+          "maxMs": 1.011,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.189,
+          "cpuMs": 14.658,
+          "peakRssMiB": 321.504
+        },
+        {
+          "name": "store.backend x1000",
+          "samples": 15,
+          "samplesMs": [
+            0.12,
+            0.005,
+            0.005,
+            0.007,
+            0.005,
+            0.005,
+            0.007,
+            0.005,
+            0.007,
+            0.005,
+            0.005,
+            0.007,
+            0.005,
+            0.005,
+            0.005
+          ],
+          "medianMs": 0.005,
+          "p95Ms": 0.12,
+          "maxMs": 0.12,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 1.25,
+          "cpuMs": 4.012,
+          "peakRssMiB": 321.504
+        },
+        {
+          "name": "store.readAfterWrites",
+          "samples": 15,
+          "samplesMs": [
+            0.876,
+            0.751,
+            0.663,
+            0.666,
+            0.697,
+            0.637,
+            0.688,
+            0.664,
+            0.721,
+            0.663,
+            0.631,
+            0.778,
+            0.69,
+            0.672,
+            0.626
+          ],
+          "medianMs": 0.672,
+          "p95Ms": 0.876,
+          "maxMs": 0.876,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 1.95,
+          "cpuMs": 12.276,
+          "peakRssMiB": 321.629
+        },
+        {
+          "name": "GET /api/sessions (Fastify inject)",
+          "samples": 10,
+          "samplesMs": [
+            7.878,
+            6.913,
+            9.761,
+            7.248,
+            8.831,
+            7.654,
+            9.577,
+            8.13,
+            9.863,
+            7.587
+          ],
+          "medianMs": 8.004,
+          "p95Ms": 9.863,
+          "maxMs": 9.863,
+          "clonesPerSample": [
+            11
+          ],
+          "clonedMessageEntriesPerSample": [
+            10000
+          ],
+          "eventLoopP95Ms": 10.904,
+          "cpuMs": 93.315,
+          "peakRssMiB": 321.754
+        },
+        {
+          "name": "store.renameSession (durable)",
+          "samples": 8,
+          "samplesMs": [
+            19.019,
+            17.675,
+            18.36,
+            17.061,
+            19.252,
+            15.861,
+            15.247,
+            14.938
+          ],
+          "medianMs": 17.368,
+          "p95Ms": 19.252,
+          "maxMs": 19.252,
+          "clonesPerSample": [
+            2
+          ],
+          "clonedMessageEntriesPerSample": [
+            2000
+          ],
+          "eventLoopP95Ms": 12.739,
+          "cpuMs": 139.678,
+          "peakRssMiB": 341.656
+        },
+        {
+          "name": "store.streamMessage (warm public snapshot)",
+          "samples": 30,
+          "samplesMs": [
+            0.904,
+            0.73,
+            0.739,
+            0.73,
+            1.537,
+            0.732,
+            0.705,
+            0.7,
+            0.723,
+            0.748,
+            0.751,
+            0.726,
+            1.129,
+            1.35,
+            0.757,
+            0.733,
+            0.706,
+            1.547,
+            0.962,
+            0.702,
+            0.745,
+            0.723,
+            0.763,
+            0.706,
+            0.709,
+            0.729,
+            0.702,
+            0.727,
+            0.714,
+            0.705
+          ],
+          "medianMs": 0.73,
+          "p95Ms": 1.537,
+          "maxMs": 1.547,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.218,
+          "cpuMs": 29.523,
+          "peakRssMiB": 327.559
+        },
+        {
+          "name": "encode one full session.upserted",
+          "samples": 15,
+          "samplesMs": [
+            0.755,
+            0.748,
+            0.659,
+            0.667,
+            0.692,
+            0.721,
+            1.025,
+            0.657,
+            0.656,
+            0.643,
+            0.661,
+            1.121,
+            0.717,
+            0.716,
+            0.743
+          ],
+          "medianMs": 0.716,
+          "p95Ms": 1.121,
+          "maxMs": 1.121,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 2.316,
+          "cpuMs": 13.428,
+          "peakRssMiB": 333.297
+        }
+      ]
+    },
+    {
+      "sessions": 100,
+      "openSessions": 100,
+      "messagesPerSession": 1000,
+      "contentBytesPerMessage": 256,
+      "initialStateBytes": 37475696,
+      "sessionListBytes": 52557,
+      "upsertBytes": 374914,
+      "metrics": [
+        {
+          "name": "store.list",
+          "samples": 15,
+          "samplesMs": [
+            90.703,
+            103.682,
+            92.292,
+            104.165,
+            112.222,
+            111.358,
+            91.636,
+            103.681,
+            89.019,
+            105.191,
+            88.773,
+            116.01,
+            91.319,
+            98.896,
+            91.155
+          ],
+          "medianMs": 98.896,
+          "p95Ms": 116.01,
+          "maxMs": 116.01,
+          "clonesPerSample": [
+            100
+          ],
+          "clonedMessageEntriesPerSample": [
+            100000
+          ],
+          "eventLoopP95Ms": 112.787,
+          "cpuMs": 2538.776,
+          "peakRssMiB": 495.262
+        },
+        {
+          "name": "store.get",
+          "samples": 15,
+          "samplesMs": [
+            0.801,
+            0.751,
+            0.644,
+            0.617,
+            0.626,
+            0.656,
+            0.61,
+            0.604,
+            0.606,
+            0.608,
+            0.618,
+            0.61,
+            0.648,
+            0.63,
+            0.613
+          ],
+          "medianMs": 0.618,
+          "p95Ms": 0.801,
+          "maxMs": 0.801,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 1.827,
+          "cpuMs": 11.083,
+          "peakRssMiB": 495.262
+        },
+        {
+          "name": "store.backend x1000",
+          "samples": 15,
+          "samplesMs": [
+            0.094,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004
+          ],
+          "medianMs": 0.004,
+          "p95Ms": 0.094,
+          "maxMs": 0.094,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 1.166,
+          "cpuMs": 3.006,
+          "peakRssMiB": 495.262
+        },
+        {
+          "name": "store.readAfterWrites",
+          "samples": 15,
+          "samplesMs": [
+            0.886,
+            1.71,
+            0.842,
+            1.538,
+            1.488,
+            0.765,
+            0.672,
+            0.656,
+            0.696,
+            0.63,
+            0.655,
+            0.685,
+            0.712,
+            0.646,
+            0.646
+          ],
+          "medianMs": 0.696,
+          "p95Ms": 1.71,
+          "maxMs": 1.71,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.126,
+          "cpuMs": 15.781,
+          "peakRssMiB": 495.262
+        },
+        {
+          "name": "GET /api/sessions (Fastify inject)",
+          "samples": 10,
+          "samplesMs": [
+            92.317,
+            104.294,
+            90.164,
+            108.99,
+            92.434,
+            107.58,
+            94.974,
+            113.43,
+            101.886,
+            109.494
+          ],
+          "medianMs": 103.09,
+          "p95Ms": 113.43,
+          "maxMs": 113.43,
+          "clonesPerSample": [
+            101
+          ],
+          "clonedMessageEntriesPerSample": [
+            100000
+          ],
+          "eventLoopP95Ms": 110.232,
+          "cpuMs": 1741.229,
+          "peakRssMiB": 495.262
+        },
+        {
+          "name": "store.renameSession (durable)",
+          "samples": 8,
+          "samplesMs": [
+            163.115,
+            168.649,
+            164.744,
+            162.54,
+            162.566,
+            165.129,
+            164.073,
+            170.654
+          ],
+          "medianMs": 164.408,
+          "p95Ms": 170.654,
+          "maxMs": 170.654,
+          "clonesPerSample": [
+            2
+          ],
+          "clonedMessageEntriesPerSample": [
+            2000
+          ],
+          "eventLoopP95Ms": 3.34,
+          "cpuMs": 1778.033,
+          "peakRssMiB": 581.039
+        },
+        {
+          "name": "store.streamMessage (warm public snapshot)",
+          "samples": 30,
+          "samplesMs": [
+            0.943,
+            0.758,
+            0.728,
+            0.734,
+            0.772,
+            0.764,
+            0.764,
+            0.727,
+            0.789,
+            0.71,
+            0.704,
+            0.729,
+            0.754,
+            0.71,
+            0.728,
+            0.711,
+            0.784,
+            0.756,
+            0.707,
+            0.714,
+            0.75,
+            0.739,
+            0.71,
+            0.713,
+            0.788,
+            1.493,
+            0.768,
+            0.709,
+            0.705,
+            0.782
+          ],
+          "medianMs": 0.736,
+          "p95Ms": 0.943,
+          "maxMs": 1.493,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 1.929,
+          "cpuMs": 27.963,
+          "peakRssMiB": 509.66
+        },
+        {
+          "name": "encode one full session.upserted",
+          "samples": 15,
+          "samplesMs": [
+            1.636,
+            1.485,
+            0.665,
+            0.684,
+            0.661,
+            0.675,
+            1.352,
+            0.69,
+            0.668,
+            0.663,
+            0.674,
+            0.697,
+            0.688,
+            0.8,
+            0.753
+          ],
+          "medianMs": 0.688,
+          "p95Ms": 1.636,
+          "maxMs": 1.636,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 2.578,
+          "cpuMs": 16.256,
+          "peakRssMiB": 515.387
+        }
+      ]
+    },
+    {
+      "sessions": 100,
+      "openSessions": 10,
+      "messagesPerSession": 1000,
+      "contentBytesPerMessage": 256,
+      "initialStateBytes": 37475876,
+      "sessionListBytes": 5307,
+      "upsertBytes": 374914,
+      "metrics": [
+        {
+          "name": "store.list",
+          "samples": 15,
+          "samplesMs": [
+            94.958,
+            96.42,
+            93.007,
+            111.168,
+            89.793,
+            111.949,
+            89.026,
+            111.17,
+            90.847,
+            119.971,
+            91.808,
+            105.465,
+            90.609,
+            101.12,
+            93.241
+          ],
+          "medianMs": 94.958,
+          "p95Ms": 119.971,
+          "maxMs": 119.971,
+          "clonesPerSample": [
+            100
+          ],
+          "clonedMessageEntriesPerSample": [
+            100000
+          ],
+          "eventLoopP95Ms": 113.246,
+          "cpuMs": 2505.204,
+          "peakRssMiB": 509.605
+        },
+        {
+          "name": "store.get",
+          "samples": 15,
+          "samplesMs": [
+            0.752,
+            0.661,
+            0.634,
+            0.66,
+            0.63,
+            0.669,
+            0.719,
+            0.755,
+            0.702,
+            0.707,
+            0.723,
+            0.99,
+            0.926,
+            0.769,
+            0.711
+          ],
+          "medianMs": 0.711,
+          "p95Ms": 0.99,
+          "maxMs": 0.99,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.053,
+          "cpuMs": 13.495,
+          "peakRssMiB": 509.605
+        },
+        {
+          "name": "store.backend x1000",
+          "samples": 15,
+          "samplesMs": [
+            0.089,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004,
+            0.004
+          ],
+          "medianMs": 0.004,
+          "p95Ms": 0.089,
+          "maxMs": 0.089,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 1.198,
+          "cpuMs": 2.964,
+          "peakRssMiB": 509.605
+        },
+        {
+          "name": "store.readAfterWrites",
+          "samples": 15,
+          "samplesMs": [
+            0.847,
+            0.675,
+            0.659,
+            0.653,
+            0.754,
+            0.889,
+            1.009,
+            0.779,
+            0.856,
+            0.851,
+            0.949,
+            1.205,
+            1.137,
+            1.23,
+            1.277
+          ],
+          "medianMs": 0.856,
+          "p95Ms": 1.277,
+          "maxMs": 1.277,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.566,
+          "cpuMs": 18.991,
+          "peakRssMiB": 509.605
+        },
+        {
+          "name": "GET /api/sessions (Fastify inject)",
+          "samples": 10,
+          "samplesMs": [
+            93.255,
+            103.647,
+            91.47,
+            116.031,
+            93.87,
+            110.643,
+            89.012,
+            112.833,
+            89.782,
+            116.493
+          ],
+          "medianMs": 98.758,
+          "p95Ms": 116.493,
+          "maxMs": 116.493,
+          "clonesPerSample": [
+            101
+          ],
+          "clonedMessageEntriesPerSample": [
+            100000
+          ],
+          "eventLoopP95Ms": 117.309,
+          "cpuMs": 1689.946,
+          "peakRssMiB": 509.605
+        },
+        {
+          "name": "store.renameSession (durable)",
+          "samples": 8,
+          "samplesMs": [
+            170.553,
+            162.856,
+            165.613,
+            178.126,
+            171.23,
+            176.678,
+            169.87,
+            175.669
+          ],
+          "medianMs": 170.892,
+          "p95Ms": 178.126,
+          "maxMs": 178.126,
+          "clonesPerSample": [
+            2
+          ],
+          "clonedMessageEntriesPerSample": [
+            2000
+          ],
+          "eventLoopP95Ms": 3.314,
+          "cpuMs": 1842.553,
+          "peakRssMiB": 581.262
+        },
+        {
+          "name": "store.streamMessage (warm public snapshot)",
+          "samples": 30,
+          "samplesMs": [
+            0.892,
+            0.908,
+            0.886,
+            0.837,
+            0.831,
+            0.843,
+            0.953,
+            0.816,
+            0.871,
+            0.81,
+            0.877,
+            1.015,
+            0.935,
+            0.892,
+            0.799,
+            0.883,
+            1.019,
+            0.905,
+            0.782,
+            0.773,
+            0.839,
+            1.252,
+            0.812,
+            0.787,
+            0.811,
+            0.764,
+            0.955,
+            0.771,
+            0.773,
+            0.803
+          ],
+          "medianMs": 0.841,
+          "p95Ms": 1.019,
+          "maxMs": 1.252,
+          "clonesPerSample": [
+            1
+          ],
+          "clonedMessageEntriesPerSample": [
+            1000
+          ],
+          "eventLoopP95Ms": 2.271,
+          "cpuMs": 32.823,
+          "peakRssMiB": 509.809
+        },
+        {
+          "name": "encode one full session.upserted",
+          "samples": 15,
+          "samplesMs": [
+            0.854,
+            0.71,
+            0.758,
+            0.704,
+            0.738,
+            0.697,
+            1.301,
+            0.678,
+            0.721,
+            0.661,
+            0.681,
+            0.695,
+            0.688,
+            0.681,
+            0.691
+          ],
+          "medianMs": 0.697,
+          "p95Ms": 1.301,
+          "maxMs": 1.301,
+          "clonesPerSample": [
+            0
+          ],
+          "clonedMessageEntriesPerSample": [
+            0
+          ],
+          "eventLoopP95Ms": 2.061,
+          "cpuMs": 13.087,
+          "peakRssMiB": 515.547
+        }
+      ]
+    }
+  ],
+  "eventLogs": [
+    {
+      "count": 100,
+      "bytes": 38680,
+      "cold": {
+        "name": "cold parse",
+        "samples": 5,
+        "samplesMs": [
+          2.115,
+          0.883,
+          1.128,
+          1.135,
+          1.052
+        ],
+        "medianMs": 1.128,
+        "p95Ms": 2.115,
+        "maxMs": 2.115,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.632,
+        "cpuMs": 6.28,
+        "peakRssMiB": 509.828
+      },
+      "version": {
+        "name": "unchanged version stat",
+        "samples": 15,
+        "samplesMs": [
+          0.304,
+          0.193,
+          0.152,
+          0.199,
+          0.175,
+          0.176,
+          0.187,
+          0.152,
+          0.236,
+          0.148,
+          0.14,
+          0.142,
+          0.334,
+          0.292,
+          0.145
+        ],
+        "medianMs": 0.176,
+        "p95Ms": 0.334,
+        "maxMs": 0.334,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.311,
+        "cpuMs": 4.428,
+        "peakRssMiB": 509.828
+      },
+      "warm": {
+        "name": "warm reader including returned array copy",
+        "samples": 15,
+        "samplesMs": [
+          1.464,
+          0.967,
+          1.148,
+          0.959,
+          0.984,
+          0.787,
+          0.522,
+          0.576,
+          1.059,
+          1.421,
+          0.638,
+          0.465,
+          0.569,
+          0.585,
+          0.902
+        ],
+        "medianMs": 0.902,
+        "p95Ms": 1.464,
+        "maxMs": 1.464,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.699,
+        "cpuMs": 14.752,
+        "peakRssMiB": 509.828
+      },
+      "appendMedianMs": 0.667
+    },
+    {
+      "count": 1000,
+      "bytes": 388780,
+      "cold": {
+        "name": "cold parse",
+        "samples": 5,
+        "samplesMs": [
+          2.235,
+          1.88,
+          2.076,
+          1.599,
+          1.822
+        ],
+        "medianMs": 1.88,
+        "p95Ms": 2.235,
+        "maxMs": 2.235,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.693,
+        "cpuMs": 14.974,
+        "peakRssMiB": 509.906
+      },
+      "version": {
+        "name": "unchanged version stat",
+        "samples": 15,
+        "samplesMs": [
+          0.337,
+          0.188,
+          0.139,
+          0.209,
+          0.123,
+          0.123,
+          0.238,
+          0.162,
+          0.155,
+          0.255,
+          0.154,
+          0.25,
+          0.142,
+          0.138,
+          0.134
+        ],
+        "medianMs": 0.155,
+        "p95Ms": 0.337,
+        "maxMs": 0.337,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.432,
+        "cpuMs": 4.156,
+        "peakRssMiB": 509.906
+      },
+      "warm": {
+        "name": "warm reader including returned array copy",
+        "samples": 15,
+        "samplesMs": [
+          0.65,
+          0.568,
+          0.544,
+          0.554,
+          0.476,
+          0.86,
+          0.503,
+          0.491,
+          0.525,
+          0.638,
+          0.602,
+          0.512,
+          0.583,
+          0.554,
+          0.518
+        ],
+        "medianMs": 0.554,
+        "p95Ms": 0.86,
+        "maxMs": 0.86,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.688,
+        "cpuMs": 9.758,
+        "peakRssMiB": 509.906
+      },
+      "appendMedianMs": 0.636
+    },
+    {
+      "count": 10000,
+      "bytes": 3907780,
+      "cold": {
+        "name": "cold parse",
+        "samples": 5,
+        "samplesMs": [
+          9.901,
+          10.322,
+          10.226,
+          9.819,
+          9.989
+        ],
+        "medianMs": 9.989,
+        "p95Ms": 10.322,
+        "maxMs": 10.322,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 9.896,
+        "cpuMs": 71.284,
+        "peakRssMiB": 509.797
+      },
+      "version": {
+        "name": "unchanged version stat",
+        "samples": 15,
+        "samplesMs": [
+          0.31,
+          0.192,
+          0.152,
+          0.255,
+          0.223,
+          0.158,
+          0.153,
+          0.193,
+          0.168,
+          0.132,
+          0.136,
+          0.143,
+          0.202,
+          0.2,
+          0.148
+        ],
+        "medianMs": 0.168,
+        "p95Ms": 0.31,
+        "maxMs": 0.31,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.32,
+        "cpuMs": 4.759,
+        "peakRssMiB": 509.797
+      },
+      "warm": {
+        "name": "warm reader including returned array copy",
+        "samples": 15,
+        "samplesMs": [
+          0.741,
+          0.506,
+          0.775,
+          0.801,
+          0.491,
+          0.756,
+          0.565,
+          0.589,
+          0.539,
+          0.465,
+          0.484,
+          0.754,
+          0.781,
+          0.498,
+          0.475
+        ],
+        "medianMs": 0.565,
+        "p95Ms": 0.801,
+        "maxMs": 0.801,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 1.678,
+        "cpuMs": 9.945,
+        "peakRssMiB": 509.797
+      },
+      "appendMedianMs": 0.898
+    }
+  ],
+  "workspace": {
+    "diskEntries": 2001,
+    "returnedEntries": 2000,
+    "hasTruncationIndicator": false,
+    "listingMetric": {
+      "name": "list 2001 files (2000 returned)",
+      "samples": 5,
+      "samplesMs": [
+        516.883,
+        540.242,
+        529.342,
+        543.617,
+        580.229
+      ],
+      "medianMs": 540.242,
+      "p95Ms": 580.229,
+      "maxMs": 580.229,
+      "clonesPerSample": [
+        0
+      ],
+      "clonedMessageEntriesPerSample": [
+        0
+      ],
+      "eventLoopP95Ms": 1.138,
+      "cpuMs": 2487.7,
+      "peakRssMiB": 406.031
+    },
+    "binaryPreview": {
+      "purpose": "Packaging bytes only; synthetic bytes are not a valid PDF or a browser decode test",
+      "rawBytes": 10485760,
+      "base64Bytes": 13981016,
+      "metric": {
+        "name": "read and base64-encode 10 MiB binary",
+        "samples": 5,
+        "samplesMs": [
+          10.682,
+          12.939,
+          7.803,
+          6.782,
+          10.125
+        ],
+        "medianMs": 10.125,
+        "p95Ms": 12.939,
+        "maxMs": 12.939,
+        "clonesPerSample": [
+          0
+        ],
+        "clonedMessageEntriesPerSample": [
+          0
+        ],
+        "eventLoopP95Ms": 2.421,
+        "cpuMs": 129.653,
+        "peakRssMiB": 462.844
+      }
+    }
+  },
+  "bundle": {
+    "available": true,
+    "scope": "Assets referenced by built HTML, not lazy chunks, compression on the server, or field load time",
+    "assets": [
+      {
+        "asset": "/assets/index-BZL1lbbF.js",
+        "bytes": 665224,
+        "gzipBytes": 197528
+      },
+      {
+        "asset": "/assets/index-sou3dg9a.css",
+        "bytes": 97891,
+        "gzipBytes": 17452
+      }
+    ]
+  }
+}

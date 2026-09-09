@@ -3,6 +3,11 @@
 A mobile-first web UI for supervising GitHub Copilot and Claude Agent sessions
 on trusted computers.
 
+See the [reference documentation](docs/README.md) for separate UI/UX, functional
+requirements and machine-setup specifications, plus the
+[code and issue review](docs/reviews/2026-09-09/code-and-issues.md) and
+[performance investigation](docs/performance.md).
+
 ## The important part
 
 **A hub is one service that serves the UI and runs sessions on its own
@@ -83,7 +88,9 @@ indexes tracked code locally; it does not send source to an external model.
 ## Requirements
 
 - Linux with systemd user services
-- Node.js 22+
+- Node.js compatible with the locked toolchain's engine ranges; see
+  [machine setup](docs/specs/machine-setup.md#1-supported-installation-and-toolchain)
+  rather than assuming every Node 22 release can run the complete validation gate
 - pnpm
 - An installed and authenticated GitHub Copilot CLI
 - tmux for terminal-backed Copilot sessions

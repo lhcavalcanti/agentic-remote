@@ -162,8 +162,9 @@ keep every method optional on the web side.
   `save_hub_config` are **not** in it, so the hub cannot read or change which hub
   the app points at; only the local settings page can.
 - Only `http` and `https` hub URLs are accepted.
-- Switching hubs destroys the previous window so one hub's Access session is
-  never presented to another.
+- Switching hubs navigates the existing main webview; it does not destroy the
+  window or clear its cookie store. Previous hub cookies remain in the shared
+  store.
 - The shell stores no provider credentials, pairing tokens, or session content.
   It holds a hub URL, an optional direct address, and a shortcut.
 

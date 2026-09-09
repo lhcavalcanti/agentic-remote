@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fnmatch
 import hashlib
 import importlib.metadata
 import json
@@ -46,7 +47,14 @@ def scope_for(root: Path) -> dict:
             isinstance(value, str) for value in scope[field]
         ):
             raise ValueError(f"Invalid Graphify scope field: {field}")
+    patterns = scope.get("inventory_only_patterns", [])
+    if not isinstance(patterns, list) or not all(isinstance(value, str) for value in patterns):
+        raise ValueError("Invalid Graphify scope field: inventory_only_patterns")
     return scope
+
+
+def inventory_only(name: str, scope: dict) -> bool:
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in scope.get("inventory_only_patterns", []))
 
 
 def source_inventory(root: Path, scope: dict) -> dict[str, str]:
@@ -288,8 +296,7 @@ def update(force: bool) -> None:
         code = []
         not_parsed = []
         for name in before["inputs"]:
-            kind = classify_file(ROOT / name)
-            if kind == FileType.CODE:
+            if not inventory_only(name, scope) and classify_file(ROOT / name) == FileType.CODE:
                 code.append(ROOT / name)
             else:
                 not_parsed.append(name)

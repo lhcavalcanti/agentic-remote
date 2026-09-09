@@ -222,11 +222,12 @@ prints every `Environment=` entry in the unit. Keep values in the profile, or in
 a separate `EnvironmentFile=` whose permissions you control.
 
 The profile is not a secret store in the first place. It holds paths, URLs, a
-service name, and the repository to watch. The GitHub token is read at run time
-from the GitHub CLI configuration and exported only into the monitor's own
-process, so this tooling never writes it to disk. Keep credentials, pairing
-tokens, and SSH keys out of the profile: name an SSH destination and let the SSH
-client resolve the key.
+service name, and the repository to watch. When
+`AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR` is set, the monitor exports it as
+`GH_CONFIG_DIR` for Git's existing `gh auth git-credential` helper. The monitor
+does not retrieve or export a GitHub token. Keep credentials, pairing tokens,
+and SSH keys out of the profile: name an SSH destination and let the SSH client
+resolve the key.
 
 ## Reproducible setup from the repository
 
@@ -370,12 +371,14 @@ AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL=http://127.0.0.1:4317/health
 Phase one graduates the commit into the local runtime and checks it. Phase two
 then runs, for each host in order:
 
-1. Refuse to continue if the remote checkout is dirty or unreachable.
-2. Run `./bin/agentic-remote update` there.
+1. Read the previous remote `HEAD` and refuse a dirty or unreachable checkout.
+2. Fetch `origin`, check out the validated commit detached, and run
+   `./bin/agentic-remote setup` there.
 3. Require the remote `HEAD` to equal the validated commit. A host that landed
-   on a different tip did not install what was validated, so it is rolled back.
-4. Probe the health URL on that host.
-5. Roll that host back with `./bin/agentic-remote rollback` if any step fails.
+   on a different commit did not install what was validated.
+4. Wait for the health URL on that host using the configured readiness retries.
+5. On failure, attempt to restore affected hosts by checking out their previous
+   commits and rerunning setup, as described below.
 
 The success marker only advances after every host succeeds, so a failure leaves
 the commit ungraduated and the next run retries it.
@@ -409,10 +412,14 @@ profiles on separate monitor hosts.
 
 ### Failure behavior
 
-A failure on any host restores that host to the commit it was on, then restores
-any host already promoted earlier in the same run, so the fleet is not left
-split across two commits. The success marker is not advanced, so the next run
-retries the same commit.
+Installation or verification failure triggers an attempt to restore that host's
+previous source commit. A later host's failure also triggers restoration of hosts
+already promoted in the same run. Restoration checks out each previous commit
+and reruns setup: it rebuilds a release rather than reactivating
+the previous immutable artifact with `rollback`. Restoration failures are logged,
+and restored health is not checked by this path; verify each affected host before
+considering recovery complete. The success marker is not advanced, so the next
+run retries the same commit.
 
 The local runtime stays active because its validation and health are durably
 recorded as `local-verified`. A retry rechecks that same local commit/release and

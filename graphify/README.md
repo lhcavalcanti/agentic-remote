@@ -84,6 +84,12 @@ Git retains the preceding committed snapshot.
 - Documentation, styles, images, and unsupported files are inventoried and
   hashed, but **not semantically extracted**. No claim is made that the graph
   understands prose requirements, dynamic HTTP routing, or runtime state.
+- `inventory_only_patterns` keeps raw review JSON in that hashed inventory
+  rather than asking the code extractor to interpret measurement data.
+  Patterns use Python `fnmatch` against Git's relative paths (`*` also matches
+  `/`); `docs/reviews/*.json` includes nested dated reports. This is not an
+  exclusion: changing the data still invalidates the snapshot. Review programs
+  and ordinary JSON manifests retain their normal code classification.
 - Dependency locks, generated/build/cache directories, `.env*`, keys, logs,
   this folder, and untracked files are excluded. No provider/session state,
   user Knowledge roots, live machine profile, or external repository is read.

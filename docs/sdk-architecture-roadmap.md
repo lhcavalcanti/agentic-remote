@@ -11,6 +11,13 @@ The baseline is `main` at `4a1efb4`, after #197. Recheck the implementation and
 open work before starting each slice; issue descriptions and this baseline are
 not proof that a defect still exists.
 
+The [September 9, 2026 review](reviews/2026-09-09/code-and-issues.md) records a
+newer source baseline and current issue dispositions. In particular, provider
+session/history lists already remove message bodies, but do so **after** cloning
+stored histories. Full-history upsert events are a separate transport concern.
+Use the [performance investigation](performance.md), not the older planning
+description, for the current measured read-path costs.
+
 ## 1. Decisions
 
 - Keep the hybrid model: SDK sessions for structured web workflows, tmux for
@@ -38,7 +45,7 @@ not proof that a defect still exists.
 | SDK integration | Copilot already uses structured permissions, questions/elicitation, model/mode operations, command RPCs, and background-task RPCs. Claude uses its official Agent SDK. | Characterize and improve existing paths instead of reimplementing them. |
 | Runtime compatibility | The lockfile resolves Copilot SDK 1.0.11, while `AgentService` explicitly launches the system CLI through `COPILOT_BIN` or its default path. | Record the SDK, actual CLI, and supported protocol separately. A package version does not prove runtime capability. |
 | Lifecycle and durability | #197 added commit-aware persistence, durable retired identities, queue admissions/settlement, reply settlement, and shared `SessionAdmissions`. | Keep these invariants and their regression suites intact during extraction. Do not plan them as missing features. |
-| Read models | `SessionSummary` exists, but `ManagedSession`, list responses, and `session.upserted` events currently carry full `SessionDetail` histories. | Reuse/refine the existing summary type and add an explicit unloaded-detail state. An empty array must not mean both unloaded and empty. |
+| Read models | `SessionSummary` exists and `ManagedSession` extends `SessionDetail`. Current provider lists strip messages after cloning them; detail reads and `session.upserted` events carry full histories. | Move summary projection before cloning; reuse/refine the summary type and make unloaded detail explicit. Do not assume listing eagerly transports every transcript. |
 | Polling and storage | Event logs have incremental readers and version gates; the JSON store batches durable changes and separates live stream deltas from committed checkpoints. | Preserve those optimizations. Measure remaining deep clones, full snapshot encoding, and changed-history projection costs. |
 | Large modules | At this baseline, `App.tsx` is about 11,900 lines and `agent-service.ts` about 6,800. | Treat size as a navigation/ownership warning, not evidence of a performance defect or a line-count target. |
 
@@ -86,7 +93,7 @@ them.
 | U3 | Extract pure session-event reconciliation from `App.tsx` into a tested module. | U2 | Revision ordering, authoritative/offline snapshots, removal/replacement, selection, and stale responses produce the same browser state. |
 | R1 | Add metadata-only store/service read projections and use them in non-transcript polling decisions. | P0 | An unchanged-history poll does not deep-clone message arrays just to check status/existence. No storage format, timing, or public response changes. |
 | R2 | Add opt-in summary listing and cursor-based history reads through node, proxy, and hub contracts. | R1 | New readers can fetch bounded history without changing old endpoints; old/new hub-node combinations retain the legacy path. |
-| R3 | Let the browser consume summaries and load selected-session history in pages. | R2, U3 | Unselected histories are not eagerly fetched on the new path; loading, paging, switching, clear/replacement, and reconnect remain correct. |
+| R3 | Let the browser consume explicit summaries and load selected-session history in pages. | R2, U3 | Selected history is bounded/paged; loading, switching, clear/replacement, and reconnect remain correct. Current list responses already omit message bodies. |
 | R4 | Add an opt-in versioned event stream with summary/control events and subscribed-session message updates. | R2 | Legacy streams remain intact; the new producer has explicit sequence/gap recovery and bounded slow-client behavior. |
 | R5 | Move capable browser clients to the new event stream. | R3, R4 | Streaming does not resend complete histories, disconnected clients recover from snapshots, and old servers still work. |
 

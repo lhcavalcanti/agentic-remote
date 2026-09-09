@@ -1,0 +1,88 @@
+{
+  "date": "2026-09-09",
+  "applicationSourceCommit": "15a043e57234f7addfd8160f990dd22b38f1882a",
+  "applicationVersion": "1.1.0",
+  "publicationBaseCommit": "46a4d04ab8af27effc6ade29d2fa5d72e45cb321",
+  "publicationBaseVersion": "1.1.1",
+  "node": "v22.22.1",
+  "fullGate": {
+    "command": "pnpm check",
+    "exitCode": 0,
+    "completedRuns": 1,
+    "filesPassed": 94,
+    "filesSkipped": 1,
+    "testsPassed": 3281,
+    "testsSkipped": 1,
+    "vitestDurationSeconds": 805.75,
+    "skippedFile": "src/MermaidDiagram.real.test.tsx",
+    "includes": [
+      "oxlint",
+      "Vitest",
+      "TypeScript build",
+      "Vite production build"
+    ],
+    "warnings": [
+      "Existing React/hooks lint warnings",
+      "Production chunk-size warning"
+    ]
+  },
+  "coordination": {
+    "initialWaitExitCode": 124,
+    "initialWaitSeconds": 900,
+    "testsStartedDuringInitialWait": false,
+    "reason": "Another session was running real-tmux validation.",
+    "completedGateStartedAfterOtherRunnerExited": true,
+    "retryToGreen": false
+  },
+  "publicationGate": {
+    "command": "NODE_ENV=production pnpm check",
+    "exitCode": 0,
+    "completedRuns": 1,
+    "filesPassed": 94,
+    "filesSkipped": 1,
+    "testsPassed": 3284,
+    "testsSkipped": 1,
+    "vitestDurationSeconds": 728.46,
+    "skippedFile": "src/MermaidDiagram.real.test.tsx",
+    "reasonForNewGate": "Main advanced by the responsive-margin/version change and review JSON required tested Graphify inventory support.",
+    "targetedGraphifyTestsPassed": 11,
+    "toolingChange": "Optional inventory-only path patterns preserve hashes for review JSON while excluding it from semantic code extraction.",
+    "applicationRuntimeBehaviorChangedByAudit": false
+  },
+  "investigationPrograms": {
+    "providerReproductionCasesPassed": 9,
+    "realFilesystemRefusalStoresReproduced": 3,
+    "performanceMethodology": "real-AgentService-summary-projection-v3",
+    "finalPerformanceRuns": 2,
+    "realSummaryProjectionAndOpenIdentityChecksPassed": true,
+    "reportedQuantilesVerifiedAgainstSamples": true,
+    "closedHistoryListCloneCountVerified": true,
+    "earlierUnprojectedApiMeasurementsInvalidated": true,
+    "uiAuditCasesPassed": 11,
+    "browser": {
+      "engine": "Chromium 151.0.7922.34",
+      "viewportsPassed": ["1440x900", "390x844"],
+      "checks": ["message composer mounted", "no horizontal document overflow"],
+      "transport": "mocked REST and WebSockets; frontend-only loopback server",
+      "missingLibrariesResolvedSessionLocally": true,
+      "systemPackagesInstalled": false,
+      "shortPrivateSocketDirectoryUsed": true,
+      "frontendClosed": true,
+      "privateRuntimeRemoved": true,
+      "screenshotsOrInputLatencyMeasured": false
+    }
+  },
+  "scope": {
+    "runtimeBehaviorChanged": false,
+    "liveProviderInvokedByInvestigationPrograms": false,
+    "manualDeploymentOrRestartPerformed": false,
+    "physicalDeviceAcceptancePerformed": false,
+    "productionLoadTestPerformed": false,
+    "inheritedProductionEnvironmentGateRepeated": true
+  },
+  "limits": [
+    "One passing gate does not establish a current flake rate or close issue 169.",
+    "The recorded Node version is below the locked jsdom dependency's declared engine range; this execution does not establish support for that version.",
+    "Benchmark fixtures and their output shapes require separate validation; passing application tests alone does not validate a measurement's representativeness."
+  ]
+}

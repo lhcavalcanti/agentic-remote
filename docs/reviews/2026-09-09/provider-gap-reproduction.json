@@ -1,0 +1,68 @@
+{
+  "baseline": "15a043e57234f7addfd8160f990dd22b38f1882a",
+  "environment": "in-memory stores; fake provider methods; no start(), authentication, terminal, network or filesystem mutation",
+  "reports": [
+    {
+      "case": "207-sdk-refusal",
+      "result": "reproduced",
+      "calls": [
+        "sdk.rename:Refused title",
+        "store.rename:Refused title"
+      ],
+      "durableTitle": "Original title",
+      "providerTitle": "Refused title"
+    },
+    {
+      "case": "207-terminal-refusal",
+      "result": "reproduced",
+      "calls": [
+        "terminal.rename:Refused title",
+        "store.rename:Refused title"
+      ],
+      "durableTitle": "Original title",
+      "providerTitle": "Refused title"
+    },
+    {
+      "case": "207-claude-refusal",
+      "result": "reproduced",
+      "calls": [
+        "claude.rename:Refused title",
+        "store.rename:Refused title"
+      ],
+      "durableTitle": "Original title",
+      "providerTitle": "Refused title"
+    },
+    {
+      "case": "207-suspended-copilot-counterexample",
+      "result": "no provider effect",
+      "calls": [
+        "store.rename:Refused title"
+      ]
+    },
+    {
+      "case": "207-success-counterexample",
+      "result": "both titles updated"
+    },
+    {
+      "case": "native-sdk-command-enqueue-receipt-loss",
+      "result": "reproduced false definite refusal",
+      "queuedOrInvokedCopies": 1,
+      "uncertainDelivery": false
+    },
+    {
+      "case": "sdk-command-invoke-counterexample",
+      "result": "correctly uncertain",
+      "queuedOrInvokedCopies": 1,
+      "uncertainDelivery": true
+    },
+    {
+      "case": "claude-error-restart",
+      "result": "reproduced refusal",
+      "providerCalls": 0
+    },
+    {
+      "case": "claude-idle-restart-counterexample",
+      "result": "succeeds without query"
+    }
+  ]
+}

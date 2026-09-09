@@ -128,6 +128,50 @@ describe('maintained graph artifacts', () => {
 })
 
 describe.skipIf(!pythonAvailable)('Graphify maintenance helpers (standard-library Python)', () => {
+  it('inventories review data without treating JSON evidence or its hashes as code', () => {
+    const root = fixture()
+    const data = 'docs/reviews/fixture/results.json'
+    mkdirSync(join(root, 'docs/reviews/fixture'), { recursive: true })
+    writeFileSync(join(root, data), '{"samples":[1,2,3]}\n')
+    writeFileSync(join(root, 'docs/reviews/fixture/probe.mjs'), 'export const probe = true\n')
+    git(root, 'add', data, 'docs/reviews/fixture/probe.mjs')
+    const result = pythonCall(root, `
+scope = module.scope_for(root)
+print(json.dumps({
+    "data": module.inventory_only("${data}", scope),
+    "nested": module.inventory_only("docs/reviews/fixture/nested/results.json", scope),
+    "script": module.inventory_only("docs/reviews/fixture/probe.mjs", scope),
+    "manifest": module.inventory_only("package.json", scope),
+    "legacy": module.inventory_only("${data}", {}),
+    "snapshot": module.snapshot(root),
+}))
+`)
+    expect(result.status, result.stderr).toBe(0)
+    const recorded = JSON.parse(result.stdout)
+    expect(recorded).toMatchObject({
+      data: true, nested: true, script: false, manifest: false, legacy: false,
+    })
+    expect(recorded.snapshot.inputs[data]).toBe(hash('{"samples":[1,2,3]}\n'))
+    writeFileSync(join(root, data), '{"samples":[4,5,6]}\n')
+    const changed = pythonCall(root, 'print(json.dumps(module.snapshot(root)))')
+    expect(changed.status, changed.stderr).toBe(0)
+    expect(JSON.parse(changed.stdout).source_fingerprint)
+      .not.toBe(recorded.snapshot.source_fingerprint)
+  })
+
+  it.each([{ patterns: 'docs/reviews/*.json' }, { patterns: [42] }])(
+    'rejects invalid inventory-only patterns: $patterns',
+    ({ patterns }) => {
+    const root = fixture()
+    writeFileSync(join(root, 'graphify/scope.json'), JSON.stringify({
+      ...scope, inventory_only_patterns: patterns,
+    }))
+    const result = pythonCall(root, 'module.scope_for(root)')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('Invalid Graphify scope field: inventory_only_patterns')
+    },
+  )
+
   it('never indexes untracked, generated, environment, or key files', () => {
     const root = fixture()
     writeFileSync(join(root, 'untracked.ts'), 'export const untracked = true\n')

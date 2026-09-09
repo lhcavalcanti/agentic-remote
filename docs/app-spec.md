@@ -10,6 +10,17 @@ stable as the app evolves.
 The words MUST, MUST NOT, SHOULD, and MAY describe required, prohibited,
 recommended, and optional behavior.
 
+## Reading guide
+
+This document remains the detailed product authority. Focused reference views
+are maintained in [UI/UX](specs/ui-ux.md),
+[functional requirements](specs/functional-requirements.md), and
+[machine setup](specs/machine-setup.md). See the [documentation index](README.md)
+for architecture, dated code/issue reviews, and measured performance evidence.
+Known gaps and proposed budgets in a review do not silently change this contract.
+Operational authorization follows the
+[repository instructions](../.github/copilot-instructions.md).
+
 ## 1. Product goals
 
 Agentic Remote MUST:
@@ -938,15 +949,23 @@ guards without disabling legitimate external/native history refresh.
 - Application changes MUST be committed and pushed before deployment.
 - Unrelated dirty worktree changes MUST be preserved and excluded from scoped
   releases.
-- Every validated development fix MUST end with an explicit user decision about
-  whether to update the production node.
-- Production MUST NOT be updated implicitly from development approval or from
-  approval granted for an earlier fix.
+- Development MUST prove the exact candidate before production promotion:
+  active release, healthy runtime, paired computers online, sessions preserved,
+  and the affected behavior exercised through the hub.
+- Once development proves a reversible change, that same commit MUST follow the
+  configured promotion policy without another routine approval. Explicit
+  confirmation remains required for unproven node-only behavior, inconclusive
+  verification, stored-state migrations/rewrites/deletions, or changes that
+  `agentic-remote rollback` cannot undo.
+- Promotion MUST follow the current
+  [repository instructions](../.github/copilot-instructions.md) and
+  [machine-local profile contract](deployment-promotion.md). A topology change
+  MUST NOT be treated as an ordinary release promotion.
 - A general release is complete only after targeted/full tests, production
   build, intended-host deployment, version verification, and live health
-  checks. Provider rollouts MAY remain development-only pending manual
-  approval; untouched nodes MUST continue advertising only their supported
-  providers.
+  checks. Provider rollouts that cannot meet those proof/rollback requirements
+  MUST remain development-only pending explicit approval; untouched nodes MUST
+  continue advertising only their supported providers.
 
 ## 16. Acceptance regression matrix
 

@@ -96,6 +96,10 @@ const configureRuntimeSchema = z.object({
   mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
 })
 
+const recoverConversationSchema = z.object({
+  reason: z.enum(['provider-error', 'stale-sdk-interaction', 'manual']),
+})
+
 const directoryQuerySchema = z.object({
   scope: z.enum(['home', 'all']).optional(),
   path: z.string().trim().max(4096).optional(),
@@ -556,10 +560,12 @@ export async function registerHubRoutes(
     },
   )
 
-  app.post<{ Params: SessionParams }>(
-    '/api/computers/:computerId/sessions/:sessionId/clear',
-    async (request) => {
-      const { computerId, sessionId } = request.params
+  const replaceConversation = async (
+    computerId: string,
+    sessionId: string,
+    replace: () => ReturnType<ComputerManager['clearConversation']>,
+    completed: string,
+  ) => {
       // Silence belongs to the conversation, not to the id it happens to be
       // under. A paired node that predates the replacement link reports a
       // clear as a plain removal, which takes the silence with it, so it is
@@ -576,7 +582,7 @@ export async function registerHubRoutes(
         }
       }
       const carryKnowledge = sessionKnowledgeLifecycle?.replacementCarrier(computerId)
-      const session = await manager.clearConversation(computerId, sessionId)
+      const session = await replace()
       assertCurrent()
       // The replacement is already real. Auxiliary persistence must not hide
       // its ID: older nodes supply that lineage only in this HTTP response.
@@ -593,17 +599,47 @@ export async function registerHubRoutes(
       await Promise.all([
         carryMetadata(
           () => carryKnowledge?.(sessionId, session),
-          'Conversation cleared, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.',
+          `${completed}, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.`,
         ),
         carryMetadata(
           () => silenced && session.id !== sessionId
             ? mutes?.setSessionMuted(computerId, session.id, true)
             : undefined,
-          'Conversation cleared, but notification silence could not be restored. Silence notifications again for this session.',
+          `${completed}, but notification silence could not be restored. Silence notifications again for this session.`,
         ),
       ])
       assertCurrent()
-      return { session }
+      return session
+  }
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/clear',
+    async (request) => {
+      const { computerId, sessionId } = request.params
+      return {
+        session: await replaceConversation(
+          computerId,
+          sessionId,
+          () => manager.clearConversation(computerId, sessionId),
+          'Conversation cleared',
+        ),
+      }
+    },
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/recover',
+    async (request) => {
+      const { computerId, sessionId } = request.params
+      const input = recoverConversationSchema.parse(request.body)
+      return {
+        session: await replaceConversation(
+          computerId,
+          sessionId,
+          () => manager.recoverConversation(computerId, sessionId, input.reason),
+          'Conversation recovered',
+        ),
+      }
     },
   )
 

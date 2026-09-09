@@ -1649,6 +1649,10 @@ describe('Review 5125727881 runtime boundaries', () => {
       service['clearSerialized'] = async () => snapshot
       return service.clearConversation(sessionId)
     },
+    recoverConversation: async ({ service }, snapshot) => {
+      service['clearSerialized'] = async () => snapshot
+      return service.recoverConversation(sessionId, 'manual')
+    },
     suspendSession: async ({ service }, snapshot) => {
       service['suspendSerialized'] = async () => snapshot
       return service.suspendSession(sessionId)

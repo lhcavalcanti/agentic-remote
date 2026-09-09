@@ -64,6 +64,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
         terminalBacked: true,
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
+        supportsContextRecovery: true,
       },
     ]
   }
@@ -298,10 +299,34 @@ class FakeSessionService extends EventEmitter implements SessionService {
     if (!session) {
       throw new Error('Session not found')
     }
+
     session.messages = []
     session.status = 'idle'
     this.emitEvent({ type: 'session.upserted', session })
     return structuredClone(session)
+  }
+
+  async recoverConversation(
+    id: string,
+    reason: import('../shared/contracts.js').SessionRecoveryReason,
+  ): Promise<SessionDetail> {
+    const current = this.sessions.get(id)
+    if (!current) throw new Error('Session not found')
+    const recovered = {
+      ...current,
+      id: `${id}-recovered`,
+      replacedSessionIds: [...(current.replacedSessionIds || []), id],
+      recovery: {
+        recoveredAt: new Date().toISOString(),
+        archivedMessageCount: current.messages.length,
+        contextMessageCount: current.messages.length,
+        contextTruncated: false,
+        reason,
+      },
+    }
+    this.sessions.delete(id)
+    this.sessions.set(recovered.id, recovered)
+    return structuredClone(recovered)
   }
 
   async suspendSession(id: string): Promise<SessionDetail> {
@@ -621,6 +646,114 @@ afterEach(async () => {
 describe('multi-node hub', () => {
   beforeEach(() => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+  })
+
+  it('fails closed when an older node does not advertise context recovery', async () => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService({
+      ...session('remote-session', 'Remote'),
+      status: 'error',
+    })
+    const olderProviders = remoteService.providers().map(
+      ({ supportsContextRecovery: _recovery, ...provider }) => provider,
+    )
+    vi.spyOn(remoteService, 'providers').mockReturnValue(
+      olderProviders as unknown as ReturnType<FakeSessionService['providers']>,
+    )
+    const recover = vi.spyOn(remoteService, 'recoverConversation')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-recovery-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-recovery-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'older-node',
+        },
+      })).statusCode).toBe(201)
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remote.identity.info.id}/sessions/remote-session/recover`,
+        payload: { reason: 'provider-error' },
+      })
+
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error).toContain('does not support conversation recovery yet')
+      expect(recover).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('routes context recovery through the authenticated node replacement chain', async () => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService({
+      ...session('remote-session', 'Remote'),
+      status: 'error',
+    })
+    const recover = vi.spyOn(remoteService, 'recoverConversation')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-recovery-route-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-recovery-route-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'recovery-node',
+        },
+      })).statusCode).toBe(201)
+      await vi.waitFor(() => {
+        expect(hub.manager?.listComputers().find(
+          (computer) => computer.id === remote.identity.info.id,
+        )?.providers?.[0]?.supportsContextRecovery).toBe(true)
+      })
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remote.identity.info.id}/sessions/remote-session/recover`,
+        payload: { reason: 'provider-error' },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json().session).toMatchObject({
+        id: 'remote-session-recovered',
+        computerId: remote.identity.info.id,
+        replacedSessionIds: ['remote-session'],
+        recovery: { reason: 'provider-error' },
+      })
+      expect(recover).toHaveBeenCalledWith('remote-session', 'provider-error')
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
   })
 
   it.each([307, 308])('surfaces HTTP %i redirects during pairing and established-node writes', async (redirectStatus) => {

@@ -11,6 +11,7 @@ import type {
   RemovedQueuedPrompt,
   QueuedPromptDispatchResult,
   RuntimeOptions,
+  SessionRecoveryReason,
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
@@ -178,6 +179,22 @@ export class ProviderSessionService
 
   clearConversation(id: string): Promise<SessionDetail> {
     return this.serviceFor(id).clearConversation(id)
+  }
+
+  recoverConversation(
+    id: string,
+    reason: SessionRecoveryReason,
+  ): Promise<SessionDetail> {
+    const service = this.serviceFor(id)
+    const provider = service.getSession(id)?.provider || 'copilot'
+    if (!service.providers().some((capability) =>
+      capability.id === provider && capability.supportsContextRecovery === true)) {
+      throw Object.assign(
+        new Error('This provider does not support conversation recovery.'),
+        { statusCode: 409 },
+      )
+    }
+    return service.recoverConversation(id, reason)
   }
 
   suspendSession(id: string): Promise<SessionDetail> {

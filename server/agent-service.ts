@@ -42,6 +42,7 @@ import type {
   SessionSkillsSnapshot,
   SessionMcpServersSnapshot,
   SessionRuntimeInfo,
+  SessionRecoveryReason,
   UserInputReplyInput,
   UserInputField,
   UserInputFieldOption,
@@ -134,6 +135,7 @@ import {
   type TerminalSendOptions,
   type TerminalSessionController,
 } from './terminal-session.js'
+import { buildRecoveryBrief } from './recovery-context.js'
 
 interface ActivePrompt {
   assistantMessageId: string
@@ -1585,6 +1587,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly queuedDispatches: QueuedDispatches
   private readonly queuedPromptStops = new Map<string, () => void>()
   private readonly queuedPromptRuns = new Map<string, Promise<void>>()
+  private readonly recoverySeedPromptRuns = new Map<string, Promise<void>>()
+  private readonly recoverySeedDispatches = new Set<Promise<SessionDetail | undefined>>()
   private readonly pendingSessionMetadata = new Map<string, SessionEvent[]>()
   private readonly sessionCreations = new Set<Promise<void>>()
   private readonly hydratedSessions = new Set<string>()
@@ -1853,6 +1857,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
         supportsSessionResources: true,
+        supportsContextRecovery: true,
       },
     ]
   }
@@ -1864,7 +1869,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.startTask) return this.startTask
     this.resourceReads.start()
     this.resourceEpoch += 1
-    const starting = this.admissions.run('@startup', () => this.startAdmitted())
+    const starting = this.admissions
+      .run('@startup', () => this.startAdmitted())
+      .then(() => this.dispatchReadyRecoverySeeds(true))
     this.startTask = starting
     void starting.catch(() => {
       if (this.startTask === starting) this.startTask = undefined
@@ -1896,6 +1903,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         session.id, resend.failedAt, resend.content, this.store.backend(session.id) === 'terminal',
       )
     }
+    await this.dispatchReadyRecoverySeeds(false)
     try {
       if (await this.discoverSessions()) await this.finishStartupRecovery()
     } catch (error) {
@@ -1947,6 +1955,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             session.isOpen &&
             session.queuedPrompts?.length &&
             !session.suspended &&
+            !this.store.recoverySeed(session.id) &&
             this.store.backend(session.id) !== 'terminal' &&
             !this.isTerminalRecoveryPending(session.id) &&
             !this.externalSessionIds.has(session.id),
@@ -1957,6 +1966,105 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.startupRecoveryPending = false
     if (![...this.terminalRecoveryStates.values()].includes('pending')) {
       this.terminalRecoveryStates = undefined
+    }
+  }
+
+  private async dispatchReadyRecoverySeeds(includeTerminal: boolean): Promise<void> {
+    if (this.stopped) return
+    for (const session of this.store.list()) {
+      const seed = this.store.recoverySeed(session.id)
+      if (seed?.state !== 'pending') continue
+      const terminal = this.store.backend(session.id) === 'terminal'
+      if (terminal && (!includeTerminal || this.isTerminalRecoveryPending(session.id))) continue
+      await this.runRecoverySeedDispatch(session.id)
+    }
+  }
+
+  private runRecoverySeedDispatch(
+    sessionId: string,
+  ): Promise<SessionDetail | undefined> {
+    const dispatch = this.dispatchRecoverySeed(sessionId)
+    this.recoverySeedDispatches.add(dispatch)
+    void dispatch.then(
+      () => this.recoverySeedDispatches.delete(dispatch),
+      () => this.recoverySeedDispatches.delete(dispatch),
+    )
+    return dispatch
+  }
+
+  private async dispatchRecoverySeed(sessionId: string): Promise<SessionDetail | undefined> {
+    const seed = this.store.recoverySeed(sessionId)
+    if (!seed || seed.state !== 'pending') return this.store.get(sessionId)
+    const terminal = this.store.backend(sessionId) === 'terminal' ||
+      this.externalSessionIds.has(sessionId)
+    if (terminal && this.isTerminalRecoveryPending(sessionId)) return undefined
+    let handedOff = false
+    try {
+      const claimed = await this.store.claimRecoverySeed(sessionId, seed.prompt)
+      this.publish(claimed)
+      if (terminal) {
+        const sent = this.terminalController.sendWhenIdle
+          ? await this.terminalController.sendWhenIdle(sessionId, seed.prompt)
+          : await this.terminalController.send(sessionId, seed.prompt, false)
+        if (!sent) throw new Error('Fresh terminal session did not accept the recovery brief')
+        handedOff = true
+        this.admissions.markCommitted(sessionId)
+        const admitted = await this.store.admitRecoverySeed(
+          sessionId,
+          seed.prompt,
+          new Date().toISOString(),
+        )
+        this.publish(admitted)
+        return admitted
+      }
+      handedOff = true
+      await this.startMessage(
+        sessionId,
+        seed.prompt,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        {
+          preserveTitle: true,
+          recoverySeedPrompt: seed.prompt,
+        },
+      )
+      await this.recoverySeedPromptRuns.get(sessionId)
+      if (this.stopped) {
+        throw new Error('The service stopped before the recovery brief completed')
+      }
+      const completed = this.store.get(sessionId)
+      if (!completed) {
+        throw new Error('The recovered session disappeared before the recovery brief completed')
+      }
+      if (completed.status !== 'idle') {
+        throw new Error(
+          completed.activity ||
+          completed.messages.at(-1)?.content ||
+          `The recovery brief did not complete successfully; session status is ${completed.status}`,
+        )
+      }
+      const admitted = await this.store.admitRecoverySeed(sessionId, seed.prompt)
+      this.publish(admitted)
+      if (admitted.queuedPrompts?.length) this.wakeSdkQueue(sessionId)
+      return admitted
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      const message = handedOff
+        ? `Conversation recovered, but recovery brief admission could not be recorded after provider handoff; delivery is uncertain: ${detail}`
+        : `Conversation recovered, but the context brief could not be sent: ${detail}`
+      try {
+        const failed = await this.store.failRecoverySeed(sessionId, seed.prompt, message)
+        this.publish(failed)
+        this.publishError(sessionId, new Error(message))
+        return failed
+      } catch (persistError) {
+        throw new AggregateError(
+          [error, persistError],
+          'Recovery brief dispatch failed and its failure state could not be saved',
+        )
+      }
     }
   }
 
@@ -2014,6 +2122,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       elicitation.resolve({ action: 'cancel' })
     }
     this.elicitations.clear()
+    await Promise.allSettled(
+      [...this.recoverySeedPromptRuns.keys()].map(async (sessionId) => {
+        const session = this.sessions.get(sessionId)
+        if (!session) return
+        await session.disconnect()
+        this.sessions.delete(sessionId)
+      }),
+    )
     await this.admissions.wait()
     await Promise.allSettled([...this.pendingAcknowledgements.values()])
     await Promise.allSettled([
@@ -2072,7 +2188,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Sessions and the SDK are down, so settle any write they triggered. Once
     // stop() resolves no further write can land, which is what lets a caller
     // safely tear down the data directory.
-    await Promise.allSettled([...this.queuedPromptRuns.values(), ...this.queueOperations.values()])
+    await Promise.allSettled([
+      ...this.queuedPromptRuns.values(),
+      ...this.recoverySeedPromptRuns.values(),
+      ...this.recoverySeedDispatches,
+      ...this.queueOperations.values(),
+    ])
     await this.store.close()
     const runtimeTimeouts = errors.filter((error) =>
       error.message.startsWith(
@@ -3122,7 +3243,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private async clearSerialized(id: string, observed: TranscriptObservation): Promise<SessionDetail> {
+  async recoverConversation(
+    id: string,
+    reason: SessionRecoveryReason,
+  ): Promise<SessionDetail> {
+    this.queuedDispatches.assertAvailable(id)
+    const observed = this.store.observeTranscript(id)
+    let recovered: SessionDetail
+    try {
+      recovered = await this.admissions.exclusive(id, (ownership) =>
+        this.serializeLifecycle(id, async () => {
+          if (ownership.joinedActivity) {
+            throw Object.assign(
+              new Error('A prompt or command was admitted while recovery waited; nothing was replaced'),
+              { statusCode: 409 },
+            )
+          }
+          return this.clearSerialized(id, {
+            ...observed,
+            isCurrent: () => ownership.isCurrent() &&
+              !this.activePrompts.has(id) && !this.drainingSessions.has(id) &&
+              !(this.dispatchingSessions.get(id) || 0) && !this.suspendingSessions.has(id),
+          }, reason)
+        }),
+      )
+    } finally {
+      this.wakeDeferredQueue(id)
+    }
+    const seeded = await this.runRecoverySeedDispatch(recovered.id)
+    return this.publicSession(seeded || recovered)
+  }
+
+  private async clearSerialized(
+    id: string,
+    observed: TranscriptObservation,
+    recoveryReason?: SessionRecoveryReason,
+  ): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
@@ -3136,16 +3292,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
+    const stalePending =
+      stored.pendingPermission?.stale === true ||
+      stored.pendingUserInput?.stale === true
     if (
       stored.status === 'running' ||
-      stored.status === 'waiting' ||
-      stored.pendingPermission || stored.pendingUserInput ||
+      (stored.status === 'waiting' && !(recoveryReason && stalePending)) ||
+      (!recoveryReason && (stored.pendingPermission || stored.pendingUserInput)) ||
       this.drainingSessions.has(id) || this.activePrompts.has(id) ||
       (this.dispatchingSessions.get(id) || 0) > 0 ||
       !this.store.isCurrentTranscript(id, observed)
     ) {
-      throw Object.assign(new Error('Conversation can only be cleared while the session is idle'), { statusCode: 409 })
+      throw Object.assign(new Error(
+        recoveryReason
+          ? 'Conversation can only be recovered from an idle, error, or stale-interaction state'
+          : 'Conversation can only be cleared while the session is idle',
+      ), { statusCode: 409 })
     }
+    const pendingContext = stored.pendingUserInput?.stale
+      ? `Unresolved user-input request before restart: ${stored.pendingUserInput.question}`
+      : undefined
+    const recoveryBrief = recoveryReason
+      ? buildRecoveryBrief([
+          ...stored.messages,
+          ...(pendingContext
+            ? [{
+                id: randomUUID(),
+                role: 'notice' as const,
+                content: pendingContext,
+                createdAt: new Date().toISOString(),
+              }]
+            : []),
+        ])
+      : undefined
     const runtime: ConfigureRuntimeInput | undefined =
       stored.runtime?.model &&
       (stored.runtime.contextTier === 'default' ||
@@ -3173,11 +3352,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const terminalBacked = this.externalSessionIds.has(id)
     const commitReplacement = async () => {
       try {
-        cleared = await this.store.replaceWithClearedSession(id, replacementId, {
+        const replacementObservation = {
           ...observed,
           isCurrent: () => observed.isCurrent?.() !== false &&
             (terminalBacked || this.sessions.get(id) === original),
-        })
+        }
+        cleared = recoveryReason && recoveryBrief
+          ? await this.store.replaceWithRecoveredSession(
+              id,
+              replacementId,
+              recoveryReason,
+              recoveryBrief.messageCount,
+              recoveryBrief.truncated,
+              recoveryBrief.prompt,
+              replacementObservation,
+            )
+          : await this.store.replaceWithClearedSession(
+              id,
+              replacementId,
+              replacementObservation,
+            )
       } catch (error) {
         if (!(error instanceof SessionReplacementCleanupError)) throw error
         cleared = error.replacement
@@ -3307,7 +3501,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         cleanupErrors.push(error)
       }
       for (const error of cleanupErrors) this.publishError(replacementId, error)
-      return cleared
+      return this.store.get(replacementId) || cleared
     } catch (error) {
       if (!committed) {
         try {
@@ -4467,9 +4661,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     reservation?: QueuedPromptReservation,
     answers?: string,
     delivery?: DeliveryBoundary | QueuedDelivery,
+    options: {
+      preserveTitle?: boolean
+      recoverySeedPrompt?: string
+    } = {},
   ): Promise<SessionDetail> {
     return this.admissions.run(sessionId, () =>
-      this.startAdmittedMessage(sessionId, content, fromQueue, reservation, answers, delivery), true)
+      this.startAdmittedMessage(
+        sessionId, content, fromQueue, reservation, answers, delivery, options,
+      ), true)
   }
 
   private async startAdmittedMessage(
@@ -4479,6 +4679,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     reservation?: QueuedPromptReservation,
     answers?: string,
     delivery?: DeliveryBoundary | QueuedDelivery,
+    options: {
+      preserveTitle?: boolean
+      recoverySeedPrompt?: string
+    } = {},
   ): Promise<SessionDetail> {
     // Anything already waiting goes first. A resume whose drain failed leaves
     // the prompt back on the queue, and a message written afterwards would
@@ -4526,6 +4730,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             !this.suspendingSessions.has(sessionId) && !this.activePrompts.has(sessionId) &&
             (fromQueue || !this.drainingSessions.has(sessionId)),
           reservation,
+          options,
         )
     this.admissions.markCommitted(sessionId)
     if (reservation) {
@@ -4560,6 +4765,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publishError(sessionId, error)
       },
     )
+    if (options.recoverySeedPrompt) {
+      this.recoverySeedPromptRuns.set(sessionId, run)
+      void run.finally(() => {
+        if (this.recoverySeedPromptRuns.get(sessionId) === run) {
+          this.recoverySeedPromptRuns.delete(sessionId)
+        }
+      })
+    }
     if (queuedDelivery) {
       this.queuedPromptRuns.set(sessionId, run)
       void run.finally(() => {
@@ -5716,6 +5929,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored || !request || request.requestId !== requestId) {
       throw new Error('Permission request is no longer pending')
     }
+    if (request.stale) {
+      throw Object.assign(
+        new Error('This SDK permission request expired when the service restarted. Recover the conversation to continue; the old callback cannot be resumed.'),
+        { statusCode: 409 },
+      )
+    }
     if (!request.options.some((option) => option.optionId === optionId)) {
       throw new Error('The selected permission option is not available')
     }
@@ -5808,6 +6027,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const request = stored?.pendingUserInput
     if (!stored || !request || request.requestId !== requestId) {
       throw new Error('User input request is no longer pending')
+    }
+    if (request.stale) {
+      throw Object.assign(
+        new Error('This SDK user-input request expired when the service restarted. Recover the conversation to continue; the old callback cannot be resumed.'),
+        { statusCode: 409 },
+      )
     }
     const action = input.action || 'accept'
     const sdkElicitation = this.elicitations.get(requestId)
@@ -7535,6 +7760,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.sdkDrainRequested.delete(sessionId)
     if (
       this.store.get(sessionId)?.failedPrompt ||
+      this.store.recoverySeed(sessionId) ||
       this.store.terminalQueueDispatch(sessionId)
     ) {
       return
@@ -7555,6 +7781,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const current = await this.store.readAfterWrites(sessionId)
         if (current.suspended || this.suspendingSessions.has(sessionId) ||
             current.pendingPermission || current.pendingUserInput || current.failedPrompt ||
+            this.store.recoverySeed(sessionId) ||
             this.activePrompts.has(sessionId) ||
             hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId)) ||
             (current.status !== 'idle' && current.status !== 'error')) return
@@ -7563,7 +7790,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             this.stopped || this.deletingSessions.has(sessionId) ||
             this.suspendingSessions.has(sessionId) || session.suspended ||
             session.failedPrompt || session.pendingPermission ||
-            session.pendingUserInput || this.activePrompts.has(sessionId) ||
+            session.pendingUserInput || this.store.recoverySeed(sessionId) ||
+            this.activePrompts.has(sessionId) ||
             (session.status !== 'idle' && session.status !== 'error')
           ) {
             throw queueConflict(
@@ -7595,7 +7823,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const remaining = this.store.get(sessionId)
         if (result?.outcome === 'sent' && remaining?.queuedPrompts?.length &&
             remaining.status === 'idle' && !remaining.failedPrompt &&
-            !remaining.queuedDispatch && !this.activePrompts.has(sessionId)) {
+            !remaining.queuedDispatch && !this.store.recoverySeed(sessionId) &&
+            !this.activePrompts.has(sessionId)) {
           this.sdkDrainRequested.add(sessionId)
         }
       })
@@ -7636,7 +7865,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             this.suspendingSessions.has(sessionId) || session.suspended ||
             !session.isOpen || session.status !== 'idle' ||
             session.failedPrompt || session.pendingPermission ||
-            session.pendingUserInput || this.activePrompts.has(sessionId) ||
+            session.pendingUserInput || this.store.recoverySeed(sessionId) ||
+            this.activePrompts.has(sessionId) ||
             this.terminalController.sending?.(sessionId)
           ) {
             throw queueConflict(
@@ -7683,7 +7913,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       releaseDispatch()
       const current = this.store.get(sessionId)
       if (current?.queuedPrompts?.length && current.status === 'idle' &&
-          !current.failedPrompt && !current.queuedDispatch) {
+          !current.failedPrompt && !current.queuedDispatch &&
+          !this.store.recoverySeed(sessionId)) {
         if (this.store.backend(sessionId) === 'terminal' ||
             this.externalSessionIds.has(sessionId)) {
           this.wakeTerminalQueue(sessionId)
@@ -7773,6 +8004,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       if (!next || stored.failedPrompt || terminalDispatch ||
+          this.store.recoverySeed(sessionId) ||
           this.pendingTerminalPromptDispatches.has(sessionId)) {
         this.pendingTerminalQueueClaims.delete(sessionId)
         // The acknowledgement's later wake still needs startup owner/composer/claim checks.

@@ -147,7 +147,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   computer and MUST NOT store or expose provider credentials or implement a
   Claude subscription login flow.
 
-### 3.3 Rename, restart, clear, and delete
+### 3.3 Rename, restart, recover, clear, and delete
 
 - Secondary session actions MAY live in a labeled disclosure rather than
   crowding the conversation header. They MUST remain keyboard- and
@@ -158,6 +158,22 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   supported.
 - Restart MUST preserve session ID, title, working folder, transcript, queue,
   runtime settings, and tmux window.
+- Copilot sessions in provider error or holding a stale SDK interaction MUST
+  offer **Recover conversation** when the owning computer advertises context
+  recovery. Claude sessions MUST NOT offer it.
+- Recover MUST create a fresh provider session ID while preserving title,
+  working folder, runtime settings, execution mode, queue, computer ownership,
+  draft continuity, replacement lineage, and notification/Knowledge metadata.
+- Recover MUST archive the prior visible transcript as read-only history,
+  append a visible recovery boundary, and combine archived and current messages
+  in public session projections. Provider transcript refresh MUST replace only
+  the current-provider portion.
+- Recover MUST seed the fresh provider before queued work with a deterministic,
+  bounded, text-only brief containing earliest goal and newest context. The
+  brief MUST report included message count and truncation and MUST exclude
+  activities, opaque provider IDs, permissions, and tool state. If seed
+  admission fails after replacement commits, the replacement ID and explicit
+  error MUST still be returned and published.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.
@@ -263,6 +279,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 ## 5. Questions and permissions
 
 Questions and permissions are the highest-priority UI state.
+
+- Persisted SDK permission and user-input requests MUST be atomically marked
+  stale and the session recoverable after service restart because their
+  in-memory callbacks no longer exist. Reply endpoints MUST reject them with
+  `409` and direct the reader to recovery. Terminal-backed persisted prompts
+  MUST retain their existing live-terminal behavior.
+- A stale prompt MUST render a focused inline recovery card with its original
+  title or question rather than dead approval/form controls.
 
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot

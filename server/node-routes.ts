@@ -103,6 +103,10 @@ const configureRuntimeSchema = z.object({
   mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
 })
 
+const recoverConversationSchema = z.object({
+  reason: z.enum(['provider-error', 'stale-sdk-interaction', 'manual']),
+})
+
 const directoryQuerySchema = z.object({
   scope: z.enum(['home', 'all']).optional(),
   path: z.string().trim().max(4096).optional(),
@@ -384,6 +388,19 @@ export async function registerNodeRoutes(
         async (request) => ({
           session: await service.clearConversation(request.params.sessionId),
         }),
+      )
+
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/recover',
+        async (request) => {
+          const input = recoverConversationSchema.parse(request.body)
+          return {
+            session: await service.recoverConversation(
+              request.params.sessionId,
+              input.reason,
+            ),
+          }
+        },
       )
 
       node.post<{ Params: { sessionId: string } }>(

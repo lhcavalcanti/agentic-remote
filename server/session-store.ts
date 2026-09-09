@@ -8,6 +8,7 @@ import type {
   SessionFileUpload,
   SessionDetail,
   SessionRuntimeInfo,
+  SessionRecoveryReason,
   SessionStatus,
   ActivityKind,
 } from '../shared/contracts.js'
@@ -35,6 +36,13 @@ export interface RecoveryResend {
   failedAt: string
   content: string
   accepted: boolean
+}
+
+export interface RecoverySeed {
+  prompt: string
+  state: 'pending' | 'dispatching' | 'failed'
+  startedAt?: string
+  error?: string
 }
 
 export interface TranscriptObservation {
@@ -76,6 +84,7 @@ interface StoredState {
 }
 
 interface StoredSession extends SessionDetail {
+  archivedMessages?: ChatMessage[]
   managedOpen?: boolean
   backend?: 'sdk' | 'terminal'
   customTitle?: boolean
@@ -86,6 +95,8 @@ interface StoredSession extends SessionDetail {
   queuedPromptReservation?: { id: string; promptId: string }
   sdkQueueAdmission?: SdkQueueAdmission
   recoveryResend?: RecoveryResend
+  recoverySeed?: RecoverySeed
+  uploadOwnerIds?: string[]
   transcriptEpoch?: string
   lastClaimedRecovery?: string
 }
@@ -131,8 +142,25 @@ function activityResultPreview(value: string): string {
   return normalized.length > 320 ? `${normalized.slice(0, 319)}…` : normalized
 }
 
+function archivedMessage(message: ChatMessage): ChatMessage {
+  const archived = {
+    ...message,
+    streaming: false,
+  }
+  if (
+    archived.role === 'activity' &&
+    archived.activityStatus === 'running'
+  ) {
+    archived.activityStatus = 'failed'
+    archived.activityResult =
+      'Stopped when the provider conversation was recovered.'
+  }
+  return archived
+}
+
 function cloneSession(session: StoredSession): SessionDetail {
   const {
+    archivedMessages,
     managedOpen: _managedOpen,
     backend,
     customTitle: _customTitle,
@@ -141,6 +169,8 @@ function cloneSession(session: StoredSession): SessionDetail {
     queuedPromptReservation: _queuedPromptReservation,
     sdkQueueAdmission,
     recoveryResend: _recoveryResend,
+    recoverySeed,
+    uploadOwnerIds: _uploadOwnerIds,
     transcriptEpoch: _transcriptEpoch,
     lastClaimedRecovery: _lastClaimedRecovery,
     contextCwd: _contextCwd,
@@ -154,8 +184,14 @@ function cloneSession(session: StoredSession): SessionDetail {
   if (sdkQueueAdmission && sdkQueueAdmission.startedAt === detail.failedPrompt?.failedAt) {
     detail.failedPrompt = undefined
   }
+  if (recoverySeed?.state === 'failed') {
+    detail.status = 'error'
+    detail.activity = recoverySeed.error ||
+      'Recovery brief delivery failed. The preserved queue is blocked.'
+  }
   return {
     ...detail,
+    messages: [...(archivedMessages || []), ...detail.messages],
     executionMode: backend === 'terminal' ? 'tmux' : 'sdk',
   }
 }
@@ -217,6 +253,7 @@ export class SessionStore {
     }
 
     const legacyRetirements: string[] = []
+    let staleSdkInteractionMarked = false
     for (const session of Object.values(loaded.sessions)) {
       if (session.replacedSessionIds !== undefined) {
         if (!isSessionIdList(session.replacedSessionIds)) {
@@ -238,7 +275,19 @@ export class SessionStore {
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
       session.queuedPromptReservation = undefined
-      session.pendingUserInput = undefined
+      const staleSdkInteraction =
+        session.provider === 'copilot' &&
+        session.backend === 'sdk' &&
+        Boolean(session.pendingPermission || session.pendingUserInput)
+      if (staleSdkInteraction) {
+        if (session.pendingPermission) session.pendingPermission.stale = true
+        if (session.pendingUserInput) session.pendingUserInput.stale = true
+        session.status = 'error'
+        session.activity = 'Provider interaction expired. Recover the conversation to continue.'
+        staleSdkInteractionMarked = true
+      } else {
+        session.pendingUserInput = undefined
+      }
       const resend = session.recoveryResend
       if (resend !== undefined && (
         !resend || typeof resend !== 'object' || Array.isArray(resend) ||
@@ -246,6 +295,28 @@ export class SessionStore {
         typeof resend.content !== 'string' || !resend.content.trim() ||
         typeof resend.accepted !== 'boolean'
       )) throw new Error('Invalid recovery resend metadata')
+      const seed = session.recoverySeed
+      if (seed !== undefined && (
+        !seed || typeof seed !== 'object' || Array.isArray(seed) ||
+        typeof seed.prompt !== 'string' || !seed.prompt.trim() ||
+        !['pending', 'dispatching', 'failed'].includes(seed.state) ||
+        (seed.startedAt !== undefined &&
+          (typeof seed.startedAt !== 'string' || !Number.isFinite(Date.parse(seed.startedAt)))) ||
+        (seed.error !== undefined && typeof seed.error !== 'string')
+      )) throw new Error('Invalid recovery seed metadata')
+      if (session.uploadOwnerIds !== undefined && !isSessionIdList(session.uploadOwnerIds)) {
+        throw new Error('Invalid upload ownership metadata')
+      }
+      if (seed?.state === 'dispatching') {
+        seed.state = 'failed'
+        seed.error = 'Recovery brief delivery was interrupted after dispatch began; delivery is uncertain and was not retried.'
+        session.status = 'error'
+        session.activity = seed.error
+        staleSdkInteractionMarked = true
+      } else if (seed?.state === 'failed') {
+        session.status = 'error'
+        session.activity = seed.error || 'Recovery brief delivery failed. The preserved queue is blocked.'
+      }
       const admission = session.sdkQueueAdmission
       if (admission !== undefined) {
         if (
@@ -282,7 +353,7 @@ export class SessionStore {
       if (session.queueDispatchAt) {
         session.status = 'running'
         session.activity = 'Sent queued prompt'
-      } else if (session.status !== 'idle') {
+      } else if (!staleSdkInteraction && !session.recoverySeed && session.status !== 'idle') {
         session.status = 'idle'
         session.activity = undefined
         session.pendingPermission = undefined
@@ -302,6 +373,11 @@ export class SessionStore {
     this.state = loaded
     this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
+    if (staleSdkInteractionMarked) {
+      const temporaryPath = `${this.statePath}.tmp`
+      await writeFile(temporaryPath, JSON.stringify(loaded), { mode: 0o600 })
+      await rename(temporaryPath, this.statePath)
+    }
   }
 
   list(): SessionDetail[] {
@@ -729,11 +805,15 @@ export class SessionStore {
   async clearConversation(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.transcriptEpoch = randomUUID()
+      session.archivedMessages = undefined
       session.messages = []
       session.status = 'idle'
       session.isOpen = true
       session.activity = undefined
       session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.recovery = undefined
+      session.recoverySeed = undefined
       session.queuedPrompts = []
       session.queuedCount = 0
       session.queueDispatchAt = undefined
@@ -751,6 +831,7 @@ export class SessionStore {
     replacementId: string,
     observation = this.observeTranscript(sessionId),
   ): Promise<SessionDetail> {
+    let uploadOwnerIds: string[] = []
     const replacement = await this.change((state) => {
       const existing = state.sessions[sessionId]
       if (!existing || this.retiredIds(state).has(sessionId)) {
@@ -770,6 +851,7 @@ export class SessionStore {
       ) {
         throw new Error('Replacement session identity is not available')
       }
+      uploadOwnerIds = [...new Set([...(existing.uploadOwnerIds || []), sessionId])]
       state.sessions[replacementId] = {
         ...existing,
         id: replacementId,
@@ -784,18 +866,22 @@ export class SessionStore {
           sessionId,
         ],
         revision: (existing.revision ?? 0) + 1,
+        archivedMessages: undefined,
         messages: [],
         status: 'idle',
         isOpen: true,
         activity: undefined,
         pendingPermission: undefined,
         pendingUserInput: undefined,
+        recovery: undefined,
         queuedPrompts: [],
         queuedCount: 0,
         queueDispatchAt: undefined,
         terminalQueueDispatch: undefined,
         queuedPromptReservation: undefined,
         sdkQueueAdmission: undefined,
+        recoverySeed: undefined,
+        uploadOwnerIds: undefined,
         transcriptEpoch: undefined,
         updatedAt: new Date().toISOString(),
         runtime: existing.runtime
@@ -815,10 +901,126 @@ export class SessionStore {
       }
     }, true)
     try {
-      await this.removeUploads(sessionId)
+      await this.removeUploadOwners(uploadOwnerIds)
     } catch (error) {
       throw new SessionReplacementCleanupError(replacement, error)
     }
+    return replacement
+  }
+
+  async replaceWithRecoveredSession(
+    sessionId: string,
+    replacementId: string,
+    reason: SessionRecoveryReason,
+    contextMessageCount: number,
+    contextTruncated: boolean,
+    recoveryPrompt: string,
+    observation = this.observeTranscript(sessionId),
+  ): Promise<SessionDetail> {
+    const replacement = await this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      const pendingIsStale =
+        existing.pendingPermission?.stale === true ||
+        existing.pendingUserInput?.stale === true
+      const hasLivePendingInteraction =
+        Boolean(existing.pendingPermission || existing.pendingUserInput) &&
+        !pendingIsStale
+      if (
+        existing.id !== sessionId ||
+        existing.transcriptEpoch !== observation.epoch ||
+        observation.isCurrent?.() === false ||
+        existing.status === 'running' ||
+        (existing.status === 'waiting' && !pendingIsStale) ||
+        hasLivePendingInteraction ||
+        existing.sdkQueueAdmission ||
+        existing.terminalQueueDispatch
+      ) {
+        throw Object.assign(
+          new Error('Conversation changed before recovery; no replacement was committed'),
+          { statusCode: 409 },
+        )
+      }
+      if (
+        sessionId === replacementId ||
+        Object.hasOwn(state.sessions, replacementId) ||
+        this.retiredIds(state).has(replacementId)
+      ) {
+        throw new Error('Replacement session identity is not available')
+      }
+      const recoveredAt = new Date().toISOString()
+      const priorMessages = [
+        ...(existing.archivedMessages || []),
+        ...existing.messages,
+      ].map(archivedMessage)
+      const boundary: ChatMessage = {
+        id: randomUUID(),
+        role: 'notice',
+        content: 'Provider context was rebuilt. Earlier messages are read-only history; a bounded text-only recovery brief was sent to the fresh conversation. Connection-specific tool state was not restored.',
+        createdAt: recoveredAt,
+      }
+      state.sessions[replacementId] = {
+        ...existing,
+        id: replacementId,
+        replacedSessionIds: [
+          ...(existing.replacedSessionIds || []),
+          sessionId,
+        ],
+        revision: (existing.revision ?? 0) + 1,
+        customTitle: true,
+        archivedMessages: [...priorMessages, boundary],
+        messages: [],
+        status: 'idle',
+        isOpen: true,
+        activity: undefined,
+        pendingPermission: undefined,
+        pendingUserInput: undefined,
+        failedPrompt: undefined,
+        recoveryResend: undefined,
+        lastClaimedRecovery: undefined,
+        queuedPrompts: [...(existing.queuedPrompts || [])],
+        queuedCount: existing.queuedPrompts?.length || 0,
+        queueDispatchAt: undefined,
+        terminalQueueDispatch: undefined,
+        queuedPromptReservation: undefined,
+        sdkQueueAdmission: undefined,
+        transcriptEpoch: undefined,
+        recoverySeed: {
+          prompt: recoveryPrompt,
+          state: 'pending',
+        },
+        uploadOwnerIds: [
+          ...new Set([
+            ...(existing.uploadOwnerIds || []),
+            sessionId,
+          ]),
+        ],
+        updatedAt: recoveredAt,
+        recovery: {
+          recoveredAt,
+          archivedMessageCount: priorMessages.length,
+          contextMessageCount,
+          contextTruncated,
+          reason,
+        },
+        runtime: existing.runtime
+          ? {
+              ...existing.runtime,
+              contextTokens: undefined,
+              contextEstimated: undefined,
+            }
+          : undefined,
+      }
+      this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
+      delete state.sessions[sessionId]
+      return () => {
+        this.observationOwners.delete(sessionId)
+        this.observationOwners.delete(replacementId)
+        return this.requireSession(replacementId)
+      }
+    }, true)
     return replacement
   }
 
@@ -848,7 +1050,7 @@ export class SessionStore {
       if (
         !isCurrent() || existing.suspended ||
         (existing.status !== 'idle' && existing.status !== 'error') ||
-        existing.failedPrompt || existing.terminalQueueDispatch ||
+        existing.failedPrompt || existing.recoverySeed || existing.terminalQueueDispatch ||
         existing.pendingPermission || existing.pendingUserInput
       ) {
         throw Object.assign(new Error('The session changed before queue reservation; nothing was sent'), { statusCode: 409 })
@@ -868,6 +1070,10 @@ export class SessionStore {
     assistantId: string,
     isCurrent: () => boolean,
     reservation?: QueuedPromptReservation,
+    options: {
+      preserveTitle?: boolean
+      recoverySeedPrompt?: string
+    } = {},
   ): Promise<SessionDetail> {
     const userId = randomUUID()
     return this.mutate(sessionId, (session) => {
@@ -884,6 +1090,16 @@ export class SessionStore {
       }
       if (session.status !== 'idle' && session.status !== 'error') {
         throw Object.assign(new Error('A turn can only start while the session is idle'), { statusCode: 409 })
+      }
+      if (options.recoverySeedPrompt) {
+        if (
+          session.recoverySeed?.state !== 'dispatching' ||
+          session.recoverySeed.prompt !== options.recoverySeedPrompt
+        ) {
+          throw Object.assign(new Error('The recovery seed is no longer dispatching'), { statusCode: 409 })
+        }
+      } else if (session.recoverySeed) {
+        throw Object.assign(new Error('The recovery brief must be admitted before other work can run'), { statusCode: 409 })
       }
       if (reservation) {
         const head = session.queuedPrompts?.[0]
@@ -919,9 +1135,65 @@ export class SessionStore {
       session.updatedAt = createdAt
       session.status = 'running'
       session.activity = 'Thinking'
-      if (session.messages.filter((message) => message.role === 'user').length === 1) {
+      if (
+        !options.preserveTitle &&
+        session.messages.filter((message) => message.role === 'user').length === 1
+      ) {
         session.title = content.length > 52 ? `${content.slice(0, 52)}…` : content
       }
+    })
+  }
+
+  recoverySeed(sessionId: string): RecoverySeed | undefined {
+    const seed = this.state.sessions[sessionId]?.recoverySeed
+    return !this.isRetiredSession(sessionId) && seed ? structuredClone(seed) : undefined
+  }
+
+  async claimRecoverySeed(sessionId: string, prompt: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (session.recoverySeed?.state !== 'pending' || session.recoverySeed.prompt !== prompt) {
+        throw Object.assign(new Error('The recovery seed is no longer pending'), { statusCode: 409 })
+      }
+      session.recoverySeed = {
+        prompt,
+        state: 'dispatching',
+        startedAt: new Date().toISOString(),
+      }
+    })
+  }
+
+  async admitRecoverySeed(
+    sessionId: string,
+    prompt: string,
+    terminalDispatchedAt?: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (session.recoverySeed?.state !== 'dispatching' || session.recoverySeed.prompt !== prompt) {
+        throw Object.assign(new Error('The recovery seed is no longer dispatching'), { statusCode: 409 })
+      }
+      session.recoverySeed = undefined
+      if (terminalDispatchedAt) {
+        session.queueDispatchAt = terminalDispatchedAt
+        session.status = 'running'
+        session.activity = 'Rebuilding provider context'
+      }
+    })
+  }
+
+  async failRecoverySeed(
+    sessionId: string,
+    prompt: string,
+    error: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (!session.recoverySeed || session.recoverySeed.prompt !== prompt) return
+      session.recoverySeed = {
+        ...session.recoverySeed,
+        state: 'failed',
+        error,
+      }
+      session.status = 'error'
+      session.activity = error
     })
   }
 
@@ -1024,8 +1296,8 @@ export class SessionStore {
       if (
         !isCurrent() || stored.suspended || stored.status !== 'idle' ||
         (requireManagedTerminal && (!stored.isOpen || stored.managedOpen !== true || stored.backend !== 'terminal')) ||
-        stored.pendingPermission || stored.pendingUserInput ||
-        stored.terminalQueueDispatch || stored.failedPrompt ||
+        stored.pendingPermission || stored.pendingUserInput || stored.recoverySeed ||
+        stored.terminalQueueDispatch || stored.failedPrompt || stored.recoverySeed ||
         !head || head.id !== expected.id || head.content !== expected.content ||
         head.createdAt !== expected.createdAt || head.command !== expected.command
       ) {
@@ -1395,16 +1667,18 @@ export class SessionStore {
   }
 
   async remove(sessionId: string): Promise<void> {
+    let uploadOwnerIds: string[] = []
     await this.change((state) => {
       const existing = state.sessions[sessionId]
       if (existing) {
+        uploadOwnerIds = [...new Set([...(existing.uploadOwnerIds || []), sessionId])]
         // Retirement must outlive the last descendant, even if provider cleanup failed.
         this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       }
       delete state.sessions[sessionId]
       return () => { this.observationOwners.delete(sessionId) }
     }, true)
-    await this.removeUploads(sessionId)
+    await this.removeUploadOwners(uploadOwnerIds)
   }
 
   async saveUpload(
@@ -1954,6 +2228,10 @@ export class SessionStore {
       recursive: true,
       force: true,
     })
+  }
+
+  private async removeUploadOwners(sessionIds: string[]): Promise<void> {
+    await Promise.all(sessionIds.map((sessionId) => this.removeUploads(sessionId)))
   }
 }
 

@@ -172,6 +172,7 @@ import {
   cancelBackgroundTask,
   cancelSession,
   clearConversation,
+  recoverConversation,
   configureRuntime,
   createSession,
   deleteSession,
@@ -266,6 +267,7 @@ import { DialogFrame } from './components/DialogFrame'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import {
   PermissionCard,
+  StaleInteractionRecoveryCard,
   UserInputCard,
 } from './features/prompts/PromptCards'
 
@@ -6504,6 +6506,7 @@ function App() {
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [recovering, setRecovering] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [suspending, setSuspending] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
@@ -7199,6 +7202,17 @@ function App() {
         computers.find((computer) => computer.id === selected.computerId),
       ).find((provider) => provider.id === (selected.provider || 'copilot'))
     : undefined
+  const selectedHasStaleInteraction =
+    selected?.pendingPermission?.stale === true ||
+    selected?.pendingUserInput?.stale === true
+  const selectedShowsRecovery =
+    selected?.provider !== 'claude' &&
+    selectedProviderCapability?.supportsContextRecovery === true &&
+    (selected?.status === 'error' || selectedHasStaleInteraction)
+  const selectedCanRecover =
+    selectedShowsRecovery &&
+    selectedComputerOnline &&
+    selected?.suspended !== true
   const selectedSupportsBackgroundTasks = selected
     ? supportsBackgroundTasks(
         computers.find((computer) => computer.id === selected.computerId),
@@ -12221,6 +12235,44 @@ function App() {
     }
   }
 
+  function adoptConversationReplacement(
+    target: ManagedSession,
+    replacement: ManagedSession,
+  ): string | undefined {
+    const targetKey = sessionKey(target)
+    const replacementKey = sessionKey(replacement)
+    replacedInto.current.set(targetKey, replacementKey)
+    const liveKey = followReplacementsRef.current(replacementKey)
+    const liveIsGone = removedSessions.current.has(liveKey)
+    adoptedReplacements.current.add(targetKey)
+    migrateSessionState(targetKey, liveKey)
+    eventSequenceRef.current = nextSessionEventSequence()
+    sessionEventSequenceRef.current.set(targetKey, eventSequenceRef.current)
+    sessionEventSequenceRef.current.set(replacementKey, eventSequenceRef.current)
+    const retire = (current: ManagedSession[]) => {
+      const without = current.filter(
+        (session) =>
+          session.id !== target.id ||
+          session.computerId !== target.computerId,
+      )
+      return liveKey === replacementKey && !liveIsGone
+        ? upsertSession(without, replacement)
+        : without
+    }
+    sessionsRef.current = retire(sessionsRef.current)
+    setSessions(retire)
+    if (!liveIsGone) {
+      setSelectedKey((current) =>
+        current === undefined ||
+        current === targetKey ||
+        current === replacementKey
+          ? liveKey
+          : current,
+      )
+    }
+    return liveIsGone ? undefined : liveKey
+  }
+
   async function clearSelectedConversation(): Promise<string | undefined> {
     if (
       !selected ||
@@ -12239,54 +12291,7 @@ function App() {
     setError(undefined)
     try {
       const cleared = await clearConversation(target.computerId, target.id)
-      // Registered here, not only from the live removal. The response is
-      // proof enough on its own, and a missed event would otherwise leave a
-      // late write, a Back entry or a deep link still pointing at a session
-      // that no longer exists.
-      const clearedKey = sessionKey(cleared)
-      replacedInto.current.set(targetKey, clearedKey)
-      // Where this session's things actually belong. The replacement this
-      // answer names may itself have been cleared while the request was in
-      // flight, and moving the draft, the reading position and the mute into
-      // it left them under a session that is gone -- the one that took its
-      // place had already been told there was nothing to claim.
-      const liveKey = followReplacementsRef.current(clearedKey)
-      // Somebody removed it outright while this request was in flight, and
-      // without a replacement to follow. Putting it back would resurrect a
-      // session already known to be gone and take the reader to it.
-      const liveIsGone = removedSessions.current.has(liveKey)
-      adoptedReplacements.current.add(targetKey)
-      migrateSessionState(targetKey, liveKey)
-      // The session that was cleared is gone either way, and nothing older may
-      // speak for it or for what it became. Written before the list is
-      // touched, and into the ref as well, so a snapshot already in flight
-      // cannot put it back or drop a replacement it has never heard of.
-      eventSequenceRef.current = nextSessionEventSequence()
-      sessionEventSequenceRef.current.set(targetKey, eventSequenceRef.current)
-      sessionEventSequenceRef.current.set(clearedKey, eventSequenceRef.current)
-      const retire = (sessions: ManagedSession[]) => {
-        const without = sessions.filter(
-          (session) =>
-            session.id !== target.id ||
-            session.computerId !== target.computerId,
-        )
-        // The replacement is only put back while it is still the live one.
-        return liveKey === clearedKey && !liveIsGone
-          ? upsertSession(without, cleared)
-          : without
-      }
-      sessionsRef.current = retire(sessionsRef.current)
-      setSessions(retire)
-      if (!liveIsGone) {
-        setSelectedKey((current) =>
-          current === undefined ||
-          current === targetKey ||
-          current === clearedKey
-            ? liveKey
-            : current,
-        )
-      }
-      return liveIsGone ? undefined : liveKey
+      return adoptConversationReplacement(target, cleared)
     } catch (caught) {
       if (
         removedSessions.current.has(targetKey) &&
@@ -12304,6 +12309,56 @@ function App() {
       // first cannot discard the position on its way across.
       clearingSessions.current.delete(targetKey)
       setClearing(false)
+    }
+  }
+
+  async function recoverSelectedConversation(): Promise<string | undefined> {
+    if (
+      !selected ||
+      recovering ||
+      !selectedCanRecover ||
+      !window.confirm(
+        `Recover the conversation in "${selected.title}"?\n\nA fresh provider conversation will be created. Old messages remain visible as read-only history, and a bounded text-only context brief will be sent first. Connection-specific tool state cannot be restored.`,
+      )
+    ) {
+      return undefined
+    }
+
+    const target = selected
+    const targetKey = sessionKey(target)
+    clearingSessions.current.add(targetKey)
+    setRecovering(true)
+    setError(undefined)
+    try {
+      const recovered = await recoverConversation(
+        target.computerId,
+        target.id,
+        selectedHasStaleInteraction
+          ? 'stale-sdk-interaction'
+          : target.status === 'error'
+            ? 'provider-error'
+            : 'manual',
+      )
+      const replacementKey = adoptConversationReplacement(target, recovered)
+      if (recovered.status === 'error' && recovered.activity) {
+        setError(recovered.activity)
+      }
+      return replacementKey
+    } catch (caught) {
+      if (
+        removedSessions.current.has(targetKey) &&
+        followReplacementsRef.current(targetKey) === targetKey
+      ) {
+        updateComposerDrafts([targetKey], (current) => {
+          const { [targetKey]: _removed, ...remaining } = current
+          return remaining
+        })
+      }
+      setError(caught instanceof Error ? caught.message : String(caught))
+      return sessionKey(target)
+    } finally {
+      clearingSessions.current.delete(targetKey)
+      setRecovering(false)
     }
   }
 
@@ -13371,6 +13426,18 @@ function App() {
                 <RefreshCw size={17} />
                 <span>Restart session</span>
               </button>
+              {selectedShowsRecovery ? (
+                <button
+                  aria-label="Recover conversation"
+                  className="session-action"
+                  disabled={!selectedCanRecover || recovering}
+                  onClick={() => void recoverSelectedConversation()}
+                  type="button"
+                >
+                  <RefreshCw size={17} />
+                  <span>Recover conversation</span>
+                </button>
+              ) : null}
               <hr className="session-actions__separator" />
               <button
                 aria-label="Clear conversation"
@@ -13450,14 +13517,25 @@ function App() {
               messages={selected.messages}
             />
           )}
-          {selected?.pendingPermission ? (
+          {selectedHasStaleInteraction ? (
+            <StaleInteractionRecoveryCard
+              disabled={!selectedCanRecover || recovering}
+              onRecover={() => void recoverSelectedConversation()}
+              title={
+                selected?.pendingPermission?.title ||
+                selected?.pendingUserInput?.question ||
+                'The provider is waiting on an expired request'
+              }
+            />
+          ) : null}
+          {selected?.pendingPermission && !selected.pendingPermission.stale ? (
             <PermissionCard
               disabled={permissionBusy}
               onReply={(optionId) => void replyToPermission(optionId)}
               permission={selected.pendingPermission}
             />
           ) : null}
-          {selected?.pendingUserInput ? (
+          {selected?.pendingUserInput && !selected.pendingUserInput.stale ? (
             <UserInputCard
               disabled={userInputBusy}
               // The answer being composed belongs to this question on this

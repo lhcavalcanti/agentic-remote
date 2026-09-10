@@ -337,11 +337,13 @@ export class PushNotificationService {
         try {
           await this.sender(subscription, JSON.stringify(payload), {
             TTL: payload.priority === 'high' ? 3_600 : 900,
+            // FCM rejects RFC 8030's `very-low`, so the lowest portable
+            // urgency is `low`.
             urgency:
               payload.priority === 'high'
                 ? 'high'
                 : payload.priority === 'low'
-                  ? 'very-low'
+                  ? 'low'
                   : 'normal',
           })
           sent += 1

@@ -187,7 +187,7 @@ describe('PushNotificationService', () => {
     })
     expect(sender.mock.calls[4]?.[2]).toEqual({
       TTL: 900,
-      urgency: 'very-low',
+      urgency: 'low',
     })
 
     events.emit('event', {
@@ -272,5 +272,64 @@ describe('PushNotificationService', () => {
       'https://push.example.test/healthy',
     ])
     reloaded.stop()
+  })
+
+  it('sends completion notifications with an urgency FCM accepts', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'push-service-test-'))
+    directories.push(directory)
+    // FCM rejects RFC 8030's `very-low` with
+    // "invalid urgency header defined. Valid options are: high, normal and low."
+    const accepted = new Set(['high', 'normal', 'low'])
+    const sender = vi.fn(
+      async (
+        _subscription: PushSubscription,
+        _payload?: string | Buffer | null,
+        options?: RequestOptions,
+      ) => {
+        if (!accepted.has(String(options?.urgency))) {
+          throw Object.assign(new Error('Received unexpected response code'), {
+            statusCode: 400,
+          })
+        }
+        return { statusCode: 201, headers: {}, body: '' }
+      },
+    )
+    const service = new PushNotificationService(directory, sender)
+    await service.initialize()
+    await service.subscribe({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/token',
+      expirationTime: null,
+      keys: { p256dh: 'public-key', auth: 'auth-key' },
+    })
+    const events = new EventEmitter<{ event: [HubEvent] }>()
+    await service.attach(events)
+    const running: HubEvent = {
+      type: 'session.upserted',
+      session: {
+        id: 'session',
+        computerId: 'computer',
+        computerName: 'development',
+        cwd: '/tmp',
+        title: 'Project',
+        updatedAt: new Date().toISOString(),
+        status: 'running',
+        isOpen: true,
+        messages: [],
+      },
+    }
+
+    events.emit('event', running)
+    events.emit('event', {
+      ...running,
+      session: { ...running.session, queuedCount: 0, status: 'idle' },
+    })
+
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+    expect(sender.mock.calls[0]?.[2]?.urgency).toBe('low')
+    expect(JSON.parse(sender.mock.calls[0]?.[1] as string)).toMatchObject({
+      title: 'Finished · Project',
+      priority: 'low',
+    })
+    service.stop()
   })
 })

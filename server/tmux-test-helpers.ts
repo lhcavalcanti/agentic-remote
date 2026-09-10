@@ -76,6 +76,11 @@ async function ownedServerPid(root: string): Promise<number | undefined> {
     })).stdout
   } catch (error) {
     if (await noTmuxServer(error)) return undefined
+    // A different server can retire during the read-only absence probe.
+    // Require conclusive evidence within the fixture budget, never assume it.
+    if (await eventually(() => noTmuxServer(error), Boolean, retirementTimeoutMs)) {
+      return undefined
+    }
     throw error
   }
   const pid = Number(stdout.trim())

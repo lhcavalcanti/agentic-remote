@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -15,14 +15,29 @@ import {
 import { SessionStore } from './session-store.js'
 
 const directories: string[] = []
+const services = new Set<ClaudeAgentService>()
 
-afterEach(async () => {
-  vi.unstubAllEnvs()
+async function cleanupFixtures(): Promise<void> {
+  const stopped = await Promise.allSettled([...services].map(async (service) => {
+    await service.stop()
+    services.delete(service)
+  }))
+  const failures = stopped.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+  if (failures.length) throw new AggregateError(failures, 'Claude fixture shutdown failed; directories were retained')
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   )
+}
+
+afterEach(async () => {
+  try {
+    await cleanupFixtures()
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+  }
 })
 
 // Sessions are confined to the home directory; these fixtures run in tmpdir.
@@ -94,6 +109,7 @@ async function fixture(
     sdk,
     async () => ({ loggedIn: true }),
   )
+  services.add(service)
   await service.start()
   return {
     deleteSession,
@@ -141,6 +157,87 @@ async function waitForIdle(
 }
 
 describe('ClaudeAgentService', () => {
+  it('waits for all fixture services to close before removing any directory', async () => {
+    const first = await fixture(async function* () {})
+    const second = await fixture(async function* () {})
+    let releaseClose = () => {}
+    const closing = new Promise<void>((resolve) => { releaseClose = resolve })
+    const close = first.service.store.close.bind(first.service.store)
+    const firstClose = vi.spyOn(first.service.store, 'close').mockImplementationOnce(async () => {
+      await closing
+      await close()
+    })
+    const secondClose = vi.spyOn(second.service.store, 'close')
+    const cleanup = cleanupFixtures()
+    try {
+      await vi.waitFor(() => expect(firstClose).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(secondClose).toHaveBeenCalledOnce())
+      await expect(access(first.directory)).resolves.toBeUndefined()
+      await expect(access(second.directory)).resolves.toBeUndefined()
+      releaseClose()
+      await cleanup
+      await expect(access(first.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(access(second.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      releaseClose()
+      await cleanup
+      await Promise.all([first.service.stop(), second.service.stop()])
+      firstClose.mockRestore()
+      secondClose.mockRestore()
+    }
+  })
+
+  it('retains fixture directories and surfaces a rejected service shutdown', async () => {
+    const first = await fixture(async function* () {})
+    const second = await fixture(async function* () {})
+    const failure = new Error('Synthetic shutdown failure')
+    const stop = vi.spyOn(first.service, 'stop').mockRejectedValueOnce(failure)
+    const otherStop = vi.spyOn(second.service, 'stop')
+    try {
+      await expect(cleanupFixtures()).rejects.toMatchObject({
+        name: 'AggregateError', errors: [failure],
+      })
+      expect(otherStop).toHaveBeenCalledOnce()
+      await expect(access(first.directory)).resolves.toBeUndefined()
+      await expect(access(second.directory)).resolves.toBeUndefined()
+    } finally {
+      stop.mockRestore()
+    }
+  })
+
+  it('waits for an aborted fixture query to settle before deleting its directory', async () => {
+    let aborted = false
+    let releaseTurn = () => {}
+    const finishing = new Promise<void>((resolve) => { releaseTurn = resolve })
+    const { directory, service } = await fixture(async function* (options) {
+      yield textResult('fixture-session')[0]
+      const signal = options.abortController!.signal
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve()
+        else signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      aborted = true
+      await finishing
+    })
+    const session = await service.createSession(directory, false, true, 'claude')
+    await service.sendMessage(session.id, 'Synthetic active fixture query')
+    const close = vi.spyOn(service.store, 'close')
+    const cleanup = cleanupFixtures()
+    try {
+      await vi.waitFor(() => expect(aborted).toBe(true))
+      expect(close).not.toHaveBeenCalled()
+      await expect(access(directory)).resolves.toBeUndefined()
+      releaseTurn()
+      await cleanup
+      expect(close).toHaveBeenCalledOnce()
+      await expect(access(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      releaseTurn()
+      await cleanup
+      await service.stop()
+    }
+  })
+
   it('persists streamed text after an aborted turn settles and before closing', async () => {
     let sessionId = ''
     let finishTurn = () => {}
@@ -338,6 +435,7 @@ describe('ClaudeAgentService', () => {
       },
       authStatus,
     )
+    services.add(service)
 
     await service.start()
     expect(service.providers()).toEqual([
@@ -784,13 +882,9 @@ describe('ClaudeAgentService', () => {
         ),
       ).not.toContain('waiting-1')
     })
-    // The drain starts a turn of its own, and the fixture removes the
-    // directory as soon as the test ends. It is left to finish first.
     await vi.waitFor(() => {
       expect(service.getSession(session.id)?.status).toBe('idle')
     })
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    await service.store.flush()
   })
 
   it('drains a standing queue once however many sends arrive', async () => {
@@ -821,8 +915,6 @@ describe('ClaudeAgentService', () => {
       .map((message) => message.content)
     // Whatever ran, nothing ran twice.
     expect(new Set(asked).size).toBe(asked.length)
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    await service.store.flush()
   })
 
   it('refuses a send while the session is being deleted', async () => {

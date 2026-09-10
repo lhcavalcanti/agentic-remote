@@ -129,10 +129,25 @@ describe('owned tmux fixture retirement', () => {
 
   it('preserves the root when server discovery is indeterminate', async () => {
     execute.mockRejectedValue(missing)
-    await expect(stopIsolatedTmuxServer(root)).rejects.toThrow()
+    const stopping = stopIsolatedTmuxServer(root).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(2100)
+    expect(await stopping).toBeInstanceOf(Error)
     expect(noTmuxServer).toHaveBeenCalledWith(missing)
     expect(commands('kill-server')).toHaveLength(0)
     expect(rm).not.toHaveBeenCalled()
+  })
+
+  it('waits for conclusive absence after a transient process-retirement probe', async () => {
+    execute.mockRejectedValue(missing)
+    vi.mocked(noTmuxServer).mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true)
+    const stopping = stopIsolatedTmuxServer(root).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(rm).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(await stopping).toBeUndefined()
+    expect(noTmuxServer).toHaveBeenCalledTimes(3)
+    expect(commands('kill-server')).toHaveLength(0)
+    expect(rm).toHaveBeenCalledExactlyOnceWith(root, { recursive: true, force: true })
   })
 
   it('preserves the root when the absence probe itself fails', async () => {

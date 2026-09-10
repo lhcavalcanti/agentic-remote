@@ -2771,7 +2771,7 @@ button {
 }
 
 .permission-card h3,
-.user-input-card h3,
+.user-input-card > h3,
 .recovery-card h3 {
   margin: 0;
   font-size: 13px;
@@ -2789,6 +2789,14 @@ button {
 
 .recovery-card .primary-button {
   min-height: 40px;
+}
+
+.user-input-card__question {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .user-input-card__choices {

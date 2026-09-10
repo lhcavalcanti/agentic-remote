@@ -2,8 +2,8 @@
   "date": "2026-09-09",
   "applicationSourceCommit": "15a043e57234f7addfd8160f990dd22b38f1882a",
   "applicationVersion": "1.1.0",
-  "publicationBaseCommit": "605657688012f7e934c80be5c3a14c200aa3f836",
-  "publicationBaseVersion": "1.1.3",
+  "publicationBaseCommit": "b2958d3dcaa4a39d4f8284d5d4a26bdc7aa5f3a3",
+  "publicationBaseVersion": "1.2.0",
   "originalPublicationBaseCommit": "46a4d04ab8af27effc6ade29d2fa5d72e45cb321",
   "node": "v22.22.1",
   "fullGate": {
@@ -76,7 +76,7 @@
   },
   "scope": {
     "runtimeBehaviorChanged": true,
-    "runtimeBehaviorChangedScope": "The applicationSourceCommit-to-current-publication range includes PR 243's responsive Markdown padding, PR 248's completion-push urgency correction, and PR 245's Markdown/form-answer corrections, now version 1.1.3. The audit-only delta from the current publicationBaseCommit changes documentation and investigation tooling, not application runtime behavior. Earlier full-gate results remain attributed to their recorded source base.",
+    "runtimeBehaviorChangedScope": "The applicationSourceCommit-to-current-publication range includes PR 243's responsive Markdown padding, PR 248's completion-push urgency correction, PR 245's Markdown/form-answer corrections, and PR 250's sandboxed HTML preview, now version 1.2.0. The audit-only delta from the current publicationBaseCommit changes documentation and investigation tooling, not application runtime behavior. Earlier full-gate results remain attributed to their recorded source base.",
     "auditOnlyRuntimeBehaviorChanged": false,
     "liveProviderInvokedByInvestigationPrograms": false,
     "manualDeploymentOrRestartPerformed": false,
@@ -102,10 +102,10 @@
   "mainRefresh": {
     "date": "2026-09-10",
     "dateTimezone": "UTC",
-    "baseCommit": "605657688012f7e934c80be5c3a14c200aa3f836",
-    "previousBaseCommit": "c098c9a36728fa723e7319a62a1e50a98355edaa",
-    "applicationVersion": "1.1.3",
-    "scope": "Integrate the already merged notification and Markdown/form corrections and regenerate derived graphs; preserve audit trust-boundary and source/bundle-provenance corrections.",
+    "baseCommit": "b2958d3dcaa4a39d4f8284d5d4a26bdc7aa5f3a3",
+    "previousBaseCommit": "605657688012f7e934c80be5c3a14c200aa3f836",
+    "applicationVersion": "1.2.0",
+    "scope": "Integrate the already merged sandboxed HTML preview and regenerate derived graphs; preserve audit trust-boundary and source/bundle-provenance corrections.",
     "historicalMeasurementsRewritten": false,
     "fullApplicationGatesRepeated": false,
     "validationPolicy": "Relevant provenance regressions, Graphify helper tests, syntax/lint, graph freshness and clean-source correctness smoke. Application runtime code must match current main."

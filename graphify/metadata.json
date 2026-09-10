@@ -285,7 +285,7 @@
     "docs/reviews/2026-09-09/reproduce-provider-findings.mts": "c7a2bd7bc9dc960b29f2344402e9b97dffc26f981729e9a3136d0649cded2fb6",
     "docs/reviews/2026-09-09/reproduce-ui-findings.tsx": "3e154bb87c8c3f79d8ef99cb03f8892ffd62da839c83be3af502fbc697848239",
     "docs/reviews/2026-09-09/ui-reproduction.config.mts": "0e3b4bf27ccf7d43db4daa1f7080d562893074af9bdfa106c315f8ebf8f89ffe",
-    "docs/reviews/2026-09-09/validation.json": "e194885848c601d2dc30ba7bee59c5606baf3c9f6a8fc8a9bed7901aa2071a32",
+    "docs/reviews/2026-09-09/validation.json": "7f54801b36d36aa23cda92e9b8c5970ebf640bc6169141f47b0a8425d8a5dddf",
     "docs/sdk-architecture-roadmap.md": "bf2a35025248d4973cca1f16a0d61f9fd9408862631f463ebcf80a6d081b65cf",
     "docs/slash-command-feedback.md": "7c9b801169b4bd9961ee9987859d77e17784169bc373f274895cd62cffc49f13",
     "docs/specs/functional-requirements.md": "f483d9b5fdd38ab8302db74422be1ed1f0966793ba027c006f10b7911fa3f16f",
@@ -585,32 +585,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ee18befa09a457ad0813c9e5c919bedb21833dbcde0f1fc08f97e2f461bff8c5",
+    "GRAPH_REPORT.md": "a286b12a78f5199e4720f006f0b0de808f14a1a01f6ff128e5f3c94649be82d8",
     "communities.json": "b11d5a728457981d369e96696a5e4743a4b00a18fc675adfb47b35d633cba2c1",
-    "graph.html": "b79df26a6d6c156ffdd02198c99d5014d9aa6d4fcbc0ebfa9300ee91a8f4a050",
-    "graph.json": "f0ef2eb1beb95a1f961f666c9ad01c70ec808df6579d98ae04b1a60c60b3f812"
+    "graph.html": "d6cbe46e0e5ff5b48bb86fef83d7012d8a5907572bc511bf6b2f3c9ed12cfe57",
+    "graph.json": "622ef3a280619ddbc1677f927fbb3536fd3f96a61338f60a49dc8f4618582aea"
   },
   "schema_version": 1,
-  "source_commit": "751f18b1976c5d1298d69d5a194538b4c646a2f6",
-  "source_fingerprint": "ccabcc75b896991d058e8a9e5235c2728cfd77bae739a1b06f6fa0a6fae1b437",
+  "source_commit": "c1d6e1bf667617faabc32afa450914dc0fc7b8b3",
+  "source_fingerprint": "efb7cbdf5bd975c1fbe57984f37ac97a1240ddc10db7f4e22c1194cacf0779a2",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
-    "server/workspace-browser.test.ts",
-    "server/workspace-browser.ts",
-    "shared/contracts.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/DocumentViewControls.test.tsx",
-    "src/DocumentViewControls.tsx",
-    "src/HtmlPreview.test.tsx",
-    "src/HtmlPreview.tsx",
-    "src/WorkspaceFileIcon.tsx",
-    "src/html-preview.ts",
-    "src/index.css"
+    "docs/reviews/2026-09-09/validation.json"
   ]
 }

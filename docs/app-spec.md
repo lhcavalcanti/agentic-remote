@@ -293,6 +293,13 @@ Questions and permissions are the highest-priority UI state.
   restore the previous size and sizing policy on completion or failure without
   overwriting intervening operator changes; it MUST NOT resize shared windows
   or a window whose ownership changed.
+- Wrapped control hints MAY trigger a bounded viewport check, but MUST NOT
+  replace verification of the complete question. Each successive long form
+  MUST independently verify its identity and restore its viewport.
+- Completion of a fallback dismissal MUST NOT count as delivery of the answer.
+  The running service MUST retain the original answer continuation across late
+  dismissal confirmation and refuse conflicting retries or replay after an
+  uncertain send. A receipt for an earlier question MUST NOT clear a newer one.
 - Safe Yes/choice and Stop actions MUST be available.
 - Cancelling or declining a persisted terminal question MUST dismiss the
   matching live form and confirm completion before hiding its card. A failed
@@ -836,7 +843,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Notification settings MUST be discoverable under App settings.
 - Per-session mute MUST persist on the hub and synchronize across devices.
 - Question and permission notifications MUST use high urgency.
-- Completion notifications MUST use low/very-low urgency.
+- Completion notifications MUST use low urgency. RFC 8030 also defines
+  `very-low`, but FCM rejects it, so `low` is the lowest portable value.
 - Every notification MUST include computer, session name, and a concise brief.
 - Completion notifications MUST say that no action is needed.
 - Opening the related chat MUST clear question, permission, and completion

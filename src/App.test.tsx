@@ -5659,6 +5659,55 @@ describe('App', () => {
     expect(transcribeAudio).toHaveBeenCalledWith(file)
   })
 
+  it('renders exact safe breaks in conversation Markdown without executing raw HTML', async () => {
+    const marked = { ...session, messages: [{
+      id: 'safe-break-message', role: 'assistant' as const,
+      content: 'first<br>second<br/>third<br />fourth\n\n<script>bad()</script>',
+      createdAt: '2026-07-22T00:00:02.000Z',
+    }] }
+    vi.mocked(listSessions).mockResolvedValue([marked])
+    vi.mocked(getSession).mockResolvedValue(marked)
+    render(<App />)
+    await screen.findByLabelText('Message')
+    await waitFor(() => expect(document.querySelectorAll('.message--assistant .message__content br')).toHaveLength(3))
+    expect(document.querySelector('.message--assistant script')).toBeNull()
+  })
+
+  it.each(['workspace', 'knowledge'] as const)(
+    'renders safe breaks in the %s viewer and leaves Source unchanged',
+    async (surface) => {
+      const content = '# First<br>second\n\nBefore<br/>after<br />last\n\n' +
+        'Inert <img src=x onerror=bad()>\n\n<script>bad()</script>\n\n```html\n<br>\n```'
+      const file: WorkspaceFile = {
+        name: 'README.md', path: 'README.md', kind: 'markdown',
+        mimeType: 'text/markdown', size: content.length, content,
+      }
+      vi.mocked(readWorkspaceFile).mockResolvedValue(file)
+      vi.mocked(readKnowledgeFile).mockResolvedValue(file)
+      mockKnowledgeRoots([knowledgeRoot])
+      vi.mocked(listKnowledgeEntries).mockResolvedValue({
+        path: '.', entries: [{ name: 'README.md', path: 'README.md', kind: 'markdown' }],
+      })
+      render(<App />)
+      if (surface === 'workspace') {
+        fireEvent.click(await screen.findByRole('button', { name: 'Browse current session folder' }))
+        fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+      } else {
+        fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+        fireEvent.click(await screen.findByRole('treeitem', { name: 'README.md' }))
+      }
+      const heading = await screen.findByRole('heading', { name: /^First\s*second$/ })
+      expect(heading).toHaveAttribute('id', 'first-second')
+      const preview = heading.closest('.workspace-preview__content')!
+      expect(preview.querySelectorAll('br')).toHaveLength(3)
+      expect(preview.querySelector('script, img, [onerror]')).toBeNull()
+      expect(preview.querySelector('pre code')?.textContent).toBe('<br>\n')
+      fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+      expect(document.querySelector('.workspace-preview__content > pre')?.textContent).toBe(content)
+      expect(document.querySelector('.workspace-preview__content br')).toBeNull()
+    },
+  )
+
   it('browses and renders Markdown workspace files', async () => {
     render(<App />)
     fireEvent.click(
@@ -10841,6 +10890,7 @@ describe('App', () => {
       '<!doctype html>',
       '<style>main { color: green }</style>',
       '<main style="padding: 12px">Session HTML</main>',
+      '<audio controls src="data:audio/wav;base64,AAAA"></audio>',
     ].join('\n')
     vi.mocked(listWorkspace).mockResolvedValue({
       path: '.',
@@ -10868,7 +10918,10 @@ describe('App', () => {
     }))
     fireEvent.click(await screen.findByRole('button', { name: /preview.html/ }))
 
-    expect(await screen.findByTitle('Preview of preview.html')).toBeInTheDocument()
+    const preview = await screen.findByTitle('Preview of preview.html')
+    expect(preview).toBeInTheDocument()
+    expect(new DOMParser().parseFromString(preview.getAttribute('srcdoc')!, 'text/html')
+      .querySelector('audio, video, source, track')).toBeNull()
     expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute(
       'aria-pressed',
       'true',
@@ -10886,7 +10939,8 @@ describe('App', () => {
   })
 
   it('previews exact HTML source in Knowledge', async () => {
-    const source = '<article style="font: 16px sans-serif">Knowledge HTML</article>'
+    const source = '<article style="font: 16px sans-serif">Knowledge HTML</article>\n' +
+      '<video controls><source src="data:video/mp4;base64,AAAA"></video>'
     mockKnowledgeRoots([knowledgeRoot])
     vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
       '.': {
@@ -10917,7 +10971,10 @@ describe('App', () => {
       await within(tree).findByRole('treeitem', { name: /reference.htm/ }),
     )
 
-    expect(await screen.findByTitle('Preview of reference.htm')).toBeInTheDocument()
+    const preview = await screen.findByTitle('Preview of reference.htm')
+    expect(preview).toBeInTheDocument()
+    expect(new DOMParser().parseFromString(preview.getAttribute('srcdoc')!, 'text/html')
+      .querySelector('audio, video, source, track')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Source' }))
     expect(
       document.querySelector('.knowledge-reader .workspace-preview__content > pre')

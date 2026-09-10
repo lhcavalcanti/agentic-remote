@@ -5,7 +5,7 @@ export const HTML_PREVIEW_CSP = [
   "style-src 'unsafe-inline'",
   'img-src data:',
   'font-src data:',
-  'media-src data:',
+  "media-src 'none'",
   "object-src 'none'",
   "frame-src 'none'",
   "child-src 'none'",
@@ -21,6 +21,7 @@ const blockedElements = [
   'animatemotion',
   'animatetransform',
   'applet',
+  'audio',
   'base',
   'embed',
   'frame',
@@ -32,6 +33,9 @@ const blockedElements = [
   'portal',
   'script',
   'set',
+  'source',
+  'track',
+  'video',
 ]
 
 const blockedAttributes = new Set([
@@ -77,18 +81,6 @@ function isAllowedDataSource(element: Element, value: string): boolean {
   const normalized = value.trim().toLowerCase()
   if (tag === 'img') {
     return normalized.startsWith('data:image/')
-  }
-  if (tag === 'audio') {
-    return normalized.startsWith('data:audio/')
-  }
-  if (tag === 'video') {
-    return normalized.startsWith('data:video/')
-  }
-  if (tag === 'source') {
-    return /^data:(?:audio|video)\//.test(normalized)
-  }
-  if (tag === 'track') {
-    return normalized.startsWith('data:text/vtt')
   }
   return false
 }

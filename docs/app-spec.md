@@ -269,6 +269,10 @@ Questions and permissions are the highest-priority UI state.
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot
   runtimes.
+- Question messages MUST render Markdown, including tables, emphasis, inline
+  code, and fenced code blocks, without changing the original message or reply
+  values. Raw HTML and unsafe link schemes MUST NOT execute. Wide tables and
+  code blocks MUST scroll within the card rather than overflow the page.
 - Terminal ask-user and permission dialogs MUST be parsed from the live pane.
 - CLI folder-trust prompts MUST be shown as permission cards with the folder
   path, an explicit one-session trust action, and Stop. The app MUST NOT
@@ -283,6 +287,19 @@ Questions and permissions are the highest-priority UI state.
   breaks within words, while still requiring the complete question and field
   headings. A failed match MUST preserve the pending request and surface an
   actionable error instead of typing into an unverified dialog.
+- If the CLI clips a long form, answering or dismissing it MAY temporarily
+  enlarge its owning single-pane window within a bounded limit. The complete
+  question and fields MUST still be verified before sending keys. The app MUST
+  restore the previous size and sizing policy on completion or failure without
+  overwriting intervening operator changes; it MUST NOT resize shared windows
+  or a window whose ownership changed.
+- Wrapped control hints MAY trigger a bounded viewport check, but MUST NOT
+  replace verification of the complete question. Each successive long form
+  MUST independently verify its identity and restore its viewport.
+- Completion of a fallback dismissal MUST NOT count as delivery of the answer.
+  The running service MUST retain the original answer continuation across late
+  dismissal confirmation and refuse conflicting retries or replay after an
+  uncertain send. A receipt for an earlier question MUST NOT clear a newer one.
 - Safe Yes/choice and Stop actions MUST be available.
 - Cancelling or declining a persisted terminal question MUST dismiss the
   matching live form and confirm completion before hiding its card. A failed
@@ -621,9 +638,16 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - HTML Preview MUST render in an opaque-origin iframe sandbox without scripts,
   same-origin access, permissions, referrers, navigation, forms, popups,
   downloads, frames, plugins, or network assets. A restrictive CSP before the
-  document content MUST allow only inline CSS plus data images, fonts, and
-  media. Interactive and navigation markup MUST also be neutralized before
-  rendering. Source MUST preserve the exact file text.
+  document content MUST allow only inline CSS plus data images and fonts.
+  Audio, video, and their source/track elements MUST be removed, including
+  data-backed media and elements inside templates; media loading MUST be
+  denied by CSP. Interactive and navigation markup MUST also be neutralized
+  before rendering. Source MUST preserve the exact file text.
+- Rendered Markdown across the app MAY convert only exact `<br>`, `<br/>`, and
+  `<br />` raw HTML nodes (case-insensitive) to hard breaks. All other raw HTML,
+  including break tags with attributes, MUST remain inert; raw HTML parsing
+  MUST NOT be enabled. Code fences, inline code, escaped tags, and Source mode
+  MUST retain their original text.
 - The document outline MUST remain Markdown-only and keyboard-accessible
   without pushing document content away.
   Repeated headings, colliding slugs, and reference headings MUST navigate to

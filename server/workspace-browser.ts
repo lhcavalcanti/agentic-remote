@@ -26,6 +26,8 @@ const MAX_SEARCH_RESULTS = 50
 const MAX_SEARCH_TEXT_BYTES = 20 * 1024 * 1024
 const searchableExtensions = new Set([
   '.csv',
+  '.htm',
+  '.html',
   '.json',
   '.log',
   '.md',
@@ -147,7 +149,9 @@ export async function readWorkspaceFile(
         ? 'application/pdf'
         : kind === 'image'
           ? imageMimeTypes.get(extension) || 'application/octet-stream'
-          : 'text/plain; charset=utf-8',
+          : kind === 'html'
+            ? 'text/html; charset=utf-8'
+            : 'text/plain; charset=utf-8',
     size: metadata.size,
     ...(binary
       ? { base64: data.toString('base64') }
@@ -291,6 +295,7 @@ async function resolveWorkspacePath(
 function fileKind(filename: string): Exclude<WorkspaceEntryKind, 'directory'> {
   const extension = path.extname(filename).toLowerCase()
   if (extension === '.md' || extension === '.markdown') return 'markdown'
+  if (extension === '.html' || extension === '.htm') return 'html'
   if (extension === '.pdf') return 'pdf'
   if (imageMimeTypes.has(extension)) return 'image'
   return 'file'

@@ -634,6 +634,11 @@ clear replacement IDs without losing, duplicating, or reordering content.
   root MUST be rejected.
 - Hidden files/directories MUST be omitted by default.
 - Markdown MUST support rendered and raw views.
+- Rendered Markdown across the app MAY convert only exact `<br>`, `<br/>`, and
+  `<br />` raw HTML nodes (case-insensitive) to hard breaks. All other raw HTML,
+  including break tags with attributes, MUST remain inert; raw HTML parsing
+  MUST NOT be enabled. Code fences, inline code, escaped tags, and Source mode
+  MUST retain their original text.
 - Markdown readers MUST label those views Preview and Source. Their outline
   MUST remain keyboard-accessible without pushing document content away.
   Repeated headings, colliding slugs, and reference headings MUST navigate to

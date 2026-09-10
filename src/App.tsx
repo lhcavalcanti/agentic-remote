@@ -137,6 +137,7 @@ import {
   type NavigationEntry,
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
+import { remarkSafeBreaks } from './remark-safe-breaks'
 import type {
   AgentProvider,
   AgentProviderCapability,
@@ -2952,7 +2953,7 @@ function DefaultRuntimeControls({
           </label>
           {selectedModel?.description ? (
             <div className="default-runtime__description">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkSafeBreaks]}>
                 {selectedModel.description}
               </ReactMarkdown>
             </div>
@@ -4207,7 +4208,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
         {message.content ? (
           <ReactMarkdown
             components={mermaidComponents}
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkSafeBreaks]}
           >
             {message.content}
           </ReactMarkdown>
@@ -5518,7 +5519,7 @@ function KnowledgeReader({
           <ReactMarkdown
             components={components}
             rehypePlugins={[rehypeDocumentHeadings]}
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkSafeBreaks]}
           >
             {file.content || ''}
           </ReactMarkdown>
@@ -6156,7 +6157,7 @@ function WorkspaceDialog({
                   <ReactMarkdown
                     components={markdownComponents}
                     rehypePlugins={[rehypeDocumentHeadings]}
-                    remarkPlugins={[remarkGfm]}
+                    remarkPlugins={[remarkGfm, remarkSafeBreaks]}
                   >
                     {file.content || ''}
                   </ReactMarkdown>

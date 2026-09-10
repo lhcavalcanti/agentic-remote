@@ -35,6 +35,23 @@ const request: PendingUserInput = {
 }
 
 describe('agent question Markdown', () => {
+  it.each([false, true])('renders safe breaks without executing HTML in structured=%s questions', (structured) => {
+    const onReply = vi.fn()
+    const { container } = render(<UserInputCard request={{
+      ...request,
+      question: 'First<br>second<br/>third<br />fourth\n\n<script>bad()</script>\n\n<div>inert</div>',
+      ...(structured ? {
+        form: { fields: [{ name: 'note', title: 'Note', type: 'string' as const, required: false }] },
+      } : {}),
+    }} disabled={false} onReply={onReply} />)
+    const message = container.querySelector('.user-input-card__question')!
+    expect(message.querySelectorAll('br')).toHaveLength(3)
+    expect(message.querySelector('script, div')).toBeNull()
+    expect(message.textContent).toContain('<script>bad()</script>')
+    expect(message.textContent).toContain('<div>inert</div>')
+    expect(onReply).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])('renders rich text with structured form=%s', (structured) => {
     const onReply = vi.fn()
     const { container } = render(<UserInputCard

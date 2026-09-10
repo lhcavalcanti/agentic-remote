@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react'
 import type { Root } from 'mdast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkSafeBreaks } from '../../remark-safe-breaks'
 import type {
   PendingPermission,
   PendingUserInput,
@@ -448,7 +449,7 @@ function singleParagraphQuestionHeading() {
 const UserInputQuestion = memo(function UserInputQuestion({ question }: { question: string }) {
   return (
     <div className="user-input-card__question markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm, singleParagraphQuestionHeading]}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkSafeBreaks, singleParagraphQuestionHeading]}>
         {question}
       </ReactMarkdown>
     </div>

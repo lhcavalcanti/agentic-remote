@@ -2,8 +2,9 @@
   "date": "2026-09-09",
   "applicationSourceCommit": "15a043e57234f7addfd8160f990dd22b38f1882a",
   "applicationVersion": "1.1.0",
-  "publicationBaseCommit": "46a4d04ab8af27effc6ade29d2fa5d72e45cb321",
-  "publicationBaseVersion": "1.1.1",
+  "publicationBaseCommit": "c098c9a36728fa723e7319a62a1e50a98355edaa",
+  "publicationBaseVersion": "1.1.2",
+  "originalPublicationBaseCommit": "46a4d04ab8af27effc6ade29d2fa5d72e45cb321",
   "node": "v22.22.1",
   "fullGate": {
     "command": "pnpm check",
@@ -35,6 +36,7 @@
     "retryToGreen": false
   },
   "publicationGate": {
+    "sourceBaseCommit": "46a4d04ab8af27effc6ade29d2fa5d72e45cb321",
     "command": "NODE_ENV=production pnpm check",
     "exitCode": 0,
     "completedRuns": 1,
@@ -74,7 +76,7 @@
   },
   "scope": {
     "runtimeBehaviorChanged": true,
-    "runtimeBehaviorChangedScope": "The applicationSourceCommit-to-publication range includes PR 243's responsive Markdown padding and version 1.1.1. The audit-only delta from publicationBaseCommit changes documentation and investigation tooling, not application runtime behavior.",
+    "runtimeBehaviorChangedScope": "The applicationSourceCommit-to-current-publication range includes PR 243's responsive Markdown padding and PR 248's completion-push urgency correction, now version 1.1.2. The audit-only delta from the current publicationBaseCommit changes documentation and investigation tooling, not application runtime behavior. Earlier full-gate results remain attributed to their recorded source base.",
     "auditOnlyRuntimeBehaviorChanged": false,
     "liveProviderInvokedByInvestigationPrograms": false,
     "manualDeploymentOrRestartPerformed": false,
@@ -96,6 +98,16 @@
     "correctnessSmoke": "Two synthetic store cases passed with sourceCommit null and explicit dirty-source attribution.",
     "fullApplicationGateRepeatedForDocumentationFollowup": false,
     "historicalPerformanceSamplesRegenerated": false
+  },
+  "mainRefresh": {
+    "date": "2026-09-10",
+    "dateTimezone": "UTC",
+    "baseCommit": "c098c9a36728fa723e7319a62a1e50a98355edaa",
+    "applicationVersion": "1.1.2",
+    "scope": "Integrate the already merged completion-push correction and regenerate derived graphs; preserve audit trust-boundary and source/bundle-provenance corrections.",
+    "historicalMeasurementsRewritten": false,
+    "fullApplicationGatesRepeated": false,
+    "validationPolicy": "Relevant provenance regressions, Graphify helper tests, syntax/lint, graph freshness and clean-source correctness smoke. Application runtime code must match current main."
   },
   "limits": [
     "One passing gate does not establish a current flake rate or close issue 169.",

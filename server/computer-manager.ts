@@ -24,6 +24,7 @@ import type {
   UserInputReplyInput,
   RuntimeOptions,
   SessionFileUpload,
+  SessionRecoveryReason,
   ServerEvent,
   SessionDetail,
   SlashCommand,
@@ -786,6 +787,26 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       computerId === this.identity.info.id
         ? await this.localService.clearConversation(sessionId)
         : await this.requireClient(computerId).clearConversation(sessionId)
+    return managedSession(session, computer)
+  }
+
+  async recoverConversation(
+    computerId: string,
+    sessionId: string,
+    reason: SessionRecoveryReason,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    if (!computer.providers?.some((provider) =>
+      provider.id === 'copilot' && provider.supportsContextRecovery === true)) {
+      throw Object.assign(
+        new Error(`${computer.name} does not support conversation recovery yet. Update it to the latest release.`),
+        { statusCode: 409 },
+      )
+    }
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.recoverConversation(sessionId, reason)
+        : await this.requireClient(computerId).recoverConversation(sessionId, reason)
     return managedSession(session, computer)
   }
 

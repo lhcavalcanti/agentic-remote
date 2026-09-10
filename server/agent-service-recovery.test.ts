@@ -194,6 +194,59 @@ afterEach(async () => {
 describe('PR167 reviewed-parent composition', () => {
   const emptyComposer = ['Synthetic idle owner', '╻▄▄▄▄▄▄▄▄▄▄', '┃ ', '╹▀▀▀▀▀▀▀▀▀▀', ' / commands'].join('\n')
 
+  it.each(['aggregate', 'owner'])(
+    'reconsiders a pending terminal seed after deferred %s discovery without duplicate dispatch',
+    async (deferred) => {
+      const f = await fixture()
+      await f.store.enqueuePrompt('pending', prompt('Preserved FIFO'))
+      await f.store.replaceWithRecoveredSession(
+        'pending', 'replacement', 'manual', 1, false, 'Deferred terminal seed',
+      )
+      f.ownership.owners.add('replacement')
+      if (deferred === 'owner') f.ownership.aggregateError = undefined
+      f.ownership.probeErrors.set('replacement', new Error('Ownership unreadable'))
+      f.terminal.capture.mockResolvedValue(emptyComposer)
+
+      await f.service.start()
+
+      expect(f.store.recoverySeed('replacement')?.state).toBe('pending')
+      expect(f.terminal.send).not.toHaveBeenCalled()
+      f.ownership.aggregateError = undefined
+      await f.service.refreshDiscovery()
+      expect(f.store.recoverySeed('replacement')?.state).toBe('pending')
+      expect(f.terminal.send).not.toHaveBeenCalled()
+
+      const claim = f.store.claimRecoverySeed.bind(f.store)
+      const claiming = gate(undefined)
+      const claimSpy = vi.spyOn(f.store, 'claimRecoverySeed').mockImplementation(async (...args) => {
+        await claiming.pending
+        return claim(...args)
+      })
+      f.ownership.probeErrors.clear()
+      await f.service.refreshDiscovery()
+      await vi.waitFor(() => expect(claimSpy).toHaveBeenCalledOnce())
+      // Discovery must remain responsive while the durable claim is pending.
+      await f.service.refreshDiscovery()
+      expect(claimSpy).toHaveBeenCalledOnce()
+      claiming.finish(undefined)
+      await vi.waitFor(() => expect(f.terminal.send)
+        .toHaveBeenCalledExactlyOnceWith('replacement', 'Deferred terminal seed', false))
+      await vi.waitFor(() => expect(f.store.recoverySeed('replacement')).toBeUndefined())
+      expect(f.store.get('replacement')?.queuedPrompts).toEqual([prompt('Preserved FIFO')])
+      await f.service.refreshDiscovery()
+      expect(claimSpy).toHaveBeenCalledOnce()
+      expect(f.terminal.create).not.toHaveBeenCalled()
+      expect(f.client.resumeSession).not.toHaveBeenCalled()
+
+      await f.store.clearUntrackedTerminalDispatch('replacement', f.store.queueDispatchAt('replacement')!)
+      await f.drainNow('replacement')
+      expect(f.terminal.send.mock.calls).toEqual([
+        ['replacement', 'Deferred terminal seed', false],
+        ['replacement', 'Preserved FIFO', false],
+      ])
+    },
+  )
+
   it('starts with native queued demand while aggregate discovery is indeterminate', async () => {
     const f = await fixture()
     await f.store.enqueuePrompt('pending', prompt('Persisted native work'))

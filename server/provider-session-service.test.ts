@@ -14,12 +14,18 @@ function provider(id: AgentProvider, supported = true) {
     providers: () => [{
       id, name: id, available: true, terminalBacked: false,
       ...(supported ? { supportsQueuedPromptDispatch: true } : {}),
+      supportsContextRecovery: id === 'copilot' && supported,
     }],
     dispatchQueuedPrompt: vi.fn(async (_sessionId: string, promptId: string, _content: string) => ({
       outcome: 'sent' as const, promptId, attemptId: '11111111-1111-4111-8111-111111111111', session,
     })),
     removeQueuedPrompt: vi.fn(async () => ({
       session, prompt: { id: 'prompt', content: 'original', createdAt: session.updatedAt },
+    })),
+    recoverConversation: vi.fn(async () => ({
+      ...session,
+      id: `${id}-recovered`,
+      replacedSessionIds: [session.id],
     })),
   })
 }
@@ -50,5 +56,25 @@ describe('provider queued dispatch aggregation', () => {
     expect(() => aggregate.dispatchQueuedPrompt('copilot-session', 'prompt', 'rewrite'))
       .toThrow('Update the owning runtime')
     expect(copilot.dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('routes recovery only to a provider that advertises support', async () => {
+    const copilot = provider('copilot')
+    const claude = provider('claude')
+    const aggregate = new ProviderSessionService(
+      copilot as unknown as SessionService,
+      claude as unknown as SessionService,
+    )
+
+    await expect(aggregate.recoverConversation(
+      'copilot-session',
+      'provider-error',
+    )).resolves.toMatchObject({ id: 'copilot-recovered' })
+    expect(copilot.recoverConversation).toHaveBeenCalledWith(
+      'copilot-session',
+      'provider-error',
+    )
+    expect(() => aggregate.recoverConversation('claude-session', 'manual'))
+      .toThrow('does not support conversation recovery')
   })
 })

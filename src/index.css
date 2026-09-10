@@ -2752,7 +2752,8 @@ button {
 }
 
 .permission-card,
-.user-input-card {
+.user-input-card,
+.recovery-card {
   margin-top: 24px;
   padding: 16px;
   border: 1px solid rgba(242, 201, 109, 0.32);
@@ -2770,12 +2771,24 @@ button {
 }
 
 .permission-card h3,
-.user-input-card > h3 {
+.user-input-card > h3,
+.recovery-card h3 {
   margin: 0;
   font-size: 13px;
   font-weight: 570;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.recovery-card p:not(.eyebrow) {
+  margin: 8px 0 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.recovery-card .primary-button {
+  min-height: 40px;
 }
 
 .user-input-card__question {

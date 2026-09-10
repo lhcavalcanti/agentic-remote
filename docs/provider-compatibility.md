@@ -14,6 +14,7 @@ history is not transferred between providers.
 | Local authentication | Existing GitHub/Copilot login | Existing local Claude login | Compatible; credentials remain on the owning computer |
 | Streaming text and tools | SDK events and terminal event logs | Agent SDK stream events | Compatible through shared UI messages |
 | Multi-turn resume | Copilot session ID | Claude session ID | Compatible; provider-native histories remain separate |
+| Context-preserving recovery | Fresh Copilot session seeded with a bounded text-only brief; prior transcript remains read-only | Not supported | Copilot-only and capability-gated |
 | Model and effort | Supported | Supported | Compatible through provider-specific model lists |
 | Context tier | Default and long-context when advertised | Automatic provider-managed context | Provider-specific; Claude advertises only the default UI option |
 | Interactive/plan/autonomous mode | Native Copilot modes | Claude permission-mode mapping | Partial; labels are shared but semantics differ |
@@ -84,9 +85,32 @@ history is not transferred between providers.
 - Restart has provider-specific meaning: Copilot reconnects or respawns its
   process; Claude clears transient error state and resumes lazily on the next
   turn.
-- A service restart clears unresolved in-memory approval/question callbacks and
-  returns their stored sessions to idle. It does not claim that an unanswered
-  provider request survived the process boundary.
+- Recover conversation is distinct from same-ID Restart and destructive Clear.
+  It creates a fresh Copilot identity, archives the visible transcript, seeds
+  bounded earliest-and-latest text context before the preserved queue, and does
+  not transfer provider event IDs, permissions, or connection-specific tool
+  state.
+- Recovery returns the committed replacement before the seed turn completes,
+  allowing the hub to carry Knowledge and notification metadata immediately.
+  Pending context rebuilding and later failure remain visible in session
+  activity; queued work stays blocked until seed admission. Discovery retries
+  pending terminal seeds only after ownership settles, without delaying other
+  sessions. A seed with uncertain delivery is never automatically retried.
+- Seed handoff excludes same-session runtime replacement without holding
+  startup or discovery open. Provider slash commands are unavailable until
+  context admission, including commands normally allowed during execution.
+  Stop and Recover conversation remain the explicit interruption/recovery
+  controls.
+- A legacy failed-prompt barrier keeps preserved work blocked during unmodified
+  1.1.2 startup, even though that release does not understand recovery seeds.
+  It cannot automatically rebuild the context: return to a recovery-aware
+  runtime to continue recovery, rather than dismissing its legacy failure
+  marker. Pending seeds may then run once; failed or uncertain seeds are not
+  automatically retried.
+- A service restart marks persisted SDK approval/question requests stale and
+  recoverable because their callbacks no longer exist. Replies receive `409`
+  rather than claiming the old callback resumed. Terminal-backed prompts keep
+  their live-terminal recovery behavior.
 
 ## Risks and follow-up work
 

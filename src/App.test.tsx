@@ -32,6 +32,7 @@ import {
   cancelBackgroundTask,
   cancelSession,
   clearConversation,
+  recoverConversation,
   createSession,
   configureRuntime,
   deleteSession,
@@ -162,6 +163,7 @@ vi.mock('./api', async (importOriginal) => ({
   getRuntimeOptions: vi.fn(),
   getProviderRuntimeOptions: vi.fn(),
   clearConversation: vi.fn(),
+  recoverConversation: vi.fn(),
   restartSession: vi.fn(),
   resumeSession: vi.fn(),
   suspendSession: vi.fn(),
@@ -210,6 +212,7 @@ const computer: ComputerSummary = {
       available: true,
       terminalBacked: true,
       supportsTmuxMigration: true,
+      supportsContextRecovery: true,
     },
     {
       id: 'claude',
@@ -1255,6 +1258,18 @@ describe('App', () => {
       ...session,
       id: 'cleared-session',
       messages: [],
+    })
+    vi.mocked(recoverConversation).mockResolvedValue({
+      ...session,
+      id: 'recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-09-09T00:00:00.000Z',
+        archivedMessageCount: session.messages.length,
+        contextMessageCount: 1,
+        contextTruncated: false,
+        reason: 'provider-error',
+      },
     })
     vi.mocked(restartSession).mockResolvedValue(session)
     vi.mocked(suspendSession).mockResolvedValue({ ...session, suspended: true })
@@ -9377,6 +9392,84 @@ describe('App', () => {
       expect(restartSession).toHaveBeenCalledWith(
         'computer-1',
         'session-1',
+      ),
+    )
+  })
+
+  it('recovers an errored Copilot session and adopts the replacement state', async () => {
+    const errored: ManagedSession = {
+      ...session,
+      status: 'error',
+    }
+    const recovered: ManagedSession = {
+      ...errored,
+      id: 'recovered-session',
+      status: 'running',
+      replacedSessionIds: [errored.id],
+      messages: [
+        ...errored.messages,
+        {
+          id: 'boundary',
+          role: 'notice',
+          content: 'Provider context was rebuilt. Earlier messages are read-only history.',
+          createdAt: '2026-09-09T00:00:00.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([errored])
+    vi.mocked(getSession).mockResolvedValue(errored)
+    vi.mocked(recoverConversation).mockResolvedValue(recovered)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findByText('Hello agent')
+    const textarea = screen.getByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this recovery draft' } })
+
+    fireEvent.click(sessionAction('Recover conversation'))
+
+    await waitFor(() =>
+      expect(recoverConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'provider-error',
+      ),
+    )
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(
+      'Old messages remain visible as read-only history',
+    ))
+    expect(await screen.findByText(/Provider context was rebuilt/)).toBeInTheDocument()
+    expect(textarea).toHaveValue('Keep this recovery draft')
+  })
+
+  it('replaces stale SDK prompt controls with an inline recovery card', async () => {
+    const stale: ManagedSession = {
+      ...session,
+      executionMode: 'sdk',
+      status: 'error',
+      pendingPermission: {
+        requestId: 'stale-permission',
+        title: 'Allow the expired tool request',
+        stale: true,
+        options: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        ],
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([stale])
+    vi.mocked(getSession).mockResolvedValue(stale)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+
+    expect(await screen.findByText('Allow the expired tool request')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Allow once' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Recover conversation' }))
+    await waitFor(() =>
+      expect(recoverConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'stale-sdk-interaction',
       ),
     )
   })

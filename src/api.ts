@@ -23,6 +23,7 @@ import type {
   PermissionReplyInput,
   RenameSessionInput,
   RuntimeOptions,
+  SessionRecoveryReason,
   SendMessageInput,
   SessionKnowledgeBinding,
   SessionFileUpload,
@@ -699,6 +700,21 @@ export async function clearConversation(
     {
       method: 'POST',
       body: '{}',
+    },
+  )
+  return response.session
+}
+
+export async function recoverConversation(
+  computerId: string,
+  sessionId: string,
+  reason: SessionRecoveryReason,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/recover`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
     },
   )
   return response.session

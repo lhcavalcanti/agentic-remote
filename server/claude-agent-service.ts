@@ -331,6 +331,7 @@ export class ClaudeAgentService
         supportsBackgroundTasks: false,
         supportsQueuedPromptDispatch: true,
         supportsSessionResources: true,
+        supportsContextRecovery: false,
         unavailableReason: this.available ? undefined : this.unavailableReason,
       },
     ]
@@ -688,12 +689,20 @@ export class ClaudeAgentService
           if (ownership.joinedActivity) {
             throw Object.assign(new Error('A prompt was admitted while Clear waited; nothing was cleared'), { statusCode: 409 })
           }
+
           return this.clearSerialized(id, { ...observed, isCurrent: ownership.isCurrent })
         }),
       ))
     } finally {
       if (!this.stopped && this.store.get(id) && this.drainRequested.has(id)) this.wakeQueue(id)
     }
+  }
+
+  recoverConversation(): Promise<SessionDetail> {
+    return Promise.reject(Object.assign(
+      new Error('Claude Agent does not support conversation recovery.'),
+      { statusCode: 409 },
+    ))
   }
 
   private async clearSerialized(

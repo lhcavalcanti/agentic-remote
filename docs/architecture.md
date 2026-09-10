@@ -477,6 +477,48 @@ is additive persistent metadata. A runtime predating retirement support can
 ignore it; rollout and rollback of this stateful change require explicit review
 rather than assuming an older binary preserves retirement.
 
+### Context recovery dispatch
+
+Conversation replacement atomically retains archived history, lineage, uploads,
+and FIFO together with a pending text-only seed. The recovery response returns
+that durable identity immediately; neither the hub's Knowledge/mute carry-over
+nor runtime startup waits for the provider turn. Session activity distinguishes
+pending rebuilding from a later failed or uncertain seed.
+
+`AgentService` tracks one seed dispatch per session and joins it during shutdown.
+Startup and successful discovery schedule eligible pending seeds independently,
+including terminal seeds previously deferred by aggregate or per-owner
+discovery. A later discovery pass joins an existing dispatch rather than
+claiming it twice. The durable pending/dispatching/failed state remains the
+crash boundary: a restarted dispatching seed becomes uncertain and is not
+resent. Preserved and newly queued work stay blocked until seed admission;
+immediate sends cannot bypass the seed and replacement cannot race its handoff.
+
+Seed handoff registers its `SessionAdmissions` and counted dispatch hold while
+owning the existing per-session lifecycle lease. The lease is then released
+before provider I/O; the handoff hold, not a global discovery lock, excludes
+Restart and other runtime replacement. SDK turn completion remains outside
+handoff admission. Clear/Recover refuse an already-dispatching seed immediately
+and retain their exclusive admission and transactional rechecks for races.
+Slash commands are refused before catalog/provider lookup and rechecked at
+dispatch; no provider command is presumed to be a pure local observation.
+
+Each new recovery replacement atomically stores its brief in the existing
+`failedPrompt` queue barrier as well as `recoverySeed`. Claiming the seed marks
+that barrier uncertain before provider handoff. Current projections hide this
+compatibility marker in favor of recovery activity, and generic recovery-token
+operations cannot consume it. Successful admission removes only the matching
+seed-owned barrier in the same commit; a failed or interrupted seed retains it.
+The unchanged 1.1.2 reader preserves this field when resetting status to idle,
+and its startup/drain paths therefore cannot send the preserved queue. Returning
+to a recovery-aware runtime admits only still-pending seeds; uncertain seeds
+remain manual recovery decisions. This adds no migration or eager rewrite of
+existing state and does not change CLI rollback policy. The compatibility test
+boots committed 1.1.2 source twice with synthetic SDK and terminal providers,
+then returns to the current reader/runtime. Its read-only source copy resolves
+the installed test dependencies explicitly, independently of temporary-directory
+ancestry.
+
 ## Pairing flow
 
 1. Install the second computer with `--role node`.

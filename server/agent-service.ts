@@ -2027,44 +2027,68 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async dispatchRecoverySeed(sessionId: string): Promise<SessionDetail | undefined> {
-    const seed = this.store.recoverySeed(sessionId)
-    if (!seed || seed.state !== 'pending') return this.store.get(sessionId)
-    const terminal = this.store.backend(sessionId) === 'terminal' ||
-      this.externalSessionIds.has(sessionId)
-    if (terminal && this.isTerminalRecoveryPending(sessionId)) return undefined
+    let prompt: string | undefined
+    let terminal = false
+    let completion: Promise<void> | undefined
     let handedOff = false
     try {
-      const claimed = await this.store.claimRecoverySeed(sessionId, seed.prompt)
-      this.publish(claimed)
-      if (terminal) {
-        const sent = this.terminalController.sendWhenIdle
-          ? await this.terminalController.sendWhenIdle(sessionId, seed.prompt)
-          : await this.terminalController.send(sessionId, seed.prompt, false)
-        if (!sent) throw new Error('Fresh terminal session did not accept the recovery brief')
-        handedOff = true
-        this.admissions.markCommitted(sessionId)
-        const admitted = await this.store.admitRecoverySeed(
-          sessionId,
-          seed.prompt,
-          new Date().toISOString(),
-        )
-        this.publish(admitted)
-        return admitted
-      }
-      handedOff = true
-      await this.startMessage(
-        sessionId,
-        seed.prompt,
-        true,
-        undefined,
-        undefined,
-        undefined,
-        {
-          preserveTitle: true,
-          recoverySeedPrompt: seed.prompt,
-        },
-      )
-      await this.recoverySeedPromptRuns.get(sessionId)
+      const slot = await this.serializeLifecycle(sessionId, async () => {
+        const delivery = this.admissions.run(sessionId, async () => {
+          // Register the handoff while owning lifecycle admission, but release
+          // that lease before provider I/O so discovery remains nonblocking.
+          const release = this.holdDispatch(sessionId)
+          try {
+            const current = await this.store.readAfterWrites(sessionId)
+            const seed = this.store.recoverySeed(sessionId)
+            if (!seed || seed.state !== 'pending') return current
+            terminal = this.store.backend(sessionId) === 'terminal' ||
+              this.externalSessionIds.has(sessionId)
+            if (
+              this.stopped || this.deletingSessions.has(sessionId) ||
+              current.suspended || this.suspendingSessions.has(sessionId) ||
+              (terminal && this.isTerminalRecoveryPending(sessionId))
+            ) return undefined
+            prompt = seed.prompt
+            const claimed = await this.store.claimRecoverySeed(sessionId, seed.prompt)
+            this.publish(claimed)
+            if (terminal) {
+              let sent: boolean
+              try {
+                sent = this.terminalController.sendWhenIdle
+                  ? await this.terminalController.sendWhenIdle(sessionId, seed.prompt)
+                  : await this.terminalController.send(sessionId, seed.prompt, false)
+              } catch (error) {
+                if (deliveryUncertaintyFromError(error) === true) {
+                  handedOff = true
+                  this.admissions.markCommitted(sessionId)
+                }
+                throw error
+              }
+              if (!sent) throw new Error('Fresh terminal session did not accept the recovery brief')
+              handedOff = true
+              this.admissions.markCommitted(sessionId)
+              const admitted = await this.store.admitRecoverySeed(
+                sessionId, seed.prompt, new Date().toISOString(),
+              )
+              this.publish(admitted)
+              return admitted
+            }
+            handedOff = true
+            await this.startMessage(
+              sessionId, seed.prompt, true, undefined, undefined, undefined,
+              { preserveTitle: true, recoverySeedPrompt: seed.prompt },
+            )
+            completion = this.recoverySeedPromptRuns.get(sessionId)
+            return this.store.get(sessionId)
+          } finally {
+            release()
+          }
+        }, true)
+        return { delivery }
+      })
+      const handoff = await slot.delivery
+      if (terminal || prompt === undefined) return handoff
+      await completion
       if (this.stopped) {
         throw new Error('The service stopped before the recovery brief completed')
       }
@@ -2079,17 +2103,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           `The recovery brief did not complete successfully; session status is ${completed.status}`,
         )
       }
-      const admitted = await this.store.admitRecoverySeed(sessionId, seed.prompt)
+      const admitted = await this.store.admitRecoverySeed(sessionId, prompt)
       this.publish(admitted)
       if (admitted.queuedPrompts?.length) this.wakeSdkQueue(sessionId)
       return admitted
     } catch (error) {
+      if (prompt === undefined) throw error
       const detail = error instanceof Error ? error.message : String(error)
       const message = handedOff
         ? `Conversation recovered, but recovery brief admission could not be recorded after provider handoff; delivery is uncertain: ${detail}`
         : `Conversation recovered, but the context brief could not be sent: ${detail}`
       try {
-        const failed = await this.store.failRecoverySeed(sessionId, seed.prompt, message)
+        const failed = await this.store.failRecoverySeed(sessionId, prompt, message)
         this.publish(failed)
         this.publishError(sessionId, new Error(message))
         return failed
@@ -2803,7 +2828,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       stored.status === 'running' ||
       stored.status === 'waiting' ||
-      this.drainingSessions.has(id)
+      this.drainingSessions.has(id) ||
+      this.dispatchingSessions.has(id) ||
+      this.store.recoverySeed(id)?.state === 'dispatching'
     ) {
       throw Object.assign(new Error('Session can only be suspended while idle'), {
         // Carries a status so the reason reaches the reader. Left
@@ -3129,7 +3156,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       stored.status === 'running' ||
       stored.status === 'waiting' ||
-      this.drainingSessions.has(id)
+      this.drainingSessions.has(id) ||
+      this.dispatchingSessions.has(id) ||
+      this.store.recoverySeed(id)?.state === 'dispatching'
     ) {
       throw new Error('Session can only restart while idle')
     }
@@ -3199,7 +3228,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (
       stored.status !== 'idle' ||
-      this.drainingSessions.has(id)
+      this.drainingSessions.has(id) ||
+      this.dispatchingSessions.has(id) ||
+      this.store.recoverySeed(id)?.state === 'dispatching'
     ) {
       throw new Error('Session can only move to tmux while idle')
     }
@@ -3266,6 +3297,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async clearConversation(id: string): Promise<SessionDetail> {
     this.queuedDispatches.assertAvailable(id)
+    this.assertRecoverySeedReplacementAvailable(id)
     const observed = this.store.observeTranscript(id)
     try {
       return this.publicSession(await this.admissions.exclusive(id, (ownership) =>
@@ -3291,6 +3323,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     reason: SessionRecoveryReason,
   ): Promise<SessionDetail> {
     this.queuedDispatches.assertAvailable(id)
+    this.assertRecoverySeedReplacementAvailable(id)
     const observed = this.store.observeTranscript(id)
     let recovered: SessionDetail
     try {
@@ -3327,9 +3360,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = await this.store.readAfterWrites(id)
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
-    if (this.recoverySeedDispatches.has(id)) {
-      throw queueConflict('The recovery brief is still being dispatched. Wait for it to settle before replacing the conversation.')
-    }
+    this.assertRecoverySeedReplacementAvailable(id)
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Clearing builds the replacement a session carries on in, which is a
       // live owner. A later resume would then build a second one beside it.
@@ -5391,6 +5422,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Slash command name is required')
     }
     await this.store.readAfterWrites(sessionId)
+    this.assertRecoverySeedSettled(sessionId)
     const claim = await this.claimFailure(sessionId, command, acknowledgedFailure)
     const delivery: DeliveryBoundary = claim ?? { accepted: false }
     let ran: SessionDetail
@@ -5438,6 +5470,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
+    this.assertRecoverySeedSettled(sessionId)
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
@@ -5658,6 +5691,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // that began after the check above said there was none.
     const now = await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
+    this.assertRecoverySeedSettled(sessionId)
     if (now.suspended || this.suspendingSessions.has(sessionId)) {
       throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409, uncertainDelivery: false })
     }
@@ -8480,6 +8514,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         new Error('A queued prompt is still awaiting durable delivery confirmation. Wait before sending more work.'),
         { statusCode: 409 },
       )
+    }
+  }
+
+  private assertRecoverySeedSettled(sessionId: string): void {
+    if (this.store.recoverySeed(sessionId)) {
+      throw queueConflict('The recovery brief must be admitted before slash commands can run. Recover the conversation if context rebuilding failed.')
+    }
+  }
+
+  private assertRecoverySeedReplacementAvailable(sessionId: string): void {
+    if (this.recoverySeedDispatches.has(sessionId)) {
+      throw queueConflict('The recovery brief is still being dispatched. Wait for it to settle before replacing the conversation.')
     }
   }
 

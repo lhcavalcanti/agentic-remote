@@ -183,6 +183,17 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Pending seeds deferred by terminal ownership discovery MUST be reconsidered
   when discovery settles. Seed dispatch MUST NOT block startup, discovery, or
   another session's seed, and concurrent discovery MUST NOT dispatch it twice.
+- Seed handoff MUST register under the owning session's lifecycle admission
+  and remain protected through durable delivery confirmation. Restart MUST NOT
+  replace a runtime underneath an admitted or in-flight seed.
+- Pending, dispatching, and failed seeds MUST reject provider slash commands,
+  including commands allowed during ordinary agent execution, before provider
+  lookup or invocation. Stop and explicit conversation recovery MUST retain
+  their existing admission and safety rules.
+- Recovery MUST atomically persist an existing failed-prompt queue barrier
+  alongside its seed so unmodified 1.1.2 startup cannot drain preserved work.
+  Only confirmed seed admission may remove that seed-owned barrier. Rollback
+  MUST NOT automatically replay uncertain seeds or bypass context rebuilding.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.

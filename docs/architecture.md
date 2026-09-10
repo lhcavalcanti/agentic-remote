@@ -494,6 +494,29 @@ crash boundary: a restarted dispatching seed becomes uncertain and is not
 resent. Preserved and newly queued work stay blocked until seed admission;
 immediate sends cannot bypass the seed and replacement cannot race its handoff.
 
+Seed handoff registers its `SessionAdmissions` and counted dispatch hold while
+owning the existing per-session lifecycle lease. The lease is then released
+before provider I/O; the handoff hold, not a global discovery lock, excludes
+Restart and other runtime replacement. SDK turn completion remains outside
+handoff admission. Clear/Recover refuse an already-dispatching seed immediately
+and retain their exclusive admission and transactional rechecks for races.
+Slash commands are refused before catalog/provider lookup and rechecked at
+dispatch; no provider command is presumed to be a pure local observation.
+
+Each new recovery replacement atomically stores its brief in the existing
+`failedPrompt` queue barrier as well as `recoverySeed`. Claiming the seed marks
+that barrier uncertain before provider handoff. Current projections hide this
+compatibility marker in favor of recovery activity, and generic recovery-token
+operations cannot consume it. Successful admission removes only the matching
+seed-owned barrier in the same commit; a failed or interrupted seed retains it.
+The unchanged 1.1.2 reader preserves this field when resetting status to idle,
+and its startup/drain paths therefore cannot send the preserved queue. Returning
+to a recovery-aware runtime admits only still-pending seeds; uncertain seeds
+remain manual recovery decisions. This adds no migration or eager rewrite of
+existing state and does not change CLI rollback policy. The compatibility test
+boots committed 1.1.2 source twice with synthetic SDK and terminal providers,
+then returns to the current reader/runtime.
+
 ## Pairing flow
 
 1. Install the second computer with `--role node`.

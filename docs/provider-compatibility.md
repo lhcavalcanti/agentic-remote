@@ -96,6 +96,17 @@ history is not transferred between providers.
   activity; queued work stays blocked until seed admission. Discovery retries
   pending terminal seeds only after ownership settles, without delaying other
   sessions. A seed with uncertain delivery is never automatically retried.
+- Seed handoff excludes same-session runtime replacement without holding
+  startup or discovery open. Provider slash commands are unavailable until
+  context admission, including commands normally allowed during execution.
+  Stop and Recover conversation remain the explicit interruption/recovery
+  controls.
+- A legacy failed-prompt barrier keeps preserved work blocked during unmodified
+  1.1.2 startup, even though that release does not understand recovery seeds.
+  It cannot automatically rebuild the context: return to a recovery-aware
+  runtime to continue recovery, rather than dismissing its legacy failure
+  marker. Pending seeds may then run once; failed or uncertain seeds are not
+  automatically retried.
 - A service restart marks persisted SDK approval/question requests stale and
   recoverable because their callbacks no longer exist. Replies receive `409`
   rather than claiming the old callback resumed. Terminal-backed prompts keep

@@ -158,6 +158,12 @@ function archivedMessage(message: ChatMessage): ChatMessage {
   return archived
 }
 
+function ownsRecoverySeedFailure(session: StoredSession): boolean {
+  return Boolean(session.recoverySeed && session.failedPrompt &&
+    session.failedPrompt.content === session.recoverySeed.prompt &&
+    session.failedPrompt.failedAt === session.recovery?.recoveredAt)
+}
+
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     archivedMessages,
@@ -184,6 +190,7 @@ function cloneSession(session: StoredSession): SessionDetail {
   if (sdkQueueAdmission && sdkQueueAdmission.startedAt === detail.failedPrompt?.failedAt) {
     detail.failedPrompt = undefined
   }
+  if (ownsRecoverySeedFailure(session)) detail.failedPrompt = undefined
   if (recoverySeed?.state === 'failed') {
     detail.status = 'error'
     detail.activity = recoverySeed.error ||
@@ -981,7 +988,9 @@ export class SessionStore {
         activity: undefined,
         pendingPermission: undefined,
         pendingUserInput: undefined,
-        failedPrompt: undefined,
+        // Older readers do not understand recoverySeed, but preserve this
+        // existing queue barrier even when startup resets status to idle.
+        failedPrompt: { content: recoveryPrompt, failedAt: recoveredAt },
         recoveryResend: undefined,
         lastClaimedRecovery: undefined,
         queuedPrompts: [...(existing.queuedPrompts || [])],
@@ -1163,6 +1172,7 @@ export class SessionStore {
         state: 'dispatching',
         startedAt: new Date().toISOString(),
       }
+      if (session.failedPrompt && ownsRecoverySeedFailure(session)) session.failedPrompt.uncertain = true
     })
   }
 
@@ -1175,6 +1185,7 @@ export class SessionStore {
       if (session.recoverySeed?.state !== 'dispatching' || session.recoverySeed.prompt !== prompt) {
         throw Object.assign(new Error('The recovery seed is no longer dispatching'), { statusCode: 409 })
       }
+      if (ownsRecoverySeedFailure(session)) session.failedPrompt = undefined
       session.recoverySeed = undefined
       if (terminalDispatchedAt) {
         session.queueDispatchAt = terminalDispatchedAt
@@ -1617,6 +1628,7 @@ export class SessionStore {
       session.queuedPrompts = [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
       if (
+        !session.recoverySeed &&
         session.failedPrompt &&
         (answers === undefined || session.failedPrompt.failedAt === answers)
       ) {
@@ -1635,7 +1647,7 @@ export class SessionStore {
     return this.mutate(sessionId, (stored) => {
       if (
         !claimedAt || claimedAt === expected.failedAt ||
-        stored.terminalQueueDispatch || stored.sdkQueueAdmission ||
+        stored.recoverySeed || stored.terminalQueueDispatch || stored.sdkQueueAdmission ||
         !stored.failedPrompt ||
         stored.failedPrompt.failedAt !== expected.failedAt ||
         stored.failedPrompt.content !== expected.content
@@ -1655,8 +1667,10 @@ export class SessionStore {
 
   // Projection reads recovery metadata without cloning the session's history.
   failedPrompt(sessionId: string): SessionDetail['failedPrompt'] {
-    const failed = this.state.sessions[sessionId]?.failedPrompt
-    return !this.isRetiredSession(sessionId) && failed ? structuredClone(failed) : undefined
+    const session = this.state.sessions[sessionId]
+    const failed = session?.failedPrompt
+    return !this.isRetiredSession(sessionId) && failed && !ownsRecoverySeedFailure(session)
+      ? structuredClone(failed) : undefined
   }
 
   recoveryResend(sessionId: string): RecoveryResend | undefined {
@@ -1698,7 +1712,7 @@ export class SessionStore {
       if (!token || session.failedPrompt?.failedAt !== token || session.lastClaimedRecovery === token) {
         throw Object.assign(new Error('That recovery has already been handled or replaced; refresh before retrying.'), { statusCode: 409 })
       }
-      if (session.terminalQueueDispatch || session.sdkQueueAdmission ||
+      if (session.recoverySeed || session.terminalQueueDispatch || session.sdkQueueAdmission ||
           session.suspended || !isCurrent(session)) {
         throw Object.assign(new Error('The session changed before recovery admission; the recovery was not consumed.'), { statusCode: 409 })
       }
@@ -1718,6 +1732,9 @@ export class SessionStore {
 
   async clearFailedPrompt(sessionId: string, expected?: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
+      if (stored.recoverySeed) {
+        throw Object.assign(new Error('The recovery brief must be admitted before its queue barrier can be cleared'), { statusCode: 409 })
+      }
       if (stored.terminalQueueDispatch || stored.sdkQueueAdmission) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }

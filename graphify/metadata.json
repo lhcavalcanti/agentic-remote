@@ -70,6 +70,8 @@
     "server/recovery-context.test.ts",
     "server/recovery-context.ts",
     "server/recovery-resend-durability.test.ts",
+    "server/recovery-seed-guards.test.ts",
+    "server/recovery-seed-legacy-fixture.ts",
     "server/release-publication.test.ts",
     "server/remote-node-client.test.ts",
     "server/remote-node-client.ts",
@@ -208,9 +210,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 144,
+  "communities": 145,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9268,
+  "edges": 9333,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -242,8 +244,8 @@
     "bin/agentic-remote-promotion-setup": "8c90f5750c7eb945098ee3b170a4f0f25fbd4dc1b7543771f8257c0f88ed7e1a",
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "3fc95217ae0127d46e5b7b702ce3f7821baa99062244ace56c7818d08be24918",
-    "docs/architecture.md": "065e95608daae9a8a0a48a706cbccda6d1a01957d039de4c67750be3a49ece8f",
+    "docs/app-spec.md": "4675664a8f1983142e6eab07a990e85c8a132016588a24c5a4a3940aa7c01fb4",
+    "docs/architecture.md": "6c6342fb7e112355e1b8464b6903d08bfab1d900e5fb4259967547e4c0c268b7",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
@@ -253,7 +255,7 @@
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
     "docs/mockups/brand-logo.html": "1a1a3efd305260cfba6c2cf5d6eb0f5ec5a68472a010a0eaf9dfd426436766c1",
     "docs/native-shell.md": "bc434b4a881ec432c84c6744ab0ab0f73d8d023ceff73d0baffd60c6bccc7a9f",
-    "docs/provider-compatibility.md": "3b382402e77a1d3a0867f8ea6814a806413fbdf4462ffcc1090d5c9524a0923b",
+    "docs/provider-compatibility.md": "6e501b9dbaa79b75be99ab55be8e809412b79f8f316f68b552bb08c1a7a4b9f9",
     "docs/sdk-architecture-roadmap.md": "f3d65fb83bed8aa9f6fe95e49ba8df5490737ff55891744265e515f9e144e45b",
     "docs/slash-command-feedback.md": "7c9b801169b4bd9961ee9987859d77e17784169bc373f274895cd62cffc49f13",
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
@@ -283,7 +285,7 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "f3aaa437c1ae9161b0502a6049ebecb4f287892cf4d79101c834c1b098e1d8f1",
     "server/agent-service.test.ts": "7e07088558a2b5b3a7b3549bbaff5144e3e5cee91c849d51245b35d188d8a51e",
-    "server/agent-service.ts": "4fc1c82a1ae49e5e0507933cf457b5cf1a229640f1be261a2404b1dcd7489f73",
+    "server/agent-service.ts": "1d91282cec148d698759b0fc310f3e265e5910ed41b4c55220ce95f7c2fbdd79",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "0cb00fcfecf02418c8c08e12fd259d10a893544af1f91c36e6f9537f26ad1f65",
@@ -333,6 +335,8 @@
     "server/recovery-context.test.ts": "a74af6cd288e8c848f78c2a7fc655a91f2af7a46aca03913ed6f4561b0e91bdd",
     "server/recovery-context.ts": "5893a9bf0e183e7ce5e6fcbf4526ec2077bfe6292e3e6f06ed45b03fc8e80725",
     "server/recovery-resend-durability.test.ts": "6af01efc5be10f560315481dd4d815e57a5eb2171483cdd4b6a677b7e0bdb485",
+    "server/recovery-seed-guards.test.ts": "b7eca02488d6a70610017a69f50ee3db8e29e2279b54a1206666ab33e1d41c60",
+    "server/recovery-seed-legacy-fixture.ts": "75115694926bbd3a4dd85912921c81ecd6b9bbd11dcfb53d0e363c1274a847db",
     "server/release-publication.test.ts": "e889b7831ace4250fed2c151a3cd6e4d6a5ee4150ee3f16b3638530011852856",
     "server/remote-node-client.test.ts": "5db4a68c999e9b0b5aa82d1d391aa7587590890baf5fa4b3f5f1ddbd897ab36b",
     "server/remote-node-client.ts": "cc248e2762555c9068e6d1d65300dac4f6bb13e4c250c7184d2dcc400e4a041d",
@@ -364,7 +368,7 @@
     "server/session-store-durability.test.ts": "0ff26c96ab3b0962cd7e177493bca5c69dd9027ec3a082d37d86255959cfb90e",
     "server/session-store-providers.test.ts": "5a376667e826c85acd52a31a4e32db48e5913a68c8d8e1c52dc541c3f4c92005",
     "server/session-store.test.ts": "f78d6bd9cfee0b3a3310a26327e89abd0d6039aa8c707709ee531681fb45c95d",
-    "server/session-store.ts": "3362f1264dc528e3255f37d4ca5eebeeda10d551b4138d14ea44137270785104",
+    "server/session-store.ts": "8dc85420109b3e714358754805ac3548170461aa2b76c8b60fe17aa03fbb600c",
     "server/submission-error-http.test.ts": "dc24ea3e877053fc637d13894872720c64da89b3519d2cf0c3c53b78058a2825",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
@@ -476,7 +480,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 3307,
+  "nodes": 3327,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -533,15 +537,21 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5d20754d9ae341befaa64e9131c0ff2739b535e030143aab50dcfdf9b6c6116f",
-    "communities.json": "2ad98a671bd8162a045eeeccb082648950312372012ad98eb910ca0e9a06e8a8",
-    "graph.html": "d59c2d92a0918726b87f126a8a4856a8afa829b705a4f355b394ed6383c5f27c",
-    "graph.json": "a63e141793cd8c0bdeec0575d7b9aed24d98105378d01401ca9203b80bc8e5cf"
+    "GRAPH_REPORT.md": "f452cd968e59ac8bb5e3b9246ada00ef297c15c0e2d0af3d4ef01304dc3dca9f",
+    "communities.json": "32dc739110f74f4728e1b228669e049f260c2090b42dbb9821fc964578efb7a9",
+    "graph.html": "2c47b9b86f62f99506262522ca221137fe216d63b83e3675d6c8800a0272bd20",
+    "graph.json": "3c266aa59cbc501c96bbb9d0e9bfc960d7dbca654fdc4d73bfe85e2d784b933d"
   },
   "schema_version": 1,
-  "source_commit": "c15a707656d3cc5bef7ee6f79adb7c03da4c5b46",
-  "source_fingerprint": "ae72097c350657fc215f4e7fc60c7b4eacb71289919f500b3e3aa5137fa50d85",
+  "source_commit": "218663027089ad2c3849e3b5677db8d04d9516a8",
+  "source_fingerprint": "4f7442a7b488f7536c50ef7db4928a8d879fb00562a3ed2099ebb4b2835f83f2",
   "working_tree_changes": [
-    "server/conversation-recovery.test.ts"
+    "docs/app-spec.md",
+    "docs/architecture.md",
+    "docs/provider-compatibility.md",
+    "server/agent-service.ts",
+    "server/recovery-seed-guards.test.ts",
+    "server/recovery-seed-legacy-fixture.ts",
+    "server/session-store.ts"
   ]
 }

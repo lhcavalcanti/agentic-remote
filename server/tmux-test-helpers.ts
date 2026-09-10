@@ -3,8 +3,16 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { noTmuxServer } from './tmux-errors.js'
 
 const execFileAsync = promisify(execFile)
+const retirementTimeoutMs = 2000
+
+interface ServerIdentity {
+  pid: number
+  startTicks: string
+  state: string
+}
 
 /**
  * Gives each test its own tmux socket namespace. Reusing tmux's default socket
@@ -29,12 +37,80 @@ export function isolatedTmuxEnv(root: string): NodeJS.ProcessEnv {
 }
 
 export async function stopIsolatedTmuxServer(root: string): Promise<void> {
-  // Addressed explicitly rather than left to the ambient environment: this is
-  // the one command here that destroys whatever it reaches.
-  await execFileAsync('tmux', ['kill-server'], {
-    env: isolatedTmuxEnv(root),
-  }).catch(() => undefined)
+  const pid = await ownedServerPid(root)
+  if (pid !== undefined) {
+    const identity = await serverIdentity(pid)
+    if (!identity) throw new Error(`Unable to capture owned tmux server PID ${pid}`)
+
+    const confirmedPid = await ownedServerPid(root)
+    if (confirmedPid !== undefined && confirmedPid !== pid) {
+      throw new Error('Owned tmux server identity changed before shutdown')
+    }
+    const current = await serverIdentity(pid)
+    assertSameIdentity(identity, current)
+    if (confirmedPid !== undefined && !retired(current)) {
+      try {
+        await execFileAsync('tmux', ['kill-server'], { env: isolatedTmuxEnv(root) })
+      } catch (error) {
+        if (!(await noTmuxServer(error))) throw error
+      }
+    }
+
+    // The client can exit before its server. Keep the namespace intact until
+    // the exact process has retired, so the next fixture cannot probe it mid-exit.
+    const stopped = await eventually(async () => {
+      const remaining = await serverIdentity(pid)
+      assertSameIdentity(identity, remaining)
+      return retired(remaining)
+    }, Boolean, retirementTimeoutMs)
+    if (!stopped) throw new Error(`Timed out waiting for owned tmux server PID ${pid} to retire`)
+  }
   await rm(root, { recursive: true, force: true })
+}
+
+async function ownedServerPid(root: string): Promise<number | undefined> {
+  let stdout: string
+  try {
+    stdout = (await execFileAsync('tmux', ['display-message', '-p', '#{pid}'], {
+      env: isolatedTmuxEnv(root),
+    })).stdout
+  } catch (error) {
+    if (await noTmuxServer(error)) return undefined
+    throw error
+  }
+  const pid = Number(stdout.trim())
+  if (!/^\d+$/.test(stdout.trim()) || !Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error('Unable to read the owned tmux server PID')
+  }
+  return pid
+}
+
+async function serverIdentity(pid: number): Promise<ServerIdentity | undefined> {
+  let stat: string
+  try {
+    stat = await readFile(`/proc/${pid}/stat`, 'utf8')
+  } catch (error) {
+    if (['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+      return undefined
+    }
+    throw error
+  }
+  const processId = /^(\d+) \(/.exec(stat)?.[1]
+  const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)
+  if (Number(processId) !== pid || !/^[A-Za-z]$/.test(fields[0] ?? '') || !/^\d+$/.test(fields[19] ?? '')) {
+    throw new Error(`Unable to read owned tmux server identity for PID ${pid}`)
+  }
+  return { pid, state: fields[0], startTicks: fields[19] }
+}
+
+function assertSameIdentity(expected: ServerIdentity, actual: ServerIdentity | undefined): void {
+  if (actual && actual.startTicks !== expected.startTicks) {
+    throw new Error(`Owned tmux server PID ${expected.pid} changed start identity`)
+  }
+}
+
+function retired(identity: ServerIdentity | undefined): boolean {
+  return !identity || identity.state === 'Z' || identity.state === 'X'
 }
 
 /**

@@ -199,6 +199,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   session ID while preserving folder, title, runtime, and draft continuity.
 - Clear MUST keep the reader on the live replacement unless they navigate
   elsewhere, including gaps between removal, replacement, and response delivery.
+- Clearing a recovery MUST atomically remove its seed-owned failed-prompt
+  compatibility barrier before dropping recovery ownership. An unrelated failed
+  prompt MUST remain recoverable even when its content equals the old brief;
+  a refused clear write MUST retain both the seed and its barrier.
 - A refused replacement write MUST preserve the original provider history and
   uploads. A terminal clear MUST restore the original command and working
   folder before reporting that refusal, or explicitly report restoration failure.

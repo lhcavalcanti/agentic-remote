@@ -160,8 +160,16 @@ function archivedMessage(message: ChatMessage): ChatMessage {
 
 function ownsRecoverySeedFailure(session: StoredSession): boolean {
   return Boolean(session.recoverySeed && session.failedPrompt &&
-    session.failedPrompt.content === session.recoverySeed.prompt &&
     session.failedPrompt.failedAt === session.recovery?.recoveredAt)
+}
+
+function clearRecoverySeedFailure(session: StoredSession): void {
+  if (!ownsRecoverySeedFailure(session)) return
+  const failedAt = session.failedPrompt!.failedAt
+  session.failedPrompt = undefined
+  if (session.recoveryResend?.failedAt === failedAt) {
+    session.recoveryResend = undefined
+  }
 }
 
 function cloneSession(session: StoredSession): SessionDetail {
@@ -815,6 +823,7 @@ export class SessionStore {
 
   async clearConversation(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      clearRecoverySeedFailure(session)
       session.transcriptEpoch = randomUUID()
       session.archivedMessages = undefined
       session.messages = []
@@ -863,6 +872,7 @@ export class SessionStore {
         throw new Error('Replacement session identity is not available')
       }
       uploadOwnerIds = [...new Set([...(existing.uploadOwnerIds || []), sessionId])]
+      const clearSeedFailure = ownsRecoverySeedFailure(existing)
       state.sessions[replacementId] = {
         ...existing,
         id: replacementId,
@@ -885,6 +895,8 @@ export class SessionStore {
         pendingPermission: undefined,
         pendingUserInput: undefined,
         recovery: undefined,
+        failedPrompt: clearSeedFailure ? undefined : existing.failedPrompt,
+        recoveryResend: clearSeedFailure ? undefined : existing.recoveryResend,
         queuedPrompts: [],
         queuedCount: 0,
         queueDispatchAt: undefined,
@@ -1185,7 +1197,7 @@ export class SessionStore {
       if (session.recoverySeed?.state !== 'dispatching' || session.recoverySeed.prompt !== prompt) {
         throw Object.assign(new Error('The recovery seed is no longer dispatching'), { statusCode: 409 })
       }
-      if (ownsRecoverySeedFailure(session)) session.failedPrompt = undefined
+      clearRecoverySeedFailure(session)
       session.recoverySeed = undefined
       if (terminalDispatchedAt) {
         session.queueDispatchAt = terminalDispatchedAt

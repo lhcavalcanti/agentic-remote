@@ -264,6 +264,41 @@ describe('recovery seed admission guards', () => {
     expect(f.store.get('replacement')?.queuedPrompts).toHaveLength(1)
   })
 
+  it.each(['send', 'command', 'queue'] as const)(
+    'clears a failed seed barrier before the next normal %s',
+    async (operation) => {
+      const f = await fixture('sdk', 'failed')
+      f.client.createSession = async (config) => {
+        if (!config.sessionId) throw new Error('Expected explicit replacement identity')
+        return { ...f.sdk, sessionId: config.sessionId }
+      }
+
+      const cleared = await f.service.clearConversation('replacement')
+
+      expect(cleared.failedPrompt).toBeUndefined()
+      expect(f.store.failedPrompt(cleared.id)).toBeUndefined()
+      expect(f.store.recoverySeed(cleared.id)).toBeUndefined()
+      if (operation === 'send') {
+        await f.service.sendMessage(cleared.id, 'Normal work after Clear')
+        expect(f.sent).toContain('Normal work after Clear')
+      } else if (operation === 'command') {
+        await f.service.executeCommand(cleared.id, '/help', false)
+        expect(f.commands).toHaveBeenCalled()
+        expect(f.invoked).toHaveBeenCalled()
+      } else {
+        const queued = await f.service.sendMessage(
+          cleared.id,
+          'Queued after Clear',
+          true,
+        )
+        expect([
+          ...(queued.queuedPrompts?.map((prompt) => prompt.content) || []),
+          ...f.sent,
+        ]).toContain('Queued after Clear')
+      }
+    },
+  )
+
   for (const backend of ['sdk', 'terminal'] as const) {
     it.each(['pending', 'dispatching', 'failed', 'uncertain'] as const)(
       `rejects provider slash-command effects on ${backend} with a %s seed`,
@@ -414,4 +449,35 @@ describe('unmodified 1.1.2 recovery queue compatibility', () => {
       expect(boots.at(-1)?.session.queuedPrompts).toEqual([])
     })
   }
+
+  it('removes the legacy barrier only when current Clear replaces the recovery', async () => {
+    const f = await fixture('sdk', 'failed')
+    const boots = await bootLegacy(f, 'sdk')
+    for (const boot of boots) {
+      expect(boot.calls).toEqual([])
+      expect(boot.failedPrompt).toMatchObject({ content: seedPrompt })
+      expect(boot.session.queuedPrompts).toHaveLength(1)
+    }
+
+    const upgraded = new SessionStore(f.stateDirectory)
+    stores.push(upgraded)
+    await upgraded.initialize()
+    const cleared = await upgraded.replaceWithClearedSession(
+      'replacement',
+      'cleared',
+    )
+
+    expect(cleared.failedPrompt).toBeUndefined()
+    expect(upgraded.failedPrompt('cleared')).toBeUndefined()
+    expect(upgraded.recoverySeed('cleared')).toBeUndefined()
+    await upgraded.enqueuePrompt('cleared', {
+      id: 'next',
+      content: 'Runnable after Clear',
+      createdAt: '2026-09-09T00:01:00.000Z',
+    })
+    await expect(upgraded.reserveQueuedPrompt('cleared', () => true)).resolves
+      .toMatchObject({
+        reservation: { prompt: { content: 'Runnable after Clear' } },
+      })
+  })
 })

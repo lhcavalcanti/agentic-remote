@@ -203,6 +203,223 @@ describe('SessionStore', () => {
     await restarted.close()
   })
 
+  it.each([
+    'pending',
+    'dispatching',
+    'failed',
+    'deferred',
+    'restarted',
+  ] as const)(
+    'removes the seed-owned legacy barrier when clearing a %s recovery',
+    async (state) => {
+      const { directory, store } = await createStore()
+      await store.create({
+        id: 'before-clear',
+        cwd: '/project',
+        title: 'Recovery project',
+        updatedAt: '2026-09-09T00:00:00.000Z',
+        status: 'error',
+        messages: [],
+        queuedPrompts: [{
+          id: 'preserved',
+          content: 'Run only after the brief',
+          createdAt: '2026-09-09T00:00:01.000Z',
+        }],
+      }, { backend: 'sdk', managedOpen: true })
+      await store.replaceWithRecoveredSession(
+        'before-clear',
+        'recovering',
+        'provider-error',
+        0,
+        false,
+        'Seed-owned context brief',
+      )
+      if (state === 'dispatching' || state === 'restarted') {
+        await store.claimRecoverySeed('recovering', 'Seed-owned context brief')
+      } else if (state === 'failed') {
+        await store.failRecoverySeed(
+          'recovering',
+          'Seed-owned context brief',
+          'Synthetic definite failure',
+        )
+      }
+
+      let active = store
+      if (state === 'deferred' || state === 'restarted') {
+        await store.close()
+        active = new SessionStore(directory)
+        await active.initialize()
+      }
+
+      const cleared = await active.replaceWithClearedSession(
+        'recovering',
+        'cleared',
+      )
+      expect(cleared.failedPrompt).toBeUndefined()
+      expect(active.failedPrompt('cleared')).toBeUndefined()
+      expect(active.recoverySeed('cleared')).toBeUndefined()
+      const persisted = JSON.parse(
+        await readFile(path.join(directory, 'state.json'), 'utf8'),
+      )
+      expect(persisted.sessions.cleared.failedPrompt).toBeUndefined()
+
+      await active.enqueuePrompt('cleared', {
+        id: 'next',
+        content: 'Next normal queue item',
+        createdAt: '2026-09-09T00:01:00.000Z',
+      })
+      await expect(active.reserveQueuedPrompt('cleared', () => true)).resolves
+        .toMatchObject({
+          reservation: {
+            prompt: { content: 'Next normal queue item' },
+          },
+        })
+      if (active !== store) await active.close()
+    },
+  )
+
+  it('removes a seed-owned barrier when clearing in place', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'before-in-place',
+      cwd: '/project',
+      title: 'Recovery project',
+      updatedAt: '2026-09-09T00:00:00.000Z',
+      status: 'error',
+      messages: [],
+    }, { backend: 'sdk', managedOpen: true })
+    await store.replaceWithRecoveredSession(
+      'before-in-place',
+      'recovering',
+      'provider-error',
+      0,
+      false,
+      'Seed-owned context brief',
+    )
+
+    const cleared = await store.clearConversation('recovering')
+
+    expect(cleared.failedPrompt).toBeUndefined()
+    expect(store.failedPrompt('recovering')).toBeUndefined()
+    expect(store.recoverySeed('recovering')).toBeUndefined()
+  })
+
+  it.each(['in-place', 'replacement'] as const)(
+    'preserves a same-content unrelated failed prompt during %s recovery clearing',
+    async (operation) => {
+      const { store } = await createStore()
+      await store.create({
+        id: 'before-unrelated',
+        cwd: '/project',
+        title: 'Recovery project',
+        updatedAt: '2026-09-09T00:00:00.000Z',
+        status: 'error',
+        messages: [],
+      }, { backend: 'sdk', managedOpen: true })
+      await store.replaceWithRecoveredSession(
+        'before-unrelated',
+        'recovering',
+        'provider-error',
+        0,
+        false,
+        'Identical text',
+      )
+      await store.update('recovering', (session) => {
+        session.failedPrompt = {
+          content: 'Identical text',
+          failedAt: '2026-09-09T00:05:00.000Z',
+        }
+      })
+
+      const cleared = operation === 'in-place'
+        ? await store.clearConversation('recovering')
+        : await store.replaceWithClearedSession('recovering', 'cleared')
+
+      expect(cleared.failedPrompt).toEqual({
+        content: 'Identical text',
+        failedAt: '2026-09-09T00:05:00.000Z',
+      })
+      expect(store.failedPrompt(cleared.id)).toEqual(cleared.failedPrompt)
+      expect(store.recoverySeed(cleared.id)).toBeUndefined()
+    },
+  )
+
+  it('retains recovery ownership when a clear replacement write fails', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'before-refused-clear',
+      cwd: '/project',
+      title: 'Recovery project',
+      updatedAt: '2026-09-09T00:00:00.000Z',
+      status: 'error',
+      messages: [],
+    }, { backend: 'sdk', managedOpen: true })
+    await store.replaceWithRecoveredSession(
+      'before-refused-clear',
+      'recovering',
+      'provider-error',
+      0,
+      false,
+      'Seed-owned context brief',
+    )
+    const blockedWrite = path.join(directory, 'state.json.tmp')
+    await mkdir(blockedWrite)
+
+    await expect(
+      store.replaceWithClearedSession('recovering', 'cleared'),
+    ).rejects.toThrow(/EISDIR/)
+
+    await rm(blockedWrite, { recursive: true })
+    expect(store.get('cleared')).toBeUndefined()
+    expect(store.recoverySeed('recovering')).toEqual({
+      prompt: 'Seed-owned context brief',
+      state: 'pending',
+    })
+    expect(store.failedPrompt('recovering')).toBeUndefined()
+
+    const restarted = new SessionStore(directory)
+    await restarted.initialize()
+    expect(restarted.recoverySeed('recovering')).toEqual({
+      prompt: 'Seed-owned context brief',
+      state: 'pending',
+    })
+    expect(restarted.failedPrompt('recovering')).toBeUndefined()
+    await restarted.close()
+  })
+
+  it('retains recovery ownership when a clear replacement loses its race', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'before-race',
+      cwd: '/project',
+      title: 'Recovery project',
+      updatedAt: '2026-09-09T00:00:00.000Z',
+      status: 'error',
+      messages: [],
+    }, { backend: 'sdk', managedOpen: true })
+    await store.replaceWithRecoveredSession(
+      'before-race',
+      'recovering',
+      'provider-error',
+      0,
+      false,
+      'Seed-owned context brief',
+    )
+    const observation = store.observeTranscript('recovering')
+    await store.updateStatus('recovering', 'running', 'New work')
+
+    await expect(
+      store.replaceWithClearedSession('recovering', 'cleared', observation),
+    ).rejects.toMatchObject({ statusCode: 409 })
+
+    expect(store.get('cleared')).toBeUndefined()
+    expect(store.recoverySeed('recovering')).toEqual({
+      prompt: 'Seed-owned context brief',
+      state: 'pending',
+    })
+    expect(store.failedPrompt('recovering')).toBeUndefined()
+  })
+
   it('atomically marks persisted SDK interactions stale without changing terminal prompts', async () => {
     const { directory, store } = await createStore()
     await store.create({

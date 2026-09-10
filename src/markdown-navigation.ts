@@ -2,6 +2,7 @@ import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import { unified } from 'unified'
 import type { Root, RootContent } from 'mdast'
+import { remarkSafeBreaks } from './remark-safe-breaks'
 
 export interface DocumentHeading {
   id: string
@@ -54,6 +55,9 @@ interface MarkdownNode {
 function markdownNodeText(node: MarkdownNode): string {
   if (node.type === 'text') {
     return node.value || ''
+  }
+  if (node.tagName === 'br') {
+    return ' '
   }
   if (node.tagName === 'img' && typeof node.properties?.alt === 'string') {
     return node.properties.alt
@@ -146,6 +150,7 @@ export function inlineText(markdown: string): string {
  */
 export function outlineFromMarkdown(content: string): DocumentHeading[] {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(content)
+  remarkSafeBreaks()(tree)
   const headings: DocumentHeading[] = []
   const used = new Map<string, number>()
   // Counted separately from the entries. An outline entry is found in the

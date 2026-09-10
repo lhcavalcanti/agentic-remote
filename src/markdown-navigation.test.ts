@@ -92,6 +92,13 @@ describe('breadcrumbSegments', () => {
 })
 
 describe('outlineFromMarkdown', () => {
+  it('uses visible hard breaks for safe-tag heading text and slugs', () => {
+    expect(outlineFromMarkdown('# First<br>second\n\n## Third<br />fourth')).toEqual([
+      { id: 'first-second', text: 'First second', level: 1, index: 0 },
+      { id: 'third-fourth', text: 'Third fourth', level: 2, index: 1 },
+    ])
+  })
+
   it('collects headings in document order with matching slugs', () => {
     expect(
       outlineFromMarkdown('# Title\n\ntext\n\n## First\n\n### Deep\n'),

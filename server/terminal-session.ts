@@ -145,6 +145,37 @@ interface TerminalOwner {
   rootPid: number
 }
 
+interface FormViewport {
+  window: string
+  pane: string
+  pid: number
+  width: number
+  height: number
+  panes: number
+  linked: number
+  policy: string
+  localPolicy: string
+  clients: string
+}
+
+export class TerminalFormReplyError extends Error {
+  readonly statusCode = 409
+  readonly uncertainDelivery: boolean
+
+  constructor(
+    message: string,
+    readonly outcome: 'not-submitted' | 'uncertain' | 'submitted',
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.name = 'TerminalFormReplyError'
+    this.uncertainDelivery = outcome !== 'not-submitted'
+  }
+}
+
+const MAX_FORM_VIEWPORT_HEIGHT = 256
+const FORM_VIEWPORT_TIMEOUT_MS = 15_000
+
 export class TmuxTerminalSessionController
   implements TerminalSessionController
 {
@@ -810,6 +841,7 @@ export class TmuxTerminalSessionController
       if (
         !owner ||
         steps.length === 0 ||
+        steps.length !== form.fields.length ||
         form.fields.length === 0 ||
         // Repeated titles make the focused field ambiguous, and the answer is
         // written per position, so the message path is used instead.
@@ -817,175 +849,112 @@ export class TmuxTerminalSessionController
       ) {
         return false
       }
-      const capture = async () =>
-        (
-          await execFileAsync('tmux', [
-            'capture-pane',
-            '-J',
-            '-p',
-            '-t',
-            owner.target,
-            '-S',
-            '-40',
-          ])
-        ).stdout
-      let pane = await capture()
-      // A form being open says nothing about which request it belongs to. The
-      // request that was answered may have closed and another opened in its
-      // place, so the fields on screen have to be the ones being answered.
-      if (
-        !parseTerminalFormPrompt(pane) ||
-        !terminalFormShowsFields(pane, form)
-      ) {
-        return false
-      }
-      // The steps are written from the first field onwards, but an attached
-      // client can leave any field focused. Walking focus back with shift+tab
-      // is what stops the answers landing one field over.
-      for (let attempt = 0; attempt < form.fields.length; attempt += 1) {
-        const active = parseTerminalFormActiveField(pane, form)
-        if (active === 0) {
-          break
-        }
-        if (active === undefined) {
+      return this.withFormViewport(sessionId, owner, form, async ({ capture, press, paste }) => {
+        let pane = await capture()
+        // A form being open says nothing about which request it belongs to. The
+        // request that was answered may have closed and another opened in its
+        // place, so the fields on screen have to be the ones being answered.
+        if (
+          !parseTerminalFormPrompt(pane) ||
+          !terminalFormShowsFields(pane, form)
+        ) {
           return false
         }
-        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'BTab'])
-        // The CLI repaints on its own schedule, so the move is waited for
-        // rather than assumed: reading too early would see the old field and
-        // send another shift+tab, overshooting the one being aimed at.
-        for (let settle = 0; settle < 20; settle += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 100))
-          pane = await capture()
-          if (parseTerminalFormActiveField(pane, form) !== active) {
+        // The steps are written from the first field onwards, but an attached
+        // client can leave any field focused. Walking focus back with shift+tab
+        // is what stops the answers landing one field over.
+        for (let attempt = 0; attempt < form.fields.length; attempt += 1) {
+          const active = parseTerminalFormActiveField(pane, form)
+          if (active === 0) {
             break
           }
-        }
-      }
-      if (parseTerminalFormActiveField(pane, form) !== 0) {
-        return false
-      }
-      const commitKeys = terminalFormCommitKeys(steps.length)
-      for (const [position, step] of steps.entries()) {
-        if (step.kind === 'checklist') {
-          const ticked = terminalChecklistState(await capture(), step.optionCount)
-          if (!ticked) {
-            // Without knowing what the checklist is showing, pressing space
-            // over it would turn the wrong rows on and off. An attached
-            // terminal can have changed any of them since the reader chose.
+          if (active === undefined) {
             return false
           }
-          // Normalising to the top makes the walk independent of wherever the
-          // cursor happens to be sitting.
-          for (let index = 0; index <= step.optionCount; index += 1) {
-            await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Up'])
-            await new Promise((resolve) => setTimeout(resolve, 25))
-          }
-          const wanted = new Set(step.selected)
-          const lastChange = ticked.reduce(
-            (furthest, isTicked, index) =>
-              wanted.has(index) === isTicked ? furthest : index,
-            -1,
-          )
-          for (let index = 0; index <= lastChange; index += 1) {
-            if (wanted.has(index) !== ticked[index]) {
-              await execFileAsync('tmux', [
-                'send-keys',
-                '-t',
-                owner.target,
-                'Space',
-              ])
-              await new Promise((resolve) => setTimeout(resolve, 35))
-            }
-            if (index < lastChange) {
-              await execFileAsync('tmux', [
-                'send-keys',
-                '-t',
-                owner.target,
-                'Down',
-              ])
-              await new Promise((resolve) => setTimeout(resolve, 35))
-            }
-          }
-        } else if (step.kind === 'select') {
-          // Normalising to the top first makes the move independent of
-          // whichever option the field currently holds.
-          for (let index = 0; index <= step.optionCount; index += 1) {
-            await execFileAsync('tmux', [
-              'send-keys',
-              '-t',
-              owner.target,
-              'Up',
-            ])
-            await new Promise((resolve) => setTimeout(resolve, 25))
-          }
-          for (let index = 0; index < step.index; index += 1) {
-            await execFileAsync('tmux', [
-              'send-keys',
-              '-t',
-              owner.target,
-              'Down',
-            ])
-            await new Promise((resolve) => setTimeout(resolve, 35))
-          }
-        } else {
-          // Ctrl+U clears the default the field was prefilled with, which
-          // would otherwise keep the typed value appended to it.
-          await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'C-u'])
-          await new Promise((resolve) => setTimeout(resolve, 35))
-          if (step.value) {
-            const buffer = `agentic-remote-form-${randomUUID()}`
-            await execFileAsync('tmux', [
-              'set-buffer',
-              '-b',
-              buffer,
-              '--',
-              step.value,
-            ])
-            await execFileAsync('tmux', [
-              'paste-buffer',
-              '-p',
-              '-d',
-              '-b',
-              buffer,
-              '-t',
-              owner.target,
-            ])
-            await new Promise((resolve) => setTimeout(resolve, 45))
-          }
-        }
-        // Tab moves to the next field. Enter does not: it accepts the whole
-        // form, leaving every field after this one at whatever it opened with,
-        // so it is pressed once and only when there is nothing left to fill.
-        await execFileAsync('tmux', [
-          'send-keys',
-          '-t',
-          owner.target,
-          commitKeys[position],
-        ])
-        await new Promise((resolve) => setTimeout(resolve, 90))
-        if (commitKeys[position] === 'Tab') {
-          // The next field is filled from what is on screen, so waiting a
-          // fixed moment for the repaint is not enough: a slow one leaves the
-          // field just left still showing, and it would be answered again with
-          // the next field's values.
-          let arrived = false
-          for (let attempt = 0; attempt < 20; attempt += 1) {
+          await press('BTab', active)
+          // The CLI repaints on its own schedule, so the move is waited for
+          // rather than assumed: reading too early would see the old field and
+          // send another shift+tab, overshooting the one being aimed at.
+          for (let settle = 0; settle < 20; settle += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100))
             pane = await capture()
-            if (parseTerminalFormActiveField(pane, form) === position + 1) {
-              arrived = true
+            if (parseTerminalFormActiveField(pane, form) !== active) {
               break
             }
-            await new Promise((resolve) => setTimeout(resolve, 100))
-          }
-          if (!arrived) {
-            return false
           }
         }
-      }
-      return submitTerminalForm(capture, (ms) =>
-        new Promise((resolve) => setTimeout(resolve, ms)),
-      )
+        if (parseTerminalFormActiveField(pane, form) !== 0) {
+          return false
+        }
+        const commitKeys = terminalFormCommitKeys(steps.length)
+        for (const [position, step] of steps.entries()) {
+          if (step.kind === 'checklist') {
+            const ticked = terminalChecklistState(await capture(), step.optionCount)
+            if (!ticked) {
+              // An attached terminal may have changed which rows are ticked.
+              return false
+            }
+            for (let index = 0; index <= step.optionCount; index += 1) {
+              await press('Up', position)
+              await new Promise((resolve) => setTimeout(resolve, 25))
+            }
+            const wanted = new Set(step.selected)
+            const lastChange = ticked.reduce(
+              (furthest, isTicked, index) =>
+                wanted.has(index) === isTicked ? furthest : index,
+              -1,
+            )
+            for (let index = 0; index <= lastChange; index += 1) {
+              if (wanted.has(index) !== ticked[index]) {
+                await press('Space', position)
+                await new Promise((resolve) => setTimeout(resolve, 35))
+              }
+              if (index < lastChange) {
+                await press('Down', position)
+                await new Promise((resolve) => setTimeout(resolve, 35))
+              }
+            }
+          } else if (step.kind === 'select') {
+            // Normalise first so a changed default cannot shift the selection.
+            for (let index = 0; index <= step.optionCount; index += 1) {
+              await press('Up', position)
+              await new Promise((resolve) => setTimeout(resolve, 25))
+            }
+            for (let index = 0; index < step.index; index += 1) {
+              await press('Down', position)
+              await new Promise((resolve) => setTimeout(resolve, 35))
+            }
+          } else {
+            // Ctrl+U removes a prefilled default before the new text is pasted.
+            await press('C-u', position)
+            await new Promise((resolve) => setTimeout(resolve, 35))
+            if (step.value) {
+              await paste(step.value, position)
+              await new Promise((resolve) => setTimeout(resolve, 45))
+            }
+          }
+          // Tab changes fields; Enter accepts the entire form, exactly once.
+          await press(commitKeys[position], position)
+          await new Promise((resolve) => setTimeout(resolve, 90))
+          if (commitKeys[position] === 'Tab') {
+            let arrived = false
+            for (let attempt = 0; attempt < 20; attempt += 1) {
+              pane = await capture()
+              if (parseTerminalFormActiveField(pane, form) === position + 1) {
+                arrived = true
+                break
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100))
+            }
+            if (!arrived) {
+              return false
+            }
+          }
+        }
+        return submitTerminalForm(capture, (ms) =>
+          new Promise((resolve) => setTimeout(resolve, ms)),
+        )
+      })
     })
   }
 
@@ -1000,23 +969,12 @@ export class TmuxTerminalSessionController
         return false
       }
       if (form && form.fields.length > 0) {
-        const pane = (
-          await execFileAsync('tmux', [
-            'capture-pane',
-            '-J',
-            '-p',
-            '-t',
-            owner.target,
-            '-S',
-            '-40',
-          ])
-        ).stdout
-        // Escape cancels whatever is open, which may be a permission dialog or
-        // another request's prompt rather than this form. Only a positive
-        // match is closed, so unrelated work is never cancelled.
-        if (!terminalFormShowsFields(pane, form)) {
-          return false
-        }
+        return this.withFormViewport(sessionId, owner, form, async ({ capture, press }) => {
+          await press(action === 'decline' ? 'C-d' : 'Escape')
+          return submitTerminalForm(capture, (ms) =>
+            new Promise((resolve) => setTimeout(resolve, ms)),
+          )
+        })
       }
       await execFileAsync('tmux', [
         'send-keys',
@@ -1026,6 +984,218 @@ export class TmuxTerminalSessionController
       ])
       return true
     })
+  }
+
+  private async readFormViewport(owner: TerminalOwner): Promise<FormViewport> {
+    const [geometry, policy, clients] = await Promise.all([
+      execFileAsync('tmux', [
+        'display-message', '-p', '-t', owner.target,
+        '#{window_id}\t#{pane_id}\t#{pane_pid}\t#{window_width}\t#{window_height}\t#{window_panes}\t#{window_linked}\t#{window-size}',
+      ], { timeout: 2_000 }),
+      execFileAsync('tmux', ['show-options', '-wqv', '-t', owner.target, 'window-size'], { timeout: 2_000 }),
+      execFileAsync('tmux', [
+        'list-clients', '-t', owner.target,
+        '-F', '#{client_name}\t#{client_created}\t#{client_width}\t#{client_height}',
+      ], { timeout: 2_000 }),
+    ])
+    const [window, pane, pid, width, height, panes, linked, effective] = geometry.stdout.trim().split('\t')
+    const localPolicy = policy.stdout.trim()
+    if (!/^@\d+$/.test(window) || !/^%\d+$/.test(pane) ||
+        ![pid, width, height, panes, linked].every((value) => /^\d+$/.test(value)) ||
+        !['manual', 'latest', 'largest', 'smallest'].includes(effective) ||
+        !['', 'manual', 'latest', 'largest', 'smallest'].includes(localPolicy)) {
+      throw new Error('Unable to identify the terminal window size and policy')
+    }
+    return {
+      window, pane, pid: Number(pid), width: Number(width), height: Number(height),
+      panes: Number(panes), linked: Number(linked), policy: effective, localPolicy,
+      clients: clients.stdout.trim().split('\n').sort().join('\n'),
+    }
+  }
+
+  private async changeFormViewport(
+    viewport: FormViewport, height: number, restore = false, policyOnly = false,
+  ): Promise<void> {
+    const expected = {
+      window_id: viewport.window, pane_id: viewport.pane, pane_pid: viewport.pid,
+      window_width: viewport.width, window_height: viewport.height,
+      window_panes: 1, window_linked: 0, 'window-size': viewport.policy,
+    }
+    const guard = Object.entries(expected).map(([key, value]) => `#{==:#{${key}},${value}}`)
+      .reduce((left, right) => `#{&&:${left},${right}}`)
+    const policy = viewport.localPolicy
+      ? `set-option -w -t ${viewport.window} window-size ${viewport.localPolicy}`
+      : `set-option -wu -t ${viewport.window} window-size`
+    const resize = `resize-window -t ${viewport.window} -x ${viewport.width} -y ${height}`
+    const change = restore && policyOnly ? policy : `${resize}${restore ? ` ; ${policy}` : ''}`
+    const result = await execFileAsync('tmux', [
+      'if-shell', '-F', '-t', viewport.pane, guard,
+      `${change} ; display-message -p resized`,
+      'display-message -p changed',
+    ], { timeout: 2_000 })
+    if (result.stdout.trim() !== 'resized') {
+      throw new Error('The terminal window changed before its size could be updated')
+    }
+  }
+
+  private async withFormViewport(
+    sessionId: string,
+    owner: TerminalOwner,
+    form: TerminalFormIdentity,
+    operation: (controls: {
+      capture: () => Promise<string>
+      press: (key: string, field?: number) => Promise<void>
+      paste: (value: string, field: number) => Promise<void>
+    }) => Promise<boolean>,
+  ): Promise<boolean> {
+    let original: FormViewport | undefined
+    let expanded: FormViewport | undefined
+    let deadline = Infinity
+    let attempted = false
+    let result = false
+    let failure: unknown
+    const processStart = async () => {
+      const data = await readFile(`/proc/${owner.pid}/stat`, 'utf8')
+      return data.slice(data.lastIndexOf(')') + 2).split(' ')[19]
+    }
+    const started = await processStart()
+    const validateOwner = async () => {
+      const current = await this.owner(sessionId, owner.target, true)
+      if (!current || current.pid !== owner.pid || current.rootPid !== owner.rootPid ||
+          await processStart() !== started) {
+        throw new Error('The terminal owner changed while answering its form')
+      }
+    }
+    const capture = async () => {
+      if (Date.now() > deadline) throw new Error('The temporary terminal form viewport timed out')
+      await validateOwner()
+      if (expanded && !sameViewport(await this.readFormViewport(owner), expanded)) {
+        throw new Error('The terminal viewport changed while its form was being inspected')
+      }
+      return (await execFileAsync('tmux', [
+        'capture-pane', '-J', '-p', '-t', owner.target, '-S', '-40',
+      ], { timeout: 2_000, maxBuffer: 1024 * 1024 })).stdout
+    }
+    const sameViewport = (left: FormViewport, right: FormViewport) =>
+      Object.keys(left).every((key) => left[key as keyof FormViewport] === right[key as keyof FormViewport])
+    const restoreViewport = async (previous: FormViewport, expected: FormViewport) => {
+      await validateOwner()
+      const current = await this.readFormViewport(owner)
+      if (!sameViewport({ ...current, clients: expected.clients }, expected)) {
+        throw new Error('Terminal sizing changed externally; the newer size or policy was not overwritten')
+      }
+      await validateOwner()
+      // A newly sized attached client owns automatic dimensions. Relinquish
+      // our manual override without forcing the old client dimensions back.
+      await this.changeFormViewport(
+        { ...expected, localPolicy: previous.localPolicy }, previous.height, true,
+        current.clients !== expected.clients && previous.policy !== 'manual',
+      )
+    }
+    const validateInput = async (field?: number) => {
+      if (expanded && !sameViewport(await this.readFormViewport(owner), expanded)) {
+        throw new Error('The terminal size, layout, client, or policy changed while answering its form')
+      }
+      const pane = await capture()
+      if (!terminalFormShowsFields(pane, form) ||
+          (field !== undefined && parseTerminalFormActiveField(pane, form) !== field)) {
+        throw new Error('The terminal is no longer showing the exact question and field being answered')
+      }
+      await validateOwner()
+    }
+    const sendInput = async (command: string, committing = false) => {
+      const conditions = [
+        `#{==:#{pane_id},${owner.target}}`,
+        `#{==:#{pane_pid},${owner.rootPid}}`,
+        ...(expanded ? [
+          `#{==:#{window_id},${expanded.window}}`,
+          `#{==:#{window_width},${expanded.width}}`,
+          `#{==:#{window_height},${expanded.height}}`,
+          '#{==:#{window_panes},1}',
+          '#{==:#{window_linked},0}',
+          '#{==:#{window-size},manual}',
+        ] : []),
+      ]
+      if (committing) attempted = true
+      const sent = await execFileAsync('tmux', [
+        'if-shell', '-F', '-t', owner.target,
+        conditions.reduce((left, right) => `#{&&:${left},${right}}`),
+        `${command} ; display-message -p sent`, 'display-message -p changed',
+      ], { timeout: 2_000 })
+      if (sent.stdout.trim() !== 'sent') {
+        if (committing) attempted = false
+        throw new Error('The terminal owner or viewport changed immediately before keyboard input')
+      }
+    }
+    try {
+      let pane = await capture()
+      if (!terminalFormShowsFields(pane, form)) {
+        if (parseTerminalFormPrompt(pane) || !hasClippedTerminalFormFooter(pane)) return false
+        original = await this.readFormViewport(owner)
+        if (original.panes !== 1 || original.linked !== 0 || original.pid !== owner.rootPid ||
+            original.height >= MAX_FORM_VIEWPORT_HEIGHT) return false
+        await validateOwner()
+        if (!sameViewport(await this.readFormViewport(owner), original)) return false
+        await validateOwner()
+        expanded = {
+          ...original, height: MAX_FORM_VIEWPORT_HEIGHT, policy: 'manual', localPolicy: 'manual',
+        }
+        deadline = Date.now() + FORM_VIEWPORT_TIMEOUT_MS
+        await this.changeFormViewport(original, expanded.height)
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          pane = await capture()
+          if (terminalFormShowsFields(pane, form)) break
+        }
+      }
+      if (terminalFormShowsFields(pane, form)) {
+        result = await operation({
+          capture,
+          press: async (key, field) => {
+            await validateInput(field)
+            await sendInput(
+              `send-keys -t ${owner.target} ${key}`,
+              ['Enter', 'Escape', 'C-d'].includes(key),
+            )
+          },
+          paste: async (value, field) => {
+            const buffer = `agentic-remote-form-${randomUUID()}`
+            await execFileAsync('tmux', ['set-buffer', '-b', buffer, '--', value], { timeout: 2_000 })
+            try {
+              await validateInput(field)
+              await sendInput(`paste-buffer -p -b ${buffer} -t ${owner.target}`)
+            } finally {
+              await execFileAsync('tmux', ['delete-buffer', '-b', buffer], { timeout: 2_000 })
+            }
+          },
+        })
+      }
+    } catch (error) {
+      failure = error
+    } finally {
+      if (original && expanded) {
+        try {
+          await restoreViewport(original, expanded)
+        } catch (error) {
+          failure = failure
+            ? new AggregateError([failure, error], 'Form operation and terminal size restoration both failed')
+            : error
+        }
+      }
+    }
+    if (failure || (attempted && !result)) {
+      const outcome = result ? 'submitted' : attempted ? 'uncertain' : 'not-submitted'
+      throw new TerminalFormReplyError(
+        `${result ? 'The terminal reply was submitted, but cleanup failed'
+          : attempted ? 'The terminal reply may have been submitted; do not resend it'
+            : 'The terminal form could not be safely answered'}: ${
+          failure instanceof Error ? failure.message : 'completion was not confirmed'
+        }`,
+        outcome,
+        failure ? { cause: failure } : undefined,
+      )
+    }
+    return result
   }
 
   async cancel(sessionId: string): Promise<boolean> {
@@ -2089,6 +2259,29 @@ function terminalControlLines(pane: string): string[] {
     /^\s*╻[\u2580-\u259f\u2500-\u257f]*\s*$/u.test(line),
   )
   return lines.slice(Math.max(composer, repaint) + 1)
+}
+
+export function hasClippedTerminalFormFooter(pane: string): boolean {
+  if (hasLiveTerminalComposer(pane)) return false
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  while (lines.length && (!lines.at(-1) || /^[─━]+$/u.test(lines.at(-1)!))) lines.pop()
+  const trailing: string[] = []
+  // Only adjacent control words can belong to the wrapped footer. Blank
+  // lines, quotations and transcript text cannot bridge otherwise valid hints.
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]
+    if (!line || !line.split(/[\s·]+/u).filter(Boolean).every((word) =>
+      /^(?:↑\/↓|select|space|toggle|enter|accept|tab|next|shift\+tab|prev|ctrl\+d|decline|esc|cancel)$/u.test(word))) break
+    trailing.unshift(line)
+    if (trailing.length > 6) return false
+  }
+  const footer = trailing.join(' ').replace(/\s+/gu, ' ')
+  if (footer.length > 240) return false
+  const controls = footer.split(/\s*·\s*/u)
+  return controls.includes('enter accept') && controls.at(-1) === 'esc cancel' &&
+    new Set(controls).size === controls.length &&
+    controls.every((control) =>
+      /^(?:↑\/↓ select|space toggle|enter accept|tab next|shift\+tab prev|ctrl\+d decline|esc cancel)$/u.test(control))
 }
 
 // A full-screen view replaces the transcript and is driven by keystrokes, so

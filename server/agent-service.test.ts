@@ -8731,8 +8731,17 @@ describe('AgentService deletion', () => {
       if (outcome === 'mismatch' || outcome === 'unconfirmed') {
         await expect(reply).rejects.toMatchObject({
           statusCode: 409,
-          message: expect.stringContaining('not dismissed'),
+          message: expect.stringContaining(outcome === 'unconfirmed'
+            ? 'completion was not confirmed'
+            : 'not dismissed'),
+          ...(outcome === 'unconfirmed' ? { uncertainDelivery: true } : {}),
         })
+        if (outcome === 'unconfirmed') {
+          await expect(service.replyUserInput(sessionId, 'persisted-user-input:question-call', {
+            action, answer: '', wasFreeform: false,
+          })).rejects.toMatchObject({ uncertainDelivery: true })
+          expect(terminal.dismissUserInput).toHaveBeenCalledOnce()
+        }
         await service.refreshTranscripts()
         expect(service.getSession(sessionId)?.pendingUserInput).toEqual(pending)
         expect(service.getSession(sessionId)?.status).toBe('waiting')

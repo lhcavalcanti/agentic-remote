@@ -2261,11 +2261,25 @@ function terminalControlLines(pane: string): string[] {
   return lines.slice(Math.max(composer, repaint) + 1)
 }
 
-function hasClippedTerminalFormFooter(pane: string): boolean {
-  const lines = terminalControlLines(pane).map(cleanDialogLine).filter((line) => line && !/^[─━]+$/u.test(line))
-  const footer = lines.at(-1) || ''
+export function hasClippedTerminalFormFooter(pane: string): boolean {
+  if (hasLiveTerminalComposer(pane)) return false
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  while (lines.length && (!lines.at(-1) || /^[─━]+$/u.test(lines.at(-1)!))) lines.pop()
+  const trailing: string[] = []
+  // Only adjacent control words can belong to the wrapped footer. Blank
+  // lines, quotations and transcript text cannot bridge otherwise valid hints.
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]
+    if (!line || !line.split(/[\s·]+/u).filter(Boolean).every((word) =>
+      /^(?:↑\/↓|select|space|toggle|enter|accept|tab|next|shift\+tab|prev|ctrl\+d|decline|esc|cancel)$/u.test(word))) break
+    trailing.unshift(line)
+    if (trailing.length > 6) return false
+  }
+  const footer = trailing.join(' ').replace(/\s+/gu, ' ')
+  if (footer.length > 240) return false
   const controls = footer.split(/\s*·\s*/u)
-  return controls.includes('enter accept') && controls.includes('esc cancel') &&
+  return controls.includes('enter accept') && controls.at(-1) === 'esc cancel' &&
+    new Set(controls).size === controls.length &&
     controls.every((control) =>
       /^(?:↑\/↓ select|space toggle|enter accept|tab next|shift\+tab prev|ctrl\+d decline|esc cancel)$/u.test(control))
 }

@@ -26,7 +26,11 @@ afterEach(async () => {
   vi.unstubAllEnvs()
 })
 
-async function formFixture(lines = 52, repaint = true) {
+async function formFixture(lines = 52, repaint = true, options: {
+  footer?: string[]
+  width?: number
+  height?: number
+} = {}) {
   const output = path.join(root, 'receipt.json')
   const executable = path.join(root, 'copilot-clipped-form.mjs')
   const question = [
@@ -40,7 +44,7 @@ async function formFixture(lines = 52, repaint = true) {
   await writeFile(executable, `
 import { writeFileSync } from 'node:fs'
 const output = ${JSON.stringify(output)}
-let pending = '', selected = 0, closed = false
+let pending = '', selected = 0, closed = false, second = false
 const receipt = { keys: [], actions: [], heights: [] }
 function save() { writeFileSync(output, JSON.stringify(receipt)) }
 function draw() {
@@ -49,9 +53,10 @@ function draw() {
   const lines = closed ? ['Finished', '╻▄▄▄▄▄▄▄▄', '┃', '╹▀▀▀▀▀▀▀▀', ' / commands'] : [
     ' Copilot needs information.',
     ...${JSON.stringify(question)}.split('\\n').map(line => ' ' + line),
+    ...(second ? [' Second synthetic question.'] : []),
     '', ' ${field}:',
     ...['Default', 'Non-default'].map((label, index) => (index === selected ? ' ❯ ' : '   ') + label),
-    '', ' ↑/↓ select · enter accept · ctrl+d decline · esc cancel',
+    '', ...${JSON.stringify(options.footer || [' ↑/↓ select · enter accept · ctrl+d decline · esc cancel'])},
     '─'.repeat(process.stdout.columns),
   ]
   process.stdout.write('\\x1b[2J\\x1b[H' + lines.slice(-(process.stdout.rows - 1)).join('\\r\\n'))
@@ -84,6 +89,7 @@ process.stdin.on('data', data => {
     } else {
       const key = pending[0]
       pending = pending.slice(1)
+      if (closed && key === 'n') { second = true; closed = false; selected = 0; draw(); continue }
       receipt.keys.push(key === '\\x04' ? 'C-d' : 'Enter')
       finish(key === '\\x04' ? 'decline' : 'accept')
     }
@@ -94,7 +100,7 @@ draw()
   const sessionId = randomUUID()
   const tmux = `form-${sessionId.slice(0, 8)}`
   await exec('tmux', [
-    'new-session', '-d', '-s', tmux, '-x', '120', '-y', '40',
+    'new-session', '-d', '-s', tmux, '-x', String(options.width || 120), '-y', String(options.height || 40),
     process.execPath, executable, '--session-id', sessionId,
   ])
   const pid = Number((await exec('tmux', ['display-message', '-p', '-t', tmux, '#{pane_pid}'])).stdout.trim())
@@ -110,7 +116,7 @@ draw()
   const capture = async (history = '-40') => (await exec('tmux', [
     'capture-pane', '-J', '-p', '-t', tmux, '-S', history,
   ])).stdout
-  await eventually(capture, (pane) => pane.includes('enter accept'))
+  await eventually(capture, (pane) => pane.includes('esc cancel'))
   const geometry = async () => ({
     dimensions: (await exec('tmux', ['display-message', '-p', '-t', tmux, '#{window_width}x#{window_height}'])).stdout.trim(),
     localPolicy: (await exec('tmux', ['show-options', '-wqv', '-t', tmux, 'window-size'])).stdout.trim(),
@@ -118,10 +124,74 @@ draw()
   const receipt = async () => JSON.parse(await readFile(output, 'utf8')) as {
     keys: string[]; actions: { action: string; selected: number }[]; heights: number[]
   }
-  return { controller, identity, steps, sessionId, tmux, capture, geometry, receipt }
+  const next = async () => {
+    await exec('tmux', ['send-keys', '-t', tmux, '-l', 'n'])
+    await eventually(capture, (pane) => pane.includes('Second synthetic question.'))
+    return { ...identity, question: question + '\nSecond synthetic question.' }
+  }
+  return { controller, identity, steps, sessionId, tmux, capture, geometry, receipt, next }
 }
 
 describe('bounded terminal form viewport', () => {
+  it.each(['accept', 'cancel', 'decline'] as const)(
+    '%s reads wrapped controls on successive clipped prompts and restores 80x24 each time', async (action) => {
+      const f = await formFixture(52, true, {
+        width: 80, height: 24,
+        footer: [' ↑/↓ select · enter accept ·', ' ctrl+d decline · esc cancel'],
+      })
+      const before = await f.geometry()
+      let identity = f.identity
+      for (let stage = 0; stage < 2; stage += 1) {
+        expect(parseTerminalFormPrompt(await f.capture('-200'))).toBe(false)
+        if (stage === 1 && action === 'accept') {
+          expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity)).toBe(false)
+          expect((await f.receipt()).actions).toHaveLength(1)
+          expect(await f.geometry()).toEqual(before)
+        }
+        const result = action === 'accept'
+          ? await f.controller.fillUserInputForm(f.sessionId, f.steps, identity)
+          : await f.controller.dismissUserInput(f.sessionId, identity, action)
+        expect(result).toBe(true)
+        expect(await f.geometry()).toEqual(before)
+        if (stage === 0) identity = await f.next()
+      }
+      expect((await f.receipt()).actions).toEqual([
+        { action, selected: action === 'accept' ? 1 : 0 },
+        { action, selected: action === 'accept' ? 1 : 0 },
+      ])
+    }, 20_000,
+  )
+
+  it.each([
+    ['separator on the next line', [' ↑/↓ select · enter accept', ' · ctrl+d decline · esc cancel']],
+    ['control words on separate lines', [' ↑/↓ select · enter', ' accept · ctrl+d decline · esc cancel']],
+    ['all six trailing control lines', [' ↑/↓ select ·', ' space toggle ·', ' enter accept ·', ' tab next ·', ' shift+tab prev · ctrl+d decline ·', ' esc cancel']],
+  ])('recognizes %s without relaxing exact question matching', async (_name, footer) => {
+    const f = await formFixture(52, true, { footer: footer as string[] })
+    const before = await f.geometry()
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity)).toBe(true)
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).actions).toEqual([{ action: 'accept', selected: 1 }])
+  }, 15_000)
+
+  it.each([
+    ['blockquote', [' > enter accept ·', ' > esc cancel']],
+    ['quoted string', [' "enter accept ·', ' esc cancel"']],
+    ['code fence', [' ```text', ' enter accept ·', ' esc cancel', ' ```']],
+    ['arbitrary text', [' enter accept · malicious action ·', ' esc cancel']],
+    ['text after controls', [' enter accept ·', ' esc cancel', ' unrelated output']],
+    ['disconnected hints', [' enter accept ·', '', ' esc cancel']],
+    ['unbounded controls', [' ↑/↓ select ·', ' space toggle ·', ' enter accept ·', ' tab next ·', ' shift+tab prev ·', ' ctrl+d', ' decline ·', ' esc cancel']],
+    ['history above composer', [' enter accept ·', ' esc cancel', '╻▄▄▄▄▄▄▄▄', '┃', '╹▀▀▀▀▀▀▀▀', ' / commands']],
+    ['history above rounded composer', [' enter accept ·', ' esc cancel', '╭────────╮', '│ >      │', '╰────────╯', ' / commands']],
+  ])('does not enlarge a %s hint lookalike', async (_name, footer) => {
+    const f = await formFixture(52, true, { footer: footer as string[] })
+    const change = vi.spyOn(f.controller, 'changeFormViewport' as never)
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity)).toBe(false)
+    expect(change).not.toHaveBeenCalled()
+    expect((await f.receipt()).keys).toEqual([])
+  })
+
   it.each(['accept', 'cancel', 'decline'] as const)(
     '%s reads a clipped alternate-screen form and restores inherited size policy', async (action) => {
       const f = await formFixture()

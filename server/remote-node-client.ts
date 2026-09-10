@@ -17,6 +17,7 @@ import type {
   RemovedQueuedPrompt,
   QueuedPromptDispatchResult,
   RuntimeOptions,
+  SessionRecoveryReason,
   SendMessageInput,
   ServerEvent,
   SessionDetail,
@@ -437,6 +438,20 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       {
         method: 'POST',
         body: '{}',
+      },
+    )
+    return response.session
+  }
+
+  async recoverConversation(
+    sessionId: string,
+    reason: SessionRecoveryReason,
+  ): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/recover`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
       },
     )
     return response.session

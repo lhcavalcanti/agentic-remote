@@ -147,7 +147,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   computer and MUST NOT store or expose provider credentials or implement a
   Claude subscription login flow.
 
-### 3.3 Rename, restart, clear, and delete
+### 3.3 Rename, restart, recover, clear, and delete
 
 - Secondary session actions MAY live in a labeled disclosure rather than
   crowding the conversation header. They MUST remain keyboard- and
@@ -160,11 +160,49 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   runtime settings, and tmux window.
 - Restart MUST remain available for an online session in `error` state. Error
   recovery MUST NOT require a direct API call.
+- Copilot sessions in provider error or holding a stale SDK interaction MUST
+  offer **Recover conversation** when the owning computer advertises context
+  recovery. Claude sessions MUST NOT offer it.
+- Recover MUST create a fresh provider session ID while preserving title,
+  working folder, runtime settings, execution mode, queue, computer ownership,
+  draft continuity, replacement lineage, and notification/Knowledge metadata.
+- Recover MUST archive the prior visible transcript as read-only history,
+  append a visible recovery boundary, and combine archived and current messages
+  in public session projections. Provider transcript refresh MUST replace only
+  the current-provider portion.
+- Recover MUST seed the fresh provider before queued work with a deterministic,
+  bounded, text-only brief containing earliest goal and newest context. The
+  brief MUST report included message count and truncation and MUST exclude
+  activities, opaque provider IDs, permissions, and tool state.
+- After replacement commits, Recover MUST return the replacement ID with
+  pending context-rebuild activity without waiting for the provider seed turn.
+  The hub MUST carry Knowledge and notification metadata to that replacement
+  independently of seed completion. Seed admission failures MUST be published
+  and remain visible on subsequent session reads with the preserved queue
+  blocked; delivery uncertainty MUST NOT cause an automatic resend.
+- Pending seeds deferred by terminal ownership discovery MUST be reconsidered
+  when discovery settles. Seed dispatch MUST NOT block startup, discovery, or
+  another session's seed, and concurrent discovery MUST NOT dispatch it twice.
+- Seed handoff MUST register under the owning session's lifecycle admission
+  and remain protected through durable delivery confirmation. Restart MUST NOT
+  replace a runtime underneath an admitted or in-flight seed.
+- Pending, dispatching, and failed seeds MUST reject provider slash commands,
+  including commands allowed during ordinary agent execution, before provider
+  lookup or invocation. Stop and explicit conversation recovery MUST retain
+  their existing admission and safety rules.
+- Recovery MUST atomically persist an existing failed-prompt queue barrier
+  alongside its seed so unmodified 1.1.2 startup cannot drain preserved work.
+  Only confirmed seed admission may remove that seed-owned barrier. Rollback
+  MUST NOT automatically replay uncertain seeds or bypass context rebuilding.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.
 - Clear MUST keep the reader on the live replacement unless they navigate
   elsewhere, including gaps between removal, replacement, and response delivery.
+- Clearing a recovery MUST atomically remove its seed-owned failed-prompt
+  compatibility barrier before dropping recovery ownership. An unrelated failed
+  prompt MUST remain recoverable even when its content equals the old brief;
+  a refused clear write MUST retain both the seed and its barrier.
 - A refused replacement write MUST preserve the original provider history and
   uploads. A terminal clear MUST restore the original command and working
   folder before reporting that refusal, or explicitly report restoration failure.
@@ -265,6 +303,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 ## 5. Questions and permissions
 
 Questions and permissions are the highest-priority UI state.
+
+- Persisted SDK permission and user-input requests MUST be atomically marked
+  stale and the session recoverable after service restart because their
+  in-memory callbacks no longer exist. Reply endpoints MUST reject them with
+  `409` and direct the reader to recovery. Terminal-backed persisted prompts
+  MUST retain their existing live-terminal behavior.
+- A stale prompt MUST render a focused inline recovery card with its original
+  title or question rather than dead approval/form controls.
 
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot

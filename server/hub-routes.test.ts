@@ -95,6 +95,42 @@ describe('hub routes', () => {
     await app.close()
   })
 
+  it('carries mute state to a recovered replacement and forwards the reason', async () => {
+    const mutes = muteCarrier(['computer-1:session-1'])
+    const recoverConversation = vi.fn(async () => {
+      mutes.muted = []
+      return { id: 'session-1-recovered', computerId: 'computer-1' }
+    })
+    const app = Fastify()
+    await registerHubRoutes(
+      app,
+      {
+        recoverConversation,
+        captureComputerRegistration: () => () => true,
+        on: () => undefined,
+        off: () => undefined,
+      } as unknown as ComputerManager,
+      {} as KnowledgeStore,
+      mutes,
+    )
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/computers/computer-1/sessions/session-1/recover',
+      headers: { host: 'localhost' },
+      payload: { reason: 'stale-sdk-interaction' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(recoverConversation).toHaveBeenCalledWith(
+      'computer-1',
+      'session-1',
+      'stale-sdk-interaction',
+    )
+    expect(mutes.muted).toEqual(['computer-1:session-1-recovered'])
+    await app.close()
+  })
+
   it('does not keep a root for a computer unpaired while it was being added', async () => {
     let paired = true
     const stored = new Map<string, { id: string; computerId: string }>()

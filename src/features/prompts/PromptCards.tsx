@@ -47,6 +47,35 @@ export function PermissionCard({
   )
 }
 
+export function StaleInteractionRecoveryCard({
+  title,
+  disabled,
+  onRecover,
+}: {
+  title: string
+  disabled: boolean
+  onRecover: () => void
+}) {
+  return (
+    <section className="recovery-card" aria-labelledby="stale-recovery-title">
+      <p className="eyebrow">Recovery needed</p>
+      <h3 id="stale-recovery-title">{title}</h3>
+      <p>
+        This request belonged to the previous provider connection and cannot
+        resume after restart.
+      </p>
+      <button
+        className="primary-button"
+        disabled={disabled}
+        onClick={onRecover}
+        type="button"
+      >
+        Recover conversation
+      </button>
+    </section>
+  )
+}
+
 function initialUserInputValues(
   form: PendingUserInput['form'],
 ): Record<string, UserInputFieldValue> {

@@ -13,6 +13,7 @@ export interface AgentProviderCapability {
   supportsBackgroundTasks?: boolean
   supportsQueuedPromptDispatch?: boolean
   supportsSessionResources?: boolean
+  supportsContextRecovery?: boolean
   unavailableReason?: string
 }
 
@@ -101,6 +102,7 @@ export interface PendingPermission {
   kind?: string
   choiceCount?: number
   options: PermissionOption[]
+  stale?: boolean
 }
 
 export type UserInputFieldValue = string | number | boolean | string[]
@@ -138,6 +140,20 @@ export interface PendingUserInput {
   allowFreeform: boolean
   multiSelect?: boolean
   form?: UserInputForm
+  stale?: boolean
+}
+
+export type SessionRecoveryReason =
+  | 'provider-error'
+  | 'stale-sdk-interaction'
+  | 'manual'
+
+export interface SessionRecoveryInfo {
+  recoveredAt: string
+  archivedMessageCount: number
+  contextMessageCount: number
+  contextTruncated: boolean
+  reason: SessionRecoveryReason
 }
 
 export interface QueuedPrompt {
@@ -328,6 +344,7 @@ export interface SessionSummary {
    * clears in a row, and the ones in between are gone with them.
    */
   replacedSessionIds?: string[]
+  recovery?: SessionRecoveryInfo
   /**
    * Whether the session is being kept without anything running for it.
    *

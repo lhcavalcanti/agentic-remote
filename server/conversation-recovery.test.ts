@@ -242,14 +242,27 @@ describe('conversation recovery', () => {
     },
   )
 
-  it('dispatches independent pending seeds without waiting for a slow provider turn', async () => {
+  it.each([
+    '2026-09-09T23:59:59.999Z',
+    '2026-09-10T00:00:00.001Z',
+  ])('dispatches independent pending seeds without waiting for a slow provider turn at %s', async (now) => {
     const { store, cleanup } = await recoveryFixture('sdk')
-    await store.replaceWithRecoveredSession('broken', 'replacement', 'manual', 1, false, 'Slow seed')
-    await store.create({
-      id: 'other', cwd: store.get('replacement')!.cwd, title: 'Other recovery',
-      updatedAt: '2026-09-09T00:00:00.000Z', status: 'error', messages: [],
-    }, { backend: 'sdk', managedOpen: true })
-    await store.replaceWithRecoveredSession('other', 'other-replacement', 'manual', 0, false, 'Fast seed')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(now))
+      await store.replaceWithRecoveredSession('broken', 'replacement', 'manual', 1, false, 'Slow seed')
+      await store.create({
+        id: 'other', cwd: store.get('replacement')!.cwd, title: 'Other recovery',
+        updatedAt: '2026-09-09T00:00:00.000Z', status: 'error', messages: [],
+      }, { backend: 'sdk', managedOpen: true })
+      await store.replaceWithRecoveredSession('other', 'other-replacement', 'manual', 0, false, 'Fast seed')
+      expect(store.get('other-replacement')?.updatedAt).toBe(now)
+    } finally {
+      vi.useRealTimers()
+    }
+    await store.update('other-replacement', (session) => {
+      session.updatedAt = '2026-09-09T00:00:00.000Z'
+    })
     await store.update('replacement', (session) => {
       session.updatedAt = '2026-09-10T00:00:00.000Z'
     })

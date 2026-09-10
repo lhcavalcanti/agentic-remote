@@ -300,7 +300,7 @@
     "server/computer-manager.ts": "252a059a56e8bec347e0b8d9a5ac7a12fb56e4301b73c47e5933e5d5b5c8a985",
     "server/computer-registry.test.ts": "e0616b92fdfb650b523100af4a8f7b8e4f31b99764ec4ab71502d3b69b1bf55b",
     "server/computer-registry.ts": "0b7670e11309f21891b15e5a5265a4d8fae8cadbc3262b4484686bfe7caff15f",
-    "server/conversation-recovery.test.ts": "b352e9dcb1a6873513c081919964b388b1d72fd2ceee856b9e300452406ebd7f",
+    "server/conversation-recovery.test.ts": "eed027610330614296a56c418c1130084251cad2d293842ed8bb91191ff206b9",
     "server/delegated-transcription-service.test.ts": "a34fed74712fa98c501e7ed21e31b452ed201360cf0e784169a28fde124a9f1a",
     "server/delegated-transcription-service.ts": "875a5d15fb582e7d836b6d3f5d1cc7328480fa793d63f272aa3c163b1c07afb7",
     "server/directory-browser.test.ts": "9952e56f0dbc161daaa8e5ad8da3498629d83e2b934963266f6ee87ab9385ccb",
@@ -533,20 +533,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5ecab7b09b555b6b5801ea8a251f7de40f08896cac1d398cc88937ca4fab7ae3",
+    "GRAPH_REPORT.md": "5d20754d9ae341befaa64e9131c0ff2739b535e030143aab50dcfdf9b6c6116f",
     "communities.json": "2ad98a671bd8162a045eeeccb082648950312372012ad98eb910ca0e9a06e8a8",
-    "graph.html": "92b866d1fe4c543cd1871feeb22acab1480911bcd5123a488a6269de4232a489",
-    "graph.json": "8f4e3c6247ddac2718be18a9df897d7d206fdf431f7ad5f332dd6c91cfe20991"
+    "graph.html": "d59c2d92a0918726b87f126a8a4856a8afa829b705a4f355b394ed6383c5f27c",
+    "graph.json": "a63e141793cd8c0bdeec0575d7b9aed24d98105378d01401ca9203b80bc8e5cf"
   },
   "schema_version": 1,
-  "source_commit": "3e9eb6a0f1b3519f2fc84c4a5151bf1fd779342b",
-  "source_fingerprint": "c8f71856bab0a7b929d0e86383e85f32c40bf97a58b3001c5022ac6aee05fd57",
+  "source_commit": "c15a707656d3cc5bef7ee6f79adb7c03da4c5b46",
+  "source_fingerprint": "ae72097c350657fc215f4e7fc60c7b4eacb71289919f500b3e3aa5137fa50d85",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "server/claude-agent-service.test.ts",
-    "server/push-notification-service.test.ts",
-    "server/push-notification-service.ts",
-    "server/tmux-test-helpers.test.ts",
-    "server/tmux-test-helpers.ts"
+    "server/conversation-recovery.test.ts"
   ]
 }

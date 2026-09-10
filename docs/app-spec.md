@@ -675,14 +675,23 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Absolute paths, traversal, hidden path segments, and symlinks escaping the
   root MUST be rejected.
 - Hidden files/directories MUST be omitted by default.
-- Markdown MUST support rendered and raw views.
+- Markdown and HTML MUST support rendered and raw views labeled Preview and
+  Source. HTML MUST be a distinct file kind, not rendered as Markdown.
+- HTML Preview MUST render in an opaque-origin iframe sandbox without scripts,
+  same-origin access, permissions, referrers, navigation, forms, popups,
+  downloads, frames, plugins, or network assets. A restrictive CSP before the
+  document content MUST allow only inline CSS plus data images and fonts.
+  Audio, video, and their source/track elements MUST be removed, including
+  data-backed media and elements inside templates; media loading MUST be
+  denied by CSP. Interactive and navigation markup MUST also be neutralized
+  before rendering. Source MUST preserve the exact file text.
 - Rendered Markdown across the app MAY convert only exact `<br>`, `<br/>`, and
   `<br />` raw HTML nodes (case-insensitive) to hard breaks. All other raw HTML,
   including break tags with attributes, MUST remain inert; raw HTML parsing
   MUST NOT be enabled. Code fences, inline code, escaped tags, and Source mode
   MUST retain their original text.
-- Markdown readers MUST label those views Preview and Source. Their outline
-  MUST remain keyboard-accessible without pushing document content away.
+- The document outline MUST remain Markdown-only and keyboard-accessible
+  without pushing document content away.
   Repeated headings, colliding slugs, and reference headings MUST navigate to
   their own rendered positions in both Knowledge and session-file outlines.
   Copying a code fence MUST require an explicit action, retain its exact text,

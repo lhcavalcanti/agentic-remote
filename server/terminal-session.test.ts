@@ -35,6 +35,7 @@ import {
   stopIsolatedTmuxServer,
   waitForProcessCommand,
 } from './tmux-test-helpers.js'
+import * as tmuxErrors from './tmux-errors.js'
 
 const execFileAsync = promisify(execFile)
 const directories: string[] = []
@@ -239,6 +240,13 @@ draw(${JSON.stringify(initialPane)} ?? composer())
   vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', '')
   vi.stubEnv('COPILOT_BIN', executable)
   vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+  // Consent/owner tests need a live isolated server, not a host-wide cold
+  // absence verdict that can be indeterminate while unrelated processes exit.
+  const tmuxSession = `agentic-startup-${process.pid}`
+  tmuxSessions.push(tmuxSession)
+  await execFileAsync('tmux', [
+    'new-session', '-d', '-s', tmuxSession, 'sleep', '60',
+  ], { env: isolatedTmuxEnv(tmuxRoot) })
   const controller = new TmuxTerminalSessionController()
   const sessionId = randomUUID()
   await controller.create(sessionId, directory, 'Owned startup', false)
@@ -277,6 +285,17 @@ describe('tmux test isolation', () => {
     expect(env.TMUX_TMPDIR).toBe('/tmp/example-root')
     expect(env.TMUX).toBe('')
   })
+
+  it('creates owned startup fixtures without depending on a host-wide absence verdict', async () => {
+    const absence = vi.spyOn(tmuxErrors, 'noTmuxServer').mockResolvedValue(false)
+    try {
+      const { controller, sessionId } = await ownedStartupFixture()
+      expect(await controller.has(sessionId)).toBe(true)
+      expect(absence).not.toHaveBeenCalled()
+    } finally {
+      absence.mockRestore()
+    }
+  }, 15_000)
 })
 
 describe('TmuxTerminalSessionController', () => {

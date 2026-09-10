@@ -10978,6 +10978,104 @@ describe('App', () => {
       .toBeInTheDocument()
   })
 
+  it('previews exact HTML source in Session files without a document outline', async () => {
+    const source = [
+      '<!doctype html>',
+      '<style>main { color: green }</style>',
+      '<main style="padding: 12px">Session HTML</main>',
+      '<audio controls src="data:audio/wav;base64,AAAA"></audio>',
+    ].join('\n')
+    vi.mocked(listWorkspace).mockResolvedValue({
+      path: '.',
+      entries: [
+        {
+          name: 'preview.html',
+          path: 'preview.html',
+          kind: 'html',
+          size: source.length,
+        },
+      ],
+    })
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      name: 'preview.html',
+      path: 'preview.html',
+      kind: 'html',
+      mimeType: 'text/html; charset=utf-8',
+      size: source.length,
+      content: source,
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Browse current session folder',
+    }))
+    fireEvent.click(await screen.findByRole('button', { name: /preview.html/ }))
+
+    const preview = await screen.findByTitle('Preview of preview.html')
+    expect(preview).toBeInTheDocument()
+    expect(new DOMParser().parseFromString(preview.getAttribute('srcdoc')!, 'text/html')
+      .querySelector('audio, video, source, track')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.queryByRole('button', { name: 'Document outline' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+    expect(screen.queryByTitle('Preview of preview.html')).toBeNull()
+    expect(
+      document.querySelector('.workspace-preview__content > pre')?.textContent,
+    ).toBe(source)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByTitle('Preview of preview.html')).toBeInTheDocument()
+  })
+
+  it('previews exact HTML source in Knowledge', async () => {
+    const source = '<article style="font: 16px sans-serif">Knowledge HTML</article>\n' +
+      '<video controls><source src="data:video/mp4;base64,AAAA"></video>'
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+      '.': {
+        path: '.',
+        entries: [
+          {
+            name: 'reference.htm',
+            path: 'reference.htm',
+            kind: 'html',
+            size: source.length,
+          },
+        ],
+      },
+    }))
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'reference.htm',
+      path: 'reference.htm',
+      kind: 'html',
+      mimeType: 'text/html; charset=utf-8',
+      size: source.length,
+      content: source,
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /reference.htm/ }),
+    )
+
+    const preview = await screen.findByTitle('Preview of reference.htm')
+    expect(preview).toBeInTheDocument()
+    expect(new DOMParser().parseFromString(preview.getAttribute('srcdoc')!, 'text/html')
+      .querySelector('audio, video, source, track')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+    expect(
+      document.querySelector('.knowledge-reader .workspace-preview__content > pre')
+        ?.textContent,
+    ).toBe(source)
+    expect(screen.queryByRole('button', { name: 'Document outline' })).toBeNull()
+  })
+
   it('scopes Markdown fragments to unique headings and refuses escaping links', async () => {
     vi.mocked(readWorkspaceFile).mockResolvedValue({
       name: 'README.md',

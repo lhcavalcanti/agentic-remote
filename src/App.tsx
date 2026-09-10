@@ -83,6 +83,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { DocumentViewControls } from './DocumentViewControls'
+import { HtmlPreview } from './HtmlPreview'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { KnowledgeRootSelector } from './KnowledgeRootSelector'
@@ -5455,6 +5456,7 @@ function KnowledgeReader({
         </div>
         <DocumentViewControls
           markdown={file.kind === 'markdown'}
+          previewable={file.kind === 'markdown' || file.kind === 'html'}
           onRawChange={setRaw}
           onSelectHeading={(heading) => {
             if (!scrollToDocumentHeading(contentRef.current, heading.index)) {
@@ -5507,6 +5509,10 @@ function KnowledgeReader({
       <div
         className={`workspace-preview__content${
           file.kind === 'markdown' && !raw ? ' markdown-body' : ''
+        }${
+          file.kind === 'html' && !raw
+            ? ' workspace-preview__content--html'
+            : ''
         }`}
         onClick={(event) =>
           followMarkdownLink(event, file.path, onOpenFile, setLinkError)
@@ -5517,6 +5523,8 @@ function KnowledgeReader({
           <PdfViewer file={file} />
         ) : file.kind === 'image' ? (
           <WorkspaceImage file={file} />
+        ) : file.kind === 'html' && !raw ? (
+          <HtmlPreview name={file.name} source={file.content || ''} />
         ) : file.kind === 'markdown' && !raw ? (
           <ReactMarkdown
             components={components}
@@ -6058,7 +6066,7 @@ function WorkspaceDialog({
           {!file ? (
             <div className="workspace-preview__empty">
               <BookOpen size={24} />
-              <p>Select a Markdown, text, or PDF file.</p>
+              <p>Select an HTML, Markdown, text, image, or PDF file.</p>
             </div>
           ) : (
             <>
@@ -6103,6 +6111,7 @@ function WorkspaceDialog({
                 <DocumentViewControls
                   key={file.path}
                   markdown={file.kind === 'markdown'}
+                  previewable={file.kind === 'markdown' || file.kind === 'html'}
                   onRawChange={setRaw}
                   onSelectHeading={(heading) => {
                     if (!scrollToDocumentHeading(previewContentRef.current, heading.index)) {
@@ -6139,6 +6148,10 @@ function WorkspaceDialog({
               <div
                 className={`workspace-preview__content${
                   file.kind === 'markdown' && !raw ? ' markdown-body' : ''
+                }${
+                  file.kind === 'html' && !raw
+                    ? ' workspace-preview__content--html'
+                    : ''
                 }`}
                 onClick={(event) =>
                   followMarkdownLink(
@@ -6155,6 +6168,8 @@ function WorkspaceDialog({
                   <PdfViewer file={file} />
                 ) : file.kind === 'image' ? (
                   <WorkspaceImage file={file} />
+                ) : file.kind === 'html' && !raw ? (
+                  <HtmlPreview name={file.name} source={file.content || ''} />
                 ) : file.kind === 'markdown' && !raw ? (
                   <ReactMarkdown
                     components={markdownComponents}

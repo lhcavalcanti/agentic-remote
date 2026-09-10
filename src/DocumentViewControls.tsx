@@ -3,12 +3,14 @@ import { List, X } from 'lucide-react'
 import type { DocumentHeading } from './markdown-navigation'
 
 export function DocumentViewControls({
+  previewable,
   markdown,
   raw,
   onRawChange,
   outline,
   onSelectHeading,
 }: {
+  previewable: boolean
   markdown: boolean
   raw: boolean
   onRawChange: (raw: boolean) => void
@@ -35,7 +37,7 @@ export function DocumentViewControls({
     }
   }, [open])
 
-  if (!markdown) return null
+  if (!previewable) return null
 
   function closeOutline() {
     setOpen(false)
@@ -70,46 +72,56 @@ export function DocumentViewControls({
           Source
         </button>
       </div>
-      <div className="document-outline-control">
-        <button
-          aria-controls={outlineId}
-          aria-expanded={open}
-          aria-label="Document outline"
-          className="document-outline-button"
-          disabled={raw || outline.length === 0}
-          onClick={() => setOpen(!open)}
-          ref={outlineButtonRef}
-          title={raw ? 'Outline is available in Preview' : 'On this page'}
-          type="button"
-        >
-          <List aria-hidden="true" size={16} />
-        </button>
-        {open && !raw && outline.length > 0 ? (
-          <nav aria-label="Document outline" className="document-outline" id={outlineId}>
-            <div className="document-outline__header">
-              <strong>On this page</strong>
-              <button aria-label="Close document outline" onClick={closeOutline} type="button">
-                <X aria-hidden="true" size={15} />
-              </button>
-            </div>
-            <div className="document-outline__items">
-              {outline.map((heading) => (
+      {markdown ? (
+        <div className="document-outline-control">
+          <button
+            aria-controls={outlineId}
+            aria-expanded={open}
+            aria-label="Document outline"
+            className="document-outline-button"
+            disabled={raw || outline.length === 0}
+            onClick={() => setOpen(!open)}
+            ref={outlineButtonRef}
+            title={raw ? 'Outline is available in Preview' : 'On this page'}
+            type="button"
+          >
+            <List aria-hidden="true" size={16} />
+          </button>
+          {open && !raw && outline.length > 0 ? (
+            <nav
+              aria-label="Document outline"
+              className="document-outline"
+              id={outlineId}
+            >
+              <div className="document-outline__header">
+                <strong>On this page</strong>
                 <button
-                  className={`document-outline__item document-outline__item--${Math.min(heading.level, 3)}`}
-                  key={heading.id}
-                  onClick={() => {
-                    setOpen(false)
-                    onSelectHeading(heading)
-                  }}
+                  aria-label="Close document outline"
+                  onClick={closeOutline}
                   type="button"
                 >
-                  {heading.text}
+                  <X aria-hidden="true" size={15} />
                 </button>
-              ))}
-            </div>
-          </nav>
-        ) : null}
-      </div>
+              </div>
+              <div className="document-outline__items">
+                {outline.map((heading) => (
+                  <button
+                    className={`document-outline__item document-outline__item--${Math.min(heading.level, 3)}`}
+                    key={heading.id}
+                    onClick={() => {
+                      setOpen(false)
+                      onSelectHeading(heading)
+                    }}
+                    type="button"
+                  >
+                    {heading.text}
+                  </button>
+                ))}
+              </div>
+            </nav>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

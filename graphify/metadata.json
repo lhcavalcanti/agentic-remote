@@ -381,11 +381,11 @@
     "server/session-store.ts": "fe55f2f7a7bc7ed52efbea8aa5a3738b060c53c38ad38149775d966696654146",
     "server/submission-error-http.test.ts": "dc24ea3e877053fc637d13894872720c64da89b3519d2cf0c3c53b78058a2825",
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
-    "server/terminal-form-viewport.test.ts": "be9711e0ff5dd5f8d425d63bb8ff61bb78d0a32e1ef9e86693a33414ba046005",
+    "server/terminal-form-viewport.test.ts": "323c01c21d341b64c266b571311fa11e69748848cfe3729ddc7f64ce59e69e5b",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
     "server/terminal-session.test.ts": "f7b7edbb9c40c9497e05ffc932f7bcc62008454c29e3de93d18112584ec21cde",
-    "server/terminal-session.ts": "e411fe90e8a5e32be0ece12e6e7a3453816a987bc9384142f8f7b746d9f0dbab",
+    "server/terminal-session.ts": "cd28b6314d8d811cb0a6f61552268b22d4f1a1b21e542aa5b561cb354e4ab670",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -555,22 +555,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "28c6166badf38a9ef57a7ba36636debfa257719c0b875af666462d51996d5be7",
+    "GRAPH_REPORT.md": "7fe16df8a254e59afdcb48e59d06173ec0805249a5b49fd5e3067519aaf363ff",
     "communities.json": "95ec61a28c81b283ccac4a45b44dc8a075283d574e14dcfae4bb916684618804",
-    "graph.html": "ad45c9b1166602a6694e7c5ed74fe9fec1012cc92683defe68ea77d8c79853a3",
-    "graph.json": "aba5790337b286f093683be7d53c0367caedb4ed2b4ae5cdf0e6e320c854da52"
+    "graph.html": "c07fc11d3cf7e7a1941b4a66280ef696e04d6cefad554befc6dd61030c740e55",
+    "graph.json": "3a485d42df8bf3b261293ead4b51504a2b7186efc2b5078d1dcb9204d2795b85"
   },
   "schema_version": 1,
-  "source_commit": "f19f110dc6bb8fe6af5bbcab919f988ed9eb045d",
-  "source_fingerprint": "63f990f184a1d8589ca76d6bc70e67108cfda48e9bf4f8718d7b0546a9cf475a",
+  "source_commit": "5434a18aa099f38071891163e0e791f1edd998ee",
+  "source_fingerprint": "1a602bf0b3c851616a295dfa0aaf451ec02915253f65d50113d70c5af2376d1d",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
     "server/terminal-form-viewport.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/terminal-session.ts"
   ]
 }

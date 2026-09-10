@@ -1186,7 +1186,9 @@ export class TmuxTerminalSessionController
           const previous = expanded
           await validateOwner()
           if (!sameViewport(await this.readFormViewport(owner), previous)) {
-            return false
+            throw new Error(
+              'The terminal viewport changed before its horizontally paginated form could be widened',
+            )
           }
           await validateOwner()
           expanded = { ...previous, width: MAX_FORM_VIEWPORT_WIDTH }

@@ -133,6 +133,9 @@ draw()
 }
 
 async function horizontalFormFixture(options: {
+  activeField?: number
+  fullWidth?: number
+  height?: number
   repaint?: boolean
   lookalikeTabs?: boolean
 } = {}) {
@@ -155,14 +158,19 @@ const output = ${JSON.stringify(output)}
 const question = ${JSON.stringify(question)}
 const fields = ${JSON.stringify(fields)}
 const lookalikeTabs = ${options.lookalikeTabs === true}
-let pending = '', active = 0, closed = false
+const fullWidth = ${options.fullWidth || 200}
+let pending = '', active = ${options.activeField || 0}, closed = false
 const selected = Array(fields.length).fill(0)
 const receipt = { keys: [], actions: [], widths: [] }
 function save() { writeFileSync(output, JSON.stringify(receipt)) }
 function tabs() {
   if (lookalikeTabs) return '  Different release   Unrelated field  →'
-  const visible = process.stdout.columns >= 200 ? fields : fields.slice(0, 4)
-  return '  ' + visible.join('   ') + (visible.length < fields.length ? '  →' : '')
+  if (process.stdout.columns >= fullWidth) return '  ' + fields.join('   ')
+  if (active === 0) return '  ' + fields.slice(0, 4).join('   ') + '  →'
+  if (active === fields.length - 1) {
+    return '  ←  ' + fields.slice(1).join('   ')
+  }
+  return '  ←  ' + fields.slice(1, 4).join('   ') + '  →'
 }
 function draw() {
   receipt.widths.push(process.stdout.columns)
@@ -181,10 +189,13 @@ function draw() {
     ' ↑/↓ select · enter accept · tab next · ctrl+d decline · esc cancel',
     '─'.repeat(process.stdout.columns),
   ]
-  process.stdout.write('\\x1b[2J\\x1b[H' + lines.join('\\r\\n'))
+  process.stdout.write(
+    '\\x1b[2J\\x1b[H' +
+    lines.slice(-(process.stdout.rows - 1)).join('\\r\\n'),
+  )
 }
-function finish() {
-  receipt.actions.push({ selected: [...selected] })
+function finish(action) {
+  receipt.actions.push({ action, selected: [...selected] })
   closed = true
   draw()
 }
@@ -195,12 +206,26 @@ process.stdin.on('data', data => {
   pending += data.toString()
   while (pending) {
     if (pending[0] === '\\x1b') {
-      if (pending.length < 3) return
+      if (pending.length < 3) {
+        setTimeout(() => {
+          if (pending === '\\x1b') {
+            receipt.keys.push('Escape')
+            pending = ''
+            finish('cancel')
+          }
+        }, 25)
+        return
+      }
       const key = pending[2]
-      receipt.keys.push(key === 'A' ? 'Up' : 'Down')
-      selected[active] = key === 'A'
-        ? Math.max(0, selected[active] - 1)
-        : Math.min(1, selected[active] + 1)
+      if (key === 'Z') {
+        receipt.keys.push('BTab')
+        active = Math.max(0, active - 1)
+      } else {
+        receipt.keys.push(key === 'A' ? 'Up' : 'Down')
+        selected[active] = key === 'A'
+          ? Math.max(0, selected[active] - 1)
+          : Math.min(1, selected[active] + 1)
+      }
       pending = pending.slice(3)
       draw()
       continue
@@ -213,7 +238,10 @@ process.stdin.on('data', data => {
       draw()
     } else if (key === '\\r') {
       receipt.keys.push('Enter')
-      finish()
+      finish('accept')
+    } else if (key === '\\x04') {
+      receipt.keys.push('C-d')
+      finish('decline')
     }
   }
 })
@@ -222,7 +250,8 @@ draw()
   const sessionId = randomUUID()
   const tmux = `horizontal-${sessionId.slice(0, 8)}`
   await exec('tmux', [
-    'new-session', '-d', '-s', tmux, '-x', '120', '-y', '29',
+    'new-session', '-d', '-s', tmux, '-x', '120',
+    '-y', String(options.height || 29),
     process.execPath, executable, '--session-id', sessionId,
   ])
   const pid = Number((await exec(
@@ -255,7 +284,7 @@ draw()
   })
   const receipt = async () => JSON.parse(await readFile(output, 'utf8')) as {
     keys: string[]
-    actions: { selected: number[] }[]
+    actions: { action: string; selected: number[] }[]
     widths: number[]
   }
   return { controller, identity, steps, sessionId, tmux, capture, geometry, receipt }
@@ -278,8 +307,50 @@ describe('bounded terminal form viewport', () => {
     expect((await f.receipt()).widths).toContain(256)
     expect((await f.receipt()).keys.filter((key) => key === 'Tab')).toHaveLength(4)
     expect((await f.receipt()).keys.filter((key) => key === 'Enter')).toHaveLength(1)
-    expect((await f.receipt()).actions).toEqual([{ selected: [0, 1, 0, 1, 0] }])
+    expect((await f.receipt()).actions).toEqual([
+      { action: 'accept', selected: [0, 1, 0, 1, 0] },
+    ])
   }, 15_000)
+
+  it.each([2, 4])(
+    'expands pagination around field %i and normalizes attached focus',
+    async (activeField) => {
+      const f = await horizontalFormFixture({ activeField })
+      const before = await f.geometry()
+      expect(terminalFormShowsFields(await f.capture(), f.identity)).toBe(false)
+
+      expect(
+        await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+      ).toBe(true)
+
+      expect(await f.geometry()).toEqual(before)
+      expect((await f.receipt()).keys.filter((key) => key === 'BTab'))
+        .toHaveLength(activeField)
+      expect((await f.receipt()).actions).toEqual([
+        { action: 'accept', selected: [0, 1, 0, 1, 0] },
+      ])
+    },
+    15_000,
+  )
+
+  it.each(['cancel', 'decline'] as const)(
+    '%s expands horizontally paginated tabs and restores 120x29',
+    async (action) => {
+      const f = await horizontalFormFixture()
+      const before = await f.geometry()
+
+      expect(
+        await f.controller.dismissUserInput(f.sessionId, f.identity, action),
+      ).toBe(true)
+
+      expect(await f.geometry()).toEqual(before)
+      expect((await f.receipt()).widths).toContain(256)
+      expect((await f.receipt()).actions).toEqual([
+        { action, selected: [0, 0, 0, 0, 0] },
+      ])
+    },
+    15_000,
+  )
 
   it('does not enlarge a tab-arrow lookalike or send keys', async () => {
     const f = await horizontalFormFixture({ lookalikeTabs: true })
@@ -320,6 +391,68 @@ describe('bounded terminal form viewport', () => {
     expect((await f.receipt()).widths).not.toContain(256)
     expect((await f.receipt()).keys).toEqual([])
   })
+
+  it('expands vertically then horizontally and restores both dimensions', async () => {
+    const f = await horizontalFormFixture({ height: 8 })
+    const before = await f.geometry()
+
+    expect(
+      await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+    ).toBe(true)
+
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).widths).toContain(120)
+    expect((await f.receipt()).widths).toContain(256)
+    expect((await f.receipt()).actions).toEqual([
+      { action: 'accept', selected: [0, 1, 0, 1, 0] },
+    ])
+  }, 15_000)
+
+  it('restores without keys when every tab cannot fit within the width bound', async () => {
+    const f = await horizontalFormFixture({ fullWidth: 300 })
+    const before = await f.geometry()
+
+    expect(
+      await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+    ).toBe(false)
+
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).widths).toContain(256)
+    expect((await f.receipt()).keys).toEqual([])
+  }, 15_000)
+
+  it('surfaces a viewport change between vertical and horizontal expansion', async () => {
+    const f = await horizontalFormFixture({ height: 8 })
+    const read = f.controller['readFormViewport'].bind(f.controller)
+    let expandedReads = 0
+    f.controller['readFormViewport'] = async (...args) => {
+      let viewport = await read(...args)
+      if (viewport.width === 120 && viewport.height === 256) {
+        expandedReads += 1
+      }
+      if (expandedReads === 31) {
+        await exec('tmux', [
+          'resize-window', '-t', f.tmux, '-x', '119', '-y', '255',
+        ])
+        expandedReads += 1
+        viewport = await read(...args)
+      }
+      return viewport
+    }
+
+    await expect(
+      f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+    ).rejects.toMatchObject({
+      outcome: 'not-submitted',
+      uncertainDelivery: false,
+    })
+
+    expect(await f.geometry()).toEqual({
+      dimensions: '119x255',
+      localPolicy: 'manual',
+    })
+    expect((await f.receipt()).keys).toEqual([])
+  }, 15_000)
 
   it.each(['accept', 'cancel', 'decline'] as const)(
     '%s reads wrapped controls on successive clipped prompts and restores 80x24 each time', async (action) => {

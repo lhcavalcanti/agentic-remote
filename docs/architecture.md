@@ -515,7 +515,9 @@ to a recovery-aware runtime admits only still-pending seeds; uncertain seeds
 remain manual recovery decisions. This adds no migration or eager rewrite of
 existing state and does not change CLI rollback policy. The compatibility test
 boots committed 1.1.2 source twice with synthetic SDK and terminal providers,
-then returns to the current reader/runtime.
+then returns to the current reader/runtime. Its read-only source copy resolves
+the installed test dependencies explicitly, independently of temporary-directory
+ancestry.
 
 ## Pairing flow
 

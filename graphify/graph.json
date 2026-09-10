@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "218663027089ad2c3849e3b5677db8d04d9516a8",
+  "built_at_commit": "d0d1bf41a9446f2cda7b5533c807f3257dfe0608",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -53016,7 +53016,7 @@
       "relation": "contains",
       "source": "server_recovery_seed_guards_test",
       "source_file": "server/recovery-seed-guards.test.ts",
-      "source_location": "L313",
+      "source_location": "L322",
       "target": "server_recovery_seed_guards_test_bootlegacy",
       "weight": 1.0
     },
@@ -53223,7 +53223,7 @@
       "relation": "calls",
       "source": "server_recovery_seed_guards_test_bootlegacy",
       "source_file": "server/recovery-seed-guards.test.ts",
-      "source_location": "L317",
+      "source_location": "L326",
       "target": "server_recovery_seed_guards_test_execute",
       "weight": 1.0
     },
@@ -126135,7 +126135,7 @@
       "label": "bootLegacy()",
       "norm_label": "bootlegacy()",
       "source_file": "server/recovery-seed-guards.test.ts",
-      "source_location": "L313"
+      "source_location": "L322"
     },
     {
       "_origin": "ast",

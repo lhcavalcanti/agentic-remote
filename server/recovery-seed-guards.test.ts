@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -303,11 +303,20 @@ describe('unmodified 1.1.2 recovery queue compatibility', () => {
     await writeFile(path.join(legacyRoot, 'package.json'), '{"type":"module"}', { mode: 0o400 })
     const runner = path.join(legacyRoot, 'server/recovery-seed-legacy-fixture.ts')
     await writeFile(runner, await readFile(new URL('./recovery-seed-legacy-fixture.ts', import.meta.url)), { mode: 0o400 })
+    await symlink(path.resolve('node_modules'), path.join(legacyRoot, 'node_modules'), 'junction')
     await chmod(legacyRoot, 0o500)
   })
   afterAll(async () => {
     await chmod(legacyRoot, 0o700)
+    await rm(path.join(legacyRoot, 'node_modules'))
     await rm(legacyRoot, { recursive: true, force: true })
+  })
+
+  it('resolves legacy packages from the fixture toolchain rather than temporary-directory ancestry', async () => {
+    const { stdout } = await execute(process.execPath, [
+      '--input-type=module', '--eval', "console.log(import.meta.resolve('@github/copilot-sdk'))",
+    ], { cwd: legacyRoot })
+    expect(stdout.trim()).toBe(import.meta.resolve('@github/copilot-sdk'))
   })
 
   async function bootLegacy(f: Awaited<ReturnType<typeof fixture>>, backend: 'sdk' | 'terminal', phase = 'idle') {

@@ -132,7 +132,195 @@ draw()
   return { controller, identity, steps, sessionId, tmux, capture, geometry, receipt, next }
 }
 
+async function horizontalFormFixture(options: {
+  repaint?: boolean
+  lookalikeTabs?: boolean
+} = {}) {
+  const output = path.join(root, 'horizontal-receipt.json')
+  const executable = path.join(root, 'copilot-horizontal-form.mjs')
+  const question =
+    'The promotion script requires rollout metadata and an explicit M365 bypass. ' +
+    'All three names contain `-m365`, so automation otherwise refuses them; GB200 ' +
+    'also has the acknowledged API test failure. Confirm the exact rollout settings.'
+  const fields = [
+    'Release tag',
+    'Group tag',
+    'Is this a livesite rollout?',
+    'Approve M365 promotion bypass',
+    'Continue on existing model-definition conflicts',
+  ]
+  await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+const output = ${JSON.stringify(output)}
+const question = ${JSON.stringify(question)}
+const fields = ${JSON.stringify(fields)}
+const lookalikeTabs = ${options.lookalikeTabs === true}
+let pending = '', active = 0, closed = false
+const selected = Array(fields.length).fill(0)
+const receipt = { keys: [], actions: [], widths: [] }
+function save() { writeFileSync(output, JSON.stringify(receipt)) }
+function tabs() {
+  if (lookalikeTabs) return '  Different release   Unrelated field  →'
+  const visible = process.stdout.columns >= 200 ? fields : fields.slice(0, 4)
+  return '  ' + visible.join('   ') + (visible.length < fields.length ? '  →' : '')
+}
+function draw() {
+  receipt.widths.push(process.stdout.columns)
+  save()
+  const lines = closed ? ['Finished', '╻▄▄▄▄▄▄▄▄', '┃', '╹▀▀▀▀▀▀▀▀', ' / commands'] : [
+    ' Copilot needs information.',
+    ' ' + question,
+    '',
+    tabs(),
+    '',
+    ' ' + fields[active] + ':',
+    selected[active] === 0 ? ' ❯ Yes' : '   Yes',
+    selected[active] === 1 ? ' ❯ No' : '   No',
+    '   Other (type your answer)',
+    '',
+    ' ↑/↓ select · enter accept · tab next · ctrl+d decline · esc cancel',
+    '─'.repeat(process.stdout.columns),
+  ]
+  process.stdout.write('\\x1b[2J\\x1b[H' + lines.join('\\r\\n'))
+}
+function finish() {
+  receipt.actions.push({ selected: [...selected] })
+  closed = true
+  draw()
+}
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?1049h')
+process.stdout.on('resize', () => { if (${options.repaint !== false}) draw() })
+process.stdin.on('data', data => {
+  pending += data.toString()
+  while (pending) {
+    if (pending[0] === '\\x1b') {
+      if (pending.length < 3) return
+      const key = pending[2]
+      receipt.keys.push(key === 'A' ? 'Up' : 'Down')
+      selected[active] = key === 'A'
+        ? Math.max(0, selected[active] - 1)
+        : Math.min(1, selected[active] + 1)
+      pending = pending.slice(3)
+      draw()
+      continue
+    }
+    const key = pending[0]
+    pending = pending.slice(1)
+    if (key === '\\t') {
+      receipt.keys.push('Tab')
+      active = Math.min(fields.length - 1, active + 1)
+      draw()
+    } else if (key === '\\r') {
+      receipt.keys.push('Enter')
+      finish()
+    }
+  }
+})
+draw()
+`)
+  const sessionId = randomUUID()
+  const tmux = `horizontal-${sessionId.slice(0, 8)}`
+  await exec('tmux', [
+    'new-session', '-d', '-s', tmux, '-x', '120', '-y', '29',
+    process.execPath, executable, '--session-id', sessionId,
+  ])
+  const pid = Number((await exec(
+    'tmux', ['display-message', '-p', '-t', tmux, '#{pane_pid}'],
+  )).stdout.trim())
+  await waitForProcessCommand(pid, [executable])
+  const home = path.join(root, 'copilot-home')
+  const session = path.join(home, 'session-state', sessionId)
+  await mkdir(session, { recursive: true })
+  await writeFile(path.join(session, `inuse.${pid}.lock`), `${pid}\n`)
+  vi.stubEnv('COPILOT_HOME', home)
+  const controller = new TmuxTerminalSessionController()
+  const identity = { question, fields }
+  const steps = fields.map((_, index) => ({
+    kind: 'select' as const,
+    optionCount: 3,
+    index: index % 2,
+  }))
+  const capture = async () => (await exec('tmux', [
+    'capture-pane', '-J', '-p', '-t', tmux, '-S', '-40',
+  ])).stdout
+  await eventually(capture, (pane) => pane.includes('esc cancel'))
+  const geometry = async () => ({
+    dimensions: (await exec(
+      'tmux', ['display-message', '-p', '-t', tmux, '#{window_width}x#{window_height}'],
+    )).stdout.trim(),
+    localPolicy: (await exec(
+      'tmux', ['show-options', '-wqv', '-t', tmux, 'window-size'],
+    )).stdout.trim(),
+  })
+  const receipt = async () => JSON.parse(await readFile(output, 'utf8')) as {
+    keys: string[]
+    actions: { selected: number[] }[]
+    widths: number[]
+  }
+  return { controller, identity, steps, sessionId, tmux, capture, geometry, receipt }
+}
+
 describe('bounded terminal form viewport', () => {
+  it('expands horizontally paginated five-field tabs and restores 120x29', async () => {
+    const f = await horizontalFormFixture()
+    const before = await f.geometry()
+    const pane = await f.capture()
+    expect(before).toEqual({ dimensions: '120x29', localPolicy: '' })
+    expect(parseTerminalFormPrompt(pane)).toBe(true)
+    expect(terminalFormShowsFields(pane, f.identity)).toBe(false)
+
+    expect(
+      await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+    ).toBe(true)
+
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).widths).toContain(256)
+    expect((await f.receipt()).keys.filter((key) => key === 'Tab')).toHaveLength(4)
+    expect((await f.receipt()).keys.filter((key) => key === 'Enter')).toHaveLength(1)
+    expect((await f.receipt()).actions).toEqual([{ selected: [0, 1, 0, 1, 0] }])
+  }, 15_000)
+
+  it('does not enlarge a tab-arrow lookalike or send keys', async () => {
+    const f = await horizontalFormFixture({ lookalikeTabs: true })
+    const before = await f.geometry()
+    const change = vi.spyOn(f.controller, 'changeFormViewport' as never)
+
+    expect(
+      await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+    ).toBe(false)
+
+    expect(change).not.toHaveBeenCalled()
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).keys).toEqual([])
+  })
+
+  it('restores width without keys when a paginated form does not repaint', async () => {
+    const f = await horizontalFormFixture({ repaint: false })
+    const before = await f.geometry()
+
+    expect(
+      await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+    ).toBe(false)
+
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).keys).toEqual([])
+  }, 15_000)
+
+  it('does not enlarge horizontally paginated tabs in a shared window', async () => {
+    const f = await horizontalFormFixture()
+    await exec('tmux', ['split-window', '-d', '-t', f.tmux, 'sleep 300'])
+    const before = await f.geometry()
+
+    expect(
+      await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+    ).toBe(false)
+
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).widths).not.toContain(256)
+    expect((await f.receipt()).keys).toEqual([])
+  })
+
   it.each(['accept', 'cancel', 'decline'] as const)(
     '%s reads wrapped controls on successive clipped prompts and restores 80x24 each time', async (action) => {
       const f = await formFixture(52, true, {

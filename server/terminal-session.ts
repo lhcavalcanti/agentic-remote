@@ -173,6 +173,7 @@ export class TerminalFormReplyError extends Error {
   }
 }
 
+const MAX_FORM_VIEWPORT_WIDTH = 256
 const MAX_FORM_VIEWPORT_HEIGHT = 256
 const FORM_VIEWPORT_TIMEOUT_MS = 15_000
 
@@ -1014,7 +1015,10 @@ export class TmuxTerminalSessionController
   }
 
   private async changeFormViewport(
-    viewport: FormViewport, height: number, restore = false, policyOnly = false,
+    viewport: FormViewport,
+    dimensions: Pick<FormViewport, 'width' | 'height'>,
+    restore = false,
+    policyOnly = false,
   ): Promise<void> {
     const expected = {
       window_id: viewport.window, pane_id: viewport.pane, pane_pid: viewport.pid,
@@ -1026,7 +1030,8 @@ export class TmuxTerminalSessionController
     const policy = viewport.localPolicy
       ? `set-option -w -t ${viewport.window} window-size ${viewport.localPolicy}`
       : `set-option -wu -t ${viewport.window} window-size`
-    const resize = `resize-window -t ${viewport.window} -x ${viewport.width} -y ${height}`
+    const resize =
+      `resize-window -t ${viewport.window} -x ${dimensions.width} -y ${dimensions.height}`
     const change = restore && policyOnly ? policy : `${resize}${restore ? ` ; ${policy}` : ''}`
     const result = await execFileAsync('tmux', [
       'if-shell', '-F', '-t', viewport.pane, guard,
@@ -1088,7 +1093,9 @@ export class TmuxTerminalSessionController
       // A newly sized attached client owns automatic dimensions. Relinquish
       // our manual override without forcing the old client dimensions back.
       await this.changeFormViewport(
-        { ...expected, localPolicy: previous.localPolicy }, previous.height, true,
+        { ...expected, localPolicy: previous.localPolicy },
+        { width: previous.width, height: previous.height },
+        true,
         current.clients !== expected.clients && previous.policy !== 'manual',
       )
     }
@@ -1130,22 +1137,65 @@ export class TmuxTerminalSessionController
     try {
       let pane = await capture()
       if (!terminalFormShowsFields(pane, form)) {
-        if (parseTerminalFormPrompt(pane) || !hasClippedTerminalFormFooter(pane)) return false
+        const promptVisible = parseTerminalFormPrompt(pane)
+        const clippedVertically =
+          !promptVisible && hasClippedTerminalFormFooter(pane)
+        const clippedHorizontally =
+          promptVisible && hasClippedTerminalFormTabs(pane, form)
+        if (!clippedVertically && !clippedHorizontally) return false
         original = await this.readFormViewport(owner)
-        if (original.panes !== 1 || original.linked !== 0 || original.pid !== owner.rootPid ||
-            original.height >= MAX_FORM_VIEWPORT_HEIGHT) return false
+        if (
+          original.panes !== 1 ||
+          original.linked !== 0 ||
+          original.pid !== owner.rootPid
+        ) {
+          return false
+        }
+        const width =
+          clippedHorizontally && original.width < MAX_FORM_VIEWPORT_WIDTH
+            ? MAX_FORM_VIEWPORT_WIDTH
+            : original.width
+        const height =
+          clippedVertically && original.height < MAX_FORM_VIEWPORT_HEIGHT
+            ? MAX_FORM_VIEWPORT_HEIGHT
+            : original.height
+        if (width === original.width && height === original.height) return false
         await validateOwner()
         if (!sameViewport(await this.readFormViewport(owner), original)) return false
         await validateOwner()
         expanded = {
-          ...original, height: MAX_FORM_VIEWPORT_HEIGHT, policy: 'manual', localPolicy: 'manual',
+          ...original,
+          width,
+          height,
+          policy: 'manual',
+          localPolicy: 'manual',
         }
         deadline = Date.now() + FORM_VIEWPORT_TIMEOUT_MS
-        await this.changeFormViewport(original, expanded.height)
+        await this.changeFormViewport(original, expanded)
         for (let attempt = 0; attempt < 30; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 100))
           pane = await capture()
           if (terminalFormShowsFields(pane, form)) break
+        }
+        if (
+          !terminalFormShowsFields(pane, form) &&
+          expanded.width < MAX_FORM_VIEWPORT_WIDTH &&
+          parseTerminalFormPrompt(pane) &&
+          hasClippedTerminalFormTabs(pane, form)
+        ) {
+          const previous = expanded
+          await validateOwner()
+          if (!sameViewport(await this.readFormViewport(owner), previous)) {
+            return false
+          }
+          await validateOwner()
+          expanded = { ...previous, width: MAX_FORM_VIEWPORT_WIDTH }
+          await this.changeFormViewport(previous, expanded)
+          for (let attempt = 0; attempt < 30; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100))
+            pane = await capture()
+            if (terminalFormShowsFields(pane, form)) break
+          }
         }
       }
       if (terminalFormShowsFields(pane, form)) {
@@ -2523,7 +2573,7 @@ function tabNames(tab: string, field: string): boolean {
   return tab === field || tab.replace(/^\[(.*)\]$/, '$1') === field
 }
 
-function terminalFormTabsIndex(
+function terminalFormTabsLine(
   lines: string[],
   form: TerminalFormIdentity,
   wrap: { width: number; ends: number[] },
@@ -2549,6 +2599,15 @@ function terminalFormTabsIndex(
   const index = lines.findIndex(
     (line, position) => position > questionAt && line.trim().length > 0,
   )
+  return index
+}
+
+function terminalFormTabsIndex(
+  lines: string[],
+  form: TerminalFormIdentity,
+  wrap: { width: number; ends: number[] },
+): number {
+  const index = terminalFormTabsLine(lines, form, wrap)
   if (index < 0) {
     return -1
   }
@@ -2562,6 +2621,42 @@ function terminalFormTabsIndex(
     tabs.every((tab, slot) => tabNames(tab, form.fields[slot]))
     ? index
     : -1
+}
+
+function hasClippedTerminalFormTabs(
+  pane: string,
+  form: TerminalFormIdentity,
+): boolean {
+  if (form.fields.length < 2) {
+    return false
+  }
+  const raw = terminalControlLines(pane)
+  const lines = raw.map(cleanDialogLine)
+  const index = terminalFormTabsLine(lines, form, terminalBoxWrap(raw))
+  if (index < 0) {
+    return false
+  }
+  const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+  const clippedLeft = tabs[0] === '←'
+  const clippedRight = tabs.at(-1) === '→'
+  if (!clippedLeft && !clippedRight) {
+    return false
+  }
+  const visible = tabs.filter((tab) => tab !== '←' && tab !== '→')
+  if (visible.length === 0 || visible.length >= form.fields.length) {
+    return false
+  }
+  const starts = clippedLeft
+    ? clippedRight
+      ? Array.from(
+          { length: form.fields.length - visible.length + 1 },
+          (_, start) => start,
+        )
+      : [form.fields.length - visible.length]
+    : [0]
+  return starts.some((start) =>
+    visible.every((tab, slot) => tabNames(tab, form.fields[start + slot])),
+  )
 }
 
 /**

@@ -333,12 +333,14 @@ Questions and permissions are the highest-priority UI state.
   breaks within words, while still requiring the complete question and field
   headings. A failed match MUST preserve the pending request and surface an
   actionable error instead of typing into an unverified dialog.
-- If the CLI clips a long form, answering or dismissing it MAY temporarily
-  enlarge its owning single-pane window within a bounded limit. The complete
-  question and fields MUST still be verified before sending keys. The app MUST
-  restore the previous size and sizing policy on completion or failure without
-  overwriting intervening operator changes; it MUST NOT resize shared windows
-  or a window whose ownership changed.
+- If the CLI clips a long form vertically or paginates its field tabs
+  horizontally, answering or dismissing it MAY temporarily enlarge its owning
+  single-pane window within bounded height and width limits. Horizontal
+  pagination indicators MAY trigger that inspection, but the complete question
+  and every field title MUST become visible and be verified before sending
+  keys. The app MUST restore the previous size and sizing policy on completion
+  or failure without overwriting intervening operator changes; it MUST NOT
+  resize shared windows or a window whose ownership changed.
 - Wrapped control hints MAY trigger a bounded viewport check, but MUST NOT
   replace verification of the complete question. Each successive long form
   MUST independently verify its identity and restore its viewport.

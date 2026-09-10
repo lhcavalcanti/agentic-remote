@@ -540,6 +540,7 @@ export interface DirectoryListing {
 export type WorkspaceEntryKind =
   | 'directory'
   | 'markdown'
+  | 'html'
   | 'pdf'
   | 'image'
   | 'file'

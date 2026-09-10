@@ -118,6 +118,54 @@ describe('workspace images', () => {
     )
   })
 
+  describe('workspace HTML', () => {
+    it('classifies, reads, and searches .html and .htm as bounded text', async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'workspace-html-'))
+      directories.push(root)
+      const fullDocument = '<!doctype html><style>p{color:green}</style><p>Searchable page</p>'
+      const snippet = '<section>Compact snippet</section>'
+      await writeFile(path.join(root, 'page.html'), fullDocument)
+      await writeFile(path.join(root, 'snippet.htm'), snippet)
+
+      const listing = await listWorkspace(root)
+      expect(
+        listing.entries.map((entry) => [entry.name, entry.kind]),
+      ).toEqual([
+        ['page.html', 'html'],
+        ['snippet.htm', 'html'],
+      ])
+      await expect(readWorkspaceFile(root, 'page.html')).resolves.toMatchObject({
+        kind: 'html',
+        mimeType: 'text/html; charset=utf-8',
+        content: fullDocument,
+      })
+      await expect(readWorkspaceFile(root, 'snippet.htm')).resolves.toMatchObject({
+        kind: 'html',
+        mimeType: 'text/html; charset=utf-8',
+        content: snippet,
+      })
+      await expect(searchWorkspace(root, 'searchable')).resolves.toMatchObject({
+        results: [
+          expect.objectContaining({
+            name: 'page.html',
+            kind: 'html',
+            snippet: fullDocument,
+          }),
+        ],
+      })
+    })
+
+    it('applies the 2 MiB text-preview limit to HTML', async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'workspace-html-large-'))
+      directories.push(root)
+      await writeFile(path.join(root, 'large.html'), 'x'.repeat(2 * 1024 * 1024 + 1))
+
+      await expect(readWorkspaceFile(root, 'large.html')).rejects.toThrow(
+        'maximum 2 MiB',
+      )
+    })
+  })
+
   it('keeps refusing types that are not previewable', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'workspace-image-'))
     directories.push(root)

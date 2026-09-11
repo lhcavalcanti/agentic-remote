@@ -94,6 +94,7 @@ import {
 } from './KnowledgeRootChoices'
 import {
   knowledgePositionForBinding,
+  sessionKnowledgeLocation,
   useSessionKnowledgeRoot,
 } from './use-session-knowledge-root'
 import { SessionActions } from './SessionActions'
@@ -192,10 +193,12 @@ import {
   listBackgroundTasks,
   listHistory,
   listKnowledgeEntries,
+  listSessionKnowledgeEntries,
   listKnowledgeRoots,
   addKnowledgeRoot,
   deleteKnowledgeRoot,
   readKnowledgeFile,
+  readSessionKnowledgeFile,
   listDirectories,
   validateSessionDirectory,
   listSessionListing,
@@ -7065,6 +7068,10 @@ function App() {
   const sessionKnowledgeRoot = useSessionKnowledgeRoot(selected, knowledgeMode !== 'hidden' || addRootOpen, acceptKnowledgeRoot)
   const sessionKnowledgeRootRef = useRef(sessionKnowledgeRoot)
   sessionKnowledgeRootRef.current = sessionKnowledgeRoot
+  const sessionKnowledgeLocationRoot = useMemo(
+    () => sessionKnowledgeLocation(sessionKnowledgeRoot.binding),
+    [sessionKnowledgeRoot.binding],
+  )
   const locationKnowledgeFile =
     locationKnowledgeTarget &&
     locationKnowledgeTarget.key === selectedKey
@@ -7073,7 +7080,7 @@ function App() {
   const rememberedKnowledgePosition = locationKnowledgeFile
     ? {
         rootId:
-          sessionKnowledgeRoot.binding?.rootId ||
+          sessionKnowledgeLocationRoot?.id ||
           (selectedKey ? knowledgePositions[selectedKey]?.rootId : undefined),
         path: knowledgeFolderForFile(locationKnowledgeFile),
         file: locationKnowledgeFile,
@@ -7087,9 +7094,19 @@ function App() {
   )
   const expectedKnowledgeRootId = selected ? resolvedKnowledgePosition?.rootId : undefined
   const sessionRootReady = !selected || Boolean(sessionKnowledgeRoot.binding)
+  const sessionHasKnowledgeBinding = Boolean(
+    sessionKnowledgeRoot.binding?.source || sessionKnowledgeRoot.binding?.rootId,
+  )
+  const usesScopedSessionKnowledge = Boolean(sessionKnowledgeRoot.binding?.source)
   const sessionRootUnavailable = Boolean(selected && expectedKnowledgeRootId && (
-    (sessionKnowledgeRoot.binding?.rootId && !sessionKnowledgeRoot.binding.available) ||
-    (knowledgeRootsLoaded && !roots.some((root) => root.id === expectedKnowledgeRootId))
+    sessionHasKnowledgeBinding
+      ? !sessionKnowledgeRoot.binding?.available ||
+        sessionKnowledgeLocationRoot?.id !== expectedKnowledgeRootId ||
+        Boolean(
+          sessionKnowledgeRoot.binding?.rootId &&
+          removedKnowledgeRoots.current.has(sessionKnowledgeRoot.binding.rootId),
+        )
+      : knowledgeRootsLoaded && !roots.some((root) => root.id === expectedKnowledgeRootId)
   ))
   const sessionRootUnassigned = Boolean(selected && sessionRootReady && !expectedKnowledgeRootId)
   const sessionRootSwitching = Boolean(selected && (
@@ -7106,9 +7123,20 @@ function App() {
     ) return
     setRootPicker((current) => current?.id === rootPicker.id
       ? { ...current, revision: binding.revision } : current)
-    setRootChoice(expectedKnowledgeRootId
-      ? { kind: 'root', rootId: expectedKnowledgeRootId }
-      : { kind: 'working-folder' })
+    const source = binding.source?.kind === 'catalog-root'
+      ? { kind: 'catalog-root' as const, rootId: binding.source.root.id }
+      : binding.source?.kind === 'session-folder'
+        ? { kind: 'session-folder' as const, path: binding.source.path }
+        : binding.rootId
+          ? { kind: 'catalog-root' as const, rootId: binding.rootId }
+          : undefined
+    setRootChoice(source
+      ? { kind: 'location', source, path: binding.path ?? '.' }
+      : {
+          kind: 'location',
+          source: { kind: 'session-folder', path: rootPicker.session.cwd },
+          path: '.',
+        })
   }, [expectedKnowledgeRootId, rootPicker, selectedKey, sessionKnowledgeRoot.binding])
 
   useLayoutEffect(() => {
@@ -7628,9 +7656,11 @@ function App() {
         setLocationKnowledgeTarget({ key, file: target.file })
         knowledgeRequest.current += 1
         const binding = sessionKnowledgeRootRef.current.binding
+        const location = sessionKnowledgeLocation(binding)
         const restoreCurrentSession = Boolean(
           key === selectedKeyStateRef.current &&
-          binding?.rootId &&
+          binding &&
+          location &&
           binding.available &&
           sessionKey({
             computerId: binding.computerId,
@@ -7647,10 +7677,10 @@ function App() {
         setKnowledgeFile(undefined)
         setKnowledgeFragment(undefined)
         setKnowledgeModeState(knowledgeOpenModeRef.current)
-        if (restoreCurrentSession && binding?.rootId) {
+        if (restoreCurrentSession && location && binding) {
           restoreKnowledgeRef.current(
             {
-              rootId: binding.rootId,
+              rootId: location.id,
               path: knowledgeFolderForFile(target.file),
               file: target.file,
             },
@@ -7999,9 +8029,13 @@ function App() {
       selectedKey,
 
       panelOpen: knowledgeMode !== 'hidden',
-      rootsLoaded: roots.length > 0,
+      rootsLoaded: knowledgeRootsLoaded,
       remembered: position,
-      rememberedRootExists: !sessionRootUnavailable && roots.some((root) => root.id === position?.rootId),
+      rememberedRootExists: !sessionRootUnavailable && (
+        sessionHasKnowledgeBinding
+          ? sessionKnowledgeLocationRoot?.id === position?.rootId
+          : roots.some((root) => root.id === position?.rootId)
+      ),
       restoredKey: knowledgeRestoredKey.current,
       runningKey: knowledgeRestoreStartedKey.current,
       viewOwner: knowledgeViewOwnerKey.current,
@@ -8066,8 +8100,9 @@ function App() {
     setKnowledgeLoading(false)
     restoreKnowledgeRef.current(action.position, action.key, sameViewOwner)
   }, [
-    knowledgeMode, hasSelectedSession, selectedKey, roots,
-    resolvedKnowledgePosition, sessionRootReady, sessionRootUnavailable,
+    knowledgeMode, knowledgeRootsLoaded, hasSelectedSession, selectedKey, roots,
+    resolvedKnowledgePosition, sessionHasKnowledgeBinding, sessionKnowledgeLocationRoot,
+    sessionRootReady, sessionRootUnavailable,
   ])
 
   useEffect(() => {
@@ -10234,9 +10269,11 @@ function App() {
     })
   }
 
-  const activeRoot = roots.find((root) => root.id === activeRootId)
+  const activeRoot = selected && sessionKnowledgeLocationRoot?.id === activeRootId
+    ? sessionKnowledgeLocationRoot
+    : roots.find((root) => root.id === activeRootId)
   const displayedKnowledgeRoot = selected
-    ? roots.find((root) => root.id === expectedKnowledgeRootId) || sessionKnowledgeRoot.binding?.root
+    ? sessionKnowledgeLocationRoot || roots.find((root) => root.id === expectedKnowledgeRootId)
     : activeRoot
   const knowledgeRootStatus = !selected
     ? 'Knowledge library'
@@ -10244,11 +10281,9 @@ function App() {
       ? sessionKnowledgeRoot.error ? 'Could not load the saved root' : 'Loading this session\'s root'
       : sessionRootUnavailable
         ? 'Saved folder unavailable'
-        : sessionKnowledgeRoot.binding?.rootId
-          ? 'Saved for this session'
-          : expectedKnowledgeRootId
-            ? 'Remembered in this browser'
-            : 'No root assigned'
+        : sessionKnowledgeRoot.binding?.source || sessionKnowledgeRoot.binding?.rootId
+          ? 'Used for this session'
+          : 'No root assigned'
   const rootPickerCurrent = rootPicker?.ownerKey === selectedKey &&
     Boolean(rootPicker?.session) === hasSelectedSession
   const rootDialogError = rootPicker && rootPickerError?.id === rootPicker.id
@@ -10486,16 +10521,23 @@ function App() {
         cwd: selected.cwd,
       } : undefined,
     })
-    setRootChoice(displayedKnowledgeRoot
-      ? { kind: 'root', rootId: displayedKnowledgeRoot.id }
-      : selected ? { kind: 'working-folder' } : undefined)
+    const binding = sessionKnowledgeRoot.binding
+    const source = binding?.source?.kind === 'catalog-root'
+      ? { kind: 'catalog-root' as const, rootId: binding.source.root.id }
+      : binding?.source?.kind === 'session-folder'
+        ? { kind: 'session-folder' as const, path: binding.source.path }
+        : binding?.rootId
+          ? { kind: 'catalog-root' as const, rootId: binding.rootId }
+          : undefined
+    setRootChoice(source
+      ? { kind: 'location', source, path: binding?.path ?? '.' }
+      : selected
+        ? { kind: 'location', source: { kind: 'session-folder', path: selected.cwd }, path: '.' }
+        : undefined)
     setRootPickerError(undefined)
   }
 
   function closeRootPicker() {
-    if (rootPickerSavingRef.current && rootChoice?.kind === 'working-folder') {
-      rootCreationOwner.current = undefined
-    }
     setRootPicker(undefined)
   }
 
@@ -10508,7 +10550,7 @@ function App() {
     setAddRootOpen(true)
   }
 
-  async function applyRootChoice() {
+  async function applyRootChoice(action: 'use' | 'save' = 'use') {
     if (!rootPicker || !rootChoice || rootPickerSavingRef.current) return
     if (!rootPickerCurrent) {
       setRootPickerError({
@@ -10523,14 +10565,15 @@ function App() {
     const ownerKey = rootPicker.ownerKey
     const expectedRevision = rootPicker.revision ?? sessionKnowledgeRoot.binding?.revision
     try {
-      if (rootChoice.kind === 'working-folder') {
-        if (!rootPicker.session) throw new Error('Choose a session before using its working folder.')
-        rootCreationOwner.current = { key: ownerKey, revision: expectedRevision }
-        await createRoot(rootPicker.session.computerId, rootPicker.session.cwd, expectedRevision)
-      } else if (rootPicker.session) {
-        await sessionKnowledgeRoot.saveRoot(rootChoice.kind === 'none' ? null : rootChoice.rootId, expectedRevision)
-      } else if (rootChoice.kind === 'root') {
-        if (!(await selectRoot(rootChoice.rootId))) return
+      if (rootPicker.session) {
+        await sessionKnowledgeRoot.saveLocation(
+          rootChoice.kind === 'none' ? null : rootChoice.source,
+          rootChoice.kind === 'none' ? '.' : rootChoice.path,
+          action,
+          expectedRevision,
+        )
+      } else if (rootChoice.kind === 'location' && rootChoice.source.kind === 'catalog-root') {
+        if (!(await selectRoot(rootChoice.source.rootId))) return
       }
       setRootPicker((current) => current?.id === rootPicker.id ? undefined : current)
     } catch (caught) {
@@ -10572,8 +10615,10 @@ function App() {
   // Stable identity: a new loader each render would remount every image and
   // restart its download.
   const loadKnowledgeAsset = useCallback(
-    (assetPath: string) => readKnowledgeFile(activeRootId || '', assetPath),
-    [activeRootId],
+    (assetPath: string) => selected?.computerId && selected?.id && usesScopedSessionKnowledge
+      ? readSessionKnowledgeFile(selected.computerId, selected.id, assetPath)
+      : readKnowledgeFile(activeRootId || '', assetPath),
+    [activeRootId, selected?.computerId, selected?.id, usesScopedSessionKnowledge],
   )
 
   async function loadKnowledgeFolder(
@@ -10601,7 +10646,9 @@ function App() {
       [path]: { ...current[path], loading: true, loadingRequest: requestId, error: undefined },
     }))
     try {
-      const listing = await listKnowledgeEntries(rootId, path)
+      const listing = selected && usesScopedSessionKnowledge
+        ? await listSessionKnowledgeEntries(selected.computerId, selected.id, path)
+        : await listKnowledgeEntries(rootId, path)
       // Switching roots invalidates every folder in flight, so a late reply
       // cannot graft one root's entries onto another root's tree.
       if (!currentRequest()) {
@@ -10849,7 +10896,9 @@ function App() {
     setKnowledgeLoading(true)
     setError(undefined)
     try {
-      const opened = await readKnowledgeFile(rootId, path)
+      const opened = selected && usesScopedSessionKnowledge
+        ? await readSessionKnowledgeFile(selected.computerId, selected.id, path)
+        : await readKnowledgeFile(rootId, path)
       // Checked before any state write, so a read left over from the previous
       // session cannot land in the one that replaced it.
       if (request !== knowledgeRequest.current) {
@@ -11840,7 +11889,8 @@ function App() {
     if (
       !selected ||
       !activeRoot ||
-      !rootsRef.current.includes(activeRoot) ||
+      (!sessionHasKnowledgeBinding &&
+        !rootsRef.current.some((root) => root.id === activeRoot.id)) ||
       !computersRef.current.some((computer) => computer.id === activeRoot.computerId && computer.online) ||
       knowledgeAskUnavailableReason ||
       knowledgeLoading ||
@@ -14465,8 +14515,18 @@ function App() {
             computers={computers}
             session={rootPicker.session}
             currentRootId={sessionKnowledgeRoot.binding?.rootId}
+            hasCurrentBinding={sessionHasKnowledgeBinding}
             choice={rootChoice}
             disabled={rootPickerSaving || !rootPickerCurrent || (hasSelectedSession && !sessionRootReady)}
+            onList={(source, path) => {
+              if (source.kind === 'session-folder') {
+                if (!rootPicker.session) {
+                  return Promise.reject(new Error('Choose a session before browsing its folder.'))
+                }
+                return listWorkspace(rootPicker.session.computerId, rootPicker.session.id, path)
+              }
+              return listKnowledgeEntries(source.rootId, path)
+            }}
             onChoice={setRootChoice}
             onBrowse={() => beginRootCreation(undefined, rootPicker.revision ?? sessionKnowledgeRoot.binding?.revision)}
             onRemove={(root) => {
@@ -14476,10 +14536,20 @@ function App() {
           />
           <div className="session-root-dialog__actions">
             <button className="secondary-button" onClick={closeRootPicker} type="button">Cancel</button>
+            {rootPicker.session && rootChoice?.kind === 'location' ? (
+              <button
+                className="secondary-button session-root-dialog__save"
+                disabled={rootPickerSaving || !rootPickerCurrent || !sessionRootReady}
+                onClick={() => void applyRootChoice('save')}
+                type="button"
+              >
+                Save this root folder
+              </button>
+            ) : null}
             <button
               className="primary-button"
               disabled={rootPickerSaving || !rootPickerCurrent || !rootChoice || (hasSelectedSession && !sessionRootReady)}
-              onClick={() => void applyRootChoice()}
+              onClick={() => void applyRootChoice('use')}
               type="button"
             >
               {rootPickerSaving ? 'Saving...' : rootChoice?.kind === 'none' ? 'Unlink this session' : rootPicker.session ? 'Use for this session' : 'Open folder'}
@@ -14509,7 +14579,8 @@ function App() {
                 setRootRemovalError(undefined)
                 void removeRoot(root.id).then(() => {
                   setRootRemovalTarget(undefined)
-                  setRootChoice((choice) => choice?.kind === 'root' && choice.rootId === root.id
+                  setRootChoice((choice) => choice?.kind === 'location' &&
+                    choice.source.kind === 'catalog-root' && choice.source.rootId === root.id
                     ? undefined : choice)
                 }).catch((caught: unknown) => {
                   setRootRemovalError(caught instanceof Error ? caught.message : String(caught))

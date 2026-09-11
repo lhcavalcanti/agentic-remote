@@ -29,7 +29,10 @@ function root(id: string, computerId = 'library'): KnowledgeRoot {
 async function fixture() {
   const directory = path.join(process.cwd(), `.session-knowledge-store-test-${randomUUID()}`)
   const roots = new Map([['one', root('one')], ['two', root('two', 'other-library')]])
-  const catalog = { getRoot: (id: string) => roots.get(id) }
+  const catalog = {
+    getRoot: (id: string) => roots.get(id),
+    removeRoot: vi.fn(async (id: string) => roots.delete(id)),
+  }
   const store = new SessionKnowledgeStore(directory, catalog)
   fixtures.push({ directory, store })
   await store.initialize()
@@ -109,6 +112,72 @@ describe('SessionKnowledgeStore', () => {
     const reloaded = new SessionKnowledgeStore(directory, catalog)
     await reloaded.initialize()
     expect(reloaded.get('computer', 'session')).toEqual(binding)
+  })
+
+  it('migrates root-only v1 bindings to catalog sources at path dot', async () => {
+    const { directory, statePath, catalog } = await fixture()
+    await disk.mkdir(directory, { recursive: true })
+    await disk.writeFile(statePath, JSON.stringify({
+      version: 1,
+      bindings: [{
+        computerId: 'computer',
+        sessionId: 'legacy',
+        rootId: 'one',
+        root: root('one'),
+        revision: 4,
+      }],
+    }))
+    const reloaded = new SessionKnowledgeStore(directory, catalog)
+    await reloaded.initialize()
+    expect(reloaded.get('computer', 'legacy')).toMatchObject({
+      rootId: 'one',
+      path: '.',
+      source: { kind: 'catalog-root', root: root('one') },
+      revision: 4,
+      available: true,
+    })
+  })
+
+  it('removes an orphaned catalog addition after an interrupted save', async () => {
+    const { directory, statePath, roots, catalog } = await fixture()
+    await disk.mkdir(directory, { recursive: true })
+    await disk.writeFile(statePath, JSON.stringify({ version: 2, bindings: [] }))
+    await disk.writeFile(`${statePath}.catalog-recovery`, JSON.stringify({
+      version: 1,
+      rootId: 'one',
+    }))
+    const reloaded = new SessionKnowledgeStore(directory, catalog)
+    await reloaded.initialize()
+    expect(catalog.removeRoot).toHaveBeenCalledWith('one')
+    expect(roots.has('one')).toBe(false)
+    await expect(access(`${statePath}.catalog-recovery`)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('persists a session-folder snapshot and nested path through replacement and reload', async () => {
+    const { store, directory, catalog } = await fixture()
+    const source = {
+      kind: 'session-folder' as const,
+      computerId: 'computer',
+      computerName: 'Studio',
+      sessionId: 'original',
+      path: '/projects/atlas',
+    }
+    await store.updateLocation('computer', 'original', {
+      source,
+      path: 'docs/guides',
+      expectedRevision: 0,
+    })
+    await store.replaceSession('computer', 'replacement', ['original'])
+    const reloaded = new SessionKnowledgeStore(directory, catalog)
+    await reloaded.initialize()
+    expect(reloaded.get('computer', 'replacement')).toMatchObject({
+      source,
+      path: 'docs/guides',
+      rootId: null,
+      revision: 1,
+      available: true,
+    })
+    expect(reloaded.get('computer', 'original').revision).toBe(0)
   })
 
   it('persists an unlink tombstone and rejects an older choice after reload', async () => {
@@ -436,7 +505,7 @@ describe('SessionKnowledgeStore', () => {
 
   it.each([
     '{invalid',
-    JSON.stringify({ version: 2, bindings: [] }),
+    JSON.stringify({ version: 3, bindings: [] }),
     JSON.stringify({ version: 1, bindings: {} }),
     JSON.stringify({ version: 1, bindings: [{ computerId: 'c', sessionId: 's', rootId: 'one', revision: 1 }] }),
     JSON.stringify({ version: 1, bindings: [{ computerId: 'c', sessionId: 's', rootId: null, revision: 0 }] }),

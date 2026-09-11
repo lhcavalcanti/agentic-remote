@@ -756,12 +756,23 @@ clear replacement IDs without losing, duplicating, or reordering content.
   user MAY add that folder directly or browse to another readable folder.
 - A knowledge root is a computer plus an absolute folder and MUST be browsable
   with no session in existence.
-- A session MAY explicitly link one root from the shared Knowledge catalog.
-  The association MUST belong to its owning computer and stable session ID,
-  survive hub/client restarts, and remain separate from the session's cwd.
+- A session MAY explicitly link a nested folder browsed from either its
+  working folder or an online root in the shared Knowledge catalog. The
+  association MUST snapshot that source plus its normalized relative subpath,
+  belong to the session's owning computer and stable session ID, survive
+  hub/client restarts and session replacement, and remain separate from the
+  session's cwd. Root-only legacy associations MUST map to subpath `.`.
   Several sessions MAY link the same root while keeping separate reading
   positions. Linking MUST NOT copy files, mount a remote folder, activate an
   agent, or send a prompt.
+- The inline folder chooser MUST support recursive keyboard, touch, desktop,
+  and phone browsing. **Use for this session** MUST leave the shared catalog
+  unchanged. **Save this root folder** MUST add or reuse only the selected
+  folder, preserve the order of existing roots, and then select it.
+- Session Knowledge entry and file routes MUST expose the selected folder as
+  tree `.` and MUST NOT return parent paths or files outside it. A stale
+  revision, session, root, or pairing action MUST commit neither the binding
+  nor a newly proposed catalog root.
 - Root associations MUST use separate hub metadata. Opening Knowledge MUST NOT
   silently promote browser-local reading positions into hub associations.
   An unassigned session with no remembered position MUST offer an explicit

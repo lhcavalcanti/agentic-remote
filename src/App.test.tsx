@@ -52,7 +52,9 @@ import {
   listHistory,
   listKnowledgeRoots,
   listKnowledgeEntries,
+  listSessionKnowledgeEntries,
   readKnowledgeFile,
+  readSessionKnowledgeFile,
   addKnowledgeRoot,
   deleteKnowledgeRoot,
   listSessions,
@@ -143,7 +145,9 @@ vi.mock('./api', async (importOriginal) => ({
   addKnowledgeRoot: vi.fn(),
   deleteKnowledgeRoot: vi.fn(),
   listKnowledgeEntries: vi.fn(),
+  listSessionKnowledgeEntries: vi.fn(),
   readKnowledgeFile: vi.fn(),
+  readSessionKnowledgeFile: vi.fn(),
   listDirectories: vi.fn(),
   validateSessionDirectory: vi.fn(),
   listWorkspace: vi.fn(),
@@ -320,9 +324,9 @@ async function chooseKnowledgeRoot(id: string) {
   if (!root) throw new Error(`Unknown fixture root: ${id}`)
   fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
   const dialog = await screen.findByRole('dialog', { name: /Choose a (session root|Knowledge folder)/ })
-  const choice = within(dialog).queryByRole('radio', {
+  const choice = within(dialog).queryByRole('button', {
     name: `${root.name} on ${root.computerName}: ${root.path}`,
-  }) || within(dialog).getByRole('radio', { name: "Use this session's folder" })
+  }) || within(dialog).getByRole('button', { name: new RegExp(`This session's folder on ${root.computerName}`) })
   await waitFor(() => expect(choice).toBeEnabled())
   fireEvent.click(choice)
   const apply = within(dialog).getByRole('button', { name: /^(Use for this session|Open folder)$/ })
@@ -401,7 +405,7 @@ describe('App', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Choose Knowledge root' }))
     const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
-    const old = within(chooser).getByRole('radio', {
+    const old = within(chooser).getByRole('button', {
       name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
     })
     expect(old).toBeDisabled()
@@ -411,10 +415,10 @@ describe('App', () => {
     }
     fixtureKnowledgeBindings.set(key, confirmed)
     await act(async () => finishLookup(confirmed))
-    expect(within(chooser).getByRole('radio', {
+    expect(within(chooser).getByRole('button', {
       name: `${other.name} on ${other.computerName}: ${other.path}`,
-    })).toBeChecked()
-    expect(old).not.toBeChecked()
+    })).toHaveAttribute('aria-pressed', 'true')
+    expect(old).toHaveAttribute('aria-pressed', 'false')
     expect(within(chooser).getByRole('button', { name: 'Use for this session' })).toBeEnabled()
     expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
   })
@@ -437,14 +441,53 @@ describe('App', () => {
     fireEvent.click(within(chooser).getByRole('button', { name: 'Cancel' }))
     expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
     await chooseKnowledgeRoot(knowledgeRoot.id)
-    await screen.findByText('Saved for this session')
+    await screen.findByText('Used for this session')
     expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
-      rootId: knowledgeRoot.id, expectedRevision: 0,
+      source: { kind: 'catalog-root', rootId: knowledgeRoot.id },
+      path: '.', action: 'use', expectedRevision: 0,
     })
     expect(addKnowledgeRoot).not.toHaveBeenCalled()
     expect(executeCommand).not.toHaveBeenCalled()
     expect(sendMessage).not.toHaveBeenCalled()
     expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+  })
+
+  it('browses and uses a nested catalog folder without adding a shared root', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    const key = `${computer.id}:${session.id}`
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id, sessionId: session.id, rootId: null, revision: 0, available: false,
+    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_rootId, requestedPath = '.') => ({
+      path: requestedPath,
+      ...(requestedPath === '.' ? {} : { parent: '.' }),
+      entries: requestedPath === '.'
+        ? [{ name: 'Guides', path: 'guides', kind: 'directory' }]
+        : [{ name: 'setup.md', path: 'guides/setup.md', kind: 'markdown' }],
+    }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('heading', { name: 'Give this session a place to read' })
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    fireEvent.click(within(chooser).getByRole('button', { name: `Browse ${knowledgeRoot.name}` }))
+    const nested = await within(chooser).findByRole('treeitem', { name: 'Guides' })
+    fireEvent.click(nested)
+    expect(within(chooser).getByRole('button', { name: 'Save this root folder' })).toBeVisible()
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
+    await waitFor(() => expect(chooser).not.toBeInTheDocument())
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+      source: { kind: 'catalog-root', rootId: knowledgeRoot.id },
+      path: 'guides',
+      action: 'use',
+      expectedRevision: 0,
+    })
+    expect(addKnowledgeRoot).not.toHaveBeenCalled()
+    expect(fixtureKnowledgeBindings.get(key)).toMatchObject({
+      rootId: knowledgeRoot.id,
+      path: 'guides',
+      source: { kind: 'catalog-root', root: knowledgeRoot },
+    })
   })
 
   it('uses the hub root rather than a document remembered under another root', async () => {
@@ -500,7 +543,7 @@ describe('App', () => {
     fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     if (source !== 'lookup') {
-      await screen.findByText('Saved for this session')
+      await screen.findByText('Used for this session')
       if (source === 'live update') {
         fireEvent.click(await screen.findByRole('treeitem', { name: 'previous.md' }))
         await screen.findByRole('heading', { name: 'Previous guide' })
@@ -534,7 +577,7 @@ describe('App', () => {
     vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
-    await screen.findByText('Saved for this session')
+    await screen.findByText('Used for this session')
     const previous = fixtureKnowledgeBinding(computer.id, session.id)
     const removed = { ...previous, revision: 2, available: false }
     fixtureKnowledgeRoots = []
@@ -554,7 +597,7 @@ describe('App', () => {
     expect(screen.queryByRole('tree')).not.toBeInTheDocument()
     expect(listKnowledgeEntries).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
-    expect(screen.queryByRole('radio', {
+    expect(screen.queryByRole('button', {
       name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
     })).not.toBeInTheDocument()
   })
@@ -610,7 +653,7 @@ describe('App', () => {
     vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
-    await screen.findByText('Saved for this session')
+    await screen.findByText('Used for this session')
     const removed = { ...fixtureKnowledgeBinding(computer.id, session.id), available: false }
     fixtureKnowledgeRoots = [fresh]
     act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
@@ -627,10 +670,10 @@ describe('App', () => {
     })
     expect(screen.queryByText('Stale catalog failure')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
-    expect(screen.getByRole('radio', {
+    expect(screen.getByRole('button', {
       name: `${fresh.name} on ${fresh.computerName}: ${fresh.path}`,
     })).toBeEnabled()
-    expect(screen.queryByRole('radio', {
+    expect(screen.queryByRole('button', {
       name: `${stale.name} on ${stale.computerName}: ${stale.path}`,
     })).not.toBeInTheDocument()
   })
@@ -699,7 +742,7 @@ describe('App', () => {
     await screen.findByText('Saved folder unavailable')
     expect(screen.queryByRole('tree')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
-    expect(screen.queryByRole('radio', {
+    expect(screen.queryByRole('button', {
       name: `${remoteRoot.name} on ${remoteRoot.computerName}: ${remoteRoot.path}`,
     })).not.toBeInTheDocument()
   })
@@ -710,10 +753,10 @@ describe('App', () => {
     vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
-    await screen.findByText('Saved for this session')
+    await screen.findByText('Used for this session')
     fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
     const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
-    const candidate = within(chooser).getByRole('radio', {
+    const candidate = within(chooser).getByRole('button', {
       name: `${other.name} on ${other.computerName}: ${other.path}`,
     })
     fireEvent.click(candidate)
@@ -727,34 +770,29 @@ describe('App', () => {
     } as MessageEvent))
     fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
     await within(chooser).findByText('Root changed in another client')
-    expect(candidate).toBeChecked()
+    expect(candidate).toHaveAttribute('aria-pressed', 'true')
     expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
     const retry = within(chooser).getByRole('button', { name: 'Use for this session' })
     await waitFor(() => expect(retry).toBeEnabled())
     fireEvent.click(retry)
     await waitFor(() => expect(chooser).not.toBeInTheDocument())
     expect(updateSessionKnowledgeRoot).toHaveBeenLastCalledWith(computer.id, session.id, {
-      rootId: other.id, expectedRevision: 2,
+      source: { kind: 'catalog-root', rootId: other.id },
+      path: '.', action: 'use', expectedRevision: 2,
     })
     expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(other.id)
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
-  it('does not overwrite a newer binding while validating the session folder', async () => {
+  it('does not overwrite a newer binding while choosing the session folder', async () => {
     mockKnowledgeRoots([knowledgeRoot])
     vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
-    let finishAdding!: (root: KnowledgeRoot) => void
-    vi.mocked(addKnowledgeRoot).mockReturnValue(new Promise((resolve) => { finishAdding = resolve }))
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
-    await screen.findByText('Saved for this session')
+    await screen.findByText('Used for this session')
     fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
     const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
-    fireEvent.click(within(chooser).getByRole('radio', { name: "Use this session's folder" }))
-    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
-    await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledWith({
-      computerId: computer.id, path: session.cwd,
-    }))
+    fireEvent.click(within(chooser).getByRole('button', { name: new RegExp("This session's folder on") }))
     const key = `${computer.id}:${session.id}`
     const newer = { ...fixtureKnowledgeBinding(computer.id, session.id), revision: 2 }
     fixtureKnowledgeBindings.set(key, newer)
@@ -763,13 +801,13 @@ describe('App', () => {
         type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: newer,
       }),
     } as MessageEvent))
-    const added = { ...knowledgeRoot, id: 'new-root', name: 'Project files', path: session.cwd }
-    fixtureKnowledgeRoots.push(added)
-    await act(async () => finishAdding(added))
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
     await within(chooser).findByText('Root changed in another client')
     expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
-      rootId: added.id, expectedRevision: 1,
+      source: { kind: 'session-folder', path: session.cwd },
+      path: '.', action: 'use', expectedRevision: 1,
     })
+    expect(addKnowledgeRoot).not.toHaveBeenCalled()
     expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
     expect(fixtureKnowledgeBindings.get(key)?.revision).toBe(2)
     expect(executeCommand).not.toHaveBeenCalled()
@@ -785,10 +823,10 @@ describe('App', () => {
     vi.mocked(updateSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
-    await screen.findByText('Saved for this session')
+    await screen.findByText('Used for this session')
     fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
     const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
-    fireEvent.click(within(chooser).getByRole('radio', {
+    fireEvent.click(within(chooser).getByRole('button', {
       name: `${other.name} on ${other.computerName}: ${other.path}`,
     }))
     fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
@@ -804,7 +842,8 @@ describe('App', () => {
     await act(async () => finish(saved))
     await waitFor(() => expect(chooser).not.toBeInTheDocument())
     expect(updateSessionKnowledgeRoot).toHaveBeenCalledExactlyOnceWith(computer.id, session.id, {
-      rootId: other.id, expectedRevision: 1,
+      source: { kind: 'catalog-root', rootId: other.id },
+      path: '.', action: 'use', expectedRevision: 1,
     })
     expect(screen.queryByText(/pairing changed while saving/)).not.toBeInTheDocument()
     expect(fixtureKnowledgeBindings.get(`${computer.id}:${session.id}`)).toEqual(saved)
@@ -824,7 +863,7 @@ describe('App', () => {
       }
       render(<App />)
       fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
-      await screen.findByText('Saved for this session')
+      await screen.findByText('Used for this session')
       fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
       const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
       const key = `${computer.id}:${session.id}`
@@ -895,7 +934,7 @@ describe('App', () => {
         await act(async () => finishLookup?.(initial))
       }
       if (!empty) {
-        await screen.findByText('Saved for this session')
+        await screen.findByText('Used for this session')
         if (entry === 'New Knowledge folder') {
           fireEvent.click(screen.getByRole('button', { name: 'Show files' }))
         }
@@ -1103,17 +1142,42 @@ describe('App', () => {
       if (input.expectedRevision !== previous.revision) {
         throw new SessionKnowledgeRequestError('Root changed in another client', 409, previous)
       }
-      const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
-      if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
+      const rootId = 'rootId' in input
+        ? input.rootId
+        : input.source?.kind === 'catalog-root'
+          ? input.source.rootId
+          : null
+      const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === rootId)
+      if (rootId && !root) throw new Error('Fixture Knowledge root is not registered')
+      const source = 'source' in input && input.source
+        ? input.source.kind === 'catalog-root'
+          ? { kind: 'catalog-root' as const, root: root! }
+          : {
+              kind: 'session-folder' as const,
+              computerId,
+              computerName: session.computerName,
+              sessionId,
+              path: input.source.path,
+            }
+        : undefined
       const binding: SessionKnowledgeBinding = {
-        computerId, sessionId, rootId: input.rootId, revision: previous.revision + 1,
-        root, available: Boolean(root),
+        computerId, sessionId, rootId, revision: previous.revision + 1,
+        ...(source ? { source, path: 'path' in input ? input.path ?? '.' : '.' } : {}),
+        root, available: Boolean(root || source),
       }
       fixtureKnowledgeBindings.set(`${computerId}:${sessionId}`, binding)
       return binding
     })
     vi.mocked(deleteKnowledgeRoot).mockImplementation(async (id) => {
       fixtureKnowledgeRoots = fixtureKnowledgeRoots.filter((root) => root.id !== id)
+    })
+    vi.mocked(listSessionKnowledgeEntries).mockImplementation(async (_computerId, _sessionId, path) => {
+      const binding = fixtureKnowledgeBinding(_computerId, _sessionId)
+      return vi.mocked(listKnowledgeEntries)(binding.rootId || '', path)
+    })
+    vi.mocked(readSessionKnowledgeFile).mockImplementation(async (_computerId, _sessionId, path) => {
+      const binding = fixtureKnowledgeBinding(_computerId, _sessionId)
+      return vi.mocked(readKnowledgeFile)(binding.rootId || '', path)
     })
     vi.mocked(listWorkspace).mockImplementation(
       async (_computerId, _sessionId, path = '.') =>
@@ -15050,6 +15114,56 @@ describe('App', () => {
         '?computer=computer-1&session=session-2&file=guides%2Fsetup.md',
       ),
     )
+  })
+
+  it('keeps a deep-linked file relative to a nested session Knowledge folder', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(secondSession)
+    mockKnowledgeRoots([knowledgeRoot])
+    fixtureKnowledgeBindings.set(`${secondSession.computerId}:${secondSession.id}`, {
+      computerId: secondSession.computerId,
+      sessionId: secondSession.id,
+      source: { kind: 'catalog-root', root: knowledgeRoot },
+      path: 'guides',
+      rootId: knowledgeRoot.id,
+      root: knowledgeRoot,
+      revision: 2,
+      available: true,
+    })
+    vi.mocked(listSessionKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{ name: 'setup.md', path: 'setup.md', kind: 'markdown' }],
+    })
+    vi.mocked(readSessionKnowledgeFile).mockResolvedValue({
+      path: 'setup.md',
+      name: 'setup.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: '# Nested setup',
+    })
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2&file=setup.md',
+    )
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Nested setup' })).toBeInTheDocument()
+    expect(readSessionKnowledgeFile).toHaveBeenCalledWith(
+      secondSession.computerId,
+      secondSession.id,
+      'setup.md',
+    )
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-2&file=setup.md',
+    )
+    act(() => window.dispatchEvent(new PopStateEvent('popstate')))
+    await waitFor(() => expect(readSessionKnowledgeFile).toHaveBeenCalledTimes(2))
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask agent about file' }))
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).value)
+      .toContain('/home/tester/docs/guides/setup.md')
   })
 
   it('follows Knowledge file changes from browser history', async () => {

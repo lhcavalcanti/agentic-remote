@@ -1,10 +1,16 @@
-import { Folder, FolderOpen, Plus } from 'lucide-react'
-import type { ComputerSummary, KnowledgeRoot, ManagedSession } from '../shared/contracts'
+import { ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, Plus } from 'lucide-react'
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
+import type {
+  ComputerSummary,
+  KnowledgeRoot,
+  ManagedSession,
+  SessionKnowledgeSourceInput,
+  WorkspaceListing,
+} from '../shared/contracts'
 import { shortPath } from './session-presentation'
 
 export type KnowledgeRootChoice =
-  | { kind: 'root'; rootId: string }
-  | { kind: 'working-folder' }
+  | { kind: 'location'; source: SessionKnowledgeSourceInput; path: string }
   | { kind: 'none' }
 
 export type KnowledgeRootSession = Pick<
@@ -16,8 +22,10 @@ export function KnowledgeRootChoices({
   computers,
   session,
   currentRootId,
+  hasCurrentBinding = Boolean(currentRootId),
   choice,
   disabled,
+  onList,
   onChoice,
   onBrowse,
   onRemove,
@@ -26,15 +34,17 @@ export function KnowledgeRootChoices({
   computers: ComputerSummary[]
   session?: KnowledgeRootSession
   currentRootId?: string | null
+  hasCurrentBinding?: boolean
   choice?: KnowledgeRootChoice
   disabled: boolean
+  onList: (source: SessionKnowledgeSourceInput, path: string) => Promise<WorkspaceListing>
   onChoice: (choice: KnowledgeRootChoice) => void
   onBrowse: () => void
   onRemove: (root: KnowledgeRoot) => void
 }) {
   const online = (computerId: string) => computers.some((computer) => computer.id === computerId && computer.online)
-  const workingRoot = session
-    ? roots.find((root) => root.computerId === session.computerId && root.path === session.cwd)
+  const workingSource: SessionKnowledgeSourceInput | undefined = session
+    ? { kind: 'session-folder', path: session.cwd }
     : undefined
   return (
     <fieldset className="knowledge-root-choices" disabled={disabled}>
@@ -42,51 +52,37 @@ export function KnowledgeRootChoices({
       {session ? (
         <>
           <h3>Start from the session folder</h3>
-          <label className="knowledge-root-choice">
-            <input
-              aria-label="Use this session's folder"
-              checked={choice?.kind === 'working-folder' || (
-                choice?.kind === 'root' && choice.rootId === workingRoot?.id
-              )}
-              disabled={!online(session.computerId)}
-              name="knowledge-root-choice"
-              onChange={() => onChoice(workingRoot
-                ? { kind: 'root', rootId: workingRoot.id }
-                : { kind: 'working-folder' })}
-              type="radio"
-            />
-            <FolderOpen aria-hidden="true" size={18} />
-            <span>
-              <strong>Use this session's folder</strong>
-              <small>{session.computerName} / {shortPath(session.cwd)}</small>
-            </span>
-            {!online(session.computerId) ? <em>Offline</em> : null}
-          </label>
+          <KnowledgeLocationChoice
+            choice={choice}
+            disabled={!online(session.computerId)}
+            label="This session's folder"
+            location={`${session.computerName} / ${shortPath(session.cwd)}`}
+            accessibleLocation={`${session.computerName}: ${session.cwd}`}
+            onChoice={onChoice}
+            onList={onList}
+            source={workingSource!}
+          />
         </>
       ) : null}
       <h3>{session ? 'Or choose from Knowledge' : 'Knowledge library'}</h3>
       <div className="knowledge-root-choices__list">
-        {roots.filter((root) => root.id !== workingRoot?.id).map((root) => (
-          <label className="knowledge-root-choice" key={root.id}>
-            <input
-              aria-label={`${root.name} on ${root.computerName}: ${root.path}`}
-              checked={choice?.kind === 'root' && choice.rootId === root.id}
-              disabled={!online(root.computerId)}
-              name="knowledge-root-choice"
-              onChange={() => onChoice({ kind: 'root', rootId: root.id })}
-              type="radio"
-            />
-            <Folder aria-hidden="true" size={18} />
-            <span>
-              <strong>{root.name}</strong>
-              <small>{root.computerName} / {shortPath(root.path)}</small>
-            </span>
-            {!online(root.computerId) ? <em>Offline</em> : root.id === currentRootId ? <em>Current</em> : null}
-          </label>
+        {roots.map((root) => (
+          <KnowledgeLocationChoice
+            badge={!online(root.computerId) ? 'Offline' : root.id === currentRootId ? 'Current' : undefined}
+            choice={choice}
+            disabled={!online(root.computerId)}
+            key={root.id}
+            label={root.name}
+            location={`${root.computerName} / ${shortPath(root.path)}`}
+            accessibleLocation={`${root.computerName}: ${root.path}`}
+            onChoice={onChoice}
+            onList={onList}
+            source={{ kind: 'catalog-root', rootId: root.id }}
+          />
         ))}
         {roots.length === 0 ? <p className="dialog-message">No Knowledge folders have been added yet.</p> : null}
       </div>
-      {session && currentRootId ? (
+      {session && hasCurrentBinding ? (
         <label className="knowledge-root-choice knowledge-root-choice--unlink">
           <input
             aria-label="No root for this session"
@@ -125,4 +121,204 @@ export function KnowledgeRootChoices({
       ) : null}
     </fieldset>
   )
+}
+
+function sourceKey(source: SessionKnowledgeSourceInput): string {
+  return source.kind === 'catalog-root' ? `root:${source.rootId}` : 'session-folder'
+}
+
+function KnowledgeLocationChoice({
+  source,
+  label,
+  location,
+  accessibleLocation,
+  badge,
+  choice,
+  disabled,
+  onList,
+  onChoice,
+}: {
+  source: SessionKnowledgeSourceInput
+  label: string
+  location: string
+  accessibleLocation: string
+  badge?: string
+  choice?: KnowledgeRootChoice
+  disabled: boolean
+  onList: (source: SessionKnowledgeSourceInput, path: string) => Promise<WorkspaceListing>
+  onChoice: (choice: KnowledgeRootChoice) => void
+}) {
+  const treeId = useId()
+  const key = sourceKey(source)
+  const selected = choice?.kind === 'location' && sourceKey(choice.source) === key
+  const selectedPath = selected ? choice.path : undefined
+  const [expanded, setExpanded] = useState(Boolean(selectedPath && selectedPath !== '.'))
+  const [folders, setFolders] = useState<Record<string, WorkspaceListing>>({})
+  const attempted = useRef(new Set<string>())
+  const [loading, setLoading] = useState<string>()
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    if (!expanded) return
+    const ancestors = selectedPath && selectedPath !== '.'
+      ? selectedPath.split('/').slice(0, -1).reduce<string[]>(
+          (paths, segment) => [...paths, paths.at(-1) === '.' ? segment : `${paths.at(-1)}/${segment}`],
+          ['.'],
+        )
+      : ['.']
+    let cancelled = false
+    void (async () => {
+      for (const folder of ancestors) {
+        const requestKey = `${key}:${folder}`
+        if (folders[folder] || attempted.current.has(requestKey)) continue
+        attempted.current.add(requestKey)
+        setLoading(folder)
+        setError(undefined)
+        try {
+          const listing = await onList(source, folder)
+          if (cancelled) return
+          setFolders((current) => ({ ...current, [folder]: listing }))
+        } catch (caught) {
+          if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught))
+          return
+        } finally {
+          if (!cancelled) setLoading(undefined)
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [expanded, folders, key, onList, selectedPath, source])
+
+  const toggle = (path: string) => {
+    if (folders[path]) {
+      setFolders((current) => {
+        const next = { ...current }
+        for (const savedPath of Object.keys(next)) {
+          if (savedPath === path || savedPath.startsWith(`${path}/`)) delete next[savedPath]
+        }
+        return next
+      })
+      return
+    }
+    setLoading(path)
+    setError(undefined)
+    void onList(source, path).then((listing) => {
+      setFolders((current) => ({ ...current, [path]: listing }))
+    }).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }).finally(() => setLoading(undefined))
+  }
+
+  return (
+    <div className={`knowledge-root-choice${selected ? ' knowledge-root-choice--selected' : ''}`}>
+      <button
+        aria-controls={treeId}
+        aria-expanded={expanded}
+        aria-label={`Browse ${label}`}
+        className="knowledge-root-choice__expand"
+        disabled={disabled}
+        onClick={() => setExpanded((value) => {
+          if (value) {
+            for (const attemptedKey of attempted.current) {
+              if (attemptedKey.startsWith(`${key}:`)) attempted.current.delete(attemptedKey)
+            }
+            setError(undefined)
+          }
+          return !value
+        })}
+        type="button"
+      >
+        {expanded ? <ChevronDown aria-hidden="true" size={16} /> : <ChevronRight aria-hidden="true" size={16} />}
+      </button>
+      <button
+        aria-label={`${label} on ${accessibleLocation}`}
+        aria-pressed={selected && choice.path === '.'}
+        className="knowledge-root-choice__location"
+        disabled={disabled}
+        onClick={() => onChoice({ kind: 'location', source, path: '.' })}
+        type="button"
+      >
+        {source.kind === 'session-folder'
+          ? <FolderOpen aria-hidden="true" size={18} />
+          : <Folder aria-hidden="true" size={18} />}
+        <span>
+          <strong>{label}</strong>
+          <small>{location}{selectedPath && selectedPath !== '.' ? ` / ${selectedPath}` : ''}</small>
+        </span>
+        {badge ? <em>{badge}</em> : null}
+      </button>
+      {expanded ? (
+        <div className="knowledge-root-choice__tree" id={treeId} role="tree">
+          <FolderRows
+            choice={choice}
+            folders={folders}
+            loading={loading}
+            onChoice={onChoice}
+            onToggle={toggle}
+            source={source}
+          />
+          {loading === '.' ? <span className="knowledge-root-choice__status"><LoaderCircle aria-hidden="true" size={14} /> Loading folders...</span> : null}
+          {error ? <span className="form-error" role="alert">{error}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function FolderRows({
+  source,
+  choice,
+  folders,
+  loading,
+  onChoice,
+  onToggle,
+  parent = '.',
+  depth = 1,
+}: {
+  source: SessionKnowledgeSourceInput
+  choice?: KnowledgeRootChoice
+  folders: Record<string, WorkspaceListing>
+  loading?: string
+  onChoice: (choice: KnowledgeRootChoice) => void
+  onToggle: (path: string) => void
+  parent?: string
+  depth?: number
+}) {
+  return folders[parent]?.entries.filter((entry) => entry.kind === 'directory').map((entry) => {
+    const expanded = Boolean(folders[entry.path])
+    const selected = choice?.kind === 'location' &&
+      sourceKey(choice.source) === sourceKey(source) &&
+      choice.path === entry.path
+    return (
+      <div className="knowledge-root-choice__branch" key={entry.path}>
+        <div className="knowledge-root-choice__folder" style={{ '--knowledge-choice-depth': depth } as CSSProperties}>
+          <button
+            aria-expanded={expanded}
+            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${entry.name}`}
+            onClick={() => onToggle(entry.path)}
+            type="button"
+          >
+            {loading === entry.path
+              ? <LoaderCircle aria-hidden="true" size={14} />
+              : expanded
+                ? <ChevronDown aria-hidden="true" size={14} />
+                : <ChevronRight aria-hidden="true" size={14} />}
+          </button>
+          <button
+            aria-pressed={selected}
+            onClick={() => onChoice({ kind: 'location', source, path: entry.path })}
+            role="treeitem"
+            type="button"
+          >
+            <Folder aria-hidden="true" size={16} />
+            <span>{entry.name}</span>
+          </button>
+        </div>
+        {expanded ? <FolderRows {...{
+          source, choice, folders, loading, onChoice, onToggle,
+          parent: entry.path, depth: depth + 1,
+        }} /> : null}
+      </div>
+    )
+  }) ?? null
 }

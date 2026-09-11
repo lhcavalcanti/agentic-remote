@@ -160,7 +160,10 @@ function requireScopedKnowledgePath(
 ): string {
   const rebased = rebaseKnowledgeRelativePath(basePath, path)
   if (rebased === undefined) {
-    throw new Error('Knowledge response escaped the selected session root')
+    throw Object.assign(
+      new Error('Knowledge browsing is restricted to the selected session root'),
+      { statusCode: 403 },
+    )
   }
   return rebased
 }
@@ -179,10 +182,10 @@ function scopeKnowledgeListing(
     ...listing,
     path: requireScopedKnowledgePath(basePath, listing.path),
     ...(parent === undefined ? { parent: undefined } : { parent }),
-    entries: listing.entries.map((entry) => ({
-      ...entry,
-      path: requireScopedKnowledgePath(basePath, entry.path),
-    })),
+    entries: listing.entries.flatMap((entry) => {
+      const path = rebaseKnowledgeRelativePath(basePath, entry.path)
+      return path === undefined ? [] : [{ ...entry, path }]
+    }),
   }
 }
 

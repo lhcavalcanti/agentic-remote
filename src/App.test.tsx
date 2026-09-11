@@ -15134,6 +15134,10 @@ describe('App', () => {
       'agentic-remote:knowledge-root',
       JSON.stringify(firstRoot.id),
     )
+    localStorage.setItem(
+      'agentic-remote:knowledge-expanded',
+      JSON.stringify({ [firstRoot.id]: ['guides'] }),
+    )
     vi.mocked(listKnowledgeEntries).mockImplementation(
       async (rootId, path = '.') => ({
         path,
@@ -15150,9 +15154,17 @@ describe('App', () => {
       await screen.findByRole('button', { name: 'Session knowledge' }),
     )
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
-    fireEvent.click(await within(tree).findByRole('treeitem', {
+    const guides = await within(tree).findByRole('treeitem', {
       name: /guides/,
-    }))
+    })
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith(firstRoot.id, 'guides'),
+    )
+    expect(guides).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(guides)
+    expect(guides).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(guides)
+    expect(guides).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() =>
       expect(
         JSON.parse(

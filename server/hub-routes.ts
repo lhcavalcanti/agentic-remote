@@ -738,6 +738,10 @@ export async function registerHubRoutes(
         }
       }
       const carryKnowledge = sessionKnowledgeLifecycle?.replacementCarrier(computerId)
+      // Read before the clear: a legacy node reports the removal as its own
+      // event, which can retire the predecessor's slot before this response
+      // names the successor that should inherit it.
+      const orderSlot = sessionOrder?.indexOf(computerId, sessionId)
       const session = await replace()
       assertCurrent()
       // The replacement is already real. Auxiliary persistence must not hide
@@ -770,7 +774,12 @@ export async function registerHubRoutes(
         carryMetadata(
           () => sessionOrder && session.id !== sessionId
             ? commitOrder((store) =>
-                store.replaceSession(computerId, sessionId, session.id),
+                store.replaceSession(
+                  computerId,
+                  sessionId,
+                  session.id,
+                  orderSlot !== undefined && orderSlot >= 0 ? orderSlot : undefined,
+                ),
               )
             : undefined,
           `${completed}, but its position in the custom order could not be saved. Drag it back into place.`,
@@ -1071,9 +1080,19 @@ export async function registerHubRoutes(
         })
     }
     if (event.type === 'session.upserted') {
-      change((store) =>
-        store.appendSession(event.session.computerId, event.session.id),
-      )
+      const { computerId, id, replacedSessionIds } = event.session
+      change((store) => {
+        // A reconnect can be the first time this hub hears about a clear that
+        // already happened. Appending would put the successor last, so the
+        // lineage is resolved first and it inherits the slot instead.
+        const ancestor = (replacedSessionIds ?? [])
+          .map((previous) => ({ previous, index: store.indexOf(computerId, previous) }))
+          .filter((entry) => entry.index >= 0)
+          .sort((left, right) => left.index - right.index)[0]
+        return ancestor
+          ? store.replaceSession(computerId, ancestor.previous, id, ancestor.index)
+          : store.appendSession(computerId, id)
+      })
       return
     }
     if (event.type === 'session.removed') {
@@ -1091,8 +1110,34 @@ export async function registerHubRoutes(
     }
   }
   manager.on('event', trackOrder)
+  let closed = false
+  let seeding: Promise<unknown> = Promise.resolve()
+  if (sessionOrder) {
+    // Sessions that already existed, or that a remote computer resynced before
+    // this hook attached, emit nothing further while they sit quiet. Without
+    // this they would never appear in the order at all.
+    seeding = Promise.resolve()
+      .then(() => manager.listSessions())
+      .then(async (sessions) => {
+        for (const session of sessions) {
+          // Shutting down mid-seed must not write into a directory the owner
+          // is already taking away.
+          if (closed) return
+          await commitOrder((store) =>
+            store.appendSession(session.computerId, session.id),
+          )
+        }
+      })
+      .catch((error: unknown) => {
+        app.log.error({ err: error }, 'Could not seed the custom session order')
+      })
+  }
   app.addHook('onClose', async () => {
+    closed = true
     manager.off('event', broadcast)
     manager.off('event', trackOrder)
+    // Drain in-flight order work so a closing app leaves no write behind it.
+    await seeding
+    await orderWork
   })
 }

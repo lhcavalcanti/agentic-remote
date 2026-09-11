@@ -8,6 +8,13 @@ const STATE_VERSION = 1
 interface SessionOrderState {
   version: number
   revision: number
+  /**
+   * Whether a browser's pre-hub order has already been taken. Lifecycle
+   * discovery appends sessions on its own, so an order that is no longer empty
+   * is not evidence that a migration happened; without this flag the first
+   * appended session would lock every device out of its saved arrangement.
+   */
+  bootstrapped: boolean
   order: Record<string, string[]>
 }
 
@@ -38,8 +45,18 @@ function laneFrom(value: unknown): string[] | undefined {
  */
 export class SessionOrderStore {
   private readonly statePath: string
-  private state: SessionOrderState = { version: STATE_VERSION, revision: 0, order: {} }
-  private writeQueue: Promise<void> = Promise.resolve()
+  private state: SessionOrderState = {
+    version: STATE_VERSION,
+    revision: 0,
+    bootstrapped: false,
+    order: {},
+  }
+  /**
+   * Serializes whole commits. A commit reads, mutates, and persists, so
+   * overlapping ones would otherwise publish a revision that never reached
+   * disk, or undo a newer write while restoring their own.
+   */
+  private commits: Promise<unknown> = Promise.resolve()
 
   constructor(private readonly directory: string) {
     this.statePath = path.join(directory, 'session-order.json')
@@ -82,17 +99,29 @@ export class SessionOrderStore {
     this.state = {
       version: STATE_VERSION,
       revision: typeof parsed.revision === 'number' && parsed.revision >= 0 ? parsed.revision : 0,
+      bootstrapped: parsed.bootstrapped === true,
       order,
     }
   }
 
   snapshot(): SessionOrderSnapshot {
-    return { revision: this.state.revision, order: structuredClone(this.state.order) }
+    return {
+      revision: this.state.revision,
+      bootstrapped: this.state.bootstrapped,
+      order: structuredClone(this.state.order),
+    }
   }
 
-  /** Whether any lane has ever been recorded, which gates the legacy bootstrap. */
-  isEmpty(): boolean {
-    return Object.keys(this.state.order).length === 0
+  /** Whether a pre-hub browser order has already been taken. */
+  isBootstrapped(): boolean {
+    return this.state.bootstrapped
+  }
+
+  /** The position a session currently holds, for carrying it onto a successor. */
+  indexOf(computerId: string, sessionId: string): number {
+    return (this.state.order[computerId] ?? []).indexOf(
+      sessionOrderKey(computerId, sessionId),
+    )
   }
 
   /**
@@ -120,10 +149,12 @@ export class SessionOrderStore {
     }
     return this.commit((order) => {
       const existing = order[computerId] ?? []
-      // Keys the client never saw stay where they were relative to the end,
-      // so an order written from a filtered or older view cannot delete them.
-      const retained = existing.filter((key) => !lane.includes(key))
-      const next = [...lane, ...retained]
+      // A reorder may only rearrange what the lane already holds. A client
+      // that still shows a cleared or deleted session would otherwise bring it
+      // back, and pushing its live successor down the list with it.
+      const moved = lane.filter((key) => existing.includes(key))
+      const retained = existing.filter((key) => !moved.includes(key))
+      const next = [...moved, ...retained]
       if (sameLane(existing, next)) return false
       order[computerId] = next
       return true
@@ -131,18 +162,23 @@ export class SessionOrderStore {
   }
 
   /**
-   * Seeds an empty hub order from a browser's legacy local order. Once any
-   * lane exists the hub is authoritative and this does nothing, which is what
-   * makes "first successful bootstrap wins" hold when several devices start.
+   * Takes a browser's pre-hub order, once. Lanes the hub already discovered
+   * are rearranged to match rather than replaced, so sessions found before the
+   * first browser connected keep their place instead of being dropped.
    */
   async bootstrap(order: Record<string, string[]>): Promise<SessionOrderSnapshot> {
-    if (!this.isEmpty()) return this.snapshot()
-    return this.commit((current) => {
-      let changed = false
+    return this.commit((current, state) => {
+      if (state.bootstrapped) return false
+      state.bootstrapped = true
+      let changed = true
       for (const [computerId, lane] of Object.entries(order)) {
         const keys = laneFrom(lane)?.filter((key) => key.startsWith(`${computerId}:`))
         if (!keys || keys.length === 0) continue
-        current[computerId] = keys
+        const existing = current[computerId] ?? []
+        const known = keys.filter((key) => existing.includes(key))
+        const unseen = keys.filter((key) => !existing.includes(key))
+        const rest = existing.filter((key) => !known.includes(key))
+        current[computerId] = [...known, ...unseen, ...rest]
         changed = true
       }
       return changed
@@ -164,11 +200,16 @@ export class SessionOrderStore {
    * Puts the replacement exactly where its predecessor sat. Clearing a session
    * creates a new one, and appending it would drop a session the user placed
    * deliberately to the bottom of the list.
+   *
+   * `fallbackIndex` covers a legacy node whose plain removal already retired
+   * the predecessor before the clear response named its successor: the slot is
+   * read before the clear and restored here.
    */
   async replaceSession(
     computerId: string,
     previousSessionId: string,
     nextSessionId: string,
+    fallbackIndex?: number,
   ): Promise<SessionOrderSnapshot> {
     if (previousSessionId === nextSessionId) return this.snapshot()
     const previous = sessionOrderKey(computerId, previousSessionId)
@@ -176,19 +217,35 @@ export class SessionOrderStore {
     return this.commit((order) => {
       const lane = order[computerId] ?? []
       const index = lane.indexOf(previous)
-      if (index < 0) {
-        // Repeating a clear must stay idempotent: the lifecycle event and the
-        // HTTP response both report the same replacement.
-        if (lane.includes(next)) return false
-        order[computerId] = [...lane, next]
+      if (index >= 0) {
+        const replaced = [...lane]
+        replaced[index] = next
+        // A replacement key already further down would otherwise appear twice.
+        order[computerId] = replaced.filter(
+          (key, position) => key !== next || position === index,
+        )
         return true
       }
-      const replaced = [...lane]
-      replaced[index] = next
-      // A replacement key already further down would otherwise appear twice.
-      order[computerId] = replaced.filter(
-        (key, position) => key !== next || position === index,
-      )
+      const already = lane.indexOf(next)
+      if (already >= 0) {
+        // The successor is present. Only move it if the remembered slot is a
+        // better answer than where a plain append happened to leave it.
+        if (fallbackIndex === undefined || fallbackIndex >= lane.length) return false
+        const without = lane.filter((key) => key !== next)
+        const target = Math.min(Math.max(fallbackIndex, 0), without.length)
+        const restored = [...without]
+        restored.splice(target, 0, next)
+        if (sameLane(lane, restored)) return false
+        order[computerId] = restored
+        return true
+      }
+      const target =
+        fallbackIndex === undefined
+          ? lane.length
+          : Math.min(Math.max(fallbackIndex, 0), lane.length)
+      const inserted = [...lane]
+      inserted.splice(target, 0, next)
+      order[computerId] = inserted
       return true
     })
   }
@@ -214,43 +271,50 @@ export class SessionOrderStore {
   }
 
   /**
-   * Applies a mutation, and persists before reporting the new revision. A
-   * mutation that changes nothing must not advance the revision, or every
+   * Applies a mutation, persisting before it reports the new revision.
+   *
+   * Commits run one at a time. Overlapping ones would read the same starting
+   * order and the later write would erase the earlier change, and a failure
+   * would restore a snapshot that a newer commit had already moved past.
+   * A mutation that changes nothing must not advance the revision, or every
    * reconnect would look like news to the clients.
    */
-  private async commit(
-    mutate: (order: Record<string, string[]>) => boolean,
+  private commit(
+    mutate: (order: Record<string, string[]>, state: SessionOrderState) => boolean,
   ): Promise<SessionOrderSnapshot> {
-    const draft = structuredClone(this.state.order)
-    if (!mutate(draft)) {
+    const run = this.commits.then(async () => {
+      const previous = this.state
+      const draft = structuredClone(previous.order)
+      const staged: SessionOrderState = { ...previous, order: draft }
+      if (!mutate(draft, staged)) {
+        return this.snapshot()
+      }
+      this.state = {
+        version: STATE_VERSION,
+        revision: previous.revision + 1,
+        bootstrapped: staged.bootstrapped,
+        order: draft,
+      }
+      try {
+        await this.persist()
+      } catch (error) {
+        // A revision nobody can reload is worse than a refused write: the
+        // clients would converge on an order the hub forgets on restart.
+        // Nothing else is in flight, so the previous state is still current.
+        this.state = previous
+        throw error
+      }
       return this.snapshot()
-    }
-    const previous = this.state
-    this.state = {
-      version: STATE_VERSION,
-      revision: previous.revision + 1,
-      order: draft,
-    }
-    try {
-      await this.persist()
-    } catch (error) {
-      // A revision nobody can reload is worse than a refused write: the
-      // clients would converge on an order the hub forgets on restart.
-      this.state = previous
-      throw error
-    }
-    return this.snapshot()
+    })
+    this.commits = run.catch(() => undefined)
+    return run
   }
 
-  private persist(): Promise<void> {
+  private async persist(): Promise<void> {
     const snapshot = JSON.stringify(this.state, null, 2)
     const temporary = `${this.statePath}.tmp`
-    const task = this.writeQueue.then(async () => {
-      await writeFile(temporary, snapshot, { mode: 0o600 })
-      await rename(temporary, this.statePath)
-    })
-    this.writeQueue = task.catch(() => undefined)
-    return task
+    await writeFile(temporary, snapshot, { mode: 0o600 })
+    await rename(temporary, this.statePath)
   }
 }
 

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "revision": 2,
+  "bootstrapped": false,
+  "order": {
+    "hub": [
+      "hub:one",
+      "hub:two"
+    ]
+  }
+}

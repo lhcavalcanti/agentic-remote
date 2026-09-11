@@ -614,6 +614,11 @@ export interface WorkspaceSearchResponse {
  */
 export interface SessionOrderSnapshot {
   revision: number
+  /**
+   * Whether a browser's pre-hub order has already been taken. Discovery
+   * appends on its own, so a non-empty order does not mean a migration ran.
+   */
+  bootstrapped: boolean
   order: Record<string, string[]>
 }
 

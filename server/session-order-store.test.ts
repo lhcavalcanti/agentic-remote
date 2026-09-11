@@ -23,16 +23,15 @@ afterEach(async () => {
 describe('SessionOrderStore', () => {
   it('starts empty and advances a revision only when something changes', async () => {
     const { store: order } = await store()
-    expect(order.snapshot()).toEqual({ revision: 0, order: {} })
-    expect(order.isEmpty()).toBe(true)
+    expect(order.snapshot()).toEqual({ revision: 0, bootstrapped: false, order: {} })
+    expect(order.isBootstrapped()).toBe(false)
 
     const first = await order.appendSession('pc', 'a')
-    expect(first).toEqual({ revision: 1, order: { pc: ['pc:a'] } })
+    expect(first).toEqual({ revision: 1, bootstrapped: false, order: { pc: ['pc:a'] } })
 
     // Discovering the same session again is not news.
     const repeat = await order.appendSession('pc', 'a')
     expect(repeat.revision).toBe(1)
-    expect(order.isEmpty()).toBe(false)
   })
 
   it('reloads the committed order and revision from disk', async () => {
@@ -43,7 +42,7 @@ describe('SessionOrderStore', () => {
 
     const reloaded = new SessionOrderStore(directory)
     await reloaded.initialize()
-    expect(reloaded.snapshot()).toEqual({ revision: 3, order: { pc: ['pc:b', 'pc:a'] } })
+    expect(reloaded.snapshot()).toEqual({ revision: 3, bootstrapped: false, order: { pc: ['pc:b', 'pc:a'] } })
   })
 
   it('writes the state file privately', async () => {
@@ -84,7 +83,7 @@ describe('SessionOrderStore', () => {
     )
     const order = new SessionOrderStore(directory)
     await order.initialize()
-    expect(order.snapshot()).toEqual({ revision: 4, order: { pc: ['pc:a', 'pc:b'] } })
+    expect(order.snapshot()).toEqual({ revision: 4, bootstrapped: false, order: { pc: ['pc:a', 'pc:b'] } })
   })
 
   it('reorders one lane without touching another', async () => {
@@ -196,6 +195,92 @@ describe('SessionOrderStore', () => {
     expect(seeded.order).toEqual({ pc: ['pc:a'] })
   })
 
+  it('only rearranges what the lane already holds', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+
+    // A client still showing a cleared session must not bring it back, nor
+    // push the live successor down the list with it.
+    const committed = await order.replaceLane('pc', ['pc:retired', 'pc:b', 'pc:a'])
+    expect(committed.order.pc).toEqual(['pc:b', 'pc:a'])
+  })
+
+  it('does not resurrect a lane that was removed', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.removeComputer('pc')
+
+    const committed = await order.replaceLane('pc', ['pc:a'])
+    expect(committed.order).toEqual({})
+  })
+
+  it('restores a replacement into a slot a plain removal already retired', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.appendSession('pc', 'c')
+    const slot = order.indexOf('pc', 'b')
+    expect(slot).toBe(1)
+
+    // The legacy node's removal lands before the clear response names the heir.
+    await order.removeSession('pc', 'b')
+    const committed = await order.replaceSession('pc', 'b', 'b2', slot)
+    expect(committed.order.pc).toEqual(['pc:a', 'pc:b2', 'pc:c'])
+  })
+
+  it('moves an already appended successor back into the remembered slot', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.appendSession('pc', 'c')
+    await order.removeSession('pc', 'b')
+    // A reconnect appended the successor at the end before the lineage arrived.
+    await order.appendSession('pc', 'b2')
+    expect(order.snapshot().order.pc).toEqual(['pc:a', 'pc:c', 'pc:b2'])
+
+    const committed = await order.replaceSession('pc', 'b', 'b2', 1)
+    expect(committed.order.pc).toEqual(['pc:a', 'pc:b2', 'pc:c'])
+  })
+
+  it('keeps concurrent commits consistent and durable', async () => {
+    const { store: order, directory } = await store()
+    await Promise.all([
+      order.appendSession('pc', 'a'),
+      order.appendSession('pc', 'b'),
+      order.appendSession('pc', 'c'),
+    ])
+    expect(order.snapshot().order.pc).toHaveLength(3)
+
+    // Every acknowledged revision has to survive a reload.
+    const reloaded = new SessionOrderStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.snapshot()).toEqual(order.snapshot())
+  })
+
+  it('takes a bootstrap after discovery already appended sessions', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    expect(order.isBootstrapped()).toBe(false)
+
+    // Discovery moved the revision, but the browser's arrangement is still owed.
+    const seeded = await order.bootstrap({ pc: ['pc:b', 'pc:a'] })
+    expect(seeded.order.pc).toEqual(['pc:b', 'pc:a'])
+    expect(seeded.bootstrapped).toBe(true)
+
+    const later = await order.bootstrap({ pc: ['pc:a', 'pc:b'] })
+    expect(later.order.pc).toEqual(['pc:b', 'pc:a'])
+  })
+
+  it('keeps sessions a legacy order never mentioned', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'fresh')
+    const seeded = await order.bootstrap({ pc: ['pc:a'] })
+    expect(seeded.order.pc).toEqual(['pc:a', 'pc:fresh'])
+  })
+
   it('keeps the last committed order when a write fails', async () => {
     const { store: order, directory } = await store()
     await order.appendSession('pc', 'a')
@@ -217,6 +302,6 @@ describe('SessionOrderStore', () => {
     const written = JSON.parse(
       await readFile(path.join(directory, 'session-order.json'), 'utf8'),
     ) as Record<string, unknown>
-    expect(written).toEqual({ version: 1, revision: 1, order: { pc: ['pc:a'] } })
+    expect(written).toEqual({ version: 1, revision: 1, bootstrapped: false, order: { pc: ['pc:a'] } })
   })
 })

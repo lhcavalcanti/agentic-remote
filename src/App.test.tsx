@@ -90,10 +90,11 @@ const dragHandlers = vi.hoisted(() =>
   new Map<string, NonNullable<DndProps['onDragEnd']>>(),
 )
 /** The hub-owned custom session order the api mocks read and commit against. */
-let hubSessionOrder: { revision: number; order: Record<string, string[]> } = {
-  revision: 0,
-  order: {},
-}
+let hubSessionOrder: {
+  revision: number
+  bootstrapped: boolean
+  order: Record<string, string[]>
+} = { revision: 0, bootstrapped: false, order: {} }
 
 vi.mock('@dnd-kit/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
@@ -1362,19 +1363,24 @@ describe('App', () => {
     // A faithful stand-in for the hub's order: it starts empty, accepts one
     // bootstrap, and commits lane writes with a rising revision, so the tests
     // exercise the same convergence rules the real store enforces.
-    hubSessionOrder = { revision: 0, order: {} }
+    hubSessionOrder = { revision: 0, bootstrapped: false, order: {} }
     vi.mocked(fetchSessionOrder).mockImplementation(async () =>
       structuredClone(hubSessionOrder),
     )
     vi.mocked(bootstrapSessionOrder).mockImplementation(async (order) => {
-      if (hubSessionOrder.revision === 0) {
-        hubSessionOrder = { revision: 1, order: structuredClone(order) }
+      if (!hubSessionOrder.bootstrapped) {
+        hubSessionOrder = {
+          revision: hubSessionOrder.revision + 1,
+          bootstrapped: true,
+          order: { ...hubSessionOrder.order, ...structuredClone(order) },
+        }
       }
       return structuredClone(hubSessionOrder)
     })
     vi.mocked(saveSessionOrderLane).mockImplementation(async (computerId, lane) => {
       hubSessionOrder = {
         revision: hubSessionOrder.revision + 1,
+        bootstrapped: hubSessionOrder.bootstrapped,
         order: { ...hubSessionOrder.order, [computerId]: [...lane] },
       }
       return structuredClone(hubSessionOrder)
@@ -13178,6 +13184,7 @@ describe('App', () => {
     )
     hubSessionOrder = {
       revision: 9,
+      bootstrapped: true,
       order: { [computer.id]: [`${computer.id}:hub-b`, `${computer.id}:hub-a`] },
     }
 
@@ -13220,6 +13227,7 @@ describe('App', () => {
     )
     hubSessionOrder = {
       revision: 4,
+      bootstrapped: true,
       order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
     }
     render(<App />)
@@ -13234,6 +13242,7 @@ describe('App', () => {
           type: 'session.order.updated',
           order: {
             revision: 5,
+            bootstrapped: true,
             order: { [computer.id]: [`${computer.id}:live-b`, `${computer.id}:live-a`] },
           },
         }),
@@ -13248,6 +13257,7 @@ describe('App', () => {
           type: 'session.order.updated',
           order: {
             revision: 4,
+            bootstrapped: true,
             order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
           },
         }),
@@ -13272,6 +13282,93 @@ describe('App', () => {
     })
     // Dropping a session on itself is not a reorder.
     expect(saveSessionOrderLane).not.toHaveBeenCalled()
+  })
+
+  it('refetches the order after a socket outage', async () => {
+    const items = [
+      { ...session, id: 'gap-a', title: 'Alpha' },
+      { ...session, id: 'gap-b', title: 'Bravo', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      order: { [computer.id]: [`${computer.id}:gap-a`, `${computer.id}:gap-b`] },
+    }
+    render(<App />)
+    await screen.findAllByText('Alpha')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    await waitFor(() => expect(titles()).toEqual(['Alpha', 'Bravo']))
+
+    // Committed while this browser had no socket. Order events are not
+    // replayed, so only a refetch can reveal it.
+    hubSessionOrder = {
+      revision: 3,
+      bootstrapped: true,
+      order: { [computer.id]: [`${computer.id}:gap-b`, `${computer.id}:gap-a`] },
+    }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onopen?.()
+    })
+    await waitFor(() => expect(titles()).toEqual(['Bravo', 'Alpha']))
+  })
+
+  it('keeps a newer acknowledged order when an older save is refused', async () => {
+    const items = [
+      { ...session, id: 'race-a', title: 'Alpha' },
+      { ...session, id: 'race-b', title: 'Bravo', messages: [] },
+      { ...session, id: 'race-c', title: 'Charlie', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    const key = (id: string) => `${computer.id}:${id}`
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      order: { [computer.id]: [key('race-a'), key('race-b'), key('race-c')] },
+    }
+    render(<App />)
+    await screen.findAllByText('Alpha')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    await waitFor(() => expect(titles()).toEqual(['Alpha', 'Bravo', 'Charlie']))
+
+    // While this drag is in flight another client commits a different order.
+    vi.mocked(saveSessionOrderLane).mockImplementationOnce(async () => {
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.order.updated',
+            order: {
+              revision: 50,
+              bootstrapped: true,
+              order: { [computer.id]: [key('race-c'), key('race-b'), key('race-a')] },
+            },
+          }),
+        } as MessageEvent)
+      })
+      throw new Error('Hub unavailable')
+    })
+
+    await act(async () => {
+      finishReorder(
+        'session-navigation',
+        `session:${computer.id}:race-a`,
+        `session:${computer.id}:race-b`,
+      )
+    })
+
+    expect(within(screen.getByRole('main'))
+      .getByText('Could not save the session order: Hub unavailable')).toBeVisible()
+    // Withdrawing only this attempt: the newer revision stands, rather than
+    // the order captured before the drag began.
+    expect(titles()).toEqual(['Charlie', 'Bravo', 'Alpha'])
   })
 
   it('reports a refused custom computer order without losing the draft', async () => {

@@ -6818,11 +6818,14 @@ function App() {
   sessionOrderRef.current = sessionOrder
   const sessionOrderRevisionRef = useRef(sessionOrderRevision)
   sessionOrderRevisionRef.current = sessionOrderRevision
+  // The last order the hub confirmed, which is what a refused drag returns to.
+  const acknowledgedSessionOrderRef = useRef(sessionOrder)
   const applySessionOrderSnapshot = useCallback(
     (snapshot: SessionOrderSnapshot) => {
       // An older revision is a late delivery, not a correction.
       if (snapshot.revision < sessionOrderRevisionRef.current) return
       sessionOrderRevisionRef.current = snapshot.revision
+      acknowledgedSessionOrderRef.current = snapshot.order
       setSessionOrderRevision(snapshot.revision)
       setSessionOrder(snapshot.order)
     },
@@ -8520,30 +8523,32 @@ function App() {
   // The hub is the source of truth for the session order, so nothing writes
   // agentic-remote:session-order any more. The existing value is read once at
   // startup and offered to an empty hub as a bootstrap.
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        let snapshot = await fetchSessionOrder()
-        if (snapshot.revision === 0) {
-          const legacy = readStoredOrder<Record<string, string[]>>(
-            'agentic-remote:session-order',
-            {},
-          )
-          if (Object.keys(legacy).length > 0) {
-            snapshot = await bootstrapSessionOrder(legacy)
-          }
+  const syncSessionOrder = useCallback(async () => {
+    try {
+      let snapshot = await fetchSessionOrder()
+      // Discovery appends on its own, so a non-empty hub order is not proof a
+      // migration ran; the hub reports whether it ever took one.
+      if (!snapshot.bootstrapped) {
+        const legacy = readStoredOrder<Record<string, string[]>>(
+          'agentic-remote:session-order',
+          {},
+        )
+        if (Object.keys(legacy).length > 0) {
+          snapshot = await bootstrapSessionOrder(legacy)
         }
-        if (!cancelled) applySessionOrderSnapshot(snapshot)
-      } catch {
-        // Rendering falls back to the order this browser already held. The
-        // next committed change or reconnect replaces it.
       }
-    })()
-    return () => {
-      cancelled = true
+      applySessionOrderSnapshot(snapshot)
+    } catch {
+      // Rendering falls back to the order this browser already held. The next
+      // committed change or reconnect replaces it.
     }
   }, [applySessionOrderSnapshot])
+  const syncSessionOrderRef = useRef(syncSessionOrder)
+  syncSessionOrderRef.current = syncSessionOrder
+
+  useEffect(() => {
+    void syncSessionOrder()
+  }, [syncSessionOrder])
 
   useEffect(() => {
     writeStored(
@@ -9353,6 +9358,9 @@ function App() {
       socket.onopen = () => {
         reconnectDelay = 1_000
         sessionKnowledgeRootRef.current.refresh()
+        // Order events are not replayed, so a reorder committed while this
+        // socket was down would otherwise stay invisible until the next one.
+        void syncSessionOrderRef.current()
         void refreshSnapshot().catch((caught: unknown) => {
           setError(caught instanceof Error ? caught.message : String(caught))
         })
@@ -13454,13 +13462,18 @@ function App() {
     // Move it now so the drag lands where it was dropped, but keep what the
     // hub last acknowledged: if the write fails the list has to go back, not
     // sit in a position no other device will ever agree with.
-    const acknowledged = sessionOrderRef.current
-    setSessionOrder({ ...acknowledged, [computerId]: lane })
+    const acknowledgedRevision = sessionOrderRevisionRef.current
+    setSessionOrder({ ...sessionOrderRef.current, [computerId]: lane })
     void (async () => {
       try {
         applySessionOrderSnapshot(await saveSessionOrderLane(computerId, lane))
       } catch (caught) {
-        setSessionOrder(acknowledged)
+        // Another client's update, or a later drag, may have been acknowledged
+        // while this was in flight. Undoing to the order captured before the
+        // drag would throw that away, so only this attempt is withdrawn.
+        if (sessionOrderRevisionRef.current === acknowledgedRevision) {
+          setSessionOrder(acknowledgedSessionOrderRef.current)
+        }
         setSidebarOpen(false)
         setError(
           `Could not save the session order: ${

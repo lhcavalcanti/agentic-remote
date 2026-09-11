@@ -30,6 +30,7 @@ function fakeManager(extra: Record<string, unknown> = {}) {
   const events = new EventEmitter()
   return Object.assign(events, {
     captureComputerRegistration: () => () => true,
+    listSessions: async () => [],
     ...extra,
   }) as unknown as ComputerManager & EventEmitter
 }
@@ -69,8 +70,11 @@ describe('hub session order routes', () => {
       headers: { host: 'localhost' },
     })
     expect(empty.statusCode).toBe(200)
-    expect(empty.json()).toEqual({ sessionOrder: { revision: 0, order: {} } })
+    expect(empty.json()).toEqual({
+      sessionOrder: { revision: 0, bootstrapped: false, order: {} },
+    })
 
+    await store.bootstrap({ 'computer-1': ['computer-1:a', 'computer-1:b'] })
     const saved = await app.inject({
       method: 'PUT',
       url: '/api/session-order/computer-1',
@@ -79,7 +83,11 @@ describe('hub session order routes', () => {
     })
     expect(saved.statusCode).toBe(200)
     expect(saved.json()).toEqual({
-      sessionOrder: { revision: 1, order: { 'computer-1': ['computer-1:b', 'computer-1:a'] } },
+      sessionOrder: {
+        revision: 2,
+        bootstrapped: true,
+        order: { 'computer-1': ['computer-1:b', 'computer-1:a'] },
+      },
     })
     await app.close()
   })
@@ -225,6 +233,7 @@ describe('hub session order routes', () => {
     directories.push(directory)
     const first = new SessionOrderStore(directory)
     await first.initialize()
+    await first.bootstrap({ 'computer-1': ['computer-1:a', 'computer-1:b'] })
     const opened = await hub(first)
     await opened.app.inject({
       method: 'PUT',
@@ -244,7 +253,11 @@ describe('hub session order routes', () => {
       headers: { host: 'localhost' },
     })
     expect(response.json()).toEqual({
-      sessionOrder: { revision: 1, order: { 'computer-1': ['computer-1:b', 'computer-1:a'] } },
+      sessionOrder: {
+        revision: 2,
+        bootstrapped: true,
+        order: { 'computer-1': ['computer-1:b', 'computer-1:a'] },
+      },
     })
     await reopened.app.close()
   })

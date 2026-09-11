@@ -3,11 +3,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KnowledgeRoot, SessionKnowledgeBinding } from '../shared/contracts'
 import { getSessionKnowledgeRoot, SessionKnowledgeRequestError, updateSessionKnowledgeRoot } from './api'
-import {
-  knowledgePositionForBinding,
-  sessionKnowledgeLocation,
-  useSessionKnowledgeRoot,
-} from './use-session-knowledge-root'
+import { knowledgePositionForBinding, useSessionKnowledgeRoot } from './use-session-knowledge-root'
 
 vi.mock('./api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./api')>(),
@@ -294,35 +290,6 @@ describe('reading position and root binding ownership', () => {
       rootId: 'atlas',
       rootPath: 'projects/agentic-remote',
       path: '.',
-    })
-  })
-
-  it('treats a nested source as its own stable reading root', () => {
-    const nested = binding(first, {
-      source: { kind: 'catalog-root', root },
-      path: 'guides/api',
-    })
-    const location = sessionKnowledgeLocation(nested)
-    expect(location).toMatchObject({
-      id: 'atlas:nested:guides%2Fapi',
-      path: '/home/demo/atlas/docs/guides/api',
-      name: 'api',
-    })
-    expect(knowledgePositionForBinding(nested, remembered)).toEqual({
-      rootId: 'atlas:nested:guides%2Fapi',
-      path: '.',
-    })
-  })
-
-  it('preserves Windows separators in a nested source snapshot', () => {
-    const windowsRoot = { ...root, path: 'C:\\work\\docs' }
-    expect(sessionKnowledgeLocation(binding(first, {
-      source: { kind: 'catalog-root', root: windowsRoot },
-      root: windowsRoot,
-      path: 'guides/api',
-    }))).toMatchObject({
-      path: 'C:\\work\\docs\\guides\\api',
-      name: 'api',
     })
   })
 })

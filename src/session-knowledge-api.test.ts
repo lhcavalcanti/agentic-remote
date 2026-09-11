@@ -2,8 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionKnowledgeBinding } from '../shared/contracts'
 import {
   getSessionKnowledgeRoot,
-  listSessionKnowledgeEntries,
-  readSessionKnowledgeFile,
   SessionKnowledgeRequestError,
   updateSessionKnowledgeRoot,
 } from './api'
@@ -90,35 +88,5 @@ describe('session Knowledge API', () => {
       rootId: null, expectedRevision: 2,
     })).rejects.toThrow('Connection lost')
     expect(fetchMock).toHaveBeenCalledOnce()
-  })
-
-  it('reads entries and files through the session-scoped Knowledge routes', async () => {
-    const listing = { path: '.', entries: [] }
-    const file = {
-      name: 'guide.md',
-      path: 'guide.md',
-      kind: 'markdown' as const,
-      mimeType: 'text/plain',
-      size: 4,
-      content: 'test',
-    }
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(Response.json(listing))
-      .mockResolvedValueOnce(Response.json(file))
-    vi.stubGlobal('fetch', fetchMock)
-    await expect(listSessionKnowledgeEntries('computer/id', 'session/id', 'nested'))
-      .resolves.toEqual(listing)
-    await expect(readSessionKnowledgeFile('computer/id', 'session/id', 'guide.md'))
-      .resolves.toEqual(file)
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      '/api/computers/computer%2Fid/sessions/session%2Fid/knowledge/entries?path=nested',
-      expect.objectContaining({ headers: expect.any(Headers) }),
-    )
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/computers/computer%2Fid/sessions/session%2Fid/knowledge/file?path=guide.md',
-      expect.objectContaining({ headers: expect.any(Headers) }),
-    )
   })
 })

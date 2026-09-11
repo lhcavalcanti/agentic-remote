@@ -105,11 +105,6 @@ describe('hub routes', () => {
           path: 'projects/agentic-remote/docs',
           kind: 'directory' as const,
         },
-        {
-          name: 'shared-link',
-          path: 'projects/shared',
-          kind: 'directory' as const,
-        },
       ],
     }))
     const readKnowledgeFile = vi.fn(async () => ({
@@ -167,20 +162,6 @@ describe('hub routes', () => {
       '/home/demo',
       'projects/agentic-remote/README.md',
     )
-
-    readKnowledgeFile.mockResolvedValueOnce({
-      name: 'shared.md',
-      path: 'projects/shared/shared.md',
-      kind: 'markdown',
-      mimeType: 'text/markdown',
-      size: 10,
-      content: '# Shared',
-    })
-    const escaped = await app.inject({
-      url: '/api/knowledge/roots/projects/file?path=shared-link%2Fshared.md&basePath=projects%2Fagentic-remote',
-      headers: { host: 'localhost' },
-    })
-    expect(escaped.statusCode).toBe(403)
     await app.close()
   })
 
@@ -269,7 +250,7 @@ describe('hub routes', () => {
     const writing = new Promise<void>((resolve) => { entered = resolve })
     const gate = new Promise<void>((resolve) => { release = resolve })
     const roots = new Map<string, { id: string; computerId: string }>()
-    const removeRootAtRevision = vi.fn(async (id: string) => roots.delete(id))
+    const removeRoot = vi.fn(async (id: string) => roots.delete(id))
     const app = Fastify()
     await registerHubRoutes(app, {
       listComputers: () => [{ id: 'worker', name: 'Worker' }],
@@ -281,14 +262,14 @@ describe('hub routes', () => {
       on: () => undefined,
       off: () => undefined,
     } as unknown as ComputerManager, {
-      addRootWithStatus: async (input: { computerId: string }) => {
+      addRoot: async (input: { computerId: string }) => {
         const root = { ...input, id: 'old-root' }
         roots.set(root.id, root)
         entered()
         await gate
-        return { root, created: true, revision: 0 }
+        return root
       },
-      removeRootAtRevision,
+      removeRoot,
     } as unknown as KnowledgeStore)
     try {
       const response = app.inject({
@@ -305,7 +286,7 @@ describe('hub routes', () => {
       expect(rejected.statusCode).toBe(409)
       expect(rejected.json().error).toContain('pairing changed while saving')
       expect([...roots.keys()]).toEqual(['fresh-root'])
-      expect(removeRootAtRevision).toHaveBeenCalledExactlyOnceWith('old-root', 0)
+      expect(removeRoot).toHaveBeenCalledExactlyOnceWith('old-root')
     } finally {
       release()
       await app.close()

@@ -160,10 +160,7 @@ function requireScopedKnowledgePath(
 ): string {
   const rebased = rebaseKnowledgeRelativePath(basePath, path)
   if (rebased === undefined) {
-    throw Object.assign(
-      new Error('Knowledge browsing is restricted to the selected session root'),
-      { statusCode: 403 },
-    )
+    throw new Error('Knowledge response escaped the selected session root')
   }
   return rebased
 }
@@ -182,10 +179,10 @@ function scopeKnowledgeListing(
     ...listing,
     path: requireScopedKnowledgePath(basePath, listing.path),
     ...(parent === undefined ? { parent: undefined } : { parent }),
-    entries: listing.entries.flatMap((entry) => {
-      const path = rebaseKnowledgeRelativePath(basePath, entry.path)
-      return path === undefined ? [] : [{ ...entry, path }]
-    }),
+    entries: listing.entries.map((entry) => ({
+      ...entry,
+      path: requireScopedKnowledgePath(basePath, entry.path),
+    })),
   }
 }
 
@@ -424,7 +421,7 @@ export async function registerHubRoutes(
           : 'Computer is not registered',
       })
     }
-    const added = await knowledge.addRootWithStatus({
+    const root = await knowledge.addRoot({
       computerId: input.computerId,
       computerName: computer.name,
       path: input.path,
@@ -433,15 +430,14 @@ export async function registerHubRoutes(
         input.path.split('/').filter(Boolean).at(-1) ||
         input.path,
     })
-    const root = added.root
     // Persistence can also overlap an unpair/re-pair. A reused ID is not the
     // registration that validated this root, and its fresh roots must survive.
     if (!manager.listComputers().some((entry) => entry.id === input.computerId)) {
-      if (added.created) await knowledge.removeRootAtRevision(root.id, added.revision)
+      await knowledge.removeRoot(root.id)
       return reply.code(404).send({ error: 'Computer is not registered' })
     }
     if (!registrationIsCurrent()) {
-      if (added.created) await knowledge.removeRootAtRevision(root.id, added.revision)
+      await knowledge.removeRoot(root.id)
       return reply.code(409).send({
         error: 'Computer pairing changed while saving this folder. Choose the computer again.',
       })

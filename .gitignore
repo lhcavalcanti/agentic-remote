@@ -34,10 +34,3 @@ dist-ssr
 shell/src-tauri/target/
 shell/src-tauri/gen/
 shell/src-tauri/icons/
-
-# Browser-test output is diagnostic, never source.
-playwright-report/
-test-results/
-
-# Fixture directories some server tests create in the repository root.
-.session-knowledge-routes-test-*/

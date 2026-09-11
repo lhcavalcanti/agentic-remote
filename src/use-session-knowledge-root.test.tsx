@@ -23,7 +23,7 @@ function binding(
 ): SessionKnowledgeBinding {
   return {
     computerId: owner.computerId, sessionId: owner.id,
-    rootId: root.id, rootPath: '.', root, revision: 1, available: true, ...overrides,
+    rootId: root.id, root, revision: 1, available: true, ...overrides,
   }
 }
 function deferred<T>() {
@@ -133,31 +133,6 @@ describe('session Knowledge root controller', () => {
     vi.mocked(updateSessionKnowledgeRoot).mockResolvedValueOnce(binding(first, { rootId: 'platform', revision: 2 }))
     await act(async () => { await rendered.result.current.saveRoot('platform') })
     expect(rendered.result.current.binding?.rootId).toBe('platform')
-  })
-
-  it('persists a nested path without changing the shared root ID', async () => {
-    const nested = binding(first, {
-      rootPath: 'projects/agentic-remote',
-      revision: 2,
-    })
-    vi.mocked(updateSessionKnowledgeRoot).mockResolvedValueOnce(nested)
-    const rendered = renderHook(() => useSessionKnowledgeRoot(first, true))
-    await waitFor(() => expect(rendered.result.current.binding?.revision).toBe(1))
-
-    await act(async () => {
-      await rendered.result.current.saveRoot(
-        root.id,
-        1,
-        'projects/agentic-remote',
-      )
-    })
-
-    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith('studio', 'one', {
-      rootId: root.id,
-      rootPath: 'projects/agentic-remote',
-      expectedRevision: 1,
-    })
-    expect(rendered.result.current.binding).toEqual(nested)
   })
 
   it('accepts a committed save when an unrelated computer is removed', async () => {
@@ -284,12 +259,5 @@ describe('reading position and root binding ownership', () => {
     expect(knowledgePositionForBinding(binding(), remembered)).toEqual(remembered)
     expect(knowledgePositionForBinding(binding(first, { rootId: 'platform' }), remembered))
       .toEqual({ rootId: 'platform', path: '.' })
-    expect(knowledgePositionForBinding(binding(first, {
-      rootPath: 'projects/agentic-remote',
-    }), remembered)).toEqual({
-      rootId: 'atlas',
-      rootPath: 'projects/agentic-remote',
-      path: '.',
-    })
   })
 })

@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { HubEvent, ManagedSession, SessionKnowledgeBinding } from '../shared/contracts.js'
-import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path.js'
 import type { ComputerManager } from './computer-manager.js'
 import type { KnowledgeStore } from './knowledge-store.js'
 import {
@@ -16,7 +15,6 @@ const sessionParams = z.object({
 })
 const updateSchema = z.object({
   rootId: z.string().min(1).max(256).nullable(),
-  rootPath: z.string().trim().max(4096).optional(),
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict()
 
@@ -312,19 +310,6 @@ export async function registerSessionKnowledgeRoutes(
         throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
       }
       const rootIsCurrent = root ? registrationGuard(root.computerId) : undefined
-      let rootPath: string
-      try {
-        rootPath = normalizeKnowledgeRelativePath(input.rootPath)
-      } catch {
-        throw new SessionKnowledgeReferenceError(
-          'Knowledge root path must stay inside the saved folder.',
-          400,
-        )
-      }
-      if (root) {
-        await manager.listKnowledge(root.computerId, root.path, rootPath)
-        rootIsCurrent?.()
-      }
       const sessionIsCurrent = await knownSessionGuard(computerId, sessionId)
       const validate = () => {
         sessionIsCurrent()
@@ -334,12 +319,7 @@ export async function registerSessionKnowledgeRoutes(
         }
       }
       try {
-        const binding = await store.update(
-          computerId,
-          sessionId,
-          { ...input, rootPath },
-          validate,
-        )
+        const binding = await store.update(computerId, sessionId, input, validate)
         reply.header('cache-control', 'no-store')
         return { binding }
       } catch (error) {

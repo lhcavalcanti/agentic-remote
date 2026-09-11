@@ -69,21 +69,6 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   reorder the displayed sessions within each computer without rewriting the
   saved custom order. Keyboard next/previous navigation MUST follow the
   displayed order. A failed preference save MUST surface an error.
-- The custom session order is owned by the hub, not by each browser. Every
-  browser connected to the same hub MUST render the same order without a
-  reload, and the order MUST survive a hub restart. Order changes carry a
-  monotonic revision; a client MUST ignore a revision older than the one it
-  holds. A drag MAY be applied optimistically, but a refused write MUST restore
-  the last acknowledged order and report the failure rather than claim a local
-  save. A drag MUST submit only the dragged computer's lane, and a session MUST
-  NOT move between computers. Computer-group order, sort mode, and filters
-  remain browser-local.
-- Clearing a session replaces its identity, and the replacement MUST take the
-  predecessor's exact position in the custom order. Deleting a session MUST
-  remove it, and removing a computer MUST remove its lane; a partial or offline
-  session listing MUST NOT be treated as evidence that an entry is gone. A
-  browser-local order from before the hub owned it MAY seed an empty hub once,
-  after which the hub snapshot is authoritative.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors, including queued delivery that requires confirmation. Pending actions
   MUST take precedence over passive runtime status.
@@ -183,13 +168,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   runtime settings, and tmux window.
 - Restart MUST remain available for an online session in `error` state. Error
   recovery MUST NOT require a direct API call.
-- Copilot sessions MUST offer **Recover conversation** in session actions when
-  the owning computer advertises context recovery. It MUST be enabled for
-  idle, provider-error, or stale-interaction sessions and remain visible but
-  disabled while running, waiting, suspended, offline, holding a live prompt or
-  queue claim, rebuilding context, or owning queued/running background work.
-  Recovery MUST enforce the same ownership checks server-side. Claude sessions
-  MUST NOT offer it.
+- Copilot sessions in provider error or holding a stale SDK interaction MUST
+  offer **Recover conversation** when the owning computer advertises context
+  recovery. Claude sessions MUST NOT offer it.
 - Recover MUST create a fresh provider session ID while preserving title,
   working folder, runtime settings, execution mode, queue, computer ownership,
   draft continuity, replacement lineage, and notification/Knowledge metadata.
@@ -342,10 +323,6 @@ Questions and permissions are the highest-priority UI state.
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot
   runtimes.
-- Structured question cards MUST remain within the phone timeline width.
-  Checkboxes MUST keep their intrinsic control size, option and heading text
-  MUST wrap inside the card, and long forms MUST remain vertically reachable
-  without covering the composer.
 - Question messages MUST render Markdown, including tables, emphasis, inline
   code, and fenced code blocks, without changing the original message or reply
   values. Raw HTML and unsafe link schemes MUST NOT execute. Wide tables and
@@ -372,9 +349,6 @@ Questions and permissions are the highest-priority UI state.
   keys. The app MUST restore the previous size and sizing policy on completion
   or failure without overwriting intervening operator changes; it MUST NOT
   resize shared windows or a window whose ownership changed.
-- The temporary viewport operation budget MUST scale with the number of form
-  fields while retaining a hard upper bound, so verified multi-field forms can
-  complete without leaving an enlarged window indefinitely.
 - Wrapped control hints MAY trigger a bounded viewport check, but MUST NOT
   replace verification of the complete question. Each successive long form
   MUST independently verify its identity and restore its viewport.
@@ -409,10 +383,6 @@ Questions and permissions are the highest-priority UI state.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Such input MUST be left untouched with an actionable conflict, not cleared,
   duplicated, or submitted automatically.
-- After that definite conflict, the app MAY offer **Clear terminal text and
-  send** beside the restored draft. It MUST require confirmation, revalidate
-  the same idle tmux owner and readable composer, clear only by explicit user
-  request, and refuse without pasting if the pane changes or gains new text.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
@@ -677,8 +647,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
 ### 7.1 Documents
 
 - Multiple selected or dropped files MUST process in selection order.
-- Supported documents include PDF, CSV/TSV, Kusto Query Language (`.kql`),
-  Excel, Word, Markdown, text, JSON/YAML, OFX/QFX, and common images.
+- Supported documents include PDF, CSV/TSV, Excel, Word, Markdown, text,
+  JSON/YAML, OFX/QFX, and common images.
 - Maximum file size is 25 MiB.
 - Files MUST be stored on the selected session's owning computer under
   `~/.agentic-remote/uploads/<session-id>/`.
@@ -792,15 +762,6 @@ clear replacement IDs without losing, duplicating, or reordering content.
   Several sessions MAY link the same root while keeping separate reading
   positions. Linking MUST NOT copy files, mount a remote folder, activate an
   agent, or send a prompt.
-- A session MAY root its Knowledge tree at a nested folder inside a shared
-  root. The nested path MUST persist with the hub-side session association and
-  become the true top of that session's tree: parent folders above it MUST NOT
-  appear in scoped list, file, breadcrumb, or relative-link responses.
-- Choosing a shared root or the session folder MUST open a recursive subfolder
-  browser without changing the shared root choices. Browsing changes only the
-  pending session choice. **Save this root folder** MUST be the explicit action
-  that adds the browsed folder to the shared catalog and selects it for the
-  session.
 - Root associations MUST use separate hub metadata. Opening Knowledge MUST NOT
   silently promote browser-local reading positions into hub associations.
   An unassigned session with no remembered position MUST offer an explicit
@@ -851,10 +812,6 @@ clear replacement IDs without losing, duplicating, or reordering content.
   crowding out the conversation, and MUST NOT affect phone full-screen reading.
 - Each session MUST keep its own reading position — root, folder, and
   document — and switching sessions MUST show that session's position.
-- Reopening Knowledge or switching between docked and expanded modes MUST
-  refetch the active document in place while preserving its root, path,
-  fragment, view mode, and scroll position. A late refresh MUST NOT replace a
-  newer root, folder, document, or session selection.
 - Clearing a conversation replaces a session rather than deleting it, so the
   removal event MUST name the replacement and every client MUST carry that
   session's reading position across rather than discard it. The hub root
@@ -942,12 +899,14 @@ clear replacement IDs without losing, duplicating, or reordering content.
   original Agentic green.
 - The selected accent MUST apply to primary actions, focus states, activity
   indicators, and other non-semantic accent treatments.
+- The browser-tab icon MUST track the selected accent immediately and after
+  reload, without changing other tabs or the shared installed-app icons.
 - Warning, error, computer-identity, and background-task colors MUST retain
   their semantic meaning.
 - The accent choice MUST be scoped to the current browser tab, persist across
   reloads in that tab, and fall back to Agentic green for an unknown value.
-- The top-left brand mark and browser-tab icon MUST use the fixed Relay
-  artwork in Agentic green and remain independent of the tab-local accent.
+- The top-left brand mark MUST use the same SVG artwork and selected accent as
+  the tab icon, including after reload, rather than a separate generic glyph.
 
 ## 10. Notifications
 
@@ -976,35 +935,15 @@ Priority order:
   stolen.
 - Mobile controls MUST use at least 40px targets where practical.
 - Inputs MUST use 16px text on iOS to prevent browser zoom.
-- In installed iOS mode, the app background MUST extend behind the status bar
-  and Dynamic Island. Headers, drawer branding, dialogs, and full-height panel
-  controls MUST remain below the safe-area inset.
+- All headers, drawer branding, dialogs, and full-height panels MUST remain
+  below the Dynamic Island.
 - iOS standalone mode MUST use a safe top fallback when
   `env(safe-area-inset-top)` incorrectly reports zero.
-- Mobile header controls MUST meet the safe-area boundary without adding a
-  second centered-row gap below the Dynamic Island.
 - Composer and dialogs MUST respect the home indicator and visual viewport.
 - Keyboard-open sizing MUST follow `visualViewport.height` and `offsetTop`.
-  Detection MUST compare the current visible height with a stable unfocused
-  baseline rather than assuming `innerHeight` remains unchanged while the
-  keyboard opens.
 - In browser and split-size modes, the entire mobile shell MUST follow the
   current visual viewport height and offset even when the keyboard is closed;
   it MUST NOT assume full-screen dimensions.
-- In installed standalone mode with the keyboard closed, the shell MUST use
-  the full window height rather than leaving a browser-chrome-sized empty band
-  when iOS reports a shorter idle visual viewport.
-- Relay in Agentic green MUST be the fixed in-app brand, browser-tab icon,
-  manifest icon, native icon, and Apple touch icon. App settings MUST NOT
-  expose icon style or icon color controls.
-- The credentialed Web App Manifest MUST be the sole Home Screen icon source;
-  the HTML head and website root MUST NOT define Apple-touch icons that take
-  precedence over it. The manifest MUST declare new opaque full-bleed Relay
-  PNG URLs at 192px, 512px, and 1024px with purpose `any`, and the service
-  worker MUST pre-cache them. Missing Apple-touch probe paths MUST return 404
-  rather than the SPA document. An existing iPhone or iPad installation needs
-  to be removed and re-added before a shipped launcher-icon or install-time
-  status-bar change appears.
 
 ## 12. PWA updates
 

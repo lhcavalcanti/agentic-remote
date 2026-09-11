@@ -2,7 +2,6 @@
   "name": "Agentic Remote",
   "short_name": "Agentic",
   "description": "A mobile-first interface for GitHub Copilot CLI sessions.",
-  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -11,22 +10,14 @@
   "orientation": "any",
   "icons": [
     {
-      "src": "/icons/relay-icon-192.png",
+      "src": "/icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
+      "type": "image/png"
     },
     {
-      "src": "/icons/relay-icon-512.png",
+      "src": "/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/relay-icon-1024.png",
-      "sizes": "1024x1024",
-      "type": "image/png",
-      "purpose": "any"
+      "type": "image/png"
     },
     {
       "src": "/icons/icon-512-maskable.png",

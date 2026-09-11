@@ -2557,42 +2557,6 @@ describe('deployed app version', () => {
     }
   })
 
-  it('returns 404 for legacy Apple-touch probes instead of SPA HTML', async () => {
-    const directory = await temporaryDirectory('app-icon-probes')
-    const release = path.join(directory, 'release')
-    await mkdir(release)
-    await writeFile(path.join(release, 'index.html'), 'application shell')
-    await writeFile(path.join(release, 'build-info.json'), JSON.stringify({
-      version: '91.0.0',
-      buildId: 'icon-probe-build',
-    }))
-    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', release)
-    const hub = await buildApp({
-      dataDirectory: path.join(directory, 'data'),
-      logger: false,
-      serveStatic: true,
-      service: new FakeSessionService(),
-    })
-    try {
-      for (const url of [
-        '/apple-touch-icon.png',
-        '/apple-touch-icon-precomposed.png',
-        '/apple-touch-icon-120x120.png',
-        '/apple-touch-icon-180x180-precomposed.png?cache=old',
-        '/icons/apple-touch-icon-152x152.png',
-      ]) {
-        const response = await hub.app.inject(url)
-        expect(response.statusCode).toBe(404)
-        expect(response.json()).toEqual({ error: 'Not found' })
-      }
-      const clientRoute = await hub.app.inject('/sessions/example')
-      expect(clientRoute.statusCode).toBe(200)
-      expect(clientRoute.body).toBe('application shell')
-    } finally {
-      await hub.app.close()
-    }
-  })
-
   it('pins the configured static build and restores its original identity on rollback', async () => {
     const directory = await temporaryDirectory('app-version-releases')
     const releaseA = path.join(directory, 'release-a')

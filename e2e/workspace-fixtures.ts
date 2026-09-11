@@ -8,14 +8,9 @@ import type {
   ManagedSession,
   RuntimeModelOption,
   SessionKnowledgeBinding,
-  SessionOrderSnapshot,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
-import {
-  joinKnowledgeRelativePath,
-  rebaseKnowledgeRelativePath,
-} from '../shared/knowledge-path'
 
 export const FIXTURE_NOW = '2026-09-04T16:20:00.000Z'
 export const SELECTED_SESSION_ID = 'fixture-plan-workspace'
@@ -464,15 +459,12 @@ export interface WorkspaceFixtureOptions {
   state?: WorkspaceFixtureState
   knowledgePositions?: Record<string, KnowledgePosition>
   extraKnowledgeFiles?: number
-  /** Optional absolute directory listings for folder-picker browser tests. */
-  directoryListings?: Record<string, string[]>
 }
 
 export interface WorkspaceFixtureState {
   roots: KnowledgeRoot[]
   sessions: ManagedSession[]
   bindings: Map<string, SessionKnowledgeBinding>
-  sessionOrder: SessionOrderSnapshot
   eventSockets: Set<WebSocketRoute>
   nextRootId: number
 }
@@ -489,24 +481,11 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
         computerId: session.computerId,
         sessionId: session.id,
         rootId: KNOWLEDGE_ROOT_ID,
-        rootPath: '.',
         root: roots[0],
         revision: 1,
         available: true,
       },
     ])),
-    sessionOrder: {
-      revision: 1,
-      bootstrapped: true,
-      order: Object.fromEntries(
-        fixtureComputers.map((computer) => [
-          computer.id,
-          sessions
-            .filter((session) => session.computerId === computer.id)
-            .map((session) => `${computer.id}:${session.id}`),
-        ]),
-      ),
-    },
     eventSockets: new Set(),
     nextRootId: 1,
   }
@@ -556,7 +535,6 @@ export async function setupWorkspaceFixture(
   const baseUrl = fixtureBaseUrl(options.baseUrl)
   const state = options.state ?? createWorkspaceFixtureState()
   const extraKnowledgeFiles = options.extraKnowledgeFiles ?? 0
-  const directoryListings = options.directoryListings ?? {}
   if (!Number.isInteger(extraKnowledgeFiles) || extraKnowledgeFiles < 0 || extraKnowledgeFiles > 200) {
     throw new Error('Use between 0 and 200 synthetic extra Knowledge files.')
   }
@@ -697,41 +675,6 @@ export async function setupWorkspaceFixture(
       await respond({ sessions })
       return
     }
-    if (method === 'GET' && path === '/api/session-order') {
-      await respond({ sessionOrder: state.sessionOrder })
-      return
-    }
-    const sessionOrderLane = path.match(/^\/api\/session-order\/([^/]+)$/)
-    if (method === 'PUT' && sessionOrderLane) {
-      const input = request.postDataJSON() as { order: string[] }
-      const computerId = decodeURIComponent(sessionOrderLane[1])
-      state.sessionOrder = {
-        ...state.sessionOrder,
-        revision: state.sessionOrder.revision + 1,
-        order: {
-          ...state.sessionOrder.order,
-          [computerId]: [...input.order],
-        },
-      }
-      emit({ type: 'session.order.updated', order: state.sessionOrder })
-      await respond({ sessionOrder: state.sessionOrder })
-      return
-    }
-    if (method === 'POST' && path === '/api/session-order/bootstrap') {
-      const input = request.postDataJSON() as {
-        order: Record<string, string[]>
-      }
-      if (!state.sessionOrder.bootstrapped) {
-        state.sessionOrder = {
-          revision: state.sessionOrder.revision + 1,
-          bootstrapped: true,
-          order: structuredClone(input.order),
-        }
-        emit({ type: 'session.order.updated', order: state.sessionOrder })
-      }
-      await respond({ sessionOrder: state.sessionOrder })
-      return
-    }
     if (method === 'GET' && path === '/api/push/settings') {
       await respond({ mutedSessions: [] })
       return
@@ -788,13 +731,11 @@ export async function setupWorkspaceFixture(
     const knowledge = path.match(/^\/api\/knowledge\/roots\/([^/]+)\/(entries|file)$/)
     if (method === 'GET' && knowledge && state.roots.some((root) => root.id === knowledge[1])) {
       const requestedPath = url.searchParams.get('path') ?? '.'
-      const basePath = url.searchParams.get('basePath') ?? '.'
-      const sourcePath = joinKnowledgeRelativePath(basePath, requestedPath)
       let body =
         knowledge[2] === 'entries'
-          ? fixtureValue(fixtureKnowledgeListings, sourcePath)
-          : fixtureValue(fixtureKnowledgeFiles, sourcePath)
-      if (knowledge[2] === 'entries' && sourcePath === 'handbook' && extraKnowledgeFiles > 0) {
+          ? fixtureValue(fixtureKnowledgeListings, requestedPath)
+          : fixtureValue(fixtureKnowledgeFiles, requestedPath)
+      if (knowledge[2] === 'entries' && requestedPath === 'handbook' && extraKnowledgeFiles > 0) {
         body = {
           ...fixtureKnowledgeListings.handbook,
           entries: [
@@ -806,11 +747,11 @@ export async function setupWorkspaceFixture(
           ],
         }
       }
-      const extraFile = sourcePath.match(/^handbook\/design-note-(\d{3})\.md$/)
+      const extraFile = requestedPath.match(/^handbook\/design-note-(\d{3})\.md$/)
       if (knowledge[2] === 'file' && extraFile && Number(extraFile[1]) > 0 && Number(extraFile[1]) <= extraKnowledgeFiles) {
         const content = `# Design note ${Number(extraFile[1])}\n\nSynthetic content for checking long Knowledge trees.\n`
         body = {
-          name: sourcePath.split('/').at(-1)!, path: sourcePath,
+          name: requestedPath.split('/').at(-1)!, path: requestedPath,
           kind: 'markdown', mimeType: 'text/markdown', content, size: Buffer.byteLength(content),
         }
       }
@@ -820,8 +761,8 @@ export async function setupWorkspaceFixture(
           '## A separate reading context\n\nThe session keeps its own root, document, and draft.\n\n' +
           '## Before a release\n\n- Confirm the owning computer.\n- Keep a reversible checkpoint.\n- Record the result.\n'
         body = {
-          name: sourcePath.split('/').at(-1)!,
-          path: sourcePath,
+          name: requestedPath.split('/').at(-1)!,
+          path: requestedPath,
           kind: 'markdown',
           mimeType: 'text/markdown',
           content,
@@ -829,31 +770,7 @@ export async function setupWorkspaceFixture(
         }
       }
       if (body) {
-        if (basePath === '.') {
-          await respond(body)
-          return
-        }
-        if (knowledge[2] === 'entries') {
-          const listing = body as WorkspaceListing
-          const parent = listing.parent
-            ? rebaseKnowledgeRelativePath(basePath, listing.parent)
-            : undefined
-          await respond({
-            ...listing,
-            path: rebaseKnowledgeRelativePath(basePath, listing.path),
-            ...(parent === undefined ? { parent: undefined } : { parent }),
-            entries: listing.entries.map((entry) => ({
-              ...entry,
-              path: rebaseKnowledgeRelativePath(basePath, entry.path),
-            })),
-          })
-        } else {
-          const file = body as WorkspaceFile
-          await respond({
-            ...file,
-            path: rebaseKnowledgeRelativePath(basePath, file.path),
-          })
-        }
+        await respond(body)
         return
       }
     }
@@ -863,22 +780,15 @@ export async function setupWorkspaceFixture(
       const current = !requested || requested === '~' ? '/home/demo' : requested
       const allowed = current === '/home/demo' ||
         sessions.some((session) => session.computerId === directory[1] && session.cwd === current) ||
-        state.roots.some((root) => root.computerId === directory[1] && root.path === current) ||
-        Object.hasOwn(directoryListings, current)
+        state.roots.some((root) => root.computerId === directory[1] && root.path === current)
       if (!allowed) {
         await reject(route, `Unknown fixture directory ${current}`)
         return
       }
-      const configured = directoryListings[current]
       await respond({
         path: current,
         parent: current === '/home/demo' ? undefined : '/home/demo',
-        directories: configured
-          ? configured.map((child) => ({
-              name: child.split('/').at(-1),
-              path: child,
-            }))
-          : current === '/home/demo'
+        directories: current === '/home/demo'
           ? [...new Set(sessions.filter((session) => session.computerId === directory[1]).map((session) => session.cwd))]
             .map((path) => ({ name: path.split('/').at(-1), path }))
           : [],
@@ -912,22 +822,14 @@ export async function setupWorkspaceFixture(
         const key = `${session.computerId}:${session.id}`
         const saved = state.bindings.get(key) ?? {
           computerId: session.computerId, sessionId: session.id,
-          rootId: null, rootPath: '.', revision: 0, available: false,
+          rootId: null, revision: 0, available: false,
         }
-        const current = {
-          ...saved,
-          rootPath: saved.rootPath || '.',
-          available: state.roots.some((root) => root.id === saved.rootId),
-        }
+        const current = { ...saved, available: state.roots.some((root) => root.id === saved.rootId) }
         if (method === 'GET') {
           await respond({ binding: current })
           return
         }
-        const input = request.postDataJSON() as {
-          rootId: string | null
-          rootPath?: string
-          expectedRevision: number
-        }
+        const input = request.postDataJSON() as { rootId: string | null; expectedRevision: number }
         if (input.expectedRevision !== current.revision) {
           await respond({ error: 'The saved root changed in another client. Review it before retrying.', binding: current }, 409)
           return
@@ -939,11 +841,7 @@ export async function setupWorkspaceFixture(
         }
         const binding: SessionKnowledgeBinding = {
           computerId: session.computerId, sessionId: session.id,
-          rootId: input.rootId,
-          rootPath: input.rootId ? input.rootPath || '.' : '.',
-          revision: current.revision + 1,
-          root,
-          available: Boolean(root),
+          rootId: input.rootId, revision: current.revision + 1, root, available: Boolean(root),
         }
         state.bindings.set(key, binding)
         emit({ type: 'session.knowledge.updated', computerId: session.computerId, sessionId: session.id, binding })

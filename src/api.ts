@@ -12,7 +12,6 @@ import type {
   AddKnowledgeRootInput,
   KnowledgeRoot,
   PushSettings,
-  SessionOrderSnapshot,
   ProviderRuntimeOptions,
   ManagedRemovedQueuedPrompt,
   ManagedQueuedPromptDispatchResult,
@@ -52,14 +51,12 @@ async function responseError(
         message?: string
         statusCode?: number
         submission?: unknown
-        terminalDraftConflict?: unknown
         uncertainDelivery?: unknown
       }
     | null
   const fallback = `Request failed (${response.status})`
   const submission = parseSubmissionReceipt(payload?.submission)
   const options = {
-    terminalDraftConflict: payload?.terminalDraftConflict === true,
     uncertainDelivery: httpDeliveryUncertain(
       response.status,
       payload?.uncertainDelivery,
@@ -256,40 +253,6 @@ export async function listSessionMcpServers(
   }
 }
 
-/**
- * The hub's custom session order. It is fetched rather than read from
- * localStorage so every browser on this hub renders the same arrangement.
- */
-export async function fetchSessionOrder(): Promise<SessionOrderSnapshot> {
-  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
-    '/api/session-order',
-  )
-  return response.sessionOrder
-}
-
-/** Submits one computer's lane, so a stale view cannot rewrite the others. */
-export async function saveSessionOrderLane(
-  computerId: string,
-  order: string[],
-): Promise<SessionOrderSnapshot> {
-  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
-    `/api/session-order/${encodeURIComponent(computerId)}`,
-    { method: 'PUT', body: JSON.stringify({ order }) },
-  )
-  return response.sessionOrder
-}
-
-/** Offers a legacy browser-local order; the hub keeps it only if it has none. */
-export async function bootstrapSessionOrder(
-  order: Record<string, string[]>,
-): Promise<SessionOrderSnapshot> {
-  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
-    '/api/session-order/bootstrap',
-    { method: 'POST', body: JSON.stringify({ order }) },
-  )
-  return response.sessionOrder
-}
-
 export async function listComputers(): Promise<ComputerSummary[]> {
   const response = await request<{ computers: ComputerSummary[] }>(
     '/api/computers',
@@ -438,24 +401,18 @@ export async function updateSessionKnowledgeRoot(
 export async function listKnowledgeEntries(
   rootId: string,
   path = '.',
-  basePath = '.',
 ): Promise<WorkspaceListing> {
   return request<WorkspaceListing>(
-    `/api/knowledge/roots/${encodeURIComponent(rootId)}/entries?path=${encodeURIComponent(path)}${
-      basePath === '.' ? '' : `&basePath=${encodeURIComponent(basePath)}`
-    }`,
+    `/api/knowledge/roots/${encodeURIComponent(rootId)}/entries?path=${encodeURIComponent(path)}`,
   )
 }
 
 export async function readKnowledgeFile(
   rootId: string,
   path: string,
-  basePath = '.',
 ): Promise<WorkspaceFile> {
   return request<WorkspaceFile>(
-    `/api/knowledge/roots/${encodeURIComponent(rootId)}/file?path=${encodeURIComponent(path)}${
-      basePath === '.' ? '' : `&basePath=${encodeURIComponent(basePath)}`
-    }`,
+    `/api/knowledge/roots/${encodeURIComponent(rootId)}/file?path=${encodeURIComponent(path)}`,
   )
 }
 

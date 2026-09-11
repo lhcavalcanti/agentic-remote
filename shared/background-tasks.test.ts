@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BackgroundTaskSnapshot } from './contracts.js'
-import {
-  hasActiveBackgroundTasks,
-  hasRunningBackgroundAgent,
-} from './background-tasks.js'
+import { hasRunningBackgroundAgent } from './background-tasks.js'
 
 function snapshot(
   type: 'agent' | 'shell',
@@ -35,17 +32,5 @@ describe('running background agent detection', () => {
       false,
     )
     expect(hasRunningBackgroundAgent(snapshot('agent', 'sync'))).toBe(false)
-  })
-
-  it('treats queued and running work of either kind as active', () => {
-    for (const status of ['queued', 'running'] as const) {
-      const active = snapshot('shell', 'sync')
-      active.tasks[0].status = status
-      expect(hasActiveBackgroundTasks(active)).toBe(true)
-    }
-    const completed = snapshot('agent', 'background')
-    completed.tasks[0].status = 'completed'
-    expect(hasActiveBackgroundTasks(completed)).toBe(false)
-    expect(hasActiveBackgroundTasks(undefined)).toBe(false)
   })
 })

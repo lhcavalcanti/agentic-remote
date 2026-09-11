@@ -12,7 +12,6 @@ const supportedExtensions = new Set([
   '.jpeg',
   '.jpg',
   '.json',
-  '.kql',
   '.md',
   '.ofx',
   '.pdf',

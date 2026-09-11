@@ -69,7 +69,6 @@ const sendMessageSchema = z.object({
     .max(200_000)
     .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
   enqueue: z.boolean().optional(),
-  replaceTerminalDraft: z.boolean().optional(),
 })
 
 const permissionReplySchema = z.object({
@@ -95,7 +94,6 @@ const executeCommandSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
   command: z.string().trim().startsWith('/').max(10_000),
   enqueue: z.boolean().optional(),
-  replaceTerminalDraft: z.boolean().optional(),
 })
 
 const configureRuntimeSchema = z.object({
@@ -509,7 +507,6 @@ export async function registerNodeRoutes(
               input.content,
               input.enqueue,
               input.acknowledgesFailure,
-              input.replaceTerminalDraft,
             ),
           })
         },
@@ -525,7 +522,6 @@ export async function registerNodeRoutes(
               input.command,
               input.enqueue,
               input.acknowledgesFailure,
-              input.replaceTerminalDraft,
             ),
           }
         },

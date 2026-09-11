@@ -80,16 +80,4 @@ describe('Vitest cohort orchestration', () => {
     }
     expect(classifiedAccess).toEqual(supportedAccess)
   })
-
-  it('keeps conversation recovery away from parallel host discovery', () => {
-    expect(
-      machineAccessTestManifest['server/conversation-recovery.test.ts'],
-    ).toMatchObject({
-      access: {
-        'real-tmux': 'direct',
-        'copilot-process': 'indirect',
-        'process-discovery': 'direct',
-      },
-    })
-  })
 })

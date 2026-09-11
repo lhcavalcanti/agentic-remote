@@ -9,20 +9,9 @@ describe('mobile safe areas', () => {
     )
   })
 
-  it('fills the iPhone status-bar area while keeping controls below the Dynamic Island', async () => {
-    const [css, html] = await Promise.all([
-      readFile(new URL('../src/index.css', import.meta.url), 'utf8'),
-      readFile(new URL('../index.html', import.meta.url), 'utf8'),
-    ])
+  it('keeps top-level iOS surfaces below the Dynamic Island', async () => {
+    const css = await readFile(new URL('../src/index.css', import.meta.url), 'utf8')
 
-    expect(html).toContain('content="black-translucent"')
-    expect(html).toMatch(
-      /rel="icon"[\s\S]*href="\/icon\.svg"[\s\S]*type="image\/svg\+xml"/,
-    )
-    expect(html).toMatch(
-      /rel="manifest"[\s\S]*href="\/manifest\.webmanifest"[\s\S]*crossorigin="use-credentials"/,
-    )
-    expect(html).not.toContain('rel="apple-touch-icon"')
     expect(css).toContain(
       '--app-safe-area-top: env(safe-area-inset-top, 0px)',
     )
@@ -30,19 +19,10 @@ describe('mobile safe areas', () => {
       '--app-safe-area-top: max(env(safe-area-inset-top, 0px), 59px)',
     )
     expect(css).toContain(
-      '--app-content-safe-area-top: calc(var(--app-safe-area-top) - 9px)',
-    )
-    expect(css).toContain(
       '--app-content-safe-area-top: var(--app-safe-area-top)',
     )
     expect(css).toMatch(
       /\.app-shell--keyboard-open\s*\{[^}]*--app-content-safe-area-top:\s*0px/s,
-    )
-    expect(css).toMatch(
-      /@media \(display-mode:\s*standalone\)[\s\S]*?\.app-shell::before\s*\{[^}]*height:\s*var\(--app-safe-area-top\)[^}]*background:\s*var\(--bg\)[^}]*pointer-events:\s*none/s,
-    )
-    expect(css).toMatch(
-      /\.app-shell--keyboard-open::before\s*\{[^}]*display:\s*none/s,
     )
     expect(css).toMatch(
       /top:\s*max\(\s*var\(--visual-viewport-top,\s*0px\),\s*var\(--app-safe-area-top\)/s,

@@ -19,14 +19,6 @@ export const machineAccessTestManifest = {
     },
     rationale: 'Starts Copilot-shaped processes in tmux and discovers them through the host process table.',
   },
-  'server/conversation-recovery.test.ts': {
-    access: {
-      'real-tmux': 'direct',
-      'copilot-process': 'indirect',
-      'process-discovery': 'direct',
-    },
-    rationale: 'Starts AgentService with production discovery defaults, which query host processes and live tmux panes while recovering persisted conversations.',
-  },
   'server/terminal-form-viewport.test.ts': {
     access: {
       'real-tmux': 'direct',

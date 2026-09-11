@@ -5,12 +5,8 @@ import { EventEmitter } from 'node:events'
 import {
   deliveryUncertaintyFromError,
   SubmissionError,
-  terminalDraftConflictFromError,
 } from '../shared/submission-error.js'
-import {
-  hasActiveBackgroundTasks,
-  hasRunningBackgroundAgent,
-} from '../shared/background-tasks.js'
+import { hasRunningBackgroundAgent } from '../shared/background-tasks.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
   CopilotClient,
@@ -3362,7 +3358,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               { statusCode: 409 },
             )
           }
-          await this.assertRecoveryBackgroundTasksSettled(id)
           return this.clearSerialized(id, {
             ...observed,
             isCurrent: () => ownership.isCurrent() &&
@@ -3403,18 +3398,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       stored.pendingPermission?.stale === true ||
       stored.pendingUserInput?.stale === true
     if (
-      recoveryReason &&
-      hasActiveBackgroundTasks(this.backgroundTaskTracker.get(id))
-    ) {
-      throw Object.assign(new Error(
-        'Wait for queued or running background tasks to finish before recovering the conversation',
-      ), { statusCode: 409 })
-    }
-    if (
       stored.status === 'running' ||
-      stored.status === 'waiting' ||
-      ((stored.pendingPermission || stored.pendingUserInput) &&
-        !(recoveryReason && stalePending)) ||
+      (stored.status === 'waiting' && !(recoveryReason && stalePending)) ||
+      (!recoveryReason && (stored.pendingPermission || stored.pendingUserInput)) ||
       this.drainingSessions.has(id) || this.activePrompts.has(id) ||
       (this.dispatchingSessions.get(id) || 0) > 0 ||
       !this.store.isCurrentTranscript(id, observed)
@@ -3766,17 +3752,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     rawContent: string,
     enqueue = false,
     acknowledgedFailure?: string,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     try {
       return await this.admissions.run(sessionId, async () =>
-        this.publicSession(await this.sendAdmittedMessage(
-          sessionId,
-          rawContent,
-          enqueue,
-          acknowledgedFailure,
-          replaceTerminalDraft,
-        )))
+        this.publicSession(await this.sendAdmittedMessage(sessionId, rawContent, enqueue, acknowledgedFailure)))
     } finally {
       this.wakeDeferredQueue(sessionId)
     }
@@ -3787,7 +3766,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     rawContent: string,
     enqueue: boolean,
     acknowledgedFailure?: string,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     const content = rawContent.trim()
     if (this.stopped) throw queueConflict('The session service is stopping.')
@@ -3796,12 +3774,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (!content) {
       throw new Error('Message cannot be empty')
-    }
-    if (replaceTerminalDraft && enqueue) {
-      throw Object.assign(
-        new Error('Terminal draft replacement is only available for immediate sends.'),
-        { statusCode: 409, uncertainDelivery: false },
-      )
     }
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
@@ -3849,7 +3821,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           enqueue,
           claim?.failedAt,
           delivery,
-          replaceTerminalDraft,
         )
       } finally {
         releaseDispatch()
@@ -4037,11 +4008,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sessionId: this.recoverySessionId(sessionId),
       ...(claim ? { failedAt: claim.failedAt } : {}),
       accepted,
-    }, {
-      cause: error,
-      terminalDraftConflict: terminalDraftConflictFromError(error),
-      uncertainDelivery: accepted || isUncertainDelivery(error),
-    })
+    }, { cause: error, uncertainDelivery: accepted || isUncertainDelivery(error) })
   }
 
   private async settleRecoveryResend<T extends SessionDetail | undefined>(
@@ -4152,7 +4119,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // other with a crash possible in between.
     answers?: string,
     delivery?: DeliveryBoundary,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
@@ -4187,7 +4153,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           terminalBacked,
           true,
           delivery,
-          replaceTerminalDraft,
         )
       })
     }
@@ -4200,7 +4165,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       terminalBacked,
       false,
       delivery,
-      replaceTerminalDraft,
     )
   }
 
@@ -4212,7 +4176,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     terminalBacked: boolean,
     startupLocked = false,
     delivery?: DeliveryBoundary,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     if (!enqueue) {
       if (this.drainingSessions.has(sessionId)) {
@@ -4222,12 +4185,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.stopped || this.deletingSessions.has(sessionId)) {
       throw queueConflict('The session is no longer available.')
-    }
-    if (replaceTerminalDraft && !terminalBacked) {
-      throw Object.assign(
-        new Error('Terminal draft replacement is only available for tmux-backed Copilot sessions.'),
-        { statusCode: 409, uncertainDelivery: false },
-      )
     }
     // Detection is awaited, and suspending can finish while it is: the guard
     // above spoke for a session that was still running.
@@ -4263,7 +4220,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             terminalBacked,
             true,
             delivery,
-            replaceTerminalDraft,
           ),
         )
       }
@@ -4286,7 +4242,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             terminalBacked,
             true,
             delivery,
-            replaceTerminalDraft,
           ),
         )
       }
@@ -4304,7 +4259,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               terminalBacked,
               true,
               delivery,
-              replaceTerminalDraft,
             ),
           )
         }
@@ -4425,13 +4379,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         content,
         nativeEnqueue,
         !nativeEnqueue && terminalWorking
-          ? {
-              allowDuringAgentExecution: true,
-              ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
-            }
-          : replaceTerminalDraft
-            ? { replaceExistingInput: true }
-            : undefined,
+          ? { allowDuringAgentExecution: true }
+          : undefined,
       )
     ) {
       // The terminal has it. Anything that fails from here leaves a send that
@@ -5471,17 +5420,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     rawCommand: string,
     enqueue = false,
     acknowledgedFailure?: string,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     try {
       return await this.admissions.run(sessionId, async () =>
-        this.publicSession(await this.executeAdmittedCommand(
-          sessionId,
-          rawCommand,
-          enqueue,
-          acknowledgedFailure,
-          replaceTerminalDraft,
-        )))
+        this.publicSession(await this.executeAdmittedCommand(sessionId, rawCommand, enqueue, acknowledgedFailure)))
     } finally {
       this.wakeDeferredQueue(sessionId)
     }
@@ -5492,7 +5434,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     rawCommand: string,
     enqueue: boolean,
     acknowledgedFailure?: string,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     if (this.stopped) throw queueConflict('The session service is stopping.')
     this.queuedDispatches.assertAvailable(sessionId)
@@ -5503,22 +5444,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!command.slice(1).split(/\s+/, 1)[0]) {
       throw new Error('Slash command name is required')
     }
-    if (replaceTerminalDraft && enqueue) {
-      throw Object.assign(
-        new Error('Terminal draft replacement is only available for immediate commands.'),
-        { statusCode: 409, uncertainDelivery: false },
-      )
-    }
     await this.store.readAfterWrites(sessionId)
-    if (
-      replaceTerminalDraft &&
-      !(await this.terminalController.has(sessionId))
-    ) {
-      throw Object.assign(
-        new Error('Terminal draft replacement is only available for tmux-backed Copilot sessions.'),
-        { statusCode: 409, uncertainDelivery: false },
-      )
-    }
     this.assertRecoverySeedSettled(sessionId)
     const claim = await this.claimFailure(sessionId, command, acknowledgedFailure)
     const delivery: DeliveryBoundary = claim ?? { accepted: false }
@@ -5531,7 +5457,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         claim?.failedAt,
         false,
         delivery,
-        replaceTerminalDraft,
       )
     } catch (error) {
       if (delivery.accepted) {
@@ -5556,7 +5481,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // the queue would be refused and put back for ever.
     fromQueue = false,
     delivery?: DeliveryBoundary | QueuedDelivery,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
 
     if (!command.startsWith('/')) {
@@ -5628,7 +5552,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             answers,
             fromQueue,
             delivery,
-            replaceTerminalDraft,
           )
         })
       }
@@ -5640,7 +5563,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         answers,
         fromQueue,
         delivery,
-        replaceTerminalDraft,
       )
     } finally {
       releaseDispatch()
@@ -5721,7 +5643,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers?: string,
     fromQueue = false,
     delivery?: DeliveryBoundary | QueuedDelivery,
-    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     const queuedDelivery =
       delivery instanceof QueuedDelivery ? delivery : undefined
@@ -5842,13 +5763,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         canonicalCommand,
         nativeEnqueue,
         commandInfo?.allowDuringAgentExecution
-          ? {
-              allowDuringAgentExecution: true,
-              ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
-            }
-          : replaceTerminalDraft
-            ? { replaceExistingInput: true }
-            : undefined,
+          ? { allowDuringAgentExecution: true }
+          : undefined,
       )
       if (!terminalSent && !catalog.session) queuedDelivery?.refuse()
     } catch (error) {
@@ -8790,31 +8706,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private assertRecoverySeedReplacementAvailable(sessionId: string): void {
-    const seed = this.store.recoverySeed(sessionId)
-    if (
-      this.recoverySeedDispatches.has(sessionId) ||
-      (seed && seed.state !== 'failed')
-    ) {
-      throw queueConflict('The recovery brief has not settled. Wait before replacing the conversation.')
-    }
-  }
-
-  private async assertRecoveryBackgroundTasksSettled(
-    sessionId: string,
-  ): Promise<void> {
-    let snapshot: BackgroundTaskSnapshot
-    try {
-      snapshot = await this.listBackgroundTasks(sessionId)
-    } catch (error) {
-      throw Object.assign(new Error(
-        'Background tasks could not be checked. Retry before recovering the conversation.',
-        { cause: error },
-      ), { statusCode: 409 })
-    }
-    if (hasActiveBackgroundTasks(snapshot)) {
-      throw Object.assign(new Error(
-        'Wait for queued or running background tasks to finish before recovering the conversation',
-      ), { statusCode: 409 })
+    if (this.recoverySeedDispatches.has(sessionId)) {
+      throw queueConflict('The recovery brief is still being dispatched. Wait for it to settle before replacing the conversation.')
     }
   }
 

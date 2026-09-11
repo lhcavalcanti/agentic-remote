@@ -6,9 +6,8 @@ const CACHE_NAME = `agentic-remote-shell-${VERSION}`
 const SHELL = [
   '/',
   '/manifest.webmanifest',
-  '/icons/relay-icon-192.png',
-  '/icons/relay-icon-512.png',
-  '/icons/relay-icon-1024.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
 ]
 
 self.addEventListener('install', (event) => {

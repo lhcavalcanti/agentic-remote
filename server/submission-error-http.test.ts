@@ -64,35 +64,4 @@ describe('submission error HTTP contract', () => {
       await runtime.app.close()
     }
   })
-
-  it('serializes a typed terminal draft conflict', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'submission-http-'))
-    directories.push(directory)
-    const runtime = await buildApp({
-      dataDirectory: directory,
-      logger: false,
-      role: 'node',
-    })
-    runtime.app.get('/synthetic-terminal-draft-conflict', async () => {
-      throw Object.assign(new Error('Terminal text is blocking this message'), {
-        statusCode: 409,
-        terminalDraftConflict: true,
-        uncertainDelivery: false,
-      })
-    })
-
-    try {
-      const response = await runtime.app.inject(
-        '/synthetic-terminal-draft-conflict',
-      )
-      expect(response.statusCode).toBe(409)
-      expect(response.json()).toEqual({
-        error: 'Terminal text is blocking this message',
-        terminalDraftConflict: true,
-        uncertainDelivery: false,
-      })
-    } finally {
-      await runtime.app.close()
-    }
-  })
 })

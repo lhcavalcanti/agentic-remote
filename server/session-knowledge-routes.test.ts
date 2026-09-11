@@ -123,10 +123,6 @@ async function fixture(options: {
     stop: vi.fn(async () => undefined),
     listSessions: vi.fn((): SessionDetail[] => manager.sessions.filter((entry) => entry.computerId === 'hub')),
     listHistory: vi.fn((): SessionDetail[] => manager.history.filter((entry) => entry.computerId === 'hub')),
-    listKnowledge: vi.fn(async (_root: string, requestedPath = '.') => ({
-      path: requestedPath,
-      entries: [],
-    })),
     getSession: vi.fn(),
     openSession: vi.fn(async () => { throw new Error('Must not hydrate or resume an agent') }),
     activateSession: vi.fn(),
@@ -174,16 +170,10 @@ async function fixture(options: {
     `/api/computers/${encodeURIComponent(computerId)}/sessions/${encodeURIComponent(sessionId)}/knowledge-root`
   const get = (computerId = 'hub', sessionId = 'one') =>
     runtime.app.inject({ url: route(computerId, sessionId), headers: trusted })
-  const put = (
-    rootId: string | null,
-    expectedRevision = 0,
-    computerId = 'hub',
-    sessionId = 'one',
-    rootPath?: string,
-  ) =>
+  const put = (rootId: string | null, expectedRevision = 0, computerId = 'hub', sessionId = 'one') =>
     runtime.app.inject({
       method: 'PUT', url: route(computerId, sessionId), headers: trusted,
-      payload: { rootId, expectedRevision, ...(rootPath ? { rootPath } : {}) },
+      payload: { rootId, expectedRevision },
     })
   const updates: SessionKnowledgeBinding[] = []
   const errors: Extract<HubEvent, { type: 'error' }>[] = []
@@ -243,14 +233,7 @@ describe('session Knowledge routes', () => {
     expect(response.statusCode).toBe(200)
     expect(response.headers['cache-control']).toBe('no-store')
     expect(response.json()).toEqual({
-      binding: {
-        computerId: 'hub',
-        sessionId: 'one',
-        rootId: null,
-        rootPath: '.',
-        revision: 0,
-        available: false,
-      },
+      binding: { computerId: 'hub', sessionId: 'one', rootId: null, revision: 0, available: false },
     })
     expect(await readdir(directory)).toEqual(before)
     expect(store.listBindings()).toEqual([])
@@ -283,9 +266,8 @@ describe('session Knowledge routes', () => {
   it('supports independent and shared choices, across computers with identical session IDs', async () => {
     const { put, get, root, secondRoot, manager } = await fixture()
     const before = structuredClone(manager.sessions)
-    expect((await put(root.id, 0, 'hub', 'one', 'projects/agentic-remote')).json().binding).toMatchObject({
-      computerId: 'hub', sessionId: 'one', rootId: root.id,
-      rootPath: 'projects/agentic-remote', root, available: true, revision: 1,
+    expect((await put(root.id)).json().binding).toMatchObject({
+      computerId: 'hub', sessionId: 'one', rootId: root.id, root, available: true, revision: 1,
     })
     expect((await put(root.id, 0, 'hub', 'two')).statusCode).toBe(200)
     expect((await put(secondRoot.id, 0, 'worker', 'one')).statusCode).toBe(200)
@@ -293,11 +275,7 @@ describe('session Knowledge routes', () => {
     expect((await get('hub', 'two')).json().binding.rootId).toBe(root.id)
     expect((await get('worker', 'one')).json().binding.rootId).toBe(secondRoot.id)
     expect(manager.sessions).toEqual(before)
-    expect(manager.listKnowledge).toHaveBeenCalledWith(
-      root.computerId,
-      root.path,
-      'projects/agentic-remote',
-    )
+    expect(manager.listKnowledge).not.toHaveBeenCalled()
     expect(manager.getSession).not.toHaveBeenCalled()
   })
 
@@ -333,27 +311,10 @@ describe('session Knowledge routes', () => {
     { rootId: null, expectedRevision: -1 },
     { rootId: null, expectedRevision: 0.5 },
     { rootId: null, expectedRevision: '0' },
-    { rootId: null, rootPath: 'projects', expectedRevision: 0 },
     { rootId: null, expectedRevision: 0, cwd: '/must-not-change' },
   ])('rejects malformed or unrelated writes %#', async (payload) => {
     const { app, route, store } = await fixture()
     const response = await app.inject({ method: 'PUT', url: route(), headers: trusted, payload })
-    expect(response.statusCode).toBe(400)
-    expect(store.listBindings()).toEqual([])
-  })
-
-  it('rejects a nested path that escapes an existing root', async () => {
-    const { app, route, root, store } = await fixture()
-    const response = await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        rootId: root.id,
-        rootPath: '../private',
-        expectedRevision: 0,
-      },
-    })
     expect(response.statusCode).toBe(400)
     expect(store.listBindings()).toEqual([])
   })
@@ -800,20 +761,11 @@ describe('session Knowledge routes', () => {
   })
 
   it('preserves a source after failed legacy-clear persistence and retries from its known mapping', async () => {
-    const { app, manager, put, root, store, get, errors, directory } = await fixture()
+    const { app, manager, put, root, store, get, errors } = await fixture()
     await put(root.id)
     manager.legacyClear = true
     const logged = vi.spyOn(app.log, 'error')
-    // Clearing now carries several kinds of metadata at once, so the failure
-    // has to name the Knowledge file rather than the next write to finish.
-    const knowledgePath = path.join(directory, 'session-knowledge.json')
-    vi.mocked(rename).mockImplementation(async (...args) => {
-      if (String(args[1]) === knowledgePath) {
-        vi.mocked(rename).mockImplementation(disk.rename)
-        throw new Error('disk full')
-      }
-      return disk.rename(...args)
-    })
+    vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
     const response = await app.inject({
       method: 'POST', url: '/api/computers/hub/sessions/one/clear', headers: trusted,
     })

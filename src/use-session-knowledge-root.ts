@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ManagedSession, SessionKnowledgeBinding } from '../shared/contracts'
-import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path'
 import { getSessionKnowledgeRoot, SessionKnowledgeRequestError, updateSessionKnowledgeRoot } from './api'
 import type { KnowledgePosition } from './knowledge-position'
 import { sessionKey } from './session-presentation'
@@ -17,15 +16,9 @@ export function knowledgePositionForBinding(
 ): KnowledgePosition | undefined {
   if (!binding) return remembered
   if (!binding.rootId) return binding.revision === 0 ? remembered : undefined
-  const rootPath = normalizeKnowledgeRelativePath(binding.rootPath)
-  return remembered?.rootId === binding.rootId &&
-    normalizeKnowledgeRelativePath(remembered.rootPath) === rootPath
+  return remembered?.rootId === binding.rootId
     ? remembered
-    : {
-        rootId: binding.rootId,
-        ...(rootPath === '.' ? {} : { rootPath }),
-        path: '.',
-      }
+    : { rootId: binding.rootId, path: '.' }
 }
 
 export function useSessionKnowledgeRoot(
@@ -120,11 +113,7 @@ export function useSessionKnowledgeRoot(
     return () => { generation.current += 1 }
   }, [accept, computerId, enabled, key, refreshVersion, sessionId])
 
-  const saveRoot = useCallback(async (
-    rootId: string | null,
-    expectedRevision?: number,
-    rootPath = '.',
-  ) => {
+  const saveRoot = useCallback(async (rootId: string | null, expectedRevision?: number) => {
     const previous = key ? bindingsRef.current.get(key) : undefined
     if (!key || !computerId || !sessionId || !previous) {
       throw new Error('Wait for this session\'s saved root to load before changing it.')
@@ -138,11 +127,7 @@ export function useSessionKnowledgeRoot(
     setSavingKey(key)
     try {
       const incoming = await updateSessionKnowledgeRoot(computerId, sessionId, {
-        rootId,
-        expectedRevision: expectedRevision ?? previous.revision,
-        ...(rootId && normalizeKnowledgeRelativePath(rootPath) !== '.'
-          ? { rootPath: normalizeKnowledgeRelativePath(rootPath) }
-          : {}),
+        rootId, expectedRevision: expectedRevision ?? previous.revision,
       })
       if (bindingKey(incoming) !== key) {
         throw new Error('The saved Knowledge root belongs to a different session.')

@@ -323,11 +323,6 @@ describe('conversation recovery', () => {
       .toMatchObject({ statusCode: 409, message: expect.stringContaining('recovery brief') })
     await expect(service.clearConversation(recovered.id)).rejects
       .toMatchObject({ statusCode: 409 })
-    await expect(service.recoverConversation(recovered.id, 'manual')).rejects
-      .toMatchObject({
-        statusCode: 409,
-        message: expect.stringContaining('recovery brief has not settled'),
-      })
     const queued = await service.sendMessage(recovered.id, 'Added after recovery', true)
     expect(queued.queuedPrompts?.map((prompt) => prompt.content)).toEqual([
       'Queued after seed', 'Added after recovery',
@@ -337,84 +332,6 @@ describe('conversation recovery', () => {
     await service['recoverySeedDispatches'].get(recovered.id)
     expect(store.recoverySeed(recovered.id)).toBeUndefined()
     expect(store.get(recovered.id)?.queuedPrompts).toHaveLength(2)
-  })
-
-  it.each(['queued', 'running'] as const)(
-    'refuses recovery while a background task is %s',
-    async (status) => {
-      const { store, cleanup } = await recoveryFixture('sdk')
-      const service = new AgentService(
-        store,
-        client(async (config) => sdkSession(config.sessionId!, [])),
-      )
-      cleanup.service = service
-      vi.spyOn(service, 'listBackgroundTasks').mockResolvedValue({
-        tasks: [{
-          id: 'background-task',
-          type: 'shell',
-          description: 'Owned work',
-          status,
-          startedAt: '2026-09-16T20:00:00.000Z',
-          executionMode: 'background',
-          canCancel: false,
-        }],
-        runningCount: status === 'running' ? 1 : 0,
-        supported: true,
-      })
-
-      await expect(service.recoverConversation('broken', 'manual')).rejects
-        .toMatchObject({
-          statusCode: 409,
-          message: expect.stringContaining('background tasks'),
-        })
-      expect(store.get('broken')).toBeDefined()
-    },
-  )
-
-  it.each([
-    {
-      state: 'running',
-      update: (session: SessionDetail) => {
-        session.status = 'running'
-      },
-    },
-    {
-      state: 'waiting on stale input',
-      update: (session: SessionDetail) => {
-        session.status = 'waiting'
-        session.pendingUserInput = {
-          requestId: 'stale-input',
-          question: 'Expired question',
-          choices: [],
-          allowFreeform: true,
-          stale: true,
-        }
-      },
-    },
-    {
-      state: 'idle with live input',
-      update: (session: SessionDetail) => {
-        session.status = 'idle'
-        session.pendingUserInput = {
-          requestId: 'live-input',
-          question: 'Current question',
-          choices: [],
-          allowFreeform: true,
-        }
-      },
-    },
-  ])('refuses recovery while the session is $state', async ({ update }) => {
-    const { store, cleanup } = await recoveryFixture('sdk')
-    await store.update('broken', update)
-    const service = new AgentService(
-      store,
-      client(async (config) => sdkSession(config.sessionId!, [])),
-    )
-    cleanup.service = service
-
-    await expect(service.recoverConversation('broken', 'manual')).rejects
-      .toMatchObject({ statusCode: 409 })
-    expect(store.get('broken')).toBeDefined()
   })
 
   it('replaces and seeds an SDK conversation before preserving its existing queue', async () => {

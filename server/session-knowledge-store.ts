@@ -8,7 +8,6 @@ import type {
   SessionKnowledgeBinding,
   UpdateSessionKnowledgeRootInput,
 } from '../shared/contracts.js'
-import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path.js'
 
 const rootSchema = z.object({
   id: z.string().min(1),
@@ -45,30 +44,8 @@ const recoverySchema = z.object({
   previous: z.string().nullable(),
 }).strict()
 
-const pathRecordSchema = z.object({
-  computerId: z.string().min(1),
-  sessionId: z.string().min(1),
-  rootId: z.string().min(1),
-  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  rootPath: z.string().transform((value) =>
-    normalizeKnowledgeRelativePath(value),
-  ).refine((value) => value !== '.', 'A nested path record cannot name the root'),
-}).strict()
-const pathStateSchema = z.object({
-  version: z.literal(1),
-  paths: z.array(pathRecordSchema),
-}).strict().refine(
-  ({ paths }) =>
-    new Set(paths.map(pathRecordKey)).size === paths.length,
-  'A binding revision cannot have more than one nested Knowledge path',
-)
-
-type PersistedBinding = z.infer<typeof bindingSchema>
-type PersistedState = z.infer<typeof stateSchema>
-type PathRecord = z.infer<typeof pathRecordSchema>
-type PathState = z.infer<typeof pathStateSchema>
-type StoredBinding = PersistedBinding & { rootPath: string }
-type State = { version: 1; bindings: StoredBinding[] }
+type StoredBinding = z.infer<typeof bindingSchema>
+type State = z.infer<typeof stateSchema>
 type Identity = Pick<SessionKnowledgeBinding, 'computerId' | 'sessionId'>
 
 interface RootCatalog {
@@ -81,58 +58,6 @@ interface SessionKnowledgeEvents {
 
 function bindingKey({ computerId, sessionId }: Identity): string {
   return JSON.stringify([computerId, sessionId])
-}
-
-function pathRecordKey(
-  { computerId, sessionId, rootId, revision }: PathRecord,
-): string {
-  return JSON.stringify([computerId, sessionId, rootId, revision])
-}
-
-function persistedState(state: State): PersistedState {
-  return {
-    version: 1,
-    bindings: state.bindings.map(({ rootPath: _rootPath, ...binding }) =>
-      binding),
-  }
-}
-
-function stateWithPaths(
-  state: PersistedState,
-  paths: PathState,
-): State {
-  return {
-    version: 1,
-    bindings: state.bindings.map((binding) => ({
-      ...binding,
-      rootPath:
-        binding.rootId === null
-          ? '.'
-          : paths.paths.find(
-              (entry) =>
-                entry.computerId === binding.computerId &&
-                entry.sessionId === binding.sessionId &&
-                entry.rootId === binding.rootId &&
-                entry.revision === binding.revision,
-            )?.rootPath || '.',
-    })),
-  }
-}
-
-function pathStateFor(current: State, next: State): PathState {
-  const records = new Map<string, PathRecord>()
-  for (const binding of [...current.bindings, ...next.bindings]) {
-    if (binding.rootId === null || binding.rootPath === '.') continue
-    const record: PathRecord = {
-      computerId: binding.computerId,
-      sessionId: binding.sessionId,
-      rootId: binding.rootId,
-      revision: binding.revision,
-      rootPath: binding.rootPath,
-    }
-    records.set(pathRecordKey(record), record)
-  }
-  return { version: 1, paths: [...records.values()] }
 }
 
 export class SessionKnowledgeConflictError extends Error {
@@ -174,9 +99,7 @@ export class SessionKnowledgeRecoveryError extends Error {
 export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> {
   private readonly statePath: string
   private readonly recoveryPath: string
-  private readonly pathStatePath: string
   private state: State = { version: 1, bindings: [] }
-  private pathState: PathState = { version: 1, paths: [] }
   private persisted: string | null = null
   private recovery?: z.infer<typeof recoverySchema>
   private unavailable?: SessionKnowledgeRecoveryError
@@ -190,7 +113,6 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     super()
     this.statePath = path.join(directory, 'session-knowledge.json')
     this.recoveryPath = `${this.statePath}.recovery`
-    this.pathStatePath = path.join(directory, 'session-knowledge-paths.json')
   }
 
   async initialize(): Promise<void> {
@@ -207,21 +129,8 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     if (this.recovery) await this.restore()
     try {
       const contents = await readFile(this.statePath, 'utf8')
-      const state = stateSchema.parse(JSON.parse(contents))
+      this.state = stateSchema.parse(JSON.parse(contents))
       this.persisted = contents
-      try {
-        this.pathState = pathStateSchema.parse(
-          JSON.parse(await readFile(this.pathStatePath, 'utf8')),
-        )
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw new Error(
-            'Cannot load session Knowledge path metadata; the existing files were not changed.',
-            { cause: error },
-          )
-        }
-      }
-      this.state = stateWithPaths(state, this.pathState)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw new Error('Cannot load session Knowledge metadata; the existing file was not changed.', {
@@ -261,21 +170,6 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       if (current.revision === Number.MAX_SAFE_INTEGER) {
         throw new SessionKnowledgeReferenceError('The Knowledge binding revision cannot advance.', 409)
       }
-      let rootPath: string
-      try {
-        rootPath = normalizeKnowledgeRelativePath(input.rootPath)
-      } catch {
-        throw new SessionKnowledgeReferenceError(
-          'Knowledge root path must stay inside the saved folder.',
-          400,
-        )
-      }
-      if (input.rootId === null && rootPath !== '.') {
-        throw new SessionKnowledgeReferenceError(
-          'An unlinked session cannot retain a nested Knowledge path.',
-          400,
-        )
-      }
       const root = input.rootId === null ? undefined : this.catalog.getRoot(input.rootId)
       if (input.rootId !== null && !root) {
         throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
@@ -283,7 +177,6 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       const binding: StoredBinding = {
         ...identity,
         rootId: input.rootId,
-        rootPath,
         revision: current.revision + 1,
         ...(root ? { root: structuredClone(root) } : {}),
       }
@@ -389,13 +282,7 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
           ...structuredClone(stored),
           available: stored.rootId !== null && this.catalog.getRoot(stored.rootId) !== undefined,
         }
-      : {
-          ...identity,
-          rootId: null,
-          rootPath: '.',
-          revision: 0,
-          available: false,
-        }
+      : { ...identity, rootId: null, revision: 0, available: false }
     if (binding.root) Object.freeze(binding.root)
     return Object.freeze(binding)
   }
@@ -415,10 +302,8 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       const next = structuredClone(this.state)
       const mutation = mutate(next)
       if (mutation.changed) {
-        const paths = pathStateFor(this.state, next)
-        await this.persist(next, paths, validate)
+        await this.persist(next, validate)
         this.state = next
-        this.pathState = paths
         // Persistence already checked the guard after rename. A later
         // retirement can suppress delivery, but cannot reject that commit.
         let current = true
@@ -439,18 +324,12 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     return task
   }
 
-  private async persist(
-    state: State,
-    paths: PathState,
-    validate?: () => void,
-  ): Promise<void> {
+  private async persist(state: State, validate?: () => void): Promise<void> {
     const pending = `${this.statePath}.${randomUUID()}.pending`
     const pendingRecovery = `${this.recoveryPath}.${randomUUID()}.pending`
-    const contents = JSON.stringify(persistedState(state))
+    const contents = JSON.stringify(state)
     try {
       await mkdir(this.directory, { recursive: true, mode: 0o700 })
-      await this.persistPaths(paths)
-      validate?.()
       await writeFile(pending, contents, { mode: 0o600, flag: 'wx' })
       validate?.()
       const recovery: z.infer<typeof recoverySchema> = { version: 1, previous: this.persisted }
@@ -481,24 +360,6 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       }
       if (error instanceof SessionKnowledgeReferenceError) throw error
       throw new SessionKnowledgePersistenceError(error)
-    }
-  }
-
-  private async persistPaths(paths: PathState): Promise<void> {
-    if (paths.paths.length === 0) {
-      await rm(this.pathStatePath, { force: true })
-      return
-    }
-    const pending = `${this.pathStatePath}.${randomUUID()}.pending`
-    try {
-      await writeFile(pending, JSON.stringify(paths), {
-        mode: 0o600,
-        flag: 'wx',
-      })
-      await rename(pending, this.pathStatePath)
-    } catch (error) {
-      await rm(pending, { force: true }).catch(() => undefined)
-      throw error
     }
   }
 

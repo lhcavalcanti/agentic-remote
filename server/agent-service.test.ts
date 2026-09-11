@@ -5547,20 +5547,6 @@ describe('AgentService deletion', () => {
       '/usage',
       true,
     )
-    await service.sendMessage(
-      client.session.sessionId,
-      'replace terminal draft',
-      false,
-      undefined,
-      true,
-    )
-    await service.executeCommand(
-      client.session.sessionId,
-      '/usage',
-      false,
-      undefined,
-      true,
-    )
 
     expect(terminal.send).toHaveBeenNthCalledWith(
       1,
@@ -5581,23 +5567,6 @@ describe('AgentService deletion', () => {
       '/usage',
       false,
       { allowDuringAgentExecution: true },
-    )
-    expect(terminal.send).toHaveBeenNthCalledWith(
-      4,
-      client.session.sessionId,
-      'replace terminal draft',
-      false,
-      { replaceExistingInput: true },
-    )
-    expect(terminal.send).toHaveBeenNthCalledWith(
-      5,
-      client.session.sessionId,
-      '/usage',
-      false,
-      {
-        allowDuringAgentExecution: true,
-        replaceExistingInput: true,
-      },
     )
     expect(sent).toMatchObject({
       activity: 'Sent to terminal',

@@ -342,8 +342,9 @@ from a separate checkout/port and run the same capture with `--phase before`.
 
 The professional revision adds walkthroughs for session ordering and document
 reading, including keyboard rearrangement, the outline, Source mode, and code
-copying. Existing browser-local custom order and reading positions remain the
-underlying state rather than being recreated for the visuals.
+copying. The custom session order is hub-owned and shared by every browser on
+that hub; reading positions remain browser-local. Both remain the underlying
+state rather than being recreated for the visuals.
 
 ## Review flows
 

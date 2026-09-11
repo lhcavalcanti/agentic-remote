@@ -156,6 +156,7 @@ import type {
   ManagedSession,
   KnowledgeRoot,
   SessionKnowledgeBinding,
+  SessionOrderSnapshot,
   QueuedPrompt,
   UserInputReplyInput,
   RuntimeOptions,
@@ -215,6 +216,9 @@ import {
   restartSession,
   resumeSession,
   suspendSession,
+  fetchSessionOrder,
+  saveSessionOrderLane,
+  bootstrapSessionOrder,
   replyPermission,
   replyUserInput,
   sendMessage,
@@ -6805,6 +6809,25 @@ function App() {
   const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>(
     () => readStoredOrder('agentic-remote:session-order', {}),
   )
+  // The hub owns the custom order. Until its first snapshot arrives the value
+  // above is only what this browser last saw, so it is offered as a bootstrap
+  // rather than written back. -1 means "nothing acknowledged yet", which keeps
+  // revision 0 (an empty hub) from looking like a snapshot already applied.
+  const [sessionOrderRevision, setSessionOrderRevision] = useState(-1)
+  const sessionOrderRef = useRef(sessionOrder)
+  sessionOrderRef.current = sessionOrder
+  const sessionOrderRevisionRef = useRef(sessionOrderRevision)
+  sessionOrderRevisionRef.current = sessionOrderRevision
+  const applySessionOrderSnapshot = useCallback(
+    (snapshot: SessionOrderSnapshot) => {
+      // An older revision is a late delivery, not a correction.
+      if (snapshot.revision < sessionOrderRevisionRef.current) return
+      sessionOrderRevisionRef.current = snapshot.revision
+      setSessionOrderRevision(snapshot.revision)
+      setSessionOrder(snapshot.order)
+    },
+    [],
+  )
   const [sessionSort, setSessionSort] = useState<SessionSort>(() =>
     sessionSortFrom(readStoredOrder<unknown>('agentic-remote:session-sort', 'custom')),
   )
@@ -8464,32 +8487,23 @@ function App() {
     if (computers.length === 0) {
       return
     }
+    // Only append what this browser can see. Pruning belongs to the hub, which
+    // is told when a session is actually deleted: a listing that is filtered,
+    // still loading, or missing an offline computer's sessions is not evidence
+    // that anything was removed, and dropping keys here would delete another
+    // device's arrangement.
     setSessionOrder((current) => {
       const next = { ...current }
       let changed = false
-      const computerIds = new Set(computers.map((computer) => computer.id))
-      for (const computerId of Object.keys(next)) {
-        if (!computerIds.has(computerId)) {
-          delete next[computerId]
-          changed = true
-        }
-      }
       for (const computer of computers) {
-        const keys = sessions
+        const existing = next[computer.id] || []
+        const missing = sessions
           .filter((session) => session.computerId === computer.id)
           .map(sessionKey)
-        const existing = next[computer.id] || []
-        const nextOrder = [
-          ...existing.filter((key) => keys.includes(key)),
-          ...keys.filter((key) => !existing.includes(key)),
-        ]
-        if (
-          nextOrder.length !== existing.length ||
-          nextOrder.some((key, index) => key !== existing[index])
-        ) {
-          next[computer.id] = nextOrder
-          changed = true
-        }
+          .filter((key) => !existing.includes(key))
+        if (missing.length === 0) continue
+        next[computer.id] = [...existing, ...missing]
+        changed = true
       }
       return changed ? next : current
     })
@@ -8503,13 +8517,33 @@ function App() {
     }
   }, [computerOrder])
 
+  // The hub is the source of truth for the session order, so nothing writes
+  // agentic-remote:session-order any more. The existing value is read once at
+  // startup and offered to an empty hub as a bootstrap.
   useEffect(() => {
-    try {
-      localStorage.setItem('agentic-remote:session-order', JSON.stringify(sessionOrder))
-    } catch {
-      // Automatic snapshot reconciliation remains usable without storage.
+    let cancelled = false
+    void (async () => {
+      try {
+        let snapshot = await fetchSessionOrder()
+        if (snapshot.revision === 0) {
+          const legacy = readStoredOrder<Record<string, string[]>>(
+            'agentic-remote:session-order',
+            {},
+          )
+          if (Object.keys(legacy).length > 0) {
+            snapshot = await bootstrapSessionOrder(legacy)
+          }
+        }
+        if (!cancelled) applySessionOrderSnapshot(snapshot)
+      } catch {
+        // Rendering falls back to the order this browser already held. The
+        // next committed change or reconnect replaces it.
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-  }, [sessionOrder])
+  }, [applySessionOrderSnapshot])
 
   useEffect(() => {
     writeStored(
@@ -9327,6 +9361,10 @@ function App() {
         const event = JSON.parse(message.data as string) as HubEvent
         if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
+        } else if (event.type === 'session.order.updated') {
+          // Preference state, not session lifecycle: it must not advance the
+          // transcript sequence the snapshot reconciliation depends on.
+          applySessionOrderSnapshot(event.order)
         } else if (event.type === 'session.upserted') {
           setResourcesView((view) => view?.ownerKey === sessionKey(event.session) &&
             view.signature !== sessionResourceOwner(event.session) ? undefined : view)
@@ -13411,17 +13449,26 @@ function App() {
     const from = order.indexOf(activeKey)
     const to = order.indexOf(overKey)
     if (from < 0 || to < 0) return
-    const next = {
-      ...sessionOrder,
-      [activeSession.computerId]: arrayMove(order, from, to),
-    }
-    try {
-      localStorage.setItem('agentic-remote:session-order', JSON.stringify(next))
-      setSessionOrder(next)
-    } catch (caught) {
-      setSidebarOpen(false)
-      setError(`Could not save the session order: ${caught instanceof Error ? caught.message : String(caught)}`)
-    }
+    const computerId = activeSession.computerId
+    const lane = arrayMove(order, from, to)
+    // Move it now so the drag lands where it was dropped, but keep what the
+    // hub last acknowledged: if the write fails the list has to go back, not
+    // sit in a position no other device will ever agree with.
+    const acknowledged = sessionOrderRef.current
+    setSessionOrder({ ...acknowledged, [computerId]: lane })
+    void (async () => {
+      try {
+        applySessionOrderSnapshot(await saveSessionOrderLane(computerId, lane))
+      } catch (caught) {
+        setSessionOrder(acknowledged)
+        setSidebarOpen(false)
+        setError(
+          `Could not save the session order: ${
+            caught instanceof Error ? caught.message : String(caught)
+          }`,
+        )
+      }
+    })()
   }
 
   function changeSessionSort(sort: SessionSort) {

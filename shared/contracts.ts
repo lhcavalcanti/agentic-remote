@@ -435,6 +435,10 @@ export type ServerEvent =
 export type HubEvent =
   | { type: 'session.upserted'; session: ManagedSession }
   | {
+      type: 'session.order.updated'
+      order: SessionOrderSnapshot
+    }
+  | {
       type: 'session.knowledge.updated'
       computerId: string
       sessionId: string
@@ -596,6 +600,21 @@ export interface WorkspaceSearchResult {
 export interface WorkspaceSearchResponse {
   results: WorkspaceSearchResult[]
   truncated: boolean
+}
+
+/**
+ * The custom session order the hub owns on behalf of every browser client
+ * connected to it.
+ *
+ * Keys are the canonical `computerId:sessionId` form, grouped into one lane per
+ * computer so a session id cannot collide across computers. `revision` is the
+ * hub's ordering authority: clients apply a snapshot only when it is at least
+ * as new as the one they already hold, which is what makes concurrent writes
+ * from several devices converge instead of fighting.
+ */
+export interface SessionOrderSnapshot {
+  revision: number
+  order: Record<string, string[]>
 }
 
 /** A folder on a computer that is browsable without any session existing. */

@@ -1,6 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type { HubEvent, WorkspaceFile, WorkspaceListing } from '../shared/contracts.js'
+import type {
+  HubEvent,
+  SessionOrderSnapshot,
+  WorkspaceFile,
+  WorkspaceListing,
+} from '../shared/contracts.js'
 import {
   joinKnowledgeRelativePath,
   normalizeKnowledgeRelativePath,
@@ -10,7 +15,16 @@ import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
+import type { SessionOrderStore } from './session-order-store.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
+
+const sessionOrderKeys = z.array(z.string().trim().min(1).max(300)).max(2000)
+
+const sessionOrderLaneSchema = z.object({ order: sessionOrderKeys })
+
+const sessionOrderBootstrapSchema = z.object({
+  order: z.record(z.string().trim().min(1).max(200), sessionOrderKeys),
+})
 
 const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
@@ -332,8 +346,34 @@ export async function registerHubRoutes(
   knowledge: KnowledgeStore,
   mutes?: SessionMuteCarrier,
   sessionKnowledge?: SessionKnowledgeStore,
+  sessionOrder?: SessionOrderStore,
 ): Promise<void> {
   const policy = originPolicy()
+  // Assigned once the socket set exists further down. Until then a committed
+  // order is still persisted and returned; only the push to other clients is
+  // skipped, which is what a client's own response already told it.
+  let publishOrder: (snapshot: SessionOrderSnapshot) => void = () => {}
+  const requireSessionOrder = (): SessionOrderStore => {
+    if (!sessionOrder) {
+      throw Object.assign(new Error('Session order is not available'), {
+        statusCode: 503,
+      })
+    }
+    return sessionOrder
+  }
+  /**
+   * Commits an order change and tells the other clients. A change that moved
+   * nothing keeps its revision, so reconnect traffic does not look like news.
+   */
+  const commitOrder = async (
+    change: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>,
+  ): Promise<SessionOrderSnapshot> => {
+    const store = requireSessionOrder()
+    const before = store.snapshot().revision
+    const snapshot = await change(store)
+    if (snapshot.revision !== before) publishOrder(snapshot)
+    return snapshot
+  }
   const readResource = resourceRequestHandler(app)
   app.addHook('onRequest', async (request, reply) => {
     if (isSessionResourceRoute(request.routeOptions.url)) reply.header('cache-control', 'no-store')
@@ -605,6 +645,32 @@ export async function registerHubRoutes(
     },
   )
 
+  app.get('/api/session-order', async () => ({
+    sessionOrder: requireSessionOrder().snapshot(),
+  }))
+
+  app.put<{ Params: { computerId: string } }>(
+    '/api/session-order/:computerId',
+    async (request) => {
+      const input = sessionOrderLaneSchema.parse(request.body)
+      return {
+        sessionOrder: await commitOrder((store) =>
+          store.replaceLane(request.params.computerId, input.order),
+        ),
+      }
+    },
+  )
+
+  // One-time seed from a browser that ordered its sessions before the hub
+  // owned the order. It is ignored once any lane exists, so the first device
+  // to arrive wins rather than the last one to reload.
+  app.post('/api/session-order/bootstrap', async (request) => {
+    const input = sessionOrderBootstrapSchema.parse(request.body)
+    return {
+      sessionOrder: await commitOrder((store) => store.bootstrap(input.order)),
+    }
+  })
+
   app.post<{ Params: { computerId: string } }>(
     '/api/computers/:computerId/sessions',
     async (request, reply) => {
@@ -696,6 +762,18 @@ export async function registerHubRoutes(
             ? mutes?.setSessionMuted(computerId, session.id, true)
             : undefined,
           `${completed}, but notification silence could not be restored. Silence notifications again for this session.`,
+        ),
+        // A node that predates the replacement link reports a clear as a plain
+        // removal, so the lineage is only in this response. Carrying it here
+        // keeps the replacement in its predecessor's slot; the store makes a
+        // second report of the same clear a no-op.
+        carryMetadata(
+          () => sessionOrder && session.id !== sessionId
+            ? commitOrder((store) =>
+                store.replaceSession(computerId, sessionId, session.id),
+              )
+            : undefined,
+          `${completed}, but its position in the custom order could not be saved. Drag it back into place.`,
         ),
       ])
       assertCurrent()
@@ -970,7 +1048,51 @@ export async function registerHubRoutes(
     }
   }
   manager.on('event', broadcast)
+  publishOrder = (snapshot) =>
+    broadcast({ type: 'session.order.updated', order: snapshot })
+  /**
+   * Keeps the saved order in step with session identity, which is the part a
+   * browser cannot be trusted to do: a client that is closed, filtered, or
+   * offline would otherwise never record the change.
+   *
+   * Changes are queued so two lifecycle events cannot interleave their
+   * read-modify-write and lose one of them.
+   */
+  let orderWork: Promise<unknown> = Promise.resolve()
+  const trackOrder = (event: HubEvent) => {
+    if (!sessionOrder) return
+    const change = (apply: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>) => {
+      orderWork = orderWork
+        .then(() => commitOrder(apply))
+        .catch((error: unknown) => {
+          // The order is a preference. Losing one update must not take the
+          // event stream down with it.
+          app.log.error({ err: error }, 'Could not update the custom session order')
+        })
+    }
+    if (event.type === 'session.upserted') {
+      change((store) =>
+        store.appendSession(event.session.computerId, event.session.id),
+      )
+      return
+    }
+    if (event.type === 'session.removed') {
+      const { computerId, sessionId, replacedBy } = event
+      change((store) =>
+        replacedBy
+          ? store.replaceSession(computerId, sessionId, replacedBy)
+          : store.removeSession(computerId, sessionId),
+      )
+      return
+    }
+    if (event.type === 'computer.removed') {
+      const { computerId } = event
+      change((store) => store.removeComputer(computerId))
+    }
+  }
+  manager.on('event', trackOrder)
   app.addHook('onClose', async () => {
     manager.off('event', broadcast)
+    manager.off('event', trackOrder)
   })
 }

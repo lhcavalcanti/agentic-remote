@@ -69,6 +69,21 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   reorder the displayed sessions within each computer without rewriting the
   saved custom order. Keyboard next/previous navigation MUST follow the
   displayed order. A failed preference save MUST surface an error.
+- The custom session order is owned by the hub, not by each browser. Every
+  browser connected to the same hub MUST render the same order without a
+  reload, and the order MUST survive a hub restart. Order changes carry a
+  monotonic revision; a client MUST ignore a revision older than the one it
+  holds. A drag MAY be applied optimistically, but a refused write MUST restore
+  the last acknowledged order and report the failure rather than claim a local
+  save. A drag MUST submit only the dragged computer's lane, and a session MUST
+  NOT move between computers. Computer-group order, sort mode, and filters
+  remain browser-local.
+- Clearing a session replaces its identity, and the replacement MUST take the
+  predecessor's exact position in the custom order. Deleting a session MUST
+  remove it, and removing a computer MUST remove its lane; a partial or offline
+  session listing MUST NOT be treated as evidence that an entry is gone. A
+  browser-local order from before the hub owned it MAY seed an empty hub once,
+  after which the hub snapshot is authoritative.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors, including queued delivery that requires confirmation. Pending actions
   MUST take precedence over passive runtime status.

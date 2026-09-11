@@ -25,6 +25,7 @@ import { ProviderSessionService } from './provider-session-service.js'
 import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
+import { SessionOrderStore } from './session-order-store.js'
 import type { SessionService } from './session-service.js'
 import {
   LocalTranscriptionService,
@@ -59,6 +60,7 @@ export interface BuildAppOptions {
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
+  sessionOrderStore?: SessionOrderStore
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -80,6 +82,7 @@ export async function buildApp(
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
+  sessionOrderStore?: SessionOrderStore
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -167,6 +170,7 @@ export async function buildApp(
   let transcriptionService: TranscriptionService | undefined
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
+  let sessionOrderStore: SessionOrderStore | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -181,11 +185,21 @@ export async function buildApp(
     sessionKnowledgeStore = options.sessionKnowledgeStore ??
       new SessionKnowledgeStore(dataDirectory, knowledgeStore)
     await sessionKnowledgeStore.initialize()
+    // Hub-only: a node serves no UI, so it has no ordering to remember.
+    sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
+    await sessionOrderStore.initialize()
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
-    await registerHubRoutes(app, manager, knowledgeStore, pushService, sessionKnowledgeStore)
+    await registerHubRoutes(
+      app,
+      manager,
+      knowledgeStore,
+      pushService,
+      sessionKnowledgeStore,
+      sessionOrderStore,
+    )
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
@@ -243,5 +257,6 @@ export async function buildApp(
     transcriptionService: transcriptionService ?? localTranscription,
     knowledgeStore,
     sessionKnowledgeStore,
+    sessionOrderStore,
   }
 }

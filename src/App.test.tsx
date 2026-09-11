@@ -7319,6 +7319,46 @@ describe('App', () => {
     })
   })
 
+  it('does not leave a reopened sheet disabled after an older historical activation fails', async () => {
+    let failActivation: ((error: Error) => void) | undefined
+    vi.mocked(activateSession).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failActivation = reject
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('tab', { name: 'Open previous' }))
+    await screen.findByRole('heading', { name: 'Open previous session' })
+    fireEvent.change(screen.getByLabelText('Previous session'), {
+      target: { value: 'computer-1:historical-session' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open session' }))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Open previous session' }),
+      ).not.toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+    )
+
+    await act(async () => {
+      failActivation?.(new Error('Historical activation failed'))
+      await Promise.resolve()
+    })
+
+    expect(
+      screen.getByRole('dialog', { name: 'Choose a folder' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled()
+    expect(screen.queryByText('Historical activation failed')).not.toBeInTheDocument()
+  })
+
   it('renames the selected session from the conversation header', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

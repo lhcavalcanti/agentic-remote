@@ -2003,7 +2003,9 @@ function NewSessionDialog({
   useEffect(() => {
     if (!open) {
       dialogGeneration.current += 1
+      return
     }
+    setSubmitting(false)
   }, [open])
 
   useEffect(() => {
@@ -2249,13 +2251,16 @@ function NewSessionDialog({
           throw new Error('Choose a previous session')
         }
 
-        onCreated(await activateSession(previous.computerId, previous.id))
+        const opened = await activateSession(previous.computerId, previous.id)
+        if (dialogGeneration.current === submittedGeneration) {
+          onCreated(opened)
+        }
       }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
       if (pendingCreation) {
         onCreationFailed(pendingCreation, message)
-      } else {
+      } else if (dialogGeneration.current === submittedGeneration) {
         setError(message)
       }
     } finally {

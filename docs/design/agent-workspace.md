@@ -51,7 +51,7 @@ separate impact confirmation rather than beside the everyday switch control.
 | State | Owner |
 | --- | --- |
 | Knowledge root catalog | Existing hub `knowledge.json`; files remain on the root's computer |
-| Root association | Additive hub `session-knowledge.json`, keyed by session computer and ID, containing shared root ID plus nested root path |
+| Root association | Existing rollback-compatible hub `session-knowledge.json` keeps the shared root ID; additive `session-knowledge-paths.json` stores matching nested paths by session/root/revision |
 | Root/folder/document position | Existing browser-local per-session state |
 | Expanded folders | Browser-local, per shared root and nested session scope |
 | Reader mode and preferred sizes | Browser workspace, unchanged by session switching |

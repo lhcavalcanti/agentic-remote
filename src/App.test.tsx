@@ -487,8 +487,26 @@ describe('App', () => {
       }
     })
     vi.mocked(listKnowledgeEntries).mockImplementation(
-      async (_rootId, path = '.') => ({ path, entries: [] }),
+      async (_rootId, path = '.') => ({
+        path,
+        entries: path === '.'
+          ? [{
+              name: 'README.md',
+              path: 'README.md',
+              kind: 'markdown',
+              size: 20,
+            }]
+          : [],
+      }),
     )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'README.md',
+      path: 'README.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: '# Scoped guide',
+    })
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
@@ -532,6 +550,14 @@ describe('App', () => {
       '.',
       'projects/agentic-remote',
     )
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'README.md' }))
+    await screen.findByRole('heading', { name: 'Scoped guide' })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Ask agent about file',
+    }))
+    expect(screen.getByLabelText('Message')).toHaveValue(
+      'Please review `/home/tester/docs/projects/agentic-remote/README.md` and help me with it.',
+    )
     expect(
       JSON.parse(
         localStorage.getItem('agentic-remote:knowledge-session-positions') ||
@@ -551,6 +577,82 @@ describe('App', () => {
     expect(within(reopened).getByRole('radio', {
       name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
     })).toBeChecked()
+  })
+
+  it('keeps expansion state separate for sessions using different paths in one root', async () => {
+    const firstKey = `${computer.id}:${session.id}`
+    const secondKey = `${computer.id}:${secondSession.id}`
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    fixtureKnowledgeBindings.set(firstKey, {
+      computerId: computer.id,
+      sessionId: session.id,
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/first',
+      root: knowledgeRoot,
+      revision: 1,
+      available: true,
+    })
+    fixtureKnowledgeBindings.set(secondKey, {
+      computerId: computer.id,
+      sessionId: secondSession.id,
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/second',
+      root: knowledgeRoot,
+      revision: 1,
+      available: true,
+    })
+    localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+      [firstKey]: {
+        rootId: knowledgeRoot.id,
+        rootPath: 'projects/first',
+        path: '.',
+      },
+      [secondKey]: {
+        rootId: knowledgeRoot.id,
+        rootPath: 'projects/second',
+        path: '.',
+      },
+    }))
+    localStorage.setItem('agentic-remote:knowledge-expanded', JSON.stringify({
+      [`${knowledgeRoot.id}:projects/first`]: ['first-child'],
+      [`${knowledgeRoot.id}:projects/second`]: ['second-child'],
+    }))
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_rootId, path = '.', basePath = '.') => ({
+        path,
+        parent: path === '.' ? undefined : '.',
+        entries: path === '.'
+          ? [{
+              name: basePath.endsWith('/first') ? 'first-child' : 'second-child',
+              path: basePath.endsWith('/first') ? 'first-child' : 'second-child',
+              kind: 'directory',
+            }]
+          : [],
+      }),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('treeitem', { name: 'first-child' })
+    expect(screen.queryByRole('treeitem', { name: 'second-child' }))
+      .not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await screen.findByRole('treeitem', { name: 'second-child' })
+    expect(screen.queryByRole('treeitem', { name: 'first-child' }))
+      .not.toBeInTheDocument()
+    expect(listKnowledgeEntries).toHaveBeenCalledWith(
+      knowledgeRoot.id,
+      '.',
+      'projects/second',
+    )
+
+    const stored = JSON.parse(
+      localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+    )
+    expect(stored[`${knowledgeRoot.id}:projects/first`]).toEqual(['first-child'])
+    expect(stored[`${knowledgeRoot.id}:projects/second`]).toEqual(['second-child'])
   })
 
   it('adds a browsed subfolder to shared Knowledge only when explicitly saved', async () => {

@@ -25,6 +25,13 @@ import {
 import type { SessionPresentation, SessionSort } from './session-presentation'
 import type { SessionFilter, SessionNavigationView } from './session-navigation-view'
 
+export type PendingSessionCreation = Pick<
+  ManagedSession,
+  'computerId' | 'cwd' | 'executionMode' | 'provider'
+> & {
+  id: string
+}
+
 type SessionActions = {
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
@@ -46,6 +53,49 @@ export function SessionState({ presentation }: {
       <span aria-hidden="true" className={`status-dot status-dot--${dotState}`} />
       {presentation.label}
     </span>
+  )
+}
+
+function PendingSessionItem({
+  creation,
+  computerName,
+}: {
+  creation: PendingSessionCreation
+  computerName: string
+}) {
+  const description = `Creating ${providerName(creation.provider)} session on ${computerName} in ${creation.cwd}`
+  return (
+    <div
+      aria-label={description}
+      className={`session-item session-item--creating session-item--tone-${computerTone(
+        creation.computerId,
+      )}`}
+      role="status"
+      title={description}
+    >
+      <span aria-hidden="true" className="session-item__creating-mark">
+        <span className="session-creation-dots">
+          <i className="session-creation-dot" />
+          <i className="session-creation-dot" />
+          <i className="session-creation-dot" />
+        </span>
+      </span>
+      <span className="session-item__text">
+        <span className="session-item__badges">
+          <em className="provider-badge">
+            {creation.provider === 'claude' ? 'Claude' : 'Copilot'}
+          </em>
+          <em className="provider-badge session-mode-badge">
+            {executionModeName(creation.executionMode)}
+          </em>
+          <span className="session-state session-state--running">Creating</span>
+        </span>
+        <strong>Creating session</strong>
+        <small className="session-item__where">
+          <span className="session-item__cwd">{shortPath(creation.cwd)}</span>
+        </small>
+      </span>
+    </div>
   )
 }
 
@@ -189,6 +239,7 @@ function SortableSessionItem({
 function SortableComputerGroup({
   computer,
   sessions,
+  pendingCreations = [],
   total,
   filtering,
   sorting,
@@ -198,6 +249,7 @@ function SortableComputerGroup({
 }: SessionActions & {
   computer: ComputerSummary
   sessions: ManagedSession[]
+  pendingCreations?: PendingSessionCreation[]
   total: number
   filtering: boolean
   sorting: boolean
@@ -249,6 +301,13 @@ function SortableComputerGroup({
         strategy={verticalListSortingStrategy}
       >
         <div className="computer-session-group__sessions">
+          {pendingCreations.map((creation) => (
+            <PendingSessionItem
+              computerName={computer.name}
+              creation={creation}
+              key={creation.id}
+            />
+          ))}
           {sessions.map((session) => (
             <SortableSessionItem
               {...actions}
@@ -262,7 +321,7 @@ function SortableComputerGroup({
               session={session}
             />
           ))}
-          {sessions.length === 0 ? (
+          {sessions.length === 0 && pendingCreations.length === 0 ? (
             <p className="computer-session-group__empty">
               {filtering ? 'No matching sessions' : 'No open sessions'}
             </p>
@@ -283,8 +342,11 @@ export function SessionNavigation({
   onNewSession,
   query,
   filter,
+  creationError,
+  onDismissCreationError,
   onQueryChange: setQuery,
   onFilterChange: setFilter,
+  pendingCreations = [],
   ...actions
 }: SessionActions & {
   view: SessionNavigationView
@@ -296,6 +358,9 @@ export function SessionNavigation({
   onNewSession: () => void
   query: string
   filter: SessionFilter
+  creationError?: string
+  onDismissCreationError?: () => void
+  pendingCreations?: PendingSessionCreation[]
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
 }) {
@@ -403,9 +468,23 @@ export function SessionNavigation({
           </div>
         ) : null}
       </div>
+      {creationError ? (
+        <div className="error-banner session-list__error" role="alert">
+          <span>{creationError}</span>
+          {onDismissCreationError ? (
+            <button
+              aria-label="Dismiss session creation error"
+              onClick={onDismissCreationError}
+              type="button"
+            >
+              <X aria-hidden="true" size={16} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="session-list__scroll">
         {loading ? <p className="sidebar-message">Loading sessions...</p> : null}
-        {!loading && counts.all === 0 ? (
+        {!loading && counts.all === 0 && pendingCreations.length === 0 ? (
           <p className="sidebar-message">No sessions here.</p>
         ) : null}
         <SortableContext
@@ -421,6 +500,9 @@ export function SessionNavigation({
                 filtering={filtering}
                 sorting={sort !== 'custom'}
                 key={group.computer.id}
+                pendingCreations={pendingCreations.filter(
+                  (creation) => creation.computerId === group.computer.id,
+                )}
                 selectedKey={selectedKey}
                 sessions={group.sessions}
                 total={group.total}

@@ -105,7 +105,10 @@ import {
   sessionResourceOwner,
   type SessionResourceTab,
 } from './session-resource-commands'
-import { SessionNavigation } from './SessionNavigation'
+import {
+  SessionNavigation,
+  type PendingSessionCreation,
+} from './SessionNavigation'
 import {
   sessionNavigationView,
   stepVisibleSession,
@@ -1931,13 +1934,23 @@ function SessionResourcesDialog({
   )
 }
 
+type SessionCreationHandle = {
+  id: string
+  intent: number
+  selectionIntent: number
+  selectedKey?: string
+}
+
 function NewSessionDialog({
   open,
   computers,
   defaultComputerId,
   defaultRuntimes,
   defaultSessionFolders,
+  creationError,
   onClose,
+  onCreating,
+  onCreationFailed,
   onCreated,
 }: {
   open: boolean
@@ -1945,8 +1958,19 @@ function NewSessionDialog({
   defaultComputerId?: string
   defaultRuntimes: DefaultRuntimeSettings
   defaultSessionFolders: DefaultSessionFolders
+  creationError?: string
   onClose: () => void
-  onCreated: (session: ManagedSession) => void
+  onCreating: (
+    creation: Omit<PendingSessionCreation, 'id'>,
+  ) => SessionCreationHandle
+  onCreationFailed: (
+    creation: SessionCreationHandle,
+    message: string,
+  ) => void
+  onCreated: (
+    session: ManagedSession,
+    creation?: SessionCreationHandle,
+  ) => void
 }) {
   const [computerId, setComputerId] = useState('')
   const [provider, setProvider] = useState<AgentProvider>('copilot')
@@ -1974,6 +1998,15 @@ function NewSessionDialog({
   )
   const initialized = useRef(false)
   const initialSelection = useRef<string | undefined>(undefined)
+  const dialogGeneration = useRef(0)
+
+  useEffect(() => {
+    if (!open) {
+      dialogGeneration.current += 1
+      return
+    }
+    setSubmitting(false)
+  }, [open])
 
   useEffect(() => {
     if (!open) {
@@ -2149,8 +2182,10 @@ function NewSessionDialog({
 
   async function submit(event: FormEvent) {
     event.preventDefault()
+    const submittedGeneration = dialogGeneration.current
     setSubmitting(true)
     setError(undefined)
+    let pendingCreation: SessionCreationHandle | undefined
     try {
       if (
         !available.some((computer) => computer.id === computerId) ||
@@ -2168,16 +2203,24 @@ function NewSessionDialog({
             )
           : undefined
         const defaultModel = defaultRuntime?.model.trim()
+        const createInTmux =
+          computerProviders(
+            available.find((computer) => computer.id === computerId),
+          ).find((entry) => entry.id === provider)?.terminalBacked === true
+            ? terminalBacked
+            : false
+        pendingCreation = onCreating({
+          computerId,
+          cwd,
+          executionMode: createInTmux ? 'tmux' : 'sdk',
+          provider,
+        })
+        setSubmitting(false)
         onCreated(
           await createSession(computerId, {
             cwd,
             provider,
-            terminalBacked:
-              computerProviders(
-                available.find((computer) => computer.id === computerId),
-              ).find((entry) => entry.id === provider)?.terminalBacked === true
-                ? terminalBacked
-                : false,
+            terminalBacked: createInTmux,
             allowAllPermissions,
             ...(defaultModel && defaultRuntime
               ? {
@@ -2191,8 +2234,11 @@ function NewSessionDialog({
                 }
               : {}),
           }),
+          pendingCreation,
         )
-        setCwd('')
+        if (dialogGeneration.current === submittedGeneration) {
+          setCwd('')
+        }
       } else {
         const previous = history.find(
           (session) =>
@@ -2205,12 +2251,22 @@ function NewSessionDialog({
           throw new Error('Choose a previous session')
         }
 
-        onCreated(await activateSession(previous.computerId, previous.id))
+        const opened = await activateSession(previous.computerId, previous.id)
+        if (dialogGeneration.current === submittedGeneration) {
+          onCreated(opened)
+        }
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      const message = caught instanceof Error ? caught.message : String(caught)
+      if (pendingCreation) {
+        onCreationFailed(pendingCreation, message)
+      } else if (dialogGeneration.current === submittedGeneration) {
+        setError(message)
+      }
     } finally {
-      setSubmitting(false)
+      if (dialogGeneration.current === submittedGeneration) {
+        setSubmitting(false)
+      }
     }
   }
 
@@ -2435,7 +2491,11 @@ function NewSessionDialog({
             </select>
           </label>
         )}
-        {error ? <p className="form-error">{error}</p> : null}
+        {error || creationError ? (
+          <p className="form-error" role="alert">
+            {error || creationError}
+          </p>
+        ) : null}
         <button
           className="primary-button dialog__submit"
           disabled={
@@ -6535,6 +6595,10 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [resizingSidebar, setResizingSidebar] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const [pendingSessionCreations, setPendingSessionCreations] = useState<
+    PendingSessionCreation[]
+  >([])
+  const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [statuslineOpen, setStatuslineOpen] = useState(false)
@@ -6645,6 +6709,10 @@ function App() {
   // this changed since?".
   const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
   const selectedKeyStateRef = useRef(selectedKey)
+  const pendingSessionCreationIdRef = useRef(0)
+  const sessionCreationIntentRef = useRef(0)
+  const sessionSelectionIntentRef = useRef(0)
+  const newSessionOpenRef = useRef(false)
   const backgroundTaskRequestsRef = useRef(new Set<string>())
   const queuedBackgroundTaskRefreshesRef = useRef(new Set<string>())
   const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
@@ -10324,7 +10392,7 @@ function App() {
       return true
     }
     const dialogs: [boolean, () => void][] = [
-      [newSessionOpen, () => setNewSessionOpen(false)],
+      [newSessionOpen, closeNewSession],
       [computersOpen, () => setComputersOpen(false)],
       [settingsOpen, () => setSettingsOpen(false)],
       [statuslineOpen, () => setStatuslineOpen(false)],
@@ -10977,6 +11045,7 @@ function App() {
   }
 
   function selectSession(session: ManagedSession) {
+    sessionSelectionIntentRef.current += 1
     historyIntentRef.current = 'push'
     setLocationKnowledgeTarget(undefined)
     setSelectedKey(sessionKey(session))
@@ -11106,12 +11175,73 @@ function App() {
     }
   }
 
-  function created(session: ManagedSession) {
+  function openNewSession() {
+    sessionCreationIntentRef.current += 1
+    newSessionOpenRef.current = true
+    setNewSessionOpen(true)
+  }
+
+  function closeNewSession() {
+    newSessionOpenRef.current = false
+    setNewSessionOpen(false)
+  }
+
+  function sessionCreationStarted(
+    creation: Omit<PendingSessionCreation, 'id'>,
+  ): SessionCreationHandle {
+    const id = `pending-session-${++pendingSessionCreationIdRef.current}`
+    const handle = {
+      id,
+      intent: sessionCreationIntentRef.current,
+      selectionIntent: sessionSelectionIntentRef.current,
+      selectedKey: selectedKeyStateRef.current,
+    }
+    setPendingSessionCreations((current) => [...current, { ...creation, id }])
+    setSessionCreationError(undefined)
+    closeNewSession()
+    setSidebarView('sessions')
+    setSidebarOpen(true)
+    return handle
+  }
+
+  function sessionCreationFailed(
+    creation: SessionCreationHandle,
+    message: string,
+  ) {
+    setPendingSessionCreations((current) =>
+      current.filter((pending) => pending.id !== creation.id),
+    )
+    setSessionCreationError(message)
+    if (!newSessionOpenRef.current) {
+      setSidebarView('sessions')
+    }
+  }
+
+  function created(
+    session: ManagedSession,
+    creation?: SessionCreationHandle,
+  ) {
+    if (creation) {
+      setPendingSessionCreations((current) =>
+        current.filter((pending) => pending.id !== creation.id),
+      )
+    }
     setSessions((current) => upsertSession(current, session))
+    const shouldSelect =
+      !creation ||
+      (
+        creation.intent === sessionCreationIntentRef.current &&
+        creation.selectionIntent === sessionSelectionIntentRef.current &&
+        creation.selectedKey === selectedKeyStateRef.current &&
+        !newSessionOpenRef.current
+      )
+    if (!shouldSelect) {
+      return
+    }
     historyIntentRef.current = 'push'
     setLocationKnowledgeTarget(undefined)
     setSelectedKey(sessionKey(session))
-    setNewSessionOpen(false)
+    closeNewSession()
     setSidebarOpen(false)
   }
 
@@ -13025,8 +13155,15 @@ function App() {
                 filter={sessionFilter}
                 onQueryChange={setSessionQuery}
                 onFilterChange={setSessionFilter}
-                onNewSession={() => setNewSessionOpen(true)}
+                creationError={
+                  !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
+                    ? sessionCreationError
+                    : undefined
+                }
+                onDismissCreationError={() => setSessionCreationError(undefined)}
+                onNewSession={openNewSession}
                 loading={loading}
+                pendingCreations={pendingSessionCreations}
                 onOpenSessionTasks={openTasksForSession}
                 onSelectSession={selectSession}
                 onToggleSessionSuspended={(session) =>
@@ -13360,7 +13497,7 @@ function App() {
           <button
             aria-label="New session"
             className="icon-button"
-            onClick={() => setNewSessionOpen(true)}
+            onClick={openNewSession}
             type="button"
           >
             <Plus size={21} />
@@ -13500,9 +13637,22 @@ function App() {
         </header>
 
         {error ? (
-          <div className="error-banner">
+          <div className="error-banner" role="alert">
             <span>{error}</span>
             <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
+              <X size={16} />
+            </button>
+          </div>
+        ) : null}
+        {sessionCreationError &&
+        !newSessionOpen &&
+        (!sidebarOpen || sidebarView !== 'sessions') ? (
+          <div className="error-banner" role="alert">
+            <span>{sessionCreationError}</span>
+            <button
+              aria-label="Dismiss session creation error"
+              onClick={() => setSessionCreationError(undefined)}
+            >
               <X size={16} />
             </button>
           </div>
@@ -13511,7 +13661,7 @@ function App() {
         <div className="timeline" onScroll={timelineScrolled} ref={timelineRef}>
           {!selected ? (
             <EmptyConversation
-              onCreate={() => setNewSessionOpen(true)}
+              onCreate={openNewSession}
               onKnowledge={() => setKnowledgeMode('docked')}
             />
           ) : loadingTranscript && selected.messages.length === 0 ? (
@@ -14312,10 +14462,13 @@ function App() {
 
       <NewSessionDialog
         computers={computers}
+        creationError={newSessionOpen ? sessionCreationError : undefined}
         defaultComputerId={defaultComputerId}
         defaultRuntimes={defaultRuntimes}
         defaultSessionFolders={defaultSessionFolders}
-        onClose={() => setNewSessionOpen(false)}
+        onClose={closeNewSession}
+        onCreating={sessionCreationStarted}
+        onCreationFailed={sessionCreationFailed}
         onCreated={created}
         open={newSessionOpen}
       />

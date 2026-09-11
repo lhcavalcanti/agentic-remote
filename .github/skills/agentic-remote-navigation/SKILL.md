@@ -239,6 +239,25 @@ NODE_ENV=production pnpm check  # guards the inherited-env regression
 Work is tracked in GitHub issues and lands through pull requests. **Do not push
 directly to `main`.**
 
+### Pre-task cleanup and refresh
+
+Before creating a feature branch or worktree:
+
+1. Inspect the primary checkout with `git status --short --branch`,
+   `git worktree list --porcelain`, and `git branch -vv`.
+2. Run `git fetch origin --prune`, then classify every auxiliary worktree and
+   branch against its PR and `origin/main`. A squash merge needs PR or
+   patch-equivalence evidence; ancestry alone is not enough.
+3. Preserve the intentional detached production runtime worktree. Never remove
+   a dirty, unmerged, or unowned worktree, and never discard its changes to
+   make cleanup convenient.
+4. Remove only clean worktrees whose work is merged, superseded by a reachable
+   remote branch, or otherwise positively recoverable. Delete their local
+   branches only after the same check; leave ambiguous branches in place.
+5. Run `git worktree prune`, return the primary checkout to `main`, and use
+   `git pull --ff-only`. Confirm that it is clean and that `HEAD` equals
+   `origin/main` before branching.
+
 ### Versioning releases
 
 Treat `package.json` as the authoritative application version and apply one

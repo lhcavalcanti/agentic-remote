@@ -1368,6 +1368,12 @@ button {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+.session-list__error {
+  flex: 0 0 auto;
+  margin: 0 4px 8px;
+  padding: 8px 9px;
+}
+
 .sidebar__body {
   display: flex;
   min-width: 0;
@@ -1590,6 +1596,62 @@ button {
 
 .session-item:hover {
   background: var(--panel-raised);
+}
+
+.session-item--creating,
+.session-item--creating:hover {
+  border-left-color: var(--computer-accent);
+  background: var(--computer-tint);
+  cursor: wait;
+}
+
+.session-item--creating .session-item__text {
+  grid-column: 2 / -1;
+}
+
+.session-item__creating-mark {
+  display: grid;
+  grid-column: 1;
+  align-self: center;
+  width: 20px;
+  min-height: 40px;
+  place-items: center;
+}
+
+.session-creation-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.session-creation-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--computer-accent);
+  animation: session-creation-flow 1s ease-in-out infinite;
+}
+
+.session-creation-dot:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.session-creation-dot:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+@keyframes session-creation-flow {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 .session-item--active {

@@ -6306,6 +6306,238 @@ describe('App', () => {
     )
   })
 
+  it('closes the new-session sheet and shows a pending session while creating', async () => {
+    let finishCreation: ((created: ManagedSession) => void) | undefined
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishCreation = resolve
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Choose a folder' }),
+      ).not.toBeInTheDocument(),
+    )
+    const pending = screen.getByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+    expect(pending).toHaveTextContent('Copilot')
+    expect(pending).toHaveTextContent('tmux')
+    expect(pending).toHaveTextContent('Creating session')
+    expect(pending.querySelectorAll('.session-creation-dot')).toHaveLength(3)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+    )
+
+    await act(async () => {
+      finishCreation?.({
+        ...session,
+        id: 'created-session',
+        title: 'Fresh session',
+      })
+      await Promise.resolve()
+    })
+
+    expect(
+      screen.getByRole('dialog', { name: 'Choose a folder' }),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
+    expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^Project chat,/ }))
+      .toHaveAttribute('aria-current', 'page')
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('status', {
+          name: 'Creating GitHub Copilot session on development in ~',
+        }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getAllByText('Fresh session').length).toBeGreaterThan(0)
+  })
+
+  it('keeps the newer selection when overlapping creations finish out of order', async () => {
+    let finishOlder: ((created: ManagedSession) => void) | undefined
+    let finishNewer: ((created: ManagedSession) => void) | undefined
+    vi.mocked(createSession)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishOlder = resolve
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishNewer = resolve
+      }))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating Claude Agent session on development in ~',
+    })
+
+    await act(async () => {
+      finishNewer?.({
+        ...session,
+        id: 'newer-created-session',
+        provider: 'claude',
+        executionMode: 'sdk',
+        title: 'Newer session',
+      })
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Newer session,/ }))
+        .toHaveAttribute('aria-current', 'page'),
+    )
+
+    await act(async () => {
+      finishOlder?.({
+        ...session,
+        id: 'older-created-session',
+        title: 'Older session',
+      })
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Older session,/ }))
+        .toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: /^Newer session,/ }))
+      .toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: /^Older session,/ }))
+      .not.toHaveAttribute('aria-current')
+  })
+
+  it('shows a failed creation inside a reopened new-session sheet', async () => {
+    let failCreation: ((error: Error) => void) | undefined
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failCreation = reject
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+
+    await act(async () => {
+      failCreation?.(new Error('Session creation failed'))
+      await Promise.resolve()
+    })
+
+    const dialog = screen.getByRole('dialog', { name: 'Choose a folder' })
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(
+      'Session creation failed',
+    )
+    expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+  })
+
+  it('shows a failed creation inside the active 390px sessions drawer', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 390,
+    })
+    let failCreation: ((error: Error) => void) | undefined
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failCreation = reject
+      }),
+    )
+    try {
+      render(<App />)
+      await screen.findAllByText('Project chat')
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+      fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+      await screen.findByRole('status', {
+        name: 'Creating GitHub Copilot session on development in ~',
+      })
+
+      await act(async () => {
+        failCreation?.(new Error('Session creation failed'))
+        await Promise.resolve()
+      })
+
+      const sidebar = document.querySelector('.sidebar--open')
+      expect(sidebar).not.toBeNull()
+      expect(within(sidebar as HTMLElement).getByRole('alert')).toHaveTextContent(
+        'Session creation failed',
+      )
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth,
+      })
+    }
+  })
+
+  it('removes a failed pending session before showing its error', async () => {
+    let failCreation: ((error: Error) => void) | undefined
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failCreation = reject
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+
+    await act(async () => {
+      failCreation?.(new Error('Session creation failed'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('status', {
+          name: 'Creating GitHub Copilot session on development in ~',
+        }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Session creation failed')
+  })
+
   it('allows SDK-backed session creation by disabling tmux', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -7085,6 +7317,46 @@ describe('App', () => {
         'historical-session',
       )
     })
+  })
+
+  it('does not leave a reopened sheet disabled after an older historical activation fails', async () => {
+    let failActivation: ((error: Error) => void) | undefined
+    vi.mocked(activateSession).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failActivation = reject
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('tab', { name: 'Open previous' }))
+    await screen.findByRole('heading', { name: 'Open previous session' })
+    fireEvent.change(screen.getByLabelText('Previous session'), {
+      target: { value: 'computer-1:historical-session' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open session' }))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Open previous session' }),
+      ).not.toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+    )
+
+    await act(async () => {
+      failActivation?.(new Error('Historical activation failed'))
+      await Promise.resolve()
+    })
+
+    expect(
+      screen.getByRole('dialog', { name: 'Choose a folder' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled()
+    expect(screen.queryByText('Historical activation failed')).not.toBeInTheDocument()
   })
 
   it('renames the selected session from the conversation header', async () => {

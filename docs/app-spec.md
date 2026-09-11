@@ -150,7 +150,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   show a noninteractive pending row in the owning computer group until creation
   finishes. The row MUST identify the provider, execution mode, folder, and
   creation state without relying on motion alone. Success MUST replace it with
-  the created session; failure MUST remove it and surface the error.
+  the created session; failure MUST remove it and surface the error in the
+  active sheet, drawer, or conversation. An older creation response MUST NOT
+  close or reset a newer sheet, re-enable its submission, or steal selection
+  from newer navigation or creation intent.
 
 ### 3.3 Rename, restart, recover, clear, and delete
 

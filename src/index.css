@@ -1368,6 +1368,12 @@ button {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+.session-list__error {
+  flex: 0 0 auto;
+  margin: 0 4px 8px;
+  padding: 8px 9px;
+}
+
 .sidebar__body {
   display: flex;
   min-width: 0;

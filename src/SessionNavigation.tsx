@@ -342,6 +342,8 @@ export function SessionNavigation({
   onNewSession,
   query,
   filter,
+  creationError,
+  onDismissCreationError,
   onQueryChange: setQuery,
   onFilterChange: setFilter,
   pendingCreations = [],
@@ -356,6 +358,8 @@ export function SessionNavigation({
   onNewSession: () => void
   query: string
   filter: SessionFilter
+  creationError?: string
+  onDismissCreationError?: () => void
   pendingCreations?: PendingSessionCreation[]
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
@@ -464,6 +468,20 @@ export function SessionNavigation({
           </div>
         ) : null}
       </div>
+      {creationError ? (
+        <div className="error-banner session-list__error" role="alert">
+          <span>{creationError}</span>
+          {onDismissCreationError ? (
+            <button
+              aria-label="Dismiss session creation error"
+              onClick={onDismissCreationError}
+              type="button"
+            >
+              <X aria-hidden="true" size={16} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="session-list__scroll">
         {loading ? <p className="sidebar-message">Loading sessions...</p> : null}
         {!loading && counts.all === 0 && pendingCreations.length === 0 ? (

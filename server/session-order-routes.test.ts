@@ -262,6 +262,77 @@ describe('hub session order routes', () => {
     await reopened.app.close()
   })
 
+  it('seeds existing sessions by lineage rather than appending them', async () => {
+    const store = await orderStore()
+    await store.bootstrap({ 'computer-1': ['computer-1:a', 'computer-1:old', 'computer-1:z'] })
+    const { app } = await hub(store, {
+      listSessions: async () => [
+        { id: 'a', computerId: 'computer-1' },
+        // A clear this hub never saw: the successor must take its ancestor's
+        // slot instead of landing at the end of the lane.
+        { id: 'new', computerId: 'computer-1', replacedSessionIds: ['old'] },
+        { id: 'z', computerId: 'computer-1' },
+      ],
+    })
+
+    await until(() =>
+      (store.snapshot().order['computer-1'] ?? []).includes('computer-1:new'),
+    )
+    expect(store.snapshot().order['computer-1']).toEqual([
+      'computer-1:a',
+      'computer-1:new',
+      'computer-1:z',
+    ])
+    await app.close()
+  })
+
+  it('does not seed a session retired while the listing was in flight', async () => {
+    const store = await orderStore()
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { app, manager } = await hub(store, {
+      listSessions: async () => {
+        await held
+        return [
+          { id: 'stays', computerId: 'computer-1' },
+          { id: 'gone', computerId: 'computer-1' },
+          { id: 'orphan', computerId: 'computer-2' },
+        ]
+      },
+    })
+
+    // Both retirements are applied before the listing is even delivered.
+    manager.emit('event', {
+      type: 'session.removed',
+      computerId: 'computer-1',
+      sessionId: 'gone',
+    })
+    manager.emit('event', { type: 'computer.removed', computerId: 'computer-2' })
+    release()
+
+    await until(() => (store.snapshot().order['computer-1'] ?? []).length > 0)
+    await app.close()
+    expect(store.snapshot().order).toEqual({ 'computer-1': ['computer-1:stays'] })
+  })
+
+  it('refuses a lane arranged from a stale view', async () => {
+    const store = await orderStore()
+    await store.bootstrap({ 'computer-1': ['computer-1:a', 'computer-1:b'] })
+    const { app } = await hub(store)
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order/computer-1',
+      headers: { host: 'localhost' },
+      payload: { order: ['computer-1:retired', 'computer-1:b', 'computer-1:a'] },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(store.snapshot().order['computer-1']).toEqual(['computer-1:a', 'computer-1:b'])
+    await app.close()
+  })
+
   it('answers 503 when the hub has no order store', async () => {
     const app = Fastify()
     await registerHubRoutes(

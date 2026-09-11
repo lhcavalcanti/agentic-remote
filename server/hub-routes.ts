@@ -1068,6 +1068,29 @@ export async function registerHubRoutes(
    * read-modify-write and lose one of them.
    */
   let orderWork: Promise<unknown> = Promise.resolve()
+  // Identities retired since this hub started. Startup seeding works from a
+  // listing taken before these arrived, so without them a session removed
+  // mid-seed would be appended back after its removal was already applied.
+  const retiredSessions = new Set<string>()
+  const retiredComputers = new Set<string>()
+  /**
+   * Seats a session by lineage: a successor takes its nearest recorded
+   * ancestor's slot, and only a session with no known ancestor is appended.
+   */
+  const seatSession = (
+    store: SessionOrderStore,
+    computerId: string,
+    id: string,
+    replacedSessionIds: string[] | undefined,
+  ): Promise<SessionOrderSnapshot> => {
+    const ancestor = (replacedSessionIds ?? [])
+      .map((previous) => ({ previous, index: store.indexOf(computerId, previous) }))
+      .filter((entry) => entry.index >= 0)
+      .sort((left, right) => left.index - right.index)[0]
+    return ancestor
+      ? store.replaceSession(computerId, ancestor.previous, id, ancestor.index)
+      : store.appendSession(computerId, id)
+  }
   const trackOrder = (event: HubEvent) => {
     if (!sessionOrder) return
     const change = (apply: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>) => {
@@ -1081,22 +1104,12 @@ export async function registerHubRoutes(
     }
     if (event.type === 'session.upserted') {
       const { computerId, id, replacedSessionIds } = event.session
-      change((store) => {
-        // A reconnect can be the first time this hub hears about a clear that
-        // already happened. Appending would put the successor last, so the
-        // lineage is resolved first and it inherits the slot instead.
-        const ancestor = (replacedSessionIds ?? [])
-          .map((previous) => ({ previous, index: store.indexOf(computerId, previous) }))
-          .filter((entry) => entry.index >= 0)
-          .sort((left, right) => left.index - right.index)[0]
-        return ancestor
-          ? store.replaceSession(computerId, ancestor.previous, id, ancestor.index)
-          : store.appendSession(computerId, id)
-      })
+      change((store) => seatSession(store, computerId, id, replacedSessionIds))
       return
     }
     if (event.type === 'session.removed') {
       const { computerId, sessionId, replacedBy } = event
+      retiredSessions.add(`${computerId}:${sessionId}`)
       change((store) =>
         replacedBy
           ? store.replaceSession(computerId, sessionId, replacedBy)
@@ -1106,6 +1119,7 @@ export async function registerHubRoutes(
     }
     if (event.type === 'computer.removed') {
       const { computerId } = event
+      retiredComputers.add(computerId)
       change((store) => store.removeComputer(computerId))
     }
   }
@@ -1123,8 +1137,22 @@ export async function registerHubRoutes(
           // Shutting down mid-seed must not write into a directory the owner
           // is already taking away.
           if (closed) return
+          // The listing predates anything that retired while it was in
+          // flight, so a session or computer that has since gone must not be
+          // recreated by this seed.
+          if (
+            retiredComputers.has(session.computerId) ||
+            retiredSessions.has(`${session.computerId}:${session.id}`)
+          ) {
+            continue
+          }
           await commitOrder((store) =>
-            store.appendSession(session.computerId, session.id),
+            seatSession(
+              store,
+              session.computerId,
+              session.id,
+              session.replacedSessionIds,
+            ),
           )
         }
       })

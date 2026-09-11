@@ -13474,6 +13474,9 @@ function App() {
         if (sessionOrderRevisionRef.current === acknowledgedRevision) {
           setSessionOrder(acknowledgedSessionOrderRef.current)
         }
+        // The hub refuses a lane arranged from a view that has moved on, so
+        // the list is fetched again rather than left disagreeing with it.
+        void syncSessionOrderRef.current()
         setSidebarOpen(false)
         setError(
           `Could not save the session order: ${

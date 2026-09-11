@@ -195,15 +195,17 @@ describe('SessionOrderStore', () => {
     expect(seeded.order).toEqual({ pc: ['pc:a'] })
   })
 
-  it('only rearranges what the lane already holds', async () => {
+  it('refuses a lane arranged from a view that has moved on', async () => {
     const { store: order } = await store()
     await order.appendSession('pc', 'a')
     await order.appendSession('pc', 'b')
 
-    // A client still showing a cleared session must not bring it back, nor
-    // push the live successor down the list with it.
-    const committed = await order.replaceLane('pc', ['pc:retired', 'pc:b', 'pc:a'])
-    expect(committed.order.pc).toEqual(['pc:b', 'pc:a'])
+    // Silently dropping the retired key would move the live successor last,
+    // so the whole lane is refused and the client resynchronizes.
+    await expect(
+      order.replaceLane('pc', ['pc:retired', 'pc:b', 'pc:a']),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    expect(order.snapshot().order.pc).toEqual(['pc:a', 'pc:b'])
   })
 
   it('does not resurrect a lane that was removed', async () => {
@@ -211,8 +213,10 @@ describe('SessionOrderStore', () => {
     await order.appendSession('pc', 'a')
     await order.removeComputer('pc')
 
-    const committed = await order.replaceLane('pc', ['pc:a'])
-    expect(committed.order).toEqual({})
+    await expect(order.replaceLane('pc', ['pc:a'])).rejects.toMatchObject({
+      statusCode: 409,
+    })
+    expect(order.snapshot().order).toEqual({})
   })
 
   it('restores a replacement into a slot a plain removal already retired', async () => {

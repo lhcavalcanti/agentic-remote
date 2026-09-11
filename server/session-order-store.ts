@@ -147,14 +147,26 @@ export class SessionOrderStore {
         { statusCode: 400 },
       )
     }
+    const current = this.state.order[computerId] ?? []
+    const unknown = lane.find((key) => !current.includes(key))
+    if (unknown) {
+      // The client is arranging a session this lane no longer holds, so its
+      // whole view is out of date. Dropping the unknown key and keeping the
+      // rest would quietly move a cleared session's live successor last, so
+      // the lane is refused and the client resynchronizes instead.
+      throw Object.assign(
+        new Error(
+          `Session order for ${computerId} is out of date; reload the session list`,
+        ),
+        { statusCode: 409 },
+      )
+    }
     return this.commit((order) => {
       const existing = order[computerId] ?? []
-      // A reorder may only rearrange what the lane already holds. A client
-      // that still shows a cleared or deleted session would otherwise bring it
-      // back, and pushing its live successor down the list with it.
-      const moved = lane.filter((key) => existing.includes(key))
-      const retained = existing.filter((key) => !moved.includes(key))
-      const next = [...moved, ...retained]
+      // Keys the client never saw keep their place at the end, so an order
+      // written from a filtered view cannot delete them.
+      const retained = existing.filter((key) => !lane.includes(key))
+      const next = [...lane, ...retained]
       if (sameLane(existing, next)) return false
       order[computerId] = next
       return true

@@ -147,22 +147,24 @@ export class SessionOrderStore {
         { statusCode: 400 },
       )
     }
-    const current = this.state.order[computerId] ?? []
-    const unknown = lane.find((key) => !current.includes(key))
-    if (unknown) {
-      // The client is arranging a session this lane no longer holds, so its
-      // whole view is out of date. Dropping the unknown key and keeping the
-      // rest would quietly move a cleared session's live successor last, so
-      // the lane is refused and the client resynchronizes instead.
-      throw Object.assign(
-        new Error(
-          `Session order for ${computerId} is out of date; reload the session list`,
-        ),
-        { statusCode: 409 },
-      )
-    }
     return this.commit((order) => {
       const existing = order[computerId] ?? []
+      // Checked inside the commit, not before it: a clear or unpair queued
+      // ahead of this reorder would otherwise pass an earlier check and then
+      // restore the key it had just retired.
+      const unknown = lane.find((key) => !existing.includes(key))
+      if (unknown) {
+        // The client is arranging a session this lane no longer holds, so its
+        // whole view is out of date. Dropping the unknown key and keeping the
+        // rest would quietly move a cleared session's live successor last, so
+        // the lane is refused and the client resynchronizes instead.
+        throw Object.assign(
+          new Error(
+            `Session order for ${computerId} is out of date; reload the session list`,
+          ),
+          { statusCode: 409 },
+        )
+      }
       // Keys the client never saw keep their place at the end, so an order
       // written from a filtered view cannot delete them.
       const retained = existing.filter((key) => !lane.includes(key))

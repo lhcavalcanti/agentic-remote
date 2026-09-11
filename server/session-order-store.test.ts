@@ -208,6 +208,33 @@ describe('SessionOrderStore', () => {
     expect(order.snapshot().order.pc).toEqual(['pc:a', 'pc:b'])
   })
 
+  it('refuses a reorder queued behind the clear that retired its key', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.appendSession('pc', 'c')
+
+    // Both are in flight together: the lane was arranged while 'b' still
+    // existed, and the clear commits first.
+    const cleared = order.replaceSession('pc', 'b', 'b2')
+    const stale = order.replaceLane('pc', ['pc:c', 'pc:b', 'pc:a'])
+
+    await cleared
+    await expect(stale).rejects.toMatchObject({ statusCode: 409 })
+    // The successor keeps the slot rather than being pushed to the end.
+    expect(order.snapshot().order.pc).toEqual(['pc:a', 'pc:b2', 'pc:c'])
+  })
+
+  it('keeps committing after a refused lane', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await expect(order.replaceLane('pc', ['pc:ghost'])).rejects.toMatchObject({
+      statusCode: 409,
+    })
+    const after = await order.appendSession('pc', 'b')
+    expect(after.order.pc).toEqual(['pc:a', 'pc:b'])
+  })
+
   it('does not resurrect a lane that was removed', async () => {
     const { store: order } = await store()
     await order.appendSession('pc', 'a')

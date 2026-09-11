@@ -122,6 +122,7 @@ describe('SessionStore', () => {
       reason: 'provider-error',
     })
     expect(projected).not.toHaveProperty('recoverySeed')
+    expect(projected.recoverySeedState).toBe('pending')
     expect(projected.activity).toBe(
       'Waiting to rebuild provider context. Preserved queued work is blocked.',
     )

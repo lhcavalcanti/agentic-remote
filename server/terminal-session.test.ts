@@ -102,7 +102,13 @@ const writeReceipt = (value) => {
 `
 }
 
-async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string, footer = '') {
+async function deliveryFixture(
+  working: boolean,
+  nextPane?: string,
+  repaintPane?: string,
+  footer = '',
+  initialText = '',
+) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
   const executable = path.join(directory, 'copilot-delivery.mjs')
@@ -112,7 +118,7 @@ async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?
   await writeFile(executable, `
 ${fixtureReceiptWriter(output)}
 let input = ''
-let pasted
+let pasted = ${JSON.stringify(initialText || undefined)}
 const received = { pastes: [], submits: [] }
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 const makeComposer = ${readyComposer.toString()}
@@ -126,6 +132,13 @@ process.stdin.on('data', (data) => {
     return
   }
   input += data.toString()
+  if (input.includes('\\x15')) {
+    received.clears = (received.clears || 0) + input.split('\\x15').length - 1
+    input = input.replaceAll('\\x15', '')
+    pasted = undefined
+    writeReceipt(received)
+    draw(composer('', ${working}))
+  }
   const end = input.indexOf('\\x1b[201~')
   if (pasted === undefined && end >= 0) {
     pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
@@ -142,7 +155,7 @@ process.stdin.on('data', (data) => {
     draw(${JSON.stringify(nextPane)} ?? composer('', ${working}))
   }
 })
-draw(composer('', ${working}))
+draw(composer(${JSON.stringify(initialText)}, ${working}))
 `)
   const tmuxSession = `agentic-delivery-${process.pid}`
   tmuxSessions.push(tmuxSession)
@@ -366,6 +379,64 @@ describe('TmuxTerminalSessionController', () => {
     expect(JSON.parse(received)).toEqual({
       pastes: ['One footer-aware message'], submits: [enqueue ? 'queue' : 'enter'],
     })
+  }, 15_000)
+
+  it('clears a verified existing draft only after explicit replacement and sends once', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      'stale terminal text',
+    )
+    await expect(controller.send(sessionId, 'Preserved app draft', false))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    expect(await readFile(output, 'utf8')).toBe('')
+
+    await expect(controller.send(
+      sessionId,
+      'Preserved app draft',
+      false,
+      { replaceExistingInput: true },
+    )).resolves.toBe(true)
+
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1,
+      pastes: ['Preserved app draft'],
+      submits: ['enter'],
+    })
+  }, 15_000)
+
+  it('does not clear an existing draft while the terminal is working', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      true,
+      undefined,
+      undefined,
+      '',
+      'terminal owner draft',
+    )
+
+    await expect(controller.send(
+      sessionId,
+      'Do not replace this',
+      false,
+      {
+        allowDuringAgentExecution: true,
+        replaceExistingInput: true,
+      },
+    )).rejects.toMatchObject({
+      statusCode: 409,
+      terminalDraftConflict: true,
+      uncertainDelivery: false,
+    })
+    expect(await readFile(output, 'utf8')).toBe('')
   }, 15_000)
 
   it.each([

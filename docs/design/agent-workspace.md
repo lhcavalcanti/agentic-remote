@@ -41,16 +41,19 @@ are preserved.
 
 The root chooser names the affected session, its working-folder suggestion,
 and the computer/path of every saved root. **Use for this session** saves only
-that session's association. Choosing a root does not change cwd, copy or mount
-files, start an agent, or send a prompt. Root removal is behind a separate
-impact confirmation rather than beside the everyday switch control.
+that session's association. A selected root opens an inline subfolder browser;
+the chosen subfolder becomes the true session root without changing the shared
+catalog. **Save this root folder** is the explicit action that adds that folder
+to the shared catalog and selects it. Choosing a root does not change cwd, copy
+or mount files, start an agent, or send a prompt. Root removal is behind a
+separate impact confirmation rather than beside the everyday switch control.
 
 | State | Owner |
 | --- | --- |
 | Knowledge root catalog | Existing hub `knowledge.json`; files remain on the root's computer |
-| Root association | Additive hub `session-knowledge.json`, keyed by session computer and ID |
+| Root association | Existing rollback-compatible hub `session-knowledge.json` keeps the shared root ID; additive `session-knowledge-paths.json` stores matching nested paths by session/root/revision |
 | Root/folder/document position | Existing browser-local per-session state |
-| Expanded folders | Browser-local, per root |
+| Expanded folders | Browser-local, per shared root and nested session scope |
 | Reader mode and preferred sizes | Browser workspace, unchanged by session switching |
 | Appearance | Browser preference, separate from tab-local accent |
 
@@ -339,8 +342,9 @@ from a separate checkout/port and run the same capture with `--phase before`.
 
 The professional revision adds walkthroughs for session ordering and document
 reading, including keyboard rearrangement, the outline, Source mode, and code
-copying. Existing browser-local custom order and reading positions remain the
-underlying state rather than being recreated for the visuals.
+copying. The custom session order is hub-owned and shared by every browser on
+that hub; reading positions remain browser-local. Both remain the underlying
+state rather than being recreated for the visuals.
 
 ## Review flows
 

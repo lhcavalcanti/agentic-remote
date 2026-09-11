@@ -88,6 +88,7 @@ export interface SessionService {
     content: string,
     enqueue?: boolean,
     acknowledgesFailure?: string,
+    replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
   /** Resource readers must settle and release their own work on cancellation. */
@@ -98,6 +99,7 @@ export interface SessionService {
     command: string,
     enqueue?: boolean,
     acknowledgesFailure?: string,
+    replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>

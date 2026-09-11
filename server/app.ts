@@ -10,6 +10,7 @@ import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
 import {
   deliveryUncertaintyFromError,
   SubmissionError,
+  terminalDraftConflictFromError,
 } from '../shared/submission-error.js'
 import { AgentService } from './agent-service.js'
 import { ClaudeAgentService } from './claude-agent-service.js'
@@ -25,6 +26,7 @@ import { ProviderSessionService } from './provider-session-service.js'
 import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
+import { SessionOrderStore } from './session-order-store.js'
 import type { SessionService } from './session-service.js'
 import {
   LocalTranscriptionService,
@@ -59,6 +61,7 @@ export interface BuildAppOptions {
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
+  sessionOrderStore?: SessionOrderStore
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -67,6 +70,12 @@ function errorStatusCode(error: unknown): number | undefined {
   }
   const statusCode = Reflect.get(error, 'statusCode')
   return typeof statusCode === 'number' ? statusCode : undefined
+}
+
+function isAppleTouchIconProbe(url: string): boolean {
+  const pathname = url.split(/[?#]/, 1)[0]
+  const name = pathname.slice(pathname.lastIndexOf('/') + 1)
+  return /^apple-touch-icon(?:-\d+x\d+)?(?:-precomposed)?\.png$/i.test(name)
 }
 
 export async function buildApp(
@@ -80,6 +89,7 @@ export async function buildApp(
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
+  sessionOrderStore?: SessionOrderStore
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -122,6 +132,7 @@ export async function buildApp(
     app.log.error(error)
     const submission = error instanceof SubmissionError ? error.submission : undefined
     const explicitUncertainty = deliveryUncertaintyFromError(error)
+    const terminalDraftConflict = terminalDraftConflictFromError(error)
     if (error instanceof TranscriptionError || error instanceof FileUploadError) {
       return reply.code(error.statusCode).send({ error: error.message })
     }
@@ -137,6 +148,7 @@ export async function buildApp(
         ...(explicitUncertainty === undefined
           ? {}
           : { uncertainDelivery: explicitUncertainty }),
+        ...(terminalDraftConflict ? { terminalDraftConflict: true } : {}),
       })
     }
     const message = error instanceof Error ? error.message : 'Unexpected server error'
@@ -152,6 +164,7 @@ export async function buildApp(
       ...(explicitUncertainty === undefined
         ? {}
         : { uncertainDelivery: explicitUncertainty }),
+      ...(terminalDraftConflict ? { terminalDraftConflict: true } : {}),
     })
   })
 
@@ -167,6 +180,7 @@ export async function buildApp(
   let transcriptionService: TranscriptionService | undefined
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
+  let sessionOrderStore: SessionOrderStore | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -181,11 +195,21 @@ export async function buildApp(
     sessionKnowledgeStore = options.sessionKnowledgeStore ??
       new SessionKnowledgeStore(dataDirectory, knowledgeStore)
     await sessionKnowledgeStore.initialize()
+    // Hub-only: a node serves no UI, so it has no ordering to remember.
+    sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
+    await sessionOrderStore.initialize()
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
-    await registerHubRoutes(app, manager, knowledgeStore, pushService, sessionKnowledgeStore)
+    await registerHubRoutes(
+      app,
+      manager,
+      knowledgeStore,
+      pushService,
+      sessionKnowledgeStore,
+      sessionOrderStore,
+    )
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
@@ -219,7 +243,8 @@ export async function buildApp(
       if (
         request.url.startsWith('/api/') ||
         request.url.startsWith('/node-api/') ||
-        request.url.startsWith('/assets/')
+        request.url.startsWith('/assets/') ||
+        isAppleTouchIconProbe(request.url)
       ) {
         return reply.code(404).send({ error: 'Not found' })
       }
@@ -243,5 +268,6 @@ export async function buildApp(
     transcriptionService: transcriptionService ?? localTranscription,
     knowledgeStore,
     sessionKnowledgeStore,
+    sessionOrderStore,
   }
 }

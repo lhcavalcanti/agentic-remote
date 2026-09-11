@@ -7,10 +7,12 @@ import {
   getRuntimeOptions,
   listBackgroundTasks,
   listHistory,
+  listKnowledgeEntries,
   listSessionListing,
   listSessionMcpServers,
   listSessionSkills,
   removeQueuedPrompt,
+  readKnowledgeFile,
   sendMessage,
   sendTestPushNotification,
   transcribeAudio,
@@ -82,6 +84,21 @@ describe('API request headers', () => {
       .rejects.toMatchObject({ statusCode: status, uncertainDelivery })
   })
 
+  it('preserves a typed terminal draft conflict from HTTP errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'Terminal text is blocking this message',
+      terminalDraftConflict: true,
+      uncertainDelivery: false,
+    }, { status: 409 })))
+
+    await expect(sendMessage('computer', 'session', { content: 'hello' }))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+  })
+
   it.each([
     [400, false],
     [409, true],
@@ -131,6 +148,28 @@ describe('API request headers', () => {
         '/api/computers/computer/sessions/session/runtime',
         expect.objectContaining({ cache: 'no-store' }),
       ],
+    ])
+  })
+
+  it('adds a nested base only to scoped Knowledge reads', async () => {
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL) => Response.json({
+      path: '.',
+      entries: [],
+      name: 'README.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 0,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await listKnowledgeEntries('projects', '.', 'agentic-remote/docs')
+    await readKnowledgeFile('projects', 'README.md', 'agentic-remote/docs')
+    await listKnowledgeEntries('projects')
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/knowledge/roots/projects/entries?path=.&basePath=agentic-remote%2Fdocs',
+      '/api/knowledge/roots/projects/file?path=README.md&basePath=agentic-remote%2Fdocs',
+      '/api/knowledge/roots/projects/entries?path=.',
     ])
   })
 

@@ -49,8 +49,8 @@ describe('file upload routes', () => {
       uploadFile,
     } as unknown as ComputerManager)
     const { boundary, payload } = multipartFile(
-      'statement.pdf',
-      'financial data',
+      'dashboard-query.kql',
+      'StormEvents | take 10',
     )
 
     const response = await app.inject({
@@ -65,16 +65,16 @@ describe('file upload routes', () => {
     expect(response.statusCode).toBe(201)
     expect(response.json()).toEqual({
       file: {
-        name: 'statement.pdf',
-        path: '/private/statement.pdf',
-        size: 14,
+        name: 'dashboard-query.kql',
+        path: '/private/dashboard-query.kql',
+        size: 21,
       },
     })
     expect(uploadFile).toHaveBeenCalledWith(
       'computer',
       'session',
-      'statement.pdf',
-      Buffer.from('financial data'),
+      'dashboard-query.kql',
+      Buffer.from('StormEvents | take 10'),
     )
     await app.close()
   })
@@ -82,6 +82,7 @@ describe('file upload routes', () => {
   it('allows financial and document formats but rejects executables', () => {
     expect(supportsSessionFile('statement.pdf')).toBe(true)
     expect(supportsSessionFile('transactions.csv')).toBe(true)
+    expect(supportsSessionFile('dashboard-query.kql')).toBe(true)
     expect(supportsSessionFile('portfolio.xlsx')).toBe(true)
     expect(supportsSessionFile('payload.sh')).toBe(false)
   })

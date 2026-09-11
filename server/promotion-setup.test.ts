@@ -125,7 +125,10 @@ describe('reproducible promotion setup', () => {
     expect(script).toContain('Persistent=true')
     expect(script).not.toContain('OnUnitActiveSec=')
     expect(script).not.toContain('OnBootSec=')
-    expect(script).toContain('TimeoutStartSec=30min')
+    // Validation plus graduation measured 16.5 minutes, and a timeout can kill
+    // the unit after setup replaced the service, so the budget keeps several
+    // times that cost in reserve.
+    expect(script).toContain('TimeoutStartSec=60min')
     expect(script).toContain('Environment=$(systemd_quote "AGENTIC_REMOTE_MONITOR_PROFILE=$PROFILE_DEST")')
     expect(script).toContain('--create-runtime')
     expect(script).toContain('git -C "$dev_root" worktree add --detach "$prod_root" HEAD')

@@ -156,6 +156,7 @@ import type {
   ManagedSession,
   KnowledgeRoot,
   SessionKnowledgeBinding,
+  SessionOrderSnapshot,
   QueuedPrompt,
   UserInputReplyInput,
   RuntimeOptions,
@@ -166,10 +167,18 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResult,
 } from '../shared/contracts'
-import { hasRunningBackgroundAgent } from '../shared/background-tasks'
+import {
+  hasActiveBackgroundTasks,
+  hasRunningBackgroundAgent,
+} from '../shared/background-tasks'
+import {
+  knowledgeAbsolutePath,
+  normalizeKnowledgeRelativePath,
+} from '../shared/knowledge-path'
 import {
   deliveryUncertaintyFromError,
   submissionReceiptFromError,
+  terminalDraftConflictFromError,
 } from '../shared/submission-error'
 import {
   activateSession,
@@ -211,6 +220,9 @@ import {
   restartSession,
   resumeSession,
   suspendSession,
+  fetchSessionOrder,
+  saveSessionOrderLane,
+  bootstrapSessionOrder,
   replyPermission,
   replyUserInput,
   sendMessage,
@@ -227,7 +239,6 @@ import {
   projectSessionResponse,
   sessionResponseStartedAt,
 } from './session-response-order'
-import { accentIconUrl, applyAccentIcon } from './accent-icon'
 import { appearanceFrom, appearanceStorageKey, type Appearance } from './appearance'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
@@ -241,6 +252,7 @@ import {
   type KnowledgeFolders,
 } from './knowledge-tree'
 import { composerMaximumHeight } from './composer-sizing'
+import { appKeyboardOpen, appViewportGeometry } from './app-viewport'
 import {
   activatePwaUpdate,
   activePushSubscription,
@@ -275,6 +287,28 @@ import {
   StaleInteractionRecoveryCard,
   UserInputCard,
 } from './features/prompts/PromptCards'
+
+function scopedKnowledgeRoot(
+  root: KnowledgeRoot,
+  rootPath: string,
+): KnowledgeRoot {
+  const normalized = normalizeKnowledgeRelativePath(rootPath)
+  if (normalized === knowledgeRootPath) {
+    return root
+  }
+  return {
+    ...root,
+    name: normalized.split('/').at(-1) || root.name,
+    path: knowledgeAbsolutePath(root.path, normalized),
+  }
+}
+
+function knowledgeExpansionKey(rootId: string, rootPath: string): string {
+  const normalized = normalizeKnowledgeRelativePath(rootPath)
+  return normalized === knowledgeRootPath
+    ? rootId
+    : `${rootId}:${normalized}`
+}
 
 function isAudioFile(file: File): boolean {
   return (
@@ -413,21 +447,17 @@ type StoredDefaultSessionFolders = {
 const defaultSessionFoldersStorageKey =
   'agentic-remote:default-session-folders'
 
-type AccentTheme = 'agentic' | 'ocean' | 'violet' | 'ember' | 'rose' | 'teal'
-
 const accentThemeStorageKey = 'agentic-remote:accent-theme'
-const accentThemes: Array<{
-  id: AccentTheme
-  name: string
-  color: string
-}> = [
+const accentThemes = [
   { id: 'agentic', name: 'Agentic', color: '#b8f36b' },
   { id: 'ocean', name: 'Ocean', color: '#6eb7ff' },
   { id: 'violet', name: 'Violet', color: '#ad92ff' },
   { id: 'ember', name: 'Ember', color: '#ff9c64' },
   { id: 'rose', name: 'Rose', color: '#ff83b6' },
   { id: 'teal', name: 'Teal', color: '#63d6c0' },
-]
+] as const
+
+type AccentTheme = (typeof accentThemes)[number]['id']
 
 function readAccentTheme(): AccentTheme {
   try {
@@ -438,6 +468,20 @@ function readAccentTheme(): AccentTheme {
   } catch {
     return 'agentic'
   }
+}
+
+function currentAppViewportGeometry(keyboardOpen: boolean) {
+  if (typeof window === 'undefined') {
+    return { height: 800, offsetTop: 0 }
+  }
+  const viewport = window.visualViewport
+  return appViewportGeometry({
+    innerHeight: window.innerHeight,
+    visualHeight: viewport?.height,
+    visualOffsetTop: viewport?.offsetTop,
+    standalone: installedAsApp(),
+    keyboardOpen,
+  })
 }
 
 type ComposerHistoryState = {
@@ -1648,6 +1692,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 /** Where a session's Knowledge panel was last reading. */
 type KnowledgePosition = {
   rootId?: string
+  rootPath?: string
   path?: string
   file?: string
 }
@@ -1740,6 +1785,7 @@ const defaultStatusline: StatuslineSettings = {
 }
 
 const timelineBottomThreshold = 48
+const keyboardFocusGapMs = 200
 
 const statuslineOptions: Array<{
   key: keyof Omit<StatuslineSettings, 'enabled'>
@@ -5422,6 +5468,7 @@ function KnowledgeReader({
   fragment,
   listing,
   loading,
+  mode,
   root,
   onOpenFolder,
   onOpenFile,
@@ -5436,6 +5483,7 @@ function KnowledgeReader({
   fragment?: string
   listing?: WorkspaceListing
   loading: boolean
+  mode: KnowledgePanelMode
   root: KnowledgeRoot
   onOpenFolder: (path: string) => void
   onOpenFile: (path: string, fragment?: string) => void
@@ -5449,6 +5497,25 @@ function KnowledgeReader({
   const [raw, setRaw] = useState(false)
   const [linkError, setLinkError] = useState<string>()
   const contentRef = useRef<HTMLDivElement>(null)
+  const contentScrollTop = useRef(0)
+  const previousFilePath = useRef(file?.path)
+
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    if (!content) {
+      previousFilePath.current = file?.path
+      return
+    }
+    if (previousFilePath.current !== file?.path) {
+      contentScrollTop.current = 0
+    } else if (mode !== 'hidden') {
+      if (contentScrollTop.current === 0) {
+        contentScrollTop.current = content.scrollTop
+      }
+      content.scrollTop = contentScrollTop.current
+    }
+    previousFilePath.current = file?.path
+  }, [file, mode])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -5577,6 +5644,9 @@ function KnowledgeReader({
         onClick={(event) =>
           followMarkdownLink(event, file.path, onOpenFile, setLinkError)
         }
+        onScroll={(event) => {
+          contentScrollTop.current = event.currentTarget.scrollTop
+        }}
         ref={contentRef}
       >
         {file.kind === 'pdf' ? (
@@ -6338,7 +6408,22 @@ function App() {
   // Folders are cached per path and loaded only when expanded, so the tree can
   // show structure without refetching a branch every time it reopens.
   const [knowledgeFolders, setKnowledgeFolders] = useState<KnowledgeFolders>({})
-  const [expandedKnowledge, setExpandedKnowledge] = useState<string[]>([])
+  const [knowledgeExpansion, setKnowledgeExpansion] = useState<{
+    scope?: string
+    paths: string[]
+  }>({ paths: [] })
+  const expandedKnowledge = knowledgeExpansion.paths
+  const setExpandedKnowledge = useCallback((
+    update: string[] | ((current: string[]) => string[]),
+  ) => {
+    setKnowledgeExpansion((current) => ({
+      ...current,
+      paths:
+        typeof update === 'function'
+          ? update(current.paths)
+          : update,
+    }))
+  }, [])
   const [knowledgePath, setKnowledgePath] = useState(knowledgeRootPath)
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
@@ -6399,6 +6484,10 @@ function App() {
   // be bumped in different combinations, and each wrong combination was a
   // race.
   const knowledgeRequest = useRef(0)
+  // Background file refreshes do not change the requested view. They still
+  // need ordering of their own so a mode toggle cannot cancel navigation or
+  // let an older refresh replace a newer one.
+  const knowledgeFileRefreshRequest = useRef(0)
   // A view generation can contain several refreshes of the same branch.
   // Only the latest request owns its payload and loading indicator.
   const knowledgeFolderRequestId = useRef(0)
@@ -6499,6 +6588,10 @@ function App() {
     (rootId: string, path: string, generation?: number, throwOnError?: boolean) =>
       Promise<WorkspaceListing | undefined>
   >(async () => undefined)
+  const selectKnowledgeRootRef = useRef<
+    (rootId: string, fromRestore?: boolean) =>
+      Promise<KnowledgeFolders | undefined>
+  >(async () => undefined)
   // Replacements announced by a removal but not yet delivered by their upsert.
   // The fallback below must not treat one as a missing session and select
   // something unrelated in the gap.
@@ -6574,6 +6667,10 @@ function App() {
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [replacingTerminalDraft, setReplacingTerminalDraft] = useState(false)
+  const [terminalDraftConflicts, setTerminalDraftConflicts] = useState<
+    Record<string, true>
+  >({})
   const [cancelling, setCancelling] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [uploadingFile, setUploadingFile] = useState(false)
@@ -6620,6 +6717,8 @@ function App() {
   const [updatingApp, setUpdatingApp] = useState(false)
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false)
   const [keyboardOpen, setKeyboardOpen] = useState(false)
+  const keyboardOpenRef = useRef(false)
+  const keyboardFocusGapUntilRef = useRef(0)
   // Escape put the command menu away. Kept until what is being typed changes,
   // so the menu does not spring back on the next keystroke.
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
@@ -6627,12 +6726,18 @@ function App() {
     Partial<Record<ShortcutId, ShortcutBinding>>
   >(() => readStoredShortcuts())
   const [viewportHeight, setViewportHeight] = useState(() =>
-    typeof window === 'undefined'
-      ? 800
-      : window.visualViewport?.height || window.innerHeight,
+    currentAppViewportGeometry(false).height,
   )
   const [viewportOffsetTop, setViewportOffsetTop] = useState(() =>
-    typeof window === 'undefined' ? 0 : window.visualViewport?.offsetTop || 0,
+    currentAppViewportGeometry(false).offsetTop,
+  )
+  const viewportBaselineHeightRef = useRef(
+    typeof window === 'undefined'
+      ? 800
+      : Math.max(
+          window.innerHeight,
+          window.visualViewport?.height || 0,
+        ),
   )
   const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
     ({
@@ -6666,18 +6771,35 @@ function App() {
       if (themeColor && previousColor !== undefined) themeColor.content = previousColor
     }
   }, [appearance])
-  const brandIcon = useMemo(
-    () => accentIconUrl(
-      (accentThemes.find((theme) => theme.id === accentTheme) ?? accentThemes[0]).color,
-    ),
-    [accentTheme],
-  )
+  const brandIcon = '/icon.svg'
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
     readStoredOrder('agentic-remote:computer-order', []),
   )
   const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>(
     () => readStoredOrder('agentic-remote:session-order', {}),
+  )
+  // The hub owns the custom order. Until its first snapshot arrives the value
+  // above is only what this browser last saw, so it is offered as a bootstrap
+  // rather than written back. -1 means "nothing acknowledged yet", which keeps
+  // revision 0 (an empty hub) from looking like a snapshot already applied.
+  const [sessionOrderRevision, setSessionOrderRevision] = useState(-1)
+  const sessionOrderRef = useRef(sessionOrder)
+  sessionOrderRef.current = sessionOrder
+  const sessionOrderRevisionRef = useRef(sessionOrderRevision)
+  sessionOrderRevisionRef.current = sessionOrderRevision
+  // The last order the hub confirmed, which is what a refused drag returns to.
+  const acknowledgedSessionOrderRef = useRef(sessionOrder)
+  const applySessionOrderSnapshot = useCallback(
+    (snapshot: SessionOrderSnapshot) => {
+      // An older revision is a late delivery, not a correction.
+      if (snapshot.revision < sessionOrderRevisionRef.current) return
+      sessionOrderRevisionRef.current = snapshot.revision
+      acknowledgedSessionOrderRef.current = snapshot.order
+      setSessionOrderRevision(snapshot.revision)
+      setSessionOrder(snapshot.order)
+    },
+    [],
   )
   const [sessionSort, setSessionSort] = useState<SessionSort>(() =>
     sessionSortFrom(readStoredOrder<unknown>('agentic-remote:session-sort', 'custom')),
@@ -7075,6 +7197,15 @@ function App() {
         rootId:
           sessionKnowledgeRoot.binding?.rootId ||
           (selectedKey ? knowledgePositions[selectedKey]?.rootId : undefined),
+        ...(normalizeKnowledgeRelativePath(
+          sessionKnowledgeRoot.binding?.rootPath,
+        ) === knowledgeRootPath
+          ? {}
+          : {
+              rootPath: normalizeKnowledgeRelativePath(
+                sessionKnowledgeRoot.binding?.rootPath,
+              ),
+            }),
         path: knowledgeFolderForFile(locationKnowledgeFile),
         file: locationKnowledgeFile,
       }
@@ -7086,6 +7217,19 @@ function App() {
     [sessionKnowledgeRoot.binding, rememberedKnowledgePosition],
   )
   const expectedKnowledgeRootId = selected ? resolvedKnowledgePosition?.rootId : undefined
+  const selectedKnowledgeBinding = selected
+    ? sessionKnowledgeRoot.binding
+    : undefined
+  const sessionKnowledgeBasePath =
+    selectedKnowledgeBinding &&
+    selectedKnowledgeBinding.rootId === expectedKnowledgeRootId
+      ? normalizeKnowledgeRelativePath(selectedKnowledgeBinding.rootPath)
+      : knowledgeRootPath
+  const activeKnowledgeBasePath =
+    selectedKnowledgeBinding &&
+    selectedKnowledgeBinding.rootId === activeRootId
+      ? normalizeKnowledgeRelativePath(selectedKnowledgeBinding.rootPath)
+      : knowledgeRootPath
   const sessionRootReady = !selected || Boolean(sessionKnowledgeRoot.binding)
   const sessionRootUnavailable = Boolean(selected && expectedKnowledgeRootId && (
     (sessionKnowledgeRoot.binding?.rootId && !sessionKnowledgeRoot.binding.available) ||
@@ -7107,9 +7251,19 @@ function App() {
     setRootPicker((current) => current?.id === rootPicker.id
       ? { ...current, revision: binding.revision } : current)
     setRootChoice(expectedKnowledgeRootId
-      ? { kind: 'root', rootId: expectedKnowledgeRootId }
-      : { kind: 'working-folder' })
-  }, [expectedKnowledgeRootId, rootPicker, selectedKey, sessionKnowledgeRoot.binding])
+      ? {
+          kind: 'root',
+          rootId: expectedKnowledgeRootId,
+          rootPath: sessionKnowledgeBasePath,
+        }
+      : { kind: 'working-folder', rootPath: knowledgeRootPath })
+  }, [
+    expectedKnowledgeRootId,
+    rootPicker,
+    selectedKey,
+    sessionKnowledgeBasePath,
+    sessionKnowledgeRoot.binding,
+  ])
 
   useLayoutEffect(() => {
     const owner = rootCreationOwner.current
@@ -7121,16 +7275,26 @@ function App() {
 
   useLayoutEffect(() => {
     if (!selectedKey || !hasSelectedSession || !sessionRootReady || !knowledgeRootsLoaded || knowledgeMode === 'hidden') return
-    const scope = `${selectedKey}:${expectedKnowledgeRootId || ''}:${sessionRootUnavailable}`
+    const scope = `${selectedKey}:${expectedKnowledgeRootId || ''}:${sessionKnowledgeBasePath}:${sessionRootUnavailable}`
     if (appliedSessionRootScope.current === scope) return
     appliedSessionRootScope.current = scope
     if (expectedKnowledgeRootId) {
-      setKnowledgePositions((current) => current[selectedKey]?.rootId === expectedKnowledgeRootId
+      setKnowledgePositions((current) =>
+        current[selectedKey]?.rootId === expectedKnowledgeRootId &&
+        normalizeKnowledgeRelativePath(current[selectedKey]?.rootPath) ===
+          sessionKnowledgeBasePath
         ? current
         : {
             ...current,
-            [selectedKey]: { rootId: expectedKnowledgeRootId, path: knowledgeRootPath },
-          })
+            [selectedKey]: {
+              rootId: expectedKnowledgeRootId,
+              ...(sessionKnowledgeBasePath === knowledgeRootPath
+                ? {}
+                : { rootPath: sessionKnowledgeBasePath }),
+              path: knowledgeRootPath,
+            },
+          },
+      )
     }
     knowledgeRequest.current += 1
     knowledgeRestoreStartedKey.current = undefined
@@ -7140,23 +7304,61 @@ function App() {
     if (!expectedKnowledgeRootId || sessionRootUnavailable) {
       setActiveRootId(undefined)
       setKnowledgeFolders({})
-      setExpandedKnowledge([])
+      setKnowledgeExpansion({ paths: [] })
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
       setKnowledgeFragment(undefined)
       knowledgeViewOwnerKey.current = selectedKey
       knowledgeRestoredKey.current = selectedKey
-    } else if (
-      activeRootId !== expectedKnowledgeRootId ||
-      knowledgeViewOwnerKey.current !== selectedKey
-    ) {
+    } else {
+      setKnowledgeFolders({})
+      const expansionScope = knowledgeExpansionKey(
+        expectedKnowledgeRootId,
+        sessionKnowledgeBasePath,
+      )
+      setKnowledgeExpansion({
+        scope: expansionScope,
+        paths: rememberedKnowledgeExpansion(
+          expectedKnowledgeRootId,
+          sessionKnowledgeBasePath,
+        ),
+      })
+      setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
       setKnowledgeFragment(undefined)
     }
   }, [
-    activeRootId, expectedKnowledgeRootId, knowledgeMode, knowledgeRootsLoaded,
-    hasSelectedSession, selectedKey, sessionRootReady, sessionRootUnavailable,
+    expectedKnowledgeRootId, knowledgeMode, knowledgeRootsLoaded,
+    hasSelectedSession, selectedKey, sessionKnowledgeBasePath,
+    sessionRootReady, sessionRootUnavailable,
   ])
+
+  useLayoutEffect(() => {
+    selectKnowledgeRootRef.current = selectRoot
+  })
+
+  useLayoutEffect(() => {
+    if (
+      selected ||
+      !activeRootId ||
+      !knowledgeRootsLoaded ||
+      knowledgeMode === 'hidden'
+    ) {
+      return
+    }
+    const scope = knowledgeExpansionKey(activeRootId, knowledgeRootPath)
+    if (knowledgeExpansion.scope === scope) {
+      return
+    }
+    void selectKnowledgeRootRef.current(activeRootId, true)
+  }, [
+    activeRootId,
+    knowledgeExpansion.scope,
+    knowledgeMode,
+    knowledgeRootsLoaded,
+    selected,
+  ])
+
   // The native shell shows how many sessions are blocked on the user. This is
   // a no-op in a browser, so the badge never needs a capability check here.
   useEffect(() => {
@@ -7212,6 +7414,8 @@ function App() {
     selectedBackgroundTasks?.runningCount || 0
   const selectedHasRunningBackgroundAgent =
     hasRunningBackgroundAgent(selectedBackgroundTasks)
+  const selectedHasActiveBackgroundTasks =
+    hasActiveBackgroundTasks(selectedBackgroundTasks)
   const selectedQueueAvailable =
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
@@ -7301,18 +7505,28 @@ function App() {
     selected?.pendingUserInput?.stale === true
   const selectedShowsRecovery =
     selected?.provider !== 'claude' &&
-    selectedProviderCapability?.supportsContextRecovery === true &&
-    (selected?.status === 'error' || selectedHasStaleInteraction)
-  const selectedCanRecover =
-    selectedShowsRecovery &&
-    selectedComputerOnline &&
-    selected?.suspended !== true
+    selectedProviderCapability?.supportsContextRecovery === true
   const selectedSupportsBackgroundTasks = selected
     ? supportsBackgroundTasks(
         computers.find((computer) => computer.id === selected.computerId),
         selected.provider,
       ) || selectedBackgroundTasks?.supported === true
     : false
+  const selectedCanRecover =
+    selectedShowsRecovery &&
+    selectedComputerOnline &&
+    selected?.suspended !== true &&
+    (selected?.status === 'idle' ||
+      selected?.status === 'error') &&
+    ((!selected?.pendingPermission &&
+      !selected?.pendingUserInput) ||
+      selectedHasStaleInteraction) &&
+    !selected?.queuedDispatch &&
+    selected?.recoverySeedState !== 'pending' &&
+    selected?.recoverySeedState !== 'dispatching' &&
+    !hasRunningTool &&
+    (!selectedSupportsBackgroundTasks || selectedBackgroundTasks !== undefined) &&
+    !selectedHasActiveBackgroundTasks
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''
@@ -7442,14 +7656,29 @@ function App() {
       const editorFocused =
         activeElement instanceof HTMLElement &&
         activeElement.matches('input, textarea, select, [contenteditable="true"]')
-      const open = Boolean(
-        editorFocused &&
-          viewport &&
-          window.innerHeight - viewport.height > 80,
-      )
+      const visibleHeight = viewport?.height || window.innerHeight
+      const viewportOffsetTop = viewport?.offsetTop || 0
+      const focusGapActive =
+        !editorFocused &&
+        Date.now() < keyboardFocusGapUntilRef.current
+      const open = appKeyboardOpen({
+        editorFocused,
+        focusGapActive,
+        baselineHeight: viewportBaselineHeightRef.current,
+        viewportHeight: visibleHeight,
+        viewportOffsetTop,
+      })
+      if (!editorFocused && !open) {
+        viewportBaselineHeightRef.current = Math.max(
+          window.innerHeight,
+          visibleHeight,
+        )
+      }
+      keyboardOpenRef.current = open
+      const geometry = currentAppViewportGeometry(open)
       setKeyboardOpen(open)
-      setViewportHeight(viewport?.height || window.innerHeight)
-      setViewportOffsetTop(viewport?.offsetTop || 0)
+      setViewportHeight(geometry.height)
+      setViewportOffsetTop(geometry.offsetTop)
     }
     const timers = new Set<number>()
     const handleViewportChange = () => {
@@ -7462,17 +7691,27 @@ function App() {
         timers.add(timer)
       }
     }
+    const handleFocusIn = () => {
+      keyboardFocusGapUntilRef.current = 0
+      handleViewportChange()
+    }
+    const handleFocusOut = () => {
+      keyboardFocusGapUntilRef.current = keyboardOpenRef.current
+        ? Date.now() + keyboardFocusGapMs
+        : 0
+      handleViewportChange()
+    }
     window.visualViewport?.addEventListener('resize', handleViewportChange)
     window.visualViewport?.addEventListener('scroll', handleViewportChange)
     window.addEventListener('resize', handleViewportChange)
-    document.addEventListener('focusin', handleViewportChange)
-    document.addEventListener('focusout', handleViewportChange)
+    document.addEventListener('focusin', handleFocusIn)
+    document.addEventListener('focusout', handleFocusOut)
     return () => {
       window.visualViewport?.removeEventListener('resize', handleViewportChange)
       window.visualViewport?.removeEventListener('scroll', handleViewportChange)
       window.removeEventListener('resize', handleViewportChange)
-      document.removeEventListener('focusin', handleViewportChange)
-      document.removeEventListener('focusout', handleViewportChange)
+      document.removeEventListener('focusin', handleFocusIn)
+      document.removeEventListener('focusout', handleFocusOut)
       for (const timer of timers) {
         window.clearTimeout(timer)
       }
@@ -7513,19 +7752,19 @@ function App() {
   }, [activeRootId])
 
   useEffect(() => {
-    if (!knowledgeHydrated.current || !activeRootId) {
+    if (!knowledgeHydrated.current || !knowledgeExpansion.scope) {
       return
     }
     const stored = {
       ...restoredKnowledgeExpansion.current,
-      [activeRootId]: expandedKnowledge,
+      [knowledgeExpansion.scope]: knowledgeExpansion.paths,
     }
     restoredKnowledgeExpansion.current = stored
     writeStored(
       'agentic-remote:knowledge-expanded',
       JSON.stringify(stored),
     )
-  }, [activeRootId, expandedKnowledge])
+  }, [knowledgeExpansion])
 
   useEffect(() => {
     writeStored(
@@ -7799,11 +8038,16 @@ function App() {
       const existing = current[selectedKey]
       const next: KnowledgePosition = {
         rootId: activeRootId,
+        ...(sessionKnowledgeBasePath === knowledgeRootPath
+          ? {}
+          : { rootPath: sessionKnowledgeBasePath }),
         path: knowledgePath,
         file: knowledgeFile?.path,
       }
       return existing &&
         existing.rootId === next.rootId &&
+        normalizeKnowledgeRelativePath(existing.rootPath) ===
+          sessionKnowledgeBasePath &&
         existing.path === next.path &&
         existing.file === next.file
         ? current
@@ -7811,7 +8055,8 @@ function App() {
     })
   }, [
     activeRootId, expectedKnowledgeRootId, knowledgeFile?.path, knowledgePath,
-    hasSelectedSession, selectedKey, sessionRootReady, sessionRootUnavailable,
+    hasSelectedSession, selectedKey, sessionKnowledgeBasePath,
+    sessionRootReady, sessionRootUnavailable,
   ])
 
   // Reopening a session with its panel open restores what that session was
@@ -7862,6 +8107,15 @@ function App() {
             knowledgeFile?.path === position.file &&
             knowledgeFile
           ) {
+            if (
+              !(await reloadKnowledgeFile(
+                rootId,
+                knowledgeFile.path,
+                token,
+              ))
+            ) {
+              return
+            }
             applyKnowledgeScrollRef.current(key)
             return
           }
@@ -8252,32 +8506,23 @@ function App() {
     if (computers.length === 0) {
       return
     }
+    // Only append what this browser can see. Pruning belongs to the hub, which
+    // is told when a session is actually deleted: a listing that is filtered,
+    // still loading, or missing an offline computer's sessions is not evidence
+    // that anything was removed, and dropping keys here would delete another
+    // device's arrangement.
     setSessionOrder((current) => {
       const next = { ...current }
       let changed = false
-      const computerIds = new Set(computers.map((computer) => computer.id))
-      for (const computerId of Object.keys(next)) {
-        if (!computerIds.has(computerId)) {
-          delete next[computerId]
-          changed = true
-        }
-      }
       for (const computer of computers) {
-        const keys = sessions
+        const existing = next[computer.id] || []
+        const missing = sessions
           .filter((session) => session.computerId === computer.id)
           .map(sessionKey)
-        const existing = next[computer.id] || []
-        const nextOrder = [
-          ...existing.filter((key) => keys.includes(key)),
-          ...keys.filter((key) => !existing.includes(key)),
-        ]
-        if (
-          nextOrder.length !== existing.length ||
-          nextOrder.some((key, index) => key !== existing[index])
-        ) {
-          next[computer.id] = nextOrder
-          changed = true
-        }
+          .filter((key) => !existing.includes(key))
+        if (missing.length === 0) continue
+        next[computer.id] = [...existing, ...missing]
+        changed = true
       }
       return changed ? next : current
     })
@@ -8291,13 +8536,35 @@ function App() {
     }
   }, [computerOrder])
 
-  useEffect(() => {
+  // The hub is the source of truth for the session order, so nothing writes
+  // agentic-remote:session-order any more. The existing value is read once at
+  // startup and offered to an empty hub as a bootstrap.
+  const syncSessionOrder = useCallback(async () => {
     try {
-      localStorage.setItem('agentic-remote:session-order', JSON.stringify(sessionOrder))
+      let snapshot = await fetchSessionOrder()
+      // Discovery appends on its own, so a non-empty hub order is not proof a
+      // migration ran; the hub reports whether it ever took one.
+      if (!snapshot.bootstrapped) {
+        const legacy = readStoredOrder<Record<string, string[]>>(
+          'agentic-remote:session-order',
+          {},
+        )
+        if (Object.keys(legacy).length > 0) {
+          snapshot = await bootstrapSessionOrder(legacy)
+        }
+      }
+      applySessionOrderSnapshot(snapshot)
     } catch {
-      // Automatic snapshot reconciliation remains usable without storage.
+      // Rendering falls back to the order this browser already held. The next
+      // committed change or reconnect replaces it.
     }
-  }, [sessionOrder])
+  }, [applySessionOrderSnapshot])
+  const syncSessionOrderRef = useRef(syncSessionOrder)
+  syncSessionOrderRef.current = syncSessionOrder
+
+  useEffect(() => {
+    void syncSessionOrder()
+  }, [syncSessionOrder])
 
   useEffect(() => {
     writeStored(
@@ -8326,11 +8593,6 @@ function App() {
     } catch {
       // A blocked storage quota should not stop this tab from changing color.
     }
-  }, [accentTheme])
-
-  useEffect(() => {
-    const theme = accentThemes.find((entry) => entry.id === accentTheme)
-    return applyAccentIcon((theme ?? accentThemes[0]).color)
   }, [accentTheme])
 
   function durableComposerDraft(key: string, draft: ComposerDraft): ComposerDraft {
@@ -9108,6 +9370,9 @@ function App() {
       socket.onopen = () => {
         reconnectDelay = 1_000
         sessionKnowledgeRootRef.current.refresh()
+        // Order events are not replayed, so a reorder committed while this
+        // socket was down would otherwise stay invisible until the next one.
+        void syncSessionOrderRef.current()
         void refreshSnapshot().catch((caught: unknown) => {
           setError(caught instanceof Error ? caught.message : String(caught))
         })
@@ -9116,6 +9381,10 @@ function App() {
         const event = JSON.parse(message.data as string) as HubEvent
         if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
+        } else if (event.type === 'session.order.updated') {
+          // Preference state, not session lifecycle: it must not advance the
+          // transcript sequence the snapshot reconciliation depends on.
+          applySessionOrderSnapshot(event.order)
         } else if (event.type === 'session.upserted') {
           setResourcesView((view) => view?.ownerKey === sessionKey(event.session) &&
             view.signature !== sessionResourceOwner(event.session) ? undefined : view)
@@ -9142,6 +9411,7 @@ function App() {
           sessionKnowledgeRootRef.current.forgetSession(event.computerId, event.sessionId)
           setResourcesView((view) => view?.ownerKey === `${event.computerId}:${event.sessionId}` ? undefined : view)
           const removedKey = `${event.computerId}:${event.sessionId}`
+          setTerminalDraftConflict(removedKey, false)
           // Said outright, so a later answer that simply does not mention it
           // is not what settles it, and a delayed clear response must not put
           // it back.
@@ -10234,9 +10504,33 @@ function App() {
     })
   }
 
-  const activeRoot = roots.find((root) => root.id === activeRootId)
+  const activeCatalogRoot =
+    roots.find((root) => root.id === activeRootId) ||
+    (
+      selected &&
+      selectedKnowledgeBinding &&
+      selectedKnowledgeBinding.rootId === activeRootId
+        ? selectedKnowledgeBinding.root
+        : undefined
+    )
+  const activeRoot = activeCatalogRoot
+    ? scopedKnowledgeRoot(
+        activeCatalogRoot,
+        selected &&
+        selectedKnowledgeBinding?.rootId === activeRootId
+          ? activeKnowledgeBasePath
+          : knowledgeRootPath,
+      )
+    : undefined
   const displayedKnowledgeRoot = selected
-    ? roots.find((root) => root.id === expectedKnowledgeRootId) || sessionKnowledgeRoot.binding?.root
+    ? (() => {
+        const root =
+          roots.find((candidate) => candidate.id === expectedKnowledgeRootId) ||
+          selectedKnowledgeBinding?.root
+        return root
+          ? scopedKnowledgeRoot(root, sessionKnowledgeBasePath)
+          : undefined
+      })()
     : activeRoot
   const knowledgeRootStatus = !selected
     ? 'Knowledge library'
@@ -10350,6 +10644,24 @@ function App() {
         'agentic-remote:knowledge-open-mode',
         JSON.stringify(mode),
       )
+    }
+    const file = knowledgeFileStateRef.current
+    const visibleModeChanged =
+      knowledgeMode !== 'hidden' &&
+      mode !== 'hidden' &&
+      mode !== knowledgeMode
+    const sessionlessReopen =
+      knowledgeMode === 'hidden' &&
+      mode !== 'hidden' &&
+      !selectedKey
+    if (
+      (visibleModeChanged || sessionlessReopen) &&
+      !knowledgeLoadingRef.current &&
+      !knowledgeRestoreStartedKey.current &&
+      activeRootId &&
+      file
+    ) {
+      void reloadKnowledgeFile(activeRootId, file.path)
     }
     setKnowledgeModeState(mode)
   }
@@ -10474,6 +10786,22 @@ function App() {
   }
 
   function openRootPicker() {
+    const choice: KnowledgeRootChoice = selected &&
+      selectedKnowledgeBinding?.rootId
+      ? {
+          kind: 'root',
+          rootId: selectedKnowledgeBinding.rootId,
+          rootPath: sessionKnowledgeBasePath,
+        }
+      : displayedKnowledgeRoot
+        ? {
+            kind: 'root',
+            rootId: displayedKnowledgeRoot.id,
+            rootPath: knowledgeRootPath,
+          }
+        : selected
+          ? { kind: 'working-folder', rootPath: knowledgeRootPath }
+          : { kind: 'none' }
     setRootPicker({
       id: ++rootPickerSequence.current,
       ownerKey: selectedKey,
@@ -10486,14 +10814,12 @@ function App() {
         cwd: selected.cwd,
       } : undefined,
     })
-    setRootChoice(displayedKnowledgeRoot
-      ? { kind: 'root', rootId: displayedKnowledgeRoot.id }
-      : selected ? { kind: 'working-folder' } : undefined)
+    setRootChoice(choice.kind === 'none' && !selected ? undefined : choice)
     setRootPickerError(undefined)
   }
 
   function closeRootPicker() {
-    if (rootPickerSavingRef.current && rootChoice?.kind === 'working-folder') {
+    if (rootPickerSavingRef.current) {
       rootCreationOwner.current = undefined
     }
     setRootPicker(undefined)
@@ -10526,9 +10852,20 @@ function App() {
       if (rootChoice.kind === 'working-folder') {
         if (!rootPicker.session) throw new Error('Choose a session before using its working folder.')
         rootCreationOwner.current = { key: ownerKey, revision: expectedRevision }
-        await createRoot(rootPicker.session.computerId, rootPicker.session.cwd, expectedRevision)
+        await createRoot(
+          rootPicker.session.computerId,
+          rootPicker.session.cwd,
+          expectedRevision,
+          rootChoice.rootPath,
+        )
       } else if (rootPicker.session) {
-        await sessionKnowledgeRoot.saveRoot(rootChoice.kind === 'none' ? null : rootChoice.rootId, expectedRevision)
+        await sessionKnowledgeRoot.saveRoot(
+          rootChoice.kind === 'none' ? null : rootChoice.rootId,
+          expectedRevision,
+          rootChoice.kind === 'none'
+            ? knowledgeRootPath
+            : rootChoice.rootPath,
+        )
       } else if (rootChoice.kind === 'root') {
         if (!(await selectRoot(rootChoice.rootId))) return
       }
@@ -10544,6 +10881,38 @@ function App() {
             ? { ...current, revision: latest.revision } : current)
         }
       }
+    } finally {
+      rootPickerSavingRef.current = false
+      setRootPickerSaving(false)
+    }
+  }
+
+  async function saveRootPickerFolder(location: {
+    computerId: string
+    path: string
+  }) {
+    if (!rootPicker?.session || rootPickerSavingRef.current || !rootPickerCurrent) return
+    rootPickerSavingRef.current = true
+    setRootPickerSaving(true)
+    setRootPickerError(undefined)
+    const ownerKey = rootPicker.ownerKey
+    const expectedRevision =
+      rootPicker.revision ?? sessionKnowledgeRoot.binding?.revision
+    try {
+      rootCreationOwner.current = { key: ownerKey, revision: expectedRevision }
+      await createRoot(
+        location.computerId,
+        location.path,
+        expectedRevision,
+        knowledgeRootPath,
+      )
+      setRootPicker((current) =>
+        current?.id === rootPicker.id ? undefined : current,
+      )
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught)
+      setRootPickerError({ id: rootPicker.id, message })
+      setError(`Could not save this Knowledge root: ${message}`)
     } finally {
       rootPickerSavingRef.current = false
       setRootPickerSaving(false)
@@ -10572,9 +10941,36 @@ function App() {
   // Stable identity: a new loader each render would remount every image and
   // restart its download.
   const loadKnowledgeAsset = useCallback(
-    (assetPath: string) => readKnowledgeFile(activeRootId || '', assetPath),
-    [activeRootId],
+    (assetPath: string) => activeKnowledgeBasePath === knowledgeRootPath
+      ? readKnowledgeFile(activeRootId || '', assetPath)
+      : readKnowledgeFile(
+          activeRootId || '',
+          assetPath,
+          activeKnowledgeBasePath,
+        ),
+    [activeKnowledgeBasePath, activeRootId],
   )
+
+  function knowledgeBasePathFor(rootId: string): string {
+    return selected && sessionKnowledgeRoot.binding?.rootId === rootId
+      ? sessionKnowledgeBasePath
+      : knowledgeRootPath
+  }
+
+  function rememberedKnowledgeExpansion(
+    rootId: string,
+    basePath: string,
+  ): string[] {
+    return (
+      restoredKnowledgeExpansion.current[
+        knowledgeExpansionKey(rootId, basePath)
+      ] ||
+      (basePath === knowledgeRootPath
+        ? restoredKnowledgeExpansion.current[rootId]
+        : undefined) ||
+      []
+    ).slice(0, 24)
+  }
 
   async function loadKnowledgeFolder(
     rootId: string,
@@ -10601,7 +10997,10 @@ function App() {
       [path]: { ...current[path], loading: true, loadingRequest: requestId, error: undefined },
     }))
     try {
-      const listing = await listKnowledgeEntries(rootId, path)
+      const basePath = knowledgeBasePathFor(rootId)
+      const listing = basePath === knowledgeRootPath
+        ? await listKnowledgeEntries(rootId, path)
+        : await listKnowledgeEntries(rootId, path, basePath)
       // Switching roots invalidates every folder in flight, so a late reply
       // cannot graft one root's entries onto another root's tree.
       if (!currentRequest()) {
@@ -10849,7 +11248,10 @@ function App() {
     setKnowledgeLoading(true)
     setError(undefined)
     try {
-      const opened = await readKnowledgeFile(rootId, path)
+      const basePath = knowledgeBasePathFor(rootId)
+      const opened = basePath === knowledgeRootPath
+        ? await readKnowledgeFile(rootId, path)
+        : await readKnowledgeFile(rootId, path, basePath)
       // Checked before any state write, so a read left over from the previous
       // session cannot land in the one that replaced it.
       if (request !== knowledgeRequest.current) {
@@ -10874,6 +11276,40 @@ function App() {
       if (request === knowledgeRequest.current) {
         setKnowledgeLoading(false)
       }
+    }
+  }
+
+  async function reloadKnowledgeFile(
+    rootId: string,
+    path: string,
+    generation = knowledgeRequest.current,
+  ): Promise<boolean> {
+    const refresh = ++knowledgeFileRefreshRequest.current
+    const ownerKey = knowledgePanelKey
+    const current = () =>
+      generation === knowledgeRequest.current &&
+      refresh === knowledgeFileRefreshRequest.current &&
+      knowledgeViewOwnerKey.current === ownerKey &&
+      knowledgeFileStateRef.current?.path === path
+    if (!current()) {
+      return false
+    }
+    setError(undefined)
+    try {
+      const basePath = knowledgeBasePathFor(rootId)
+      const refreshed = basePath === knowledgeRootPath
+        ? await readKnowledgeFile(rootId, path)
+        : await readKnowledgeFile(rootId, path, basePath)
+      if (!current()) {
+        return false
+      }
+      setKnowledgeFile(refreshed)
+      return true
+    } catch (caught) {
+      if (current()) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+      return false
     }
   }
 
@@ -10905,10 +11341,12 @@ function App() {
     setKnowledgePath(knowledgeRootPath)
     // Reopening a root restores the branches that were open in it, bounded so
     // a very wide tree cannot fan out into unbounded requests.
-    const remembered = (
-      restoredKnowledgeExpansion.current[rootId] || []
-    ).slice(0, 24)
-    setExpandedKnowledge(remembered)
+    const basePath = knowledgeBasePathFor(rootId)
+    const remembered = rememberedKnowledgeExpansion(rootId, basePath)
+    setKnowledgeExpansion({
+      scope: knowledgeExpansionKey(rootId, basePath),
+      paths: remembered,
+    })
     const opened = await loadKnowledgeFolder(
       rootId,
       knowledgeRootPath,
@@ -10936,13 +11374,18 @@ function App() {
       knowledgeRequest.current += 1
       setActiveRootId(undefined)
       setKnowledgeFolders({})
-      setExpandedKnowledge([])
+      setKnowledgeExpansion({ paths: [] })
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
     }
   }
 
-  async function createRoot(computerId: string, path: string, expectedRevision?: number) {
+  async function createRoot(
+    computerId: string,
+    path: string,
+    expectedRevision?: number,
+    bindingRootPath = knowledgeRootPath,
+  ) {
     const owner = rootCreationOwner.current || { key: selectedKey, revision: expectedRevision }
     rootCreationOwner.current = owner
     const ownerKey = owner.key
@@ -10983,7 +11426,7 @@ function App() {
     }
     if (saveRoot) {
       try {
-        await saveRoot(root.id, revision)
+        await saveRoot(root.id, revision, bindingRootPath)
       } catch (caught) {
         if (
           caught instanceof SessionKnowledgeRequestError &&
@@ -11072,7 +11515,7 @@ function App() {
       setKnowledgeLoading(false)
       setActiveRootId(undefined)
       setKnowledgeFolders({})
-      setExpandedKnowledge([])
+      setKnowledgeExpansion({ paths: [] })
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
     }
@@ -11279,7 +11722,23 @@ function App() {
     setSidebarOpen(false)
   }
 
-  async function submitMessage(enqueue = false) {
+  function setTerminalDraftConflict(key: string, blocked: boolean) {
+    setTerminalDraftConflicts((current) => {
+      if (blocked) {
+        return current[key] ? current : { ...current, [key]: true }
+      }
+      if (!current[key]) {
+        return current
+      }
+      const { [key]: _removed, ...remaining } = current
+      return remaining
+    })
+  }
+
+  async function submitMessage(
+    enqueue = false,
+    replaceTerminalDraft = false,
+  ) {
     const displayContent = composer
     const trimmedDisplay = displayContent.trim()
     if (!selected || !trimmedDisplay || sending) {
@@ -11452,6 +11911,7 @@ function App() {
             acknowledgesFailure: submission.acknowledgesFailure,
             command: content,
             enqueue: shouldEnqueue,
+            ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
           })
         : await sendMessage(selected.computerId, selected.id, {
             // Whatever they were handed back is answered by this, whether
@@ -11459,12 +11919,14 @@ function App() {
             acknowledgesFailure: submission.acknowledgesFailure,
             content,
             enqueue: shouldEnqueue,
+            ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
           })
       const updated = currentSessionResponse(response)
       if (!composerMounted.current) {
         return
       }
       const liveKey = followReplacementsRef.current(targetKey)
+      setTerminalDraftConflict(liveKey, false)
       updateComposerDrafts([], (current) => {
         const draft = current[liveKey]
         if (draft?.pendingSubmission?.id !== submission.id) {
@@ -11512,6 +11974,10 @@ function App() {
         return
       }
       const liveKey = followReplacementsRef.current(targetKey)
+      const terminalDraftConflict = terminalDraftConflictFromError(caught)
+      if (terminalDraftConflict) {
+        setTerminalDraftConflict(liveKey, true)
+      }
       if (
         liveKey === targetKey &&
         !removedSessions.current.has(targetKey) &&
@@ -11576,7 +12042,13 @@ function App() {
           (selectedRef.current && sessionKey(selectedRef.current) === liveKey) ||
           (!selectedRef.current && selectedKey === liveKey)
         ) {
-          setError(caught instanceof Error ? caught.message : String(caught))
+          setError(
+            terminalDraftConflict && !replaceTerminalDraft
+              ? undefined
+              : caught instanceof Error
+                ? caught.message
+                : String(caught),
+          )
         }
       }
     } finally {
@@ -11605,6 +12077,33 @@ function App() {
         }
         focusComposer(liveKey)
       }
+    }
+  }
+
+  async function replaceTerminalDraftAndSend() {
+    if (
+      !selected ||
+      sending ||
+      replacingTerminalDraft ||
+      !composer.trim()
+    ) {
+      return
+    }
+    const key = sessionKey(selected)
+    if (
+      !terminalDraftConflicts[key] ||
+      terminalDraftReplacementUnavailable ||
+      !window.confirm(
+        `Clear the unsent terminal text in "${selected.title}" and send this app draft?\n\nThe terminal text will be deleted and cannot be recovered. If the terminal changes before the replacement, the app draft will not be sent.`,
+      )
+    ) {
+      return
+    }
+    setReplacingTerminalDraft(true)
+    try {
+      await submitMessage(false, true)
+    } finally {
+      setReplacingTerminalDraft(false)
     }
   }
 
@@ -11840,7 +12339,7 @@ function App() {
     if (
       !selected ||
       !activeRoot ||
-      !rootsRef.current.includes(activeRoot) ||
+      !rootsRef.current.some((root) => root.id === activeRoot.id) ||
       !computersRef.current.some((computer) => computer.id === activeRoot.computerId && computer.online) ||
       knowledgeAskUnavailableReason ||
       knowledgeLoading ||
@@ -11890,9 +12389,42 @@ function App() {
   const queuedEditUnconfirmed = Boolean(selectedKey && editingQueuedPromptId &&
     unconfirmedQueuedPrompts[selectedKey] === editingQueuedPromptId)
   const selectedComposerPastes = selectedKey ? composerDrafts[selectedKey]?.pastes : undefined
+  const terminalDraftExpandedContent = expandComposerPastes(
+    composer,
+    activeComposerPastes(composer, selectedComposerPastes || []),
+  )
   const readonlyResourceCommand = useMemo(() => editingQueuedPromptId ? undefined : sessionResourceCommand(
-    expandComposerPastes(composer, activeComposerPastes(composer, selectedComposerPastes || [])),
-  ), [composer, selectedComposerPastes, editingQueuedPromptId])
+    terminalDraftExpandedContent,
+  ), [editingQueuedPromptId, terminalDraftExpandedContent])
+  const terminalDraftCommand = terminalDraftExpandedContent.trim().startsWith('/')
+    ? terminalDraftExpandedContent.trim().slice(1).split(/\s+/, 1)[0].toLowerCase()
+    : ''
+  const terminalDraftCommandDefinition = terminalDraftCommand
+    ? commands.find(
+        (candidate) =>
+          candidate.name.toLowerCase() === terminalDraftCommand ||
+          slashShortcut(candidate.name) === terminalDraftCommand ||
+          candidate.aliases?.some(
+            (alias) => alias.toLowerCase() === terminalDraftCommand,
+          ),
+      )
+    : undefined
+  const terminalDraftLocalCommand =
+    Boolean(readonlyResourceCommand) ||
+    ['statusline', 'clear', 'restart'].includes(
+      terminalDraftCommandDefinition?.name || terminalDraftCommand,
+    ) ||
+    (
+      terminalDraftCommand === 'cwd' &&
+      !terminalDraftExpandedContent.trim()
+        .slice(terminalDraftCommand.length + 1)
+        .trim()
+    )
+  const terminalDraftReplacementUnavailable = editingQueuedPromptId
+    ? 'Finish or cancel the queued-message edit before replacing terminal text.'
+    : terminalDraftLocalCommand
+      ? 'Use the normal action for this command; it does not replace terminal text.'
+      : undefined
 
   function forgetQueuedEdit(key: string, promptId: string) {
     updateComposerDrafts([], (current) => {
@@ -12464,6 +12996,7 @@ function App() {
   ): string | undefined {
     const targetKey = sessionKey(target)
     const replacementKey = sessionKey(replacement)
+    setTerminalDraftConflict(targetKey, false)
     replacedInto.current.set(targetKey, replacementKey)
     const liveKey = followReplacementsRef.current(replacementKey)
     const liveIsGone = removedSessions.current.has(liveKey)
@@ -12971,6 +13504,7 @@ function App() {
     try {
       await deleteSession(selected.computerId, selected.id)
       const closedKey = sessionKey(selected)
+      setTerminalDraftConflict(closedKey, false)
       removedSessions.current.add(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
@@ -13079,17 +13613,34 @@ function App() {
     const from = order.indexOf(activeKey)
     const to = order.indexOf(overKey)
     if (from < 0 || to < 0) return
-    const next = {
-      ...sessionOrder,
-      [activeSession.computerId]: arrayMove(order, from, to),
-    }
-    try {
-      localStorage.setItem('agentic-remote:session-order', JSON.stringify(next))
-      setSessionOrder(next)
-    } catch (caught) {
-      setSidebarOpen(false)
-      setError(`Could not save the session order: ${caught instanceof Error ? caught.message : String(caught)}`)
-    }
+    const computerId = activeSession.computerId
+    const lane = arrayMove(order, from, to)
+    // Move it now so the drag lands where it was dropped, but keep what the
+    // hub last acknowledged: if the write fails the list has to go back, not
+    // sit in a position no other device will ever agree with.
+    const acknowledgedRevision = sessionOrderRevisionRef.current
+    setSessionOrder({ ...sessionOrderRef.current, [computerId]: lane })
+    void (async () => {
+      try {
+        applySessionOrderSnapshot(await saveSessionOrderLane(computerId, lane))
+      } catch (caught) {
+        // Another client's update, or a later drag, may have been acknowledged
+        // while this was in flight. Undoing to the order captured before the
+        // drag would throw that away, so only this attempt is withdrawn.
+        if (sessionOrderRevisionRef.current === acknowledgedRevision) {
+          setSessionOrder(acknowledgedSessionOrderRef.current)
+        }
+        // The hub refuses a lane arranged from a view that has moved on, so
+        // the list is fetched again rather than left disagreeing with it.
+        void syncSessionOrderRef.current()
+        setSidebarOpen(false)
+        setError(
+          `Could not save the session order: ${
+            caught instanceof Error ? caught.message : String(caught)
+          }`,
+        )
+      }
+    })()
   }
 
   function changeSessionSort(sort: SessionSort) {
@@ -13982,6 +14533,39 @@ function App() {
                 </button>
               </div>
             ) : null}
+            {selectedKey && terminalDraftConflicts[selectedKey] ? (
+              <div
+                className="terminal-draft-conflict"
+                id="terminal-draft-conflict"
+                role="alert"
+              >
+                <div>
+                  <strong>Terminal text is blocking this draft</strong>
+                  <span>
+                    {terminalDraftReplacementUnavailable ||
+                      'This deletes the unsent text currently in tmux, then sends the app draft.'}
+                  </span>
+                </div>
+                <button
+                  disabled={
+                    replacingTerminalDraft ||
+                    sending ||
+                    !composer.trim() ||
+                    !selectedComputerOnline ||
+                    selected.suspended === true ||
+                    (selected.status !== 'idle' && selected.status !== 'error') ||
+                    Boolean(selected.pendingPermission || selected.pendingUserInput) ||
+                    Boolean(terminalDraftReplacementUnavailable)
+                  }
+                  onClick={() => void replaceTerminalDraftAndSend()}
+                  title={terminalDraftReplacementUnavailable}
+                  type="button"
+                >
+                  <Trash2 aria-hidden="true" size={15} />
+                  {replacingTerminalDraft ? 'Clearing…' : 'Clear terminal text and send'}
+                </button>
+              </div>
+            ) : null}
             {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain &&
               !selected.queuedDispatch && !queuedEditUnconfirmed ? (
               <div className="error-banner" id="composer-delivery-warning" role="status">
@@ -14053,6 +14637,8 @@ function App() {
                     [
                       selected.queuedDispatch || queuedEditUnconfirmed
                         ? 'queued-dispatch-warning'
+                        : selectedKey && terminalDraftConflicts[selectedKey]
+                          ? 'terminal-draft-conflict'
                         : selectedKey && composerDrafts[selectedKey]?.deliveryUncertain
                           ? 'composer-delivery-warning'
                           : undefined,
@@ -14089,7 +14675,7 @@ function App() {
                 />
               </div>
               <input
-                accept="audio/*,.aac,.csv,.doc,.docx,.flac,.gif,.jpeg,.jpg,.json,.m4a,.md,.mp3,.mp4,.ofx,.ogg,.pdf,.png,.qfx,.tsv,.txt,.wav,.webm,.webp,.xls,.xlsx,.yaml,.yml"
+                accept="audio/*,.aac,.csv,.doc,.docx,.flac,.gif,.jpeg,.jpg,.json,.kql,.m4a,.md,.mp3,.mp4,.ofx,.ogg,.pdf,.png,.qfx,.tsv,.txt,.wav,.webm,.webp,.xls,.xlsx,.yaml,.yml"
                 aria-label="File attachment"
                 className="composer-audio-input"
                 onChange={audioFileChanged}
@@ -14159,6 +14745,7 @@ function App() {
                       aria-label="Queue message"
                       className="send-button send-button--queue"
                       disabled={!composer.trim() || sending || Boolean(queueActionId) ||
+                        replacingTerminalDraft ||
                         Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
                       onClick={() => void submitMessage(true)}
                       title="Queue behind the current response"
@@ -14178,7 +14765,8 @@ function App() {
                         : 'Send message'
                     }
                     className="send-button"
-                    disabled={!composer.trim() || sending || (!readonlyResourceCommand && (
+                    disabled={!composer.trim() || sending || replacingTerminalDraft ||
+                      (!readonlyResourceCommand && (
                       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
                       queuedEditUnconfirmed || selected.suspended === true ||
                       Boolean(editingQueuedPromptId &&
@@ -14421,6 +15009,7 @@ function App() {
                 key={`${activeRoot.id}:${knowledgeFile?.path || '.'}`}
                 listing={knowledgeListing}
                 loading={knowledgeLoading}
+                mode={knowledgeMode}
                 onLoadAsset={loadKnowledgeAsset}
                 onAsk={askAboutKnowledgeFile}
                 onShowFiles={() => openSidebar('knowledge')}
@@ -14465,10 +15054,13 @@ function App() {
             computers={computers}
             session={rootPicker.session}
             currentRootId={sessionKnowledgeRoot.binding?.rootId}
+            currentRootPath={sessionKnowledgeBasePath}
             choice={rootChoice}
             disabled={rootPickerSaving || !rootPickerCurrent || (hasSelectedSession && !sessionRootReady)}
             onChoice={setRootChoice}
             onBrowse={() => beginRootCreation(undefined, rootPicker.revision ?? sessionKnowledgeRoot.binding?.revision)}
+            onSaveRoot={(location) => void saveRootPickerFolder(location)}
+            savingRoot={rootPickerSaving}
             onRemove={(root) => {
               setRootRemovalError(undefined)
               setRootRemovalTarget(root)

@@ -313,6 +313,14 @@ The development server uses Vite plus Fastify. Run the complete checks with:
 pnpm check
 ```
 
+After changing `src/app-icon-design.ts`, regenerate the committed PWA and
+native bundle icons:
+
+```bash
+pnpm icons:pwa
+pnpm --dir shell icons
+```
+
 ## Security
 
 Agentic Remote is a trusted-administrator interface, not a multi-tenant
@@ -413,3 +421,11 @@ curl http://192.168.1.10:4317/api/health
 
 If the installed PWA looks outdated, use **App settings → Check for updates**,
 apply the update, and reopen the app.
+
+An iPhone or iPad captures its launcher icon and standalone status-bar mode
+when the app is added to the Home Screen. To adopt a shipped launcher-icon
+change or full-height Dynamic Island behavior, remove the existing Home Screen
+app and add it again from Safari. Agentic Remote loads its manifest with
+credentials and uses new opaque Relay icon URLs there; it deliberately omits
+Apple-touch declarations and root fallbacks so Safari cannot prefer a failed
+legacy icon request and generate a letter tile.

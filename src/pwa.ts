@@ -64,7 +64,8 @@ export function pushNotificationsSupported(): boolean {
 
 export function installedAsApp(): boolean {
   return (
-    window.matchMedia('(display-mode: standalone)').matches ||
+    (typeof window.matchMedia === 'function' &&
+      window.matchMedia('(display-mode: standalone)').matches) ||
     ('standalone' in navigator &&
       (navigator as Navigator & { standalone?: boolean }).standalone === true)
   )

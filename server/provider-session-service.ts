@@ -259,12 +259,14 @@ export class ProviderSessionService
     content: string,
     enqueue?: boolean,
     acknowledgesFailure?: string,
+    replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail> {
     return this.serviceFor(sessionId).sendMessage(
       sessionId,
       content,
       enqueue,
       acknowledgesFailure,
+      replaceTerminalDraft,
     )
   }
 
@@ -306,12 +308,14 @@ export class ProviderSessionService
     command: string,
     enqueue?: boolean,
     acknowledgesFailure?: string,
+    replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail> {
     return this.serviceFor(sessionId).executeCommand(
       sessionId,
       command,
       enqueue,
       acknowledgesFailure,
+      replaceTerminalDraft,
     )
   }
 

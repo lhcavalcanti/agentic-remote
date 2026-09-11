@@ -1,11 +1,30 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type { HubEvent } from '../shared/contracts.js'
+import type {
+  HubEvent,
+  SessionOrderSnapshot,
+  WorkspaceFile,
+  WorkspaceListing,
+} from '../shared/contracts.js'
+import {
+  joinKnowledgeRelativePath,
+  normalizeKnowledgeRelativePath,
+  rebaseKnowledgeRelativePath,
+} from '../shared/knowledge-path.js'
 import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
+import type { SessionOrderStore } from './session-order-store.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
+
+const sessionOrderKeys = z.array(z.string().trim().min(1).max(300)).max(2000)
+
+const sessionOrderLaneSchema = z.object({ order: sessionOrderKeys })
+
+const sessionOrderBootstrapSchema = z.object({
+  order: z.record(z.string().trim().min(1).max(200), sessionOrderKeys),
+})
 
 const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
@@ -46,6 +65,7 @@ const sendMessageSchema = z.object({
     .max(200_000)
     .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
   enqueue: z.boolean().optional(),
+  replaceTerminalDraft: z.boolean().optional(),
 })
 
 const permissionReplySchema = z.object({
@@ -87,6 +107,7 @@ const executeCommandSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
   command: z.string().trim().startsWith('/').max(10_000),
   enqueue: z.boolean().optional(),
+  replaceTerminalDraft: z.boolean().optional(),
 })
 
 const configureRuntimeSchema = z.object({
@@ -113,13 +134,88 @@ const knowledgeRootSchema = z.object({
   name: z.string().trim().max(200).optional(),
 })
 
+const knowledgeRelativePathSchema = z.string().trim().max(4096).optional()
+  .transform((value, context) => {
+    try {
+      return normalizeKnowledgeRelativePath(value)
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: 'Knowledge paths must stay inside the selected root',
+      })
+      return z.NEVER
+    }
+  })
 const knowledgePathSchema = z.object({
-  path: z.string().trim().max(4096).optional(),
+  path: knowledgeRelativePathSchema,
+  basePath: knowledgeRelativePathSchema,
 })
 
 const knowledgeFileSchema = z.object({
-  path: z.string().trim().min(1).max(4096),
+  path: z.string().trim().min(1).max(4096).transform((value, context) => {
+    try {
+      return normalizeKnowledgeRelativePath(value)
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: 'Knowledge paths must stay inside the selected root',
+      })
+      return z.NEVER
+    }
+  }),
+  basePath: knowledgeRelativePathSchema,
 })
+
+function scopedKnowledgePath(basePath: string, path: string): string {
+  return joinKnowledgeRelativePath(basePath, path)
+}
+
+function requireScopedKnowledgePath(
+  basePath: string,
+  path: string,
+): string {
+  const rebased = rebaseKnowledgeRelativePath(basePath, path)
+  if (rebased === undefined) {
+    throw Object.assign(
+      new Error('Knowledge browsing is restricted to the selected session root'),
+      { statusCode: 403 },
+    )
+  }
+  return rebased
+}
+
+function scopeKnowledgeListing(
+  listing: WorkspaceListing,
+  basePath: string,
+): WorkspaceListing {
+  if (basePath === '.') {
+    return listing
+  }
+  const parent = listing.parent
+    ? rebaseKnowledgeRelativePath(basePath, listing.parent)
+    : undefined
+  return {
+    ...listing,
+    path: requireScopedKnowledgePath(basePath, listing.path),
+    ...(parent === undefined ? { parent: undefined } : { parent }),
+    entries: listing.entries.flatMap((entry) => {
+      const path = rebaseKnowledgeRelativePath(basePath, entry.path)
+      return path === undefined ? [] : [{ ...entry, path }]
+    }),
+  }
+}
+
+function scopeKnowledgeFile(
+  file: WorkspaceFile,
+  basePath: string,
+): WorkspaceFile {
+  return basePath === '.'
+    ? file
+    : {
+        ...file,
+        path: requireScopedKnowledgePath(basePath, file.path),
+      }
+}
 
 const workspaceFileQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
@@ -252,8 +348,34 @@ export async function registerHubRoutes(
   knowledge: KnowledgeStore,
   mutes?: SessionMuteCarrier,
   sessionKnowledge?: SessionKnowledgeStore,
+  sessionOrder?: SessionOrderStore,
 ): Promise<void> {
   const policy = originPolicy()
+  // Assigned once the socket set exists further down. Until then a committed
+  // order is still persisted and returned; only the push to other clients is
+  // skipped, which is what a client's own response already told it.
+  let publishOrder: (snapshot: SessionOrderSnapshot) => void = () => {}
+  const requireSessionOrder = (): SessionOrderStore => {
+    if (!sessionOrder) {
+      throw Object.assign(new Error('Session order is not available'), {
+        statusCode: 503,
+      })
+    }
+    return sessionOrder
+  }
+  /**
+   * Commits an order change and tells the other clients. A change that moved
+   * nothing keeps its revision, so reconnect traffic does not look like news.
+   */
+  const commitOrder = async (
+    change: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>,
+  ): Promise<SessionOrderSnapshot> => {
+    const store = requireSessionOrder()
+    const before = store.snapshot().revision
+    const snapshot = await change(store)
+    if (snapshot.revision !== before) publishOrder(snapshot)
+    return snapshot
+  }
   const readResource = resourceRequestHandler(app)
   app.addHook('onRequest', async (request, reply) => {
     if (isSessionResourceRoute(request.routeOptions.url)) reply.header('cache-control', 'no-store')
@@ -387,7 +509,12 @@ export async function registerHubRoutes(
         return reply.code(404).send({ error: 'Knowledge root not found' })
       }
       const query = knowledgePathSchema.parse(request.query)
-      return manager.listKnowledge(root.computerId, root.path, query.path)
+      const listing = await manager.listKnowledge(
+        root.computerId,
+        root.path,
+        scopedKnowledgePath(query.basePath, query.path),
+      )
+      return scopeKnowledgeListing(listing, query.basePath)
     },
   )
 
@@ -399,7 +526,12 @@ export async function registerHubRoutes(
         return reply.code(404).send({ error: 'Knowledge root not found' })
       }
       const query = knowledgeFileSchema.parse(request.query)
-      return manager.readKnowledgeFile(root.computerId, root.path, query.path)
+      const file = await manager.readKnowledgeFile(
+        root.computerId,
+        root.path,
+        scopedKnowledgePath(query.basePath, query.path),
+      )
+      return scopeKnowledgeFile(file, query.basePath)
     },
   )
 
@@ -515,6 +647,32 @@ export async function registerHubRoutes(
     },
   )
 
+  app.get('/api/session-order', async () => ({
+    sessionOrder: requireSessionOrder().snapshot(),
+  }))
+
+  app.put<{ Params: { computerId: string } }>(
+    '/api/session-order/:computerId',
+    async (request) => {
+      const input = sessionOrderLaneSchema.parse(request.body)
+      return {
+        sessionOrder: await commitOrder((store) =>
+          store.replaceLane(request.params.computerId, input.order),
+        ),
+      }
+    },
+  )
+
+  // One-time seed from a browser that ordered its sessions before the hub
+  // owned the order. It is ignored once any lane exists, so the first device
+  // to arrive wins rather than the last one to reload.
+  app.post('/api/session-order/bootstrap', async (request) => {
+    const input = sessionOrderBootstrapSchema.parse(request.body)
+    return {
+      sessionOrder: await commitOrder((store) => store.bootstrap(input.order)),
+    }
+  })
+
   app.post<{ Params: { computerId: string } }>(
     '/api/computers/:computerId/sessions',
     async (request, reply) => {
@@ -582,6 +740,10 @@ export async function registerHubRoutes(
         }
       }
       const carryKnowledge = sessionKnowledgeLifecycle?.replacementCarrier(computerId)
+      // Read before the clear: a legacy node reports the removal as its own
+      // event, which can retire the predecessor's slot before this response
+      // names the successor that should inherit it.
+      const orderSlot = sessionOrder?.indexOf(computerId, sessionId)
       const session = await replace()
       assertCurrent()
       // The replacement is already real. Auxiliary persistence must not hide
@@ -606,6 +768,23 @@ export async function registerHubRoutes(
             ? mutes?.setSessionMuted(computerId, session.id, true)
             : undefined,
           `${completed}, but notification silence could not be restored. Silence notifications again for this session.`,
+        ),
+        // A node that predates the replacement link reports a clear as a plain
+        // removal, so the lineage is only in this response. Carrying it here
+        // keeps the replacement in its predecessor's slot; the store makes a
+        // second report of the same clear a no-op.
+        carryMetadata(
+          () => sessionOrder && session.id !== sessionId
+            ? commitOrder((store) =>
+                store.replaceSession(
+                  computerId,
+                  sessionId,
+                  session.id,
+                  orderSlot !== undefined && orderSlot >= 0 ? orderSlot : undefined,
+                ),
+              )
+            : undefined,
+          `${completed}, but its position in the custom order could not be saved. Drag it back into place.`,
         ),
       ])
       assertCurrent()
@@ -880,7 +1059,115 @@ export async function registerHubRoutes(
     }
   }
   manager.on('event', broadcast)
+  publishOrder = (snapshot) =>
+    broadcast({ type: 'session.order.updated', order: snapshot })
+  /**
+   * Keeps the saved order in step with session identity, which is the part a
+   * browser cannot be trusted to do: a client that is closed, filtered, or
+   * offline would otherwise never record the change.
+   *
+   * Changes are queued so two lifecycle events cannot interleave their
+   * read-modify-write and lose one of them.
+   */
+  let orderWork: Promise<unknown> = Promise.resolve()
+  // Identities retired since this hub started. Startup seeding works from a
+  // listing taken before these arrived, so without them a session removed
+  // mid-seed would be appended back after its removal was already applied.
+  const retiredSessions = new Set<string>()
+  const retiredComputers = new Set<string>()
+  /**
+   * Seats a session by lineage: a successor takes its nearest recorded
+   * ancestor's slot, and only a session with no known ancestor is appended.
+   */
+  const seatSession = (
+    store: SessionOrderStore,
+    computerId: string,
+    id: string,
+    replacedSessionIds: string[] | undefined,
+  ): Promise<SessionOrderSnapshot> => {
+    const ancestor = (replacedSessionIds ?? [])
+      .map((previous) => ({ previous, index: store.indexOf(computerId, previous) }))
+      .filter((entry) => entry.index >= 0)
+      .sort((left, right) => left.index - right.index)[0]
+    return ancestor
+      ? store.replaceSession(computerId, ancestor.previous, id, ancestor.index)
+      : store.appendSession(computerId, id)
+  }
+  const trackOrder = (event: HubEvent) => {
+    if (!sessionOrder) return
+    const change = (apply: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>) => {
+      orderWork = orderWork
+        .then(() => commitOrder(apply))
+        .catch((error: unknown) => {
+          // The order is a preference. Losing one update must not take the
+          // event stream down with it.
+          app.log.error({ err: error }, 'Could not update the custom session order')
+        })
+    }
+    if (event.type === 'session.upserted') {
+      const { computerId, id, replacedSessionIds } = event.session
+      change((store) => seatSession(store, computerId, id, replacedSessionIds))
+      return
+    }
+    if (event.type === 'session.removed') {
+      const { computerId, sessionId, replacedBy } = event
+      retiredSessions.add(`${computerId}:${sessionId}`)
+      change((store) =>
+        replacedBy
+          ? store.replaceSession(computerId, sessionId, replacedBy)
+          : store.removeSession(computerId, sessionId),
+      )
+      return
+    }
+    if (event.type === 'computer.removed') {
+      const { computerId } = event
+      retiredComputers.add(computerId)
+      change((store) => store.removeComputer(computerId))
+    }
+  }
+  manager.on('event', trackOrder)
+  let closed = false
+  let seeding: Promise<unknown> = Promise.resolve()
+  if (sessionOrder) {
+    // Sessions that already existed, or that a remote computer resynced before
+    // this hook attached, emit nothing further while they sit quiet. Without
+    // this they would never appear in the order at all.
+    seeding = Promise.resolve()
+      .then(() => manager.listSessions())
+      .then(async (sessions) => {
+        for (const session of sessions) {
+          // Shutting down mid-seed must not write into a directory the owner
+          // is already taking away.
+          if (closed) return
+          // The listing predates anything that retired while it was in
+          // flight, so a session or computer that has since gone must not be
+          // recreated by this seed.
+          if (
+            retiredComputers.has(session.computerId) ||
+            retiredSessions.has(`${session.computerId}:${session.id}`)
+          ) {
+            continue
+          }
+          await commitOrder((store) =>
+            seatSession(
+              store,
+              session.computerId,
+              session.id,
+              session.replacedSessionIds,
+            ),
+          )
+        }
+      })
+      .catch((error: unknown) => {
+        app.log.error({ err: error }, 'Could not seed the custom session order')
+      })
+  }
   app.addHook('onClose', async () => {
+    closed = true
     manager.off('event', broadcast)
+    manager.off('event', trackOrder)
+    // Drain in-flight order work so a closing app leaves no write behind it.
+    await seeding
+    await orderWork
   })
 }

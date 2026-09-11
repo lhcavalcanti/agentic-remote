@@ -345,6 +345,8 @@ export interface SessionSummary {
    */
   replacedSessionIds?: string[]
   recovery?: SessionRecoveryInfo
+  /** A recovery brief that still owns the session and must settle first. */
+  recoverySeedState?: 'pending' | 'dispatching' | 'failed'
   /**
    * Whether the session is being kept without anything running for it.
    *
@@ -435,6 +437,10 @@ export type ServerEvent =
 export type HubEvent =
   | { type: 'session.upserted'; session: ManagedSession }
   | {
+      type: 'session.order.updated'
+      order: SessionOrderSnapshot
+    }
+  | {
       type: 'session.knowledge.updated'
       computerId: string
       sessionId: string
@@ -481,6 +487,8 @@ export interface CreateSessionInput {
 export interface SendMessageInput {
   content: string
   enqueue?: boolean
+  /** Explicitly replace verified unsent text in a tmux composer before sending. */
+  replaceTerminalDraft?: boolean
   /**
    * The failure this submission is the reader's answer to.
    *
@@ -542,6 +550,8 @@ export interface ExecuteCommandInput {
   command: string
   enqueue?: boolean
   /** See `SendMessageInput`. */
+  replaceTerminalDraft?: boolean
+  /** See `SendMessageInput`. */
   acknowledgesFailure?: string
 }
 
@@ -598,6 +608,26 @@ export interface WorkspaceSearchResponse {
   truncated: boolean
 }
 
+/**
+ * The custom session order the hub owns on behalf of every browser client
+ * connected to it.
+ *
+ * Keys are the canonical `computerId:sessionId` form, grouped into one lane per
+ * computer so a session id cannot collide across computers. `revision` is the
+ * hub's ordering authority: clients apply a snapshot only when it is at least
+ * as new as the one they already hold, which is what makes concurrent writes
+ * from several devices converge instead of fighting.
+ */
+export interface SessionOrderSnapshot {
+  revision: number
+  /**
+   * Whether a browser's pre-hub order has already been taken. Discovery
+   * appends on its own, so a non-empty order does not mean a migration ran.
+   */
+  bootstrapped: boolean
+  order: Record<string, string[]>
+}
+
 /** A folder on a computer that is browsable without any session existing. */
 export interface KnowledgeRoot {
   id: string
@@ -620,6 +650,8 @@ export interface SessionKnowledgeBinding {
   computerId: string
   sessionId: string
   rootId: string | null
+  /** Relative folder within the saved root that acts as this session's root. */
+  rootPath?: string
   /** Zero means never linked; an explicit unlink retains a newer revision. */
   revision: number
   /** Retained metadata, including when the shared root has been removed. */
@@ -630,5 +662,6 @@ export interface SessionKnowledgeBinding {
 
 export interface UpdateSessionKnowledgeRootInput {
   rootId: string | null
+  rootPath?: string
   expectedRevision: number
 }

@@ -95,6 +95,95 @@ describe('hub routes', () => {
     await app.close()
   })
 
+  it('scopes Knowledge list and file responses to a nested session root', async () => {
+    const listKnowledge = vi.fn(async () => ({
+      path: 'projects/agentic-remote',
+      parent: 'projects',
+      entries: [
+        {
+          name: 'docs',
+          path: 'projects/agentic-remote/docs',
+          kind: 'directory' as const,
+        },
+        {
+          name: 'shared-link',
+          path: 'projects/shared',
+          kind: 'directory' as const,
+        },
+      ],
+    }))
+    const readKnowledgeFile = vi.fn(async () => ({
+      name: 'README.md',
+      path: 'projects/agentic-remote/README.md',
+      kind: 'markdown' as const,
+      mimeType: 'text/markdown',
+      size: 10,
+      content: '# Project',
+    }))
+    const app = Fastify()
+    await registerHubRoutes(
+      app,
+      {
+        listComputers: () => [{ id: 'library', name: 'Library' }],
+        captureComputerRegistration: () => () => true,
+        listKnowledge,
+        readKnowledgeFile,
+        on: () => undefined,
+        off: () => undefined,
+      } as unknown as ComputerManager,
+      {
+        getRoot: () => ({
+          id: 'projects',
+          computerId: 'library',
+          computerName: 'Library',
+          path: '/home/demo',
+          name: 'Projects',
+          createdAt: '2026-09-11T00:00:00.000Z',
+        }),
+      } as unknown as KnowledgeStore,
+    )
+
+    const listing = await app.inject({
+      url: '/api/knowledge/roots/projects/entries?path=.&basePath=projects%2Fagentic-remote',
+      headers: { host: 'localhost' },
+    })
+    expect(listing.json()).toEqual({
+      path: '.',
+      entries: [{ name: 'docs', path: 'docs', kind: 'directory' }],
+    })
+    expect(listKnowledge).toHaveBeenCalledWith(
+      'library',
+      '/home/demo',
+      'projects/agentic-remote',
+    )
+
+    const file = await app.inject({
+      url: '/api/knowledge/roots/projects/file?path=README.md&basePath=projects%2Fagentic-remote',
+      headers: { host: 'localhost' },
+    })
+    expect(file.json()).toMatchObject({ name: 'README.md', path: 'README.md' })
+    expect(readKnowledgeFile).toHaveBeenCalledWith(
+      'library',
+      '/home/demo',
+      'projects/agentic-remote/README.md',
+    )
+
+    readKnowledgeFile.mockResolvedValueOnce({
+      name: 'shared.md',
+      path: 'projects/shared/shared.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 10,
+      content: '# Shared',
+    })
+    const escaped = await app.inject({
+      url: '/api/knowledge/roots/projects/file?path=shared-link%2Fshared.md&basePath=projects%2Fagentic-remote',
+      headers: { host: 'localhost' },
+    })
+    expect(escaped.statusCode).toBe(403)
+    await app.close()
+  })
+
   it('carries mute state to a recovered replacement and forwards the reason', async () => {
     const mutes = muteCarrier(['computer-1:session-1'])
     const recoverConversation = vi.fn(async () => {

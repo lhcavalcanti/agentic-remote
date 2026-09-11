@@ -48,6 +48,9 @@ import {
   listBackgroundTasks,
   listCommands,
   listComputers,
+  fetchSessionOrder,
+  saveSessionOrderLane,
+  bootstrapSessionOrder,
   listDirectories,
   listHistory,
   listKnowledgeRoots,
@@ -86,6 +89,12 @@ type DndProps = ComponentProps<typeof import('@dnd-kit/core').DndContext>
 const dragHandlers = vi.hoisted(() =>
   new Map<string, NonNullable<DndProps['onDragEnd']>>(),
 )
+/** The hub-owned custom session order the api mocks read and commit against. */
+let hubSessionOrder: {
+  revision: number
+  bootstrapped: boolean
+  order: Record<string, string[]>
+} = { revision: 0, bootstrapped: false, order: {} }
 
 vi.mock('@dnd-kit/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
@@ -131,6 +140,9 @@ vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   listSessions: vi.fn(),
   listSessionListing: vi.fn(),
+  fetchSessionOrder: vi.fn(),
+  saveSessionOrderLane: vi.fn(),
+  bootstrapSessionOrder: vi.fn(),
   listBackgroundTasks: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
@@ -318,7 +330,9 @@ function mockAddedKnowledgeRoot(root: KnowledgeRoot) {
 async function chooseKnowledgeRoot(id: string) {
   const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === id)
   if (!root) throw new Error(`Unknown fixture root: ${id}`)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+  const reopen = screen.getByRole('button', { name: 'Choose Knowledge root' })
+  await waitFor(() => expect(reopen).toBeEnabled())
+  fireEvent.click(reopen)
   const dialog = await screen.findByRole('dialog', { name: /Choose a (session root|Knowledge folder)/ })
   const choice = within(dialog).queryByRole('radio', {
     name: `${root.name} on ${root.computerName}: ${root.path}`,
@@ -346,7 +360,7 @@ function fixtureKnowledgeBinding(computerId: string, sessionId: string): Session
         fixtureKnowledgeRoots[0]
     saved = {
       computerId, sessionId, rootId: root?.id || null,
-      revision: root ? 1 : 0, available: Boolean(root), root,
+      rootPath: '.', revision: root ? 1 : 0, available: Boolean(root), root,
     }
     fixtureKnowledgeBindings.set(key, saved)
   }
@@ -377,13 +391,17 @@ function openSessionActions() {
 
 function sessionAction(name: string) {
   openSessionActions()
-  return screen.getByRole('button', { name })
+  return within(
+    screen.getByRole('group', { name: 'Session actions' }),
+  ).getByRole('button', { name })
 }
 
 async function findSessionAction(name: string) {
   await screen.findByRole('button', { name: 'Session actions' })
   openSessionActions()
-  return screen.findByRole('button', { name })
+  return within(
+    screen.getByRole('group', { name: 'Session actions' }),
+  ).findByRole('button', { name })
 }
 
 describe('App', () => {
@@ -445,6 +463,277 @@ describe('App', () => {
     expect(executeCommand).not.toHaveBeenCalled()
     expect(sendMessage).not.toHaveBeenCalled()
     expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+  })
+
+  it('roots a session at a nested folder without adding shared root options', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    const key = `${computer.id}:${session.id}`
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id,
+      sessionId: session.id,
+      rootId: null,
+      rootPath: '.',
+      revision: 0,
+      available: false,
+    })
+    vi.mocked(listDirectories).mockImplementation(async (_computerId, path) => {
+      if (path === `${knowledgeRoot.path}/projects`) {
+        return {
+          path,
+          parent: knowledgeRoot.path,
+          directories: [{
+            name: 'agentic-remote',
+            path: `${path}/agentic-remote`,
+          }],
+        }
+      }
+      if (path === `${knowledgeRoot.path}/projects/agentic-remote`) {
+        return {
+          path,
+          parent: `${knowledgeRoot.path}/projects`,
+          directories: [],
+        }
+      }
+      return {
+        path: knowledgeRoot.path,
+        directories: [{
+          name: 'projects',
+          path: `${knowledgeRoot.path}/projects`,
+        }],
+      }
+    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_rootId, path = '.') => ({
+        path,
+        entries: path === '.'
+          ? [{
+              name: 'README.md',
+              path: 'README.md',
+              kind: 'markdown',
+              size: 20,
+            }]
+          : [],
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'README.md',
+      path: 'README.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: '# Scoped guide',
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const choose = screen.getByRole('button', { name: 'Choose Knowledge root' })
+    await waitFor(() => expect(choose).toBeEnabled())
+    fireEvent.click(choose)
+    const chooser = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    fireEvent.click(within(chooser).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    }))
+    const optionCount = within(chooser).getAllByRole('radio').length
+    fireEvent.click(await within(chooser).findByRole('button', { name: 'projects' }))
+    fireEvent.click(await within(chooser).findByRole('button', {
+      name: 'agentic-remote',
+    }))
+
+    expect(within(chooser).getAllByRole('radio')).toHaveLength(optionCount)
+    expect(within(chooser).queryByRole('radio', {
+      name: /agentic-remote/,
+    })).not.toBeInTheDocument()
+    fireEvent.click(within(chooser).getByRole('button', {
+      name: 'Use for this session',
+    }))
+
+    await waitFor(() =>
+      expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        {
+          rootId: knowledgeRoot.id,
+          rootPath: 'projects/agentic-remote',
+          expectedRevision: 0,
+        },
+      ),
+    )
+    await screen.findByText(`agentic-remote · ${knowledgeRoot.computerName}`)
+    expect(listKnowledgeEntries).toHaveBeenCalledWith(
+      knowledgeRoot.id,
+      '.',
+      'projects/agentic-remote',
+    )
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'README.md' }))
+    await screen.findByRole('heading', { name: 'Scoped guide' })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Ask agent about file',
+    }))
+    expect(screen.getByLabelText('Message')).toHaveValue(
+      'Please review `/home/tester/docs/projects/agentic-remote/README.md` and help me with it.',
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )[key],
+    ).toMatchObject({
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/agentic-remote',
+      path: '.',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const reopened = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    await within(reopened).findByText('~/docs/projects/agentic-remote')
+    expect(within(reopened).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    })).toBeChecked()
+  })
+
+  it('keeps expansion state separate for sessions using different paths in one root', async () => {
+    const firstKey = `${computer.id}:${session.id}`
+    const secondKey = `${computer.id}:${secondSession.id}`
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    fixtureKnowledgeBindings.set(firstKey, {
+      computerId: computer.id,
+      sessionId: session.id,
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/first',
+      root: knowledgeRoot,
+      revision: 1,
+      available: true,
+    })
+    fixtureKnowledgeBindings.set(secondKey, {
+      computerId: computer.id,
+      sessionId: secondSession.id,
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/second',
+      root: knowledgeRoot,
+      revision: 1,
+      available: true,
+    })
+    localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+      [firstKey]: {
+        rootId: knowledgeRoot.id,
+        rootPath: 'projects/first',
+        path: '.',
+      },
+      [secondKey]: {
+        rootId: knowledgeRoot.id,
+        rootPath: 'projects/second',
+        path: '.',
+      },
+    }))
+    localStorage.setItem('agentic-remote:knowledge-expanded', JSON.stringify({
+      [`${knowledgeRoot.id}:projects/first`]: ['first-child'],
+      [`${knowledgeRoot.id}:projects/second`]: ['second-child'],
+    }))
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_rootId, path = '.', basePath = '.') => ({
+        path,
+        parent: path === '.' ? undefined : '.',
+        entries: path === '.'
+          ? [{
+              name: basePath.endsWith('/first') ? 'first-child' : 'second-child',
+              path: basePath.endsWith('/first') ? 'first-child' : 'second-child',
+              kind: 'directory',
+            }]
+          : [],
+      }),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('treeitem', { name: 'first-child' })
+    expect(screen.queryByRole('treeitem', { name: 'second-child' }))
+      .not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await screen.findByRole('treeitem', { name: 'second-child' })
+    expect(screen.queryByRole('treeitem', { name: 'first-child' }))
+      .not.toBeInTheDocument()
+    expect(listKnowledgeEntries).toHaveBeenCalledWith(
+      knowledgeRoot.id,
+      '.',
+      'projects/second',
+    )
+
+    const stored = JSON.parse(
+      localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+    )
+    expect(stored[`${knowledgeRoot.id}:projects/first`]).toEqual(['first-child'])
+    expect(stored[`${knowledgeRoot.id}:projects/second`]).toEqual(['second-child'])
+  })
+
+  it('adds a browsed subfolder to shared Knowledge only when explicitly saved', async () => {
+    const savedRoot: KnowledgeRoot = {
+      ...knowledgeRoot,
+      id: 'saved-project-root',
+      name: 'projects',
+      path: `${knowledgeRoot.path}/projects`,
+    }
+    mockKnowledgeRoots([knowledgeRoot])
+    mockAddedKnowledgeRoot(savedRoot)
+    vi.mocked(listDirectories).mockImplementation(async (_computerId, path) =>
+      path === savedRoot.path
+        ? {
+            path,
+            parent: knowledgeRoot.path,
+            directories: [],
+          }
+        : {
+            path: knowledgeRoot.path,
+            directories: [{ name: 'projects', path: savedRoot.path }],
+          },
+    )
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Choose Knowledge root',
+    }))
+    const chooser = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    const optionCount = within(chooser).getAllByRole('radio').length
+    fireEvent.click(await within(chooser).findByRole('button', { name: 'projects' }))
+
+    expect(within(chooser).getAllByRole('radio')).toHaveLength(optionCount)
+    expect(within(chooser).queryByRole('radio', {
+      name: `projects on ${savedRoot.computerName}: ${savedRoot.path}`,
+    })).not.toBeInTheDocument()
+    fireEvent.click(await within(chooser).findByRole('button', {
+      name: 'Save this root folder',
+    }))
+
+    await waitFor(() =>
+      expect(addKnowledgeRoot).toHaveBeenCalledWith({
+        computerId: savedRoot.computerId,
+        path: savedRoot.path,
+      }),
+    )
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(
+      computer.id,
+      session.id,
+      {
+        rootId: savedRoot.id,
+        expectedRevision: 1,
+      },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const reopened = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    expect(within(reopened).getByRole('radio', {
+      name: `projects on ${savedRoot.computerName}: ${savedRoot.path}`,
+    })).toBeChecked()
   })
 
   it('uses the hub root rather than a document remembered under another root', async () => {
@@ -1064,6 +1353,131 @@ describe('App', () => {
 
   })
 
+  it('fills the installed window when the idle visual viewport is shorter', async () => {
+    const originalVisualViewport = window.visualViewport
+    const originalMatchMedia = window.matchMedia
+    const originalInnerHeight = window.innerHeight
+    const visualViewport = new EventTarget() as VisualViewport
+    Object.defineProperties(visualViewport, {
+      height: { configurable: true, value: 774, writable: true },
+      offsetTop: { configurable: true, value: 0, writable: true },
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 852,
+    })
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: visualViewport,
+    })
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: query === '(display-mode: standalone)',
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    })
+
+    const editor = document.createElement('textarea')
+    const nextEditor = document.createElement('input')
+    const rendered = render(<App />)
+    const shell = document.querySelector<HTMLElement>('.app-shell')
+    try {
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '852px',
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('0px')
+
+      document.body.append(editor)
+      document.body.append(nextEditor)
+      editor.focus()
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: 510,
+      })
+      Object.defineProperty(visualViewport, 'height', {
+        configurable: true,
+        value: 510,
+        writable: true,
+      })
+      Object.defineProperty(visualViewport, 'offsetTop', {
+        configurable: true,
+        value: 42,
+        writable: true,
+      })
+      act(() => visualViewport.dispatchEvent(new Event('resize')))
+      expect(shell).toHaveClass('app-shell--keyboard-open')
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '510px',
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('42px')
+
+      Object.defineProperty(visualViewport, 'offsetTop', {
+        configurable: true,
+        value: 10,
+        writable: true,
+      })
+      act(() => editor.blur())
+      expect(shell).toHaveClass('app-shell--keyboard-open')
+      nextEditor.focus()
+      act(() => visualViewport.dispatchEvent(new Event('resize')))
+      expect(shell).toHaveClass('app-shell--keyboard-open')
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '510px',
+      )
+
+      act(() => nextEditor.blur())
+      await waitFor(
+        () => expect(shell).not.toHaveClass('app-shell--keyboard-open'),
+        { timeout: 700 },
+      )
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: 852,
+      })
+      Object.defineProperty(visualViewport, 'height', {
+        configurable: true,
+        value: 774,
+        writable: true,
+      })
+      Object.defineProperty(visualViewport, 'offsetTop', {
+        configurable: true,
+        value: 0,
+        writable: true,
+      })
+      act(() => visualViewport.dispatchEvent(new Event('resize')))
+      await waitFor(() =>
+        expect(shell).not.toHaveClass('app-shell--keyboard-open'),
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '852px',
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('0px')
+    } finally {
+      editor.remove()
+      nextEditor.remove()
+      rendered.unmount()
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+      Object.defineProperty(window, 'visualViewport', {
+        configurable: true,
+        value: originalVisualViewport,
+      })
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        value: originalMatchMedia,
+      })
+    }
+  })
+
   beforeEach(() => {
     dragHandlers.clear()
     vi.restoreAllMocks()
@@ -1075,6 +1489,31 @@ describe('App', () => {
     // The address now carries the selected session, so it has to be reset or
     // one test's deep link selects a session in the next.
     window.history.replaceState({}, '', '/')
+    // A faithful stand-in for the hub's order: it starts empty, accepts one
+    // bootstrap, and commits lane writes with a rising revision, so the tests
+    // exercise the same convergence rules the real store enforces.
+    hubSessionOrder = { revision: 0, bootstrapped: false, order: {} }
+    vi.mocked(fetchSessionOrder).mockImplementation(async () =>
+      structuredClone(hubSessionOrder),
+    )
+    vi.mocked(bootstrapSessionOrder).mockImplementation(async (order) => {
+      if (!hubSessionOrder.bootstrapped) {
+        hubSessionOrder = {
+          revision: hubSessionOrder.revision + 1,
+          bootstrapped: true,
+          order: { ...hubSessionOrder.order, ...structuredClone(order) },
+        }
+      }
+      return structuredClone(hubSessionOrder)
+    })
+    vi.mocked(saveSessionOrderLane).mockImplementation(async (computerId, lane) => {
+      hubSessionOrder = {
+        revision: hubSessionOrder.revision + 1,
+        bootstrapped: hubSessionOrder.bootstrapped,
+        order: { ...hubSessionOrder.order, [computerId]: [...lane] },
+      }
+      return structuredClone(hubSessionOrder)
+    })
     vi.mocked(listSessions).mockResolvedValue([session])
     // The snapshot asks for the list and for which computers answered for
     // their own sessions. Every test that sets up a list means it to be an
@@ -1106,7 +1545,11 @@ describe('App', () => {
       const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
       if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
       const binding: SessionKnowledgeBinding = {
-        computerId, sessionId, rootId: input.rootId, revision: previous.revision + 1,
+        computerId,
+        sessionId,
+        rootId: input.rootId,
+        rootPath: input.rootId ? input.rootPath || '.' : '.',
+        revision: previous.revision + 1,
         root, available: Boolean(root),
       }
       fixtureKnowledgeBindings.set(`${computerId}:${sessionId}`, binding)
@@ -2325,26 +2768,26 @@ describe('App', () => {
     const shell = document.querySelector('.app-shell')
     expect(shell).toHaveAttribute('data-accent-theme', 'agentic')
     const icon = () =>
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || ''
-    expect(decodeURIComponent(icon())).toContain('color="#b8f36b"')
+      document.querySelector('.brand__mark')?.getAttribute('src') || ''
+    expect(icon()).toBe('/icon.svg')
     expect(document.querySelector('.brand__mark')?.tagName).toBe('IMG')
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     expect(document.querySelector('.brand__mark')).toHaveAttribute('alt', '')
+    const initialIcon = icon()
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
     fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
 
     expect(shell).toHaveAttribute('data-accent-theme', 'violet')
     expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
     expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
-    expect(decodeURIComponent(icon())).toContain('color="#ad92ff"')
+    expect(icon()).toBe(initialIcon)
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
-    expect(decodeURIComponent(icon())).toContain('color="#63d6c0"')
+    expect(icon()).toBe(initialIcon)
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
-    expect(document.querySelectorAll('link[rel="icon"]')).toHaveLength(1)
   })
 
-  it('restores the tab icon from the saved accent on load', async () => {
+  it('restores the tab accent without changing the fixed Relay icon', async () => {
     sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -2353,12 +2796,9 @@ describe('App', () => {
       'data-accent-theme',
       'rose',
     )
-    expect(decodeURIComponent(
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
-    )).toContain('color="#ff83b6"')
     expect(document.querySelector('.brand__mark')).toHaveAttribute(
       'src',
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href,
+      '/icon.svg',
     )
   })
 
@@ -2372,9 +2812,27 @@ describe('App', () => {
       'data-accent-theme',
       'agentic',
     )
-    expect(decodeURIComponent(
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
-    )).toContain('color="#b8f36b"')
+    expect(document.querySelector('.brand__mark')).toHaveAttribute(
+      'src',
+      '/icon.svg',
+    )
+  })
+
+  it('ignores legacy icon preferences and omits icon settings', async () => {
+    localStorage.setItem(
+      'agentic-remote:app-icon',
+      JSON.stringify({ style: 'atlas', color: 'teal' }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    expect(screen.queryByRole('radio', { name: /app icon/i }))
+      .not.toBeInTheDocument()
+    expect(document.querySelector('.brand__mark')).toHaveAttribute(
+      'src',
+      '/icon.svg',
+    )
   })
 
   it('falls back to blank runtime defaults when stored settings are null', async () => {
@@ -6043,13 +6501,20 @@ describe('App', () => {
   })
 
   it('uploads a document to the selected computer and appends its path', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'dashboard-query.kql',
+      path: '/private/uploads/dashboard-query.kql',
+      size: 21,
+    })
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
-    const file = new File(['financial data'], 'statement.pdf', {
-      type: 'application/pdf',
+    const attachment = screen.getByLabelText('File attachment')
+    expect(attachment.getAttribute('accept')?.split(',')).toContain('.kql')
+    const file = new File(['StormEvents | take 10'], 'dashboard-query.kql', {
+      type: 'text/plain',
     })
 
-    fireEvent.change(screen.getByLabelText('File attachment'), {
+    fireEvent.change(attachment, {
       target: { files: [file] },
     })
 
@@ -6062,7 +6527,7 @@ describe('App', () => {
     )
     await waitFor(() =>
       expect(textarea).toHaveValue(
-        'Attached file: `/private/uploads/statement.pdf`',
+        'Attached file: `/private/uploads/dashboard-query.kql`',
       ),
     )
     expect(transcribeAudio).not.toHaveBeenCalled()
@@ -6132,6 +6597,185 @@ describe('App', () => {
         'Original message\n\nTranscribed walking idea',
       ),
     )
+  })
+
+  it('offers a confirmed clear-and-send action for a terminal draft conflict', async () => {
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(Object.assign(
+        new Error(
+          'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+        ),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          uncertainDelivery: false,
+        },
+      ))
+      .mockResolvedValueOnce(session)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Send the preserved app draft' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const replace = await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    })
+    expect(textarea).toHaveValue('Send the preserved app draft')
+    expect(replace).toBeEnabled()
+    fireEvent.click(replace)
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(
+      'The terminal text will be deleted and cannot be recovered',
+    ))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          content: 'Send the preserved app draft',
+          enqueue: false,
+          replaceTerminalDraft: true,
+        },
+      ),
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('button', {
+        name: 'Clear terminal text and send',
+      })).not.toBeInTheDocument(),
+    )
+    expect(textarea).toHaveValue('')
+  })
+
+  it('keeps the post-clear refusal reason visible beside the retry action', async () => {
+    const initial = Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    )
+    const changed = Object.assign(
+      new Error(
+        'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
+      ),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    )
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(initial)
+      .mockRejectedValueOnce(changed)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this draft visible' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    }))
+
+    expect(
+      (await screen.findAllByText(changed.message))
+        .some((message) => message.closest('.error-banner')),
+    ).toBe(true)
+    expect(textarea).toHaveValue('Keep this draft visible')
+    expect(screen.getByRole('button', {
+      name: 'Clear terminal text and send',
+    })).toBeEnabled()
+  })
+
+  it.each(['direct', 'collapsed paste'] as const)(
+    'does not clear terminal text for an app-local command from a %s',
+    async (source) => {
+    vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    ))
+    const confirm = vi.spyOn(window, 'confirm')
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Initial ordinary message' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const replace = await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    })
+
+    if (source === 'direct') {
+      fireEvent.change(textarea, { target: { value: '/clear' } })
+    } else {
+      fireEvent.change(textarea, { target: { value: '' } })
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          getData: () => [
+            '/clear',
+            ...Array.from({ length: 20 }, (_, index) => `line ${index}`),
+          ].join('\n'),
+        },
+      })
+      expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+    }
+
+    expect(replace).toBeDisabled()
+    expect(screen.getByText(
+      'Use the normal action for this command; it does not replace terminal text.',
+    )).toBeVisible()
+    fireEvent.click(replace)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(clearConversation).not.toHaveBeenCalled()
+    expect(sendMessage).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('does not clear terminal text while editing a queued prompt', async () => {
+    const queued: ManagedSession = {
+      ...session,
+      queuedCount: 1,
+      queuedPrompts: [{
+        id: 'queued-message',
+        content: 'Keep the queued message in place',
+        createdAt: session.updatedAt,
+      }],
+    }
+    vi.mocked(listSessions).mockResolvedValue([queued])
+    vi.mocked(getSession).mockResolvedValue(queued)
+    vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    ))
+    const confirm = vi.spyOn(window, 'confirm')
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Initial ordinary message' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const replace = await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    })
+    fireEvent.change(textarea, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Keep the queued message in place'),
+    )
+
+    expect(replace).toBeDisabled()
+    expect(screen.getByText(
+      'Finish or cancel the queued-message edit before replacing terminal text.',
+    )).toBeVisible()
+    fireEvent.click(replace)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(sendMessage).toHaveBeenCalledOnce()
   })
 
   it('keeps a suspended conversation readable and closed to writing', async () => {
@@ -9714,6 +10358,145 @@ describe('App', () => {
     expect(textarea).toHaveValue('Keep this recovery draft')
   })
 
+  it('offers manual recovery for an idle Copilot session', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+
+    render(<App />)
+    await screen.findByText('Hello agent')
+    const textarea = screen.getByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this manual recovery draft' } })
+    const recover = sessionAction('Recover conversation')
+    await waitFor(() => expect(recover).toBeEnabled())
+    fireEvent.click(recover)
+
+    await waitFor(() =>
+      expect(recoverConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'manual',
+      ),
+    )
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(
+      'Old messages remain visible as read-only history',
+    ))
+    expect(textarea).toHaveValue('Keep this manual recovery draft')
+  })
+
+  it.each([
+    { state: 'running', selected: { ...session, status: 'running' as const } },
+    { state: 'waiting', selected: { ...session, status: 'waiting' as const } },
+    {
+      state: 'waiting on stale input',
+      selected: {
+        ...session,
+        status: 'waiting' as const,
+        pendingUserInput: {
+          requestId: 'stale-input',
+          question: 'Expired question',
+          choices: [],
+          allowFreeform: true,
+          stale: true,
+        },
+      },
+    },
+    { state: 'suspended', selected: { ...session, suspended: true } },
+    { state: 'offline', selected: session, offline: true },
+    {
+      state: 'holding a live prompt',
+      selected: {
+        ...session,
+        pendingPermission: {
+          requestId: 'live-permission',
+          title: 'Allow a live tool',
+          options: [
+            { optionId: 'allow', name: 'Allow', kind: 'allow_once' as const },
+          ],
+        },
+      },
+    },
+    {
+      state: 'holding an unconfirmed queue claim',
+      selected: {
+        ...session,
+        queuedDispatch: {
+          attemptId: 'attempt-1',
+          promptId: 'prompt-1',
+          content: 'Unconfirmed queue work',
+          startedAt: '2026-09-16T20:00:00.000Z',
+          state: 'uncertain' as const,
+        },
+      },
+    },
+    {
+      state: 'rebuilding provider context',
+      selected: {
+        ...session,
+        recoverySeedState: 'pending' as const,
+      },
+    },
+    {
+      state: 'showing a running tool',
+      selected: {
+        ...session,
+        messages: [
+          ...session.messages,
+          {
+            id: 'running-tool',
+            role: 'activity' as const,
+            content: 'Bash',
+            createdAt: '2026-09-16T20:00:00.000Z',
+            activityStatus: 'running' as const,
+          },
+        ],
+      },
+    },
+  ])('keeps manual recovery visible but disabled while $state', async ({
+    selected,
+    offline,
+  }) => {
+    vi.mocked(listSessions).mockResolvedValue([selected])
+    vi.mocked(getSession).mockResolvedValue(selected)
+    if (offline) {
+      vi.mocked(listComputers).mockResolvedValue([
+        { ...computer, online: false },
+      ])
+    }
+
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    expect(sessionAction('Recover conversation')).toBeDisabled()
+    expect(recoverConversation).not.toHaveBeenCalled()
+  })
+
+  it.each(['queued', 'running'] as const)(
+    'disables manual recovery while a background task is %s',
+    async (status) => {
+      vi.mocked(listComputers).mockResolvedValue([taskComputer])
+      vi.mocked(listBackgroundTasks).mockResolvedValue({
+        tasks: [{
+          id: 'background-task',
+          type: 'shell',
+          description: 'Keep this work attached',
+          status,
+          startedAt: '2026-09-16T20:00:00.000Z',
+          executionMode: 'background',
+          canCancel: false,
+        }],
+        runningCount: status === 'running' ? 1 : 0,
+        supported: true,
+      })
+
+      render(<App />)
+      await screen.findByText('Hello agent')
+      await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+
+      expect(sessionAction('Recover conversation')).toBeDisabled()
+      expect(recoverConversation).not.toHaveBeenCalled()
+    },
+  )
+
   it('replaces stale SDK prompt controls with an inline recovery card', async () => {
     const stale: ManagedSession = {
       ...session,
@@ -12002,11 +12785,6 @@ describe('App', () => {
           'workspace-guide', 'repeat', 'repeat-1', 'repeat-1-1',
           'section', 'section-1', 'repeat-2', 'unknownmissing',
         ])
-        if (source === 'knowledge') {
-          await waitFor(() =>
-            expect(new URL(window.location.href).searchParams.get('file')).toBe('guide.md'),
-          )
-        }
         const location = window.location.href
         for (const [entry, index] of [0, 1, 2, 3, 5, 6, 7].entries()) {
           fireEvent.click(screen.getByRole('button', { name: 'Document outline' }))
@@ -12339,7 +13117,7 @@ describe('App', () => {
           expect(content.scrollTop).toBe(270)
           expect(screen.getByRole('navigation', { name: 'Knowledge' }).scrollTop).toBe(70)
           expect(screen.getByRole('heading', { name: 'Details' })).toBeVisible()
-          expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+          expect(readKnowledgeFile).toHaveBeenCalledTimes(width <= 960 ? 3 : 4)
           expect(localStorage.getItem('agentic-remote:reader-width')).toBe('760')
           expect(sendMessage).not.toHaveBeenCalled()
           expect(window.location.hash).toBe('')
@@ -12798,13 +13576,216 @@ describe('App', () => {
     }
   })
 
-  it.each(['computer', 'session'])('reports a refused custom %s order without losing the draft', async (kind) => {
+  it('hydrates the custom order from the hub instead of this browser', async () => {
+    const items = [
+      { ...session, id: 'hub-a', title: 'Alpha' },
+      { ...session, id: 'hub-b', title: 'Bravo', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    // A stale local arrangement must lose to an order the hub already holds.
+    localStorage.setItem(
+      'agentic-remote:session-order',
+      JSON.stringify({ [computer.id]: [`${computer.id}:hub-a`, `${computer.id}:hub-b`] }),
+    )
+    hubSessionOrder = {
+      revision: 9,
+      bootstrapped: true,
+      order: { [computer.id]: [`${computer.id}:hub-b`, `${computer.id}:hub-a`] },
+    }
+
+    render(<App />)
+    await screen.findAllByText('Alpha')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    await waitFor(() => expect(titles()).toEqual(['Bravo', 'Alpha']))
+    expect(bootstrapSessionOrder).not.toHaveBeenCalled()
+  })
+
+  it('seeds an empty hub from the browser order exactly once', async () => {
+    const items = [
+      { ...session, id: 'seed-a', title: 'Alpha' },
+      { ...session, id: 'seed-b', title: 'Bravo', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    const legacy = { [computer.id]: [`${computer.id}:seed-b`, `${computer.id}:seed-a`] }
+    localStorage.setItem('agentic-remote:session-order', JSON.stringify(legacy))
+
+    render(<App />)
+    await screen.findAllByText('Alpha')
+    await waitFor(() => expect(bootstrapSessionOrder).toHaveBeenCalledWith(legacy))
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    await waitFor(() => expect(titles()).toEqual(['Bravo', 'Alpha']))
+  })
+
+  it('renders a reorder committed by another client, and ignores a stale one', async () => {
+    const items = [
+      { ...session, id: 'live-a', title: 'Alpha' },
+      { ...session, id: 'live-b', title: 'Bravo', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    hubSessionOrder = {
+      revision: 4,
+      bootstrapped: true,
+      order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
+    }
+    render(<App />)
+    await screen.findAllByText('Alpha')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    await waitFor(() => expect(titles()).toEqual(['Alpha', 'Bravo']))
+
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.order.updated',
+          order: {
+            revision: 5,
+            bootstrapped: true,
+            order: { [computer.id]: [`${computer.id}:live-b`, `${computer.id}:live-a`] },
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(titles()).toEqual(['Bravo', 'Alpha'])
+
+    // A late delivery of an older revision is not a correction.
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.order.updated',
+          order: {
+            revision: 4,
+            bootstrapped: true,
+            order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(titles()).toEqual(['Bravo', 'Alpha'])
+  })
+
+  it('sends only the dragged computer lane to the hub', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+
+    await act(async () => {
+      finishReorder(
+        'session-navigation',
+        `session:${computer.id}:${session.id}`,
+        `session:${computer.id}:${session.id}`,
+      )
+    })
+    // Dropping a session on itself is not a reorder.
+    expect(saveSessionOrderLane).not.toHaveBeenCalled()
+  })
+
+  it('refetches the order after a socket outage', async () => {
+    const items = [
+      { ...session, id: 'gap-a', title: 'Alpha' },
+      { ...session, id: 'gap-b', title: 'Bravo', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      order: { [computer.id]: [`${computer.id}:gap-a`, `${computer.id}:gap-b`] },
+    }
+    render(<App />)
+    await screen.findAllByText('Alpha')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    await waitFor(() => expect(titles()).toEqual(['Alpha', 'Bravo']))
+
+    // Committed while this browser had no socket. Order events are not
+    // replayed, so only a refetch can reveal it.
+    hubSessionOrder = {
+      revision: 3,
+      bootstrapped: true,
+      order: { [computer.id]: [`${computer.id}:gap-b`, `${computer.id}:gap-a`] },
+    }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onopen?.()
+    })
+    await waitFor(() => expect(titles()).toEqual(['Bravo', 'Alpha']))
+  })
+
+  it('keeps a newer acknowledged order when an older save is refused', async () => {
+    const items = [
+      { ...session, id: 'race-a', title: 'Alpha' },
+      { ...session, id: 'race-b', title: 'Bravo', messages: [] },
+      { ...session, id: 'race-c', title: 'Charlie', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    const key = (id: string) => `${computer.id}:${id}`
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      order: { [computer.id]: [key('race-a'), key('race-b'), key('race-c')] },
+    }
+    render(<App />)
+    await screen.findAllByText('Alpha')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    await waitFor(() => expect(titles()).toEqual(['Alpha', 'Bravo', 'Charlie']))
+
+    // While this drag is in flight another client commits a different order.
+    vi.mocked(saveSessionOrderLane).mockImplementationOnce(async () => {
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.order.updated',
+            order: {
+              revision: 50,
+              bootstrapped: true,
+              order: { [computer.id]: [key('race-c'), key('race-b'), key('race-a')] },
+            },
+          }),
+        } as MessageEvent)
+      })
+      throw new Error('Hub unavailable')
+    })
+
+    await act(async () => {
+      finishReorder(
+        'session-navigation',
+        `session:${computer.id}:race-a`,
+        `session:${computer.id}:race-b`,
+      )
+    })
+
+    expect(within(screen.getByRole('main'))
+      .getByText('Could not save the session order: Hub unavailable')).toBeVisible()
+    // Withdrawing only this attempt: the newer revision stands, rather than
+    // the order captured before the drag began.
+    expect(titles()).toEqual(['Charlie', 'Bravo', 'Alpha'])
+  })
+
+  it('reports a refused custom computer order without losing the draft', async () => {
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     render(<App />)
     fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    const key = `agentic-remote:${kind}-order`
+    const key = 'agentic-remote:computer-order'
     const persisted = localStorage.getItem(key)
     const original = Storage.prototype.setItem
     const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
@@ -12816,17 +13797,44 @@ describe('App', () => {
     try {
       act(() => finishReorder(
         'session-navigation',
-        kind === 'computer' ? `computer:${computer.id}` : `session:${computer.id}:${session.id}`,
-        kind === 'computer' ? `computer:${secondComputer.id}` : `session:${computer.id}:${secondSession.id}`,
+        `computer:${computer.id}`,
+        `computer:${secondComputer.id}`,
       ))
       expect(within(screen.getByRole('main'))
-        .getByText(`Could not save the ${kind} order: Storage unavailable`)).toBeVisible()
+        .getByText('Could not save the computer order: Storage unavailable')).toBeVisible()
       expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
       expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
       expect(localStorage.getItem(key)).toBe(persisted)
     } finally {
       save.mockRestore()
     }
+  })
+
+  it('restores the acknowledged session order when the hub refuses the write', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    const before = titles()
+    vi.mocked(saveSessionOrderLane).mockRejectedValueOnce(new Error('Hub unavailable'))
+
+    await act(async () => {
+      finishReorder(
+        'session-navigation',
+        `session:${computer.id}:${session.id}`,
+        `session:${computer.id}:${secondSession.id}`,
+      )
+    })
+
+    expect(within(screen.getByRole('main'))
+      .getByText('Could not save the session order: Hub unavailable')).toBeVisible()
+    expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
+    // The list must not keep a position no other device will agree with.
+    expect(titles()).toEqual(before)
   })
 
   it('keeps search arrows from recalling a prompt or changing the selected session', async () => {
@@ -13784,6 +14792,349 @@ describe('App', () => {
       },
     })
     expect(localStorage.getItem('agentic-remote:knowledge-position')).toBeNull()
+  })
+
+  it('reloads the active Knowledge document on reopen, expand, and minimize', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        size: 20,
+      }],
+    })
+    let revision = 0
+    vi.mocked(readKnowledgeFile).mockImplementation(async () => {
+      revision += 1
+      return {
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: `# Revision ${revision}`,
+      }
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Revision 1' })
+    const content = document.querySelector<HTMLElement>(
+      '.knowledge-reader .workspace-preview__content',
+    )
+    expect(content).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+    expect(screen.getByRole('button', { name: 'Source' }))
+      .toHaveAttribute('aria-pressed', 'true')
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    if (content) {
+      content.scrollTop = 120
+      fireEvent.scroll(content)
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+    await waitFor(() => expect(content).toHaveTextContent('# Revision 2'))
+    expect(content?.scrollTop).toBe(120)
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize knowledge panel' }))
+    await waitFor(() => expect(content).toHaveTextContent('# Revision 3'))
+    expect(content?.scrollTop).toBe(120)
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(content).toHaveTextContent('# Revision 4'))
+
+    expect(readKnowledgeFile).toHaveBeenCalledTimes(4)
+    expect(screen.getByRole('button', { name: 'Source' }))
+      .toHaveAttribute('aria-pressed', 'true')
+    expect(
+      document.querySelector<HTMLElement>(
+        '.knowledge-reader .workspace-preview__content',
+      )?.scrollTop,
+    ).toBe(120)
+  })
+
+  it('does not let a slow Knowledge mode refresh replace a newer document', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [
+        { name: 'guide.md', path: 'guide.md', kind: 'markdown', size: 20 },
+        { name: 'other.md', path: 'other.md', kind: 'markdown', size: 20 },
+      ],
+    })
+    let finishRefresh:
+      | ((file: WorkspaceFile) => void)
+      | undefined
+    let guideReads = 0
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_rootId, path) => {
+      if (path === 'other.md') {
+        return {
+          name: 'other.md',
+          path: 'other.md',
+          kind: 'markdown',
+          mimeType: 'text/markdown',
+          size: 20,
+          content: '# Newer document',
+        }
+      }
+      guideReads += 1
+      if (guideReads === 1) {
+        return {
+          name: 'guide.md',
+          path: 'guide.md',
+          kind: 'markdown',
+          mimeType: 'text/markdown',
+          size: 20,
+          content: '# Original document',
+        }
+      }
+      return new Promise<WorkspaceFile>((resolve) => {
+        finishRefresh = resolve
+      })
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Original document' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+    await waitFor(() => expect(guideReads).toBe(2))
+    fireEvent.click(within(tree).getByRole('treeitem', { name: /other.md/ }))
+    await screen.findByRole('heading', { name: 'Newer document' })
+
+    await act(async () => {
+      finishRefresh?.({
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Stale refresh',
+      })
+    })
+    expect(
+      screen.getByRole('heading', { name: 'Newer document' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'Stale refresh' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not let a mode change cancel file navigation already in flight', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [
+        { name: 'guide.md', path: 'guide.md', kind: 'markdown', size: 20 },
+        { name: 'other.md', path: 'other.md', kind: 'markdown', size: 20 },
+      ],
+    })
+    let finishNavigation:
+      | ((file: WorkspaceFile) => void)
+      | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_rootId, path) => {
+      if (path === 'other.md') {
+        return new Promise<WorkspaceFile>((resolve) => {
+          finishNavigation = resolve
+        })
+      }
+      return {
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Original document',
+      }
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Original document' })
+
+    fireEvent.click(within(tree).getByRole('treeitem', { name: /other.md/ }))
+    await waitFor(() => expect(finishNavigation).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+    expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      finishNavigation?.({
+        name: 'other.md',
+        path: 'other.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Navigated document',
+      })
+    })
+    expect(
+      await screen.findByRole('heading', { name: 'Navigated document' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Ask agent about file' }),
+    ).toBeEnabled()
+  })
+
+  it('settles reopen ownership when the panel mode changes during refresh', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        size: 20,
+      }],
+    })
+    let revision = 0
+    let finishReopen:
+      | ((file: WorkspaceFile) => void)
+      | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(async () => {
+      revision += 1
+      const file: WorkspaceFile = {
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: `# Revision ${revision}`,
+      }
+      if (revision === 2) {
+        return new Promise<WorkspaceFile>((resolve) => {
+          finishReopen = resolve
+        })
+      }
+      return file
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Revision 1' })
+    tree.scrollTop = 70
+    fireEvent.scroll(tree)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(finishReopen).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+    expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      finishReopen?.({
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Revision 2',
+      })
+    })
+    await screen.findByRole('heading', { name: 'Revision 2' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize knowledge panel' }))
+    await screen.findByRole('heading', { name: 'Revision 3' })
+    tree.scrollTop = 95
+    fireEvent.scroll(tree)
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('heading', { name: 'Revision 4' })
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(tree.scrollTop).toBe(95)
+  })
+
+  it('reloads an active sessionless Knowledge document on reopen', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        size: 20,
+      }],
+    })
+    let revision = 0
+    vi.mocked(readKnowledgeFile).mockImplementation(async () => {
+      revision += 1
+      return {
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: `# Sessionless revision ${revision}`,
+      }
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Sessionless revision 1' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Knowledge' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Sessionless revision 2' }),
+    ).toBeInTheDocument()
+    expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the readable Knowledge document visible when a mode refresh fails', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        size: 20,
+      }],
+    })
+    vi.mocked(readKnowledgeFile)
+      .mockResolvedValueOnce({
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Readable document',
+      })
+      .mockRejectedValueOnce(new Error('Knowledge refresh failed'))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Readable document' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+    expect(
+      (await screen.findAllByText('Knowledge refresh failed'))
+        .some((message) => !message.closest('[hidden]')),
+    ).toBe(true)
+    expect(
+      screen.getByRole('heading', { name: 'Readable document' }),
+    ).toBeInTheDocument()
   })
 
   it('drops an app-wide position rather than filing it under a linked session', async () => {
@@ -14839,6 +16190,72 @@ describe('App', () => {
     expect(
       await within(tree).findByRole('treeitem', { name: /guides/ }),
     ).toBeInTheDocument()
+  })
+
+  it('restores expansion for the initial sessionless root after switching roots', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    const firstRoot: KnowledgeRoot = {
+      id: 'root-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/home/tester/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }
+    const secondRoot = {
+      ...firstRoot,
+      id: 'root-2',
+      path: '/home/tester/other',
+      name: 'other',
+    }
+    mockKnowledgeRoots([firstRoot, secondRoot])
+    localStorage.setItem(
+      'agentic-remote:knowledge-root',
+      JSON.stringify(firstRoot.id),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-expanded',
+      JSON.stringify({ [firstRoot.id]: ['guides'] }),
+    )
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (rootId, path = '.') => ({
+        path,
+        parent: path === '.' ? undefined : '.',
+        entries:
+          rootId === firstRoot.id && path === '.'
+            ? [{ name: 'guides', path: 'guides', kind: 'directory' }]
+            : [],
+      }),
+    )
+
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Session knowledge' }),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    const guides = await within(tree).findByRole('treeitem', {
+      name: /guides/,
+    })
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith(firstRoot.id, 'guides'),
+    )
+    expect(guides).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(guides)
+    expect(guides).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(guides)
+    expect(guides).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+        )[firstRoot.id],
+      ).toEqual(['guides']),
+    )
+
+    await chooseKnowledgeRoot(secondRoot.id)
+    await chooseKnowledgeRoot(firstRoot.id)
+    expect(await within(tree).findByRole('treeitem', { name: /guides/ }))
+      .toHaveAttribute('aria-expanded', 'true')
   })
 
   it('does not overwrite a session knowledge position before restoring it', async () => {

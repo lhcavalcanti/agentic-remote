@@ -6442,6 +6442,10 @@ function App() {
   // reader last submitted, so a stale one is not put back on top of it.
   const handledFailures = useRef(new Map<string, string>())
   const submissionsInFlight = useRef(new Set<string>())
+  // Keep the session row through the response cleanup. The in-flight marker
+  // is cleared as soon as the composer is restored, but a refresh can have
+  // omitted the row before that cleanup runs.
+  const submissionAnchors = useRef(new Set<string>())
   // Failures that could not be shown because newer text was in the way, and
   // the stamp of the one a session's composer is currently holding.
   const unshownFailures = useRef(
@@ -8643,7 +8647,8 @@ function App() {
         // submission. Keep its identity selected until the response or live
         // upsert puts it back; choosing the first row here loses the message
         // and the work that follows it to the reader.
-        (submissionsInFlight.current.has(current) &&
+        ((submissionsInFlight.current.has(current) ||
+          submissionAnchors.current.has(current)) &&
           !removedSessions.current.has(current)) ||
         // Its computer did not answer the most recent time it was asked, so
         // nobody has said this session is not there. Moving the reader off it
@@ -8904,11 +8909,18 @@ function App() {
         )
         const merge = (current: ManagedSession[]) => {
           let merged = current.filter(
-            (session) =>
-              !claim.speaksFor.has(session.computerId) ||
-              speaksForKeys.has(sessionKey(session)) ||
-              (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) >
-                startedAtSequence,
+            (session) => {
+              const key = sessionKey(session)
+              return (
+                !claim.speaksFor.has(session.computerId) ||
+                speaksForKeys.has(key) ||
+                (sessionEventSequenceRef.current.get(key) || 0) >
+                  startedAtSequence ||
+                ((submissionsInFlight.current.has(key) ||
+                  submissionAnchors.current.has(key)) &&
+                  !removedSessions.current.has(key))
+              )
+            },
           )
           for (const session of carrySnapshotTranscripts(snapshotSessions, current)) {
             if (claim.speaksFor.has(session.computerId)) {
@@ -8944,7 +8956,10 @@ function App() {
           // hub restart the cache is empty, so it removed all of them.
           if (
             changedAt > startedAtSequence ||
-            !answeredFor.has(existing.computerId)
+            !answeredFor.has(existing.computerId) ||
+            ((submissionsInFlight.current.has(sessionKey(existing)) ||
+              submissionAnchors.current.has(sessionKey(existing))) &&
+              !removedSessions.current.has(sessionKey(existing)))
           ) {
             reconciled = upsertSession(reconciled, existing)
           }
@@ -9076,7 +9091,8 @@ function App() {
         // still in flight. Keep the identity anchored until that response or
         // its live upsert restores the row.
         !(
-          submissionsInFlight.current.has(sessionKey(selectedAtRefresh)) &&
+          (submissionsInFlight.current.has(sessionKey(selectedAtRefresh)) ||
+            submissionAnchors.current.has(sessionKey(selectedAtRefresh))) &&
           !removedSessions.current.has(sessionKey(selectedAtRefresh))
         )
       ) {
@@ -9167,6 +9183,7 @@ function App() {
             // A clear issued here has not returned its replacement yet. A node
             // on an older build sends no link, so everything this session
             // carries is held until the response names the replacement.
+            submissionAnchors.current.delete(removedKey)
             updateComposerDrafts([removedKey], (current) => {
               const { [removedKey]: _removed, ...remaining } = current
               return remaining
@@ -9260,6 +9277,7 @@ function App() {
           for (const session of sessionsRef.current) {
             if (session.computerId === event.computerId) {
               removedSessions.current.add(sessionKey(session))
+              submissionAnchors.current.delete(sessionKey(session))
             }
           }
           setSessions((current) =>
@@ -10020,6 +10038,9 @@ function App() {
     }
     if (submissionsInFlight.current.delete(fromKey)) {
       submissionsInFlight.current.add(toKey)
+    }
+    if (submissionAnchors.current.delete(fromKey)) {
+      submissionAnchors.current.add(toKey)
     }
     updateComposerDrafts([fromKey, toKey], (current) => {
       const source = current[fromKey]
@@ -11310,6 +11331,8 @@ function App() {
     const settleSubmission = () => {
       submissionsInFlight.current.delete(targetKey)
       submissionsInFlight.current.delete(followReplacementsRef.current(targetKey))
+      submissionAnchors.current.delete(targetKey)
+      submissionAnchors.current.delete(followReplacementsRef.current(targetKey))
     }
 
     // Asked of the text that is actually sent, not of what the composer shows.
@@ -11420,6 +11443,7 @@ function App() {
         return
       }
       submissionsInFlight.current.add(targetKey)
+      submissionAnchors.current.add(targetKey)
       setSending(true)
       const response = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
@@ -11488,6 +11512,21 @@ function App() {
         return
       }
       const liveKey = followReplacementsRef.current(targetKey)
+      if (
+        liveKey === targetKey &&
+        !removedSessions.current.has(targetKey) &&
+        !sessionsRef.current.some((entry) => sessionKey(entry) === targetKey)
+      ) {
+        // A refresh can omit the session while the request is in flight. Put
+        // its last known row back before releasing the anchor so the restored
+        // draft and error remain reachable after a rejection.
+        sessionsRef.current = upsertSession(sessionsRef.current, selected)
+        setSessions((current) =>
+          current.some((entry) => sessionKey(entry) === targetKey)
+            ? current
+            : upsertSession(current, selected),
+        )
+      }
       const receipt = submissionReceiptFromError(caught)
       const awaitingReplacement = receipt && receipt.sessionId !== selected.id && liveKey === targetKey &&
         !removedSessions.current.has(`${selected.computerId}:${receipt.sessionId}`)
@@ -11533,7 +11572,10 @@ function App() {
             deliveryUncertaintyFromError(caught) ?? true,
           )
         }
-        if (selectedRef.current && sessionKey(selectedRef.current) === liveKey) {
+        if (
+          (selectedRef.current && sessionKey(selectedRef.current) === liveKey) ||
+          (!selectedRef.current && selectedKey === liveKey)
+        ) {
           setError(caught instanceof Error ? caught.message : String(caught))
         }
       }
@@ -12121,6 +12163,7 @@ function App() {
     const { target, savedKey, promptId, submitted, content } = submission
     if (!updateComposerDrafts([], (current) => ({ ...current }), true)) return false
     submissionsInFlight.current.add(savedKey)
+    submissionAnchors.current.add(savedKey)
     setQueueActionId(promptId)
     setError(undefined)
     try {
@@ -12196,6 +12239,9 @@ function App() {
       return false
     } finally {
       submissionsInFlight.current.delete(savedKey)
+      submissionsInFlight.current.delete(followReplacementsRef.current(savedKey))
+      submissionAnchors.current.delete(savedKey)
+      submissionAnchors.current.delete(followReplacementsRef.current(savedKey))
       setQueueActionId(undefined)
     }
   }
@@ -12223,6 +12269,7 @@ function App() {
     }), true)) return false
     queuedDispatchInFlight.current.set(savedKey, promptId)
     submissionsInFlight.current.add(savedKey)
+    submissionAnchors.current.add(savedKey)
     setQueueActionId(promptId)
     setError(undefined)
     const restore = (uncertain: boolean) => {
@@ -12273,6 +12320,8 @@ function App() {
       if (queuedDispatchInFlight.current.get(savedKey) === promptId) queuedDispatchInFlight.current.delete(savedKey)
       submissionsInFlight.current.delete(savedKey)
       submissionsInFlight.current.delete(followReplacementsRef.current(savedKey))
+      submissionAnchors.current.delete(savedKey)
+      submissionAnchors.current.delete(followReplacementsRef.current(savedKey))
       setQueueActionId(undefined)
     }
   }

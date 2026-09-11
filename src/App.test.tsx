@@ -10398,6 +10398,44 @@ describe('App', () => {
     )
   })
 
+  it('keeps a rejected submission row available for its restored draft and error', async () => {
+    let listed = [session, secondSession]
+    vi.mocked(listSessionListing).mockImplementation(async () => ({
+      sessions: listed,
+      answeredComputerIds: [computer.id],
+    }))
+    let refuse!: (error: unknown) => void
+    vi.mocked(sendMessage).mockImplementationOnce(
+      () => new Promise((_resolve, reject) => {
+        refuse = reject
+      }),
+    )
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'restore this action' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+
+    listed = [secondSession]
+    act(() => {
+      MockWebSocket.instances[0]?.onopen?.()
+    })
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(2))
+    expect(document.querySelector('.session-item--active')).toHaveTextContent(
+      'Project chat',
+    )
+
+    await act(async () => {
+      refuse(new Error('Dispatch refused'))
+    })
+    await waitFor(() => expect(textarea).toHaveValue('restore this action'))
+    expect(screen.getAllByText('Dispatch refused').length).toBeGreaterThan(0)
+    expect(document.querySelector('.session-item--active')).toHaveTextContent(
+      'Project chat',
+    )
+  })
+
   it('autocompletes and executes session slash commands', async () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')

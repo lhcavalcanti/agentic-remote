@@ -109,10 +109,62 @@ describe('SessionKnowledgeStore', () => {
     listed.length = 0
     expect(store.listBindings()).toHaveLength(1)
     expect((await stat(statePath)).mode & 0o777).toBe(0o600)
-    expect(await readdir(directory)).toEqual(['session-knowledge.json'])
+    const pathStatePath = path.join(directory, 'session-knowledge-paths.json')
+    expect((await stat(pathStatePath)).mode & 0o777).toBe(0o600)
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({
+      version: 1,
+      bindings: [{
+        computerId: 'computer',
+        sessionId: 'session',
+        rootId: 'one',
+        revision: 1,
+        root: root('one'),
+      }],
+    })
+    expect(JSON.parse(await readFile(pathStatePath, 'utf8'))).toEqual({
+      version: 1,
+      paths: [{
+        computerId: 'computer',
+        sessionId: 'session',
+        rootId: 'one',
+        rootPath: 'projects/agentic-remote',
+        revision: 1,
+      }],
+    })
+    expect((await readdir(directory)).sort()).toEqual([
+      'session-knowledge-paths.json',
+      'session-knowledge.json',
+    ])
     const reloaded = new SessionKnowledgeStore(directory, catalog)
     await reloaded.initialize()
     expect(reloaded.get('computer', 'session')).toEqual(binding)
+  })
+
+  it('ignores a stale nested-path sidecar after an older rollback changes the v1 binding', async () => {
+    const { store, catalog, directory, statePath } = await fixture()
+    await store.update('computer', 'session', {
+      rootId: 'one',
+      rootPath: 'projects/agentic-remote',
+      expectedRevision: 0,
+    })
+    await disk.writeFile(statePath, JSON.stringify({
+      version: 1,
+      bindings: [{
+        computerId: 'computer',
+        sessionId: 'session',
+        rootId: 'two',
+        revision: 2,
+        root: root('two', 'other-library'),
+      }],
+    }), { mode: 0o600 })
+
+    const reloaded = new SessionKnowledgeStore(directory, catalog)
+    await reloaded.initialize()
+    expect(reloaded.get('computer', 'session')).toMatchObject({
+      rootId: 'two',
+      rootPath: '.',
+      revision: 2,
+    })
   })
 
   it('persists an unlink tombstone and rejects an older choice after reload', async () => {

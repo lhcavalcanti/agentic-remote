@@ -6365,7 +6365,22 @@ function App() {
   // Folders are cached per path and loaded only when expanded, so the tree can
   // show structure without refetching a branch every time it reopens.
   const [knowledgeFolders, setKnowledgeFolders] = useState<KnowledgeFolders>({})
-  const [expandedKnowledge, setExpandedKnowledge] = useState<string[]>([])
+  const [knowledgeExpansion, setKnowledgeExpansion] = useState<{
+    scope?: string
+    paths: string[]
+  }>({ paths: [] })
+  const expandedKnowledge = knowledgeExpansion.paths
+  const setExpandedKnowledge = useCallback((
+    update: string[] | ((current: string[]) => string[]),
+  ) => {
+    setKnowledgeExpansion((current) => ({
+      ...current,
+      paths:
+        typeof update === 'function'
+          ? update(current.paths)
+          : update,
+    }))
+  }, [])
   const [knowledgePath, setKnowledgePath] = useState(knowledgeRootPath)
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
@@ -7209,7 +7224,7 @@ function App() {
     if (!expectedKnowledgeRootId || sessionRootUnavailable) {
       setActiveRootId(undefined)
       setKnowledgeFolders({})
-      setExpandedKnowledge([])
+      setKnowledgeExpansion({ paths: [] })
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
       setKnowledgeFragment(undefined)
@@ -7217,7 +7232,17 @@ function App() {
       knowledgeRestoredKey.current = selectedKey
     } else {
       setKnowledgeFolders({})
-      setExpandedKnowledge([])
+      const expansionScope = knowledgeExpansionKey(
+        expectedKnowledgeRootId,
+        sessionKnowledgeBasePath,
+      )
+      setKnowledgeExpansion({
+        scope: expansionScope,
+        paths: rememberedKnowledgeExpansion(
+          expectedKnowledgeRootId,
+          sessionKnowledgeBasePath,
+        ),
+      })
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
       setKnowledgeFragment(undefined)
@@ -7583,23 +7608,19 @@ function App() {
   }, [activeRootId])
 
   useEffect(() => {
-    if (!knowledgeHydrated.current || !activeRootId) {
+    if (!knowledgeHydrated.current || !knowledgeExpansion.scope) {
       return
     }
-    const expansionKey = knowledgeExpansionKey(
-      activeRootId,
-      activeKnowledgeBasePath,
-    )
     const stored = {
       ...restoredKnowledgeExpansion.current,
-      [expansionKey]: expandedKnowledge,
+      [knowledgeExpansion.scope]: knowledgeExpansion.paths,
     }
     restoredKnowledgeExpansion.current = stored
     writeStored(
       'agentic-remote:knowledge-expanded',
       JSON.stringify(stored),
     )
-  }, [activeKnowledgeBasePath, activeRootId, expandedKnowledge])
+  }, [knowledgeExpansion])
 
   useEffect(() => {
     writeStored(
@@ -10749,6 +10770,21 @@ function App() {
       : knowledgeRootPath
   }
 
+  function rememberedKnowledgeExpansion(
+    rootId: string,
+    basePath: string,
+  ): string[] {
+    return (
+      restoredKnowledgeExpansion.current[
+        knowledgeExpansionKey(rootId, basePath)
+      ] ||
+      (basePath === knowledgeRootPath
+        ? restoredKnowledgeExpansion.current[rootId]
+        : undefined) ||
+      []
+    ).slice(0, 24)
+  }
+
   async function loadKnowledgeFolder(
     rootId: string,
     path: string,
@@ -11085,16 +11121,11 @@ function App() {
     // Reopening a root restores the branches that were open in it, bounded so
     // a very wide tree cannot fan out into unbounded requests.
     const basePath = knowledgeBasePathFor(rootId)
-    const remembered = (
-      restoredKnowledgeExpansion.current[
-        knowledgeExpansionKey(rootId, basePath)
-      ] ||
-      (basePath === knowledgeRootPath
-        ? restoredKnowledgeExpansion.current[rootId]
-        : undefined) ||
-      []
-    ).slice(0, 24)
-    setExpandedKnowledge(remembered)
+    const remembered = rememberedKnowledgeExpansion(rootId, basePath)
+    setKnowledgeExpansion({
+      scope: knowledgeExpansionKey(rootId, basePath),
+      paths: remembered,
+    })
     const opened = await loadKnowledgeFolder(
       rootId,
       knowledgeRootPath,
@@ -11122,7 +11153,7 @@ function App() {
       knowledgeRequest.current += 1
       setActiveRootId(undefined)
       setKnowledgeFolders({})
-      setExpandedKnowledge([])
+      setKnowledgeExpansion({ paths: [] })
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
     }
@@ -11263,7 +11294,7 @@ function App() {
       setKnowledgeLoading(false)
       setActiveRootId(undefined)
       setKnowledgeFolders({})
-      setExpandedKnowledge([])
+      setKnowledgeExpansion({ paths: [] })
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
     }
@@ -12031,7 +12062,7 @@ function App() {
     if (
       !selected ||
       !activeRoot ||
-      !rootsRef.current.includes(activeRoot) ||
+      !rootsRef.current.some((root) => root.id === activeRoot.id) ||
       !computersRef.current.some((computer) => computer.id === activeRoot.computerId && computer.online) ||
       knowledgeAskUnavailableReason ||
       knowledgeLoading ||

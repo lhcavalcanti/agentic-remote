@@ -105,6 +105,11 @@ describe('hub routes', () => {
           path: 'projects/agentic-remote/docs',
           kind: 'directory' as const,
         },
+        {
+          name: 'shared-link',
+          path: 'projects/shared',
+          kind: 'directory' as const,
+        },
       ],
     }))
     const readKnowledgeFile = vi.fn(async () => ({
@@ -162,6 +167,20 @@ describe('hub routes', () => {
       '/home/demo',
       'projects/agentic-remote/README.md',
     )
+
+    readKnowledgeFile.mockResolvedValueOnce({
+      name: 'shared.md',
+      path: 'projects/shared/shared.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 10,
+      content: '# Shared',
+    })
+    const escaped = await app.inject({
+      url: '/api/knowledge/roots/projects/file?path=shared-link%2Fshared.md&basePath=projects%2Fagentic-remote',
+      headers: { host: 'localhost' },
+    })
+    expect(escaped.statusCode).toBe(403)
     await app.close()
   })
 

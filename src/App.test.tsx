@@ -6306,6 +6306,88 @@ describe('App', () => {
     )
   })
 
+  it('closes the new-session sheet and shows a pending session while creating', async () => {
+    let finishCreation: ((created: ManagedSession) => void) | undefined
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishCreation = resolve
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Choose a folder' }),
+      ).not.toBeInTheDocument(),
+    )
+    const pending = screen.getByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+    expect(pending).toHaveTextContent('Copilot')
+    expect(pending).toHaveTextContent('tmux')
+    expect(pending).toHaveTextContent('Creating session')
+    expect(pending.querySelectorAll('.session-creation-dot')).toHaveLength(3)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await act(async () => {
+      finishCreation?.({
+        ...session,
+        id: 'created-session',
+        title: 'Fresh session',
+      })
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('status', {
+          name: 'Creating GitHub Copilot session on development in ~',
+        }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getAllByText('Fresh session').length).toBeGreaterThan(0)
+  })
+
+  it('removes a failed pending session and surfaces the creation error', async () => {
+    let failCreation: ((error: Error) => void) | undefined
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failCreation = reject
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+
+    await act(async () => {
+      failCreation?.(new Error('Session creation failed'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('status', {
+          name: 'Creating GitHub Copilot session on development in ~',
+        }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Session creation failed')
+  })
+
   it('allows SDK-backed session creation by disabling tmux', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

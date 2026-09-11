@@ -146,6 +146,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Agentic Remote MUST use authentication already configured on the owning
   computer and MUST NOT store or expose provider credentials or implement a
   Claude subscription login flow.
+- Submitting a valid new session MUST close the creation sheet immediately and
+  show a noninteractive pending row in the owning computer group until creation
+  finishes. The row MUST identify the provider, execution mode, folder, and
+  creation state without relying on motion alone. Success MUST replace it with
+  the created session; failure MUST remove it and surface the error.
 
 ### 3.3 Rename, restart, recover, clear, and delete
 

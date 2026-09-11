@@ -168,6 +168,19 @@ describe('session navigation', () => {
     expect(actions.onOpenSessionTasks).toHaveBeenCalledWith(worker)
   })
 
+  it('keeps task access inline with session metadata', () => {
+    render(navigation())
+    const task = screen.getByRole('button', { name: 'View background tasks for Build docs' })
+    const open = screen.getByRole('button', { name: /^Build docs,/ })
+
+    expect(task.closest('.session-item__body')).not.toBeNull()
+    expect(task.closest('.session-item__where')).toBeNull()
+    expect(open).not.toContainElement(task)
+    expect(task).toHaveTextContent('1 task')
+    fireEvent.click(within(open).getByText('~/notes'))
+    expect(actions.onSelectSession).toHaveBeenCalledWith(worker)
+  })
+
   it('updates the filtered list when an answer is no longer pending', () => {
     const rendered = render(navigation())
     fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))

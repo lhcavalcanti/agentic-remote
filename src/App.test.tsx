@@ -10183,6 +10183,119 @@ describe('App', () => {
     })
   })
 
+  it.each([
+    ['desktop Enter', { key: 'Enter' }, false, false],
+    ['Ctrl+Enter', { key: 'Enter', ctrlKey: true }, false, true],
+    ['Cmd+Enter', { key: 'Enter', metaKey: true }, false, true],
+    ['Queue message', undefined, true, true],
+  ] as const)('anchors the selected session and timeline for %s', async (_name, key, running, enqueue) => {
+    const target = running ? { ...session, status: 'running' as const } : session
+    vi.mocked(listSessions).mockResolvedValue([target, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : target,
+    )
+    let resolveSend!: (value: ManagedSession) => void
+    vi.mocked(sendMessage).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSend = resolve
+      }),
+    )
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const timeline = document.querySelector<HTMLElement>('.timeline')!
+    Object.defineProperties(timeline, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline)
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+
+    fireEvent.change(textarea, { target: { value: 'follow this action' } })
+    if (key) {
+      fireEvent.keyDown(textarea, key)
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Queue message' }))
+    }
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          content: 'follow this action',
+          enqueue: enqueue || running,
+        },
+      ),
+    )
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' })
+    expect(document.querySelector('.session-item--active')).toHaveTextContent(
+      'Project chat',
+    )
+
+    scrollIntoView.mockClear()
+    const live = {
+      ...target,
+      status: 'running' as const,
+      updatedAt: '2026-07-22T00:00:10.000Z',
+      messages: [
+        ...target.messages,
+        {
+          id: 'accepted-action',
+          role: 'user' as const,
+          content: 'follow this action',
+          createdAt: '2026-07-22T00:00:10.000Z',
+        },
+      ],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: live,
+        }),
+      } as MessageEvent)
+    })
+    expect(await screen.findByText('follow this action')).toBeInTheDocument()
+    expect(document.querySelector('.session-item--active')).toHaveTextContent(
+      'Project chat',
+    )
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
+
+    scrollIntoView.mockClear()
+    timeline.scrollTop = 100
+    fireEvent.scroll(timeline)
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...live,
+            messages: [
+              ...live.messages,
+              {
+                id: 'passive-update',
+                role: 'assistant' as const,
+                content: 'Passive update',
+                createdAt: '2026-07-22T00:00:11.000Z',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(await screen.findByText('Passive update')).toBeInTheDocument()
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveSend(live)
+    })
+  })
+
   it('offers immediate send and queue buttons while the agent is running', async () => {
     const runningSession: ManagedSession = {
       ...session,
@@ -10216,9 +10329,73 @@ describe('App', () => {
     expect(
       screen.getByRole('button', { name: 'Send message' }),
     ).toHaveAttribute('title', 'Send into the current response')
+    const actionButtons = [...document.querySelectorAll('.composer-actions > .send-button')]
+    expect(actionButtons).toHaveLength(5)
+    expect(actionButtons.filter((button) => button.querySelector('.send-button__label')))
+      .toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Queue message' })).not.toHaveTextContent('Queue')
     expect(
       screen.getByRole('button', { name: 'Stop response' }),
     ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stop response' })).not.toHaveTextContent('Stop')
+  })
+
+  it('keeps an in-flight submission selected when a refresh briefly omits it', async () => {
+    let listed = [session, secondSession]
+    vi.mocked(listSessionListing).mockImplementation(async () => ({
+      sessions: listed,
+      answeredComputerIds: [computer.id],
+    }))
+    let resolveSend!: (value: ManagedSession) => void
+    vi.mocked(sendMessage).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSend = resolve
+      }),
+    )
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'hold this session' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+        'computer-1',
+        'session-1',
+        { content: 'hold this session', enqueue: false },
+      ),
+    )
+
+    listed = [secondSession]
+    act(() => {
+      MockWebSocket.instances[0]?.onopen?.()
+    })
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(2))
+    expect(new URLSearchParams(window.location.search).get('session')).toBe(
+      'session-1',
+    )
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 10)))
+
+    listed = [session, secondSession]
+    await act(async () => {
+      resolveSend({
+        ...session,
+        updatedAt: '2026-07-22T00:00:10.000Z',
+        messages: [
+          ...session.messages,
+          {
+            id: 'held-session-response',
+            role: 'assistant',
+            content: 'The selected session is back',
+            createdAt: '2026-07-22T00:00:10.000Z',
+          },
+        ],
+      })
+    })
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get('session')).toBe(
+        'session-1',
+      ),
+    )
   })
 
   it('autocompletes and executes session slash commands', async () => {

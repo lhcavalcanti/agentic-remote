@@ -8639,6 +8639,12 @@ function App() {
       (sessionsRef.current.some((session) => sessionKey(session) === current) ||
         pendingReplacements.current.has(current) ||
         clearingSessions.current.has(current) ||
+        // A refresh can briefly omit the session that owns an active
+        // submission. Keep its identity selected until the response or live
+        // upsert puts it back; choosing the first row here loses the message
+        // and the work that follows it to the reader.
+        (submissionsInFlight.current.has(current) &&
+          !removedSessions.current.has(current)) ||
         // Its computer did not answer the most recent time it was asked, so
         // nobody has said this session is not there. Moving the reader off it
         // sends them somewhere they never asked for, and the session arriving
@@ -9065,7 +9071,14 @@ function App() {
         selectedAtRefresh &&
         !clearingSessions.current.has(sessionKey(selectedAtRefresh)) &&
         !pendingReplacements.current.has(sessionKey(selectedAtRefresh)) &&
-        !replacedInto.current.has(sessionKey(selectedAtRefresh))
+        !replacedInto.current.has(sessionKey(selectedAtRefresh)) &&
+        // The refresh may be older than the response for a submission that is
+        // still in flight. Keep the identity anchored until that response or
+        // its live upsert restores the row.
+        !(
+          submissionsInFlight.current.has(sessionKey(selectedAtRefresh)) &&
+          !removedSessions.current.has(sessionKey(selectedAtRefresh))
+        )
       ) {
         setSelectedKey(
           snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined,
@@ -11292,8 +11305,8 @@ function App() {
     }
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
-    // sent. The mark is cleared once the request settles.
-    submissionsInFlight.current.add(targetKey)
+    // sent. The mark is set after draft admission and cleared once the request
+    // settles.
     const settleSubmission = () => {
       submissionsInFlight.current.delete(targetKey)
       submissionsInFlight.current.delete(followReplacementsRef.current(targetKey))
@@ -11406,6 +11419,7 @@ function App() {
       if (!admitted) {
         return
       }
+      submissionsInFlight.current.add(targetKey)
       setSending(true)
       const response = isCommand
         ? await executeCommand(selected.computerId, selected.id, {

@@ -1572,12 +1572,14 @@ button {
 .session-item__body {
   grid-column: 2;
   min-width: 0;
+  position: relative;
 }
 
 /* The whole row apart from the handle and the suspend control opens the
    session, so it carries the padding-free bulk of the row. */
 .session-item__open {
   display: block;
+  width: 100%;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -1909,8 +1911,15 @@ button {
 }
 
 /* The task action shares the metadata line without nesting inside the session
-   button or squeezing the session title. */
+   button or squeezing the session title. Its absolute hit area is deliberately
+   kept out of the row's height calculation. */
 .session-item__tasks {
+  display: inline-flex;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  align-items: flex-end;
+  justify-content: center;
   min-height: 28px;
   flex: 0 0 auto;
   max-width: 50%;
@@ -1924,6 +1933,10 @@ button {
   border: 0;
   border-radius: 4px;
   background: transparent;
+}
+
+.session-item__body--tasks .session-item__where {
+  padding-right: calc(50% + 6px);
 }
 
 .session-item__tasks--offline {
@@ -6481,10 +6494,6 @@ button {
 
   .session-item__where {
     align-items: center;
-  }
-
-  .session-item__tasks {
-    min-height: 40px;
   }
 
   .composer-hint {

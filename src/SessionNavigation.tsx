@@ -158,7 +158,11 @@ function SortableSessionItem({
       >
         <GripVertical size={14} />
       </span>
-      <div className="session-item__body">
+      <div
+        className={`session-item__body${
+          runningBackgroundTasks > 0 ? ' session-item__body--tasks' : ''
+        }`}
+      >
         <button
           aria-current={selected ? 'page' : undefined}
           aria-label={[
@@ -187,29 +191,29 @@ function SortableSessionItem({
               <SessionState presentation={presentation} />
             </span>
             <strong>{session.title}</strong>
+            <small className="session-item__where">
+              <span className="session-item__cwd">{shortPath(session.cwd)}</span>
+              <time
+                className="session-item__time"
+                dateTime={activity.dateTime}
+                title={activity.title}
+              >
+                {activity.label}
+              </time>
+            </small>
           </span>
         </button>
-        <small className="session-item__where">
-          <span className="session-item__cwd">{shortPath(session.cwd)}</span>
-          {runningBackgroundTasks > 0 ? (
-            <button
-              aria-label={`View background tasks for ${session.title}`}
-              className={`session-item__tasks session-item__tasks--interactive${online ? '' : ' session-item__tasks--offline'}`}
-              onClick={() => onOpenSessionTasks(session)}
-              title={online ? undefined : 'Last known background tasks; reconnect to refresh their state'}
-              type="button"
-            >
-              {runningBackgroundTasks} task{runningBackgroundTasks === 1 ? '' : 's'}{online ? '' : ' · last known'}
-            </button>
-          ) : null}
-          <time
-            className="session-item__time"
-            dateTime={activity.dateTime}
-            title={activity.title}
+        {runningBackgroundTasks > 0 ? (
+          <button
+            aria-label={`View background tasks for ${session.title}`}
+            className={`session-item__tasks session-item__tasks--interactive${online ? '' : ' session-item__tasks--offline'}`}
+            onClick={() => onOpenSessionTasks(session)}
+            title={online ? undefined : 'Last known background tasks; reconnect to refresh their state'}
+            type="button"
           >
-            {activity.label}
-          </time>
-        </small>
+            {runningBackgroundTasks} task{runningBackgroundTasks === 1 ? '' : 's'}{online ? '' : ' · last known'}
+          </button>
+        ) : null}
       </div>
       <button
         aria-label={

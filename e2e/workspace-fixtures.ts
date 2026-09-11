@@ -11,6 +11,10 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
+import {
+  joinKnowledgeRelativePath,
+  rebaseKnowledgeRelativePath,
+} from '../shared/knowledge-path'
 
 export const FIXTURE_NOW = '2026-09-04T16:20:00.000Z'
 export const SELECTED_SESSION_ID = 'fixture-plan-workspace'
@@ -481,6 +485,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
         computerId: session.computerId,
         sessionId: session.id,
         rootId: KNOWLEDGE_ROOT_ID,
+        rootPath: '.',
         root: roots[0],
         revision: 1,
         available: true,
@@ -731,11 +736,13 @@ export async function setupWorkspaceFixture(
     const knowledge = path.match(/^\/api\/knowledge\/roots\/([^/]+)\/(entries|file)$/)
     if (method === 'GET' && knowledge && state.roots.some((root) => root.id === knowledge[1])) {
       const requestedPath = url.searchParams.get('path') ?? '.'
+      const basePath = url.searchParams.get('basePath') ?? '.'
+      const sourcePath = joinKnowledgeRelativePath(basePath, requestedPath)
       let body =
         knowledge[2] === 'entries'
-          ? fixtureValue(fixtureKnowledgeListings, requestedPath)
-          : fixtureValue(fixtureKnowledgeFiles, requestedPath)
-      if (knowledge[2] === 'entries' && requestedPath === 'handbook' && extraKnowledgeFiles > 0) {
+          ? fixtureValue(fixtureKnowledgeListings, sourcePath)
+          : fixtureValue(fixtureKnowledgeFiles, sourcePath)
+      if (knowledge[2] === 'entries' && sourcePath === 'handbook' && extraKnowledgeFiles > 0) {
         body = {
           ...fixtureKnowledgeListings.handbook,
           entries: [
@@ -747,11 +754,11 @@ export async function setupWorkspaceFixture(
           ],
         }
       }
-      const extraFile = requestedPath.match(/^handbook\/design-note-(\d{3})\.md$/)
+      const extraFile = sourcePath.match(/^handbook\/design-note-(\d{3})\.md$/)
       if (knowledge[2] === 'file' && extraFile && Number(extraFile[1]) > 0 && Number(extraFile[1]) <= extraKnowledgeFiles) {
         const content = `# Design note ${Number(extraFile[1])}\n\nSynthetic content for checking long Knowledge trees.\n`
         body = {
-          name: requestedPath.split('/').at(-1)!, path: requestedPath,
+          name: sourcePath.split('/').at(-1)!, path: sourcePath,
           kind: 'markdown', mimeType: 'text/markdown', content, size: Buffer.byteLength(content),
         }
       }
@@ -761,8 +768,8 @@ export async function setupWorkspaceFixture(
           '## A separate reading context\n\nThe session keeps its own root, document, and draft.\n\n' +
           '## Before a release\n\n- Confirm the owning computer.\n- Keep a reversible checkpoint.\n- Record the result.\n'
         body = {
-          name: requestedPath.split('/').at(-1)!,
-          path: requestedPath,
+          name: sourcePath.split('/').at(-1)!,
+          path: sourcePath,
           kind: 'markdown',
           mimeType: 'text/markdown',
           content,
@@ -770,7 +777,31 @@ export async function setupWorkspaceFixture(
         }
       }
       if (body) {
-        await respond(body)
+        if (basePath === '.') {
+          await respond(body)
+          return
+        }
+        if (knowledge[2] === 'entries') {
+          const listing = body as WorkspaceListing
+          const parent = listing.parent
+            ? rebaseKnowledgeRelativePath(basePath, listing.parent)
+            : undefined
+          await respond({
+            ...listing,
+            path: rebaseKnowledgeRelativePath(basePath, listing.path),
+            ...(parent === undefined ? { parent: undefined } : { parent }),
+            entries: listing.entries.map((entry) => ({
+              ...entry,
+              path: rebaseKnowledgeRelativePath(basePath, entry.path),
+            })),
+          })
+        } else {
+          const file = body as WorkspaceFile
+          await respond({
+            ...file,
+            path: rebaseKnowledgeRelativePath(basePath, file.path),
+          })
+        }
         return
       }
     }
@@ -822,14 +853,22 @@ export async function setupWorkspaceFixture(
         const key = `${session.computerId}:${session.id}`
         const saved = state.bindings.get(key) ?? {
           computerId: session.computerId, sessionId: session.id,
-          rootId: null, revision: 0, available: false,
+          rootId: null, rootPath: '.', revision: 0, available: false,
         }
-        const current = { ...saved, available: state.roots.some((root) => root.id === saved.rootId) }
+        const current = {
+          ...saved,
+          rootPath: saved.rootPath || '.',
+          available: state.roots.some((root) => root.id === saved.rootId),
+        }
         if (method === 'GET') {
           await respond({ binding: current })
           return
         }
-        const input = request.postDataJSON() as { rootId: string | null; expectedRevision: number }
+        const input = request.postDataJSON() as {
+          rootId: string | null
+          rootPath?: string
+          expectedRevision: number
+        }
         if (input.expectedRevision !== current.revision) {
           await respond({ error: 'The saved root changed in another client. Review it before retrying.', binding: current }, 409)
           return
@@ -841,7 +880,11 @@ export async function setupWorkspaceFixture(
         }
         const binding: SessionKnowledgeBinding = {
           computerId: session.computerId, sessionId: session.id,
-          rootId: input.rootId, revision: current.revision + 1, root, available: Boolean(root),
+          rootId: input.rootId,
+          rootPath: input.rootId ? input.rootPath || '.' : '.',
+          revision: current.revision + 1,
+          root,
+          available: Boolean(root),
         }
         state.bindings.set(key, binding)
         emit({ type: 'session.knowledge.updated', computerId: session.computerId, sessionId: session.id, binding })

@@ -5,7 +5,6 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ComputerSummary, HubEvent, ManagedSession, ServerEvent, SessionDetail, SessionKnowledgeBinding,
-  WorkspaceListing,
 } from '../shared/contracts.js'
 import { buildApp, type ServerRole } from './app.js'
 import type { ComputerManager, SessionMetadataLookup } from './computer-manager.js'
@@ -72,19 +71,7 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
     if (!registration) throw new Error('Computer not found')
     return () => this.registrations.get(computerId) === registration
   })
-  listKnowledge = vi.fn(async (
-    _computerId: string,
-    _root: string,
-    _requestedPath = '.',
-  ): Promise<WorkspaceListing> => ({ path: '.', entries: [] }))
-  readKnowledgeFile = vi.fn(async (_computerId: string, _root: string, requestedPath: string) => ({
-    name: path.basename(requestedPath),
-    path: requestedPath,
-    kind: 'markdown' as const,
-    mimeType: 'text/plain; charset=utf-8',
-    size: 4,
-    content: 'test',
-  }))
+  listKnowledge = vi.fn(async () => ({ path: '.', entries: [] }))
   deleteSession = vi.fn(async (computerId: string, sessionId: string) => {
     if (![...this.sessions, ...this.history].some((entry) => entry.computerId === computerId && entry.id === sessionId)) {
       throw Object.assign(new Error('Session not found'), { statusCode: 404 })
@@ -136,6 +123,10 @@ async function fixture(options: {
     stop: vi.fn(async () => undefined),
     listSessions: vi.fn((): SessionDetail[] => manager.sessions.filter((entry) => entry.computerId === 'hub')),
     listHistory: vi.fn((): SessionDetail[] => manager.history.filter((entry) => entry.computerId === 'hub')),
+    listKnowledge: vi.fn(async (_root: string, requestedPath = '.') => ({
+      path: requestedPath,
+      entries: [],
+    })),
     getSession: vi.fn(),
     openSession: vi.fn(async () => { throw new Error('Must not hydrate or resume an agent') }),
     activateSession: vi.fn(),
@@ -183,10 +174,16 @@ async function fixture(options: {
     `/api/computers/${encodeURIComponent(computerId)}/sessions/${encodeURIComponent(sessionId)}/knowledge-root`
   const get = (computerId = 'hub', sessionId = 'one') =>
     runtime.app.inject({ url: route(computerId, sessionId), headers: trusted })
-  const put = (rootId: string | null, expectedRevision = 0, computerId = 'hub', sessionId = 'one') =>
+  const put = (
+    rootId: string | null,
+    expectedRevision = 0,
+    computerId = 'hub',
+    sessionId = 'one',
+    rootPath?: string,
+  ) =>
     runtime.app.inject({
       method: 'PUT', url: route(computerId, sessionId), headers: trusted,
-      payload: { rootId, expectedRevision },
+      payload: { rootId, expectedRevision, ...(rootPath ? { rootPath } : {}) },
     })
   const updates: SessionKnowledgeBinding[] = []
   const errors: Extract<HubEvent, { type: 'error' }>[] = []
@@ -246,7 +243,14 @@ describe('session Knowledge routes', () => {
     expect(response.statusCode).toBe(200)
     expect(response.headers['cache-control']).toBe('no-store')
     expect(response.json()).toEqual({
-      binding: { computerId: 'hub', sessionId: 'one', rootId: null, revision: 0, available: false },
+      binding: {
+        computerId: 'hub',
+        sessionId: 'one',
+        rootId: null,
+        rootPath: '.',
+        revision: 0,
+        available: false,
+      },
     })
     expect(await readdir(directory)).toEqual(before)
     expect(store.listBindings()).toEqual([])
@@ -279,8 +283,9 @@ describe('session Knowledge routes', () => {
   it('supports independent and shared choices, across computers with identical session IDs', async () => {
     const { put, get, root, secondRoot, manager } = await fixture()
     const before = structuredClone(manager.sessions)
-    expect((await put(root.id)).json().binding).toMatchObject({
-      computerId: 'hub', sessionId: 'one', rootId: root.id, root, available: true, revision: 1,
+    expect((await put(root.id, 0, 'hub', 'one', 'projects/agentic-remote')).json().binding).toMatchObject({
+      computerId: 'hub', sessionId: 'one', rootId: root.id,
+      rootPath: 'projects/agentic-remote', root, available: true, revision: 1,
     })
     expect((await put(root.id, 0, 'hub', 'two')).statusCode).toBe(200)
     expect((await put(secondRoot.id, 0, 'worker', 'one')).statusCode).toBe(200)
@@ -288,266 +293,12 @@ describe('session Knowledge routes', () => {
     expect((await get('hub', 'two')).json().binding.rootId).toBe(root.id)
     expect((await get('worker', 'one')).json().binding.rootId).toBe(secondRoot.id)
     expect(manager.sessions).toEqual(before)
-    expect(manager.listKnowledge).not.toHaveBeenCalled()
+    expect(manager.listKnowledge).toHaveBeenCalledWith(
+      root.computerId,
+      root.path,
+      'projects/agentic-remote',
+    )
     expect(manager.getSession).not.toHaveBeenCalled()
-  })
-
-  it('uses a nested saved root without changing the catalog and rebases reads to dot', async () => {
-    const { app, route, root, knowledge, manager } = await fixture()
-    const before = knowledge.listRoots()
-    manager.listKnowledge.mockImplementation(async (_computerId, _root, requestedPath = '.') => ({
-      path: requestedPath,
-      parent: requestedPath === 'guides' ? '.' : 'guides',
-      entries: [{
-        name: 'intro.md',
-        path: `${requestedPath}/intro.md`,
-        kind: 'markdown',
-        size: 4,
-      }, {
-        name: 'escaped.md',
-        path: 'outside/escaped.md',
-        kind: 'markdown',
-        size: 4,
-      }],
-    }))
-    const saved = await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: root.id },
-        path: 'guides',
-        action: 'use',
-        expectedRevision: 0,
-      },
-    })
-    expect(saved.statusCode).toBe(200)
-    expect(saved.json().binding).toMatchObject({
-      rootId: root.id,
-      path: 'guides',
-      source: { kind: 'catalog-root', root },
-    })
-    expect(knowledge.listRoots()).toEqual(before)
-    const entries = await app.inject({
-      url: '/api/computers/hub/sessions/one/knowledge/entries?path=.',
-      headers: trusted,
-    })
-    expect(entries.statusCode).toBe(200)
-    expect(entries.json()).toEqual({
-      path: '.',
-      entries: [{ name: 'intro.md', path: 'intro.md', kind: 'markdown', size: 4 }],
-    })
-    const file = await app.inject({
-      url: '/api/computers/hub/sessions/one/knowledge/file?path=intro.md',
-      headers: trusted,
-    })
-    expect(file.statusCode).toBe(200)
-    expect(file.json()).toMatchObject({ name: 'intro.md', path: 'intro.md', content: 'test' })
-    expect(manager.listKnowledge).toHaveBeenLastCalledWith('library', '/library/notes', 'guides')
-    expect(manager.readKnowledgeFile).toHaveBeenCalledWith('library', '/library/notes', 'guides/intro.md')
-  })
-
-  it.each(['../private', '/absolute', 'nested/../../private'])(
-    'rejects scoped traversal %s before reading the source',
-    async (requestedPath) => {
-      const { app, route, root, manager } = await fixture()
-      await app.inject({
-        method: 'PUT',
-        url: route(),
-        headers: trusted,
-        payload: {
-          source: { kind: 'catalog-root', rootId: root.id },
-          path: 'guides',
-          action: 'use',
-          expectedRevision: 0,
-        },
-      })
-      manager.listKnowledge.mockClear()
-      const response = await app.inject({
-        url: `/api/computers/hub/sessions/one/knowledge/entries?path=${encodeURIComponent(requestedPath)}`,
-        headers: trusted,
-      })
-      expect(response.statusCode).toBe(400)
-      expect(manager.listKnowledge).not.toHaveBeenCalled()
-    },
-  )
-
-  it('rejects a session-folder snapshot after the session working folder changes', async () => {
-    const { app, route, manager, store } = await fixture()
-    manager.sessions = manager.sessions.map((entry) =>
-      entry.computerId === 'hub' && entry.id === 'one'
-        ? { ...entry, cwd: '/project-moved' }
-        : entry)
-    const response = await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'session-folder', path: '/project' },
-        path: 'docs',
-        action: 'use',
-        expectedRevision: 0,
-      },
-    })
-    expect(response.statusCode).toBe(409)
-    expect(response.json().error).toContain('session folder changed')
-    expect(store.get('hub', 'one').revision).toBe(0)
-    expect(manager.listKnowledge).not.toHaveBeenCalled()
-  })
-
-  it('rejects a read response overtaken by a newer session binding', async () => {
-    const { app, route, root, secondRoot, manager } = await fixture()
-    await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: root.id },
-        path: 'guides',
-        action: 'use',
-        expectedRevision: 0,
-      },
-    })
-    const held = gate()
-    manager.listKnowledge.mockImplementationOnce(async () => {
-      held.start()
-      await held.wait
-      return { path: 'guides', entries: [] }
-    })
-    const reading = app.inject({
-      url: '/api/computers/hub/sessions/one/knowledge/entries?path=.',
-      headers: trusted,
-    }).then((response) => response)
-    await held.started
-    expect((await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: secondRoot.id },
-        path: '.',
-        action: 'use',
-        expectedRevision: 1,
-      },
-    })).statusCode).toBe(200)
-    held.finish()
-    expect((await reading).statusCode).toBe(409)
-  })
-
-  it('preserves a node confinement error for a symlink outside the selected folder', async () => {
-    const { app, route, root, manager } = await fixture()
-    await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: root.id },
-        path: 'guides',
-        action: 'use',
-        expectedRevision: 0,
-      },
-    })
-    manager.readKnowledgeFile.mockRejectedValueOnce(Object.assign(
-      new Error('Workspace browsing is restricted to the session folder'),
-      { statusCode: 403 },
-    ))
-    const response = await app.inject({
-      url: '/api/computers/hub/sessions/one/knowledge/file?path=outside.md',
-      headers: trusted,
-    })
-    expect(response.statusCode).toBe(403)
-    expect(response.json().error).toContain('restricted')
-  })
-
-  it('saves only the selected nested folder and reuses it without reordering the catalog', async () => {
-    const { app, route, root, knowledge, directory } = await fixture()
-    const first = await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: root.id },
-        path: 'guides/api',
-        action: 'save',
-        expectedRevision: 0,
-      },
-    })
-    expect(first.statusCode).toBe(200)
-    expect(first.json().binding).toMatchObject({
-      path: '.',
-      root: { path: '/library/notes/guides/api', name: 'api' },
-    })
-    const order = knowledge.listRoots().map((entry) => entry.id)
-    const savedRootId = first.json().binding.rootId
-    const second = await app.inject({
-      method: 'PUT',
-      url: route('hub', 'two'),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: root.id },
-        path: 'guides/api',
-        action: 'save',
-        expectedRevision: 0,
-      },
-    })
-    expect(second.statusCode).toBe(200)
-    expect(second.json().binding.rootId).toBe(savedRootId)
-    expect(knowledge.listRoots().map((entry) => entry.id)).toEqual(order)
-    await expect(access(path.join(directory, 'session-knowledge.json.catalog-recovery')))
-      .rejects.toMatchObject({ code: 'ENOENT' })
-  })
-
-  it('rolls back a newly saved nested root when its pairing is retired', async () => {
-    const { app, route, root, knowledge, manager, store } = await fixture()
-    const before = knowledge.listRoots()
-    const held = holdWrite()
-    const saving = app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: root.id },
-        path: 'guides/api',
-        action: 'save',
-        expectedRevision: 0,
-      },
-    }).then((response) => response)
-    await held.started
-    manager.rePair('library')
-    held.finish()
-    expect((await saving).statusCode).toBe(409)
-    expect(store.get('hub', 'one').revision).toBe(0)
-    expect(knowledge.listRoots()).toEqual(before)
-  })
-
-  it('publishes neither catalog nor binding when nested-root catalog persistence fails', async () => {
-    const { app, route, root, knowledge, store, directory } = await fixture()
-    const before = knowledge.listRoots()
-    const knowledgePath = path.join(directory, 'knowledge.json')
-    vi.mocked(rename).mockImplementationOnce(async (...args) => {
-      if (String(args[1]) === path.join(directory, 'session-knowledge.json.catalog-recovery')) {
-        return disk.rename(...args)
-      }
-      if (String(args[1]) === knowledgePath) throw new Error('catalog disk full')
-      return disk.rename(...args)
-    }).mockImplementationOnce(async (...args) => {
-      if (String(args[1]) === knowledgePath) throw new Error('catalog disk full')
-      return disk.rename(...args)
-    })
-    const response = await app.inject({
-      method: 'PUT',
-      url: route(),
-      headers: trusted,
-      payload: {
-        source: { kind: 'catalog-root', rootId: root.id },
-        path: 'guides/api',
-        action: 'save',
-        expectedRevision: 0,
-      },
-    })
-    expect(response.statusCode).toBe(503)
-    expect(knowledge.listRoots()).toEqual(before)
-    expect(store.get('hub', 'one').revision).toBe(0)
   })
 
   it('preserves an explicit unlink and returns the newest binding with a stale-write conflict', async () => {
@@ -582,10 +333,27 @@ describe('session Knowledge routes', () => {
     { rootId: null, expectedRevision: -1 },
     { rootId: null, expectedRevision: 0.5 },
     { rootId: null, expectedRevision: '0' },
+    { rootId: null, rootPath: 'projects', expectedRevision: 0 },
     { rootId: null, expectedRevision: 0, cwd: '/must-not-change' },
   ])('rejects malformed or unrelated writes %#', async (payload) => {
     const { app, route, store } = await fixture()
     const response = await app.inject({ method: 'PUT', url: route(), headers: trusted, payload })
+    expect(response.statusCode).toBe(400)
+    expect(store.listBindings()).toEqual([])
+  })
+
+  it('rejects a nested path that escapes an existing root', async () => {
+    const { app, route, root, store } = await fixture()
+    const response = await app.inject({
+      method: 'PUT',
+      url: route(),
+      headers: trusted,
+      payload: {
+        rootId: root.id,
+        rootPath: '../private',
+        expectedRevision: 0,
+      },
+    })
     expect(response.statusCode).toBe(400)
     expect(store.listBindings()).toEqual([])
   })

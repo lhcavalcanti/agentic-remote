@@ -615,39 +615,13 @@ export interface AddKnowledgeRootInput {
   name?: string
 }
 
-export type SessionKnowledgeSource =
-  | {
-      kind: 'catalog-root'
-      /** Snapshot retained even if the shared catalog entry is later removed. */
-      root: KnowledgeRoot
-    }
-  | {
-      kind: 'session-folder'
-      /** The session folder is snapshotted so replacement never rebases it. */
-      computerId: string
-      computerName: string
-      sessionId: string
-      path: string
-    }
-
-export type SessionKnowledgeSourceInput =
-  | { kind: 'catalog-root'; rootId: string }
-  | {
-      kind: 'session-folder'
-      /** Working-folder snapshot shown by the chooser. */
-      path: string
-    }
-
 export interface SessionKnowledgeBinding {
   /** The session's owning computer, which may differ from the root's. */
   computerId: string
   sessionId: string
-  /** The immutable folder from which this session selection was browsed. */
-  source?: SessionKnowledgeSource
-  /** Normalized path beneath the source. The selected folder is exposed as `.`. */
-  path?: string
-  /** Catalog compatibility projection; null for session-folder sources. */
   rootId: string | null
+  /** Relative folder within the saved root that acts as this session's root. */
+  rootPath?: string
   /** Zero means never linked; an explicit unlink retains a newer revision. */
   revision: number
   /** Retained metadata, including when the shared root has been removed. */
@@ -656,15 +630,8 @@ export interface SessionKnowledgeBinding {
   available: boolean
 }
 
-export type UpdateSessionKnowledgeRootInput =
-  | {
-      source: SessionKnowledgeSourceInput | null
-      path?: string
-      action?: 'use' | 'save'
-      expectedRevision: number
-    }
-  | {
-      /** Backward-compatible root-only request; interpreted as path `.`. */
-      rootId: string | null
-      expectedRevision: number
-    }
+export interface UpdateSessionKnowledgeRootInput {
+  rootId: string | null
+  rootPath?: string
+  expectedRevision: number
+}

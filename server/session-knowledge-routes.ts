@@ -1,23 +1,9 @@
-import path from 'node:path'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type {
-  HubEvent,
-  ManagedSession,
-  SessionKnowledgeBinding,
-  SessionKnowledgeSource,
-} from '../shared/contracts.js'
+import type { HubEvent, ManagedSession, SessionKnowledgeBinding } from '../shared/contracts.js'
+import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path.js'
 import type { ComputerManager } from './computer-manager.js'
 import type { KnowledgeStore } from './knowledge-store.js'
-import {
-  normalizeSessionKnowledgePath,
-  rebaseKnowledgeFile,
-  rebaseKnowledgeListing,
-  scopedKnowledgePath,
-  sourceComputerId,
-  sourceComputerName,
-  sourcePath,
-} from './session-knowledge-path.js'
 import {
   SessionKnowledgeConflictError,
   SessionKnowledgeReferenceError,
@@ -28,42 +14,11 @@ const sessionParams = z.object({
   computerId: z.string().min(1).max(256),
   sessionId: z.string().min(1).max(256),
 })
-const sourceInputSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('catalog-root'),
-    rootId: z.string().min(1).max(256),
-  }).strict(),
-  z.object({
-    kind: z.literal('session-folder'),
-    path: z.string().min(1).max(4096),
-  }).strict(),
-])
 const updateSchema = z.object({
-  source: sourceInputSchema.nullable(),
-  path: z.string().max(4096).optional(),
-  action: z.enum(['use', 'save']).default('use'),
-  expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-}).strict()
-const legacyUpdateSchema = z.object({
   rootId: z.string().min(1).max(256).nullable(),
+  rootPath: z.string().trim().max(4096).optional(),
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict()
-const knowledgePathSchema = z.object({ path: z.string().max(4096).optional() })
-const knowledgeFileSchema = z.object({ path: z.string().min(1).max(4096) })
-
-function joinOwnedPath(root: string, relative: string): string {
-  const flavor = path.win32.isAbsolute(root) && !path.posix.isAbsolute(root)
-    ? path.win32
-    : path.posix
-  return flavor.resolve(root, ...relative.split('/'))
-}
-
-function ownedBasename(value: string): string {
-  const flavor = path.win32.isAbsolute(value) && !path.posix.isAbsolute(value)
-    ? path.win32
-    : path.posix
-  return flavor.basename(value)
-}
 
 interface Lineage {
   replacements: Map<string, string>
@@ -135,7 +90,6 @@ export async function registerSessionKnowledgeRoutes(
       seen.add(target)
       target = lineage.replacements.get(target)!
     }
-
     return target
   }
 
@@ -352,131 +306,39 @@ export async function registerSessionKnowledgeRoutes(
     '/api/computers/:computerId/sessions/:sessionId/knowledge-root',
     async (request, reply) => {
       const { computerId, sessionId } = sessionParams.parse(request.params)
-      const currentInput = updateSchema.safeParse(request.body)
-      const legacyInput = currentInput.success ? undefined : legacyUpdateSchema.parse(request.body)
-      const input = currentInput.success
-        ? currentInput.data
-        : {
-            source: legacyInput!.rootId === null
-              ? null
-              : { kind: 'catalog-root' as const, rootId: legacyInput!.rootId },
-            path: '.',
-            action: 'use' as const,
-            expectedRevision: legacyInput!.expectedRevision,
-          }
-      if (input.source === null && input.action === 'save') {
-        throw new SessionKnowledgeReferenceError('Choose a folder before saving it to Knowledge.', 400)
+      const input = updateSchema.parse(request.body)
+      const root = input.rootId === null ? undefined : knowledge.getRoot(input.rootId)
+      if (input.rootId !== null && !root) {
+        throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
       }
-      const selectedPath = input.source ? normalizeSessionKnowledgePath(input.path) : undefined
-      let source: SessionKnowledgeSource | null = null
-      let sourceIsCurrent: (() => void) | undefined
-      if (input.source?.kind === 'catalog-root') {
-        const root = knowledge.getRoot(input.source.rootId)
-        if (!root) {
-          throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
-        }
-        source = { kind: 'catalog-root', root }
-        sourceIsCurrent = registrationGuard(root.computerId)
-      } else if (input.source?.kind === 'session-folder') {
-        sourceIsCurrent = registrationGuard(computerId)
+      const rootIsCurrent = root ? registrationGuard(root.computerId) : undefined
+      let rootPath: string
+      try {
+        rootPath = normalizeKnowledgeRelativePath(input.rootPath)
+      } catch {
+        throw new SessionKnowledgeReferenceError(
+          'Knowledge root path must stay inside the saved folder.',
+          400,
+        )
+      }
+      if (root) {
+        await manager.listKnowledge(root.computerId, root.path, rootPath)
+        rootIsCurrent?.()
       }
       const sessionIsCurrent = await knownSessionGuard(computerId, sessionId)
-      if (input.source?.kind === 'session-folder') {
-        const lookup = await manager.lookupSessionMetadata(computerId, sessionId)
-        sessionIsCurrent()
-        if (!lookup.session) {
-          throw new SessionKnowledgeReferenceError(
-            'The owning computer could not open this session folder. Reconnect it and try again.',
-            lookup.activeAuthoritative && lookup.historyAuthoritative ? 404 : 503,
-          )
-        }
-        if (lookup.session.cwd !== input.source.path) {
-          throw new SessionKnowledgeReferenceError(
-            'The session folder changed while this chooser was open. Reopen it and choose again.',
-            409,
-          )
-        }
-        source = {
-          kind: 'session-folder',
-          computerId,
-          computerName: lookup.session.computerName,
-          sessionId,
-          path: input.source.path,
-        }
-      }
-      let preparedRootId: string | undefined
       const validate = () => {
         sessionIsCurrent()
-        sourceIsCurrent?.()
-        if (source?.kind === 'catalog-root' && !knowledge.getRoot(source.root.id)) {
+        rootIsCurrent?.()
+        if (input.rootId !== null && !knowledge.getRoot(input.rootId)) {
           throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
         }
-        if (preparedRootId && !knowledge.getRoot(preparedRootId)) {
-          throw new SessionKnowledgeReferenceError('The saved Knowledge root changed before the session could use it.', 409)
-        }
-      }
-      if (currentInput.success && source && selectedPath) {
-        validate()
-        await manager.listKnowledge(sourceComputerId(source), sourcePath(source), selectedPath)
-        validate()
       }
       try {
-        const binding = await store.updateLocation(
+        const binding = await store.update(
           computerId,
           sessionId,
-          {
-            source,
-            path: selectedPath,
-            expectedRevision: input.expectedRevision,
-          },
+          { ...input, rootPath },
           validate,
-          input.action === 'save' && source && selectedPath
-            ? async () => {
-                validate()
-                const selectedAbsolutePath = selectedPath === '.'
-                  ? sourcePath(source)
-                  : joinOwnedPath(sourcePath(source), selectedPath)
-                const candidate = knowledge.prepareRoot({
-                  computerId: sourceComputerId(source),
-                  computerName: sourceComputerName(source),
-                  path: selectedAbsolutePath,
-                  name: ownedBasename(selectedAbsolutePath),
-                })
-                if (!candidate.created) {
-                  return {
-                    source: { kind: 'catalog-root', root: candidate.root },
-                    path: '.',
-                  }
-                }
-                return {
-                  source: { kind: 'catalog-root', root: candidate.root },
-                  path: '.',
-                  catalogAddition: {
-                    rootId: candidate.root.id,
-                    commit: async () => {
-                      const added = await knowledge.commitPreparedRoot(candidate.root)
-                      preparedRootId = added.root.id
-                      try {
-                        validate()
-                      } catch (error) {
-                        if (added.created) await knowledge.removeRoot(added.root.id)
-                        throw error
-                      }
-                      return {
-                        source: { kind: 'catalog-root' as const, root: added.root },
-                        path: '.',
-                        created: added.created,
-                        ...(added.created ? {
-                          rollback: async () => {
-                            await knowledge.removeRoot(added.root.id)
-                          },
-                        } : {}),
-                      }
-                    },
-                  },
-                }
-              }
-            : undefined,
         )
         reply.header('cache-control', 'no-store')
         return { binding }
@@ -486,77 +348,6 @@ export async function registerSessionKnowledgeRoutes(
         }
         throw error
       }
-    },
-  )
-
-  async function scopedRead(
-    computerId: string,
-    sessionId: string,
-  ): Promise<{
-    binding: SessionKnowledgeBinding
-    validate: () => void
-  }> {
-    const sessionIsCurrent = await knownSessionGuard(computerId, sessionId)
-    const binding = store.get(computerId, sessionId)
-    if (!binding.source || !binding.available || !binding.path) {
-      throw new SessionKnowledgeReferenceError('This session has no available Knowledge folder.')
-    }
-    const sourceIsCurrent = registrationGuard(sourceComputerId(binding.source))
-    const signature = JSON.stringify(binding)
-    const validate = () => {
-      sessionIsCurrent()
-      sourceIsCurrent()
-      if (binding.source?.kind === 'catalog-root' && !knowledge.getRoot(binding.source.root.id)) {
-        throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
-      }
-      if (JSON.stringify(store.get(computerId, sessionId)) !== signature) {
-        throw new SessionKnowledgeReferenceError(
-          'This session’s Knowledge folder changed while reading it. Reload and try again.',
-          409,
-        )
-      }
-    }
-    validate()
-    return { binding, validate }
-  }
-
-  app.get<{
-    Params: { computerId: string; sessionId: string }
-    Querystring: { path?: string }
-  }>(
-    '/api/computers/:computerId/sessions/:sessionId/knowledge/entries',
-    async (request) => {
-      const { computerId, sessionId } = sessionParams.parse(request.params)
-      const query = knowledgePathSchema.parse(request.query)
-      const { binding, validate } = await scopedRead(computerId, sessionId)
-      const requestedPath = scopedKnowledgePath(binding.path!, query.path)
-      const listing = await manager.listKnowledge(
-        sourceComputerId(binding.source!),
-        sourcePath(binding.source!),
-        requestedPath,
-      )
-      validate()
-      return rebaseKnowledgeListing(binding, listing)
-    },
-  )
-
-  app.get<{
-    Params: { computerId: string; sessionId: string }
-    Querystring: { path: string }
-  }>(
-    '/api/computers/:computerId/sessions/:sessionId/knowledge/file',
-    async (request) => {
-      const { computerId, sessionId } = sessionParams.parse(request.params)
-      const query = knowledgeFileSchema.parse(request.query)
-      const { binding, validate } = await scopedRead(computerId, sessionId)
-      const requestedPath = scopedKnowledgePath(binding.path!, query.path)
-      const file = await manager.readKnowledgeFile(
-        sourceComputerId(binding.source!),
-        sourcePath(binding.source!),
-        requestedPath,
-      )
-      validate()
-      return rebaseKnowledgeFile(binding, file)
     },
   )
 

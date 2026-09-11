@@ -45,55 +45,30 @@ export class KnowledgeStore {
   async addRoot(
     root: Omit<KnowledgeRoot, 'id' | 'createdAt'>,
   ): Promise<KnowledgeRoot> {
-    return (await this.addRootWithStatus(root)).root
-  }
-
-  prepareRoot(
-    root: Omit<KnowledgeRoot, 'id' | 'createdAt'>,
-  ): { root: KnowledgeRoot; created: boolean } {
     const existing = this.state.roots.find(
       (entry) => entry.computerId === root.computerId && entry.path === root.path,
     )
-    return existing
-      ? { root: structuredClone(existing), created: false }
-      : {
-          root: {
-            ...root,
-            id: randomUUID(),
-            createdAt: new Date().toISOString(),
-          },
-          created: true,
-        }
+    if (existing) {
+      return structuredClone(existing)
+    }
+    const created: KnowledgeRoot = {
+      ...root,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+    }
+    this.state.roots.unshift(created)
+    await this.persist()
+    return structuredClone(created)
   }
 
-  async addRootWithStatus(
-    root: Omit<KnowledgeRoot, 'id' | 'createdAt'>,
-  ): Promise<{ root: KnowledgeRoot; created: boolean }> {
-    return this.commitPreparedRoot(this.prepareRoot(root).root)
-  }
-
-  commitPreparedRoot(root: KnowledgeRoot): Promise<{ root: KnowledgeRoot; created: boolean }> {
-    return this.enqueue(async () => {
-      const existing = this.state.roots.find(
-        (entry) => entry.computerId === root.computerId && entry.path === root.path,
-      )
-      if (existing) return { root: structuredClone(existing), created: false }
-      const next = { roots: [structuredClone(root), ...this.state.roots] }
-      await this.write(next)
-      this.state = next
-      return { root: structuredClone(root), created: true }
-    })
-  }
-
-  removeRoot(id: string): Promise<boolean> {
-    return this.enqueue(async () => {
-      const remaining = this.state.roots.filter((entry) => entry.id !== id)
-      if (remaining.length === this.state.roots.length) return false
-      const next = { roots: remaining }
-      await this.write(next)
-      this.state = next
-      return true
-    })
+  async removeRoot(id: string): Promise<boolean> {
+    const before = this.state.roots.length
+    this.state.roots = this.state.roots.filter((entry) => entry.id !== id)
+    if (this.state.roots.length === before) {
+      return false
+    }
+    await this.persist()
+    return true
   }
 
   /**
@@ -102,33 +77,27 @@ export class KnowledgeStore {
    * gone the root can never answer anything but "not found" -- and it stays
    * in the list offering to try.
    */
-  removeRootsForComputer(computerId: string): Promise<number> {
-    return this.enqueue(async () => {
-      const remaining = this.state.roots.filter(
-        (entry) => entry.computerId !== computerId,
-      )
-      const removed = this.state.roots.length - remaining.length
-      if (removed === 0) return 0
-      const next = { roots: remaining }
-      await this.write(next)
-      this.state = next
-      return removed
-    })
+  async removeRootsForComputer(computerId: string): Promise<number> {
+    const remaining = this.state.roots.filter(
+      (entry) => entry.computerId !== computerId,
+    )
+    const removed = this.state.roots.length - remaining.length
+    if (removed === 0) {
+      return 0
+    }
+    this.state.roots = remaining
+    await this.persist()
+    return removed
   }
 
   private persist(): Promise<void> {
-    return this.enqueue(() => this.write(this.state))
-  }
-
-  private enqueue<TResult>(operation: () => Promise<TResult>): Promise<TResult> {
-    const task = this.writeQueue.then(operation)
-    this.writeQueue = task.then(() => undefined, () => undefined)
+    const snapshot = JSON.stringify(this.state, null, 2)
+    const task = this.writeQueue.then(async () => {
+      const temporary = `${this.statePath}.tmp`
+      await writeFile(temporary, snapshot, { mode: 0o600 })
+      await rename(temporary, this.statePath)
+    })
+    this.writeQueue = task.catch(() => undefined)
     return task
-  }
-
-  private async write(state: KnowledgeState): Promise<void> {
-    const temporary = `${this.statePath}.tmp`
-    await writeFile(temporary, JSON.stringify(state, null, 2), { mode: 0o600 })
-    await rename(temporary, this.statePath)
   }
 }

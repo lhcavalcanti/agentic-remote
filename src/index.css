@@ -642,56 +642,41 @@ button {
 }
 
 .knowledge-root-choice {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.knowledge-root-choice--selected {
-  border-color: var(--accent-foreground);
-}
-
-.knowledge-root-choice__expand,
-.knowledge-root-choice__location,
-.knowledge-root-choice__folder > button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-}
-
-.knowledge-root-choice__expand {
-  display: grid;
-  min-height: 60px;
-  place-items: center;
-  border-right: 1px solid var(--border);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.knowledge-root-choice__location {
   display: flex;
-  min-width: 0;
-  min-height: 60px;
+  min-height: 62px;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  text-align: left;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   cursor: pointer;
 }
 
-.knowledge-root-choice__location[aria-pressed='true'],
-.knowledge-root-choice__folder > button[aria-pressed='true'] {
+.knowledge-root-choice:has(:checked) {
+  border-color: var(--accent-foreground);
   background: var(--accent-tint);
 }
 
-.knowledge-root-choice__location > svg {
+.knowledge-root-choice:has(:disabled) {
+  cursor: not-allowed;
+}
+
+.knowledge-root-choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: 2px;
+}
+
+.knowledge-root-choice > input {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.knowledge-root-choice > svg {
   flex: 0 0 auto;
   color: var(--muted);
 }
 
-.knowledge-root-choice__location > span,
+.knowledge-root-choice > span,
 .knowledge-root-management__row > span {
   display: flex;
   min-width: 0;
@@ -714,7 +699,7 @@ button {
   overflow-wrap: anywhere;
 }
 
-.knowledge-root-choice__location em {
+.knowledge-root-choice em {
   flex: 0 0 auto;
   align-self: flex-start;
   padding: 2px 5px;
@@ -725,80 +710,99 @@ button {
   font-style: normal;
 }
 
-.knowledge-root-choice__tree {
-  grid-column: 1 / -1;
-  padding: 5px 7px 8px;
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
+.knowledge-root-choice--unlink {
+  min-height: 56px;
+  margin-top: 14px;
 }
 
-.knowledge-root-choice__folder {
+.knowledge-root-browser {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  padding-left: calc((var(--knowledge-choice-depth) - 1) * 16px);
-}
-
-.knowledge-root-choice__folder > button:first-child {
-  display: grid;
-  min-height: 40px;
-  place-items: center;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.knowledge-root-choice__folder > button:last-child {
-  display: flex;
-  min-width: 0;
-  min-height: 40px;
-  align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.knowledge-root-browser > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.knowledge-root-browser > header > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.knowledge-root-browser > header strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.knowledge-root-browser > header small,
+.knowledge-root-browser > p,
+.knowledge-root-browser__folders > span {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-root-browser > header button,
+.knowledge-root-browser__folders button {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  text-align: left;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 11px;
   cursor: pointer;
 }
 
-.knowledge-root-choice__folder > button:last-child span {
+.knowledge-root-browser > header button {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  color: var(--accent-foreground);
+}
+
+.knowledge-root-browser > header em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.knowledge-root-browser > p {
+  margin: 0;
+}
+
+.knowledge-root-browser__folders {
+  display: grid;
+  max-height: 180px;
+  gap: 5px;
+  overflow-y: auto;
+}
+
+.knowledge-root-browser__folders button {
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.knowledge-root-browser__folders button > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.knowledge-root-choice__status {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  gap: 7px;
-  padding-left: 42px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.knowledge-root-choice button:focus-visible {
-  position: relative;
-  z-index: 1;
-  outline: 2px solid var(--accent-foreground);
-  outline-offset: -2px;
-}
-
-.knowledge-root-choice--unlink {
-  display: flex;
-  min-height: 56px;
-  margin-top: 14px;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 12px;
-  cursor: pointer;
-}
-
-.knowledge-root-choice--unlink:has(:checked) {
-  border-color: var(--accent-foreground);
-  background: var(--accent-tint);
-}
-
-.knowledge-root-choice--unlink:has(input:focus-visible) {
-  outline: 2px solid var(--accent-foreground);
-  outline-offset: 2px;
+.knowledge-root-browser button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .knowledge-root-choices__browse {
@@ -6096,15 +6100,8 @@ button {
   }
 
   .session-root-dialog--chooser .session-root-dialog__actions {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
     flex: 0 0 auto;
     margin-top: 12px;
-  }
-
-  .session-root-dialog--chooser .session-root-dialog__save {
-    grid-column: 1 / -1;
-    grid-row: 1;
   }
 
   .new-session-dialog > form {

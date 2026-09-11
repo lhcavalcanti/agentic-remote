@@ -6541,6 +6541,10 @@ function App() {
     (rootId: string, path: string, generation?: number, throwOnError?: boolean) =>
       Promise<WorkspaceListing | undefined>
   >(async () => undefined)
+  const selectKnowledgeRootRef = useRef<
+    (rootId: string, fromRestore?: boolean) =>
+      Promise<KnowledgeFolders | undefined>
+  >(async () => undefined)
   // Replacements announced by a removal but not yet delivered by their upsert.
   // The fallback below must not treat one as a missing session and select
   // something unrelated in the gap.
@@ -7254,6 +7258,10 @@ function App() {
   ])
 
   useLayoutEffect(() => {
+    selectKnowledgeRootRef.current = selectRoot
+  })
+
+  useLayoutEffect(() => {
     if (
       selected ||
       !activeRootId ||
@@ -7266,10 +7274,7 @@ function App() {
     if (knowledgeExpansion.scope === scope) {
       return
     }
-    setKnowledgeExpansion({
-      scope,
-      paths: rememberedKnowledgeExpansion(activeRootId, knowledgeRootPath),
-    })
+    void selectKnowledgeRootRef.current(activeRootId, true)
   }, [
     activeRootId,
     knowledgeExpansion.scope,

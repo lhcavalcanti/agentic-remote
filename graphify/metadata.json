@@ -428,8 +428,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "3fbf196352ee169f58bb688bca92ad8425ed7598f9ee062a2f5931258d439853",
-    "src/App.tsx": "2edac228cae4c29c86079ee9fb8785a04472984ba27c480e16a6b2a4c5eca4d4",
+    "src/App.test.tsx": "a1266534139c6384677ba5f3287e3bebda2be560bd02a2f278970ae481615f57",
+    "src/App.tsx": "2f3785b6c7df50cdea8a38fd634553776304519b25f1c5bf4eabd63bba933773",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -559,14 +559,14 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "06608fdfa807b7420dafc7f33a81e564959ebfb9455935a9f0654369a80ba5ae",
+    "GRAPH_REPORT.md": "68a15624028a7a64b70a5fab8641ae4ce0c5292e7c1294e2912160224e16cd41",
     "communities.json": "ee0b050112598312cca9ea811b09f0f7dbe70d5170f91d474f36de43f40f5cbd",
-    "graph.html": "c0df631070a18fc8bc81da5e42dd425e993330980a01e3172513c1d0a1b0366e",
-    "graph.json": "8d3e8dc8bcaaf1ca484ccfc44129fd4d5955073eeceaf83bdc5202d1b790b7f7"
+    "graph.html": "4ef22187bb65911d66dafe6477f3cc88ea62c320a9c271b2011bdb1e1e088b51",
+    "graph.json": "eccd810a5acceb4ae4dcac677dbd05db50ed52f33b1c33b932931ee05e2e1b86"
   },
   "schema_version": 1,
-  "source_commit": "44ce57d8187acff19a184e29c1ffd0e64c192af5",
-  "source_fingerprint": "23b88adb08064e781245c8f6cc8140df8ef25f06891d540ab0881d6d7c3c53d0",
+  "source_commit": "9d688e12da7e7e099e3f3c68d2e46638a733a828",
+  "source_fingerprint": "5634039db53e96defac312a5d6ff800116e9f88a0846eb549cd72f8f158e9a35",
   "working_tree_changes": [
     "src/App.test.tsx",
     "src/App.tsx"

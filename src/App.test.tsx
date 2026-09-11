@@ -10216,9 +10216,15 @@ describe('App', () => {
     expect(
       screen.getByRole('button', { name: 'Send message' }),
     ).toHaveAttribute('title', 'Send into the current response')
+    const actionButtons = [...document.querySelectorAll('.composer-actions > .send-button')]
+    expect(actionButtons).toHaveLength(5)
+    expect(actionButtons.filter((button) => button.querySelector('.send-button__label')))
+      .toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Queue message' })).not.toHaveTextContent('Queue')
     expect(
       screen.getByRole('button', { name: 'Stop response' }),
     ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stop response' })).not.toHaveTextContent('Stop')
   })
 
   it('autocompletes and executes session slash commands', async () => {

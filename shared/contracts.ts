@@ -620,6 +620,8 @@ export interface SessionKnowledgeBinding {
   computerId: string
   sessionId: string
   rootId: string | null
+  /** Relative folder within the saved root that acts as this session's root. */
+  rootPath?: string
   /** Zero means never linked; an explicit unlink retains a newer revision. */
   revision: number
   /** Retained metadata, including when the shared root has been removed. */
@@ -630,5 +632,6 @@ export interface SessionKnowledgeBinding {
 
 export interface UpdateSessionKnowledgeRootInput {
   rootId: string | null
+  rootPath?: string
   expectedRevision: number
 }

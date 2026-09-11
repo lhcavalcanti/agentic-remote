@@ -401,18 +401,24 @@ export async function updateSessionKnowledgeRoot(
 export async function listKnowledgeEntries(
   rootId: string,
   path = '.',
+  basePath = '.',
 ): Promise<WorkspaceListing> {
   return request<WorkspaceListing>(
-    `/api/knowledge/roots/${encodeURIComponent(rootId)}/entries?path=${encodeURIComponent(path)}`,
+    `/api/knowledge/roots/${encodeURIComponent(rootId)}/entries?path=${encodeURIComponent(path)}${
+      basePath === '.' ? '' : `&basePath=${encodeURIComponent(basePath)}`
+    }`,
   )
 }
 
 export async function readKnowledgeFile(
   rootId: string,
   path: string,
+  basePath = '.',
 ): Promise<WorkspaceFile> {
   return request<WorkspaceFile>(
-    `/api/knowledge/roots/${encodeURIComponent(rootId)}/file?path=${encodeURIComponent(path)}`,
+    `/api/knowledge/roots/${encodeURIComponent(rootId)}/file?path=${encodeURIComponent(path)}${
+      basePath === '.' ? '' : `&basePath=${encodeURIComponent(basePath)}`
+    }`,
   )
 }
 

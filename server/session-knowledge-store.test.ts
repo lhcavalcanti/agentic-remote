@@ -68,7 +68,7 @@ describe('SessionKnowledgeStore', () => {
     const { store, directory } = await fixture()
     expect(store.get('computer', 'session')).toEqual({
       computerId: 'computer', sessionId: 'session', rootId: null,
-      revision: 0, available: false,
+      rootPath: '.', revision: 0, available: false,
     })
     expect(store.listBindings()).toEqual([])
     await expect(access(directory)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -95,7 +95,11 @@ describe('SessionKnowledgeStore', () => {
 
   it('persists private metadata and immutable detached snapshots across reloads', async () => {
     const { store, roots, catalog, statePath, directory } = await fixture()
-    const binding = await store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 })
+    const binding = await store.update('computer', 'session', {
+      rootId: 'one',
+      rootPath: 'projects/agentic-remote',
+      expectedRevision: 0,
+    })
     expect(Object.isFrozen(binding)).toBe(true)
     expect(Object.isFrozen(binding.root)).toBe(true)
     roots.get('one')!.name = 'Catalog object changed'
@@ -116,7 +120,8 @@ describe('SessionKnowledgeStore', () => {
     await store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 })
     const unlinked = await store.update('computer', 'session', { rootId: null, expectedRevision: 1 })
     expect(unlinked).toEqual({
-      computerId: 'computer', sessionId: 'session', rootId: null, revision: 2, available: false,
+      computerId: 'computer', sessionId: 'session', rootId: null,
+      rootPath: '.', revision: 2, available: false,
     })
     const reloaded = new SessionKnowledgeStore(directory, catalog)
     await reloaded.initialize()
@@ -131,6 +136,20 @@ describe('SessionKnowledgeStore', () => {
       .resolves.toMatchObject({ rootId: null, revision: 1, available: false })
     await expect(store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 }))
       .rejects.toBeInstanceOf(SessionKnowledgeConflictError)
+  })
+
+  it('rejects a nested path outside a linked root or on an unlink', async () => {
+    const { store } = await fixture()
+    await expect(store.update('computer', 'session', {
+      rootId: 'one',
+      rootPath: '../private',
+      expectedRevision: 0,
+    })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(store.update('computer', 'session', {
+      rootId: null,
+      rootPath: 'projects',
+      expectedRevision: 0,
+    })).rejects.toMatchObject({ statusCode: 400 })
   })
 
   it('checks concurrent expected revisions inside the serialized transaction', async () => {
@@ -380,9 +399,17 @@ describe('SessionKnowledgeStore', () => {
     const { store } = await fixture()
     await store.replaceSession('computer', 'unbound-replacement', ['unbound'])
     expect(writeFile).not.toHaveBeenCalled()
-    await store.update('computer', 'original', { rootId: 'one', expectedRevision: 0 })
+    await store.update('computer', 'original', {
+      rootId: 'one',
+      rootPath: 'projects/agentic-remote',
+      expectedRevision: 0,
+    })
     await store.replaceSession('computer', 'current', ['original', 'intermediate'])
-    expect(store.get('computer', 'current')).toMatchObject({ rootId: 'one', revision: 1 })
+    expect(store.get('computer', 'current')).toMatchObject({
+      rootId: 'one',
+      rootPath: 'projects/agentic-remote',
+      revision: 1,
+    })
     expect(store.get('computer', 'original').revision).toBe(0)
     expect(store.get('computer', 'intermediate').revision).toBe(0)
   })
@@ -402,7 +429,8 @@ describe('SessionKnowledgeStore', () => {
     await store.update('computer', 'previous', { rootId: null, expectedRevision: 0 })
     await store.replaceSession('computer', 'current', ['oldest', 'previous'])
     expect(store.listBindings()).toEqual([{
-      computerId: 'computer', sessionId: 'current', rootId: null, revision: 1, available: false,
+      computerId: 'computer', sessionId: 'current', rootId: null,
+      rootPath: '.', revision: 1, available: false,
     }])
   })
 

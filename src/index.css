@@ -715,6 +715,96 @@ button {
   margin-top: 14px;
 }
 
+.knowledge-root-browser {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.knowledge-root-browser > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.knowledge-root-browser > header > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.knowledge-root-browser > header strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.knowledge-root-browser > header small,
+.knowledge-root-browser > p,
+.knowledge-root-browser__folders > span {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-root-browser > header button,
+.knowledge-root-browser__folders button {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.knowledge-root-browser > header button {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  color: var(--accent-foreground);
+}
+
+.knowledge-root-browser > header em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.knowledge-root-browser > p {
+  margin: 0;
+}
+
+.knowledge-root-browser__folders {
+  display: grid;
+  max-height: 180px;
+  gap: 5px;
+  overflow-y: auto;
+}
+
+.knowledge-root-browser__folders button {
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.knowledge-root-browser__folders button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-root-browser button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .knowledge-root-choices__browse {
   display: flex;
   min-height: 40px;

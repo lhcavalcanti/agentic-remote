@@ -1,6 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type { HubEvent } from '../shared/contracts.js'
+import type { HubEvent, WorkspaceFile, WorkspaceListing } from '../shared/contracts.js'
+import {
+  joinKnowledgeRelativePath,
+  normalizeKnowledgeRelativePath,
+  rebaseKnowledgeRelativePath,
+} from '../shared/knowledge-path.js'
 import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
@@ -113,13 +118,85 @@ const knowledgeRootSchema = z.object({
   name: z.string().trim().max(200).optional(),
 })
 
+const knowledgeRelativePathSchema = z.string().trim().max(4096).optional()
+  .transform((value, context) => {
+    try {
+      return normalizeKnowledgeRelativePath(value)
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: 'Knowledge paths must stay inside the selected root',
+      })
+      return z.NEVER
+    }
+  })
 const knowledgePathSchema = z.object({
-  path: z.string().trim().max(4096).optional(),
+  path: knowledgeRelativePathSchema,
+  basePath: knowledgeRelativePathSchema,
 })
 
 const knowledgeFileSchema = z.object({
-  path: z.string().trim().min(1).max(4096),
+  path: z.string().trim().min(1).max(4096).transform((value, context) => {
+    try {
+      return normalizeKnowledgeRelativePath(value)
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: 'Knowledge paths must stay inside the selected root',
+      })
+      return z.NEVER
+    }
+  }),
+  basePath: knowledgeRelativePathSchema,
 })
+
+function scopedKnowledgePath(basePath: string, path: string): string {
+  return joinKnowledgeRelativePath(basePath, path)
+}
+
+function requireScopedKnowledgePath(
+  basePath: string,
+  path: string,
+): string {
+  const rebased = rebaseKnowledgeRelativePath(basePath, path)
+  if (rebased === undefined) {
+    throw new Error('Knowledge response escaped the selected session root')
+  }
+  return rebased
+}
+
+function scopeKnowledgeListing(
+  listing: WorkspaceListing,
+  basePath: string,
+): WorkspaceListing {
+  if (basePath === '.') {
+    return listing
+  }
+  const parent = listing.parent
+    ? rebaseKnowledgeRelativePath(basePath, listing.parent)
+    : undefined
+  return {
+    ...listing,
+    path: requireScopedKnowledgePath(basePath, listing.path),
+    ...(parent === undefined ? { parent: undefined } : { parent }),
+    entries: listing.entries.map((entry) => ({
+      ...entry,
+      path: requireScopedKnowledgePath(basePath, entry.path),
+    })),
+  }
+}
+
+function scopeKnowledgeFile(
+  file: WorkspaceFile,
+  basePath: string,
+): WorkspaceFile {
+  return basePath === '.'
+    ? file
+    : {
+        ...file,
+        path: requireScopedKnowledgePath(basePath, file.path),
+      }
+}
 
 const workspaceFileQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
@@ -387,7 +464,12 @@ export async function registerHubRoutes(
         return reply.code(404).send({ error: 'Knowledge root not found' })
       }
       const query = knowledgePathSchema.parse(request.query)
-      return manager.listKnowledge(root.computerId, root.path, query.path)
+      const listing = await manager.listKnowledge(
+        root.computerId,
+        root.path,
+        scopedKnowledgePath(query.basePath, query.path),
+      )
+      return scopeKnowledgeListing(listing, query.basePath)
     },
   )
 
@@ -399,7 +481,12 @@ export async function registerHubRoutes(
         return reply.code(404).send({ error: 'Knowledge root not found' })
       }
       const query = knowledgeFileSchema.parse(request.query)
-      return manager.readKnowledgeFile(root.computerId, root.path, query.path)
+      const file = await manager.readKnowledgeFile(
+        root.computerId,
+        root.path,
+        scopedKnowledgePath(query.basePath, query.path),
+      )
+      return scopeKnowledgeFile(file, query.basePath)
     },
   )
 

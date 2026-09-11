@@ -318,7 +318,9 @@ function mockAddedKnowledgeRoot(root: KnowledgeRoot) {
 async function chooseKnowledgeRoot(id: string) {
   const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === id)
   if (!root) throw new Error(`Unknown fixture root: ${id}`)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+  const reopen = screen.getByRole('button', { name: 'Choose Knowledge root' })
+  await waitFor(() => expect(reopen).toBeEnabled())
+  fireEvent.click(reopen)
   const dialog = await screen.findByRole('dialog', { name: /Choose a (session root|Knowledge folder)/ })
   const choice = within(dialog).queryByRole('radio', {
     name: `${root.name} on ${root.computerName}: ${root.path}`,
@@ -346,7 +348,7 @@ function fixtureKnowledgeBinding(computerId: string, sessionId: string): Session
         fixtureKnowledgeRoots[0]
     saved = {
       computerId, sessionId, rootId: root?.id || null,
-      revision: root ? 1 : 0, available: Boolean(root), root,
+      rootPath: '.', revision: root ? 1 : 0, available: Boolean(root), root,
     }
     fixtureKnowledgeBindings.set(key, saved)
   }
@@ -445,6 +447,175 @@ describe('App', () => {
     expect(executeCommand).not.toHaveBeenCalled()
     expect(sendMessage).not.toHaveBeenCalled()
     expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+  })
+
+  it('roots a session at a nested folder without adding shared root options', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    const key = `${computer.id}:${session.id}`
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id,
+      sessionId: session.id,
+      rootId: null,
+      rootPath: '.',
+      revision: 0,
+      available: false,
+    })
+    vi.mocked(listDirectories).mockImplementation(async (_computerId, path) => {
+      if (path === `${knowledgeRoot.path}/projects`) {
+        return {
+          path,
+          parent: knowledgeRoot.path,
+          directories: [{
+            name: 'agentic-remote',
+            path: `${path}/agentic-remote`,
+          }],
+        }
+      }
+      if (path === `${knowledgeRoot.path}/projects/agentic-remote`) {
+        return {
+          path,
+          parent: `${knowledgeRoot.path}/projects`,
+          directories: [],
+        }
+      }
+      return {
+        path: knowledgeRoot.path,
+        directories: [{
+          name: 'projects',
+          path: `${knowledgeRoot.path}/projects`,
+        }],
+      }
+    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_rootId, path = '.') => ({ path, entries: [] }),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const choose = screen.getByRole('button', { name: 'Choose Knowledge root' })
+    await waitFor(() => expect(choose).toBeEnabled())
+    fireEvent.click(choose)
+    const chooser = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    fireEvent.click(within(chooser).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    }))
+    const optionCount = within(chooser).getAllByRole('radio').length
+    fireEvent.click(await within(chooser).findByRole('button', { name: 'projects' }))
+    fireEvent.click(await within(chooser).findByRole('button', {
+      name: 'agentic-remote',
+    }))
+
+    expect(within(chooser).getAllByRole('radio')).toHaveLength(optionCount)
+    expect(within(chooser).queryByRole('radio', {
+      name: /agentic-remote/,
+    })).not.toBeInTheDocument()
+    fireEvent.click(within(chooser).getByRole('button', {
+      name: 'Use for this session',
+    }))
+
+    await waitFor(() =>
+      expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        {
+          rootId: knowledgeRoot.id,
+          rootPath: 'projects/agentic-remote',
+          expectedRevision: 0,
+        },
+      ),
+    )
+    await screen.findByText(`agentic-remote · ${knowledgeRoot.computerName}`)
+    expect(listKnowledgeEntries).toHaveBeenCalledWith(
+      knowledgeRoot.id,
+      '.',
+      'projects/agentic-remote',
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )[key],
+    ).toMatchObject({
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/agentic-remote',
+      path: '.',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const reopened = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    await within(reopened).findByText('~/docs/projects/agentic-remote')
+    expect(within(reopened).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    })).toBeChecked()
+  })
+
+  it('adds a browsed subfolder to shared Knowledge only when explicitly saved', async () => {
+    const savedRoot: KnowledgeRoot = {
+      ...knowledgeRoot,
+      id: 'saved-project-root',
+      name: 'projects',
+      path: `${knowledgeRoot.path}/projects`,
+    }
+    mockKnowledgeRoots([knowledgeRoot])
+    mockAddedKnowledgeRoot(savedRoot)
+    vi.mocked(listDirectories).mockImplementation(async (_computerId, path) =>
+      path === savedRoot.path
+        ? {
+            path,
+            parent: knowledgeRoot.path,
+            directories: [],
+          }
+        : {
+            path: knowledgeRoot.path,
+            directories: [{ name: 'projects', path: savedRoot.path }],
+          },
+    )
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Choose Knowledge root',
+    }))
+    const chooser = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    const optionCount = within(chooser).getAllByRole('radio').length
+    fireEvent.click(await within(chooser).findByRole('button', { name: 'projects' }))
+
+    expect(within(chooser).getAllByRole('radio')).toHaveLength(optionCount)
+    expect(within(chooser).queryByRole('radio', {
+      name: `projects on ${savedRoot.computerName}: ${savedRoot.path}`,
+    })).not.toBeInTheDocument()
+    fireEvent.click(await within(chooser).findByRole('button', {
+      name: 'Save this root folder',
+    }))
+
+    await waitFor(() =>
+      expect(addKnowledgeRoot).toHaveBeenCalledWith({
+        computerId: savedRoot.computerId,
+        path: savedRoot.path,
+      }),
+    )
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(
+      computer.id,
+      session.id,
+      {
+        rootId: savedRoot.id,
+        expectedRevision: 1,
+      },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const reopened = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    expect(within(reopened).getByRole('radio', {
+      name: `projects on ${savedRoot.computerName}: ${savedRoot.path}`,
+    })).toBeChecked()
   })
 
   it('uses the hub root rather than a document remembered under another root', async () => {
@@ -1106,7 +1277,11 @@ describe('App', () => {
       const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
       if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
       const binding: SessionKnowledgeBinding = {
-        computerId, sessionId, rootId: input.rootId, revision: previous.revision + 1,
+        computerId,
+        sessionId,
+        rootId: input.rootId,
+        rootPath: input.rootId ? input.rootPath || '.' : '.',
+        revision: previous.revision + 1,
         root, available: Boolean(root),
       }
       fixtureKnowledgeBindings.set(`${computerId}:${sessionId}`, binding)

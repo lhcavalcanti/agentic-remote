@@ -8,6 +8,7 @@ import type {
   SessionKnowledgeBinding,
   UpdateSessionKnowledgeRootInput,
 } from '../shared/contracts.js'
+import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path.js'
 
 const rootSchema = z.object({
   id: z.string().min(1),
@@ -22,11 +23,14 @@ const bindingSchema = z.object({
   computerId: z.string().min(1),
   sessionId: z.string().min(1),
   rootId: z.string().min(1).nullable(),
+  rootPath: z.string().optional().transform((value) =>
+    normalizeKnowledgeRelativePath(value),
+  ),
   revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   root: rootSchema.optional(),
 }).strict().refine(
   (binding) => binding.rootId === null
-    ? binding.root === undefined
+    ? binding.root === undefined && binding.rootPath === '.'
     : binding.root?.id === binding.rootId,
   'A linked Knowledge folder must retain its matching metadata',
 )
@@ -170,6 +174,21 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       if (current.revision === Number.MAX_SAFE_INTEGER) {
         throw new SessionKnowledgeReferenceError('The Knowledge binding revision cannot advance.', 409)
       }
+      let rootPath: string
+      try {
+        rootPath = normalizeKnowledgeRelativePath(input.rootPath)
+      } catch {
+        throw new SessionKnowledgeReferenceError(
+          'Knowledge root path must stay inside the saved folder.',
+          400,
+        )
+      }
+      if (input.rootId === null && rootPath !== '.') {
+        throw new SessionKnowledgeReferenceError(
+          'An unlinked session cannot retain a nested Knowledge path.',
+          400,
+        )
+      }
       const root = input.rootId === null ? undefined : this.catalog.getRoot(input.rootId)
       if (input.rootId !== null && !root) {
         throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
@@ -177,6 +196,7 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       const binding: StoredBinding = {
         ...identity,
         rootId: input.rootId,
+        rootPath,
         revision: current.revision + 1,
         ...(root ? { root: structuredClone(root) } : {}),
       }
@@ -282,7 +302,13 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
           ...structuredClone(stored),
           available: stored.rootId !== null && this.catalog.getRoot(stored.rootId) !== undefined,
         }
-      : { ...identity, rootId: null, revision: 0, available: false }
+      : {
+          ...identity,
+          rootId: null,
+          rootPath: '.',
+          revision: 0,
+          available: false,
+        }
     if (binding.root) Object.freeze(binding.root)
     return Object.freeze(binding)
   }

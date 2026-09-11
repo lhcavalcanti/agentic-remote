@@ -428,8 +428,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "a708c988235e0cd9beb2e1aee4457f099f89f9ac1790d4967f637129f9f2be47",
-    "src/App.tsx": "a0f08dabb51c3c14b4a6c691bf87acc003af1a0b584d804495e79827c31998fc",
+    "src/App.test.tsx": "3fbf196352ee169f58bb688bca92ad8425ed7598f9ee062a2f5931258d439853",
+    "src/App.tsx": "2edac228cae4c29c86079ee9fb8785a04472984ba27c480e16a6b2a4c5eca4d4",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -559,20 +559,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "087c43084d6194514596367914240d654f0b5e1064f19c9674e836c020b3c453",
+    "GRAPH_REPORT.md": "06608fdfa807b7420dafc7f33a81e564959ebfb9455935a9f0654369a80ba5ae",
     "communities.json": "ee0b050112598312cca9ea811b09f0f7dbe70d5170f91d474f36de43f40f5cbd",
-    "graph.html": "776598272a79d6138ff1227a5d2e1c7128f821225cb9a935d4c1f812011e2eab",
-    "graph.json": "f367c180a7059a2be3ce2b42fa0e7f770c8c502e0c7b37706d42e1bfb8b7ecf8"
+    "graph.html": "c0df631070a18fc8bc81da5e42dd425e993330980a01e3172513c1d0a1b0366e",
+    "graph.json": "8d3e8dc8bcaaf1ca484ccfc44129fd4d5955073eeceaf83bdc5202d1b790b7f7"
   },
   "schema_version": 1,
-  "source_commit": "9f3056e960ea5c44c3a4f47896a4766623ab4acb",
-  "source_fingerprint": "a3caadb255ee5e617c29589f5d43b083708cd2f94cb933a938a7d28594d11b16",
+  "source_commit": "44ce57d8187acff19a184e29c1ffd0e64c192af5",
+  "source_fingerprint": "23b88adb08064e781245c8f6cc8140df8ef25f06891d540ab0881d6d7c3c53d0",
   "working_tree_changes": [
-    "docs/design/agent-workspace.md",
-    "server/hub-routes.test.ts",
-    "server/hub-routes.ts",
-    "server/session-knowledge-store.test.ts",
-    "server/session-knowledge-store.ts",
     "src/App.test.tsx",
     "src/App.tsx"
   ]

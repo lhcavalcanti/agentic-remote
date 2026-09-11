@@ -15113,6 +15113,60 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('restores expansion for the initial sessionless root after switching roots', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    const firstRoot: KnowledgeRoot = {
+      id: 'root-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/home/tester/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }
+    const secondRoot = {
+      ...firstRoot,
+      id: 'root-2',
+      path: '/home/tester/other',
+      name: 'other',
+    }
+    mockKnowledgeRoots([firstRoot, secondRoot])
+    localStorage.setItem(
+      'agentic-remote:knowledge-root',
+      JSON.stringify(firstRoot.id),
+    )
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (rootId, path = '.') => ({
+        path,
+        parent: path === '.' ? undefined : '.',
+        entries:
+          rootId === firstRoot.id && path === '.'
+            ? [{ name: 'guides', path: 'guides', kind: 'directory' }]
+            : [],
+      }),
+    )
+
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Session knowledge' }),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', {
+      name: /guides/,
+    }))
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+        )[firstRoot.id],
+      ).toEqual(['guides']),
+    )
+
+    await chooseKnowledgeRoot(secondRoot.id)
+    await chooseKnowledgeRoot(firstRoot.id)
+    expect(await within(tree).findByRole('treeitem', { name: /guides/ }))
+      .toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('does not overwrite a session knowledge position before restoring it', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)

@@ -101,7 +101,12 @@ WorkingDirectory=$dev_root
 Environment=$(systemd_quote "HOME=$USER_HOME")
 Environment=$(systemd_quote "AGENTIC_REMOTE_MONITOR_PROFILE=$PROFILE_DEST")
 Environment=$(systemd_quote "PATH=$runtime_path")
-TimeoutStartSec=30min
+# A full validation run (install, lint, the whole suite, build) plus
+# graduation measured 16.5 minutes, and the suite grows as tests are added.
+# A timeout here is not a clean abort: the kill can land after setup has
+# already replaced the running service, leaving recovery half done. Keep
+# several times the observed cost in reserve.
+TimeoutStartSec=60min
 ExecStart=$(systemd_quote "$MONITOR_DEST") run
 EOF
   install -m 0600 "$temporary" "$SERVICE_FILE"

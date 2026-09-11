@@ -7252,6 +7252,32 @@ function App() {
     hasSelectedSession, selectedKey, sessionKnowledgeBasePath,
     sessionRootReady, sessionRootUnavailable,
   ])
+
+  useLayoutEffect(() => {
+    if (
+      selected ||
+      !activeRootId ||
+      !knowledgeRootsLoaded ||
+      knowledgeMode === 'hidden'
+    ) {
+      return
+    }
+    const scope = knowledgeExpansionKey(activeRootId, knowledgeRootPath)
+    if (knowledgeExpansion.scope === scope) {
+      return
+    }
+    setKnowledgeExpansion({
+      scope,
+      paths: rememberedKnowledgeExpansion(activeRootId, knowledgeRootPath),
+    })
+  }, [
+    activeRootId,
+    knowledgeExpansion.scope,
+    knowledgeMode,
+    knowledgeRootsLoaded,
+    selected,
+  ])
+
   // The native shell shows how many sessions are blocked on the user. This is
   // a no-op in a browser, so the badge never needs a capability check here.
   useEffect(() => {

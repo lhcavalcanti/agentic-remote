@@ -1,22 +1,22 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `54430aba8c51d789def9f68261bb4a9a8abc6999bf72c3bf5d1d5621f9721258`
+Snapshot: `e89b29a8daa8930191f2478c38f64338d8ce1550d2dc5cb1ff2e973635de0082`
 
-Source checkout: `12e8950f4cbcaf22bc52ebbdab0033b3ffc0dfbe`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `89634639969db3faf569ec404fe12ba7d1bcca73`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
-All 226 tracked code files in scope have source nodes. Parsing, resolution, community labels, and queries are local; no model or external API is used. Imports can point to external package identifiers rather than local files.
+All 227 tracked code files in scope have source nodes. Parsing, resolution, community labels, and queries are local; no model or external API is used. Imports can point to external package identifiers rather than local files.
 
 Documentation, styles, images, and other non-code files are inventoried but **not semantically extracted**. Runtime routing and dynamic behavior must still be confirmed in source.
 
 
 ## Corpus Check
-- 226 files · ~457,279 words
+- 227 files · ~457,356 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3454 nodes · 9736 edges · 144 communities (111 shown, 20 thin omitted)
+- 3455 nodes · 9736 edges · 145 communities (111 shown, 20 thin omitted)
 - Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 722 edges (avg confidence: 0.81)
 - Token cost: 0 input · 0 output
 
@@ -180,7 +180,7 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 ## Import Cycles
 - 4-file cycle: `server/computer-manager.ts -> server/remote-node-client.ts -> server/node-routes.ts -> server/file-upload-routes.ts -> server/computer-manager.ts`
 
-## Communities (144 total, 20 thin omitted)
+## Communities (145 total, 20 thin omitted)
 
 ### Community 0 - "api.ts"
 Cohesion: 0.03
@@ -628,17 +628,17 @@ Nodes (4): sessionMuteSchema, subscriptionSchema, testNotificationSchema, unsubs
 
 ## Knowledge Gaps
 - **658 isolated node(s):** `$schema`, `graphify/vendor/**`, `graphify/.venv/**`, `graphify/.cache/**`, `typescript` (+653 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 989 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 990 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **20 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `AgentService` connect `AgentService` to `SessionStore`, `.readAfterWrites`, `contracts.ts`, `SessionDetail`, `queued-dispatch.ts`, `.handleSessionEvent`, `SessionMcpServersSnapshot`, `.get`, `node-routes.ts`, `SessionSkillsSnapshot`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Why does `buildApp()` connect `app.ts` to `ClaudeAgentService`, `SessionService`, `SessionStore`, `.readAfterWrites`, `SessionKnowledgeStore`, `AgentService`, `ComputerManager`, `computer-manager.ts`, `SessionOrderStore`, `ProviderSessionService`, `node-routes.ts`, `PushNotificationService`, `tmux-errors.integration.test.ts`, `pwa.ts`?**
   _High betweenness centrality (0.003) - this node is a cross-community bridge._
 - **Why does `connect()` connect `claude-recovery-admission.test.ts` to `ClaudeAgentService`, `SessionStore`, `AgentService`, `.get`, `ProviderSessionService`?**
-  _High betweenness centrality (0.002) - this node is a cross-community bridge._
-- **Why does `fixture()` connect `AgentService` to `recovery-resend-durability.test.ts`, `SessionStore`, `SessionDetail`?**
   _High betweenness centrality (0.002) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `App()` (e.g. with `readAccentTheme()` and `readDefaultRuntimeSettings()`) actually correct?**
   _`App()` has 4 INFERRED edges - model-reasoned connections that need verification._

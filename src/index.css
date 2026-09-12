@@ -2924,6 +2924,8 @@ button {
 .permission-card,
 .user-input-card,
 .recovery-card {
+  min-width: 0;
+  max-width: 100%;
   margin-top: 24px;
   padding: 16px;
   border: 1px solid rgba(242, 201, 109, 0.32);
@@ -2985,6 +2987,8 @@ button {
 
 .user-input-card__option {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 10px;
   cursor: pointer;
@@ -2993,7 +2997,15 @@ button {
 .user-input-card__option input {
   width: 18px;
   height: 18px;
-  flex: none;
+  flex: 0 0 18px;
+  margin: 1px 0 0;
+  padding: 0;
+}
+
+.user-input-card__option > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .user-input-card__form {
@@ -3018,6 +3030,8 @@ button {
 }
 
 .user-input-card__structured-form {
+  min-width: 0;
+  max-width: 100%;
   margin-top: 14px;
 }
 
@@ -3030,6 +3044,8 @@ button {
 
 .user-input-card__fields {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 14px;
 }
 
@@ -3042,11 +3058,15 @@ button {
 }
 
 .user-input-card__field > span,
-.user-input-card__field > legend {
+.user-input-card__field > legend,
+.user-input-card__field-description {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 3px;
   color: var(--text);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .user-input-card__field > span small,
@@ -3057,7 +3077,7 @@ button {
   line-height: 1.35;
 }
 
-.user-input-card__field input,
+.user-input-card__field > input:not([type='checkbox']),
 .user-input-card__field select {
   width: 100%;
   min-width: 0;
@@ -3090,6 +3110,8 @@ button {
 
 .user-input-card__field-options {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 8px;
   padding: 6px;
   border: 1px solid var(--border-strong);
@@ -3110,6 +3132,8 @@ button {
 
 .user-input-card__select {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .user-input-card__select-trigger {
@@ -3127,6 +3151,15 @@ button {
   background: color-mix(in srgb, var(--accent) 7%, var(--panel-raised));
   color-scheme: inherit;
   text-align: left;
+}
+
+.user-input-card__select-trigger > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.user-input-card__select-trigger > svg {
+  flex: 0 0 auto;
 }
 
 .user-input-card__select-trigger:hover {
@@ -3176,6 +3209,7 @@ button {
   border-radius: 7px;
   background: transparent;
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .user-input-card__select-option:hover,
@@ -3192,6 +3226,7 @@ button {
 
 .user-input-card__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
 }
@@ -5957,6 +5992,7 @@ button {
   .session-sort select,
   .knowledge-root-picker__select select,
   .user-input-card__form input,
+  .user-input-card__field > input:not([type='checkbox']),
   .composer textarea {
     font-size: 16px;
   }
@@ -6639,6 +6675,28 @@ button {
     bottom: max(8px, env(safe-area-inset-bottom));
     left: max(8px, env(safe-area-inset-left));
     max-width: none;
+  }
+}
+
+@media (max-width: 500px) {
+  .user-input-card {
+    margin-top: 16px;
+    padding: 14px;
+  }
+
+  .user-input-card__option {
+    min-height: 40px;
+    align-items: flex-start;
+    padding: 8px;
+    border-radius: 7px;
+  }
+
+  .user-input-card__shortcut-hint {
+    display: none;
+  }
+
+  .user-input-card__fields {
+    gap: 12px;
   }
 }
 

@@ -927,9 +927,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
   their semantic meaning.
 - The accent choice MUST be scoped to the current browser tab, persist across
   reloads in that tab, and fall back to Agentic green for an unknown value.
-- The top-left brand mark and browser-tab icon MUST use the durable app icon
-  preference defined in §11, update together, and remain independent of the
-  tab-local accent.
+- The top-left brand mark and browser-tab icon MUST use the fixed Relay
+  artwork in Agentic green and remain independent of the tab-local accent.
 
 ## 10. Notifications
 
@@ -963,19 +962,22 @@ Priority order:
   controls MUST remain below the safe-area inset.
 - iOS standalone mode MUST use a safe top fallback when
   `env(safe-area-inset-top)` incorrectly reports zero.
+- Mobile header controls MUST meet the safe-area boundary without adding a
+  second centered-row gap below the Dynamic Island.
 - Composer and dialogs MUST respect the home indicator and visual viewport.
 - Keyboard-open sizing MUST follow `visualViewport.height` and `offsetTop`.
 - In browser and split-size modes, the entire mobile shell MUST follow the
   current visual viewport height and offset even when the keyboard is closed;
   it MUST NOT assume full-screen dimensions.
-- App settings MUST offer five distinct Agentic Remote icon styles and a
-  separate durable icon color. The choice MUST update the in-app brand and
-  favicon immediately without changing the tab-local UI accent.
-- During initial head parsing, the selected icon MUST emit an Apple touch icon
-  link to its committed opaque 180px PNG. The UI MUST explain that Safari needs
-  one reload after a selection change and that an existing iPhone or iPad
-  installation needs to be removed and re-added before its launcher icon or
-  install-time status-bar mode changes.
+- In installed standalone mode with the keyboard closed, the shell MUST use
+  the full window height rather than leaving a browser-chrome-sized empty band
+  when iOS reports a shorter idle visual viewport.
+- Relay in Agentic green MUST be the fixed in-app brand, browser-tab icon,
+  manifest icon, native icon, and Apple touch icon. App settings MUST NOT
+  expose icon style or icon color controls.
+- The Apple touch icon MUST be a committed opaque 180px PNG. An existing
+  iPhone or iPad installation needs to be removed and re-added before a
+  shipped launcher-icon or install-time status-bar change appears.
 
 ## 12. PWA updates
 

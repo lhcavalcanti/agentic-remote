@@ -1349,6 +1349,102 @@ describe('App', () => {
 
   })
 
+  it('fills the installed window when the idle visual viewport is shorter', async () => {
+    const originalVisualViewport = window.visualViewport
+    const originalMatchMedia = window.matchMedia
+    const originalInnerHeight = window.innerHeight
+    const visualViewport = new EventTarget() as VisualViewport
+    Object.defineProperties(visualViewport, {
+      height: { configurable: true, value: 774, writable: true },
+      offsetTop: { configurable: true, value: 0, writable: true },
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 852,
+    })
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: visualViewport,
+    })
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: query === '(display-mode: standalone)',
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    })
+
+    const editor = document.createElement('textarea')
+    const rendered = render(<App />)
+    const shell = document.querySelector<HTMLElement>('.app-shell')
+    try {
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '852px',
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('0px')
+
+      document.body.append(editor)
+      editor.focus()
+      Object.defineProperty(visualViewport, 'height', {
+        configurable: true,
+        value: 510,
+        writable: true,
+      })
+      Object.defineProperty(visualViewport, 'offsetTop', {
+        configurable: true,
+        value: 42,
+        writable: true,
+      })
+      act(() => visualViewport.dispatchEvent(new Event('resize')))
+      expect(shell).toHaveClass('app-shell--keyboard-open')
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '510px',
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('42px')
+
+      editor.blur()
+      Object.defineProperty(visualViewport, 'height', {
+        configurable: true,
+        value: 774,
+        writable: true,
+      })
+      Object.defineProperty(visualViewport, 'offsetTop', {
+        configurable: true,
+        value: 0,
+        writable: true,
+      })
+      act(() => visualViewport.dispatchEvent(new Event('resize')))
+      await waitFor(() =>
+        expect(shell).not.toHaveClass('app-shell--keyboard-open'),
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '852px',
+      )
+      expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('0px')
+    } finally {
+      editor.remove()
+      rendered.unmount()
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+      Object.defineProperty(window, 'visualViewport', {
+        configurable: true,
+        value: originalVisualViewport,
+      })
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        value: originalMatchMedia,
+      })
+    }
+  })
+
   beforeEach(() => {
     dragHandlers.clear()
     vi.restoreAllMocks()
@@ -2639,8 +2735,8 @@ describe('App', () => {
     const shell = document.querySelector('.app-shell')
     expect(shell).toHaveAttribute('data-accent-theme', 'agentic')
     const icon = () =>
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || ''
-    expect(decodeURIComponent(icon())).toContain('color="#b8f36b"')
+      document.querySelector('.brand__mark')?.getAttribute('src') || ''
+    expect(icon()).toBe('/icon.svg')
     expect(document.querySelector('.brand__mark')?.tagName).toBe('IMG')
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     expect(document.querySelector('.brand__mark')).toHaveAttribute('alt', '')
@@ -2656,10 +2752,9 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
     expect(icon()).toBe(initialIcon)
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
-    expect(document.querySelectorAll('link[rel="icon"]')).toHaveLength(1)
   })
 
-  it('restores the tab accent without changing the durable app icon', async () => {
+  it('restores the tab accent without changing the fixed Relay icon', async () => {
     sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -2668,12 +2763,9 @@ describe('App', () => {
       'data-accent-theme',
       'rose',
     )
-    expect(decodeURIComponent(
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
-    )).toContain('color="#b8f36b"')
     expect(document.querySelector('.brand__mark')).toHaveAttribute(
       'src',
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href,
+      '/icon.svg',
     )
   })
 
@@ -2687,69 +2779,27 @@ describe('App', () => {
       'data-accent-theme',
       'agentic',
     )
-    expect(decodeURIComponent(
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
-    )).toContain('color="#b8f36b"')
-  })
-
-  it('persists a separate app icon style and color across browser tabs', async () => {
-    const rendered = render(<App />)
-    await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-
-    expect(screen.getByRole('radio', { name: 'Relay app icon' })).toBeChecked()
-    expect(screen.getByRole('radio', {
-      name: 'Agentic app icon color',
-    })).toBeChecked()
-    fireEvent.click(screen.getByRole('radio', { name: 'Atlas app icon' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'Teal app icon color' }))
-
-    expect(JSON.parse(
-      localStorage.getItem('agentic-remote:app-icon') || '{}',
-    )).toEqual({ style: 'atlas', color: 'teal' })
-    expect(document.documentElement.dataset.appIconStyle).toBe('atlas')
-    expect(document.documentElement.dataset.appIconColor).toBe('teal')
-    expect(decodeURIComponent(
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
-    )).toContain('color="#63d6c0"')
-    expect(document.querySelector<HTMLLinkElement>(
-      'link[rel="apple-touch-icon"]',
-    )?.getAttribute('href')).toBe('/icons/app/app-atlas-teal-180.png')
     expect(document.querySelector('.brand__mark')).toHaveAttribute(
       'src',
-      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href,
+      '/icon.svg',
     )
-
-    rendered.unmount()
-    render(<App />)
-    await screen.findAllByText('Project chat')
-    expect(document.documentElement.dataset.appIconStyle).toBe('atlas')
-    expect(document.documentElement.dataset.appIconColor).toBe('teal')
   })
 
-  it('keeps the previous app icon when durable storage is unavailable', async () => {
+  it('ignores legacy icon preferences and omits icon settings', async () => {
+    localStorage.setItem(
+      'agentic-remote:app-icon',
+      JSON.stringify({ style: 'atlas', color: 'teal' }),
+    )
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-    const original = Storage.prototype.setItem
-    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
-      function (this: Storage, key: string, value: string) {
-        if (key === 'agentic-remote:app-icon') {
-          throw new Error('Storage unavailable')
-        }
-        original.call(this, key, value)
-      },
+
+    expect(screen.queryByRole('radio', { name: /app icon/i }))
+      .not.toBeInTheDocument()
+    expect(document.querySelector('.brand__mark')).toHaveAttribute(
+      'src',
+      '/icon.svg',
     )
-    try {
-      fireEvent.click(screen.getByRole('radio', { name: 'Orbit app icon' }))
-      expect(screen.getByText(
-        'Could not save app icon: Storage unavailable',
-      )).toBeVisible()
-      expect(screen.getByRole('radio', { name: 'Relay app icon' })).toBeChecked()
-      expect(document.documentElement.dataset.appIconStyle).toBe('relay')
-    } finally {
-      save.mockRestore()
-    }
   })
 
   it('falls back to blank runtime defaults when stored settings are null', async () => {

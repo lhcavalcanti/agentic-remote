@@ -235,16 +235,6 @@ import {
   projectSessionResponse,
   sessionResponseStartedAt,
 } from './session-response-order'
-import {
-  appIconColors,
-  appIconStyles,
-  appIconUrl,
-  applyAppIcon,
-  readAppIconPreference,
-  saveAppIconPreference,
-  type AppIconColor,
-  type AppIconPreference,
-} from './app-icon'
 import { appearanceFrom, appearanceStorageKey, type Appearance } from './appearance'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
@@ -258,6 +248,7 @@ import {
   type KnowledgeFolders,
 } from './knowledge-tree'
 import { composerMaximumHeight } from './composer-sizing'
+import { appViewportGeometry } from './app-viewport'
 import {
   activatePwaUpdate,
   activePushSubscription,
@@ -452,10 +443,17 @@ type StoredDefaultSessionFolders = {
 const defaultSessionFoldersStorageKey =
   'agentic-remote:default-session-folders'
 
-type AccentTheme = AppIconColor
-
 const accentThemeStorageKey = 'agentic-remote:accent-theme'
-const accentThemes = appIconColors
+const accentThemes = [
+  { id: 'agentic', name: 'Agentic', color: '#b8f36b' },
+  { id: 'ocean', name: 'Ocean', color: '#6eb7ff' },
+  { id: 'violet', name: 'Violet', color: '#ad92ff' },
+  { id: 'ember', name: 'Ember', color: '#ff9c64' },
+  { id: 'rose', name: 'Rose', color: '#ff83b6' },
+  { id: 'teal', name: 'Teal', color: '#63d6c0' },
+] as const
+
+type AccentTheme = (typeof accentThemes)[number]['id']
 
 function readAccentTheme(): AccentTheme {
   try {
@@ -466,6 +464,20 @@ function readAccentTheme(): AccentTheme {
   } catch {
     return 'agentic'
   }
+}
+
+function currentAppViewportGeometry(keyboardOpen: boolean) {
+  if (typeof window === 'undefined') {
+    return { height: 800, offsetTop: 0 }
+  }
+  const viewport = window.visualViewport
+  return appViewportGeometry({
+    innerHeight: window.innerHeight,
+    visualHeight: viewport?.height,
+    visualOffsetTop: viewport?.offsetTop,
+    standalone: installedAsApp(),
+    keyboardOpen,
+  })
 }
 
 type ComposerHistoryState = {
@@ -3462,8 +3474,6 @@ function AppSettingsDialog({
   onDefaultSessionFoldersChange,
   accentTheme,
   onAccentThemeChange,
-  appIcon,
-  onAppIconChange,
   appearance,
   onAppearanceChange,
   statusline,
@@ -3485,8 +3495,6 @@ function AppSettingsDialog({
   onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
   accentTheme: AccentTheme
   onAccentThemeChange: (theme: AccentTheme) => void
-  appIcon: AppIconPreference
-  onAppIconChange: (preference: AppIconPreference) => void
   appearance: Appearance
   onAppearanceChange: (appearance: Appearance) => void
   statusline: StatuslineSettings
@@ -3830,87 +3838,6 @@ function AppSettingsDialog({
             </label>
           ))}
         </div>
-        <fieldset className="app-icon-options">
-          <legend>App icon</legend>
-          {appIconStyles.map((style) => (
-            <label
-              className={`app-icon-option ${
-                appIcon.style === style.id ? 'app-icon-option--selected' : ''
-              }`}
-              key={style.id}
-            >
-              <input
-                aria-label={`${style.name} app icon`}
-                checked={appIcon.style === style.id}
-                name="app-icon-style"
-                onChange={() => {
-                  try {
-                    onAppIconChange({ ...appIcon, style: style.id })
-                    setError(undefined)
-                  } catch (caught) {
-                    setError(`Could not save app icon: ${
-                      caught instanceof Error ? caught.message : String(caught)
-                    }`)
-                  }
-                }}
-                type="radio"
-              />
-              <img
-                alt=""
-                aria-hidden="true"
-                src={appIconUrl({ style: style.id, color: appIcon.color })}
-              />
-              <span>
-                <strong>{style.name}</strong>
-                <small>{style.description}</small>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-        <div
-          aria-label="App icon color"
-          className="app-icon-color-list"
-          role="radiogroup"
-        >
-          {appIconColors.map((color) => (
-            <label
-              className={
-                appIcon.color === color.id
-                  ? 'app-icon-color app-icon-color--selected'
-                  : 'app-icon-color'
-              }
-              key={color.id}
-            >
-              <input
-                aria-label={`${color.name} app icon color`}
-                checked={appIcon.color === color.id}
-                name="app-icon-color"
-                onChange={() => {
-                  try {
-                    onAppIconChange({ ...appIcon, color: color.id })
-                    setError(undefined)
-                  } catch (caught) {
-                    setError(`Could not save app icon color: ${
-                      caught instanceof Error ? caught.message : String(caught)
-                    }`)
-                  }
-                }}
-                type="radio"
-              />
-              <span
-                aria-hidden="true"
-                style={{ '--app-icon-choice': color.color } as CSSProperties}
-              />
-              <strong>{color.name}</strong>
-            </label>
-          ))}
-        </div>
-        <p className="dialog-message app-icon-install-hint">
-          Safari reads this icon when the page opens. After changing it, reload
-          once before adding Agentic Remote to the Home Screen. Remove and
-          re-add an existing installation to update its launcher icon and
-          full-height status-bar mode.
-        </p>
       </section>
 
       <section className="app-settings-section">
@@ -6760,12 +6687,10 @@ function App() {
     Partial<Record<ShortcutId, ShortcutBinding>>
   >(() => readStoredShortcuts())
   const [viewportHeight, setViewportHeight] = useState(() =>
-    typeof window === 'undefined'
-      ? 800
-      : window.visualViewport?.height || window.innerHeight,
+    currentAppViewportGeometry(false).height,
   )
   const [viewportOffsetTop, setViewportOffsetTop] = useState(() =>
-    typeof window === 'undefined' ? 0 : window.visualViewport?.offsetTop || 0,
+    currentAppViewportGeometry(false).offsetTop,
   )
   const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
     ({
@@ -6783,8 +6708,6 @@ function App() {
     useState<DefaultSessionFolders>(readDefaultSessionFolders)
   const [accentTheme, setAccentTheme] =
     useState<AccentTheme>(readAccentTheme)
-  const [appIcon, setAppIcon] =
-    useState<AppIconPreference>(readAppIconPreference)
   const [appearance, setAppearance] = useState<Appearance>(() =>
     appearanceFrom(readStoredOrder<unknown>(appearanceStorageKey, 'graphite')),
   )
@@ -6801,7 +6724,7 @@ function App() {
       if (themeColor && previousColor !== undefined) themeColor.content = previousColor
     }
   }, [appearance])
-  const brandIcon = useMemo(() => appIconUrl(appIcon), [appIcon])
+  const brandIcon = '/icon.svg'
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
     readStoredOrder('agentic-remote:computer-order', []),
@@ -7679,9 +7602,10 @@ function App() {
           viewport &&
           window.innerHeight - viewport.height > 80,
       )
+      const geometry = currentAppViewportGeometry(open)
       setKeyboardOpen(open)
-      setViewportHeight(viewport?.height || window.innerHeight)
-      setViewportOffsetTop(viewport?.offsetTop || 0)
+      setViewportHeight(geometry.height)
+      setViewportOffsetTop(geometry.offsetTop)
     }
     const timers = new Set<number>()
     const handleViewportChange = () => {
@@ -8578,10 +8502,6 @@ function App() {
       // A blocked storage quota should not stop this tab from changing color.
     }
   }, [accentTheme])
-
-  useEffect(() => {
-    return applyAppIcon(appIcon)
-  }, [appIcon])
 
   function durableComposerDraft(key: string, draft: ComposerDraft): ComposerDraft {
     const history = composerHistoryRef.current[key]
@@ -14998,13 +14918,8 @@ function App() {
       ) : null}
       <AppSettingsDialog
         accentTheme={accentTheme}
-        appIcon={appIcon}
         onApplyUpdate={() => void applyPwaUpdate()}
         onAccentThemeChange={setAccentTheme}
-        onAppIconChange={(preference) => {
-          saveAppIconPreference(preference)
-          setAppIcon(preference)
-        }}
         appearance={appearance}
         onAppearanceChange={(next) => {
           localStorage.setItem(appearanceStorageKey, JSON.stringify(next))

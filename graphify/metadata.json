@@ -224,9 +224,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 152,
+  "communities": 143,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9709,
+  "edges": 9716,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -327,11 +327,11 @@
     "server/event-log.ts": "c5fc6997c675fda84e89c7b0994dea55ee57b2ddc16c01bcacea01dc6df6c378",
     "server/file-upload-routes.test.ts": "b0337fe1ee691d1222bdd489e15937bc26202f5cfa746a1dbebcf4d9034a7f5e",
     "server/file-upload-routes.ts": "0317d860de68ea94f6757fe910f2097147837ce26737141e3bf6ace411fa43a5",
-    "server/hub-routes.test.ts": "4af07f9bea3afbe02126001e7f9ae3bd85104e5407b4d7177919b92a985c84ac",
-    "server/hub-routes.ts": "76dcc062e32ce83e8427a0e93567d76c585e4f5fd0fcfd8cefe66b00a56a413d",
+    "server/hub-routes.test.ts": "9203d8748fdf5bf091a9937c1b90709b130a6dcfbc943b6278ee1c1a1618cba1",
+    "server/hub-routes.ts": "f29caa19bf6b39451edbfbfd71165116f4e8dc3f53600262d925d4e52c928711",
     "server/index.ts": "e2275fd55a6ea6aafb5e9473079b6a2b59647071dd13e59dd0666b5f2d3947db",
-    "server/knowledge-store.test.ts": "b307d462baf6fdcc016f499edce2593b4b25def50e76ef3835de764f4d3d4f7f",
-    "server/knowledge-store.ts": "ffc85e7425848582206975d54174e50f2a4e9896be5ed981b766e1ed97a32b9a",
+    "server/knowledge-store.test.ts": "a4a6b6641d750a7e45ca0645dacdf9bf26f214be585248512e266620d6ca6453",
+    "server/knowledge-store.ts": "d4ca2ff54716deefb502b190810bd82f4d0af2a50d99ca0853a4bfca0ab1799d",
     "server/multi-node.test.ts": "4473924e1b3c066de30a1a1e2888b2eaf43e3ae1727181a8d044cfc34bc63174",
     "server/node-identity.ts": "5a997e31e6717b7f5ba8b8de3dd036120fb4695ee316a84d7a85027fcceef66e",
     "server/node-routes.ts": "85fcb0339a72ed8b8a166e44dfa70d62b52d658acba6fcc2e43639e8f0cb2fa0",
@@ -368,10 +368,10 @@
     "server/session-directory.ts": "8260aee7e736e5442329ca4fc000e63e606a5c349f4f4fe3f79b59bd65636f1e",
     "server/session-enqueue-clear.test.ts": "3a033c126740c580cad87d516ddff90b1e573c2e4170fb92d3b895c5d26142b7",
     "server/session-knowledge-path.ts": "48124e4542c08d5875e22962bb2cc5787bf96d1ab056c5662f23d2486eae336a",
-    "server/session-knowledge-routes.test.ts": "35d9598795e56cffc95530a43b50c00ff0f2de7f2433827d3ffc4c141a36c9a7",
-    "server/session-knowledge-routes.ts": "ae485e301e45d30be94cd62872e6face39a20be379f9287bc4e377ecff1b5f28",
+    "server/session-knowledge-routes.test.ts": "ac1b205e2ca63c198145578de1db540f43431f6cb322c204c8b874f77ab2f1e8",
+    "server/session-knowledge-routes.ts": "3588d8ffc58f901c50b836cb36cbc0bce4964c0ff7339fe255f5341d3669efa6",
     "server/session-knowledge-store.test.ts": "64c0e1f5705f401f78aa78310c726a2789676fe843c036c89d8ac959719c35e2",
-    "server/session-knowledge-store.ts": "ff646e2e4f208ebf76a9c45fdb73fc6c5cd1056c2477d3535ab9f9493bf65381",
+    "server/session-knowledge-store.ts": "b0aaae093b386801dfc634241277caf38903e7aaf4c7a943daad734217c0774c",
     "server/session-metadata-provenance.test.ts": "be2c62820258c7847f63664e714b26e4b518e41aa9ef7f02bb3efa7aaef97f66",
     "server/session-reply-durability.test.ts": "735188f7d527094ff2f35956f76a0f69955cba4f3df69bcbc7f9e5cfa1cbe630",
     "server/session-resource-cancellation.test.ts": "cda2bdb53d746f5062c123d18289a61b745fb1b9da5ee642c3142d01310b06a8",
@@ -508,7 +508,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 3438,
+  "nodes": 3441,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -565,23 +565,21 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "2f03ea4d16af17acadd45801c0741cac5fd5e15c88270fc09a2e361ee689566a",
-    "communities.json": "6e9753a8fed8bbe401b371db4ce002fa297e2854e8a9022947baa62ebe9ffe8a",
-    "graph.html": "bac5832fed9ad7d828bd58b4f5ff28039e304dd2b74eb7cceea4df5ab16ae8a5",
-    "graph.json": "69bd30e9a5fd04b1cc5b0c2b20cbd91a0526c1f648cdf02dc228b899c1ba8069"
+    "GRAPH_REPORT.md": "975b9fbbfc3f09db335ffeca0241663fbce6302debd66072ec515f3267cbb393",
+    "communities.json": "5adcb9857521c6eb0186e989d0d4f3413d83d5405686a32097b42a9ee44a749a",
+    "graph.html": "bc5cc205eb8e3f46b8e0a656de51480f507fd196c63bfaba78091e39214aebb5",
+    "graph.json": "288c59dedf3424773e11f59ca9b8159d280f35b70332dbfdc5d141c82327b4b3"
   },
   "schema_version": 1,
-  "source_commit": "634092613d1281cd9b1014a327dc8f25b5f77289",
-  "source_fingerprint": "f35d4a2c32d36ce7863020fa038dec8b7212fb177f4567a24fb4d420a4726a6c",
+  "source_commit": "f3256ace2a0bc2a66812c4f58c40210c91165856",
+  "source_fingerprint": "1baa5f5c84bd16340e569c7f0499e5d55f92ab9634dee02955b792aae14ee9cd",
   "working_tree_changes": [
-    "e2e/nested-knowledge.pw.ts",
     "server/hub-routes.test.ts",
     "server/hub-routes.ts",
     "server/knowledge-store.test.ts",
     "server/knowledge-store.ts",
     "server/session-knowledge-routes.test.ts",
     "server/session-knowledge-routes.ts",
-    "src/KnowledgeRootChoices.test.tsx",
-    "src/KnowledgeRootChoices.tsx"
+    "server/session-knowledge-store.ts"
   ]
 }

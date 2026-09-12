@@ -453,11 +453,21 @@ export async function registerSessionKnowledgeRoutes(
                   name: ownedBasename(selectedAbsolutePath),
                 })
                 if (!candidate.created) {
-                  const reused = await knowledge.commitPreparedRoot(candidate.root)
-                  preparedRootId = reused.root.id
+                  const reservation = await knowledge.reservePreparedRoot(candidate.root)
+                  preparedRootId = reservation.root.id
+                  try {
+                    validate()
+                  } catch (error) {
+                    await reservation.rollback()
+                    throw error
+                  }
                   return {
-                    source: { kind: 'catalog-root', root: reused.root },
+                    source: { kind: 'catalog-root', root: reservation.root },
                     path: '.',
+                    finalize: reservation.finalize,
+                    rollback: async () => {
+                      await reservation.rollback()
+                    },
                   }
                 }
                 return {
@@ -466,25 +476,22 @@ export async function registerSessionKnowledgeRoutes(
                   catalogAddition: {
                     rootId: candidate.root.id,
                     commit: async () => {
-                      const added = await knowledge.commitPreparedRoot(candidate.root)
-                      preparedRootId = added.root.id
+                      const reservation = await knowledge.reservePreparedRoot(candidate.root)
+                      preparedRootId = reservation.root.id
                       try {
                         validate()
                       } catch (error) {
-                        if (added.created) {
-                          await knowledge.removeRootAtRevision(added.root.id, added.revision)
-                        }
+                        await reservation.rollback()
                         throw error
                       }
                       return {
-                        source: { kind: 'catalog-root' as const, root: added.root },
+                        source: { kind: 'catalog-root' as const, root: reservation.root },
                         path: '.',
-                        created: added.created,
-                        ...(added.created ? {
-                          rollback: async () => {
-                            await knowledge.removeRootAtRevision(added.root.id, added.revision)
-                          },
-                        } : {}),
+                        created: reservation.created,
+                        finalize: reservation.finalize,
+                        rollback: async () => {
+                          await reservation.rollback()
+                        },
                       }
                     },
                   },

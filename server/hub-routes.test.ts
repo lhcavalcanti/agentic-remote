@@ -269,7 +269,8 @@ describe('hub routes', () => {
     const writing = new Promise<void>((resolve) => { entered = resolve })
     const gate = new Promise<void>((resolve) => { release = resolve })
     const roots = new Map<string, { id: string; computerId: string }>()
-    const removeRootAtRevision = vi.fn(async (id: string) => roots.delete(id))
+    const rollback = vi.fn(async () => roots.delete('old-root'))
+    const finalize = vi.fn(async () => undefined)
     const app = Fastify()
     await registerHubRoutes(app, {
       listComputers: () => [{ id: 'worker', name: 'Worker' }],
@@ -281,14 +282,13 @@ describe('hub routes', () => {
       on: () => undefined,
       off: () => undefined,
     } as unknown as ComputerManager, {
-      addRootWithStatus: async (input: { computerId: string }) => {
+      reserveRoot: async (input: { computerId: string }) => {
         const root = { ...input, id: 'old-root' }
         roots.set(root.id, root)
         entered()
         await gate
-        return { root, created: true, revision: 0 }
+        return { root, created: true, rollback, finalize }
       },
-      removeRootAtRevision,
     } as unknown as KnowledgeStore)
     try {
       const response = app.inject({
@@ -305,7 +305,8 @@ describe('hub routes', () => {
       expect(rejected.statusCode).toBe(409)
       expect(rejected.json().error).toContain('pairing changed while saving')
       expect([...roots.keys()]).toEqual(['fresh-root'])
-      expect(removeRootAtRevision).toHaveBeenCalledExactlyOnceWith('old-root', 0)
+      expect(rollback).toHaveBeenCalledOnce()
+      expect(finalize).not.toHaveBeenCalled()
     } finally {
       release()
       await app.close()

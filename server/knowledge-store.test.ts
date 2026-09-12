@@ -49,30 +49,77 @@ describe('KnowledgeStore', () => {
     await expect(restored.removeRoot(first.id)).resolves.toBe(false)
   })
 
-  it('does not roll back a newly created root after another request reuses it', async () => {
+  it('keeps a provisional root when another requester finalizes it', async () => {
     const directory = await temporaryDirectory()
     const store = new KnowledgeStore(directory)
     await store.initialize()
-    const prepared = store.prepareRoot({
+    const input = {
       computerId: 'computer',
       computerName: 'development',
       path: '/home/user/notes',
       name: 'notes',
-    })
+    }
+    const creatorCandidate = store.prepareRoot(input)
+    const reuserCandidate = store.prepareRoot(input)
 
-    const created = await store.commitPreparedRoot(prepared.root)
-    const reused = await store.addRootWithStatus({
+    const creator = await store.reservePreparedRoot(creatorCandidate.root)
+    const reuser = await store.reservePreparedRoot(reuserCandidate.root)
+
+    expect(creator.created).toBe(true)
+    expect(reuser).toMatchObject({ root: creator.root, created: false })
+    await expect(creator.rollback()).resolves.toBe(false)
+    await reuser.finalize()
+    expect(store.getRoot(creator.root.id)).toEqual(creator.root)
+  })
+
+  it.each(['creator', 'reuser'] as const)(
+    'removes a provisional root after the %s rolls back first and both requests fail',
+    async (first) => {
+      const directory = await temporaryDirectory()
+      const store = new KnowledgeStore(directory)
+      await store.initialize()
+      const input = {
+        computerId: 'computer',
+        computerName: 'development',
+        path: '/home/user/notes',
+        name: 'notes',
+      }
+      const creatorCandidate = store.prepareRoot(input)
+      const reuserCandidate = store.prepareRoot(input)
+      const creator = await store.reservePreparedRoot(creatorCandidate.root)
+      const reuser = await store.reservePreparedRoot(reuserCandidate.root)
+      const reservations = { creator, reuser }
+      const second = first === 'creator' ? 'reuser' : 'creator'
+
+      await expect(reservations[first].rollback()).resolves.toBe(false)
+      await expect(reservations[second].rollback()).resolves.toBe(true)
+
+      expect(store.getRoot(creator.root.id)).toBeUndefined()
+      const restored = new KnowledgeStore(directory)
+      await restored.initialize()
+      expect(restored.listRoots()).toEqual([])
+    },
+  )
+
+  it('keeps a provisional root when the reuser finalizes before the creator rolls back', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
       computerId: 'computer',
       computerName: 'development',
       path: '/home/user/notes',
       name: 'notes',
-    })
+    }
+    const creatorCandidate = store.prepareRoot(input)
+    const reuserCandidate = store.prepareRoot(input)
+    const creator = await store.reservePreparedRoot(creatorCandidate.root)
+    const reuser = await store.reservePreparedRoot(reuserCandidate.root)
 
-    expect(created.created).toBe(true)
-    expect(reused).toMatchObject({ root: created.root, created: false })
-    await expect(store.removeRootAtRevision(created.root.id, created.revision))
-      .resolves.toBe(false)
-    expect(store.getRoot(created.root.id)).toEqual(created.root)
+    await reuser.finalize()
+    await expect(creator.rollback()).resolves.toBe(false)
+
+    expect(store.getRoot(creator.root.id)).toEqual(creator.root)
   })
 
   it('loads a state file written before roots replaced bookmarks', async () => {

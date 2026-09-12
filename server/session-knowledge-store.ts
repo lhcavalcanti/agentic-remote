@@ -102,6 +102,7 @@ interface LegacyUpdate {
 interface PreparedLocation {
   source: SessionKnowledgeSource
   path: string
+  finalize?: () => Promise<void>
   rollback?: () => Promise<void>
   catalogAddition?: {
     rootId: string
@@ -109,6 +110,7 @@ interface PreparedLocation {
       source: SessionKnowledgeSource
       path: string
       created: boolean
+      finalize?: () => Promise<void>
       rollback?: () => Promise<void>
     }>
   }
@@ -298,8 +300,10 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     prepare?: () => Promise<PreparedLocation>,
   ): Promise<SessionKnowledgeBinding> {
     const identity = { computerId, sessionId }
+    let beganCatalogAddition = false
+    let finalize: (() => Promise<void>) | undefined
     let rollback: (() => Promise<void>) | undefined
-    return this.change(async (next) => {
+    const update = this.change(async (next) => {
       const current = this.snapshot(identity)
       if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
         throw new SessionKnowledgeReferenceError('Expected revision must be a nonnegative integer.', 400)
@@ -314,13 +318,20 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       let committed = prepared
       if (prepared?.catalogAddition) {
         await this.beginCatalogAddition(prepared.catalogAddition.rootId)
+        beganCatalogAddition = true
         try {
           const addition = await prepared.catalogAddition.commit()
+          finalize = addition.finalize
+          rollback = addition.rollback
           committed = { ...prepared, ...addition, catalogAddition: undefined }
-          if (!addition.created) await this.clearCatalogAddition()
+          if (!addition.created) {
+            await this.clearCatalogAddition()
+            beganCatalogAddition = false
+          }
         } catch (error) {
           try {
             await this.clearCatalogAddition()
+            beganCatalogAddition = false
           } catch (cleanupError) {
             this.catalogCleanupError = new SessionKnowledgePersistenceError(cleanupError)
             throw new SessionKnowledgePersistenceError(new AggregateError([error, cleanupError]))
@@ -329,6 +340,7 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
           throw new SessionKnowledgePersistenceError(error)
         }
       }
+      finalize = committed?.finalize
       rollback = committed?.rollback
       const source = committed?.source ?? input.source ?? undefined
       const selectedPath = source
@@ -362,7 +374,10 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       if (rollback) {
         try {
           await rollback()
-          await this.clearCatalogAddition()
+          if (beganCatalogAddition) {
+            await this.clearCatalogAddition()
+            beganCatalogAddition = false
+          }
         } catch (rollbackError) {
           if (this.catalogRecovery) {
             this.catalogCleanupError = new SessionKnowledgePersistenceError(rollbackError)
@@ -371,6 +386,10 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
         }
       }
       return error
+    })
+    return update.then(async (binding) => {
+      await finalize?.()
+      return binding
     })
   }
 

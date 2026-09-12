@@ -544,16 +544,17 @@ describe('session Knowledge routes', () => {
 
   it('keeps a newly saved root when another request reuses it before stale rollback', async () => {
     const { app, route, root, knowledge, manager, store } = await fixture()
-    const originalCommit = knowledge.commitPreparedRoot.bind(knowledge)
+    const originalReserve = knowledge.reservePreparedRoot.bind(knowledge)
     let reusedRootId: string | undefined
-    vi.spyOn(knowledge, 'commitPreparedRoot').mockImplementationOnce(async (candidate) => {
-      const added = await originalCommit(candidate)
-      expect(added.created).toBe(true)
-      const reused = await originalCommit(candidate)
+    vi.spyOn(knowledge, 'reservePreparedRoot').mockImplementationOnce(async (candidate) => {
+      const created = await originalReserve(candidate)
+      expect(created.created).toBe(true)
+      const reused = await originalReserve(candidate)
       expect(reused.created).toBe(false)
       reusedRootId = reused.root.id
+      await reused.finalize()
       manager.rePair('library')
-      return added
+      return created
     })
 
     const response = await app.inject({
@@ -578,13 +579,13 @@ describe('session Knowledge routes', () => {
 
   it('keeps a hub-created root when a session reuses it before stale rollback', async () => {
     const { app, route, root, knowledge, manager, store } = await fixture()
-    const originalAdd = knowledge.addRootWithStatus.bind(knowledge)
+    const originalReserve = knowledge.reserveRoot.bind(knowledge)
     const held = gate()
-    vi.spyOn(knowledge, 'addRootWithStatus').mockImplementationOnce(async (input) => {
-      const added = await originalAdd(input)
+    vi.spyOn(knowledge, 'reserveRoot').mockImplementationOnce(async (input) => {
+      const reservation = await originalReserve(input)
       held.start()
       await held.wait
-      return added
+      return reservation
     })
     const adding = app.inject({
       method: 'POST',

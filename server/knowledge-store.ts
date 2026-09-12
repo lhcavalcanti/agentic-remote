@@ -7,10 +7,17 @@ interface KnowledgeState {
   roots: KnowledgeRoot[]
 }
 
+export interface KnowledgeRootReservation {
+  root: KnowledgeRoot
+  created: boolean
+  finalize: () => Promise<void>
+  rollback: () => Promise<boolean>
+}
+
 export class KnowledgeStore {
   private readonly statePath: string
   private state: KnowledgeState = { roots: [] }
-  private readonly rootRevisions = new Map<string, number>()
+  private readonly rootReservations = new Map<string, Set<string>>()
   private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly directory: string) {
@@ -26,8 +33,7 @@ export class KnowledgeStore {
       // Rebuild from known fields so a file written before roots replaced
       // bookmarks loads, and the obsolete key is not carried forward.
       this.state = { roots: parsed.roots ?? [] }
-      this.rootRevisions.clear()
-      for (const root of this.state.roots) this.rootRevisions.set(root.id, 0)
+      this.rootReservations.clear()
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error
@@ -48,7 +54,9 @@ export class KnowledgeStore {
   async addRoot(
     root: Omit<KnowledgeRoot, 'id' | 'createdAt'>,
   ): Promise<KnowledgeRoot> {
-    return (await this.addRootWithStatus(root)).root
+    const reservation = await this.reserveRoot(root)
+    await reservation.finalize()
+    return reservation.root
   }
 
   prepareRoot(
@@ -69,31 +77,30 @@ export class KnowledgeStore {
         }
   }
 
-  async addRootWithStatus(
+  reserveRoot(
     root: Omit<KnowledgeRoot, 'id' | 'createdAt'>,
-  ): Promise<{ root: KnowledgeRoot; created: boolean; revision: number }> {
-    return this.commitPreparedRoot(this.prepareRoot(root).root)
+  ): Promise<KnowledgeRootReservation> {
+    return this.reservePreparedRoot(this.prepareRoot(root).root)
   }
 
-  commitPreparedRoot(root: KnowledgeRoot): Promise<{
-    root: KnowledgeRoot
-    created: boolean
-    revision: number
-  }> {
+  reservePreparedRoot(root: KnowledgeRoot): Promise<KnowledgeRootReservation> {
     return this.enqueue(async () => {
       const existing = this.state.roots.find(
         (entry) => entry.computerId === root.computerId && entry.path === root.path,
       )
       if (existing) {
-        const revision = (this.rootRevisions.get(existing.id) ?? 0) + 1
-        this.rootRevisions.set(existing.id, revision)
-        return { root: structuredClone(existing), created: false, revision }
+        const reservations = this.rootReservations.get(existing.id)
+        if (!reservations) return this.reservation(existing, false)
+        const token = randomUUID()
+        reservations.add(token)
+        return this.reservation(existing, false, token)
       }
       const next = { roots: [structuredClone(root), ...this.state.roots] }
       await this.write(next)
       this.state = next
-      this.rootRevisions.set(root.id, 0)
-      return { root: structuredClone(root), created: true, revision: 0 }
+      const token = randomUUID()
+      this.rootReservations.set(root.id, new Set([token]))
+      return this.reservation(root, true, token)
     })
   }
 
@@ -104,20 +111,7 @@ export class KnowledgeStore {
       const next = { roots: remaining }
       await this.write(next)
       this.state = next
-      this.rootRevisions.delete(id)
-      return true
-    })
-  }
-
-  removeRootAtRevision(id: string, revision: number): Promise<boolean> {
-    return this.enqueue(async () => {
-      if (this.rootRevisions.get(id) !== revision) return false
-      const remaining = this.state.roots.filter((entry) => entry.id !== id)
-      if (remaining.length === this.state.roots.length) return false
-      const next = { roots: remaining }
-      await this.write(next)
-      this.state = next
-      this.rootRevisions.delete(id)
+      this.rootReservations.delete(id)
       return true
     })
   }
@@ -141,8 +135,61 @@ export class KnowledgeStore {
       const next = { roots: remaining }
       await this.write(next)
       this.state = next
-      for (const id of removedIds) this.rootRevisions.delete(id)
+      for (const id of removedIds) this.rootReservations.delete(id)
       return removed
+    })
+  }
+
+  private reservation(
+    root: KnowledgeRoot,
+    created: boolean,
+    token?: string,
+  ): KnowledgeRootReservation {
+    let settled = false
+    return {
+      root: structuredClone(root),
+      created,
+      finalize: async () => {
+        if (settled) return
+        if (token) await this.finalizeReservation(root.id, token)
+        settled = true
+      },
+      rollback: async () => {
+        if (settled) return false
+        const removed = token
+          ? await this.rollbackReservation(root.id, token)
+          : false
+        settled = true
+        return removed
+      },
+    }
+  }
+
+  private finalizeReservation(id: string, token: string): Promise<void> {
+    return this.enqueue(async () => {
+      const reservations = this.rootReservations.get(id)
+      if (reservations?.has(token)) this.rootReservations.delete(id)
+    })
+  }
+
+  private rollbackReservation(id: string, token: string): Promise<boolean> {
+    return this.enqueue(async () => {
+      const reservations = this.rootReservations.get(id)
+      if (!reservations?.has(token)) return false
+      if (reservations.size > 1) {
+        reservations.delete(token)
+        return false
+      }
+      const remaining = this.state.roots.filter((entry) => entry.id !== id)
+      if (remaining.length === this.state.roots.length) {
+        this.rootReservations.delete(id)
+        return false
+      }
+      const next = { roots: remaining }
+      await this.write(next)
+      this.state = next
+      this.rootReservations.delete(id)
+      return true
     })
   }
 

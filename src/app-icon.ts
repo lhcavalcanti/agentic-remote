@@ -1,4 +1,5 @@
 import {
+  appIconStorageKey,
   appIconPreferenceFrom,
   appIconUrl,
   appleTouchIconPath,
@@ -8,6 +9,7 @@ import {
 
 export {
   appIconColors,
+  appIconStorageKey,
   appIconPreferenceFrom,
   appIconStyles,
   appIconSvg,
@@ -18,8 +20,6 @@ export {
   type AppIconPreference,
   type AppIconStyle,
 } from './app-icon-design.js'
-
-export const appIconStorageKey = 'agentic-remote:app-icon'
 
 export function readAppIconPreference(): AppIconPreference {
   try {

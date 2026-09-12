@@ -59,6 +59,9 @@ describe('service worker build caches', () => {
     expect(caches.open).toHaveBeenCalledWith('agentic-remote-shell-build-b')
     const requests = cache.addAll.mock.calls[0][0] as Request[]
     expect(requests.map((request) => request.url)).toContain('https://example.test/')
+    expect(requests.map((request) => request.url)).toContain(
+      'https://example.test/app-icon-bootstrap.js',
+    )
     expect(requests.every((request) => request.cache === 'reload')).toBe(true)
   })
 

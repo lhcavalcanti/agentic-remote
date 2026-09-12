@@ -16,9 +16,8 @@ describe('mobile safe areas', () => {
     ])
 
     expect(html).toContain('content="black-translucent"')
-    expect(html).toMatch(
-      /rel="apple-touch-icon"[\s\S]*sizes="180x180"/,
-    )
+    expect(html).toContain('<script src="/app-icon-bootstrap.js"></script>')
+    expect(html).not.toMatch(/<link\s+rel="apple-touch-icon"/)
     expect(css).toContain(
       '--app-safe-area-top: env(safe-area-inset-top, 0px)',
     )
@@ -32,7 +31,7 @@ describe('mobile safe areas', () => {
       /\.app-shell--keyboard-open\s*\{[^}]*--app-content-safe-area-top:\s*0px/s,
     )
     expect(css).toMatch(
-      /@media \(display-mode:\s*standalone\)[\s\S]*?\.app-shell::before\s*\{[^}]*height:\s*var\(--app-safe-area-top\)[^}]*background:\s*#111210[^}]*pointer-events:\s*none/s,
+      /@media \(display-mode:\s*standalone\)[\s\S]*?\.app-shell::before\s*\{[^}]*height:\s*var\(--app-safe-area-top\)[^}]*background:\s*var\(--bg\)[^}]*pointer-events:\s*none/s,
     )
     expect(css).toMatch(
       /\.app-shell--keyboard-open::before\s*\{[^}]*display:\s*none/s,

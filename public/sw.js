@@ -5,6 +5,7 @@ const VERSION =
 const CACHE_NAME = `agentic-remote-shell-${VERSION}`
 const SHELL = [
   '/',
+  '/app-icon-bootstrap.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

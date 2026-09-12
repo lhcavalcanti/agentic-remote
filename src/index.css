@@ -6785,7 +6785,7 @@ button {
     right: 0;
     left: 0;
     height: var(--app-safe-area-top);
-    background: #111210;
+    background: var(--bg);
     pointer-events: none;
   }
 

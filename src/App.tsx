@@ -3902,9 +3902,10 @@ function AppSettingsDialog({
           ))}
         </div>
         <p className="dialog-message app-icon-install-hint">
-          iPhone and iPad capture this icon when you add Agentic Remote to the
-          Home Screen. Remove and re-add an existing installation to update its
-          launcher icon and full-height status-bar mode.
+          Safari reads this icon when the page opens. After changing it, reload
+          once before adding Agentic Remote to the Home Screen. Remove and
+          re-add an existing installation to update its launcher icon and
+          full-height status-bar mode.
         </p>
       </section>
 

@@ -1,6 +1,8 @@
 import { readFile, readdir } from 'node:fs/promises'
+import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import {
+  appIconBootstrapScript,
   appIconColors,
   appIconStyles,
   defaultAppIcon,
@@ -23,6 +25,47 @@ async function pngSize(path: string): Promise<{
 }
 
 describe('PWA app icon assets', () => {
+  it('selects the persisted Apple touch icon during initial head parsing', async () => {
+    const script = await readFile(
+      new URL('../public/app-icon-bootstrap.js', import.meta.url),
+      'utf8',
+    )
+    expect(script).toBe(appIconBootstrapScript())
+
+    const renderLink = (stored: string | null, failure?: Error) => {
+      let link = ''
+      vm.runInNewContext(script, {
+        document: {
+          write: (value: string) => {
+            link = value
+          },
+        },
+        localStorage: {
+          getItem: () => {
+            if (failure) throw failure
+            return stored
+          },
+        },
+      })
+      return link
+    }
+
+    for (const style of appIconStyles) {
+      for (const color of appIconColors) {
+        expect(renderLink(JSON.stringify({
+          style: style.id,
+          color: color.id,
+        }))).toBe(
+          `<link rel="apple-touch-icon" sizes="180x180" href="/icons/app/app-${style.id}-${color.id}-180.png">`,
+        )
+      }
+    }
+    const fallback =
+      '<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">'
+    expect(renderLink('{"style":"unknown","color":"teal"}')).toBe(fallback)
+    expect(renderLink(null, new Error('Storage unavailable'))).toBe(fallback)
+  })
+
   it('ships every selectable iPhone icon as an opaque 180px PNG', async () => {
     const files = await readdir(new URL('../public/icons/app/', import.meta.url))
     expect(files.sort()).toEqual(

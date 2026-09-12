@@ -2,6 +2,7 @@ import { copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { chromium } from '@playwright/test'
 import {
+  appIconBootstrapScript,
   appIconColors,
   appIconStyles,
   appIconSvg,
@@ -31,6 +32,10 @@ async function renderIcon(
 }
 
 try {
+  await writeFile(
+    resolve(root, 'public/app-icon-bootstrap.js'),
+    appIconBootstrapScript(),
+  )
   for (const style of appIconStyles) {
     for (const color of appIconColors) {
       await renderIcon(

@@ -8,6 +8,7 @@ export const appIconColors = [
 ] as const
 
 export type AppIconColor = (typeof appIconColors)[number]['id']
+export const appIconStorageKey = 'agentic-remote:app-icon'
 
 export const appIconStyles = [
   {
@@ -131,4 +132,27 @@ export function appleTouchIconPath(
 ): string {
   const normalized = appIconPreferenceFrom(preference)
   return `/icons/app/app-${normalized.style}-${normalized.color}-180.png`
+}
+
+export function appIconBootstrapScript(): string {
+  const styles = JSON.stringify(appIconStyles.map((entry) => entry.id))
+  const colors = JSON.stringify(appIconColors.map((entry) => entry.id))
+  return `(() => {
+  const fallback = '/icons/apple-touch-icon.png'
+  let href = fallback
+  try {
+    const value = JSON.parse(localStorage.getItem('${appIconStorageKey}') || 'null')
+    if (
+      value &&
+      ${styles}.includes(value.style) &&
+      ${colors}.includes(value.color)
+    ) {
+      href = '/icons/app/app-' + value.style + '-' + value.color + '-180.png'
+    }
+  } catch {}
+  document.write(
+    '<link rel="apple-touch-icon" sizes="180x180" href="' + href + '">',
+  )
+})()
+`
 }

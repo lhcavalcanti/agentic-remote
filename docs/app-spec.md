@@ -944,8 +944,9 @@ Priority order:
   stolen.
 - Mobile controls MUST use at least 40px targets where practical.
 - Inputs MUST use 16px text on iOS to prevent browser zoom.
-- All headers, drawer branding, dialogs, and full-height panels MUST remain
-  below the Dynamic Island.
+- In installed iOS mode, the app background MUST extend behind the status bar
+  and Dynamic Island. Headers, drawer branding, dialogs, and full-height panel
+  controls MUST remain below the safe-area inset.
 - iOS standalone mode MUST use a safe top fallback when
   `env(safe-area-inset-top)` incorrectly reports zero.
 - Composer and dialogs MUST respect the home indicator and visual viewport.
@@ -953,6 +954,13 @@ Priority order:
 - In browser and split-size modes, the entire mobile shell MUST follow the
   current visual viewport height and offset even when the keyboard is closed;
   it MUST NOT assume full-screen dimensions.
+- App settings MUST offer five distinct Agentic Remote icon styles and a
+  separate durable icon color. The choice MUST update the in-app brand and
+  favicon immediately without changing the tab-local UI accent.
+- The selected icon MUST point the Apple touch icon at a committed opaque
+  180px PNG for the next Home Screen installation. The UI MUST explain that an
+  existing iPhone or iPad installation needs to be removed and re-added before
+  its launcher icon or install-time status-bar mode changes.
 
 ## 12. PWA updates
 

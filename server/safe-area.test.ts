@@ -9,9 +9,16 @@ describe('mobile safe areas', () => {
     )
   })
 
-  it('keeps top-level iOS surfaces below the Dynamic Island', async () => {
-    const css = await readFile(new URL('../src/index.css', import.meta.url), 'utf8')
+  it('fills the iPhone status-bar area while keeping controls below the Dynamic Island', async () => {
+    const [css, html] = await Promise.all([
+      readFile(new URL('../src/index.css', import.meta.url), 'utf8'),
+      readFile(new URL('../index.html', import.meta.url), 'utf8'),
+    ])
 
+    expect(html).toContain('content="black-translucent"')
+    expect(html).toMatch(
+      /rel="apple-touch-icon"[\s\S]*sizes="180x180"/,
+    )
     expect(css).toContain(
       '--app-safe-area-top: env(safe-area-inset-top, 0px)',
     )
@@ -23,6 +30,12 @@ describe('mobile safe areas', () => {
     )
     expect(css).toMatch(
       /\.app-shell--keyboard-open\s*\{[^}]*--app-content-safe-area-top:\s*0px/s,
+    )
+    expect(css).toMatch(
+      /@media \(display-mode:\s*standalone\)[\s\S]*?\.app-shell::before\s*\{[^}]*height:\s*var\(--app-safe-area-top\)[^}]*background:\s*#111210[^}]*pointer-events:\s*none/s,
+    )
+    expect(css).toMatch(
+      /\.app-shell--keyboard-open::before\s*\{[^}]*display:\s*none/s,
     )
     expect(css).toMatch(
       /top:\s*max\(\s*var\(--visual-viewport-top,\s*0px\),\s*var\(--app-safe-area-top\)/s,

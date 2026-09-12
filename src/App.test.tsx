@@ -318,7 +318,9 @@ function mockAddedKnowledgeRoot(root: KnowledgeRoot) {
 async function chooseKnowledgeRoot(id: string) {
   const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === id)
   if (!root) throw new Error(`Unknown fixture root: ${id}`)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+  const reopen = screen.getByRole('button', { name: 'Choose Knowledge root' })
+  await waitFor(() => expect(reopen).toBeEnabled())
+  fireEvent.click(reopen)
   const dialog = await screen.findByRole('dialog', { name: /Choose a (session root|Knowledge folder)/ })
   const choice = within(dialog).queryByRole('radio', {
     name: `${root.name} on ${root.computerName}: ${root.path}`,
@@ -346,7 +348,7 @@ function fixtureKnowledgeBinding(computerId: string, sessionId: string): Session
         fixtureKnowledgeRoots[0]
     saved = {
       computerId, sessionId, rootId: root?.id || null,
-      revision: root ? 1 : 0, available: Boolean(root), root,
+      rootPath: '.', revision: root ? 1 : 0, available: Boolean(root), root,
     }
     fixtureKnowledgeBindings.set(key, saved)
   }
@@ -445,6 +447,277 @@ describe('App', () => {
     expect(executeCommand).not.toHaveBeenCalled()
     expect(sendMessage).not.toHaveBeenCalled()
     expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+  })
+
+  it('roots a session at a nested folder without adding shared root options', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    const key = `${computer.id}:${session.id}`
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id,
+      sessionId: session.id,
+      rootId: null,
+      rootPath: '.',
+      revision: 0,
+      available: false,
+    })
+    vi.mocked(listDirectories).mockImplementation(async (_computerId, path) => {
+      if (path === `${knowledgeRoot.path}/projects`) {
+        return {
+          path,
+          parent: knowledgeRoot.path,
+          directories: [{
+            name: 'agentic-remote',
+            path: `${path}/agentic-remote`,
+          }],
+        }
+      }
+      if (path === `${knowledgeRoot.path}/projects/agentic-remote`) {
+        return {
+          path,
+          parent: `${knowledgeRoot.path}/projects`,
+          directories: [],
+        }
+      }
+      return {
+        path: knowledgeRoot.path,
+        directories: [{
+          name: 'projects',
+          path: `${knowledgeRoot.path}/projects`,
+        }],
+      }
+    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_rootId, path = '.') => ({
+        path,
+        entries: path === '.'
+          ? [{
+              name: 'README.md',
+              path: 'README.md',
+              kind: 'markdown',
+              size: 20,
+            }]
+          : [],
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'README.md',
+      path: 'README.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 20,
+      content: '# Scoped guide',
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const choose = screen.getByRole('button', { name: 'Choose Knowledge root' })
+    await waitFor(() => expect(choose).toBeEnabled())
+    fireEvent.click(choose)
+    const chooser = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    fireEvent.click(within(chooser).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    }))
+    const optionCount = within(chooser).getAllByRole('radio').length
+    fireEvent.click(await within(chooser).findByRole('button', { name: 'projects' }))
+    fireEvent.click(await within(chooser).findByRole('button', {
+      name: 'agentic-remote',
+    }))
+
+    expect(within(chooser).getAllByRole('radio')).toHaveLength(optionCount)
+    expect(within(chooser).queryByRole('radio', {
+      name: /agentic-remote/,
+    })).not.toBeInTheDocument()
+    fireEvent.click(within(chooser).getByRole('button', {
+      name: 'Use for this session',
+    }))
+
+    await waitFor(() =>
+      expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        {
+          rootId: knowledgeRoot.id,
+          rootPath: 'projects/agentic-remote',
+          expectedRevision: 0,
+        },
+      ),
+    )
+    await screen.findByText(`agentic-remote · ${knowledgeRoot.computerName}`)
+    expect(listKnowledgeEntries).toHaveBeenCalledWith(
+      knowledgeRoot.id,
+      '.',
+      'projects/agentic-remote',
+    )
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'README.md' }))
+    await screen.findByRole('heading', { name: 'Scoped guide' })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Ask agent about file',
+    }))
+    expect(screen.getByLabelText('Message')).toHaveValue(
+      'Please review `/home/tester/docs/projects/agentic-remote/README.md` and help me with it.',
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )[key],
+    ).toMatchObject({
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/agentic-remote',
+      path: '.',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const reopened = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    await within(reopened).findByText('~/docs/projects/agentic-remote')
+    expect(within(reopened).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    })).toBeChecked()
+  })
+
+  it('keeps expansion state separate for sessions using different paths in one root', async () => {
+    const firstKey = `${computer.id}:${session.id}`
+    const secondKey = `${computer.id}:${secondSession.id}`
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    fixtureKnowledgeBindings.set(firstKey, {
+      computerId: computer.id,
+      sessionId: session.id,
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/first',
+      root: knowledgeRoot,
+      revision: 1,
+      available: true,
+    })
+    fixtureKnowledgeBindings.set(secondKey, {
+      computerId: computer.id,
+      sessionId: secondSession.id,
+      rootId: knowledgeRoot.id,
+      rootPath: 'projects/second',
+      root: knowledgeRoot,
+      revision: 1,
+      available: true,
+    })
+    localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+      [firstKey]: {
+        rootId: knowledgeRoot.id,
+        rootPath: 'projects/first',
+        path: '.',
+      },
+      [secondKey]: {
+        rootId: knowledgeRoot.id,
+        rootPath: 'projects/second',
+        path: '.',
+      },
+    }))
+    localStorage.setItem('agentic-remote:knowledge-expanded', JSON.stringify({
+      [`${knowledgeRoot.id}:projects/first`]: ['first-child'],
+      [`${knowledgeRoot.id}:projects/second`]: ['second-child'],
+    }))
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_rootId, path = '.', basePath = '.') => ({
+        path,
+        parent: path === '.' ? undefined : '.',
+        entries: path === '.'
+          ? [{
+              name: basePath.endsWith('/first') ? 'first-child' : 'second-child',
+              path: basePath.endsWith('/first') ? 'first-child' : 'second-child',
+              kind: 'directory',
+            }]
+          : [],
+      }),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('treeitem', { name: 'first-child' })
+    expect(screen.queryByRole('treeitem', { name: 'second-child' }))
+      .not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await screen.findByRole('treeitem', { name: 'second-child' })
+    expect(screen.queryByRole('treeitem', { name: 'first-child' }))
+      .not.toBeInTheDocument()
+    expect(listKnowledgeEntries).toHaveBeenCalledWith(
+      knowledgeRoot.id,
+      '.',
+      'projects/second',
+    )
+
+    const stored = JSON.parse(
+      localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+    )
+    expect(stored[`${knowledgeRoot.id}:projects/first`]).toEqual(['first-child'])
+    expect(stored[`${knowledgeRoot.id}:projects/second`]).toEqual(['second-child'])
+  })
+
+  it('adds a browsed subfolder to shared Knowledge only when explicitly saved', async () => {
+    const savedRoot: KnowledgeRoot = {
+      ...knowledgeRoot,
+      id: 'saved-project-root',
+      name: 'projects',
+      path: `${knowledgeRoot.path}/projects`,
+    }
+    mockKnowledgeRoots([knowledgeRoot])
+    mockAddedKnowledgeRoot(savedRoot)
+    vi.mocked(listDirectories).mockImplementation(async (_computerId, path) =>
+      path === savedRoot.path
+        ? {
+            path,
+            parent: knowledgeRoot.path,
+            directories: [],
+          }
+        : {
+            path: knowledgeRoot.path,
+            directories: [{ name: 'projects', path: savedRoot.path }],
+          },
+    )
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Choose Knowledge root',
+    }))
+    const chooser = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    const optionCount = within(chooser).getAllByRole('radio').length
+    fireEvent.click(await within(chooser).findByRole('button', { name: 'projects' }))
+
+    expect(within(chooser).getAllByRole('radio')).toHaveLength(optionCount)
+    expect(within(chooser).queryByRole('radio', {
+      name: `projects on ${savedRoot.computerName}: ${savedRoot.path}`,
+    })).not.toBeInTheDocument()
+    fireEvent.click(await within(chooser).findByRole('button', {
+      name: 'Save this root folder',
+    }))
+
+    await waitFor(() =>
+      expect(addKnowledgeRoot).toHaveBeenCalledWith({
+        computerId: savedRoot.computerId,
+        path: savedRoot.path,
+      }),
+    )
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(
+      computer.id,
+      session.id,
+      {
+        rootId: savedRoot.id,
+        expectedRevision: 1,
+      },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const reopened = await screen.findByRole('dialog', {
+      name: 'Choose a session root',
+    })
+    expect(within(reopened).getByRole('radio', {
+      name: `projects on ${savedRoot.computerName}: ${savedRoot.path}`,
+    })).toBeChecked()
   })
 
   it('uses the hub root rather than a document remembered under another root', async () => {
@@ -1106,7 +1379,11 @@ describe('App', () => {
       const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
       if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
       const binding: SessionKnowledgeBinding = {
-        computerId, sessionId, rootId: input.rootId, revision: previous.revision + 1,
+        computerId,
+        sessionId,
+        rootId: input.rootId,
+        rootPath: input.rootId ? input.rootPath || '.' : '.',
+        revision: previous.revision + 1,
         root, available: Boolean(root),
       }
       fixtureKnowledgeBindings.set(`${computerId}:${sessionId}`, binding)
@@ -14834,6 +15111,72 @@ describe('App', () => {
     expect(
       await within(tree).findByRole('treeitem', { name: /guides/ }),
     ).toBeInTheDocument()
+  })
+
+  it('restores expansion for the initial sessionless root after switching roots', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    const firstRoot: KnowledgeRoot = {
+      id: 'root-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/home/tester/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }
+    const secondRoot = {
+      ...firstRoot,
+      id: 'root-2',
+      path: '/home/tester/other',
+      name: 'other',
+    }
+    mockKnowledgeRoots([firstRoot, secondRoot])
+    localStorage.setItem(
+      'agentic-remote:knowledge-root',
+      JSON.stringify(firstRoot.id),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-expanded',
+      JSON.stringify({ [firstRoot.id]: ['guides'] }),
+    )
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (rootId, path = '.') => ({
+        path,
+        parent: path === '.' ? undefined : '.',
+        entries:
+          rootId === firstRoot.id && path === '.'
+            ? [{ name: 'guides', path: 'guides', kind: 'directory' }]
+            : [],
+      }),
+    )
+
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Session knowledge' }),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    const guides = await within(tree).findByRole('treeitem', {
+      name: /guides/,
+    })
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith(firstRoot.id, 'guides'),
+    )
+    expect(guides).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(guides)
+    expect(guides).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(guides)
+    expect(guides).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+        )[firstRoot.id],
+      ).toEqual(['guides']),
+    )
+
+    await chooseKnowledgeRoot(secondRoot.id)
+    await chooseKnowledgeRoot(firstRoot.id)
+    expect(await within(tree).findByRole('treeitem', { name: /guides/ }))
+      .toHaveAttribute('aria-expanded', 'true')
   })
 
   it('does not overwrite a session knowledge position before restoring it', async () => {

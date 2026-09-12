@@ -762,6 +762,15 @@ clear replacement IDs without losing, duplicating, or reordering content.
   Several sessions MAY link the same root while keeping separate reading
   positions. Linking MUST NOT copy files, mount a remote folder, activate an
   agent, or send a prompt.
+- A session MAY root its Knowledge tree at a nested folder inside a shared
+  root. The nested path MUST persist with the hub-side session association and
+  become the true top of that session's tree: parent folders above it MUST NOT
+  appear in scoped list, file, breadcrumb, or relative-link responses.
+- Choosing a shared root or the session folder MUST open a recursive subfolder
+  browser without changing the shared root choices. Browsing changes only the
+  pending session choice. **Save this root folder** MUST be the explicit action
+  that adds the browsed folder to the shared catalog and selects it for the
+  session.
 - Root associations MUST use separate hub metadata. Opening Knowledge MUST NOT
   silently promote browser-local reading positions into hub associations.
   An unassigned session with no remembered position MUST offer an explicit

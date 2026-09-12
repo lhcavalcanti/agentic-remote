@@ -12,6 +12,7 @@ import type {
   AddKnowledgeRootInput,
   KnowledgeRoot,
   PushSettings,
+  SessionOrderSnapshot,
   ProviderRuntimeOptions,
   ManagedRemovedQueuedPrompt,
   ManagedQueuedPromptDispatchResult,
@@ -251,6 +252,40 @@ export async function listSessionMcpServers(
       pluginName: server.pluginName,
     })),
   }
+}
+
+/**
+ * The hub's custom session order. It is fetched rather than read from
+ * localStorage so every browser on this hub renders the same arrangement.
+ */
+export async function fetchSessionOrder(): Promise<SessionOrderSnapshot> {
+  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
+    '/api/session-order',
+  )
+  return response.sessionOrder
+}
+
+/** Submits one computer's lane, so a stale view cannot rewrite the others. */
+export async function saveSessionOrderLane(
+  computerId: string,
+  order: string[],
+): Promise<SessionOrderSnapshot> {
+  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
+    `/api/session-order/${encodeURIComponent(computerId)}`,
+    { method: 'PUT', body: JSON.stringify({ order }) },
+  )
+  return response.sessionOrder
+}
+
+/** Offers a legacy browser-local order; the hub keeps it only if it has none. */
+export async function bootstrapSessionOrder(
+  order: Record<string, string[]>,
+): Promise<SessionOrderSnapshot> {
+  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
+    '/api/session-order/bootstrap',
+    { method: 'POST', body: JSON.stringify({ order }) },
+  )
+  return response.sessionOrder
 }
 
 export async function listComputers(): Promise<ComputerSummary[]> {

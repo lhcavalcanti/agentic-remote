@@ -800,11 +800,20 @@ describe('session Knowledge routes', () => {
   })
 
   it('preserves a source after failed legacy-clear persistence and retries from its known mapping', async () => {
-    const { app, manager, put, root, store, get, errors } = await fixture()
+    const { app, manager, put, root, store, get, errors, directory } = await fixture()
     await put(root.id)
     manager.legacyClear = true
     const logged = vi.spyOn(app.log, 'error')
-    vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+    // Clearing now carries several kinds of metadata at once, so the failure
+    // has to name the Knowledge file rather than the next write to finish.
+    const knowledgePath = path.join(directory, 'session-knowledge.json')
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (String(args[1]) === knowledgePath) {
+        vi.mocked(rename).mockImplementation(disk.rename)
+        throw new Error('disk full')
+      }
+      return disk.rename(...args)
+    })
     const response = await app.inject({
       method: 'POST', url: '/api/computers/hub/sessions/one/clear', headers: trusted,
     })

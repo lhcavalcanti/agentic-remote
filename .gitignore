@@ -34,3 +34,6 @@ dist-ssr
 shell/src-tauri/target/
 shell/src-tauri/gen/
 shell/src-tauri/icons/
+
+# Fixture directories some server tests create in the repository root.
+.session-knowledge-routes-test-*/

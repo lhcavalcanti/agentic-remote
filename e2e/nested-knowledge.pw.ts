@@ -16,7 +16,7 @@ for (const viewport of [
       height: viewport.height,
     })
     const state = createWorkspaceFixtureState()
-    await setupWorkspaceFixture(page, {
+    const fixture = await setupWorkspaceFixture(page, {
       baseUrl: testInfo.project.use.baseURL!,
       state,
       selectedSessionId: state.sessions[0].id,
@@ -26,40 +26,44 @@ for (const viewport of [
         '/home/demo/field-notes/handbook': [],
       },
     })
-    await page.goto('/')
+    try {
+      await page.goto('/')
 
-    if (viewport.name === 'phone') {
+      if (viewport.name === 'phone') {
+        await page
+          .getByRole('button', { name: 'Session knowledge', exact: true })
+          .click()
+        await page
+          .getByRole('button', { name: 'Back to files', exact: true })
+          .click()
+      }
+
       await page
-        .getByRole('button', { name: 'Session knowledge', exact: true })
+        .getByRole('button', { name: 'Choose Knowledge root', exact: true })
         .click()
-      await page
-        .getByRole('button', { name: 'Back to files', exact: true })
+      const chooser = page.getByRole('dialog', {
+        name: 'Choose a session root',
+        exact: true,
+      })
+      await expect(chooser).toBeVisible()
+      await chooser
+        .getByRole('button', { name: 'handbook', exact: true })
         .click()
+
+      const use = chooser.getByRole('button', {
+        name: 'Use for this session',
+        exact: true,
+      })
+      const save = chooser.getByRole('button', {
+        name: 'Save this root folder',
+        exact: true,
+      })
+      await expect(use).toBeInViewport({ ratio: 1 })
+      await expect(save).toBeInViewport({ ratio: 1 })
+      await use.click({ trial: true })
+      await save.click({ trial: true })
+    } finally {
+      fixture.assertHealthy()
     }
-
-    await page
-      .getByRole('button', { name: 'Choose Knowledge root', exact: true })
-      .click()
-    const chooser = page.getByRole('dialog', {
-      name: 'Choose a session root',
-      exact: true,
-    })
-    await expect(chooser).toBeVisible()
-    await chooser
-      .getByRole('button', { name: 'handbook', exact: true })
-      .click()
-
-    const use = chooser.getByRole('button', {
-      name: 'Use for this session',
-      exact: true,
-    })
-    const save = chooser.getByRole('button', {
-      name: 'Save this root folder',
-      exact: true,
-    })
-    await expect(use).toBeInViewport({ ratio: 1 })
-    await expect(save).toBeInViewport({ ratio: 1 })
-    await use.click({ trial: true })
-    await save.click({ trial: true })
   })
 }

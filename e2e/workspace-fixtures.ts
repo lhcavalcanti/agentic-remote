@@ -8,6 +8,7 @@ import type {
   ManagedSession,
   RuntimeModelOption,
   SessionKnowledgeBinding,
+  SessionOrderSnapshot,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
@@ -471,6 +472,7 @@ export interface WorkspaceFixtureState {
   roots: KnowledgeRoot[]
   sessions: ManagedSession[]
   bindings: Map<string, SessionKnowledgeBinding>
+  sessionOrder: SessionOrderSnapshot
   eventSockets: Set<WebSocketRoute>
   nextRootId: number
 }
@@ -493,6 +495,18 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
         available: true,
       },
     ])),
+    sessionOrder: {
+      revision: 1,
+      bootstrapped: true,
+      order: Object.fromEntries(
+        fixtureComputers.map((computer) => [
+          computer.id,
+          sessions
+            .filter((session) => session.computerId === computer.id)
+            .map((session) => `${computer.id}:${session.id}`),
+        ]),
+      ),
+    },
     eventSockets: new Set(),
     nextRootId: 1,
   }
@@ -681,6 +695,41 @@ export async function setupWorkspaceFixture(
     }
     if (method === 'GET' && path === '/api/history') {
       await respond({ sessions })
+      return
+    }
+    if (method === 'GET' && path === '/api/session-order') {
+      await respond({ sessionOrder: state.sessionOrder })
+      return
+    }
+    const sessionOrderLane = path.match(/^\/api\/session-order\/([^/]+)$/)
+    if (method === 'PUT' && sessionOrderLane) {
+      const input = request.postDataJSON() as { order: string[] }
+      const computerId = decodeURIComponent(sessionOrderLane[1])
+      state.sessionOrder = {
+        ...state.sessionOrder,
+        revision: state.sessionOrder.revision + 1,
+        order: {
+          ...state.sessionOrder.order,
+          [computerId]: [...input.order],
+        },
+      }
+      emit({ type: 'session.order.updated', order: state.sessionOrder })
+      await respond({ sessionOrder: state.sessionOrder })
+      return
+    }
+    if (method === 'POST' && path === '/api/session-order/bootstrap') {
+      const input = request.postDataJSON() as {
+        order: Record<string, string[]>
+      }
+      if (!state.sessionOrder.bootstrapped) {
+        state.sessionOrder = {
+          revision: state.sessionOrder.revision + 1,
+          bootstrapped: true,
+          order: structuredClone(input.order),
+        }
+        emit({ type: 'session.order.updated', order: state.sessionOrder })
+      }
+      await respond({ sessionOrder: state.sessionOrder })
       return
     }
     if (method === 'GET' && path === '/api/push/settings') {

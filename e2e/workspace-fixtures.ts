@@ -463,6 +463,8 @@ export interface WorkspaceFixtureOptions {
   state?: WorkspaceFixtureState
   knowledgePositions?: Record<string, KnowledgePosition>
   extraKnowledgeFiles?: number
+  /** Optional absolute directory listings for folder-picker browser tests. */
+  directoryListings?: Record<string, string[]>
 }
 
 export interface WorkspaceFixtureState {
@@ -540,6 +542,7 @@ export async function setupWorkspaceFixture(
   const baseUrl = fixtureBaseUrl(options.baseUrl)
   const state = options.state ?? createWorkspaceFixtureState()
   const extraKnowledgeFiles = options.extraKnowledgeFiles ?? 0
+  const directoryListings = options.directoryListings ?? {}
   if (!Number.isInteger(extraKnowledgeFiles) || extraKnowledgeFiles < 0 || extraKnowledgeFiles > 200) {
     throw new Error('Use between 0 and 200 synthetic extra Knowledge files.')
   }
@@ -811,15 +814,22 @@ export async function setupWorkspaceFixture(
       const current = !requested || requested === '~' ? '/home/demo' : requested
       const allowed = current === '/home/demo' ||
         sessions.some((session) => session.computerId === directory[1] && session.cwd === current) ||
-        state.roots.some((root) => root.computerId === directory[1] && root.path === current)
+        state.roots.some((root) => root.computerId === directory[1] && root.path === current) ||
+        Object.hasOwn(directoryListings, current)
       if (!allowed) {
         await reject(route, `Unknown fixture directory ${current}`)
         return
       }
+      const configured = directoryListings[current]
       await respond({
         path: current,
         parent: current === '/home/demo' ? undefined : '/home/demo',
-        directories: current === '/home/demo'
+        directories: configured
+          ? configured.map((child) => ({
+              name: child.split('/').at(-1),
+              path: child,
+            }))
+          : current === '/home/demo'
           ? [...new Set(sessions.filter((session) => session.computerId === directory[1]).map((session) => session.cwd))]
             .map((path) => ({ name: path.split('/').at(-1), path }))
           : [],

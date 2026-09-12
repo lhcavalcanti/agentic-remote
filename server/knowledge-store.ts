@@ -10,6 +10,7 @@ interface KnowledgeState {
 export class KnowledgeStore {
   private readonly statePath: string
   private state: KnowledgeState = { roots: [] }
+  private readonly rootRevisions = new Map<string, number>()
   private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly directory: string) {
@@ -25,6 +26,8 @@ export class KnowledgeStore {
       // Rebuild from known fields so a file written before roots replaced
       // bookmarks loads, and the obsolete key is not carried forward.
       this.state = { roots: parsed.roots ?? [] }
+      this.rootRevisions.clear()
+      for (const root of this.state.roots) this.rootRevisions.set(root.id, 0)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error
@@ -68,20 +71,29 @@ export class KnowledgeStore {
 
   async addRootWithStatus(
     root: Omit<KnowledgeRoot, 'id' | 'createdAt'>,
-  ): Promise<{ root: KnowledgeRoot; created: boolean }> {
+  ): Promise<{ root: KnowledgeRoot; created: boolean; revision: number }> {
     return this.commitPreparedRoot(this.prepareRoot(root).root)
   }
 
-  commitPreparedRoot(root: KnowledgeRoot): Promise<{ root: KnowledgeRoot; created: boolean }> {
+  commitPreparedRoot(root: KnowledgeRoot): Promise<{
+    root: KnowledgeRoot
+    created: boolean
+    revision: number
+  }> {
     return this.enqueue(async () => {
       const existing = this.state.roots.find(
         (entry) => entry.computerId === root.computerId && entry.path === root.path,
       )
-      if (existing) return { root: structuredClone(existing), created: false }
+      if (existing) {
+        const revision = (this.rootRevisions.get(existing.id) ?? 0) + 1
+        this.rootRevisions.set(existing.id, revision)
+        return { root: structuredClone(existing), created: false, revision }
+      }
       const next = { roots: [structuredClone(root), ...this.state.roots] }
       await this.write(next)
       this.state = next
-      return { root: structuredClone(root), created: true }
+      this.rootRevisions.set(root.id, 0)
+      return { root: structuredClone(root), created: true, revision: 0 }
     })
   }
 
@@ -92,6 +104,20 @@ export class KnowledgeStore {
       const next = { roots: remaining }
       await this.write(next)
       this.state = next
+      this.rootRevisions.delete(id)
+      return true
+    })
+  }
+
+  removeRootAtRevision(id: string, revision: number): Promise<boolean> {
+    return this.enqueue(async () => {
+      if (this.rootRevisions.get(id) !== revision) return false
+      const remaining = this.state.roots.filter((entry) => entry.id !== id)
+      if (remaining.length === this.state.roots.length) return false
+      const next = { roots: remaining }
+      await this.write(next)
+      this.state = next
+      this.rootRevisions.delete(id)
       return true
     })
   }
@@ -104,6 +130,9 @@ export class KnowledgeStore {
    */
   removeRootsForComputer(computerId: string): Promise<number> {
     return this.enqueue(async () => {
+      const removedIds = this.state.roots
+        .filter((entry) => entry.computerId === computerId)
+        .map((entry) => entry.id)
       const remaining = this.state.roots.filter(
         (entry) => entry.computerId !== computerId,
       )
@@ -112,6 +141,7 @@ export class KnowledgeStore {
       const next = { roots: remaining }
       await this.write(next)
       this.state = next
+      for (const id of removedIds) this.rootRevisions.delete(id)
       return removed
     })
   }

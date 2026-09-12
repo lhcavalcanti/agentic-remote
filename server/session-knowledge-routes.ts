@@ -453,8 +453,10 @@ export async function registerSessionKnowledgeRoutes(
                   name: ownedBasename(selectedAbsolutePath),
                 })
                 if (!candidate.created) {
+                  const reused = await knowledge.commitPreparedRoot(candidate.root)
+                  preparedRootId = reused.root.id
                   return {
-                    source: { kind: 'catalog-root', root: candidate.root },
+                    source: { kind: 'catalog-root', root: reused.root },
                     path: '.',
                   }
                 }
@@ -469,7 +471,9 @@ export async function registerSessionKnowledgeRoutes(
                       try {
                         validate()
                       } catch (error) {
-                        if (added.created) await knowledge.removeRoot(added.root.id)
+                        if (added.created) {
+                          await knowledge.removeRootAtRevision(added.root.id, added.revision)
+                        }
                         throw error
                       }
                       return {
@@ -478,7 +482,7 @@ export async function registerSessionKnowledgeRoutes(
                         created: added.created,
                         ...(added.created ? {
                           rollback: async () => {
-                            await knowledge.removeRoot(added.root.id)
+                            await knowledge.removeRootAtRevision(added.root.id, added.revision)
                           },
                         } : {}),
                       }
@@ -539,14 +543,17 @@ export async function registerSessionKnowledgeRoutes(
       const { computerId, sessionId } = sessionParams.parse(request.params)
       const query = knowledgePathSchema.parse(request.query)
       const { binding, validate } = await scopedRead(computerId, sessionId)
-      const requestedPath = scopedKnowledgePath(binding.path!, query.path)
+      const selectedRoot = binding.path === '.'
+        ? sourcePath(binding.source!)
+        : joinOwnedPath(sourcePath(binding.source!), binding.path!)
+      const requestedPath = scopedKnowledgePath('.', query.path)
       const listing = await manager.listKnowledge(
         sourceComputerId(binding.source!),
-        sourcePath(binding.source!),
+        selectedRoot,
         requestedPath,
       )
       validate()
-      return rebaseKnowledgeListing(binding, listing)
+      return rebaseKnowledgeListing({ ...binding, path: '.' }, listing)
     },
   )
 
@@ -559,14 +566,17 @@ export async function registerSessionKnowledgeRoutes(
       const { computerId, sessionId } = sessionParams.parse(request.params)
       const query = knowledgeFileSchema.parse(request.query)
       const { binding, validate } = await scopedRead(computerId, sessionId)
-      const requestedPath = scopedKnowledgePath(binding.path!, query.path)
+      const selectedRoot = binding.path === '.'
+        ? sourcePath(binding.source!)
+        : joinOwnedPath(sourcePath(binding.source!), binding.path!)
+      const requestedPath = scopedKnowledgePath('.', query.path)
       const file = await manager.readKnowledgeFile(
         sourceComputerId(binding.source!),
-        sourcePath(binding.source!),
+        selectedRoot,
         requestedPath,
       )
       validate()
-      return rebaseKnowledgeFile(binding, file)
+      return rebaseKnowledgeFile({ ...binding, path: '.' }, file)
     },
   )
 

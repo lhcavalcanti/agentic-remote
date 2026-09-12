@@ -55,6 +55,7 @@ export function KnowledgeRootChoices({
           <KnowledgeLocationChoice
             choice={choice}
             disabled={!online(session.computerId)}
+            key={`session-folder:${session.computerId}:${session.id}:${session.cwd}`}
             label="This session's folder"
             location={`${session.computerName} / ${shortPath(session.cwd)}`}
             accessibleLocation={`${session.computerName}: ${session.cwd}`}
@@ -152,11 +153,19 @@ function KnowledgeLocationChoice({
   const key = sourceKey(source)
   const selected = choice?.kind === 'location' && sourceKey(choice.source) === key
   const selectedPath = selected ? choice.path : undefined
-  const [expanded, setExpanded] = useState(Boolean(selectedPath && selectedPath !== '.'))
+  const [expandedOverride, setExpandedOverride] = useState<boolean>()
+  const expanded = expandedOverride ?? Boolean(selectedPath && selectedPath !== '.')
   const [folders, setFolders] = useState<Record<string, WorkspaceListing>>({})
   const attempted = useRef(new Set<string>())
+  const onListRef = useRef(onList)
+  const sourceRef = useRef(source)
   const [loading, setLoading] = useState<string>()
   const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    onListRef.current = onList
+    sourceRef.current = source
+  }, [onList, source])
 
   useEffect(() => {
     if (!expanded) return
@@ -166,28 +175,36 @@ function KnowledgeLocationChoice({
           ['.'],
         )
       : ['.']
+    const folder = ancestors.find((candidate) => {
+      const requestKey = `${key}:${candidate}`
+      return !folders[candidate] && !attempted.current.has(requestKey)
+    })
+    if (!folder) return
+    const attemptedRequests = attempted.current
     let cancelled = false
-    void (async () => {
-      for (const folder of ancestors) {
-        const requestKey = `${key}:${folder}`
-        if (folders[folder] || attempted.current.has(requestKey)) continue
-        attempted.current.add(requestKey)
-        setLoading(folder)
-        setError(undefined)
-        try {
-          const listing = await onList(source, folder)
-          if (cancelled) return
-          setFolders((current) => ({ ...current, [folder]: listing }))
-        } catch (caught) {
-          if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught))
-          return
-        } finally {
-          if (!cancelled) setLoading(undefined)
-        }
+    const requestKey = `${key}:${folder}`
+    attemptedRequests.add(requestKey)
+    setLoading(folder)
+    setError(undefined)
+    let settled = false
+    void onListRef.current(sourceRef.current, folder).then((listing) => {
+      if (!cancelled) {
+        settled = true
+        setFolders((current) => ({ ...current, [folder]: listing }))
       }
-    })()
-    return () => { cancelled = true }
-  }, [expanded, folders, key, onList, selectedPath, source])
+    }).catch((caught: unknown) => {
+      if (!cancelled) {
+        settled = true
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    }).finally(() => {
+      if (!cancelled) setLoading(undefined)
+    })
+    return () => {
+      cancelled = true
+      if (!settled) attemptedRequests.delete(requestKey)
+    }
+  }, [expanded, folders, key, selectedPath])
 
   const toggle = (path: string) => {
     if (folders[path]) {
@@ -217,14 +234,14 @@ function KnowledgeLocationChoice({
         aria-label={`Browse ${label}`}
         className="knowledge-root-choice__expand"
         disabled={disabled}
-        onClick={() => setExpanded((value) => {
-          if (value) {
+        onClick={() => setExpandedOverride(() => {
+          if (expanded) {
             for (const attemptedKey of attempted.current) {
               if (attemptedKey.startsWith(`${key}:`)) attempted.current.delete(attemptedKey)
             }
             setError(undefined)
           }
-          return !value
+          return !expanded
         })}
         type="button"
       >

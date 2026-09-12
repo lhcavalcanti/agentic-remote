@@ -320,15 +320,9 @@ describe('session Knowledge routes', () => {
     const before = knowledge.listRoots()
     manager.listKnowledge.mockImplementation(async (_computerId, _root, requestedPath = '.') => ({
       path: requestedPath,
-      parent: requestedPath === 'guides' ? '.' : 'guides',
       entries: [{
         name: 'intro.md',
-        path: `${requestedPath}/intro.md`,
-        kind: 'markdown',
-        size: 4,
-      }, {
-        name: 'escaped.md',
-        path: 'outside/escaped.md',
+        path: requestedPath === '.' ? 'intro.md' : `${requestedPath}/intro.md`,
         kind: 'markdown',
         size: 4,
       }],
@@ -366,8 +360,8 @@ describe('session Knowledge routes', () => {
     })
     expect(file.statusCode).toBe(200)
     expect(file.json()).toMatchObject({ name: 'intro.md', path: 'intro.md', content: 'test' })
-    expect(manager.listKnowledge).toHaveBeenLastCalledWith('library', '/library/notes', 'guides')
-    expect(manager.readKnowledgeFile).toHaveBeenCalledWith('library', '/library/notes', 'guides/intro.md')
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith('library', '/library/notes/guides', '.')
+    expect(manager.readKnowledgeFile).toHaveBeenCalledWith('library', '/library/notes/guides', 'intro.md')
   })
 
   it.each(['../private', '/absolute', 'nested/../../private'])(
@@ -480,6 +474,11 @@ describe('session Knowledge routes', () => {
     })
     expect(response.statusCode).toBe(403)
     expect(response.json().error).toContain('restricted')
+    expect(manager.readKnowledgeFile).toHaveBeenCalledWith(
+      'library',
+      '/library/notes/guides',
+      'outside.md',
+    )
   })
 
   it('saves only the selected nested folder and reuses it without reordering the catalog', async () => {
@@ -541,6 +540,110 @@ describe('session Knowledge routes', () => {
     expect((await saving).statusCode).toBe(409)
     expect(store.get('hub', 'one').revision).toBe(0)
     expect(knowledge.listRoots()).toEqual(before)
+  })
+
+  it('keeps a newly saved root when another request reuses it before stale rollback', async () => {
+    const { app, route, root, knowledge, manager, store } = await fixture()
+    const originalCommit = knowledge.commitPreparedRoot.bind(knowledge)
+    let reusedRootId: string | undefined
+    vi.spyOn(knowledge, 'commitPreparedRoot').mockImplementationOnce(async (candidate) => {
+      const added = await originalCommit(candidate)
+      expect(added.created).toBe(true)
+      const reused = await originalCommit(candidate)
+      expect(reused.created).toBe(false)
+      reusedRootId = reused.root.id
+      manager.rePair('library')
+      return added
+    })
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: route(),
+      headers: trusted,
+      payload: {
+        source: { kind: 'catalog-root', rootId: root.id },
+        path: 'guides/api',
+        action: 'save',
+        expectedRevision: 0,
+      },
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(store.get('hub', 'one').revision).toBe(0)
+    expect(knowledge.getRoot(reusedRootId!)).toMatchObject({
+      id: reusedRootId,
+      path: '/library/notes/guides/api',
+    })
+  })
+
+  it('keeps a hub-created root when a session reuses it before stale rollback', async () => {
+    const { app, route, root, knowledge, manager, store } = await fixture()
+    const originalAdd = knowledge.addRootWithStatus.bind(knowledge)
+    const held = gate()
+    vi.spyOn(knowledge, 'addRootWithStatus').mockImplementationOnce(async (input) => {
+      const added = await originalAdd(input)
+      held.start()
+      await held.wait
+      return added
+    })
+    const adding = app.inject({
+      method: 'POST',
+      url: '/api/knowledge/roots',
+      headers: trusted,
+      payload: {
+        computerId: root.computerId,
+        path: '/library/notes/guides/api',
+      },
+    }).then((response) => response)
+    await held.started
+
+    const saving = await app.inject({
+      method: 'PUT',
+      url: route(),
+      headers: trusted,
+      payload: {
+        source: { kind: 'catalog-root', rootId: root.id },
+        path: 'guides/api',
+        action: 'save',
+        expectedRevision: 0,
+      },
+    })
+    manager.rePair('library')
+    held.finish()
+    const rejected = await adding
+
+    expect(saving.statusCode).toBe(200)
+    expect(rejected.statusCode).toBe(409)
+    expect(knowledge.getRoot(saving.json().binding.rootId)).toBeDefined()
+    expect(store.get('hub', 'one').rootId).toBe(saving.json().binding.rootId)
+  })
+
+  it('rejects a reused root deleted while its session binding persists', async () => {
+    const { app, route, root, knowledge, store } = await fixture()
+    const nested = await knowledge.addRoot({
+      computerId: root.computerId,
+      computerName: root.computerName,
+      path: '/library/notes/guides/api',
+      name: 'api',
+    })
+    const held = holdWrite()
+    const saving = app.inject({
+      method: 'PUT',
+      url: route(),
+      headers: trusted,
+      payload: {
+        source: { kind: 'catalog-root', rootId: root.id },
+        path: 'guides/api',
+        action: 'save',
+        expectedRevision: 0,
+      },
+    }).then((response) => response)
+    await held.started
+    await knowledge.removeRoot(nested.id)
+    held.finish()
+
+    expect((await saving).statusCode).toBe(409)
+    expect(store.get('hub', 'one').revision).toBe(0)
   })
 
   it('publishes neither catalog nor binding when nested-root catalog persistence fails', async () => {

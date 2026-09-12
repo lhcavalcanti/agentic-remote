@@ -75,6 +75,53 @@ describe('session root choices', () => {
     await waitFor(() => expect(screen.getByRole('treeitem', { name: /Deep/ })).toBeVisible())
   })
 
+  it('restores every ancestor needed to reveal a deep selected folder', async () => {
+    const onList = vi.fn(async (_source, path: string) => ({
+      path,
+      entries: path === '.'
+        ? [{ name: 'Guides', path: 'guides', kind: 'directory' as const }]
+        : path === 'guides'
+          ? [{ name: 'Deep', path: 'guides/deep', kind: 'directory' as const }]
+          : [{ name: 'Reference', path: 'guides/deep/reference', kind: 'directory' as const }],
+    }))
+    render(<KnowledgeRootChoices {...actions} onList={onList} roots={[root]} computers={computers}
+      session={session} disabled={false}
+      choice={{
+        kind: 'location',
+        source: { kind: 'catalog-root', rootId: root.id },
+        path: 'guides/deep/reference',
+      }} />)
+
+    expect(await screen.findByRole('treeitem', { name: 'Reference' })).toHaveAttribute('aria-pressed', 'true')
+    expect(onList.mock.calls.map(([, requestedPath]) => requestedPath)).toEqual([
+      '.',
+      'guides',
+      'guides/deep',
+    ])
+  })
+
+  it('expands a deep selection that finishes loading after the chooser opens', async () => {
+    const onList = vi.fn(async (_source, path: string) => ({
+      path,
+      entries: path === '.'
+        ? [{ name: 'Guides', path: 'guides', kind: 'directory' as const }]
+        : [{ name: 'Deep', path: 'guides/deep', kind: 'directory' as const }],
+    }))
+    const rendered = render(<KnowledgeRootChoices {...actions} onList={onList}
+      roots={[root]} computers={computers} session={session} disabled={false} />)
+
+    rendered.rerender(<KnowledgeRootChoices {...actions} onList={onList}
+      roots={[root]} computers={computers} session={session} disabled={false}
+      choice={{
+        kind: 'location',
+        source: { kind: 'catalog-root', rootId: root.id },
+        path: 'guides/deep',
+      }} />)
+
+    expect(await screen.findByRole('treeitem', { name: 'Deep' })).toHaveAttribute('aria-pressed', 'true')
+    expect(onList.mock.calls.map(([, requestedPath]) => requestedPath)).toEqual(['.', 'guides'])
+  })
+
   it('keeps unassignment separate from shared-folder removal', () => {
     render(<KnowledgeRootChoices {...actions} roots={[root]} computers={computers} session={session}
       currentRootId={root.id} disabled={false} />)

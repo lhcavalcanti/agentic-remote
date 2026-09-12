@@ -1,0 +1,34 @@
+import { describe, expect, it } from 'vitest'
+import { appViewportGeometry } from './app-viewport'
+
+describe('app viewport geometry', () => {
+  it('fills the installed window when iOS reports a shorter idle visual viewport', () => {
+    expect(appViewportGeometry({
+      innerHeight: 852,
+      visualHeight: 774,
+      visualOffsetTop: 0,
+      standalone: true,
+      keyboardOpen: false,
+    })).toEqual({ height: 852, offsetTop: 0 })
+  })
+
+  it('follows the visual viewport while the standalone keyboard is open', () => {
+    expect(appViewportGeometry({
+      innerHeight: 852,
+      visualHeight: 510,
+      visualOffsetTop: 42,
+      standalone: true,
+      keyboardOpen: true,
+    })).toEqual({ height: 510, offsetTop: 42 })
+  })
+
+  it('keeps following Safari and split-size visual viewports', () => {
+    expect(appViewportGeometry({
+      innerHeight: 852,
+      visualHeight: 700,
+      visualOffsetTop: 18,
+      standalone: false,
+      keyboardOpen: false,
+    })).toEqual({ height: 700, offsetTop: 18 })
+  })
+})

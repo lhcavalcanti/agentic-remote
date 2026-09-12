@@ -422,6 +422,26 @@ export async function readKnowledgeFile(
   )
 }
 
+export async function listSessionKnowledgeEntries(
+  computerId: string,
+  sessionId: string,
+  path = '.',
+): Promise<WorkspaceListing> {
+  return request<WorkspaceListing>(
+    `${sessionPath(computerId, sessionId)}/knowledge/entries?path=${encodeURIComponent(path)}`,
+  )
+}
+
+export async function readSessionKnowledgeFile(
+  computerId: string,
+  sessionId: string,
+  path: string,
+): Promise<WorkspaceFile> {
+  return request<WorkspaceFile>(
+    `${sessionPath(computerId, sessionId)}/knowledge/file?path=${encodeURIComponent(path)}`,
+  )
+}
+
 export async function listDirectories(
   computerId: string,
   path = '~',

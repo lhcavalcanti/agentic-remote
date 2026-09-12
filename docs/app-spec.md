@@ -338,6 +338,10 @@ Questions and permissions are the highest-priority UI state.
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot
   runtimes.
+- Structured question cards MUST remain within the phone timeline width.
+  Checkboxes MUST keep their intrinsic control size, option and heading text
+  MUST wrap inside the card, and long forms MUST remain vertically reachable
+  without covering the composer.
 - Question messages MUST render Markdown, including tables, emphasis, inline
   code, and fenced code blocks, without changing the original message or reply
   values. Raw HTML and unsafe link schemes MUST NOT execute. Wide tables and

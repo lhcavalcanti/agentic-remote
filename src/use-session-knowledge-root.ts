@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ManagedSession, SessionKnowledgeBinding } from '../shared/contracts'
+import type {
+  KnowledgeRoot,
+  ManagedSession,
+  SessionKnowledgeBinding,
+  SessionKnowledgeSourceInput,
+} from '../shared/contracts'
 import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path'
 import { getSessionKnowledgeRoot, SessionKnowledgeRequestError, updateSessionKnowledgeRoot } from './api'
 import type { KnowledgePosition } from './knowledge-position'
@@ -16,16 +21,57 @@ export function knowledgePositionForBinding(
   remembered: KnowledgePosition | undefined,
 ): KnowledgePosition | undefined {
   if (!binding) return remembered
-  if (!binding.rootId) return binding.revision === 0 ? remembered : undefined
-  const rootPath = normalizeKnowledgeRelativePath(binding.rootPath)
-  return remembered?.rootId === binding.rootId &&
-    normalizeKnowledgeRelativePath(remembered.rootPath) === rootPath
+  if (!binding.source && binding.rootId) {
+    const rootPath = normalizeKnowledgeRelativePath(binding.rootPath)
+    return remembered?.rootId === binding.rootId &&
+      normalizeKnowledgeRelativePath(remembered.rootPath) === rootPath
+      ? remembered
+      : {
+          rootId: binding.rootId,
+          ...(rootPath === '.' ? {} : { rootPath }),
+          path: '.',
+        }
+  }
+  const location = sessionKnowledgeLocation(binding)
+  if (!location) return binding.revision === 0 ? remembered : undefined
+  return remembered?.rootId === location.id || (
+    binding.path === '.' && remembered?.rootId === binding.rootId
+  )
     ? remembered
+    : { rootId: location.id, path: '.' }
+}
+
+export function sessionKnowledgeLocation(
+  binding: SessionKnowledgeBinding | undefined,
+): KnowledgeRoot | undefined {
+  const source = binding?.source
+  if (!source || !binding.path) {
+    return binding?.root
+      ? { ...binding.root, id: binding.rootId ?? binding.root.id }
+      : undefined
+  }
+  const sourceRoot = source.kind === 'catalog-root'
+    ? source.root
     : {
-        rootId: binding.rootId,
-        ...(rootPath === '.' ? {} : { rootPath }),
-        path: '.',
+        id: `session-folder:${source.computerId}:${source.sessionId}`,
+        computerId: source.computerId,
+        computerName: source.computerName,
+        path: source.path,
+        name: source.path.split('/').filter(Boolean).at(-1) || source.path,
+        createdAt: '',
       }
+  if (binding.path === '.') return sourceRoot
+  const separator = sourceRoot.path.includes('\\') && !sourceRoot.path.includes('/')
+    ? '\\'
+    : '/'
+  return {
+    ...sourceRoot,
+    id: `${sourceRoot.id}:nested:${encodeURIComponent(binding.path)}`,
+    path: `${sourceRoot.path.replace(/[\\/]$/, '')}${separator}${
+      binding.path.replaceAll('/', separator)
+    }`,
+    name: binding.path.split('/').at(-1) || sourceRoot.name,
+  }
 }
 
 export function useSessionKnowledgeRoot(
@@ -120,10 +166,10 @@ export function useSessionKnowledgeRoot(
     return () => { generation.current += 1 }
   }, [accept, computerId, enabled, key, refreshVersion, sessionId])
 
-  const saveRoot = useCallback(async (
-    rootId: string | null,
+  const saveInput = useCallback(async (
+    input: { source: SessionKnowledgeSourceInput | null; path?: string; action?: 'use' | 'save' } |
+      { rootId: string | null; rootPath?: string },
     expectedRevision?: number,
-    rootPath = '.',
   ) => {
     const previous = key ? bindingsRef.current.get(key) : undefined
     if (!key || !computerId || !sessionId || !previous) {
@@ -132,17 +178,19 @@ export function useSessionKnowledgeRoot(
     const token = ++saveSequence.current
     const ownerLifetime = lifetime.current
     const pairingChanged = (incoming: SessionKnowledgeBinding) =>
-      [computerId, incoming.root?.computerId].some((id) =>
+      [
+        computerId,
+        incoming.source?.kind === 'catalog-root'
+          ? incoming.source.root.computerId
+          : incoming.source?.computerId ?? incoming.root?.computerId,
+      ].some((id) =>
         id !== undefined && (computerChanges.current.get(id) || 0) > ownerLifetime)
     const sessionLifetime = sessionLifetimes.current.get(key) || 0
     setSavingKey(key)
     try {
       const incoming = await updateSessionKnowledgeRoot(computerId, sessionId, {
-        rootId,
+        ...input,
         expectedRevision: expectedRevision ?? previous.revision,
-        ...(rootId && normalizeKnowledgeRelativePath(rootPath) !== '.'
-          ? { rootPath: normalizeKnowledgeRelativePath(rootPath) }
-          : {}),
       })
       if (bindingKey(incoming) !== key) {
         throw new Error('The saved Knowledge root belongs to a different session.')
@@ -171,6 +219,27 @@ export function useSessionKnowledgeRoot(
       if (mounted.current && token === saveSequence.current) setSavingKey(undefined)
     }
   }, [applyUpdate, computerId, key, refresh, sessionId])
+
+  const saveLocation = useCallback((
+    source: SessionKnowledgeSourceInput | null,
+    path = '.',
+    action: 'use' | 'save' = 'use',
+    expectedRevision?: number,
+  ) => saveInput({
+    source,
+    ...(source ? { path, action } : {}),
+  }, expectedRevision), [saveInput])
+
+  const saveRoot = useCallback((
+    rootId: string | null,
+    expectedRevision?: number,
+    rootPath = '.',
+  ) => saveInput({
+    rootId,
+    ...(rootId && normalizeKnowledgeRelativePath(rootPath) !== '.'
+      ? { rootPath: normalizeKnowledgeRelativePath(rootPath) }
+      : {}),
+  }, expectedRevision), [saveInput])
 
   const forgetSession = useCallback((computerId: string, sessionId: string) => {
     const removedKey = sessionKey({ computerId, id: sessionId })
@@ -214,6 +283,7 @@ export function useSessionKnowledgeRoot(
     saving: savingKey === key && Boolean(key),
     refresh,
     saveRoot,
+    saveLocation,
     applyUpdate,
     forgetComputer,
     forgetSession,

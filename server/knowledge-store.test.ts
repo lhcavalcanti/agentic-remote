@@ -49,6 +49,32 @@ describe('KnowledgeStore', () => {
     await expect(restored.removeRoot(first.id)).resolves.toBe(false)
   })
 
+  it('does not roll back a newly created root after another request reuses it', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const prepared = store.prepareRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+
+    const created = await store.commitPreparedRoot(prepared.root)
+    const reused = await store.addRootWithStatus({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+
+    expect(created.created).toBe(true)
+    expect(reused).toMatchObject({ root: created.root, created: false })
+    await expect(store.removeRootAtRevision(created.root.id, created.revision))
+      .resolves.toBe(false)
+    expect(store.getRoot(created.root.id)).toEqual(created.root)
+  })
+
   it('loads a state file written before roots replaced bookmarks', async () => {
     const directory = await temporaryDirectory()
     const root = {

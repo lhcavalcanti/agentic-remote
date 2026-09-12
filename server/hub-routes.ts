@@ -424,7 +424,7 @@ export async function registerHubRoutes(
           : 'Computer is not registered',
       })
     }
-    const root = await knowledge.addRoot({
+    const added = await knowledge.addRootWithStatus({
       computerId: input.computerId,
       computerName: computer.name,
       path: input.path,
@@ -433,14 +433,15 @@ export async function registerHubRoutes(
         input.path.split('/').filter(Boolean).at(-1) ||
         input.path,
     })
+    const root = added.root
     // Persistence can also overlap an unpair/re-pair. A reused ID is not the
     // registration that validated this root, and its fresh roots must survive.
     if (!manager.listComputers().some((entry) => entry.id === input.computerId)) {
-      await knowledge.removeRoot(root.id)
+      if (added.created) await knowledge.removeRootAtRevision(root.id, added.revision)
       return reply.code(404).send({ error: 'Computer is not registered' })
     }
     if (!registrationIsCurrent()) {
-      await knowledge.removeRoot(root.id)
+      if (added.created) await knowledge.removeRootAtRevision(root.id, added.revision)
       return reply.code(409).send({
         error: 'Computer pairing changed while saving this folder. Choose the computer again.',
       })

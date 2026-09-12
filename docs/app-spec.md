@@ -908,14 +908,13 @@ clear replacement IDs without losing, duplicating, or reordering content.
   original Agentic green.
 - The selected accent MUST apply to primary actions, focus states, activity
   indicators, and other non-semantic accent treatments.
-- The browser-tab icon MUST track the selected accent immediately and after
-  reload, without changing other tabs or the shared installed-app icons.
 - Warning, error, computer-identity, and background-task colors MUST retain
   their semantic meaning.
 - The accent choice MUST be scoped to the current browser tab, persist across
   reloads in that tab, and fall back to Agentic green for an unknown value.
-- The top-left brand mark MUST use the same SVG artwork and selected accent as
-  the tab icon, including after reload, rather than a separate generic glyph.
+- The top-left brand mark and browser-tab icon MUST use the durable app icon
+  preference defined in §11, update together, and remain independent of the
+  tab-local accent.
 
 ## 10. Notifications
 
@@ -944,8 +943,9 @@ Priority order:
   stolen.
 - Mobile controls MUST use at least 40px targets where practical.
 - Inputs MUST use 16px text on iOS to prevent browser zoom.
-- All headers, drawer branding, dialogs, and full-height panels MUST remain
-  below the Dynamic Island.
+- In installed iOS mode, the app background MUST extend behind the status bar
+  and Dynamic Island. Headers, drawer branding, dialogs, and full-height panel
+  controls MUST remain below the safe-area inset.
 - iOS standalone mode MUST use a safe top fallback when
   `env(safe-area-inset-top)` incorrectly reports zero.
 - Composer and dialogs MUST respect the home indicator and visual viewport.
@@ -953,6 +953,14 @@ Priority order:
 - In browser and split-size modes, the entire mobile shell MUST follow the
   current visual viewport height and offset even when the keyboard is closed;
   it MUST NOT assume full-screen dimensions.
+- App settings MUST offer five distinct Agentic Remote icon styles and a
+  separate durable icon color. The choice MUST update the in-app brand and
+  favicon immediately without changing the tab-local UI accent.
+- During initial head parsing, the selected icon MUST emit an Apple touch icon
+  link to its committed opaque 180px PNG. The UI MUST explain that Safari needs
+  one reload after a selection change and that an existing iPhone or iPad
+  installation needs to be removed and re-added before its launcher icon or
+  install-time status-bar mode changes.
 
 ## 12. PWA updates
 

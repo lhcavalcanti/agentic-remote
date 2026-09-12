@@ -2607,21 +2607,22 @@ describe('App', () => {
     expect(document.querySelector('.brand__mark')?.tagName).toBe('IMG')
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     expect(document.querySelector('.brand__mark')).toHaveAttribute('alt', '')
+    const initialIcon = icon()
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
     fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
 
     expect(shell).toHaveAttribute('data-accent-theme', 'violet')
     expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
     expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
-    expect(decodeURIComponent(icon())).toContain('color="#ad92ff"')
+    expect(icon()).toBe(initialIcon)
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
-    expect(decodeURIComponent(icon())).toContain('color="#63d6c0"')
+    expect(icon()).toBe(initialIcon)
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     expect(document.querySelectorAll('link[rel="icon"]')).toHaveLength(1)
   })
 
-  it('restores the tab icon from the saved accent on load', async () => {
+  it('restores the tab accent without changing the durable app icon', async () => {
     sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -2632,7 +2633,7 @@ describe('App', () => {
     )
     expect(decodeURIComponent(
       document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
-    )).toContain('color="#ff83b6"')
+    )).toContain('color="#b8f36b"')
     expect(document.querySelector('.brand__mark')).toHaveAttribute(
       'src',
       document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href,
@@ -2652,6 +2653,66 @@ describe('App', () => {
     expect(decodeURIComponent(
       document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
     )).toContain('color="#b8f36b"')
+  })
+
+  it('persists a separate app icon style and color across browser tabs', async () => {
+    const rendered = render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    expect(screen.getByRole('radio', { name: 'Relay app icon' })).toBeChecked()
+    expect(screen.getByRole('radio', {
+      name: 'Agentic app icon color',
+    })).toBeChecked()
+    fireEvent.click(screen.getByRole('radio', { name: 'Atlas app icon' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Teal app icon color' }))
+
+    expect(JSON.parse(
+      localStorage.getItem('agentic-remote:app-icon') || '{}',
+    )).toEqual({ style: 'atlas', color: 'teal' })
+    expect(document.documentElement.dataset.appIconStyle).toBe('atlas')
+    expect(document.documentElement.dataset.appIconColor).toBe('teal')
+    expect(decodeURIComponent(
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
+    )).toContain('color="#63d6c0"')
+    expect(document.querySelector<HTMLLinkElement>(
+      'link[rel="apple-touch-icon"]',
+    )?.getAttribute('href')).toBe('/icons/app/app-atlas-teal-180.png')
+    expect(document.querySelector('.brand__mark')).toHaveAttribute(
+      'src',
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href,
+    )
+
+    rendered.unmount()
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    expect(document.documentElement.dataset.appIconStyle).toBe('atlas')
+    expect(document.documentElement.dataset.appIconColor).toBe('teal')
+  })
+
+  it('keeps the previous app icon when durable storage is unavailable', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+      function (this: Storage, key: string, value: string) {
+        if (key === 'agentic-remote:app-icon') {
+          throw new Error('Storage unavailable')
+        }
+        original.call(this, key, value)
+      },
+    )
+    try {
+      fireEvent.click(screen.getByRole('radio', { name: 'Orbit app icon' }))
+      expect(screen.getByText(
+        'Could not save app icon: Storage unavailable',
+      )).toBeVisible()
+      expect(screen.getByRole('radio', { name: 'Relay app icon' })).toBeChecked()
+      expect(document.documentElement.dataset.appIconStyle).toBe('relay')
+    } finally {
+      save.mockRestore()
+    }
   })
 
   it('falls back to blank runtime defaults when stored settings are null', async () => {

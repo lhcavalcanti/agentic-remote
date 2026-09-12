@@ -248,7 +248,7 @@ import {
   type KnowledgeFolders,
 } from './knowledge-tree'
 import { composerMaximumHeight } from './composer-sizing'
-import { appViewportGeometry } from './app-viewport'
+import { appKeyboardOpen, appViewportGeometry } from './app-viewport'
 import {
   activatePwaUpdate,
   activePushSubscription,
@@ -6692,6 +6692,14 @@ function App() {
   const [viewportOffsetTop, setViewportOffsetTop] = useState(() =>
     currentAppViewportGeometry(false).offsetTop,
   )
+  const viewportBaselineHeightRef = useRef(
+    typeof window === 'undefined'
+      ? 800
+      : Math.max(
+          window.innerHeight,
+          window.visualViewport?.height || 0,
+        ),
+  )
   const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
     ({
       ...defaultStatusline,
@@ -7597,11 +7605,20 @@ function App() {
       const editorFocused =
         activeElement instanceof HTMLElement &&
         activeElement.matches('input, textarea, select, [contenteditable="true"]')
-      const open = Boolean(
-        editorFocused &&
-          viewport &&
-          window.innerHeight - viewport.height > 80,
-      )
+      const visibleHeight = viewport?.height || window.innerHeight
+      const viewportOffsetTop = viewport?.offsetTop || 0
+      if (!editorFocused) {
+        viewportBaselineHeightRef.current = Math.max(
+          window.innerHeight,
+          visibleHeight,
+        )
+      }
+      const open = appKeyboardOpen({
+        editorFocused,
+        baselineHeight: viewportBaselineHeightRef.current,
+        viewportHeight: visibleHeight,
+        viewportOffsetTop,
+      })
       const geometry = currentAppViewportGeometry(open)
       setKeyboardOpen(open)
       setViewportHeight(geometry.height)

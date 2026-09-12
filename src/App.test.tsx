@@ -1302,6 +1302,10 @@ describe('App', () => {
     const editor = document.createElement('textarea')
     document.body.append(editor)
     editor.focus()
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 510,
+    })
     Object.defineProperty(visualViewport, 'height', {
       configurable: true,
       value: 510,
@@ -1320,6 +1324,10 @@ describe('App', () => {
     expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('42px')
 
     editor.blur()
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 852,
+    })
     Object.defineProperty(visualViewport, 'height', {
       configurable: true,
       value: 844,

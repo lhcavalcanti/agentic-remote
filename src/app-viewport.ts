@@ -19,3 +19,23 @@ export function appViewportGeometry({
     offsetTop: visualOffsetTop || 0,
   }
 }
+
+export function appKeyboardOpen({
+  editorFocused,
+  baselineHeight,
+  viewportHeight,
+  viewportOffsetTop,
+}: {
+  editorFocused: boolean
+  baselineHeight: number
+  viewportHeight: number
+  viewportOffsetTop: number
+}): boolean {
+  return (
+    editorFocused &&
+    (
+      baselineHeight - viewportHeight > 80 ||
+      viewportOffsetTop > 20
+    )
+  )
+}

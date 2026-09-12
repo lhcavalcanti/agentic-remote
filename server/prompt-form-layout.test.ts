@@ -16,7 +16,13 @@ describe('phone prompt form layout', () => {
       /\.user-input-card__option > span\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow-wrap:\s*anywhere/s,
     )
     expect(css).toMatch(
+      /\.user-input-card__field-description\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow-wrap:\s*anywhere/s,
+    )
+    expect(css).toMatch(
       /\.permission-card,\s*\.user-input-card,\s*\.recovery-card\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%/s,
+    )
+    expect(css).toMatch(
+      /\.user-input-card__option\s*\{[^}]*align-items:\s*center[^}]*\}[\s\S]*@media \(max-width:\s*500px\)[\s\S]*?\.user-input-card__option\s*\{[^}]*min-height:\s*40px[^}]*align-items:\s*flex-start[^}]*padding:\s*8px/s,
     )
     expect(css).toMatch(
       /@media \(max-width:\s*500px\)[\s\S]*?\.user-input-card__shortcut-hint\s*\{[^}]*display:\s*none/s,

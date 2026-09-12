@@ -342,7 +342,7 @@
     "server/paths.ts": "11789bf5288ae72e1ce71a17f75b02c1432912d9dc5c5b859f0d1855100b2c14",
     "server/promotion-monitor.test.ts": "26c8ac58be92d4bd4288166f5a17203da68e99f0d5e36d1c00f22bda7e6db008",
     "server/promotion-setup.test.ts": "bdd915949a2483d85c8b26fd4754bd36edc1584de3eb9cc782797796857f7549",
-    "server/prompt-form-layout.test.ts": "02c91ece1a599b882a8c34c7d6c37124e3ba2f177251decf7c5a07957d51f120",
+    "server/prompt-form-layout.test.ts": "74ae644b07a6a745c1541c4106492b27b24729dffdbe9d90f111125b06373ce6",
     "server/provider-session-service.test.ts": "a992bdd3e052c487125012533959b89e9477a261e537c1d79751a6685fd2272c",
     "server/provider-session-service.ts": "24d7db279e19f3d754fc7639f375d678255014d35daa570a69d923da6a557c83",
     "server/push-notification-service.test.ts": "9a191967a8900e9eae9651849053514a2e96b4f13e0f84125cf053a95cf6376d",
@@ -481,7 +481,7 @@
     "src/features/prompts/PromptCards.test.tsx": "53427c6b4d7ff7ece561d930f35ea9921e2b75b11b487670660a0d00f5767479",
     "src/features/prompts/PromptCards.tsx": "6d23f53748d6c60de9e4f47f0b6c36c1776586f69009ad3c53ec3680547fcafd",
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
-    "src/index.css": "90488bf783eaa6520c684cd2a333197c3028ded226abf7c19eb00cfa50518718",
+    "src/index.css": "b1bf86e5febeac2a9d6c956a0c268a13f6af171b0ff897befb350cd4e53ea246",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -573,22 +573,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7291363034036ab1809810fb9461dbdc18def12a9c95a5028197b8fd9f66a72e",
+    "GRAPH_REPORT.md": "cae6c29338dd99a0aa2b850c5679799c73df7a3ce82e74b1933dbc6623319aba",
     "communities.json": "f7eea5e4757ad9c3cd07b41a33bccc70e748f5723abfe867fa7eb9f5c6346541",
-    "graph.html": "cdb236423708df939bf7f5081ece4933ed30d4cd0f5ad204fa857df4335e4f86",
-    "graph.json": "448f303b36f17bf991fcb994677c72f88df8ec72f386075e26a750d60edac43b"
+    "graph.html": "782f9db5e6773babd94fcf2e38f7e4ce1fe13c131a3f6a1e381d7e2d34f11e26",
+    "graph.json": "19728be85c5d97d1140c858463f75c4eee2ffed29c4b274bef6c0587490f28dc"
   },
   "schema_version": 1,
-  "source_commit": "0615441ad2c36311c0f0e805d8d4758d29dcff5c",
-  "source_fingerprint": "96c787d3cc6b09cc806844ab5acf2c55df2f59462f1709e2da11d017f432cad8",
+  "source_commit": "89634639969db3faf569ec404fe12ba7d1bcca73",
+  "source_fingerprint": "e89b29a8daa8930191f2478c38f64338d8ce1550d2dc5cb1ff2e973635de0082",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
     "server/prompt-form-layout.test.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/index.css"
   ]
 }

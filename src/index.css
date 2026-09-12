@@ -2989,11 +2989,8 @@ button {
   display: flex;
   min-width: 0;
   max-width: 100%;
-  min-height: 40px;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  padding: 8px;
-  border-radius: 7px;
   cursor: pointer;
 }
 
@@ -3061,7 +3058,8 @@ button {
 }
 
 .user-input-card__field > span,
-.user-input-card__field > legend {
+.user-input-card__field > legend,
+.user-input-card__field-description {
   display: grid;
   min-width: 0;
   max-width: 100%;
@@ -6684,6 +6682,13 @@ button {
   .user-input-card {
     margin-top: 16px;
     padding: 14px;
+  }
+
+  .user-input-card__option {
+    min-height: 40px;
+    align-items: flex-start;
+    padding: 8px;
+    border-radius: 7px;
   }
 
   .user-input-card__shortcut-hint {

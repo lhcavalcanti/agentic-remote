@@ -1428,7 +1428,11 @@ describe('App', () => {
         '510px',
       )
 
-      nextEditor.blur()
+      act(() => nextEditor.blur())
+      await waitFor(
+        () => expect(shell).not.toHaveClass('app-shell--keyboard-open'),
+        { timeout: 700 },
+      )
       Object.defineProperty(window, 'innerHeight', {
         configurable: true,
         value: 852,

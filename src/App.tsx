@@ -1781,6 +1781,7 @@ const defaultStatusline: StatuslineSettings = {
 }
 
 const timelineBottomThreshold = 48
+const keyboardFocusGapMs = 200
 
 const statuslineOptions: Array<{
   key: keyof Omit<StatuslineSettings, 'enabled'>
@@ -6681,6 +6682,7 @@ function App() {
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false)
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const keyboardOpenRef = useRef(false)
+  const keyboardFocusGapUntilRef = useRef(0)
   // Escape put the command menu away. Kept until what is being typed changes,
   // so the menu does not spring back on the next keystroke.
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
@@ -7608,9 +7610,12 @@ function App() {
         activeElement.matches('input, textarea, select, [contenteditable="true"]')
       const visibleHeight = viewport?.height || window.innerHeight
       const viewportOffsetTop = viewport?.offsetTop || 0
+      const focusGapActive =
+        !editorFocused &&
+        Date.now() < keyboardFocusGapUntilRef.current
       const open = appKeyboardOpen({
         editorFocused,
-        wasOpen: keyboardOpenRef.current,
+        focusGapActive,
         baselineHeight: viewportBaselineHeightRef.current,
         viewportHeight: visibleHeight,
         viewportOffsetTop,
@@ -7638,17 +7643,27 @@ function App() {
         timers.add(timer)
       }
     }
+    const handleFocusIn = () => {
+      keyboardFocusGapUntilRef.current = 0
+      handleViewportChange()
+    }
+    const handleFocusOut = () => {
+      keyboardFocusGapUntilRef.current = keyboardOpenRef.current
+        ? Date.now() + keyboardFocusGapMs
+        : 0
+      handleViewportChange()
+    }
     window.visualViewport?.addEventListener('resize', handleViewportChange)
     window.visualViewport?.addEventListener('scroll', handleViewportChange)
     window.addEventListener('resize', handleViewportChange)
-    document.addEventListener('focusin', handleViewportChange)
-    document.addEventListener('focusout', handleViewportChange)
+    document.addEventListener('focusin', handleFocusIn)
+    document.addEventListener('focusout', handleFocusOut)
     return () => {
       window.visualViewport?.removeEventListener('resize', handleViewportChange)
       window.visualViewport?.removeEventListener('scroll', handleViewportChange)
       window.removeEventListener('resize', handleViewportChange)
-      document.removeEventListener('focusin', handleViewportChange)
-      document.removeEventListener('focusout', handleViewportChange)
+      document.removeEventListener('focusin', handleFocusIn)
+      document.removeEventListener('focusout', handleFocusOut)
       for (const timer of timers) {
         window.clearTimeout(timer)
       }

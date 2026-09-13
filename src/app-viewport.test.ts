@@ -35,14 +35,14 @@ describe('app viewport geometry', () => {
   it('detects the keyboard when iOS shrinks both reported heights', () => {
     expect(appKeyboardOpen({
       editorFocused: true,
-      wasOpen: false,
+      focusGapActive: false,
       baselineHeight: 852,
       viewportHeight: 510,
       viewportOffsetTop: 42,
     })).toBe(true)
     expect(appKeyboardOpen({
       editorFocused: true,
-      wasOpen: false,
+      focusGapActive: false,
       baselineHeight: 852,
       viewportHeight: 852,
       viewportOffsetTop: 0,
@@ -52,17 +52,17 @@ describe('app viewport geometry', () => {
   it('retains keyboard mode across the focus gap between editors', () => {
     expect(appKeyboardOpen({
       editorFocused: false,
-      wasOpen: true,
+      focusGapActive: true,
       baselineHeight: 852,
       viewportHeight: 510,
       viewportOffsetTop: 10,
     })).toBe(true)
     expect(appKeyboardOpen({
       editorFocused: false,
-      wasOpen: true,
+      focusGapActive: false,
       baselineHeight: 852,
-      viewportHeight: 852,
-      viewportOffsetTop: 0,
+      viewportHeight: 510,
+      viewportOffsetTop: 10,
     })).toBe(false)
   })
 })

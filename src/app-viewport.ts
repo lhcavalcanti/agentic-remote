@@ -22,13 +22,13 @@ export function appViewportGeometry({
 
 export function appKeyboardOpen({
   editorFocused,
-  wasOpen,
+  focusGapActive,
   baselineHeight,
   viewportHeight,
   viewportOffsetTop,
 }: {
   editorFocused: boolean
-  wasOpen: boolean
+  focusGapActive: boolean
   baselineHeight: number
   viewportHeight: number
   viewportOffsetTop: number
@@ -38,6 +38,6 @@ export function appKeyboardOpen({
     viewportOffsetTop > 20
   return (
     viewportOccluded &&
-    (editorFocused || wasOpen)
+    (editorFocused || focusGapActive)
   )
 }

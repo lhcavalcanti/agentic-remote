@@ -6680,6 +6680,7 @@ function App() {
   const [updatingApp, setUpdatingApp] = useState(false)
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false)
   const [keyboardOpen, setKeyboardOpen] = useState(false)
+  const keyboardOpenRef = useRef(false)
   // Escape put the command menu away. Kept until what is being typed changes,
   // so the menu does not spring back on the next keystroke.
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
@@ -7607,18 +7608,20 @@ function App() {
         activeElement.matches('input, textarea, select, [contenteditable="true"]')
       const visibleHeight = viewport?.height || window.innerHeight
       const viewportOffsetTop = viewport?.offsetTop || 0
-      if (!editorFocused) {
+      const open = appKeyboardOpen({
+        editorFocused,
+        wasOpen: keyboardOpenRef.current,
+        baselineHeight: viewportBaselineHeightRef.current,
+        viewportHeight: visibleHeight,
+        viewportOffsetTop,
+      })
+      if (!editorFocused && !open) {
         viewportBaselineHeightRef.current = Math.max(
           window.innerHeight,
           visibleHeight,
         )
       }
-      const open = appKeyboardOpen({
-        editorFocused,
-        baselineHeight: viewportBaselineHeightRef.current,
-        viewportHeight: visibleHeight,
-        viewportOffsetTop,
-      })
+      keyboardOpenRef.current = open
       const geometry = currentAppViewportGeometry(open)
       setKeyboardOpen(open)
       setViewportHeight(geometry.height)

@@ -425,4 +425,6 @@ apply the update, and reopen the app.
 An iPhone or iPad captures its launcher icon and standalone status-bar mode
 when the app is added to the Home Screen. To adopt a shipped launcher-icon
 change or full-height Dynamic Island behavior, remove the existing Home Screen
-app and add it again from Safari.
+app and add it again from Safari. Agentic Remote ships explicit Relay icons for
+the iPhone and iPad touch-icon sizes so the installer does not fall back to a
+generated letter tile.

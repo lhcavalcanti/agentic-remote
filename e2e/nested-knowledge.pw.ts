@@ -5,7 +5,7 @@ import {
 } from './workspace-fixtures'
 
 for (const viewport of [
-  { name: 'desktop', width: 1280, height: 800 },
+  { name: 'desktop', width: 1280, height: 600 },
   { name: 'phone', width: 390, height: 667 },
 ]) {
   test(`chooses a nested Knowledge folder on ${viewport.name}`, async ({
@@ -49,6 +49,33 @@ for (const viewport of [
       await chooser
         .getByRole('button', { name: 'handbook', exact: true })
         .click()
+
+      const bounds = await chooser.boundingBox()
+      expect(bounds).not.toBeNull()
+      expect(bounds!.x).toBeGreaterThanOrEqual(0)
+      expect(bounds!.y).toBeGreaterThanOrEqual(0)
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height)
+
+      const choicesBounds = await chooser
+        .locator('.knowledge-root-choices')
+        .boundingBox()
+      const actionsBounds = await chooser
+        .locator('.session-root-dialog__actions')
+        .boundingBox()
+      expect(choicesBounds).not.toBeNull()
+      expect(actionsBounds).not.toBeNull()
+      expect(choicesBounds!.y + choicesBounds!.height).toBeLessThanOrEqual(
+        actionsBounds!.y,
+      )
+
+      if (process.env.AGENTIC_REMOTE_CAPTURE_ISSUE_278) {
+        await page.screenshot({
+          path: testInfo.outputPath(`session-root-${viewport.name}.png`),
+          animations: 'disabled',
+          caret: 'hide',
+        })
+      }
 
       const use = chooser.getByRole('button', {
         name: 'Use for this session',

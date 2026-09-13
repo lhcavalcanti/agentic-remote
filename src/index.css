@@ -611,6 +611,31 @@ button {
   width: min(620px, 100%);
 }
 
+.dialog.session-root-dialog--chooser {
+  display: flex;
+  min-height: 0;
+  max-height: calc(var(--visual-viewport-height, 100dvh) - 36px);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.session-root-dialog--chooser .dialog__header,
+.session-root-dialog--chooser .session-root-dialog__actions {
+  flex: 0 0 auto;
+}
+
+.session-root-dialog--chooser .knowledge-root-choices {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.session-root-dialog--chooser .knowledge-root-choices__list {
+  max-height: none;
+  overflow: visible;
+}
+
 .session-root-dialog .eyebrow {
   color: var(--muted);
   font-size: 12px;
@@ -6172,23 +6197,10 @@ button {
   }
 
   .session-root-dialog--chooser .dialog__header {
-    flex: 0 0 auto;
     margin-bottom: 12px;
   }
 
-  .session-root-dialog--chooser .knowledge-root-choices {
-    min-height: 0;
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .session-root-dialog--chooser .knowledge-root-choices__list {
-    max-height: none;
-    overflow: visible;
-  }
-
   .session-root-dialog--chooser .session-root-dialog__actions {
-    flex: 0 0 auto;
     margin-top: 12px;
   }
 

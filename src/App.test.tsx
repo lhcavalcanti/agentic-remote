@@ -1381,6 +1381,7 @@ describe('App', () => {
     })
 
     const editor = document.createElement('textarea')
+    const nextEditor = document.createElement('input')
     const rendered = render(<App />)
     const shell = document.querySelector<HTMLElement>('.app-shell')
     try {
@@ -1390,7 +1391,12 @@ describe('App', () => {
       expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('0px')
 
       document.body.append(editor)
+      document.body.append(nextEditor)
       editor.focus()
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: 510,
+      })
       Object.defineProperty(visualViewport, 'height', {
         configurable: true,
         value: 510,
@@ -1408,7 +1414,29 @@ describe('App', () => {
       )
       expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('42px')
 
-      editor.blur()
+      Object.defineProperty(visualViewport, 'offsetTop', {
+        configurable: true,
+        value: 10,
+        writable: true,
+      })
+      act(() => editor.blur())
+      expect(shell).toHaveClass('app-shell--keyboard-open')
+      nextEditor.focus()
+      act(() => visualViewport.dispatchEvent(new Event('resize')))
+      expect(shell).toHaveClass('app-shell--keyboard-open')
+      expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+        '510px',
+      )
+
+      act(() => nextEditor.blur())
+      await waitFor(
+        () => expect(shell).not.toHaveClass('app-shell--keyboard-open'),
+        { timeout: 700 },
+      )
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: 852,
+      })
       Object.defineProperty(visualViewport, 'height', {
         configurable: true,
         value: 774,
@@ -1429,6 +1457,7 @@ describe('App', () => {
       expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('0px')
     } finally {
       editor.remove()
+      nextEditor.remove()
       rendered.unmount()
       Object.defineProperty(window, 'innerHeight', {
         configurable: true,

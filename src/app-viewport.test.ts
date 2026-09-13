@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appViewportGeometry } from './app-viewport'
+import { appKeyboardOpen, appViewportGeometry } from './app-viewport'
 
 describe('app viewport geometry', () => {
   it('fills the installed window when iOS reports a shorter idle visual viewport', () => {
@@ -30,5 +30,39 @@ describe('app viewport geometry', () => {
       standalone: false,
       keyboardOpen: false,
     })).toEqual({ height: 700, offsetTop: 18 })
+  })
+
+  it('detects the keyboard when iOS shrinks both reported heights', () => {
+    expect(appKeyboardOpen({
+      editorFocused: true,
+      focusGapActive: false,
+      baselineHeight: 852,
+      viewportHeight: 510,
+      viewportOffsetTop: 42,
+    })).toBe(true)
+    expect(appKeyboardOpen({
+      editorFocused: true,
+      focusGapActive: false,
+      baselineHeight: 852,
+      viewportHeight: 852,
+      viewportOffsetTop: 0,
+    })).toBe(false)
+  })
+
+  it('retains keyboard mode across the focus gap between editors', () => {
+    expect(appKeyboardOpen({
+      editorFocused: false,
+      focusGapActive: true,
+      baselineHeight: 852,
+      viewportHeight: 510,
+      viewportOffsetTop: 10,
+    })).toBe(true)
+    expect(appKeyboardOpen({
+      editorFocused: false,
+      focusGapActive: false,
+      baselineHeight: 852,
+      viewportHeight: 510,
+      viewportOffsetTop: 10,
+    })).toBe(false)
   })
 })

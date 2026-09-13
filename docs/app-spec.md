@@ -982,9 +982,11 @@ Priority order:
 - Relay in Agentic green MUST be the fixed in-app brand, browser-tab icon,
   manifest icon, native icon, and Apple touch icon. App settings MUST NOT
   expose icon style or icon color controls.
-- The Apple touch icon MUST be a committed opaque 180px PNG. An existing
-  iPhone or iPad installation needs to be removed and re-added before a
-  shipped launcher-icon or install-time status-bar change appears.
+- Apple touch icons MUST use the fixed Relay artwork as committed opaque
+  120px, 152px, 167px, and 180px PNGs at size-specific root URLs. The
+  service worker MUST pre-cache those install assets. An existing iPhone or
+  iPad installation needs to be removed and re-added before a shipped
+  launcher-icon or install-time status-bar change appears.
 
 ## 12. PWA updates
 

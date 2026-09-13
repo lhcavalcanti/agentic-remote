@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { appIconSvg } from '../src/app-icon-design.js'
 
 const root = new URL('../', import.meta.url)
+const appleTouchSizes = [120, 152, 167, 180] as const
 
 async function pngSize(path: string): Promise<{
   width: number
@@ -31,6 +32,19 @@ describe('PWA app icon assets', () => {
   })
 
   it('keeps the default install and manifest icons synchronized', async () => {
+    for (const size of appleTouchSizes) {
+      const name = `apple-touch-icon-${size}x${size}.png`
+      expect(await pngSize(`public/icons/${name}`)).toEqual({
+        width: size,
+        height: size,
+        colorType: 2,
+      })
+      expect(
+        await readFile(new URL(`../public/${name}`, import.meta.url)),
+      ).toEqual(
+        await readFile(new URL(`../public/icons/${name}`, import.meta.url)),
+      )
+    }
     expect(await pngSize('public/icons/apple-touch-icon.png')).toEqual({
       width: 180,
       height: 180,
@@ -51,14 +65,18 @@ describe('PWA app icon assets', () => {
     expect(
       await readFile(new URL('../public/apple-touch-icon.png', import.meta.url)),
     ).toEqual(
-      await readFile(new URL('../public/icons/apple-touch-icon.png', import.meta.url)),
+      await readFile(
+        new URL('../public/icons/apple-touch-icon-180x180.png', import.meta.url),
+      ),
     )
     expect(
       await readFile(
         new URL('../public/apple-touch-icon-precomposed.png', import.meta.url),
       ),
     ).toEqual(
-      await readFile(new URL('../public/icons/apple-touch-icon.png', import.meta.url)),
+      await readFile(
+        new URL('../public/icons/apple-touch-icon-180x180.png', import.meta.url),
+      ),
     )
   })
 })

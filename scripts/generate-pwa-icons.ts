@@ -4,6 +4,7 @@ import { chromium } from '@playwright/test'
 import { appIconSvg } from '../src/app-icon-design'
 
 const root = resolve(import.meta.dirname, '..')
+const appleTouchSizes = [120, 152, 167, 180] as const
 const browser = await chromium.launch({ headless: true })
 const page = await browser.newPage()
 
@@ -29,16 +30,27 @@ try {
     resolve(root, 'public/icon.svg'),
     `${appIconSvg()}\n`,
   )
-  await renderIcon('public/icons/apple-touch-icon.png', 180)
+  for (const size of appleTouchSizes) {
+    const name = `apple-touch-icon-${size}x${size}.png`
+    await renderIcon(`public/icons/${name}`, size)
+    await copyFile(
+      resolve(root, `public/icons/${name}`),
+      resolve(root, `public/${name}`),
+    )
+  }
   await renderIcon('public/icons/icon-192.png', 192)
   await renderIcon('public/icons/icon-512.png', 512)
   await renderIcon('public/icons/icon-512-maskable.png', 512)
   await copyFile(
+    resolve(root, 'public/icons/apple-touch-icon-180x180.png'),
     resolve(root, 'public/icons/apple-touch-icon.png'),
+  )
+  await copyFile(
+    resolve(root, 'public/icons/apple-touch-icon-180x180.png'),
     resolve(root, 'public/apple-touch-icon.png'),
   )
   await copyFile(
-    resolve(root, 'public/icons/apple-touch-icon.png'),
+    resolve(root, 'public/icons/apple-touch-icon-180x180.png'),
     resolve(root, 'public/apple-touch-icon-precomposed.png'),
   )
 } finally {

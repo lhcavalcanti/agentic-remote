@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `a8c5d72e737001fa3325130c7093f173f21f578c7bf1f0643bb296768553af50`
+Snapshot: `ec832cffe2066b26dc2e300af0863e3392642016ff9ffb6fd00746447d2da271`
 
-Source checkout: `3b52b46dd94e626a7455c9a21d98da991b440eaa`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `2bbeb76e81aea43e488a36eae132a540f5ad4f94`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -12,7 +12,7 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 
 
 ## Corpus Check
-- 227 files · ~457,745 words
+- 227 files · ~457,749 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -546,7 +546,7 @@ Nodes (9): carrySnapshotTranscripts(), currentSessionEventSequence(), nextSessio
 
 ### Community 94 - "generate-pwa-icons.ts"
 Cohesion: 0.27
-Nodes (6): appleTouchSizes, renderIcon(), root, appleTouchSizes, root, appIconSvg()
+Nodes (6): legacyAppleTouchIcons, renderIcon(), root, manifestIconSizes, root, appIconSvg()
 
 ### Community 96 - "session-admission-lifecycle.test.ts"
 Cohesion: 0.24
@@ -675,23 +675,15 @@ _Questions this graph is uniquely positioned to answer:_
 - `docs/sdk-architecture-roadmap.md`
 - `docs/slash-command-feedback.md`
 - `index.html`
-- `public/apple-touch-icon-120x120.png`
-- `public/apple-touch-icon-152x152.png`
-- `public/apple-touch-icon-167x167.png`
-- `public/apple-touch-icon-180x180.png`
-- `public/apple-touch-icon-precomposed.png`
-- `public/apple-touch-icon.png`
 - `public/fonts/MonaSans.woff2`
 - `public/fonts/OFL.txt`
 - `public/icon.svg`
-- `public/icons/apple-touch-icon-120x120.png`
-- `public/icons/apple-touch-icon-152x152.png`
-- `public/icons/apple-touch-icon-167x167.png`
-- `public/icons/apple-touch-icon-180x180.png`
-- `public/icons/apple-touch-icon.png`
 - `public/icons/icon-192.png`
 - `public/icons/icon-512-maskable.png`
 - `public/icons/icon-512.png`
+- `public/icons/relay-icon-1024.png`
+- `public/icons/relay-icon-192.png`
+- `public/icons/relay-icon-512.png`
 - `public/manifest.webmanifest`
 - `shell/README.md`
 - `shell/index.html`

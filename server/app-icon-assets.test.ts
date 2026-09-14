@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { appIconSvg } from '../src/app-icon-design.js'
 
 const root = new URL('../', import.meta.url)
-const appleTouchSizes = [120, 152, 167, 180] as const
+const manifestIconSizes = [192, 512, 1024] as const
 
 async function pngSize(path: string): Promise<{
   width: number
@@ -31,52 +31,68 @@ describe('PWA app icon assets', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('keeps the default install and manifest icons synchronized', async () => {
-    for (const size of appleTouchSizes) {
-      const name = `apple-touch-icon-${size}x${size}.png`
-      expect(await pngSize(`public/icons/${name}`)).toEqual({
+  it('keeps the credentialed manifest icons synchronized', async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        new URL('../public/manifest.webmanifest', import.meta.url),
+        'utf8',
+      ),
+    ) as {
+      id?: string
+      icons?: Array<{
+        src?: string
+        sizes?: string
+        type?: string
+        purpose?: string
+      }>
+    }
+    expect(manifest.id).toBe('/')
+    expect(manifest.icons?.filter((icon) => icon.purpose === 'any')).toEqual(
+      manifestIconSizes.map((size) => ({
+        src: `/icons/relay-icon-${size}.png`,
+        sizes: `${size}x${size}`,
+        type: 'image/png',
+        purpose: 'any',
+      })),
+    )
+
+    for (const size of manifestIconSizes) {
+      expect(await pngSize(`public/icons/relay-icon-${size}.png`)).toEqual({
         width: size,
         height: size,
         colorType: 2,
       })
-      expect(
-        await readFile(new URL(`../public/${name}`, import.meta.url)),
-      ).toEqual(
-        await readFile(new URL(`../public/icons/${name}`, import.meta.url)),
-      )
     }
-    expect(await pngSize('public/icons/apple-touch-icon.png')).toEqual({
-      width: 180,
-      height: 180,
-      colorType: 2,
-    })
-    expect(await pngSize('public/icons/icon-192.png')).toMatchObject({
-      width: 192,
-      height: 192,
-    })
-    expect(await pngSize('public/icons/icon-512.png')).toMatchObject({
-      width: 512,
-      height: 512,
-    })
-    expect(await pngSize('public/icons/icon-512-maskable.png')).toMatchObject({
-      width: 512,
-      height: 512,
-    })
     expect(
-      await readFile(new URL('../public/apple-touch-icon.png', import.meta.url)),
+      await readFile(new URL('../public/icons/icon-192.png', import.meta.url)),
     ).toEqual(
       await readFile(
-        new URL('../public/icons/apple-touch-icon-180x180.png', import.meta.url),
+        new URL('../public/icons/relay-icon-192.png', import.meta.url),
+      ),
+    )
+    expect(
+      await readFile(new URL('../public/icons/icon-512.png', import.meta.url)),
+    ).toEqual(
+      await readFile(
+        new URL('../public/icons/relay-icon-512.png', import.meta.url),
       ),
     )
     expect(
       await readFile(
-        new URL('../public/apple-touch-icon-precomposed.png', import.meta.url),
+        new URL('../public/icons/icon-512-maskable.png', import.meta.url),
       ),
     ).toEqual(
       await readFile(
-        new URL('../public/icons/apple-touch-icon-180x180.png', import.meta.url),
+        new URL('../public/icons/relay-icon-512.png', import.meta.url),
       ),
     )
+    expect(
+      (await readdir(new URL('../public/', import.meta.url)))
+        .filter((name) => name.startsWith('apple-touch-icon')),
+    ).toEqual([])
+    expect(
+      (await readdir(new URL('../public/icons/', import.meta.url)))
+        .filter((name) => name.startsWith('apple-touch-icon')),
+    ).toEqual([])
   })
 })

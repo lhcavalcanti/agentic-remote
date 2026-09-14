@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "3b52b46dd94e626a7455c9a21d98da991b440eaa",
+  "built_at_commit": "2bbeb76e81aea43e488a36eae132a540f5ad4f94",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -6619,7 +6619,7 @@
       "source": "scripts_generate_pwa_icons",
       "source_file": "scripts/generate-pwa-icons.ts",
       "source_location": "L7",
-      "target": "scripts_generate_pwa_icons_appletouchsizes",
+      "target": "scripts_generate_pwa_icons_legacyappletouchicons",
       "weight": 1.0
     },
     {
@@ -6629,7 +6629,7 @@
       "relation": "contains",
       "source": "scripts_generate_pwa_icons",
       "source_file": "scripts/generate-pwa-icons.ts",
-      "source_location": "L11",
+      "source_location": "L23",
       "target": "scripts_generate_pwa_icons_rendericon",
       "weight": 1.0
     },
@@ -6676,7 +6676,7 @@
       "relation": "calls",
       "source": "scripts_generate_pwa_icons_rendericon",
       "source_file": "scripts/generate-pwa-icons.ts",
-      "source_location": "L23",
+      "source_location": "L35",
       "target": "src_app_icon_design_appiconsvg",
       "weight": 1.0
     },
@@ -26711,7 +26711,7 @@
       "source": "server_app_icon_assets_test",
       "source_file": "server/app-icon-assets.test.ts",
       "source_location": "L6",
-      "target": "server_app_icon_assets_test_appletouchsizes",
+      "target": "server_app_icon_assets_test_manifesticonsizes",
       "weight": 1.0
     },
     {
@@ -118103,7 +118103,7 @@
       "source_file": "shell/src-tauri/Cargo.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "1.6.4"
+      "version": "1.6.5"
     },
     {
       "_origin": "ast",
@@ -118561,9 +118561,9 @@
       "community": 94,
       "community_name": "generate-pwa-icons.ts",
       "file_type": "code",
-      "id": "scripts_generate_pwa_icons_appletouchsizes",
-      "label": "appleTouchSizes",
-      "norm_label": "appletouchsizes",
+      "id": "scripts_generate_pwa_icons_legacyappletouchicons",
+      "label": "legacyAppleTouchIcons",
+      "norm_label": "legacyappletouchicons",
       "source_file": "scripts/generate-pwa-icons.ts",
       "source_location": "L7"
     },
@@ -118577,7 +118577,7 @@
       "label": "renderIcon()",
       "norm_label": "rendericon()",
       "source_file": "scripts/generate-pwa-icons.ts",
-      "source_location": "L11"
+      "source_location": "L23"
     },
     {
       "_origin": "ast",
@@ -122775,9 +122775,9 @@
       "community": 94,
       "community_name": "generate-pwa-icons.ts",
       "file_type": "code",
-      "id": "server_app_icon_assets_test_appletouchsizes",
-      "label": "appleTouchSizes",
-      "norm_label": "appletouchsizes",
+      "id": "server_app_icon_assets_test_manifesticonsizes",
+      "label": "manifestIconSizes",
+      "norm_label": "manifesticonsizes",
       "source_file": "server/app-icon-assets.test.ts",
       "source_location": "L6"
     },

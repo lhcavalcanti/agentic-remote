@@ -4087,11 +4087,11 @@
     "label": "generate-pwa-icons.ts",
     "nodes": [
       "scripts_generate_pwa_icons",
-      "scripts_generate_pwa_icons_appletouchsizes",
+      "scripts_generate_pwa_icons_legacyappletouchicons",
       "scripts_generate_pwa_icons_rendericon",
       "scripts_generate_pwa_icons_root",
       "server_app_icon_assets_test",
-      "server_app_icon_assets_test_appletouchsizes",
+      "server_app_icon_assets_test_manifesticonsizes",
       "server_app_icon_assets_test_pngsize",
       "server_app_icon_assets_test_root",
       "src_app_icon_design",

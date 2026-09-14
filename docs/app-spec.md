@@ -840,6 +840,10 @@ clear replacement IDs without losing, duplicating, or reordering content.
   crowding out the conversation, and MUST NOT affect phone full-screen reading.
 - Each session MUST keep its own reading position — root, folder, and
   document — and switching sessions MUST show that session's position.
+- Reopening Knowledge or switching between docked and expanded modes MUST
+  refetch the active document in place while preserving its root, path,
+  fragment, view mode, and scroll position. A late refresh MUST NOT replace a
+  newer root, folder, document, or session selection.
 - Clearing a conversation replaces a session rather than deleting it, so the
   removal event MUST name the replacement and every client MUST carry that
   session's reading position across rather than discard it. The hub root

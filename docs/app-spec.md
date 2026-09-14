@@ -986,7 +986,8 @@ Priority order:
   the HTML head and website root MUST NOT define Apple-touch icons that take
   precedence over it. The manifest MUST declare new opaque full-bleed Relay
   PNG URLs at 192px, 512px, and 1024px with purpose `any`, and the service
-  worker MUST pre-cache them. An existing iPhone or iPad installation needs
+  worker MUST pre-cache them. Missing Apple-touch probe paths MUST return 404
+  rather than the SPA document. An existing iPhone or iPad installation needs
   to be removed and re-added before a shipped launcher-icon or install-time
   status-bar change appears.
 

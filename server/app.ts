@@ -71,6 +71,12 @@ function errorStatusCode(error: unknown): number | undefined {
   return typeof statusCode === 'number' ? statusCode : undefined
 }
 
+function isAppleTouchIconProbe(url: string): boolean {
+  const pathname = url.split(/[?#]/, 1)[0]
+  const name = pathname.slice(pathname.lastIndexOf('/') + 1)
+  return /^apple-touch-icon(?:-\d+x\d+)?(?:-precomposed)?\.png$/i.test(name)
+}
+
 export async function buildApp(
   options: BuildAppOptions = {},
 ): Promise<{
@@ -233,7 +239,8 @@ export async function buildApp(
       if (
         request.url.startsWith('/api/') ||
         request.url.startsWith('/node-api/') ||
-        request.url.startsWith('/assets/')
+        request.url.startsWith('/assets/') ||
+        isAppleTouchIconProbe(request.url)
       ) {
         return reply.code(404).send({ error: 'Not found' })
       }

@@ -5464,6 +5464,7 @@ function KnowledgeReader({
   fragment,
   listing,
   loading,
+  mode,
   root,
   onOpenFolder,
   onOpenFile,
@@ -5478,6 +5479,7 @@ function KnowledgeReader({
   fragment?: string
   listing?: WorkspaceListing
   loading: boolean
+  mode: KnowledgePanelMode
   root: KnowledgeRoot
   onOpenFolder: (path: string) => void
   onOpenFile: (path: string, fragment?: string) => void
@@ -5491,6 +5493,25 @@ function KnowledgeReader({
   const [raw, setRaw] = useState(false)
   const [linkError, setLinkError] = useState<string>()
   const contentRef = useRef<HTMLDivElement>(null)
+  const contentScrollTop = useRef(0)
+  const previousFilePath = useRef(file?.path)
+
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    if (!content) {
+      previousFilePath.current = file?.path
+      return
+    }
+    if (previousFilePath.current !== file?.path) {
+      contentScrollTop.current = 0
+    } else if (mode !== 'hidden') {
+      if (contentScrollTop.current === 0) {
+        contentScrollTop.current = content.scrollTop
+      }
+      content.scrollTop = contentScrollTop.current
+    }
+    previousFilePath.current = file?.path
+  }, [file, mode])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -5619,6 +5640,9 @@ function KnowledgeReader({
         onClick={(event) =>
           followMarkdownLink(event, file.path, onOpenFile, setLinkError)
         }
+        onScroll={(event) => {
+          contentScrollTop.current = event.currentTarget.scrollTop
+        }}
         ref={contentRef}
       >
         {file.kind === 'pdf' ? (
@@ -6456,6 +6480,10 @@ function App() {
   // be bumped in different combinations, and each wrong combination was a
   // race.
   const knowledgeRequest = useRef(0)
+  // Background file refreshes do not change the requested view. They still
+  // need ordering of their own so a mode toggle cannot cancel navigation or
+  // let an older refresh replace a newer one.
+  const knowledgeFileRefreshRequest = useRef(0)
   // A view generation can contain several refreshes of the same branch.
   // Only the latest request owns its payload and loading indicator.
   const knowledgeFolderRequestId = useRef(0)
@@ -8059,6 +8087,15 @@ function App() {
             knowledgeFile?.path === position.file &&
             knowledgeFile
           ) {
+            if (
+              !(await reloadKnowledgeFile(
+                rootId,
+                knowledgeFile.path,
+                token,
+              ))
+            ) {
+              return
+            }
             applyKnowledgeScrollRef.current(key)
             return
           }
@@ -10587,6 +10624,24 @@ function App() {
         JSON.stringify(mode),
       )
     }
+    const file = knowledgeFileStateRef.current
+    const visibleModeChanged =
+      knowledgeMode !== 'hidden' &&
+      mode !== 'hidden' &&
+      mode !== knowledgeMode
+    const sessionlessReopen =
+      knowledgeMode === 'hidden' &&
+      mode !== 'hidden' &&
+      !selectedKey
+    if (
+      (visibleModeChanged || sessionlessReopen) &&
+      !knowledgeLoadingRef.current &&
+      !knowledgeRestoreStartedKey.current &&
+      activeRootId &&
+      file
+    ) {
+      void reloadKnowledgeFile(activeRootId, file.path)
+    }
     setKnowledgeModeState(mode)
   }
 
@@ -11200,6 +11255,40 @@ function App() {
       if (request === knowledgeRequest.current) {
         setKnowledgeLoading(false)
       }
+    }
+  }
+
+  async function reloadKnowledgeFile(
+    rootId: string,
+    path: string,
+    generation = knowledgeRequest.current,
+  ): Promise<boolean> {
+    const refresh = ++knowledgeFileRefreshRequest.current
+    const ownerKey = knowledgePanelKey
+    const current = () =>
+      generation === knowledgeRequest.current &&
+      refresh === knowledgeFileRefreshRequest.current &&
+      knowledgeViewOwnerKey.current === ownerKey &&
+      knowledgeFileStateRef.current?.path === path
+    if (!current()) {
+      return false
+    }
+    setError(undefined)
+    try {
+      const basePath = knowledgeBasePathFor(rootId)
+      const refreshed = basePath === knowledgeRootPath
+        ? await readKnowledgeFile(rootId, path)
+        : await readKnowledgeFile(rootId, path, basePath)
+      if (!current()) {
+        return false
+      }
+      setKnowledgeFile(refreshed)
+      return true
+    } catch (caught) {
+      if (current()) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+      return false
     }
   }
 
@@ -14771,6 +14860,7 @@ function App() {
                 key={`${activeRoot.id}:${knowledgeFile?.path || '.'}`}
                 listing={knowledgeListing}
                 loading={knowledgeLoading}
+                mode={knowledgeMode}
                 onLoadAsset={loadKnowledgeAsset}
                 onAsk={askAboutKnowledgeFile}
                 onShowFiles={() => openSidebar('knowledge')}

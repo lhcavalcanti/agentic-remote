@@ -59,9 +59,9 @@ describe('service worker build caches', () => {
     expect(caches.open).toHaveBeenCalledWith('agentic-remote-shell-build-b')
     const requests = cache.addAll.mock.calls[0][0] as Request[]
     expect(requests.map((request) => request.url)).toContain('https://example.test/')
-    for (const size of [120, 152, 167, 180]) {
+    for (const size of [192, 512, 1024]) {
       expect(requests.map((request) => request.url)).toContain(
-        `https://example.test/apple-touch-icon-${size}x${size}.png`,
+        `https://example.test/icons/relay-icon-${size}.png`,
       )
     }
     expect(requests.every((request) => request.cache === 'reload')).toBe(true)

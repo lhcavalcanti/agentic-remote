@@ -982,11 +982,14 @@ Priority order:
 - Relay in Agentic green MUST be the fixed in-app brand, browser-tab icon,
   manifest icon, native icon, and Apple touch icon. App settings MUST NOT
   expose icon style or icon color controls.
-- Apple touch icons MUST use the fixed Relay artwork as committed opaque
-  120px, 152px, 167px, and 180px PNGs at size-specific root URLs. The
-  service worker MUST pre-cache those install assets. An existing iPhone or
-  iPad installation needs to be removed and re-added before a shipped
-  launcher-icon or install-time status-bar change appears.
+- The credentialed Web App Manifest MUST be the sole Home Screen icon source;
+  the HTML head and website root MUST NOT define Apple-touch icons that take
+  precedence over it. The manifest MUST declare new opaque full-bleed Relay
+  PNG URLs at 192px, 512px, and 1024px with purpose `any`, and the service
+  worker MUST pre-cache them. Missing Apple-touch probe paths MUST return 404
+  rather than the SPA document. An existing iPhone or iPad installation needs
+  to be removed and re-added before a shipped launcher-icon or install-time
+  status-bar change appears.
 
 ## 12. PWA updates
 

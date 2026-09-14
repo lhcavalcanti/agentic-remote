@@ -19,20 +19,10 @@ describe('mobile safe areas', () => {
     expect(html).toMatch(
       /rel="icon"[\s\S]*href="\/icon\.svg"[\s\S]*type="image\/svg\+xml"/,
     )
-    const touchLinks = Array.from(
-      html.matchAll(/<link[\s\S]*?rel="apple-touch-icon"[\s\S]*?\/>/g),
-      (match) => match[0],
+    expect(html).toMatch(
+      /rel="manifest"[\s\S]*href="\/manifest\.webmanifest"[\s\S]*crossorigin="use-credentials"/,
     )
-    expect(touchLinks).toHaveLength(4)
-    for (const size of [120, 152, 167, 180]) {
-      expect(touchLinks).toContainEqual(
-        expect.stringContaining(`sizes="${size}x${size}"`),
-      )
-      expect(touchLinks).toContainEqual(
-        expect.stringContaining(`href="/apple-touch-icon-${size}x${size}.png"`),
-      )
-    }
-    expect(html).not.toContain('href="/icons/apple-touch-icon.png"')
+    expect(html).not.toContain('rel="apple-touch-icon"')
     expect(css).toContain(
       '--app-safe-area-top: env(safe-area-inset-top, 0px)',
     )

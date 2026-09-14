@@ -6480,6 +6480,10 @@ function App() {
   // be bumped in different combinations, and each wrong combination was a
   // race.
   const knowledgeRequest = useRef(0)
+  // Background file refreshes do not change the requested view. They still
+  // need ordering of their own so a mode toggle cannot cancel navigation or
+  // let an older refresh replace a newer one.
+  const knowledgeFileRefreshRequest = useRef(0)
   // A view generation can contain several refreshes of the same branch.
   // Only the latest request owns its payload and loading indicator.
   const knowledgeFolderRequestId = useRef(0)
@@ -10621,10 +10625,18 @@ function App() {
       )
     }
     const file = knowledgeFileStateRef.current
-    if (
+    const visibleModeChanged =
       knowledgeMode !== 'hidden' &&
       mode !== 'hidden' &&
-      mode !== knowledgeMode &&
+      mode !== knowledgeMode
+    const sessionlessReopen =
+      knowledgeMode === 'hidden' &&
+      mode !== 'hidden' &&
+      !selectedKey
+    if (
+      (visibleModeChanged || sessionlessReopen) &&
+      !knowledgeLoadingRef.current &&
+      !knowledgeRestoreStartedKey.current &&
       activeRootId &&
       file
     ) {
@@ -11249,11 +11261,13 @@ function App() {
   async function reloadKnowledgeFile(
     rootId: string,
     path: string,
-    generation = ++knowledgeRequest.current,
+    generation = knowledgeRequest.current,
   ): Promise<boolean> {
+    const refresh = ++knowledgeFileRefreshRequest.current
     const ownerKey = knowledgePanelKey
     const current = () =>
       generation === knowledgeRequest.current &&
+      refresh === knowledgeFileRefreshRequest.current &&
       knowledgeViewOwnerKey.current === ownerKey &&
       knowledgeFileStateRef.current?.path === path
     if (!current()) {

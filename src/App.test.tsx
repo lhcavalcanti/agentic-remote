@@ -14600,6 +14600,175 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('does not let a mode change cancel file navigation already in flight', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [
+        { name: 'guide.md', path: 'guide.md', kind: 'markdown', size: 20 },
+        { name: 'other.md', path: 'other.md', kind: 'markdown', size: 20 },
+      ],
+    })
+    let finishNavigation:
+      | ((file: WorkspaceFile) => void)
+      | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_rootId, path) => {
+      if (path === 'other.md') {
+        return new Promise<WorkspaceFile>((resolve) => {
+          finishNavigation = resolve
+        })
+      }
+      return {
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Original document',
+      }
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Original document' })
+
+    fireEvent.click(within(tree).getByRole('treeitem', { name: /other.md/ }))
+    await waitFor(() => expect(finishNavigation).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+    expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      finishNavigation?.({
+        name: 'other.md',
+        path: 'other.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Navigated document',
+      })
+    })
+    expect(
+      await screen.findByRole('heading', { name: 'Navigated document' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Ask agent about file' }),
+    ).toBeEnabled()
+  })
+
+  it('settles reopen ownership when the panel mode changes during refresh', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        size: 20,
+      }],
+    })
+    let revision = 0
+    let finishReopen:
+      | ((file: WorkspaceFile) => void)
+      | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(async () => {
+      revision += 1
+      const file: WorkspaceFile = {
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: `# Revision ${revision}`,
+      }
+      if (revision === 2) {
+        return new Promise<WorkspaceFile>((resolve) => {
+          finishReopen = resolve
+        })
+      }
+      return file
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Revision 1' })
+    tree.scrollTop = 70
+    fireEvent.scroll(tree)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(finishReopen).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+    expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      finishReopen?.({
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: '# Revision 2',
+      })
+    })
+    await screen.findByRole('heading', { name: 'Revision 2' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize knowledge panel' }))
+    await screen.findByRole('heading', { name: 'Revision 3' })
+    tree.scrollTop = 95
+    fireEvent.scroll(tree)
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('heading', { name: 'Revision 4' })
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(tree.scrollTop).toBe(95)
+  })
+
+  it('reloads an active sessionless Knowledge document on reopen', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        size: 20,
+      }],
+    })
+    let revision = 0
+    vi.mocked(readKnowledgeFile).mockImplementation(async () => {
+      revision += 1
+      return {
+        name: 'guide.md',
+        path: 'guide.md',
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 20,
+        content: `# Sessionless revision ${revision}`,
+      }
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Sessionless revision 1' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Knowledge' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Sessionless revision 2' }),
+    ).toBeInTheDocument()
+    expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps the readable Knowledge document visible when a mode refresh fails', async () => {
     mockKnowledgeRoots([knowledgeRoot])
     vi.mocked(listKnowledgeEntries).mockResolvedValue({

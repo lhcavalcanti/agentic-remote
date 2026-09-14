@@ -441,8 +441,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "bfe123e51faffd76e2a2ff3ccf3aeded939ed9efa59433e6f38eec669ef92d99",
-    "src/App.tsx": "7bf8f96370d31616cbad1c57f08f0bed70c61f2569c643a2630668467649f3d4",
+    "src/App.test.tsx": "577e6ff2cadddf12a487c124f560bee9d6a9a6d8371252fbd82e15585a2efd24",
+    "src/App.tsx": "770ceb72148fa8e08d098c509f3aab5850082e60ccf98fa7e13be649a02e6c36",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -573,21 +573,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "dacf781bc448bee387e03379a3001dd90d32f05f3d4e0a5bed4a4c7a3bf5cd9e",
+    "GRAPH_REPORT.md": "55704a0f3ca631db7595dee5a0be25eecacb25528d5e91cff376f21291ad6557",
     "communities.json": "2c3d94a4f00c0b74fb108f03fb8e5dcafe22a767a00c2b29de41ac7083fbf0ae",
-    "graph.html": "9d33f321fa4631120f15d6227d7e69159a570ff4f937e70b69aa5a1a8709d09d",
-    "graph.json": "a877317a6e33e2beeb2181d7de127d7f9c22f86a84102bbf4c986a12d32609c3"
+    "graph.html": "ca0ddf6fe77c1917db000dc5f5424b80cc95663e70dd0c59c0f8158969a9fbb1",
+    "graph.json": "6f8ecd9a17c3a068e15c741d4d20731468d5a0dfd190913c7993daa46657f86a"
   },
   "schema_version": 1,
-  "source_commit": "47cb59ee0dede45f2d9282a0b294c3a8c20fc4f6",
-  "source_fingerprint": "b9732276799f36d7e7e7c8971b7a1cf61e3f22f2543ea811080ecd7609bcfe5a",
+  "source_commit": "bdca5246051c23be722d66884146810b2681a948",
+  "source_fingerprint": "2e5a7e7655e0e994d248a5a89c3c9d3e9e1e1535d219685691403c21b8a0a3d8",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/App.test.tsx",
     "src/App.tsx"
   ]

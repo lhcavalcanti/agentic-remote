@@ -368,6 +368,9 @@ Questions and permissions are the highest-priority UI state.
   keys. The app MUST restore the previous size and sizing policy on completion
   or failure without overwriting intervening operator changes; it MUST NOT
   resize shared windows or a window whose ownership changed.
+- The temporary viewport operation budget MUST scale with the number of form
+  fields while retaining a hard upper bound, so verified multi-field forms can
+  complete without leaving an enlarged window indefinitely.
 - Wrapped control hints MAY trigger a bounded viewport check, but MUST NOT
   replace verification of the complete question. Each successive long form
   MUST independently verify its identity and restore its viewport.

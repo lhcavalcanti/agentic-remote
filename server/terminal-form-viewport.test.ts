@@ -134,6 +134,7 @@ draw()
 
 async function horizontalFormFixture(options: {
   activeField?: number
+  fields?: string[]
   fullWidth?: number
   height?: number
   repaint?: boolean
@@ -145,7 +146,7 @@ async function horizontalFormFixture(options: {
     'The promotion script requires rollout metadata and an explicit M365 bypass. ' +
     'All three names contain `-m365`, so automation otherwise refuses them; GB200 ' +
     'also has the acknowledged API test failure. Confirm the exact rollout settings.'
-  const fields = [
+  const fields = options.fields || [
     'Release tag',
     'Group tag',
     'Is this a livesite rollout?',
@@ -311,6 +312,42 @@ describe('bounded terminal form viewport', () => {
       { action: 'accept', selected: [0, 1, 0, 1, 0] },
     ])
   }, 15_000)
+
+  it('scales the bounded operation budget for eight-field paginated forms', async () => {
+    const f = await horizontalFormFixture({
+      fields: [
+        'Chat normal deployment',
+        'Chat normal model',
+        'Chat 0k deployment',
+        'Chat 0k model',
+        'Sol normal deployment',
+        'Sol normal model',
+        'Sol 0k deployment',
+        'Sol 0k model',
+      ],
+    })
+    const before = await f.geometry()
+    const change = f.controller['changeFormViewport'].bind(f.controller)
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    f.controller['changeFormViewport'] = async (...args) => {
+      await change(...args)
+      if (!args[2] && !clock) {
+        clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 16_000)
+      }
+    }
+    try {
+      expect(
+        await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity),
+      ).toBe(true)
+    } finally {
+      clock?.mockRestore()
+    }
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).keys.filter((key) => key === 'Tab'))
+      .toHaveLength(7)
+    expect((await f.receipt()).keys.filter((key) => key === 'Enter'))
+      .toHaveLength(1)
+  }, 30_000)
 
   it.each([2, 4])(
     'expands pagination around field %i and normalizes attached focus',

@@ -175,7 +175,18 @@ export class TerminalFormReplyError extends Error {
 
 const MAX_FORM_VIEWPORT_WIDTH = 256
 const MAX_FORM_VIEWPORT_HEIGHT = 256
-const FORM_VIEWPORT_TIMEOUT_MS = 15_000
+const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
+const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
+const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
+
+function formViewportTimeout(fieldCount: number): number {
+  return Math.min(
+    MAX_FORM_VIEWPORT_TIMEOUT_MS,
+    FORM_VIEWPORT_BASE_TIMEOUT_MS +
+      Math.max(0, fieldCount - 1) *
+        FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS,
+  )
+}
 
 export class TmuxTerminalSessionController
   implements TerminalSessionController
@@ -1170,7 +1181,7 @@ export class TmuxTerminalSessionController
           policy: 'manual',
           localPolicy: 'manual',
         }
-        deadline = Date.now() + FORM_VIEWPORT_TIMEOUT_MS
+        deadline = Date.now() + formViewportTimeout(form.fields.length)
         await this.changeFormViewport(original, expanded)
         for (let attempt = 0; attempt < 30; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 100))

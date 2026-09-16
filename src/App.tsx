@@ -7495,12 +7495,14 @@ function App() {
     selected?.pendingUserInput?.stale === true
   const selectedShowsRecovery =
     selected?.provider !== 'claude' &&
-    selectedProviderCapability?.supportsContextRecovery === true &&
-    (selected?.status === 'error' || selectedHasStaleInteraction)
+    selectedProviderCapability?.supportsContextRecovery === true
   const selectedCanRecover =
     selectedShowsRecovery &&
     selectedComputerOnline &&
-    selected?.suspended !== true
+    selected?.suspended !== true &&
+    (selected?.status === 'idle' ||
+      selected?.status === 'error' ||
+      selectedHasStaleInteraction)
   const selectedSupportsBackgroundTasks = selected
     ? supportsBackgroundTasks(
         computers.find((computer) => computer.id === selected.computerId),

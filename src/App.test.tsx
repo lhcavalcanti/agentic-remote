@@ -10168,6 +10168,54 @@ describe('App', () => {
     expect(textarea).toHaveValue('Keep this recovery draft')
   })
 
+  it('offers manual recovery for an idle Copilot session', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findByText('Hello agent')
+    const textarea = screen.getByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this manual recovery draft' } })
+    const recover = sessionAction('Recover conversation')
+    expect(recover).toBeEnabled()
+    fireEvent.click(recover)
+
+    await waitFor(() =>
+      expect(recoverConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'manual',
+      ),
+    )
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(
+      'Old messages remain visible as read-only history',
+    ))
+    expect(textarea).toHaveValue('Keep this manual recovery draft')
+  })
+
+  it.each([
+    { state: 'running', selected: { ...session, status: 'running' as const } },
+    { state: 'waiting', selected: { ...session, status: 'waiting' as const } },
+    { state: 'suspended', selected: { ...session, suspended: true } },
+    { state: 'offline', selected: session, offline: true },
+  ])('keeps manual recovery visible but disabled while $state', async ({
+    selected,
+    offline,
+  }) => {
+    vi.mocked(listSessions).mockResolvedValue([selected])
+    vi.mocked(getSession).mockResolvedValue(selected)
+    if (offline) {
+      vi.mocked(listComputers).mockResolvedValue([
+        { ...computer, online: false },
+      ])
+    }
+
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    expect(sessionAction('Recover conversation')).toBeDisabled()
+    expect(recoverConversation).not.toHaveBeenCalled()
+  })
+
   it('replaces stale SDK prompt controls with an inline recovery card', async () => {
     const stale: ManagedSession = {
       ...session,

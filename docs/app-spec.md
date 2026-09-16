@@ -183,9 +183,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   runtime settings, and tmux window.
 - Restart MUST remain available for an online session in `error` state. Error
   recovery MUST NOT require a direct API call.
-- Copilot sessions in provider error or holding a stale SDK interaction MUST
-  offer **Recover conversation** when the owning computer advertises context
-  recovery. Claude sessions MUST NOT offer it.
+- Copilot sessions MUST offer **Recover conversation** in session actions when
+  the owning computer advertises context recovery. It MUST be enabled for
+  idle, provider-error, or stale-interaction sessions and remain visible but
+  disabled while running, waiting, suspended, or offline. Claude sessions MUST
+  NOT offer it.
 - Recover MUST create a fresh provider session ID while preserving title,
   working folder, runtime settings, execution mode, queue, computer ownership,
   draft continuity, replacement lineage, and notification/Knowledge metadata.

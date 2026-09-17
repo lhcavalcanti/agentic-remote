@@ -84,6 +84,21 @@ describe('API request headers', () => {
       .rejects.toMatchObject({ statusCode: status, uncertainDelivery })
   })
 
+  it('preserves a typed terminal draft conflict from HTTP errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'Terminal text is blocking this message',
+      terminalDraftConflict: true,
+      uncertainDelivery: false,
+    }, { status: 409 })))
+
+    await expect(sendMessage('computer', 'session', { content: 'hello' }))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+  })
+
   it.each([
     [400, false],
     [409, true],

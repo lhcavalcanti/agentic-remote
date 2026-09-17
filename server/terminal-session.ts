@@ -41,6 +41,7 @@ export interface TerminalFormIdentity {
 
 export interface TerminalSendOptions {
   allowDuringAgentExecution?: boolean
+  replaceExistingInput?: boolean
 }
 
 export interface TerminalSessionController {
@@ -170,6 +171,17 @@ export class TerminalFormReplyError extends Error {
     super(message, options)
     this.name = 'TerminalFormReplyError'
     this.uncertainDelivery = outcome !== 'not-submitted'
+  }
+}
+
+export class TerminalDraftConflictError extends Error {
+  readonly statusCode = 409
+  readonly uncertainDelivery = false
+  readonly terminalDraftConflict = true
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'TerminalDraftConflictError'
   }
 }
 
@@ -1285,6 +1297,111 @@ export class TmuxTerminalSessionController
     return this.sendInternal(sessionId, content, false, true)
   }
 
+  private async clearComposerForReplacement(
+    sessionId: string,
+    owner: TerminalOwner,
+    pane: string,
+  ): Promise<string> {
+    const readable = composerText(pane)
+    if (readable === undefined) {
+      throw new TerminalDraftConflictError(
+        'The terminal composer could not be read, so its text was not cleared.',
+      )
+    }
+    if (!composerHoldsText(pane)) {
+      return pane
+    }
+    if (
+      isTerminalOverlay(pane) ||
+      parseTerminalPermission(pane) ||
+      parseTerminalUserInput(pane) ||
+      parseTerminalFormPrompt(pane) ||
+      isTerminalAgentWorking(pane)
+    ) {
+      throw new TerminalDraftConflictError(
+        'The terminal changed before its text could be cleared. The app draft was not sent.',
+      )
+    }
+    const currentOwner = await this.owner(sessionId, owner.target, true)
+    if (
+      !currentOwner ||
+      currentOwner.pid !== owner.pid ||
+      currentOwner.rootPid !== owner.rootPid ||
+      currentOwner.target !== owner.target
+    ) {
+      throw new TerminalDraftConflictError(
+        'The terminal owner changed before its text could be cleared. The app draft was not sent.',
+      )
+    }
+    const currentPane = await capturePane(owner.target)
+    if (
+      composerText(currentPane) === undefined ||
+      !terminalInputReady(currentPane) ||
+      isTerminalOverlay(currentPane) ||
+      parseTerminalPermission(currentPane) ||
+      parseTerminalUserInput(currentPane) ||
+      parseTerminalFormPrompt(currentPane) ||
+      isTerminalAgentWorking(currentPane)
+    ) {
+      throw new TerminalDraftConflictError(
+        'The terminal changed before its text could be cleared. The app draft was not sent.',
+      )
+    }
+    if (!composerHoldsText(currentPane)) {
+      return currentPane
+    }
+    const conditions = [
+      `#{==:#{pane_id},${owner.target}}`,
+      `#{==:#{pane_pid},${owner.rootPid}}`,
+    ]
+    const cleared = await execFileAsync('tmux', [
+      'if-shell',
+      '-F',
+      '-t',
+      owner.target,
+      conditions.reduce((left, right) => `#{&&:${left},${right}}`),
+      `send-keys -t ${owner.target} C-u ; display-message -p cleared`,
+      'display-message -p changed',
+    ], { timeout: 2_000 })
+    if (cleared.stdout.trim() !== 'cleared') {
+      throw new TerminalDraftConflictError(
+        'The terminal owner changed before its text could be cleared. The app draft was not sent.',
+      )
+    }
+    let previousEmpty: string | undefined
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      const clearedPane = await capturePane(owner.target, 2_000)
+      const text = composerText(clearedPane)
+      if (
+        text !== undefined &&
+        terminalInputReady(clearedPane) &&
+        !composerHoldsText(clearedPane)
+      ) {
+        if (text === previousEmpty) {
+          const finalOwner = await this.owner(sessionId, owner.target, true)
+          if (
+            finalOwner &&
+            finalOwner.pid === owner.pid &&
+            finalOwner.rootPid === owner.rootPid &&
+            finalOwner.target === owner.target
+          ) {
+            return clearedPane
+          }
+          throw new TerminalDraftConflictError(
+            'The terminal owner changed after its text was cleared. The app draft was not sent.',
+          )
+        }
+        previousEmpty = text
+      } else {
+        previousEmpty = undefined
+      }
+    }
+    throw new TerminalDraftConflictError(
+      'The terminal clear was sent, but an empty composer could not be confirmed. The app draft was not sent.',
+    )
+  }
+
   private async sendInternal(
     sessionId: string,
     content: string,
@@ -1399,15 +1516,12 @@ export class TmuxTerminalSessionController
           { statusCode: 409 },
         )
       }
-      if (
+      const existingInput =
         composerText(paneBeforePaste) !== undefined &&
         composerHoldsText(paneBeforePaste)
-      ) {
-        throw Object.assign(
-          new Error(
+      if (existingInput && !options.replaceExistingInput) {
+        throw new TerminalDraftConflictError(
             'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
-          ),
-          { statusCode: 409 },
         )
       }
       if (isTerminalOverlay(paneBeforePaste)) {
@@ -1445,47 +1559,88 @@ export class TmuxTerminalSessionController
         '--',
         content,
       ])
-      // The paste can reach the pane even if its acknowledgement is lost.
-      // Preflight and buffer preparation above have not changed native input.
-      let pasteAcknowledged = false
       try {
+        if (existingInput) {
+          paneBeforePaste = await this.clearComposerForReplacement(
+            sessionId,
+            currentOwner,
+            paneBeforePaste,
+          )
+        }
+        if (options.replaceExistingInput) {
+          const ownerBeforePaste = await this.owner(
+            sessionId,
+            currentOwner.target,
+            true,
+          )
+          paneBeforePaste = await capturePane(currentOwner.target)
+          if (
+            !ownerBeforePaste ||
+            ownerBeforePaste.pid !== currentOwner.pid ||
+            ownerBeforePaste.rootPid !== currentOwner.rootPid ||
+            ownerBeforePaste.target !== currentOwner.target ||
+            composerText(paneBeforePaste) === undefined ||
+            !terminalInputReady(paneBeforePaste) ||
+            composerHoldsText(paneBeforePaste) ||
+            isTerminalOverlay(paneBeforePaste) ||
+            parseTerminalPermission(paneBeforePaste) ||
+            parseTerminalUserInput(paneBeforePaste) ||
+            parseTerminalFormPrompt(paneBeforePaste) ||
+            isTerminalAgentWorking(paneBeforePaste)
+          ) {
+            throw new TerminalDraftConflictError(
+              'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
+            )
+          }
+        }
+        // The paste can reach the pane even if its acknowledgement is lost.
+        // Preflight and buffer preparation above have not changed native input.
+        let pasteAcknowledged = false
+        try {
+          await execFileAsync('tmux', [
+            'paste-buffer',
+            '-p',
+            '-d',
+            '-b',
+            buffer,
+            '-t',
+            owner.target,
+          ])
+          pasteAcknowledged = true
+          return await this.finishSend(
+            owner.target,
+            content,
+            confirmation,
+            paneBeforePaste,
+            enqueue,
+            idleOnly,
+          )
+        } catch (error) {
+          if (!pasteAcknowledged && error && typeof error === 'object' &&
+              'syscall' in error && typeof error.syscall === 'string' &&
+              /^spawn(?: |$)/.test(error.syscall)) {
+            throw error
+          }
+          if (
+            error &&
+            typeof error === 'object' &&
+            'uncertainDelivery' in error
+          ) {
+            throw error
+          }
+          throw Object.assign(
+            new Error(
+              'The terminal may not have received the message, and the text may still be in the prompt. Check the terminal before sending it again.',
+            ),
+            { statusCode: 409, uncertainDelivery: true, cause: error },
+          )
+        }
+      } finally {
         await execFileAsync('tmux', [
-          'paste-buffer',
-          '-p',
-          '-d',
+          'delete-buffer',
           '-b',
           buffer,
-          '-t',
-          owner.target,
-        ])
-        pasteAcknowledged = true
-        return await this.finishSend(
-          owner.target,
-          content,
-          confirmation,
-          paneBeforePaste,
-          enqueue,
-          idleOnly,
-        )
-      } catch (error) {
-        if (!pasteAcknowledged && error && typeof error === 'object' &&
-            'syscall' in error && typeof error.syscall === 'string' &&
-            /^spawn(?: |$)/.test(error.syscall)) {
-          throw error
-        }
-        if (
-          error &&
-          typeof error === 'object' &&
-          'uncertainDelivery' in error
-        ) {
-          throw error
-        }
-        throw Object.assign(
-          new Error(
-            'The terminal may not have received the message, and the text may still be in the prompt. Check the terminal before sending it again.',
-          ),
-          { statusCode: 409, uncertainDelivery: true, cause: error },
-        )
+        ], { timeout: 2_000 }).catch(() => undefined)
       }
     })
   }

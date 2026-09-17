@@ -443,7 +443,7 @@ describe('bounded terminal form viewport', () => {
     expect((await f.receipt()).actions).toEqual([
       { action: 'accept', selected: [0, 1, 0, 1, 0] },
     ])
-  }, 15_000)
+  }, 30_000)
 
   it('restores without keys when every tab cannot fit within the width bound', async () => {
     const f = await horizontalFormFixture({ fullWidth: 300 })

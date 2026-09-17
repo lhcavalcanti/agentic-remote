@@ -28,6 +28,14 @@ export function deliveryUncertaintyFromError(error: unknown): boolean | undefine
   return typeof uncertain === 'boolean' ? uncertain : undefined
 }
 
+export function terminalDraftConflictFromError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      Reflect.get(error, 'terminalDraftConflict') === true,
+  )
+}
+
 const legacyDefinitiveHttpRefusals = new Set([
   400, 401, 403, 404, 405, 410, 413, 415, 422, 429,
 ])
@@ -54,17 +62,22 @@ export class SubmissionError extends Error {
   readonly statusCode: number
   readonly submission?: SubmissionReceipt
   readonly uncertainDelivery: boolean
+  readonly terminalDraftConflict: boolean
 
   constructor(
     message: string,
     statusCode: number,
     submission?: SubmissionReceipt,
-    options?: ErrorOptions & { uncertainDelivery?: boolean },
+    options?: ErrorOptions & {
+      terminalDraftConflict?: boolean
+      uncertainDelivery?: boolean
+    },
   ) {
     super(message, options)
     this.name = 'SubmissionError'
     this.statusCode = statusCode
     this.submission = submission
     this.uncertainDelivery = options?.uncertainDelivery ?? submission?.accepted === true
+    this.terminalDraftConflict = options?.terminalDraftConflict === true
   }
 }

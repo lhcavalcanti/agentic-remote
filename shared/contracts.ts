@@ -487,6 +487,8 @@ export interface CreateSessionInput {
 export interface SendMessageInput {
   content: string
   enqueue?: boolean
+  /** Explicitly replace verified unsent text in a tmux composer before sending. */
+  replaceTerminalDraft?: boolean
   /**
    * The failure this submission is the reader's answer to.
    *
@@ -547,6 +549,8 @@ export interface SlashCommand {
 export interface ExecuteCommandInput {
   command: string
   enqueue?: boolean
+  /** See `SendMessageInput`. */
+  replaceTerminalDraft?: boolean
   /** See `SendMessageInput`. */
   acknowledgesFailure?: string
 }

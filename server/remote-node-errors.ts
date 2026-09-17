@@ -10,8 +10,10 @@ export class RemoteNodeRequestError extends SubmissionError {
     statusCode: number,
     submission?: SubmissionReceipt,
     uncertainDelivery?: boolean,
+    terminalDraftConflict?: boolean,
   ) {
     super(message, statusCode, submission, {
+      terminalDraftConflict,
       uncertainDelivery: httpDeliveryUncertain(
         statusCode,
         uncertainDelivery,

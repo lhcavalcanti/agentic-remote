@@ -6,7 +6,10 @@ import {
   deliveryUncertaintyFromError,
   SubmissionError,
 } from '../shared/submission-error.js'
-import { hasRunningBackgroundAgent } from '../shared/background-tasks.js'
+import {
+  hasActiveBackgroundTasks,
+  hasRunningBackgroundAgent,
+} from '../shared/background-tasks.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
   CopilotClient,
@@ -3358,6 +3361,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               { statusCode: 409 },
             )
           }
+          await this.assertRecoveryBackgroundTasksSettled(id)
           return this.clearSerialized(id, {
             ...observed,
             isCurrent: () => ownership.isCurrent() &&
@@ -3398,9 +3402,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       stored.pendingPermission?.stale === true ||
       stored.pendingUserInput?.stale === true
     if (
+      recoveryReason &&
+      hasActiveBackgroundTasks(this.backgroundTaskTracker.get(id))
+    ) {
+      throw Object.assign(new Error(
+        'Wait for queued or running background tasks to finish before recovering the conversation',
+      ), { statusCode: 409 })
+    }
+    if (
       stored.status === 'running' ||
-      (stored.status === 'waiting' && !(recoveryReason && stalePending)) ||
-      (!recoveryReason && (stored.pendingPermission || stored.pendingUserInput)) ||
+      stored.status === 'waiting' ||
+      ((stored.pendingPermission || stored.pendingUserInput) &&
+        !(recoveryReason && stalePending)) ||
       this.drainingSessions.has(id) || this.activePrompts.has(id) ||
       (this.dispatchingSessions.get(id) || 0) > 0 ||
       !this.store.isCurrentTranscript(id, observed)
@@ -8706,8 +8719,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private assertRecoverySeedReplacementAvailable(sessionId: string): void {
-    if (this.recoverySeedDispatches.has(sessionId)) {
-      throw queueConflict('The recovery brief is still being dispatched. Wait for it to settle before replacing the conversation.')
+    const seed = this.store.recoverySeed(sessionId)
+    if (
+      this.recoverySeedDispatches.has(sessionId) ||
+      (seed && seed.state !== 'failed')
+    ) {
+      throw queueConflict('The recovery brief has not settled. Wait before replacing the conversation.')
+    }
+  }
+
+  private async assertRecoveryBackgroundTasksSettled(
+    sessionId: string,
+  ): Promise<void> {
+    let snapshot: BackgroundTaskSnapshot
+    try {
+      snapshot = await this.listBackgroundTasks(sessionId)
+    } catch (error) {
+      throw Object.assign(new Error(
+        'Background tasks could not be checked. Retry before recovering the conversation.',
+        { cause: error },
+      ), { statusCode: 409 })
+    }
+    if (hasActiveBackgroundTasks(snapshot)) {
+      throw Object.assign(new Error(
+        'Wait for queued or running background tasks to finish before recovering the conversation',
+      ), { statusCode: 409 })
     }
   }
 

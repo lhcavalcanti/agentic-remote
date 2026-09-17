@@ -167,7 +167,10 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResult,
 } from '../shared/contracts'
-import { hasRunningBackgroundAgent } from '../shared/background-tasks'
+import {
+  hasActiveBackgroundTasks,
+  hasRunningBackgroundAgent,
+} from '../shared/background-tasks'
 import {
   knowledgeAbsolutePath,
   normalizeKnowledgeRelativePath,
@@ -7406,6 +7409,8 @@ function App() {
     selectedBackgroundTasks?.runningCount || 0
   const selectedHasRunningBackgroundAgent =
     hasRunningBackgroundAgent(selectedBackgroundTasks)
+  const selectedHasActiveBackgroundTasks =
+    hasActiveBackgroundTasks(selectedBackgroundTasks)
   const selectedQueueAvailable =
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
@@ -7495,18 +7500,28 @@ function App() {
     selected?.pendingUserInput?.stale === true
   const selectedShowsRecovery =
     selected?.provider !== 'claude' &&
-    selectedProviderCapability?.supportsContextRecovery === true &&
-    (selected?.status === 'error' || selectedHasStaleInteraction)
-  const selectedCanRecover =
-    selectedShowsRecovery &&
-    selectedComputerOnline &&
-    selected?.suspended !== true
+    selectedProviderCapability?.supportsContextRecovery === true
   const selectedSupportsBackgroundTasks = selected
     ? supportsBackgroundTasks(
         computers.find((computer) => computer.id === selected.computerId),
         selected.provider,
       ) || selectedBackgroundTasks?.supported === true
     : false
+  const selectedCanRecover =
+    selectedShowsRecovery &&
+    selectedComputerOnline &&
+    selected?.suspended !== true &&
+    (selected?.status === 'idle' ||
+      selected?.status === 'error') &&
+    ((!selected?.pendingPermission &&
+      !selected?.pendingUserInput) ||
+      selectedHasStaleInteraction) &&
+    !selected?.queuedDispatch &&
+    selected?.recoverySeedState !== 'pending' &&
+    selected?.recoverySeedState !== 'dispatching' &&
+    !hasRunningTool &&
+    (!selectedSupportsBackgroundTasks || selectedBackgroundTasks !== undefined) &&
+    !selectedHasActiveBackgroundTasks
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''

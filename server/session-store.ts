@@ -212,6 +212,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     ...detail,
     messages: [...(archivedMessages || []), ...detail.messages],
     executionMode: backend === 'terminal' ? 'tmux' : 'sdk',
+    ...(recoverySeed ? { recoverySeedState: recoverySeed.state } : {}),
   }
 }
 

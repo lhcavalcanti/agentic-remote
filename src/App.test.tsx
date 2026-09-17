@@ -391,13 +391,17 @@ function openSessionActions() {
 
 function sessionAction(name: string) {
   openSessionActions()
-  return screen.getByRole('button', { name })
+  return within(
+    screen.getByRole('group', { name: 'Session actions' }),
+  ).getByRole('button', { name })
 }
 
 async function findSessionAction(name: string) {
   await screen.findByRole('button', { name: 'Session actions' })
   openSessionActions()
-  return screen.findByRole('button', { name })
+  return within(
+    screen.getByRole('group', { name: 'Session actions' }),
+  ).findByRole('button', { name })
 }
 
 describe('App', () => {
@@ -10167,6 +10171,145 @@ describe('App', () => {
     expect(await screen.findByText(/Provider context was rebuilt/)).toBeInTheDocument()
     expect(textarea).toHaveValue('Keep this recovery draft')
   })
+
+  it('offers manual recovery for an idle Copilot session', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+
+    render(<App />)
+    await screen.findByText('Hello agent')
+    const textarea = screen.getByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this manual recovery draft' } })
+    const recover = sessionAction('Recover conversation')
+    await waitFor(() => expect(recover).toBeEnabled())
+    fireEvent.click(recover)
+
+    await waitFor(() =>
+      expect(recoverConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'manual',
+      ),
+    )
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(
+      'Old messages remain visible as read-only history',
+    ))
+    expect(textarea).toHaveValue('Keep this manual recovery draft')
+  })
+
+  it.each([
+    { state: 'running', selected: { ...session, status: 'running' as const } },
+    { state: 'waiting', selected: { ...session, status: 'waiting' as const } },
+    {
+      state: 'waiting on stale input',
+      selected: {
+        ...session,
+        status: 'waiting' as const,
+        pendingUserInput: {
+          requestId: 'stale-input',
+          question: 'Expired question',
+          choices: [],
+          allowFreeform: true,
+          stale: true,
+        },
+      },
+    },
+    { state: 'suspended', selected: { ...session, suspended: true } },
+    { state: 'offline', selected: session, offline: true },
+    {
+      state: 'holding a live prompt',
+      selected: {
+        ...session,
+        pendingPermission: {
+          requestId: 'live-permission',
+          title: 'Allow a live tool',
+          options: [
+            { optionId: 'allow', name: 'Allow', kind: 'allow_once' as const },
+          ],
+        },
+      },
+    },
+    {
+      state: 'holding an unconfirmed queue claim',
+      selected: {
+        ...session,
+        queuedDispatch: {
+          attemptId: 'attempt-1',
+          promptId: 'prompt-1',
+          content: 'Unconfirmed queue work',
+          startedAt: '2026-09-16T20:00:00.000Z',
+          state: 'uncertain' as const,
+        },
+      },
+    },
+    {
+      state: 'rebuilding provider context',
+      selected: {
+        ...session,
+        recoverySeedState: 'pending' as const,
+      },
+    },
+    {
+      state: 'showing a running tool',
+      selected: {
+        ...session,
+        messages: [
+          ...session.messages,
+          {
+            id: 'running-tool',
+            role: 'activity' as const,
+            content: 'Bash',
+            createdAt: '2026-09-16T20:00:00.000Z',
+            activityStatus: 'running' as const,
+          },
+        ],
+      },
+    },
+  ])('keeps manual recovery visible but disabled while $state', async ({
+    selected,
+    offline,
+  }) => {
+    vi.mocked(listSessions).mockResolvedValue([selected])
+    vi.mocked(getSession).mockResolvedValue(selected)
+    if (offline) {
+      vi.mocked(listComputers).mockResolvedValue([
+        { ...computer, online: false },
+      ])
+    }
+
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    expect(sessionAction('Recover conversation')).toBeDisabled()
+    expect(recoverConversation).not.toHaveBeenCalled()
+  })
+
+  it.each(['queued', 'running'] as const)(
+    'disables manual recovery while a background task is %s',
+    async (status) => {
+      vi.mocked(listComputers).mockResolvedValue([taskComputer])
+      vi.mocked(listBackgroundTasks).mockResolvedValue({
+        tasks: [{
+          id: 'background-task',
+          type: 'shell',
+          description: 'Keep this work attached',
+          status,
+          startedAt: '2026-09-16T20:00:00.000Z',
+          executionMode: 'background',
+          canCancel: false,
+        }],
+        runningCount: status === 'running' ? 1 : 0,
+        supported: true,
+      })
+
+      render(<App />)
+      await screen.findByText('Hello agent')
+      await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+
+      expect(sessionAction('Recover conversation')).toBeDisabled()
+      expect(recoverConversation).not.toHaveBeenCalled()
+    },
+  )
 
   it('replaces stale SDK prompt controls with an inline recovery card', async () => {
     const stale: ManagedSession = {

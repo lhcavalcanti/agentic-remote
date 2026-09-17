@@ -6647,6 +6647,121 @@ describe('App', () => {
     expect(textarea).toHaveValue('')
   })
 
+  it('keeps the post-clear refusal reason visible beside the retry action', async () => {
+    const initial = Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    )
+    const changed = Object.assign(
+      new Error(
+        'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
+      ),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    )
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(initial)
+      .mockRejectedValueOnce(changed)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this draft visible' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    }))
+
+    expect(
+      (await screen.findAllByText(changed.message))
+        .some((message) => message.closest('.error-banner')),
+    ).toBe(true)
+    expect(textarea).toHaveValue('Keep this draft visible')
+    expect(screen.getByRole('button', {
+      name: 'Clear terminal text and send',
+    })).toBeEnabled()
+  })
+
+  it('does not clear terminal text for an app-local command', async () => {
+    vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    ))
+    const confirm = vi.spyOn(window, 'confirm')
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Initial ordinary message' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const replace = await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    })
+
+    fireEvent.change(textarea, { target: { value: '/clear' } })
+
+    expect(replace).toBeDisabled()
+    expect(screen.getByText(
+      'Use the normal action for this command; it does not replace terminal text.',
+    )).toBeVisible()
+    fireEvent.click(replace)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(clearConversation).not.toHaveBeenCalled()
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('does not clear terminal text while editing a queued prompt', async () => {
+    const queued: ManagedSession = {
+      ...session,
+      queuedCount: 1,
+      queuedPrompts: [{
+        id: 'queued-message',
+        content: 'Keep the queued message in place',
+        createdAt: session.updatedAt,
+      }],
+    }
+    vi.mocked(listSessions).mockResolvedValue([queued])
+    vi.mocked(getSession).mockResolvedValue(queued)
+    vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    ))
+    const confirm = vi.spyOn(window, 'confirm')
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Initial ordinary message' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const replace = await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    })
+    fireEvent.change(textarea, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Keep the queued message in place'),
+    )
+
+    expect(replace).toBeDisabled()
+    expect(screen.getByText(
+      'Finish or cancel the queued-message edit before replacing terminal text.',
+    )).toBeVisible()
+    fireEvent.click(replace)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
   it('keeps a suspended conversation readable and closed to writing', async () => {
     // Suspending stops the process, not the conversation: the history and the
     // name stay, and the way back is the button rather than the composer.

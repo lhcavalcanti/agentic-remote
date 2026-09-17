@@ -12042,15 +12042,15 @@ function App() {
           (selectedRef.current && sessionKey(selectedRef.current) === liveKey) ||
           (!selectedRef.current && selectedKey === liveKey)
         ) {
-            setError(
-              terminalDraftConflict
-                ? undefined
-                : caught instanceof Error
-                  ? caught.message
-                  : String(caught),
-            )
-          }
+          setError(
+            terminalDraftConflict && !replaceTerminalDraft
+              ? undefined
+              : caught instanceof Error
+                ? caught.message
+                : String(caught),
+          )
         }
+      }
     } finally {
       if (composerMounted.current) {
         const liveKey = followReplacementsRef.current(targetKey)
@@ -12092,6 +12092,7 @@ function App() {
     const key = sessionKey(selected)
     if (
       !terminalDraftConflicts[key] ||
+      terminalDraftReplacementUnavailable ||
       !window.confirm(
         `Clear the unsent terminal text in "${selected.title}" and send this app draft?\n\nThe terminal text will be deleted and cannot be recovered. If the terminal changes before the replacement, the app draft will not be sent.`,
       )
@@ -12391,6 +12392,33 @@ function App() {
   const readonlyResourceCommand = useMemo(() => editingQueuedPromptId ? undefined : sessionResourceCommand(
     expandComposerPastes(composer, activeComposerPastes(composer, selectedComposerPastes || [])),
   ), [composer, selectedComposerPastes, editingQueuedPromptId])
+  const terminalDraftCommand = composer.trim().startsWith('/')
+    ? composer.trim().slice(1).split(/\s+/, 1)[0].toLowerCase()
+    : ''
+  const terminalDraftCommandDefinition = terminalDraftCommand
+    ? commands.find(
+        (candidate) =>
+          candidate.name.toLowerCase() === terminalDraftCommand ||
+          slashShortcut(candidate.name) === terminalDraftCommand ||
+          candidate.aliases?.some(
+            (alias) => alias.toLowerCase() === terminalDraftCommand,
+          ),
+      )
+    : undefined
+  const terminalDraftLocalCommand =
+    Boolean(readonlyResourceCommand) ||
+    ['statusline', 'clear', 'restart'].includes(
+      terminalDraftCommandDefinition?.name || terminalDraftCommand,
+    ) ||
+    (
+      terminalDraftCommand === 'cwd' &&
+      !composer.trim().slice(terminalDraftCommand.length + 1).trim()
+    )
+  const terminalDraftReplacementUnavailable = editingQueuedPromptId
+    ? 'Finish or cancel the queued-message edit before replacing terminal text.'
+    : terminalDraftLocalCommand
+      ? 'Use the normal action for this command; it does not replace terminal text.'
+      : undefined
 
   function forgetQueuedEdit(key: string, promptId: string) {
     updateComposerDrafts([], (current) => {
@@ -14508,8 +14536,8 @@ function App() {
                 <div>
                   <strong>Terminal text is blocking this draft</strong>
                   <span>
-                    This deletes the unsent text currently in tmux, then sends
-                    the app draft.
+                    {terminalDraftReplacementUnavailable ||
+                      'This deletes the unsent text currently in tmux, then sends the app draft.'}
                   </span>
                 </div>
                 <button
@@ -14520,9 +14548,11 @@ function App() {
                     !selectedComputerOnline ||
                     selected.suspended === true ||
                     (selected.status !== 'idle' && selected.status !== 'error') ||
-                    Boolean(selected.pendingPermission || selected.pendingUserInput)
+                    Boolean(selected.pendingPermission || selected.pendingUserInput) ||
+                    Boolean(terminalDraftReplacementUnavailable)
                   }
                   onClick={() => void replaceTerminalDraftAndSend()}
+                  title={terminalDraftReplacementUnavailable}
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={15} />

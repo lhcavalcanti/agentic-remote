@@ -409,6 +409,10 @@ Questions and permissions are the highest-priority UI state.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Such input MUST be left untouched with an actionable conflict, not cleared,
   duplicated, or submitted automatically.
+- After that definite conflict, the app MAY offer **Clear terminal text and
+  send** beside the restored draft. It MUST require confirmation, revalidate
+  the same idle tmux owner and readable composer, clear only by explicit user
+  request, and refuse without pasting if the pane changes or gains new text.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject

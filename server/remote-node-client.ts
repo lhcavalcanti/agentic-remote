@@ -695,6 +695,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         | {
             error?: string
             submission?: unknown
+            terminalDraftConflict?: boolean
             uncertainDelivery?: boolean
           }
         | null
@@ -703,6 +704,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         response.status,
         parseSubmissionReceipt(payload?.submission),
         payload?.uncertainDelivery,
+        payload?.terminalDraftConflict,
       )
     }
     if (markOnline) {

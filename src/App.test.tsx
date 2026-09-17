@@ -6599,6 +6599,54 @@ describe('App', () => {
     )
   })
 
+  it('offers a confirmed clear-and-send action for a terminal draft conflict', async () => {
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(Object.assign(
+        new Error(
+          'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+        ),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          uncertainDelivery: false,
+        },
+      ))
+      .mockResolvedValueOnce(session)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Send the preserved app draft' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const replace = await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    })
+    expect(textarea).toHaveValue('Send the preserved app draft')
+    expect(replace).toBeEnabled()
+    fireEvent.click(replace)
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(
+      'The terminal text will be deleted and cannot be recovered',
+    ))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          content: 'Send the preserved app draft',
+          enqueue: false,
+          replaceTerminalDraft: true,
+        },
+      ),
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('button', {
+        name: 'Clear terminal text and send',
+      })).not.toBeInTheDocument(),
+    )
+    expect(textarea).toHaveValue('')
+  })
+
   it('keeps a suspended conversation readable and closed to writing', async () => {
     // Suspending stops the process, not the conversation: the history and the
     // name stay, and the way back is the button rather than the composer.

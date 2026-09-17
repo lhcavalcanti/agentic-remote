@@ -871,6 +871,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.content,
             input.enqueue,
             input.acknowledgesFailure,
+            input.replaceTerminalDraft,
           )
         : await this.requireClient(computerId).sendMessage(sessionId, input)
     return managedSession(session, computer)
@@ -889,6 +890,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.command,
             input.enqueue,
             input.acknowledgesFailure,
+            input.replaceTerminalDraft,
           )
         : await this.requireClient(computerId).executeCommand(sessionId, input)
     return managedSession(session, computer)

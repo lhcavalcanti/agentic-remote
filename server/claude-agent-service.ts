@@ -961,7 +961,14 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
     acknowledgesFailure?: string,
+    replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
+    if (replaceTerminalDraft) {
+      throw Object.assign(
+        new Error('Terminal draft replacement is only available for tmux-backed Copilot sessions.'),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
     if (this.stopped) throw new Error('The session service is stopping')
     if (this.store.get(sessionId)?.queuedDispatch && !enqueue) {
       this.queuedDispatches.assertAvailable(sessionId)
@@ -1378,6 +1385,8 @@ export class ClaudeAgentService
     _sessionId: string,
     command: string,
     _enqueue = false,
+    _acknowledgesFailure?: string,
+    _replaceTerminalDraft = false,
   ): Promise<SessionDetail> {
     throw new Error(`Claude Agent command ${command.split(/\s/, 1)[0]} is not available`)
   }

@@ -52,12 +52,14 @@ async function responseError(
         message?: string
         statusCode?: number
         submission?: unknown
+        terminalDraftConflict?: unknown
         uncertainDelivery?: unknown
       }
     | null
   const fallback = `Request failed (${response.status})`
   const submission = parseSubmissionReceipt(payload?.submission)
   const options = {
+    terminalDraftConflict: payload?.terminalDraftConflict === true,
     uncertainDelivery: httpDeliveryUncertain(
       response.status,
       payload?.uncertainDelivery,

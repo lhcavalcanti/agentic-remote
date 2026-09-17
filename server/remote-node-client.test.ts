@@ -172,6 +172,7 @@ describe('paired-node redirect isolation', () => {
         response.writeHead(409, { 'content-type': 'application/json' })
         response.end(JSON.stringify({
           error: 'Synthetic node refusal',
+          terminalDraftConflict: true,
           uncertainDelivery,
         }))
       })
@@ -180,6 +181,7 @@ describe('paired-node redirect isolation', () => {
     await expect(client(node).sendMessage('remote-session', { content: 'Direct request' }))
       .rejects.toMatchObject({
         statusCode: 409,
+        terminalDraftConflict: true,
         uncertainDelivery,
         message: 'Synthetic node refusal',
       })

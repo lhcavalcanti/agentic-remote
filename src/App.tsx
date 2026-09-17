@@ -12389,11 +12389,15 @@ function App() {
   const queuedEditUnconfirmed = Boolean(selectedKey && editingQueuedPromptId &&
     unconfirmedQueuedPrompts[selectedKey] === editingQueuedPromptId)
   const selectedComposerPastes = selectedKey ? composerDrafts[selectedKey]?.pastes : undefined
+  const terminalDraftExpandedContent = expandComposerPastes(
+    composer,
+    activeComposerPastes(composer, selectedComposerPastes || []),
+  )
   const readonlyResourceCommand = useMemo(() => editingQueuedPromptId ? undefined : sessionResourceCommand(
-    expandComposerPastes(composer, activeComposerPastes(composer, selectedComposerPastes || [])),
-  ), [composer, selectedComposerPastes, editingQueuedPromptId])
-  const terminalDraftCommand = composer.trim().startsWith('/')
-    ? composer.trim().slice(1).split(/\s+/, 1)[0].toLowerCase()
+    terminalDraftExpandedContent,
+  ), [editingQueuedPromptId, terminalDraftExpandedContent])
+  const terminalDraftCommand = terminalDraftExpandedContent.trim().startsWith('/')
+    ? terminalDraftExpandedContent.trim().slice(1).split(/\s+/, 1)[0].toLowerCase()
     : ''
   const terminalDraftCommandDefinition = terminalDraftCommand
     ? commands.find(
@@ -12412,7 +12416,9 @@ function App() {
     ) ||
     (
       terminalDraftCommand === 'cwd' &&
-      !composer.trim().slice(terminalDraftCommand.length + 1).trim()
+      !terminalDraftExpandedContent.trim()
+        .slice(terminalDraftCommand.length + 1)
+        .trim()
     )
   const terminalDraftReplacementUnavailable = editingQueuedPromptId
     ? 'Finish or cancel the queued-message edit before replacing terminal text.'

@@ -6689,7 +6689,9 @@ describe('App', () => {
     })).toBeEnabled()
   })
 
-  it('does not clear terminal text for an app-local command', async () => {
+  it.each(['direct', 'collapsed paste'] as const)(
+    'does not clear terminal text for an app-local command from a %s',
+    async (source) => {
     vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(
       new Error('Terminal text is blocking this message'),
       {
@@ -6707,7 +6709,20 @@ describe('App', () => {
       name: 'Clear terminal text and send',
     })
 
-    fireEvent.change(textarea, { target: { value: '/clear' } })
+    if (source === 'direct') {
+      fireEvent.change(textarea, { target: { value: '/clear' } })
+    } else {
+      fireEvent.change(textarea, { target: { value: '' } })
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          getData: () => [
+            '/clear',
+            ...Array.from({ length: 20 }, (_, index) => `line ${index}`),
+          ].join('\n'),
+        },
+      })
+      expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+    }
 
     expect(replace).toBeDisabled()
     expect(screen.getByText(
@@ -6717,7 +6732,8 @@ describe('App', () => {
     expect(confirm).not.toHaveBeenCalled()
     expect(clearConversation).not.toHaveBeenCalled()
     expect(sendMessage).toHaveBeenCalledOnce()
-  })
+    },
+  )
 
   it('does not clear terminal text while editing a queued prompt', async () => {
     const queued: ManagedSession = {

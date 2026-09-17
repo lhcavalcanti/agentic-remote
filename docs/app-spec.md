@@ -673,8 +673,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
 ### 7.1 Documents
 
 - Multiple selected or dropped files MUST process in selection order.
-- Supported documents include PDF, CSV/TSV, Excel, Word, Markdown, text,
-  JSON/YAML, OFX/QFX, and common images.
+- Supported documents include PDF, CSV/TSV, Kusto Query Language (`.kql`),
+  Excel, Word, Markdown, text, JSON/YAML, OFX/QFX, and common images.
 - Maximum file size is 25 MiB.
 - Files MUST be stored on the selected session's owning computer under
   `~/.agentic-remote/uploads/<session-id>/`.

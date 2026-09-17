@@ -6501,13 +6501,20 @@ describe('App', () => {
   })
 
   it('uploads a document to the selected computer and appends its path', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'dashboard-query.kql',
+      path: '/private/uploads/dashboard-query.kql',
+      size: 21,
+    })
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
-    const file = new File(['financial data'], 'statement.pdf', {
-      type: 'application/pdf',
+    const attachment = screen.getByLabelText('File attachment')
+    expect(attachment.getAttribute('accept')?.split(',')).toContain('.kql')
+    const file = new File(['StormEvents | take 10'], 'dashboard-query.kql', {
+      type: 'text/plain',
     })
 
-    fireEvent.change(screen.getByLabelText('File attachment'), {
+    fireEvent.change(attachment, {
       target: { files: [file] },
     })
 
@@ -6520,7 +6527,7 @@ describe('App', () => {
     )
     await waitFor(() =>
       expect(textarea).toHaveValue(
-        'Attached file: `/private/uploads/statement.pdf`',
+        'Attached file: `/private/uploads/dashboard-query.kql`',
       ),
     )
     expect(transcribeAudio).not.toHaveBeenCalled()

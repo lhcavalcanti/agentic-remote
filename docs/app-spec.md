@@ -186,8 +186,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Copilot sessions MUST offer **Recover conversation** in session actions when
   the owning computer advertises context recovery. It MUST be enabled for
   idle, provider-error, or stale-interaction sessions and remain visible but
-  disabled while running, waiting, suspended, or offline. Claude sessions MUST
-  NOT offer it.
+  disabled while running, waiting, suspended, offline, holding a live prompt or
+  queue claim, rebuilding context, or owning queued/running background work.
+  Recovery MUST enforce the same ownership checks server-side. Claude sessions
+  MUST NOT offer it.
 - Recover MUST create a fresh provider session ID while preserving title,
   working folder, runtime settings, execution mode, queue, computer ownership,
   draft continuity, replacement lineage, and notification/Knowledge metadata.

@@ -345,6 +345,8 @@ export interface SessionSummary {
    */
   replacedSessionIds?: string[]
   recovery?: SessionRecoveryInfo
+  /** A recovery brief that still owns the session and must settle first. */
+  recoverySeedState?: 'pending' | 'dispatching' | 'failed'
   /**
    * Whether the session is being kept without anything running for it.
    *

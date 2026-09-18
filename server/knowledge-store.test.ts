@@ -111,4 +111,62 @@ describe('KnowledgeStore', () => {
     await restored.initialize()
     expect(restored.listRoots()).toEqual([kept])
   })
+
+  it('keeps a provisional root when another request finalizes its reuse', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/notes',
+      name: 'notes',
+    }
+
+    const creator = await store.reserveRoot(input)
+    const reuser = await store.reserveRoot(input)
+    expect(creator.created).toBe(true)
+    expect(reuser.created).toBe(false)
+
+    await reuser.finalize()
+    await expect(creator.rollback()).resolves.toBe(false)
+    expect(store.listRoots()).toEqual([creator.root])
+  })
+
+  it('removes a provisional root after every request rolls back', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/notes',
+      name: 'notes',
+    }
+
+    const creator = await store.reserveRoot(input)
+    const reuser = await store.reserveRoot(input)
+
+    await expect(creator.rollback()).resolves.toBe(false)
+    await expect(reuser.rollback()).resolves.toBe(true)
+    expect(store.listRoots()).toEqual([])
+  })
+
+  it('never rolls back a root that existed before the reservation', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/notes',
+      name: 'notes',
+    }
+    const existing = await store.addRoot(input)
+
+    const reservation = await store.reserveRoot(input)
+    expect(reservation.created).toBe(false)
+    await expect(reservation.rollback()).resolves.toBe(false)
+    expect(store.listRoots()).toEqual([existing])
+  })
 })

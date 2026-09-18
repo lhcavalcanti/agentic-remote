@@ -281,12 +281,17 @@ describe('hub routes', () => {
       on: () => undefined,
       off: () => undefined,
     } as unknown as ComputerManager, {
-      addRoot: async (input: { computerId: string }) => {
+      reserveRoot: async (input: { computerId: string }) => {
         const root = { ...input, id: 'old-root' }
         roots.set(root.id, root)
         entered()
         await gate
-        return root
+        return {
+          root,
+          created: true,
+          finalize: async () => undefined,
+          rollback: async () => removeRoot(root.id),
+        }
       },
       removeRoot,
     } as unknown as KnowledgeStore)
@@ -310,5 +315,53 @@ describe('hub routes', () => {
       release()
       await app.close()
     }
+  })
+
+  it('does not remove a reused root when its registration turns stale', async () => {
+    let registration = Symbol('original')
+    const existing = { id: 'existing', computerId: 'worker' }
+    const removeRoot = vi.fn(async () => true)
+    const stale = () => {
+      registration = Symbol('repaired')
+    }
+    const app = Fastify()
+    await registerHubRoutes(app, {
+      listComputers: () => [{ id: 'worker', name: 'Worker' }],
+      captureComputerRegistration: () => {
+        const captured = registration
+        return () => captured === registration
+      },
+      listKnowledge: async () => ({ path: '.', entries: [] }),
+      on: () => undefined,
+      off: () => undefined,
+    } as unknown as ComputerManager, {
+      // Current route path.
+      addRoot: async () => {
+        stale()
+        return existing
+      },
+      // The reservation path the fix is expected to use.
+      reserveRoot: async () => {
+        stale()
+        return {
+          root: existing,
+          created: false,
+          finalize: async () => undefined,
+          rollback: async () => false,
+        }
+      },
+      removeRoot,
+    } as unknown as KnowledgeStore)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/knowledge/roots',
+      headers: { host: 'localhost' },
+      payload: { computerId: 'worker', path: '/home/tester/docs' },
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(removeRoot).not.toHaveBeenCalled()
+    await app.close()
   })
 })

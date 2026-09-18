@@ -253,6 +253,21 @@ development `main` checkout. `install` copies the monitor to a stable
 machine-local path, so the systemd timer does not execute from the mutable
 development checkout. Omit `--enable` when the machine should remain opt-out.
 
+Refresh an existing installation after upgrading from a version that predates
+the `refresh` command:
+
+```bash
+./bin/agentic-remote-promotion-setup refresh
+```
+
+`refresh` atomically replaces the installed monitor and unit definitions,
+preserves the profile, and keeps the timer's enabled and running state.
+Successful promotions also refresh those lifecycle assets from the exact
+validated candidate before restarting the managed service. A refresh failure
+therefore leaves the previous service process running while the promotion
+monitor restores the previous release, rather than silently installing an
+older timeout or monitor.
+
 ## Pull, validate, and graduate
 
 A local-only monitor may run this sequence on an opt-in machine:

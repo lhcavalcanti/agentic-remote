@@ -141,6 +141,29 @@ EOF
   rm -f -- "$temporary"
 }
 
+refresh_promotion_lifecycle_if_installed() {
+  local promotion_profile="$CONFIG_DIR/promotion.env"
+  local promotion_service="$SYSTEMD_DIR/agentic-remote-promotion-monitor.service"
+  local promotion_timer="$SYSTEMD_DIR/agentic-remote-promotion-monitor.timer"
+  local promotion_monitor="$HOME/.local/lib/agentic-remote/promotion-monitor"
+  local promotion_setup="$REPO_ROOT/bin/agentic-remote-promotion-setup"
+  if [[ ! -f "$promotion_service" &&
+    ! -f "$promotion_timer" &&
+    ! -f "$promotion_monitor" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$promotion_profile" ||
+    ! -f "$promotion_service" ||
+    ! -f "$promotion_timer" ||
+    ! -f "$promotion_monitor" ]]; then
+    die "promotion lifecycle installation is incomplete; run promotion setup install or uninstall"
+  fi
+  [[ -x "$promotion_setup" ]] ||
+    die "promotion lifecycle is installed, but this release cannot refresh it"
+  AGENTIC_REMOTE_PROMOTION_HOME="$HOME" "$promotion_setup" refresh ||
+    die "the release was published, but the installed promotion lifecycle could not be refreshed"
+}
+
 derived_origins() {
   local derived_host="$1" derived_port="$2"
   if [[ -z "$derived_host" || -z "$derived_port" ]]; then
@@ -429,6 +452,7 @@ setup_service() {
   ln -sfn "$REPO_ROOT/bin/agentic-remote" "$COMMAND_LINK"
   systemctl --user daemon-reload
   systemctl --user enable "$SERVICE_NAME"
+  refresh_promotion_lifecycle_if_installed
   systemctl --user restart "$SERVICE_NAME"
   enable_linger
   quarantine_inactive_rejected_releases ||

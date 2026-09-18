@@ -8,6 +8,7 @@ import type {
   ManagedSession,
   RuntimeModelOption,
   SessionKnowledgeBinding,
+  SessionOrderSnapshot,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
@@ -463,12 +464,15 @@ export interface WorkspaceFixtureOptions {
   state?: WorkspaceFixtureState
   knowledgePositions?: Record<string, KnowledgePosition>
   extraKnowledgeFiles?: number
+  /** Optional absolute directory listings for folder-picker browser tests. */
+  directoryListings?: Record<string, string[]>
 }
 
 export interface WorkspaceFixtureState {
   roots: KnowledgeRoot[]
   sessions: ManagedSession[]
   bindings: Map<string, SessionKnowledgeBinding>
+  sessionOrder: SessionOrderSnapshot
   eventSockets: Set<WebSocketRoute>
   nextRootId: number
 }
@@ -491,6 +495,18 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
         available: true,
       },
     ])),
+    sessionOrder: {
+      revision: 1,
+      bootstrapped: true,
+      order: Object.fromEntries(
+        fixtureComputers.map((computer) => [
+          computer.id,
+          sessions
+            .filter((session) => session.computerId === computer.id)
+            .map((session) => `${computer.id}:${session.id}`),
+        ]),
+      ),
+    },
     eventSockets: new Set(),
     nextRootId: 1,
   }
@@ -540,6 +556,7 @@ export async function setupWorkspaceFixture(
   const baseUrl = fixtureBaseUrl(options.baseUrl)
   const state = options.state ?? createWorkspaceFixtureState()
   const extraKnowledgeFiles = options.extraKnowledgeFiles ?? 0
+  const directoryListings = options.directoryListings ?? {}
   if (!Number.isInteger(extraKnowledgeFiles) || extraKnowledgeFiles < 0 || extraKnowledgeFiles > 200) {
     throw new Error('Use between 0 and 200 synthetic extra Knowledge files.')
   }
@@ -680,6 +697,41 @@ export async function setupWorkspaceFixture(
       await respond({ sessions })
       return
     }
+    if (method === 'GET' && path === '/api/session-order') {
+      await respond({ sessionOrder: state.sessionOrder })
+      return
+    }
+    const sessionOrderLane = path.match(/^\/api\/session-order\/([^/]+)$/)
+    if (method === 'PUT' && sessionOrderLane) {
+      const input = request.postDataJSON() as { order: string[] }
+      const computerId = decodeURIComponent(sessionOrderLane[1])
+      state.sessionOrder = {
+        ...state.sessionOrder,
+        revision: state.sessionOrder.revision + 1,
+        order: {
+          ...state.sessionOrder.order,
+          [computerId]: [...input.order],
+        },
+      }
+      emit({ type: 'session.order.updated', order: state.sessionOrder })
+      await respond({ sessionOrder: state.sessionOrder })
+      return
+    }
+    if (method === 'POST' && path === '/api/session-order/bootstrap') {
+      const input = request.postDataJSON() as {
+        order: Record<string, string[]>
+      }
+      if (!state.sessionOrder.bootstrapped) {
+        state.sessionOrder = {
+          revision: state.sessionOrder.revision + 1,
+          bootstrapped: true,
+          order: structuredClone(input.order),
+        }
+        emit({ type: 'session.order.updated', order: state.sessionOrder })
+      }
+      await respond({ sessionOrder: state.sessionOrder })
+      return
+    }
     if (method === 'GET' && path === '/api/push/settings') {
       await respond({ mutedSessions: [] })
       return
@@ -811,15 +863,22 @@ export async function setupWorkspaceFixture(
       const current = !requested || requested === '~' ? '/home/demo' : requested
       const allowed = current === '/home/demo' ||
         sessions.some((session) => session.computerId === directory[1] && session.cwd === current) ||
-        state.roots.some((root) => root.computerId === directory[1] && root.path === current)
+        state.roots.some((root) => root.computerId === directory[1] && root.path === current) ||
+        Object.hasOwn(directoryListings, current)
       if (!allowed) {
         await reject(route, `Unknown fixture directory ${current}`)
         return
       }
+      const configured = directoryListings[current]
       await respond({
         path: current,
         parent: current === '/home/demo' ? undefined : '/home/demo',
-        directories: current === '/home/demo'
+        directories: configured
+          ? configured.map((child) => ({
+              name: child.split('/').at(-1),
+              path: child,
+            }))
+          : current === '/home/demo'
           ? [...new Set(sessions.filter((session) => session.computerId === directory[1]).map((session) => session.cwd))]
             .map((path) => ({ name: path.split('/').at(-1), path }))
           : [],

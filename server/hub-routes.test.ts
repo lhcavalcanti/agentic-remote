@@ -289,7 +289,11 @@ describe('hub routes', () => {
         return {
           root,
           created: true,
-          finalize: async () => undefined,
+          finalize: async (guard?: () => boolean) => {
+            if (guard?.() ?? true) return true
+            await removeRoot(root.id)
+            return false
+          },
           rollback: async () => removeRoot(root.id),
         }
       },
@@ -335,18 +339,12 @@ describe('hub routes', () => {
       on: () => undefined,
       off: () => undefined,
     } as unknown as ComputerManager, {
-      // Current route path.
-      addRoot: async () => {
-        stale()
-        return existing
-      },
-      // The reservation path the fix is expected to use.
       reserveRoot: async () => {
         stale()
         return {
           root: existing,
           created: false,
-          finalize: async () => undefined,
+          finalize: async (guard?: () => boolean) => guard?.() ?? true,
           rollback: async () => false,
         }
       },
@@ -363,5 +361,53 @@ describe('hub routes', () => {
     expect(response.statusCode).toBe(409)
     expect(removeRoot).not.toHaveBeenCalled()
     await app.close()
+  })
+
+  it('rejects a registration that turns stale while finalization waits', async () => {
+    let registration = Symbol('original')
+    let release!: () => void
+    let entered!: () => void
+    const finalizing = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const app = Fastify()
+    await registerHubRoutes(app, {
+      listComputers: () => [{ id: 'worker', name: 'Worker' }],
+      captureComputerRegistration: () => {
+        const captured = registration
+        return () => captured === registration
+      },
+      listKnowledge: async () => ({ path: '.', entries: [] }),
+      on: () => undefined,
+      off: () => undefined,
+    } as unknown as ComputerManager, {
+      reserveRoot: async () => ({
+        root: { id: 'provisional', computerId: 'worker' },
+        created: true,
+        finalize: async (guard?: () => boolean) => {
+          entered()
+          await gate
+          return guard?.() ?? true
+        },
+        rollback: async () => true,
+      }),
+    } as unknown as KnowledgeStore)
+    try {
+      const response = app.inject({
+        method: 'POST',
+        url: '/api/knowledge/roots',
+        headers: { host: 'localhost' },
+        payload: { computerId: 'worker', path: '/home/tester/docs' },
+      }).then((value) => value)
+      await finalizing
+      registration = Symbol('repaired')
+      release()
+
+      const rejected = await response
+      expect(rejected.statusCode).toBe(409)
+      expect(rejected.json().error).toContain('pairing changed while saving')
+    } finally {
+      release()
+      await app.close()
+    }
   })
 })

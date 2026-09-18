@@ -10,7 +10,7 @@ interface KnowledgeState {
 export interface KnowledgeRootReservation {
   root: KnowledgeRoot
   created: boolean
-  finalize: () => Promise<void>
+  finalize: (guard?: () => boolean) => Promise<boolean>
   rollback: () => Promise<boolean>
 }
 
@@ -135,52 +135,69 @@ export class KnowledgeStore {
     created: boolean,
     token?: string,
   ): KnowledgeRootReservation {
-    let settled = false
+    let outcome: boolean | undefined
     return {
       root: structuredClone(root),
       created,
-      finalize: async () => {
-        if (settled) return
-        if (token) await this.finalizeReservation(root.id, token)
-        settled = true
+      finalize: async (guard) => {
+        if (outcome !== undefined) return outcome
+        const finalized = token
+          ? await this.finalizeReservation(root.id, token, guard)
+          : await this.enqueue(async () => guard?.() ?? true)
+        outcome = finalized
+        return finalized
       },
       rollback: async () => {
-        if (settled) return false
+        if (outcome !== undefined) return false
         const removed = token
           ? await this.rollbackReservation(root.id, token)
           : false
-        settled = true
+        outcome = false
         return removed
       },
     }
   }
 
-  private finalizeReservation(id: string, token: string): Promise<void> {
+  private finalizeReservation(
+    id: string,
+    token: string,
+    guard?: () => boolean,
+  ): Promise<boolean> {
     return this.enqueue(async () => {
+      if (guard && !guard()) {
+        await this.rollbackReservationNow(id, token)
+        return false
+      }
       const reservations = this.rootReservations.get(id)
       if (reservations?.has(token)) this.rootReservations.delete(id)
+      return true
     })
   }
 
   private rollbackReservation(id: string, token: string): Promise<boolean> {
-    return this.enqueue(async () => {
-      const reservations = this.rootReservations.get(id)
-      if (!reservations?.has(token)) return false
-      if (reservations.size > 1) {
-        reservations.delete(token)
-        return false
-      }
-      const remaining = this.state.roots.filter((entry) => entry.id !== id)
-      if (remaining.length === this.state.roots.length) {
-        this.rootReservations.delete(id)
-        return false
-      }
-      const next = { roots: remaining }
-      await this.write(next)
-      this.state = next
+    return this.enqueue(() => this.rollbackReservationNow(id, token))
+  }
+
+  private async rollbackReservationNow(
+    id: string,
+    token: string,
+  ): Promise<boolean> {
+    const reservations = this.rootReservations.get(id)
+    if (!reservations?.has(token)) return false
+    if (reservations.size > 1) {
+      reservations.delete(token)
+      return false
+    }
+    const remaining = this.state.roots.filter((entry) => entry.id !== id)
+    if (remaining.length === this.state.roots.length) {
       this.rootReservations.delete(id)
-      return true
-    })
+      return false
+    }
+    const next = { roots: remaining }
+    await this.write(next)
+    this.state = next
+    this.rootReservations.delete(id)
+    return true
   }
 
   private enqueue<TResult>(

@@ -169,4 +169,21 @@ describe('KnowledgeStore', () => {
     await expect(reservation.rollback()).resolves.toBe(false)
     expect(store.listRoots()).toEqual([existing])
   })
+
+  it('rolls back a provisional root when guarded finalization is refused', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const reservation = await store.reserveRoot({
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+
+    await expect(
+      reservation.finalize(() => false),
+    ).resolves.toBe(false)
+    expect(store.listRoots()).toEqual([])
+  })
 })

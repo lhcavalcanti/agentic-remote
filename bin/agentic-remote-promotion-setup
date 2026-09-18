@@ -84,15 +84,16 @@ validate_profile() {
 }
 
 write_units() {
-  local dev_root node_bin corepack_bin runtime_path temporary
+  local dev_root node_bin corepack_bin runtime_path service_temporary timer_temporary
   node_bin="$(command -v node)"
   corepack_bin="$(command -v corepack)"
   runtime_path="$(dirname "$node_bin"):$(dirname "$corepack_bin"):/usr/local/bin:/usr/bin:/bin"
   dev_root="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_DEV_ROOT)"
   [[ -n "$dev_root" ]] || die "profile is missing AGENTIC_REMOTE_MONITOR_DEV_ROOT"
 
-  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.service.XXXXXX")"
-  cat >"$temporary" <<EOF
+  service_temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.service.XXXXXX")"
+  timer_temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.timer.XXXXXX")"
+  cat >"$service_temporary" <<EOF
 [Unit]
 Description=Validate and graduate Agentic Remote development builds
 Wants=network-online.target
@@ -112,11 +113,8 @@ Environment=$(systemd_quote "PATH=$runtime_path")
 TimeoutStartSec=60min
 ExecStart=$(systemd_quote "$MONITOR_DEST") run
 EOF
-  install -m 0600 "$temporary" "$SERVICE_FILE"
-  rm -f -- "$temporary"
 
-  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.timer.XXXXXX")"
-  cat >"$temporary" <<EOF
+  cat >"$timer_temporary" <<EOF
 [Unit]
 Description=Check and graduate Agentic Remote builds every two hours
 
@@ -134,8 +132,9 @@ Unit=$SERVICE_NAME
 [Install]
 WantedBy=timers.target
 EOF
-  install -m 0600 "$temporary" "$TIMER_FILE"
-  rm -f -- "$temporary"
+  chmod 0600 "$service_temporary" "$timer_temporary"
+  mv -f -- "$service_temporary" "$SERVICE_FILE"
+  mv -f -- "$timer_temporary" "$TIMER_FILE"
 }
 
 install_monitor_binary() {

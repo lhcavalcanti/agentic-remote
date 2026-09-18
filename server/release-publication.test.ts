@@ -82,6 +82,7 @@ async function publicationFixture() {
       cwd: directory,
       env: {
         ...process.env,
+        HOME: directory,
         REPO_ROOT: repository,
         CONFIG_DIR: config,
         ENV_FILE: path.join(config, 'environment'),
@@ -108,9 +109,17 @@ async function installPromotionLifecycleFixture(
 ) {
   const systemd = path.join(config, 'systemd')
   const setup = path.join(repository, 'bin', 'agentic-remote-promotion-setup')
+  const monitor = path.join(
+    path.dirname(config),
+    '.local',
+    'lib',
+    'agentic-remote',
+    'promotion-monitor',
+  )
   await Promise.all([
     mkdir(systemd, { recursive: true }),
     mkdir(path.dirname(setup), { recursive: true }),
+    mkdir(path.dirname(monitor), { recursive: true }),
   ])
   await Promise.all([
     writeFile(path.join(config, 'promotion.env'), 'fixture profile\n'),
@@ -130,8 +139,25 @@ async function installPromotionLifecycleFixture(
         `exit ${exitCode}`,
       ].join('\n'),
     ),
+    writeFile(monitor, '#!/usr/bin/env bash\nexit 0\n'),
   ])
-  await chmod(setup, 0o755)
+  await Promise.all([chmod(setup, 0o755), chmod(monitor, 0o755)])
+}
+
+async function installPartialPromotionLifecycleFixture(
+  repository: string,
+  config: string,
+) {
+  const systemd = path.join(config, 'systemd')
+  await mkdir(systemd, { recursive: true })
+  await Promise.all([
+    writeFile(path.join(config, 'promotion.env'), 'fixture profile\n'),
+    writeFile(
+      path.join(systemd, 'agentic-remote-promotion-monitor.service'),
+      'fixture service\n',
+    ),
+    mkdir(path.join(repository, 'bin'), { recursive: true }),
+  ])
 }
 
 type PublicationSyncEvent = {
@@ -220,6 +246,30 @@ describe('immutable build publication', () => {
 
     await expect(run('setup_service')).rejects.toThrow(
       'the release was published, but the installed promotion lifecycle could not be refreshed',
+    )
+    expect(await readFile(path.join(config, 'service-call'), 'utf8'))
+      .toBe('--user enable fixture.service\n')
+  })
+
+  it('treats a preserved profile without units or monitor as uninstalled', async () => {
+    const { config, run, build } = await publicationFixture()
+    await mkdir(config, { recursive: true })
+    await writeFile(path.join(config, 'promotion.env'), 'preserved profile\n')
+    await build('uninstalled-lifecycle')
+
+    await run('setup_service')
+
+    expect(await readFile(path.join(config, 'service-call'), 'utf8'))
+      .toBe('--user restart fixture.service\n')
+  })
+
+  it('refuses a partial promotion lifecycle before restarting the service', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    await installPartialPromotionLifecycleFixture(repository, config)
+    await build('partial-lifecycle')
+
+    await expect(run('setup_service')).rejects.toThrow(
+      'promotion lifecycle installation is incomplete',
     )
     expect(await readFile(path.join(config, 'service-call'), 'utf8'))
       .toBe('--user enable fixture.service\n')

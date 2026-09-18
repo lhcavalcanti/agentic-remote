@@ -141,8 +141,11 @@ describe('reproducible promotion setup', () => {
 
     // systemctl show prints Environment= entries, so the units must not be
     // more readable than the profile they point at.
-    expect(script).toContain('install -m 0600 "$temporary" "$SERVICE_FILE"')
-    expect(script).toContain('install -m 0600 "$temporary" "$TIMER_FILE"')
+    expect(script).toContain('chmod 0600 "$service_temporary" "$timer_temporary"')
+    expect(script).toContain('mv -f -- "$service_temporary" "$SERVICE_FILE"')
+    expect(script).toContain('mv -f -- "$timer_temporary" "$TIMER_FILE"')
+    expect(script).not.toContain('install -m 0600 "$temporary" "$SERVICE_FILE"')
+    expect(script).not.toContain('install -m 0600 "$temporary" "$TIMER_FILE"')
     expect(script).not.toContain('install -m 0644')
   })
 

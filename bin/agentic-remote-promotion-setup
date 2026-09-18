@@ -30,6 +30,9 @@ Commands:
   install [--profile FILE] [--create-runtime] [--enable]
       Install the local monitor and user systemd units. Disabled by default.
       --create-runtime creates the detached production worktree when absent.
+  refresh
+      Refresh the installed monitor and units without changing the profile or
+      the timer's enabled/running state.
   enable
       Enable and start the local two-hour promotion timer.
   disable
@@ -81,15 +84,16 @@ validate_profile() {
 }
 
 write_units() {
-  local dev_root node_bin corepack_bin runtime_path temporary
+  local dev_root node_bin corepack_bin runtime_path service_temporary timer_temporary
   node_bin="$(command -v node)"
   corepack_bin="$(command -v corepack)"
   runtime_path="$(dirname "$node_bin"):$(dirname "$corepack_bin"):/usr/local/bin:/usr/bin:/bin"
   dev_root="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_DEV_ROOT)"
   [[ -n "$dev_root" ]] || die "profile is missing AGENTIC_REMOTE_MONITOR_DEV_ROOT"
 
-  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.service.XXXXXX")"
-  cat >"$temporary" <<EOF
+  service_temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.service.XXXXXX")"
+  timer_temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.timer.XXXXXX")"
+  cat >"$service_temporary" <<EOF
 [Unit]
 Description=Validate and graduate Agentic Remote development builds
 Wants=network-online.target
@@ -109,11 +113,8 @@ Environment=$(systemd_quote "PATH=$runtime_path")
 TimeoutStartSec=60min
 ExecStart=$(systemd_quote "$MONITOR_DEST") run
 EOF
-  install -m 0600 "$temporary" "$SERVICE_FILE"
-  rm -f -- "$temporary"
 
-  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.timer.XXXXXX")"
-  cat >"$temporary" <<EOF
+  cat >"$timer_temporary" <<EOF
 [Unit]
 Description=Check and graduate Agentic Remote builds every two hours
 
@@ -131,8 +132,16 @@ Unit=$SERVICE_NAME
 [Install]
 WantedBy=timers.target
 EOF
-  install -m 0600 "$temporary" "$TIMER_FILE"
-  rm -f -- "$temporary"
+  chmod 0600 "$service_temporary" "$timer_temporary"
+  mv -f -- "$service_temporary" "$SERVICE_FILE"
+  mv -f -- "$timer_temporary" "$TIMER_FILE"
+}
+
+install_monitor_binary() {
+  local temporary
+  temporary="$(mktemp "$INSTALL_DIR/.promotion-monitor.XXXXXX")"
+  install -m 0755 "$REPO_ROOT/bin/agentic-remote-promotion-monitor" "$temporary"
+  mv -f -- "$temporary" "$MONITOR_DEST"
 }
 
 create_runtime_worktree() {
@@ -224,7 +233,7 @@ install_monitor() {
   if [[ "$create_runtime" == 1 ]]; then
     create_runtime_worktree
   fi
-  install -m 0755 "$REPO_ROOT/bin/agentic-remote-promotion-monitor" "$MONITOR_DEST"
+  install_monitor_binary
   write_units
   systemctl --user daemon-reload
   if [[ "$enable" == 1 ]]; then
@@ -234,6 +243,35 @@ install_monitor() {
   else
     printf 'Local promotion monitor installed and disabled by default.\n'
   fi
+}
+
+refresh_monitor() {
+  require_command corepack
+  require_command node
+  require_command systemctl
+  [[ -f "$PROFILE_DEST" ]] ||
+    die "monitor profile is not installed; run install first"
+  [[ -f "$SERVICE_FILE" && -f "$TIMER_FILE" && -f "$MONITOR_DEST" ]] ||
+    die "monitor is not installed; run install first"
+  validate_profile "$PROFILE_DEST"
+
+  local was_enabled=0 was_active=0
+  systemctl --user is-enabled --quiet "$TIMER_NAME" 2>/dev/null &&
+    was_enabled=1
+  systemctl --user is-active --quiet "$TIMER_NAME" 2>/dev/null &&
+    was_active=1
+
+  install_monitor_binary
+  write_units
+  systemctl --user daemon-reload
+  if [[ "$was_enabled" == 1 ]]; then
+    systemctl --user enable "$TIMER_NAME"
+  fi
+  if [[ "$was_active" == 1 ]]; then
+    systemctl --user restart "$TIMER_NAME"
+  fi
+  printf 'Local promotion monitor refreshed; profile preserved, timer enabled=%s active=%s.\n' \
+    "$was_enabled" "$was_active"
 }
 
 enable_monitor() {
@@ -292,6 +330,10 @@ case "$command" in
     ;;
   install)
     install_monitor "$@"
+    ;;
+  refresh)
+    (($# == 0)) || die "refresh does not accept options"
+    refresh_monitor
     ;;
   enable)
     (($# == 0)) || die "enable does not accept options"

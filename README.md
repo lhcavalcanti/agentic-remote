@@ -129,6 +129,16 @@ monitor is optional and disabled unless `--enable` is supplied. `enable` probes
 the configured health URL first and refuses to arm the timer until it answers,
 so a mistyped address fails before it can restart a service.
 
+Existing installations can apply updated lifecycle definitions without
+changing their profile or timer state:
+
+```bash
+./bin/agentic-remote-promotion-setup refresh
+```
+
+After that one-time refresh, successful promotions refresh the installed
+monitor and units from the exact validated candidate before recording success.
+
 ### Promoting to a second machine
 
 To keep the machine people use separate from the machine that rebuilds, add

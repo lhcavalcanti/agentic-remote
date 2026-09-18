@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -43,7 +44,8 @@ async function publicationFixture() {
   const script = await readFile(new URL('../bin/agentic-remote', import.meta.url), 'utf8')
   const functions = [
     'config_value', 'validate_host', 'validate_port', 'validate_role', 'validate_name', 'validate_release_id',
-    'derived_origins', 'sync_release_paths', 'quarantine_inactive_rejected_releases', 'publish_release',
+    'refresh_promotion_lifecycle_if_installed', 'derived_origins', 'sync_release_paths',
+    'quarantine_inactive_rejected_releases', 'publish_release',
     'setup_service', 'rollback_service',
   ].map((name) => {
     const match = script.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))
@@ -97,6 +99,39 @@ async function publicationFixture() {
     return version
   }
   return { repository, config, run, build }
+}
+
+async function installPromotionLifecycleFixture(
+  repository: string,
+  config: string,
+  exitCode = 0,
+) {
+  const systemd = path.join(config, 'systemd')
+  const setup = path.join(repository, 'bin', 'agentic-remote-promotion-setup')
+  await Promise.all([
+    mkdir(systemd, { recursive: true }),
+    mkdir(path.dirname(setup), { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(path.join(config, 'promotion.env'), 'fixture profile\n'),
+    writeFile(
+      path.join(systemd, 'agentic-remote-promotion-monitor.service'),
+      'fixture service\n',
+    ),
+    writeFile(
+      path.join(systemd, 'agentic-remote-promotion-monitor.timer'),
+      'fixture timer\n',
+    ),
+    writeFile(
+      setup,
+      [
+        '#!/usr/bin/env bash',
+        'printf "%s\\n" "$*" >"$CONFIG_DIR/promotion-refresh-call"',
+        `exit ${exitCode}`,
+      ].join('\n'),
+    ),
+  ])
+  await chmod(setup, 0o755)
 }
 
 type PublicationSyncEvent = {
@@ -163,6 +198,33 @@ async function publicationSyncTrace(config: string, candidate: string, failure =
 }
 
 describe('immutable build publication', () => {
+  it('refreshes an installed promotion lifecycle before restarting the service', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    await installPromotionLifecycleFixture(repository, config)
+    await build('lifecycle-refresh')
+
+    await run('setup_service')
+
+    expect(await readFile(
+      path.join(config, 'promotion-refresh-call'),
+      'utf8',
+    )).toBe('refresh\n')
+    expect(await readFile(path.join(config, 'service-call'), 'utf8'))
+      .toBe('--user restart fixture.service\n')
+  })
+
+  it('does not restart the service when lifecycle refresh fails', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    await installPromotionLifecycleFixture(repository, config, 9)
+    await build('lifecycle-refresh-failure')
+
+    await expect(run('setup_service')).rejects.toThrow(
+      'the release was published, but the installed promotion lifecycle could not be refreshed',
+    )
+    expect(await readFile(path.join(config, 'service-call'), 'utf8'))
+      .toBe('--user enable fixture.service\n')
+  })
+
   it('syncs release contents and inventory before and after activating current', async () => {
     const { repository, config, run, build } = await publicationFixture()
     const trace = path.join(repository, 'sync-trace')

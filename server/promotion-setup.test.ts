@@ -129,6 +129,10 @@ describe('reproducible promotion setup', () => {
     // the unit after setup replaced the service, so the budget keeps several
     // times that cost in reserve.
     expect(script).toContain('TimeoutStartSec=60min')
+    expect(script).toContain('Local promotion monitor refreshed; profile preserved')
+    expect(script).toContain('systemctl --user is-enabled --quiet "$TIMER_NAME"')
+    expect(script).toContain('systemctl --user is-active --quiet "$TIMER_NAME"')
+    expect(script).toContain('install_monitor_binary')
     expect(script).toContain('Environment=$(systemd_quote "AGENTIC_REMOTE_MONITOR_PROFILE=$PROFILE_DEST")')
     expect(script).toContain('--create-runtime')
     expect(script).toContain('git -C "$dev_root" worktree add --detach "$prod_root" HEAD')
@@ -140,5 +144,24 @@ describe('reproducible promotion setup', () => {
     expect(script).toContain('install -m 0600 "$temporary" "$SERVICE_FILE"')
     expect(script).toContain('install -m 0600 "$temporary" "$TIMER_FILE"')
     expect(script).not.toContain('install -m 0644')
+  })
+
+  it('refreshes lifecycle assets before a verified promotion is recorded complete', async () => {
+    const cli = await readFile(
+      new URL('../bin/agentic-remote', import.meta.url),
+      'utf8',
+    )
+
+    const setup = cli.indexOf('setup_service()')
+    const refresh = cli.indexOf(
+      '\n  refresh_promotion_lifecycle_if_installed\n',
+      setup,
+    )
+    const restart = cli.indexOf(
+      '\n  systemctl --user restart "$SERVICE_NAME"\n',
+      setup,
+    )
+    expect(refresh).toBeGreaterThan(0)
+    expect(refresh).toBeLessThan(restart)
   })
 })

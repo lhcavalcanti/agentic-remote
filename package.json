@@ -17,7 +17,7 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "vitest run",
+    "test": "concurrently -n parallel-safe,machine-access -c cyan,magenta -s all \"vitest run --project parallel-safe\" \"vitest run --project machine-access\"",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check": "pnpm lint && pnpm test && pnpm build"

@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -32,6 +32,16 @@ async function discoverTestFiles(
 }
 
 describe('Vitest cohort orchestration', () => {
+  it('launches both named projects concurrently behind pnpm test', async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(process.cwd(), 'package.json'), 'utf8'),
+    ) as { scripts: Record<string, string> }
+
+    expect(packageJson.scripts.test).toBe(
+      'concurrently -n parallel-safe,machine-access -c cyan,magenta -s all "vitest run --project parallel-safe" "vitest run --project machine-access"',
+    )
+  })
+
   it('partitions every discovered test file exactly once', async () => {
     const discovered = await discoverTestFiles()
     const serialFiles = new Set(machineAccessTestFiles)

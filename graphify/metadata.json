@@ -121,6 +121,7 @@
     "server/terminal-session.test.ts",
     "server/terminal-session.ts",
     "server/terminal-startup-queue.test.ts",
+    "server/test-orchestration.test.ts",
     "server/tmux-errors.integration.test.ts",
     "server/tmux-errors.test.ts",
     "server/tmux-errors.ts",
@@ -224,15 +225,16 @@
     "src/shell.ts",
     "src/use-session-knowledge-root.test.tsx",
     "src/use-session-knowledge-root.ts",
+    "test-partitions.ts",
     "tsconfig.app.json",
     "tsconfig.json",
     "tsconfig.node.json",
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 137,
+  "communities": 144,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9799,
+  "edges": 9820,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -406,6 +408,7 @@
     "server/terminal-session.test.ts": "7464674dd50de52e690b1f6ea40287cb55d28d6ff7d51f658439bbc0bf27eca0",
     "server/terminal-session.ts": "6d5aeca97360054e4af63fad32d587a711d786ea28beb6d9009096c785f33ee4",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
+    "server/test-orchestration.test.ts": "2a41a96e0d752be3c550753a6900def6746186e406c41fb839705e490a4edfb5",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
     "server/tmux-errors.ts": "c81388a0558de865caf123ae67302e6581c978dec3f2f6e2ea5a215ec6637d2b",
@@ -513,14 +516,15 @@
     "src/shell.ts": "1c9d79f0e47be068450913f037bc0f35efbce37a3c6c9a45429de527c8316aac",
     "src/use-session-knowledge-root.test.tsx": "4f80b53683ee9b270982608b2de9a8f7aa5b03baa03be3ce2a29f073317349c4",
     "src/use-session-knowledge-root.ts": "931caaf6414ed837536b35bd930f257c9365b675dbd35ec641d70cf71b192b7e",
+    "test-partitions.ts": "1f2c1eb5214eb5cf37769b2ed487789de1e3ec0c25715356f2e818fa35d7a76d",
     "tsconfig.app.json": "9db467556a29303882f9844ff4a1607ac9ee47225b42c0589cb348cf913b4bb3",
     "tsconfig.json": "91434fd9d32940ba5f1347be26f2c7ff676e7c1e203dba03e9986d71915755ff",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
     "tsconfig.server.json": "c3022e22834e731724ffa817c01bd2e4654184f9031945ffcbff4f489dca93bb",
-    "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
+    "vite.config.ts": "06aa0a3cf91f881c5cfad2493ccf308721d67abe75eeb46754671a665134f4b3"
   },
   "mode": "local-ast-only",
-  "nodes": 3471,
+  "nodes": 3483,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -577,19 +581,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "186b03ab8813f0ef23333c9e5ceb9c7bcdab7ab77a718a7837b4e2e37b056afc",
-    "communities.json": "6d5dbd5fc03f0cba4abc41d6916aeb141f9dc0720653360fdb3ac6a17c755719",
-    "graph.html": "353a1f17e6ba3fe1415965937af5cc7520c13274bb66c14e0718257ea6a63447",
-    "graph.json": "cf5650316f5fe0aef2f07884b1e84e41daa82a16463e10f4ea8ab5ff5940aa78"
+    "GRAPH_REPORT.md": "cb61c4882b8321378f468f8df1529fc3af4691caffd7fec5aa92df555a83a32f",
+    "communities.json": "d6deaa59928e17302e4bb41241d1656edcca81d30a431de65193c7b17d6fb3c0",
+    "graph.html": "80afda6d283856e97efb3f47fb0199bde84d1e61c052b34c3b5a60468264f691",
+    "graph.json": "b1524368e9df8d3878779175f837e6f5d6cedd694586ff50dd2f232d987914cd"
   },
   "schema_version": 1,
-  "source_commit": "6d4aee9cd372317a417644e63f9367071badeede",
-  "source_fingerprint": "673a99e2d1b8ec7f447dda0a90631b58579bd46340cb8fc6cd8278164cf50ec9",
+  "source_commit": "f08b07b9f2e306ddd2edf07e114fb1040db08433",
+  "source_fingerprint": "e00128290f358224ee62860e74426b79b80110eee84019e4df9a4ca278d9486f",
   "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/test-orchestration.test.ts",
+    "test-partitions.ts",
+    "vite.config.ts"
   ]
 }

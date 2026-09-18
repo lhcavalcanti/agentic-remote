@@ -5,7 +5,9 @@ import {
   getProviderRuntimeOptions,
   getSession,
   getRuntimeOptions,
+  HUB_SNAPSHOT_TIMEOUT_MS,
   listBackgroundTasks,
+  listComputers,
   listHistory,
   listKnowledgeEntries,
   listSessionListing,
@@ -27,9 +29,45 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('API request headers', () => {
+  it('turns a non-JSON gateway response into an actionable hub error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream unavailable', { status: 502 })),
+    )
+
+    await expect(listComputers()).rejects.toMatchObject({
+      statusCode: 502,
+      message: 'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.',
+    })
+  })
+
+  it('bounds the initial hub snapshot instead of loading forever', async () => {
+    const controller = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_path: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(init.signal?.reason),
+            { once: true },
+          )
+        })),
+    )
+
+    const result = expect(listSessionListing()).rejects.toThrow(
+      'Agentic Remote did not answer within 15 seconds. Check the hub service and tunnel, then retry.',
+    )
+    expect(AbortSignal.timeout).toHaveBeenCalledWith(HUB_SNAPSHOT_TIMEOUT_MS)
+    controller.abort(new DOMException('Timed out', 'TimeoutError'))
+    await result
+  })
+
   it.each(['detail', 'listing', 'history', 'queue envelope'] as const)(
     'retains request-start provenance through serialized %s responses without wire changes',
     async (surface) => {

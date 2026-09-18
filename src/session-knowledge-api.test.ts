@@ -78,7 +78,10 @@ describe('session Knowledge API', () => {
   it('retains an HTTP status when an error body cannot be decoded', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('not-json', { status: 502 })))
     await expect(getSessionKnowledgeRoot('computer/id', 'session/id'))
-      .rejects.toMatchObject({ status: 502, message: 'Request failed (502)' })
+      .rejects.toMatchObject({
+        status: 502,
+        message: 'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.',
+      })
   })
 
   it('does not retry a lost write acknowledgment', async () => {

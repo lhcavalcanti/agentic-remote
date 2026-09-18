@@ -6666,6 +6666,8 @@ function App() {
   const [commandsKey, setCommandsKey] = useState<string>()
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [sessionLoadError, setSessionLoadError] = useState<string>()
+  const [sessionLoadAttempt, setSessionLoadAttempt] = useState(0)
   const [sending, setSending] = useState(false)
   const [replacingTerminalDraft, setReplacingTerminalDraft] = useState(false)
   const [terminalDraftConflicts, setTerminalDraftConflicts] = useState<
@@ -8794,6 +8796,7 @@ function App() {
         if (!active) {
           return
         }
+        setSessionLoadError(undefined)
         // Overtaken as a whole is not overtaken for every computer. A refresh
         // that came back first without reaching a node has said nothing about
         // it, and discarding this answer threw away the only word anyone had
@@ -8881,7 +8884,9 @@ function App() {
       })
       .catch((caught: unknown) => {
         if (active) {
-          setError(caught instanceof Error ? caught.message : String(caught))
+          setSessionLoadError(
+            caught instanceof Error ? caught.message : String(caught),
+          )
         }
       })
       .finally(() => {
@@ -8892,7 +8897,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [upsertSession])
+  }, [sessionLoadAttempt, upsertSession])
 
   useEffect(() => {
     if (loading) {
@@ -9373,9 +9378,13 @@ function App() {
         // Order events are not replayed, so a reorder committed while this
         // socket was down would otherwise stay invisible until the next one.
         void syncSessionOrderRef.current()
-        void refreshSnapshot().catch((caught: unknown) => {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        })
+        void refreshSnapshot()
+          .then(() => setSessionLoadError(undefined))
+          .catch((caught: unknown) => {
+            setSessionLoadError(
+              caught instanceof Error ? caught.message : String(caught),
+            )
+          })
       }
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as HubEvent
@@ -13774,9 +13783,15 @@ function App() {
                     ? sessionCreationError
                     : undefined
                 }
+                loadingError={sessionLoadError}
                 onDismissCreationError={() => setSessionCreationError(undefined)}
                 onNewSession={openNewSession}
                 loading={loading}
+                onRetryLoading={() => {
+                  setLoading(true)
+                  setSessionLoadError(undefined)
+                  setSessionLoadAttempt((current) => current + 1)
+                }}
                 pendingCreations={pendingSessionCreations}
                 onOpenSessionTasks={openTasksForSession}
                 onSelectSession={selectSession}

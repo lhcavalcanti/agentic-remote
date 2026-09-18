@@ -56,7 +56,11 @@ async function responseError(
         uncertainDelivery?: unknown
       }
     | null
-  const fallback = `Request failed (${response.status})`
+  const fallback = response.status === 502
+    ? 'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.'
+    : response.status === 504
+      ? 'Agentic Remote did not answer the gateway in time (504). Check the hub service and tunnel, then retry.'
+      : `Request failed (${response.status})`
   const submission = parseSubmissionReceipt(payload?.submission)
   const options = {
     terminalDraftConflict: payload?.terminalDraftConflict === true,
@@ -114,6 +118,23 @@ async function request<TResult>(
     throw await responseError(response)
   }
   return rememberSessionResponse(await response.json() as TResult, startedAtSequence)
+}
+
+export const HUB_SNAPSHOT_TIMEOUT_MS = 15_000
+
+async function hubSnapshotRequest<TResult>(path: string): Promise<TResult> {
+  try {
+    return await request<TResult>(path, {
+      signal: AbortSignal.timeout(HUB_SNAPSHOT_TIMEOUT_MS),
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new Error(
+        'Agentic Remote did not answer within 15 seconds. Check the hub service and tunnel, then retry.',
+      )
+    }
+    throw error
+  }
 }
 
 async function requestVoid(path: string, init: RequestInit): Promise<void> {
@@ -291,7 +312,7 @@ export async function bootstrapSessionOrder(
 }
 
 export async function listComputers(): Promise<ComputerSummary[]> {
-  const response = await request<{ computers: ComputerSummary[] }>(
+  const response = await hubSnapshotRequest<{ computers: ComputerSummary[] }>(
     '/api/computers',
   )
   return response.computers
@@ -330,7 +351,7 @@ export async function listSessions(): Promise<ManagedSession[]> {
 }
 
 export async function listSessionListing(): Promise<SessionListing> {
-  const response = await request<{
+  const response = await hubSnapshotRequest<{
     sessions: ManagedSession[]
     answeredComputerIds?: string[]
   }>('/api/sessions')

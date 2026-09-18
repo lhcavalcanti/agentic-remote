@@ -72,11 +72,15 @@ function NavigationHarness({
   sort = 'custom',
   computerList = computers,
   snapshots = backgroundTasks,
+  loading = false,
+  loadingError,
 }: {
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
   computerList?: ComputerSummary[]
   snapshots?: Record<string, BackgroundTaskSnapshot>
+  loading?: boolean
+  loadingError?: string
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
@@ -90,7 +94,8 @@ function NavigationHarness({
         filter={filter}
         onQueryChange={setQuery}
         onFilterChange={setFilter}
-        loading={false}
+        loading={loading}
+        loadingError={loadingError}
         selectedKey="studio:review"
         sort={sort}
       />
@@ -108,6 +113,39 @@ afterEach(() => {
 })
 
 describe('session navigation', () => {
+  it('distinguishes loading from a failed connection and offers retry', () => {
+    const retry = vi.fn()
+    const rendered = render(
+      <NavigationHarness loading computerList={[]} sessions={new Map()} />,
+    )
+    expect(screen.getByText('Connecting...')).toBeVisible()
+    expect(screen.getByText('Loading sessions...')).toBeVisible()
+
+    rendered.rerender(
+      <DndContext>
+        <SessionNavigation
+          {...actions}
+          backgroundTasks={{}}
+          view={sessionNavigationView([], new Map(), {}, '', 'all')}
+          query=""
+          filter="all"
+          onQueryChange={vi.fn()}
+          onFilterChange={vi.fn()}
+          loading={false}
+          loadingError="The gateway could not reach Agentic Remote."
+          onRetryLoading={retry}
+          selectedKey={undefined}
+          sort="custom"
+        />
+      </DndContext>,
+    )
+    expect(screen.getByText('Connection failed')).toBeVisible()
+    expect(screen.queryByText('Loading sessions...')).toBeNull()
+    expect(screen.queryByText('No sessions here.')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading sessions' }))
+    expect(retry).toHaveBeenCalledOnce()
+  })
+
   it('offers explicit ordering without mutating the custom list or selection', () => {
     render(navigation())
     const order = screen.getByRole('combobox', { name: 'Session order' })

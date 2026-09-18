@@ -408,7 +408,7 @@
     "server/terminal-session.test.ts": "7464674dd50de52e690b1f6ea40287cb55d28d6ff7d51f658439bbc0bf27eca0",
     "server/terminal-session.ts": "6d5aeca97360054e4af63fad32d587a711d786ea28beb6d9009096c785f33ee4",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
-    "server/test-orchestration.test.ts": "2a41a96e0d752be3c550753a6900def6746186e406c41fb839705e490a4edfb5",
+    "server/test-orchestration.test.ts": "dd254320056fa6374dc5a29eb7f978ef147a397d9dda9d2aef0f37510ecf7dd0",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
     "server/tmux-errors.ts": "c81388a0558de865caf123ae67302e6581c978dec3f2f6e2ea5a215ec6637d2b",
@@ -516,7 +516,7 @@
     "src/shell.ts": "1c9d79f0e47be068450913f037bc0f35efbce37a3c6c9a45429de527c8316aac",
     "src/use-session-knowledge-root.test.tsx": "4f80b53683ee9b270982608b2de9a8f7aa5b03baa03be3ce2a29f073317349c4",
     "src/use-session-knowledge-root.ts": "931caaf6414ed837536b35bd930f257c9365b675dbd35ec641d70cf71b192b7e",
-    "test-partitions.ts": "1f2c1eb5214eb5cf37769b2ed487789de1e3ec0c25715356f2e818fa35d7a76d",
+    "test-partitions.ts": "39c481d0e0d2cb76cb2ceb29cb8b564d5b3112aaa5fa56ee15d95eaa96eb443f",
     "tsconfig.app.json": "9db467556a29303882f9844ff4a1607ac9ee47225b42c0589cb348cf913b4bb3",
     "tsconfig.json": "91434fd9d32940ba5f1347be26f2c7ff676e7c1e203dba03e9986d71915755ff",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
@@ -581,17 +581,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "cb61c4882b8321378f468f8df1529fc3af4691caffd7fec5aa92df555a83a32f",
+    "GRAPH_REPORT.md": "1edbc6183e5a75b03ba24de8159677505ec59954c11e9f0f68ebc455f39b5057",
     "communities.json": "d6deaa59928e17302e4bb41241d1656edcca81d30a431de65193c7b17d6fb3c0",
-    "graph.html": "80afda6d283856e97efb3f47fb0199bde84d1e61c052b34c3b5a60468264f691",
-    "graph.json": "b1524368e9df8d3878779175f837e6f5d6cedd694586ff50dd2f232d987914cd"
+    "graph.html": "0783f0cee098e3d29898771d4ddb30be9a9a994c4abc8fb330e55cb677ca84aa",
+    "graph.json": "558ad4375580bf522ec8a043e7556a762988fae511a7b82c691e003accc8f67c"
   },
   "schema_version": 1,
-  "source_commit": "f08b07b9f2e306ddd2edf07e114fb1040db08433",
-  "source_fingerprint": "e00128290f358224ee62860e74426b79b80110eee84019e4df9a4ca278d9486f",
+  "source_commit": "f8f9ba8dcfcbcd63767b811bbe7646ad2e3c1f09",
+  "source_fingerprint": "605cd97781b2df527c20ae42eaf80745a0a63f433b1056278c73aed36ca7a8a7",
   "working_tree_changes": [
     "server/test-orchestration.test.ts",
-    "test-partitions.ts",
-    "vite.config.ts"
+    "test-partitions.ts"
   ]
 }

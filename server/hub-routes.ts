@@ -466,7 +466,7 @@ export async function registerHubRoutes(
           : 'Computer is not registered',
       })
     }
-    const root = await knowledge.addRoot({
+    const reservation = await knowledge.reserveRoot({
       computerId: input.computerId,
       computerName: computer.name,
       path: input.path,
@@ -475,16 +475,17 @@ export async function registerHubRoutes(
         input.path.split('/').filter(Boolean).at(-1) ||
         input.path,
     })
-    // Persistence can also overlap an unpair/re-pair. A reused ID is not the
-    // registration that validated this root, and its fresh roots must survive.
-    if (!manager.listComputers().some((entry) => entry.id === input.computerId)) {
-      await knowledge.removeRoot(root.id)
-      return reply.code(404).send({ error: 'Computer is not registered' })
-    }
-    if (!registrationIsCurrent()) {
-      await knowledge.removeRoot(root.id)
-      return reply.code(409).send({
-        error: 'Computer pairing changed while saving this folder. Choose the computer again.',
+    const root = reservation.root
+    // The registration decision runs inside the store's serialized finalize
+    // operation. Nothing can replace this pairing while finalization waits
+    // behind another Knowledge write and then slip through with stale data.
+    if (!(await reservation.finalize(registrationIsCurrent))) {
+      const registered = manager.listComputers()
+        .some((entry) => entry.id === input.computerId)
+      return reply.code(registered ? 409 : 404).send({
+        error: registered
+          ? 'Computer pairing changed while saving this folder. Choose the computer again.'
+          : 'Computer is not registered',
       })
     }
     return reply.code(201).send({ root, listing })

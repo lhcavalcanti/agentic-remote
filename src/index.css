@@ -1489,6 +1489,15 @@ button {
   padding: 8px 9px;
 }
 
+.error-banner .error-banner__retry {
+  display: block;
+  padding: 4px 7px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 700;
+}
+
 .sidebar__body {
   display: flex;
   min-width: 0;

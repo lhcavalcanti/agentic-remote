@@ -349,6 +349,7 @@ export function SessionNavigation({
   query,
   filter,
   creationError,
+  loadingError,
   onDismissCreationError,
   onQueryChange: setQuery,
   onFilterChange: setFilter,
@@ -365,6 +366,7 @@ export function SessionNavigation({
   query: string
   filter: SessionFilter
   creationError?: string
+  loadingError?: string
   onDismissCreationError?: () => void
   pendingCreations?: PendingSessionCreation[]
   onQueryChange: (query: string) => void
@@ -387,6 +389,8 @@ export function SessionNavigation({
             <small>
             {loading
               ? 'Connecting...'
+              : loadingError
+                ? 'Connection failed'
               : `${groups.filter(({ computer }) => computer.online).length}/${groups.length} online`}
             </small>
           </div>
@@ -490,7 +494,7 @@ export function SessionNavigation({
       ) : null}
       <div className="session-list__scroll">
         {loading ? <p className="sidebar-message">Loading sessions...</p> : null}
-        {!loading && counts.all === 0 && pendingCreations.length === 0 ? (
+        {!loading && !loadingError && counts.all === 0 && pendingCreations.length === 0 ? (
           <p className="sidebar-message">No sessions here.</p>
         ) : null}
         <SortableContext

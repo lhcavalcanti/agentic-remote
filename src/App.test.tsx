@@ -1555,6 +1555,7 @@ describe('App', () => {
       fixtureKnowledgeBindings.set(`${computerId}:${sessionId}`, binding)
       return binding
     })
+
     vi.mocked(deleteKnowledgeRoot).mockImplementation(async (id) => {
       fixtureKnowledgeRoots = fixtureKnowledgeRoots.filter((root) => root.id !== id)
     })
@@ -1801,6 +1802,53 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, id) => id === secondSession.id ? secondSession : target)
     return target
   }
+
+  it('shows an actionable session-load failure and retries the snapshot', async () => {
+    vi.mocked(listSessionListing)
+      .mockRejectedValueOnce(
+        new Error(
+          'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.',
+        ),
+      )
+      .mockResolvedValue({
+        sessions: [session],
+        answeredComputerIds: [computer.id],
+      })
+
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText('Loading sessions...')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading sessions' }))
+
+    await screen.findAllByText('Project chat')
+    expect(listSessionListing).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('button', { name: 'Retry loading sessions' })).toBeNull()
+  })
+
+  it('clears a session-load failure after a successful visibility refresh', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(listSessionListing)
+      .mockRejectedValueOnce(new Error('The hub is unavailable'))
+      .mockResolvedValue({
+        sessions: [session],
+        answeredComputerIds: [computer.id],
+      })
+
+    render(<App />)
+    await screen.findByText('The hub is unavailable')
+
+    fireEvent(document, new Event('visibilitychange'))
+
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(screen.queryByText('The hub is unavailable')).not.toBeInTheDocument(),
+    )
+  })
 
   it('opens read-only skills and MCP views from the selected session menu', async () => {
     resourceSession()

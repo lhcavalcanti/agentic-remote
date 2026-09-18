@@ -45,6 +45,7 @@ import { currentSessionEventSequence, rememberSessionResponse } from './session-
 async function responseError(
   response: Response,
   definiteStatuses?: ReadonlySet<number>,
+  retrySafe = false,
 ): Promise<Error> {
   const payload = (await response.json().catch(() => null)) as
     | {
@@ -56,7 +57,14 @@ async function responseError(
         uncertainDelivery?: unknown
       }
     | null
-  const fallback = `Request failed (${response.status})`
+  const retryGuidance = retrySafe
+    ? 'Check the hub service and tunnel, then retry.'
+    : 'Check the hub service and tunnel before retrying; the request outcome is unknown.'
+  const fallback = response.status === 502
+    ? `The gateway could not reach Agentic Remote (502). ${retryGuidance}`
+    : response.status === 504
+      ? `Agentic Remote did not answer the gateway in time (504). ${retryGuidance}`
+      : `Request failed (${response.status})`
   const submission = parseSubmissionReceipt(payload?.submission)
   const options = {
     terminalDraftConflict: payload?.terminalDraftConflict === true,
@@ -111,9 +119,38 @@ async function request<TResult>(
     headers,
   })
   if (!response.ok) {
-    throw await responseError(response)
+    throw await responseError(
+      response,
+      undefined,
+      !init?.method || init.method.toUpperCase() === 'GET',
+    )
   }
   return rememberSessionResponse(await response.json() as TResult, startedAtSequence)
+}
+
+export const HUB_SNAPSHOT_TIMEOUT_MS = 15_000
+
+async function hubSnapshotRequest<TResult>(path: string): Promise<TResult> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, HUB_SNAPSHOT_TIMEOUT_MS)
+  try {
+    return await request<TResult>(path, {
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(
+        'Agentic Remote did not answer within 15 seconds. Check the hub service and tunnel, then retry.',
+      )
+    }
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
 }
 
 async function requestVoid(path: string, init: RequestInit): Promise<void> {
@@ -291,7 +328,7 @@ export async function bootstrapSessionOrder(
 }
 
 export async function listComputers(): Promise<ComputerSummary[]> {
-  const response = await request<{ computers: ComputerSummary[] }>(
+  const response = await hubSnapshotRequest<{ computers: ComputerSummary[] }>(
     '/api/computers',
   )
   return response.computers
@@ -330,7 +367,7 @@ export async function listSessions(): Promise<ManagedSession[]> {
 }
 
 export async function listSessionListing(): Promise<SessionListing> {
-  const response = await request<{
+  const response = await hubSnapshotRequest<{
     sessions: ManagedSession[]
     answeredComputerIds?: string[]
   }>('/api/sessions')
@@ -411,7 +448,7 @@ async function requestSessionKnowledgeRoot(
       binding?: SessionKnowledgeBinding
     } | null
     throw new SessionKnowledgeRequestError(
-      (await responseError(response)).message,
+      (await responseError(response, undefined, input === undefined)).message,
       response.status,
       payload?.binding,
     )

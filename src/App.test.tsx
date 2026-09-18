@@ -1830,6 +1830,26 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Retry loading sessions' })).toBeNull()
   })
 
+  it('clears a session-load failure after a successful visibility refresh', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(listSessionListing)
+      .mockRejectedValueOnce(new Error('The hub is unavailable'))
+      .mockResolvedValue({
+        sessions: [session],
+        answeredComputerIds: [computer.id],
+      })
+
+    render(<App />)
+    await screen.findByText('The hub is unavailable')
+
+    fireEvent(document, new Event('visibilitychange'))
+
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(screen.queryByText('The hub is unavailable')).not.toBeInTheDocument(),
+    )
+  })
+
   it('opens read-only skills and MCP views from the selected session menu', async () => {
     resourceSession()
     render(<App />)

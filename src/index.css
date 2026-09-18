@@ -1489,7 +1489,7 @@ button {
   padding: 8px 9px;
 }
 
-.error-banner .session-list__retry {
+.error-banner .error-banner__retry {
   display: block;
   padding: 4px 7px;
   border: 1px solid currentColor;

@@ -46,8 +46,7 @@ describe('API request headers', () => {
   })
 
   it('bounds the initial hub snapshot instead of loading forever', async () => {
-    const controller = new AbortController()
-    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    vi.useFakeTimers()
     vi.stubGlobal(
       'fetch',
       vi.fn((_path: string, init?: RequestInit) =>
@@ -63,9 +62,22 @@ describe('API request headers', () => {
     const result = expect(listSessionListing()).rejects.toThrow(
       'Agentic Remote did not answer within 15 seconds. Check the hub service and tunnel, then retry.',
     )
-    expect(AbortSignal.timeout).toHaveBeenCalledWith(HUB_SNAPSHOT_TIMEOUT_MS)
-    controller.abort(new DOMException('Timed out', 'TimeoutError'))
+    await vi.advanceTimersByTimeAsync(HUB_SNAPSHOT_TIMEOUT_MS)
     await result
+  })
+
+  it('does not advise retrying a non-JSON write with an unknown outcome', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream unavailable', { status: 502 })),
+    )
+
+    await expect(sendMessage('computer', 'session', { content: 'hello' }))
+      .rejects.toMatchObject({
+        statusCode: 502,
+        uncertainDelivery: true,
+        message: expect.stringContaining('the request outcome is unknown'),
+      })
   })
 
   it.each(['detail', 'listing', 'history', 'queue envelope'] as const)(

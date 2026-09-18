@@ -113,8 +113,7 @@ afterEach(() => {
 })
 
 describe('session navigation', () => {
-  it('distinguishes loading from a failed connection and offers retry', () => {
-    const retry = vi.fn()
+  it('distinguishes loading from a failed connection without showing an empty list', () => {
     const rendered = render(
       <NavigationHarness loading computerList={[]} sessions={new Map()} />,
     )
@@ -133,7 +132,6 @@ describe('session navigation', () => {
           onFilterChange={vi.fn()}
           loading={false}
           loadingError="The gateway could not reach Agentic Remote."
-          onRetryLoading={retry}
           selectedKey={undefined}
           sort="custom"
         />
@@ -142,8 +140,7 @@ describe('session navigation', () => {
     expect(screen.getByText('Connection failed')).toBeVisible()
     expect(screen.queryByText('Loading sessions...')).toBeNull()
     expect(screen.queryByText('No sessions here.')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Retry loading sessions' }))
-    expect(retry).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'Retry loading sessions' })).toBeNull()
   })
 
   it('offers explicit ordering without mutating the custom list or selection', () => {

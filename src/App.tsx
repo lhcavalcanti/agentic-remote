@@ -9146,6 +9146,7 @@ function App() {
           return undefined
         }),
       ])
+      setSessionLoadError(undefined)
       const claim = claimGeneration(listing.answeredComputerIds)
       if (!claim.whole && !claim.speaksFor.size) {
         // Overtaken, and it reached nothing the newer answer did not.
@@ -9378,13 +9379,11 @@ function App() {
         // Order events are not replayed, so a reorder committed while this
         // socket was down would otherwise stay invisible until the next one.
         void syncSessionOrderRef.current()
-        void refreshSnapshot()
-          .then(() => setSessionLoadError(undefined))
-          .catch((caught: unknown) => {
-            setSessionLoadError(
-              caught instanceof Error ? caught.message : String(caught),
-            )
-          })
+        void refreshSnapshot().catch((caught: unknown) => {
+          setSessionLoadError(
+            caught instanceof Error ? caught.message : String(caught),
+          )
+        })
       }
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as HubEvent
@@ -13787,11 +13786,6 @@ function App() {
                 onDismissCreationError={() => setSessionCreationError(undefined)}
                 onNewSession={openNewSession}
                 loading={loading}
-                onRetryLoading={() => {
-                  setLoading(true)
-                  setSessionLoadError(undefined)
-                  setSessionLoadAttempt((current) => current + 1)
-                }}
                 pendingCreations={pendingSessionCreations}
                 onOpenSessionTasks={openTasksForSession}
                 onSelectSession={selectSession}
@@ -14265,6 +14259,23 @@ function App() {
           ) : null}
         </header>
 
+        {sessionLoadError ? (
+          <div className="error-banner" role="alert">
+            <span>{sessionLoadError}</span>
+            <button
+              aria-label="Retry loading sessions"
+              className="error-banner__retry"
+              onClick={() => {
+                setLoading(true)
+                setSessionLoadError(undefined)
+                setSessionLoadAttempt((current) => current + 1)
+              }}
+              type="button"
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
         {error ? (
           <div className="error-banner" role="alert">
             <span>{error}</span>

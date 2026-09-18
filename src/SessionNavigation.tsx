@@ -351,7 +351,6 @@ export function SessionNavigation({
   creationError,
   loadingError,
   onDismissCreationError,
-  onRetryLoading,
   onQueryChange: setQuery,
   onFilterChange: setFilter,
   pendingCreations = [],
@@ -369,7 +368,6 @@ export function SessionNavigation({
   creationError?: string
   loadingError?: string
   onDismissCreationError?: () => void
-  onRetryLoading?: () => void
   pendingCreations?: PendingSessionCreation[]
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
@@ -490,21 +488,6 @@ export function SessionNavigation({
               type="button"
             >
               <X aria-hidden="true" size={16} />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {loadingError ? (
-        <div className="error-banner session-list__error" role="alert">
-          <span>{loadingError}</span>
-          {onRetryLoading ? (
-            <button
-              aria-label="Retry loading sessions"
-              className="session-list__retry"
-              onClick={onRetryLoading}
-              type="button"
-            >
-              Retry
             </button>
           ) : null}
         </div>

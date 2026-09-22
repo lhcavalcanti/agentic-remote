@@ -2377,6 +2377,7 @@ function isTerminalChrome(line: string): boolean {
 // the prompt, depending on its version.
 const COMPOSER_TOP = /^\s*[╻╭][\u2580-\u259f\u2500-\u257f]*\s*$/u
 const FLAT_COMPOSER_EDGE = /^\s*[─━]{8,}\s*$/u
+const FLAT_COMPOSER_STATUS = /\bSession:\s+\d+(?:\.\d+)?\s+AIC used\s*$/u
 
 interface TerminalComposerFrame {
   top: number
@@ -2432,7 +2433,7 @@ function composerFrameText(
   ).join(' ').trim()
 }
 
-function terminalComposerFrame(
+function flatComposerFrame(
   lines: string[],
   requireLive = true,
 ): TerminalComposerFrame | undefined {
@@ -2443,18 +2444,23 @@ function terminalComposerFrame(
     ) {
       continue
     }
-    const top = lines.findLastIndex(
-      (line, index) => index < bottom && FLAT_COMPOSER_EDGE.test(line),
-    )
-    if (top < 0) {
-      continue
-    }
-    const frame = { top, bottom, flat: true }
-    if (/^[>❯](?:\s|$)/u.test(composerFrameText(lines, frame))) {
-      return frame
+    for (let top = bottom - 1; top >= 0; top -= 1) {
+      if (!FLAT_COMPOSER_EDGE.test(lines[top])) {
+        continue
+      }
+      const frame = { top, bottom, flat: true }
+      if (/^[>❯](?:\s|$)/u.test(composerFrameText(lines, frame))) {
+        return frame
+      }
     }
   }
+  return undefined
+}
 
+function boxedComposerFrame(
+  lines: string[],
+  requireLive = true,
+): TerminalComposerFrame | undefined {
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
   if (top < 0) {
     return undefined
@@ -2486,6 +2492,21 @@ function terminalComposerFrame(
   return frame
 }
 
+function terminalComposerFrame(
+  lines: string[],
+  requireLive = true,
+): TerminalComposerFrame | undefined {
+  const flat = flatComposerFrame(lines, requireLive)
+  const boxed = boxedComposerFrame(lines, requireLive)
+  if (!flat) {
+    return boxed
+  }
+  if (!boxed) {
+    return flat
+  }
+  return flat.bottom > boxed.bottom ? flat : boxed
+}
+
 function hasLiveTerminalComposer(pane: string): boolean {
   return terminalComposerFrame(pane.split('\n')) !== undefined
 }
@@ -2506,7 +2527,14 @@ function terminalInputReady(pane: string, allowWorking = false): boolean {
 function stripTerminalStatus(pane: string): string[] {
   const lines = pane.split('\n').map((line) => line.trimEnd())
   const composer = terminalComposerFrame(lines)
-  return composer ? lines.slice(0, composer.top) : lines
+  if (!composer) {
+    return lines
+  }
+  const status = composer.flat && composer.top > 0 &&
+    FLAT_COMPOSER_STATUS.test(lines[composer.top - 1])
+    ? composer.top - 1
+    : composer.top
+  return lines.slice(0, status)
 }
 
 function terminalControlLines(pane: string): string[] {

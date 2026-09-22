@@ -88,9 +88,13 @@ function readyComposer(text = '', working = false): string {
   ].join('\n')
 }
 
-function flatReadyComposer(text = '', working = false): string {
+function flatReadyComposer(
+  text = '',
+  working = false,
+  cwd = '/work/project',
+): string {
   return [
-    ' /work/project                                      Session: 0 AIC used',
+    ` ${cwd}                                      Session: 0 AIC used`,
     '────────────────────────────────────────────────────────────',
     `❯${text ? ` ${text}` : ''}`,
     '────────────────────────────────────────────────────────────',
@@ -121,6 +125,7 @@ async function deliveryFixture(
   footer = '',
   initialText = '',
   composerStyle: 'boxed' | 'flat' = 'boxed',
+  transcript = '',
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -135,7 +140,7 @@ let pasted = ${JSON.stringify(initialText || undefined)}
 const received = { pastes: [], submits: [] }
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 const makeComposer = ${(composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
-const composer = (text = '', working = false) => makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
+const composer = (text = '', working = false) => ${JSON.stringify(transcript ? `${transcript}\n` : '')} + makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
@@ -413,6 +418,59 @@ describe('TmuxTerminalSessionController', () => {
     )
     expect(JSON.parse(received)).toEqual({
       pastes: ['Message through the flat composer'],
+      submits: ['enter'],
+    })
+  }, 15_000)
+
+  it('ignores an older flat composer above the live boxed composer', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      '',
+      'boxed',
+      flatReadyComposer('Earlier terminal text'),
+    )
+    await expect(
+      controller.send(sessionId, 'Message through the boxed composer', false),
+    ).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Message through the boxed composer'],
+      submits: ['enter'],
+    })
+  }, 15_000)
+
+  it('replaces a multiline flat draft containing a horizontal rule', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      'first line\n────────────\nsecond line',
+      'flat',
+    )
+    await expect(
+      controller.send(sessionId, 'Replacement message', false),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      terminalDraftConflict: true,
+    })
+    await expect(controller.send(
+      sessionId,
+      'Replacement message',
+      false,
+      { replaceExistingInput: true },
+    )).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1,
+      pastes: ['Replacement message'],
       submits: ['enter'],
     })
   }, 15_000)
@@ -3031,6 +3089,14 @@ describe('terminal slash command output', () => {
     expect(terminalCommandOutput(before, after, '/cwd')).toBe(
       'Current working directory: /work/project',
     )
+  })
+
+  it('ignores a changed flat composer path/status row', () => {
+    expect(terminalCommandOutput(
+      flatReadyComposer('', false, '/work/one'),
+      flatReadyComposer('', false, '/work/two'),
+      '/cwd',
+    )).toBeUndefined()
   })
 
   it('does not report the echoed command as its own output', () => {

@@ -88,6 +88,18 @@ function readyComposer(text = '', working = false): string {
   ].join('\n')
 }
 
+function flatReadyComposer(text = '', working = false): string {
+  return [
+    ' /work/project                                      Session: 0 AIC used',
+    '────────────────────────────────────────────────────────────',
+    `❯${text ? ` ${text}` : ''}`,
+    '────────────────────────────────────────────────────────────',
+    working
+      ? ' ◉ Working · esc interrupt'
+      : ' ← open sidebar · / commands · ? help · tab next tab        ctrl+t show reasoning · GPT-6 Astra · 1M context',
+  ].join('\n')
+}
+
 const shellReadyComposer =
   "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
 
@@ -108,6 +120,7 @@ async function deliveryFixture(
   repaintPane?: string,
   footer = '',
   initialText = '',
+  composerStyle: 'boxed' | 'flat' = 'boxed',
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -121,7 +134,7 @@ let input = ''
 let pasted = ${JSON.stringify(initialText || undefined)}
 const received = { pastes: [], submits: [] }
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
-const makeComposer = ${readyComposer.toString()}
+const makeComposer = ${(composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
 const composer = (text = '', working = false) => makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
@@ -173,7 +186,8 @@ draw(composer(${JSON.stringify(initialText)}, ${working}))
   await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
   vi.stubEnv('COPILOT_HOME', copilotHome)
   const controller = new TmuxTerminalSessionController()
-  await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('╹')))
+  const readyMarker = composerStyle === 'flat' ? 'open sidebar' : '╹'
+  await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes(readyMarker)))
   return { controller, sessionId, output, directory, tmuxSession }
 }
 
@@ -378,6 +392,28 @@ describe('TmuxTerminalSessionController', () => {
     )
     expect(JSON.parse(received)).toEqual({
       pastes: ['One footer-aware message'], submits: [enqueue ? 'queue' : 'enter'],
+    })
+  }, 15_000)
+
+  it('sends through the flat composer used by Copilot v1.0.87', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      '',
+      'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    await expect(
+      controller.send(sessionId, 'Message through the flat composer', false),
+    ).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Message through the flat composer'],
+      submits: ['enter'],
     })
   }, 15_000)
 
@@ -2867,6 +2903,16 @@ describe('terminal update notice', () => {
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
   })
 
+  it('reads an update below the flat composer', () => {
+    const pane = [
+      ' ● Ready',
+      flatReadyComposer(),
+      ' v1.0.88 available · run /update · shift+tab switch mode',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBe('1.0.88')
+  })
+
   // Without the /update requirement any sentence mentioning a version would
   // be mistaken for the CLI offering one.
   it('does not treat transcript text as an update offer', () => {
@@ -2967,6 +3013,24 @@ describe('terminal slash command output', () => {
     const pane = [' ● Tip: /plugin', composer].join('\n')
 
     expect(terminalCommandOutput(pane, pane, '/cwd')).toBeUndefined()
+  })
+
+  it('reports command output above a flat composer', () => {
+    const before = [
+      '  ╭─╮╭─╮',
+      '  ╰─╯╰─╯  Copilot v1.0.87 uses AI.',
+      flatReadyComposer(),
+    ].join('\n')
+    const after = [
+      '  ╭─╮╭─╮',
+      '  ╰─╯╰─╯  Copilot v1.0.87 uses AI.',
+      ' ● Current working directory: /work/project',
+      flatReadyComposer(),
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/cwd')).toBe(
+      'Current working directory: /work/project',
+    )
   })
 
   it('does not report the echoed command as its own output', () => {
@@ -3885,10 +3949,16 @@ describe('composerHoldsText', () => {
       composerHoldsText(framed(['│ > Message agent on development\u2026 │'])),
     ).toBe(false)
     expect(composerHoldsText(framed(['│                   │']))).toBe(false)
+    expect(composerHoldsText([
+      '  ╭─╮╭─╮',
+      '  ╰─╯╰─╯  Copilot v1.0.87 uses AI.',
+      flatReadyComposer(),
+    ].join('\n'))).toBe(false)
   })
 
   it('reads typed input as held text', () => {
     expect(composerHoldsText(framed(['│ > half a thought  │']))).toBe(true)
+    expect(composerHoldsText(flatReadyComposer('half a thought'))).toBe(true)
   })
 
   it('treats an unreadable pane as holding text', () => {

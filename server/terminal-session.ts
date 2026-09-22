@@ -2098,7 +2098,7 @@ function desktopInstallPromptIdentity(pane: string): string | undefined {
 }
 
 function hasComposerAfter(lines: string[], index: number): boolean {
-  return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
+  return terminalComposerFrame(lines.slice(index + 1), false) !== undefined
 }
 
 function activeBottomFrame(
@@ -2331,13 +2331,13 @@ export function parseTerminalUpdateNotice(pane: string): string | undefined {
   }
   // Anchor below the composer's lower edge rather than its top, so text typed
   // into the composer is not read as an offer either.
-  const composer = lines.findLastIndex((line) => COMPOSER_EDGE.test(line))
+  const composer = terminalComposerFrame(lines, false)
   // Without a composer the pane is showing a full-screen view, which covers
   // the status bar. The next poll sees it again once the view closes.
-  if (composer < 0) {
+  if (!composer) {
     return undefined
   }
-  for (const line of lines.slice(composer + 1)) {
+  for (const line of lines.slice(composer.bottom + 1)) {
     const match = /\bv?(\d+\.\d+\.\d+[\w.-]*)\s+available\b/i.exec(line)
     if (match && /\/update\b/.test(line)) {
       return match[1]
@@ -2346,7 +2346,7 @@ export function parseTerminalUpdateNotice(pane: string): string | undefined {
   return undefined
 }
 
-// The CLI redraws a composer box and a status footer on every frame, so a
+// The CLI redraws a composer frame and a status footer on every frame, so a
 // naive pane diff is mostly chrome. Everything below recognises that chrome so
 // only genuine command output is reported.
 const TERMINAL_CHROME = [
@@ -2372,11 +2372,17 @@ function isTerminalChrome(line: string): boolean {
   return TERMINAL_CHROME.some((pattern) => pattern.test(trimmed))
 }
 
-// The composer box always sits below the transcript, and the status footer
-// below that. Both redraw with changing values -- token counts, diff stats --
-// so matching each variant is futile; drop the whole region instead. The top
-// border of the composer marks where it begins.
+// The composer always sits below the transcript, and the status footer below
+// that. Copilot uses either a bordered box or two horizontal separators around
+// the prompt, depending on its version.
 const COMPOSER_TOP = /^\s*[╻╭][\u2580-\u259f\u2500-\u257f]*\s*$/u
+const FLAT_COMPOSER_EDGE = /^\s*[─━]{8,}\s*$/u
+
+interface TerminalComposerFrame {
+  top: number
+  bottom: number
+  flat: boolean
+}
 
 function isTerminalContextFooter(line: string): boolean {
   const parts = line.trim().split('·').map((part) => part.trim())
@@ -2399,11 +2405,59 @@ function isTerminalModelFooter(line: string, previousLine = ''): boolean {
   )
 }
 
-function hasLiveTerminalComposer(pane: string): boolean {
-  const lines = pane.split('\n')
+function isTerminalComposerFooter(lines: string[]): boolean {
+  return lines.every(
+    (line, index) =>
+      isTerminalChrome(line) ||
+      isTerminalContextFooter(line) ||
+      isTerminalModelFooter(line, lines[index - 1]) ||
+      /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
+      /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
+      /\besc\s+interrupt\b/i.test(line) ||
+      (/\/update\b/u.test(line) && /\bv?\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),
+  )
+}
+
+function composerFrameText(
+  lines: string[],
+  frame: TerminalComposerFrame,
+): string {
+  return lines.slice(frame.top + 1, frame.bottom).map((line) =>
+    frame.flat
+      ? line.trim()
+      : line
+          .replace(/^\s*[\u2502\u2503\u257d\u257f]\s?/u, '')
+          .replace(/[\u2502\u2503\u257d\u257f]\s*$/u, '')
+          .trim(),
+  ).join(' ').trim()
+}
+
+function terminalComposerFrame(
+  lines: string[],
+  requireLive = true,
+): TerminalComposerFrame | undefined {
+  for (let bottom = lines.length - 1; bottom >= 0; bottom -= 1) {
+    if (
+      !FLAT_COMPOSER_EDGE.test(lines[bottom]) ||
+      (requireLive && !isTerminalComposerFooter(lines.slice(bottom + 1)))
+    ) {
+      continue
+    }
+    const top = lines.findLastIndex(
+      (line, index) => index < bottom && FLAT_COMPOSER_EDGE.test(line),
+    )
+    if (top < 0) {
+      continue
+    }
+    const frame = { top, bottom, flat: true }
+    if (/^[>❯](?:\s|$)/u.test(composerFrameText(lines, frame))) {
+      return frame
+    }
+  }
+
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
   if (top < 0) {
-    return false
+    return undefined
   }
   const bottom = lines.findIndex(
     (line, index) => index > top && COMPOSER_EDGE.test(line),
@@ -2412,32 +2466,28 @@ function hasLiveTerminalComposer(pane: string): boolean {
   if (
     bottom < 0 ||
     !lines[bottom].trimStart().startsWith(heavy ? '╹' : '╰') ||
-    !lines.slice(top + 1, bottom).some((line) => /^\s*[│┃╽╿]/u.test(line))
+    !lines.slice(top + 1, bottom).some((line) => /^\s*[│┃╽╿]/u.test(line)) ||
+    (requireLive && !isTerminalComposerFooter(lines.slice(bottom + 1)))
   ) {
-    return false
+    return undefined
   }
-  if (!heavy) {
+  const frame = { top, bottom, flat: false }
+  if (requireLive && !heavy) {
     // Rounded frames also surround dialog fields. Only the legacy prompt
     // marker or its exact placeholder identifies one as a composer.
-    const text = composerText(pane) || ''
+    const text = composerFrameText(lines, frame)
     if (
       !/^[>❯](?:\s|$)/u.test(text) &&
       !COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))
     ) {
-      return false
+      return undefined
     }
   }
-  const footer = lines.slice(bottom + 1)
-  return footer.every(
-    (line, index) =>
-      isTerminalChrome(line) ||
-      isTerminalContextFooter(line) ||
-      isTerminalModelFooter(line, footer[index - 1]) ||
-      /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
-      /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
-      /\besc\s+interrupt\b/i.test(line) ||
-      (/\/update\b/u.test(line) && /\b\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),
-  )
+  return frame
+}
+
+function hasLiveTerminalComposer(pane: string): boolean {
+  return terminalComposerFrame(pane.split('\n')) !== undefined
 }
 
 function terminalInputReady(pane: string, allowWorking = false): boolean {
@@ -2455,18 +2505,18 @@ function terminalInputReady(pane: string, allowWorking = false): boolean {
 
 function stripTerminalStatus(pane: string): string[] {
   const lines = pane.split('\n').map((line) => line.trimEnd())
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (COMPOSER_TOP.test(lines[index])) {
-      return lines.slice(0, index)
-    }
-  }
-  return lines
+  const composer = terminalComposerFrame(lines)
+  return composer ? lines.slice(0, composer.top) : lines
 }
 
 function terminalControlLines(pane: string): string[] {
   const lines = pane.split('\n')
   while (lines.length > 0 && !lines[lines.length - 1].trim()) {
     lines.pop()
+  }
+  const liveComposer = terminalComposerFrame(lines)
+  if (liveComposer) {
+    return lines.slice(liveComposer.bottom + 1)
   }
   // The bottom of the CLI composer separates transcript/draft text from the
   // controls that own the keyboard. Rounded dialog borders are not composers.
@@ -3603,23 +3653,8 @@ function pastedPlaceholderCount(text: string): number {
 /** The composer's contents, or nothing when the pane cannot be read. */
 function composerText(pane: string): string | undefined {
   const lines = pane.split('\n').map((line) => line.trimEnd())
-  const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
-  if (top < 0) {
-    return undefined
-  }
-  const body: string[] = []
-  for (const line of lines.slice(top + 1)) {
-    if (COMPOSER_EDGE.test(line)) {
-      break
-    }
-    body.push(
-      line
-        .replace(/^\s*[\u2502\u2503\u257d\u257f]\s?/u, '')
-        .replace(/[\u2502\u2503\u257d\u257f]\s*$/u, '')
-        .trim(),
-    )
-  }
-  return body.join(' ').trim()
+  const frame = terminalComposerFrame(lines, false)
+  return frame ? composerFrameText(lines, frame) : undefined
 }
 
 export function composerHoldsText(pane: string): boolean {

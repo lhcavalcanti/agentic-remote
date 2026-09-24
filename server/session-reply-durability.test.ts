@@ -483,12 +483,14 @@ describe('Reply durability regressions', () => {
     expect(f.resume).toHaveBeenCalledOnce()
   })
 
-  it('keeps the retained reply when the exact form focus cannot be proven', async () => {
+  it('keeps the retained reply and focus guard when the exact form focus cannot be proven', async () => {
     const f = await terminalFormFixture()
     f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
       'Interrupted after a field commit', 'resumable',
+      undefined,
+      [0, 1],
     ))
-    f.resume.mockResolvedValue(false)
+    f.resume.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
     await expect(f.reply()).rejects.toMatchObject({
       statusCode: 409,
@@ -496,6 +498,16 @@ describe('Reply durability regressions', () => {
       message: expect.stringContaining('No keys were sent'),
     })
     expect(f.service['terminalFormResumptions'].size).toBe(1)
+    await expect(f.reply()).resolves.toMatchObject({
+      status: 'running', pendingUserInput: undefined,
+    })
+    expect(f.resume).toHaveBeenCalledTimes(2)
+    expect(f.resume).toHaveBeenNthCalledWith(
+      1, sessionId, expect.any(Array), expect.any(Object), [0, 1],
+    )
+    expect(f.resume).toHaveBeenNthCalledWith(
+      2, sessionId, expect.any(Array), expect.any(Object), [0, 1],
+    )
     expect(f.dismiss).not.toHaveBeenCalled()
     expect(f.terminal.send).not.toHaveBeenCalled()
   })

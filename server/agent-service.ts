@@ -6568,6 +6568,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       receipt.error = new TerminalFormReplyError(
         'The exact terminal form and its focused field could not be proven. No keys were sent.',
         'not-submitted',
+        undefined,
+        receipt.error.resumeFields,
       )
       throw receipt.error
     }

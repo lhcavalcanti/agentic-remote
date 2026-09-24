@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "fab993a14e0406de5cb467c702791aeb00893e2a",
+  "built_at_commit": "15d85bde9eb59353ce3e2a7b8aae4364ef600743",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -10164,7 +10164,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8755",
+      "source_location": "L8757",
       "target": "server_agent_service_agentservice_assertrecoverybackgroundtaskssettled",
       "weight": 1.0
     },
@@ -10175,7 +10175,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8745",
+      "source_location": "L8747",
       "target": "server_agent_service_agentservice_assertrecoveryseedreplacementavailable",
       "weight": 1.0
     },
@@ -10186,7 +10186,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8739",
+      "source_location": "L8741",
       "target": "server_agent_service_agentservice_assertrecoveryseedsettled",
       "weight": 1.0
     },
@@ -10197,7 +10197,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8918",
+      "source_location": "L8920",
       "target": "server_agent_service_agentservice_assertstartupdispatchsettled",
       "weight": 1.0
     },
@@ -10219,7 +10219,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8725",
+      "source_location": "L8727",
       "target": "server_agent_service_agentservice_assertterminalqueuesettled",
       "weight": 1.0
     },
@@ -10241,7 +10241,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6878",
+      "source_location": "L6880",
       "target": "server_agent_service_agentservice_attachsdksession",
       "weight": 1.0
     },
@@ -10252,7 +10252,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7939",
+      "source_location": "L7941",
       "target": "server_agent_service_agentservice_attachsession",
       "weight": 1.0
     },
@@ -10263,7 +10263,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8702",
+      "source_location": "L8704",
       "target": "server_agent_service_agentservice_awaitingacceptedstartuprecovery",
       "weight": 1.0
     },
@@ -10329,7 +10329,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7391",
+      "source_location": "L7393",
       "target": "server_agent_service_agentservice_clearupdatenoticeforexited",
       "weight": 1.0
     },
@@ -10439,7 +10439,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7053",
+      "source_location": "L7055",
       "target": "server_agent_service_agentservice_discoversessions",
       "weight": 1.0
     },
@@ -10450,7 +10450,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7045",
+      "source_location": "L7047",
       "target": "server_agent_service_agentservice_discoverterminalsessions",
       "weight": 1.0
     },
@@ -10472,7 +10472,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8444",
+      "source_location": "L8446",
       "target": "server_agent_service_agentservice_dispatchqueuedprompt",
       "weight": 1.0
     },
@@ -10505,7 +10505,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8843",
+      "source_location": "L8845",
       "target": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "weight": 1.0
     },
@@ -10527,7 +10527,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8542",
+      "source_location": "L8544",
       "target": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "weight": 1.0
     },
@@ -10538,7 +10538,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8585",
+      "source_location": "L8587",
       "target": "server_agent_service_agentservice_drainnextterminalprompt",
       "weight": 1.0
     },
@@ -10549,7 +10549,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8350",
+      "source_location": "L8352",
       "target": "server_agent_service_agentservice_drainsdkqueue",
       "weight": 1.0
     },
@@ -10560,7 +10560,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8528",
+      "source_location": "L8530",
       "target": "server_agent_service_agentservice_drainterminalqueue",
       "weight": 1.0
     },
@@ -10593,7 +10593,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6839",
+      "source_location": "L6841",
       "target": "server_agent_service_agentservice_ensureloaded",
       "weight": 1.0
     },
@@ -10670,7 +10670,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7955",
+      "source_location": "L7957",
       "target": "server_agent_service_agentservice_flushsessionmetadata",
       "weight": 1.0
     },
@@ -10703,7 +10703,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8047",
+      "source_location": "L8049",
       "target": "server_agent_service_agentservice_handlesessionevent",
       "weight": 1.0
     },
@@ -10714,7 +10714,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7971",
+      "source_location": "L7973",
       "target": "server_agent_service_agentservice_handlesessionmetadata",
       "weight": 1.0
     },
@@ -10736,7 +10736,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8696",
+      "source_location": "L8698",
       "target": "server_agent_service_agentservice_hasstartupqueuelifecycle",
       "weight": 1.0
     },
@@ -10747,7 +10747,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7514",
+      "source_location": "L7516",
       "target": "server_agent_service_agentservice_hasunanswereduserinputrow",
       "weight": 1.0
     },
@@ -10769,7 +10769,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7028",
+      "source_location": "L7030",
       "target": "server_agent_service_agentservice_hydratesession",
       "weight": 1.0
     },
@@ -10791,7 +10791,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7534",
+      "source_location": "L7536",
       "target": "server_agent_service_agentservice_istoolcallcomplete",
       "weight": 1.0
     },
@@ -10923,7 +10923,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7909",
+      "source_location": "L7911",
       "target": "server_agent_service_agentservice_liveactivitygroupid",
       "weight": 1.0
     },
@@ -10978,7 +10978,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7504",
+      "source_location": "L7506",
       "target": "server_agent_service_agentservice_observetranscript",
       "weight": 1.0
     },
@@ -11044,7 +11044,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9065",
+      "source_location": "L9067",
       "target": "server_agent_service_agentservice_publicsession",
       "weight": 1.0
     },
@@ -11055,7 +11055,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9060",
+      "source_location": "L9062",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -11066,7 +11066,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9079",
+      "source_location": "L9081",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -11077,7 +11077,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7770",
+      "source_location": "L7772",
       "target": "server_agent_service_agentservice_readbackgroundtasks",
       "weight": 1.0
     },
@@ -11176,7 +11176,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7461",
+      "source_location": "L7463",
       "target": "server_agent_service_agentservice_recoverhiddenuserinput",
       "weight": 1.0
     },
@@ -11187,7 +11187,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6951",
+      "source_location": "L6953",
       "target": "server_agent_service_agentservice_recoverterminalsession",
       "weight": 1.0
     },
@@ -11198,7 +11198,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6929",
+      "source_location": "L6931",
       "target": "server_agent_service_agentservice_recoverterminalsessions",
       "weight": 1.0
     },
@@ -11220,7 +11220,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7182",
+      "source_location": "L7184",
       "target": "server_agent_service_agentservice_refreshdiscovery",
       "weight": 1.0
     },
@@ -11242,7 +11242,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7203",
+      "source_location": "L7205",
       "target": "server_agent_service_agentservice_refreshtranscripts",
       "weight": 1.0
     },
@@ -11253,7 +11253,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7870",
+      "source_location": "L7872",
       "target": "server_agent_service_agentservice_rememberliveactivityevent",
       "weight": 1.0
     },
@@ -11297,7 +11297,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7840",
+      "source_location": "L7842",
       "target": "server_agent_service_agentservice_replacebackgroundtasks",
       "weight": 1.0
     },
@@ -11341,7 +11341,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6577",
+      "source_location": "L6579",
       "target": "server_agent_service_agentservice_replyuserinputinternal",
       "weight": 1.0
     },
@@ -11352,7 +11352,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8969",
+      "source_location": "L8971",
       "target": "server_agent_service_agentservice_requestelicitation",
       "weight": 1.0
     },
@@ -11363,7 +11363,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8926",
+      "source_location": "L8928",
       "target": "server_agent_service_agentservice_requestpermission",
       "weight": 1.0
     },
@@ -11374,7 +11374,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9021",
+      "source_location": "L9023",
       "target": "server_agent_service_agentservice_requestuserinput",
       "weight": 1.0
     },
@@ -11484,7 +11484,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8709",
+      "source_location": "L8711",
       "target": "server_agent_service_agentservice_retryterminalqueueclaim",
       "weight": 1.0
     },
@@ -11506,7 +11506,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8167",
+      "source_location": "L8169",
       "target": "server_agent_service_agentservice_runprompt",
       "weight": 1.0
     },
@@ -11682,7 +11682,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8883",
+      "source_location": "L8885",
       "target": "server_agent_service_agentservice_serializequeue",
       "weight": 1.0
     },
@@ -11693,7 +11693,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8900",
+      "source_location": "L8902",
       "target": "server_agent_service_agentservice_serializeterminaladmission",
       "weight": 1.0
     },
@@ -11715,7 +11715,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8291",
+      "source_location": "L8293",
       "target": "server_agent_service_agentservice_settlequeueadmission",
       "weight": 1.0
     },
@@ -11748,7 +11748,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8774",
+      "source_location": "L8776",
       "target": "server_agent_service_agentservice_settleterminalqueue",
       "weight": 1.0
     },
@@ -11891,7 +11891,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7717",
+      "source_location": "L7719",
       "target": "server_agent_service_agentservice_syncbackgroundtasks",
       "weight": 1.0
     },
@@ -11902,7 +11902,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7695",
+      "source_location": "L7697",
       "target": "server_agent_service_agentservice_syncexternalworkspace",
       "weight": 1.0
     },
@@ -11913,7 +11913,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7421",
+      "source_location": "L7423",
       "target": "server_agent_service_agentservice_syncterminalupdatenotice",
       "weight": 1.0
     },
@@ -11924,7 +11924,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7565",
+      "source_location": "L7567",
       "target": "server_agent_service_agentservice_syncterminaluserinput",
       "weight": 1.0
     },
@@ -11935,7 +11935,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7218",
+      "source_location": "L7220",
       "target": "server_agent_service_agentservice_synctranscripts",
       "weight": 1.0
     },
@@ -11957,7 +11957,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7654",
+      "source_location": "L7656",
       "target": "server_agent_service_agentservice_terminalcontinuationstate",
       "weight": 1.0
     },
@@ -12001,7 +12001,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9088",
+      "source_location": "L9090",
       "target": "server_agent_service_agentservice_validatedirectory",
       "weight": 1.0
     },
@@ -12034,7 +12034,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7551",
+      "source_location": "L7553",
       "target": "server_agent_service_agentservice_waitfortoolcompletion",
       "weight": 1.0
     },
@@ -12045,7 +12045,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8308",
+      "source_location": "L8310",
       "target": "server_agent_service_agentservice_wakedeferredqueue",
       "weight": 1.0
     },
@@ -12056,7 +12056,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8319",
+      "source_location": "L8321",
       "target": "server_agent_service_agentservice_wakesdkqueue",
       "weight": 1.0
     },
@@ -12067,7 +12067,7 @@
       "relation": "method",
       "source": "server_agent_service_agentservice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8333",
+      "source_location": "L8335",
       "target": "server_agent_service_agentservice_waketerminalqueue",
       "weight": 1.0
     },
@@ -12367,7 +12367,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertrecoverybackgroundtaskssettled",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8760",
+      "source_location": "L8762",
       "target": "server_agent_service_agentservice_listbackgroundtasks",
       "weight": 1.0
     },
@@ -12379,7 +12379,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertrecoverybackgroundtaskssettled",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8767",
+      "source_location": "L8769",
       "target": "shared_background_tasks_hasactivebackgroundtasks",
       "weight": 1.0
     },
@@ -12391,7 +12391,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertrecoveryseedreplacementavailable",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8751",
+      "source_location": "L8753",
       "target": "server_queued_dispatch_queueconflict",
       "weight": 1.0
     },
@@ -12403,7 +12403,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertrecoveryseedreplacementavailable",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8746",
+      "source_location": "L8748",
       "target": "server_session_store_sessionstore_recoveryseed",
       "weight": 1.0
     },
@@ -12415,7 +12415,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertrecoveryseedsettled",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8741",
+      "source_location": "L8743",
       "target": "server_queued_dispatch_queueconflict",
       "weight": 1.0
     },
@@ -12427,7 +12427,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertrecoveryseedsettled",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8740",
+      "source_location": "L8742",
       "target": "server_session_store_sessionstore_recoveryseed",
       "weight": 1.0
     },
@@ -12463,7 +12463,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertterminalqueuesettled",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8729",
+      "source_location": "L8731",
       "target": "server_agent_service_agentservice_assertterminalrecoverysettled",
       "weight": 1.0
     },
@@ -12475,7 +12475,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_assertterminalqueuesettled",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8730",
+      "source_location": "L8732",
       "target": "server_session_store_sessionstore_terminalqueuedispatch",
       "weight": 1.0
     },
@@ -12499,7 +12499,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6879",
+      "source_location": "L6881",
       "target": "server_agent_service_agentservice_assertterminalqueuesettled",
       "weight": 1.0
     },
@@ -12511,7 +12511,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6925",
+      "source_location": "L6927",
       "target": "server_agent_service_agentservice_attachsession",
       "weight": 1.0
     },
@@ -12523,7 +12523,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6895",
+      "source_location": "L6897",
       "target": "server_agent_service_agentservice_requestelicitation",
       "weight": 1.0
     },
@@ -12535,7 +12535,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6892",
+      "source_location": "L6894",
       "target": "server_agent_service_agentservice_requestpermission",
       "weight": 1.0
     },
@@ -12547,7 +12547,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6894",
+      "source_location": "L6896",
       "target": "server_agent_service_agentservice_requestuserinput",
       "weight": 1.0
     },
@@ -12559,7 +12559,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6902",
+      "source_location": "L6904",
       "target": "server_agent_service_copilotclientlike_createsession",
       "weight": 1.0
     },
@@ -12571,7 +12571,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6886",
+      "source_location": "L6888",
       "target": "server_agent_service_copilotclientlike_resumesession",
       "weight": 1.0
     },
@@ -12583,7 +12583,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6916",
+      "source_location": "L6918",
       "target": "server_agent_service_copilotsessionlike_disconnect",
       "weight": 1.0
     },
@@ -12595,7 +12595,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6899",
+      "source_location": "L6901",
       "target": "server_agent_service_ismissingsessionerror",
       "weight": 1.0
     },
@@ -12607,7 +12607,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsdksession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6880",
+      "source_location": "L6882",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -12619,7 +12619,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7951",
+      "source_location": "L7953",
       "target": "server_agent_service_agentservice_handlesessionevent",
       "weight": 1.0
     },
@@ -12631,7 +12631,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_attachsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7943",
+      "source_location": "L7945",
       "target": "server_agent_service_copilotsessionlike_on",
       "weight": 1.0
     },
@@ -12643,7 +12643,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_awaitingacceptedstartuprecovery",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8706",
+      "source_location": "L8708",
       "target": "server_session_store_sessionstore_terminalqueuedispatch",
       "weight": 1.0
     },
@@ -12655,7 +12655,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_awaitingacceptedstartuprecovery",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8702",
+      "source_location": "L8704",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -13279,7 +13279,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_clearupdatenoticeforexited",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7397",
+      "source_location": "L7399",
       "target": "server_agent_service_agentservice_isterminalrecoverypending",
       "weight": 1.0
     },
@@ -13291,7 +13291,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_clearupdatenoticeforexited",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7412",
+      "source_location": "L7414",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -13303,7 +13303,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_clearupdatenoticeforexited",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7401",
+      "source_location": "L7403",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -13315,7 +13315,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_clearupdatenoticeforexited",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7404",
+      "source_location": "L7406",
       "target": "server_session_store_sessionstore_updateif",
       "weight": 1.0
     },
@@ -14131,7 +14131,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7104",
+      "source_location": "L7106",
       "target": "server_agent_service_agentservice_clearupdatenoticeforexited",
       "weight": 1.0
     },
@@ -14143,7 +14143,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7069",
+      "source_location": "L7071",
       "target": "server_agent_service_agentservice_discoverterminalsessions",
       "weight": 1.0
     },
@@ -14155,7 +14155,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7173",
+      "source_location": "L7175",
       "target": "server_agent_service_agentservice_isterminalrecoverypending",
       "weight": 1.0
     },
@@ -14167,7 +14167,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7160",
+      "source_location": "L7162",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -14179,7 +14179,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7068",
+      "source_location": "L7070",
       "target": "server_agent_service_copilotclientlike_listsessions",
       "weight": 1.0
     },
@@ -14191,7 +14191,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7118",
+      "source_location": "L7120",
       "target": "server_agent_service_normalizedtitle",
       "weight": 1.0
     },
@@ -14203,7 +14203,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7157",
+      "source_location": "L7159",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -14215,7 +14215,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7094",
+      "source_location": "L7096",
       "target": "server_session_store_sessionstore_isretiredsession",
       "weight": 1.0
     },
@@ -14227,7 +14227,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7174",
+      "source_location": "L7176",
       "target": "server_session_store_sessionstore_shouldrecoverterminalsession",
       "weight": 1.0
     },
@@ -14239,7 +14239,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7144",
+      "source_location": "L7146",
       "target": "server_session_store_sessionstore_syncbackends",
       "weight": 1.0
     },
@@ -14251,7 +14251,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7127",
+      "source_location": "L7129",
       "target": "server_session_store_sessionstore_syncdiscovered",
       "weight": 1.0
     },
@@ -14263,7 +14263,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoversessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7166",
+      "source_location": "L7168",
       "target": "server_session_store_sessionstore_syncopen",
       "weight": 1.0
     },
@@ -14275,7 +14275,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_discoverterminalsessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7049",
+      "source_location": "L7051",
       "target": "server_agent_service_terminaldiscoveryerror",
       "weight": 1.0
     },
@@ -14287,7 +14287,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_discoverterminalsessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7045",
+      "source_location": "L7047",
       "target": "server_session_store_discoveredsession",
       "weight": 1.0
     },
@@ -14635,7 +14635,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8492",
+      "source_location": "L8494",
       "target": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "weight": 1.0
     },
@@ -14647,7 +14647,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8456",
+      "source_location": "L8458",
       "target": "server_agent_service_agentservice_holddispatch",
       "weight": 1.0
     },
@@ -14659,7 +14659,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8483",
+      "source_location": "L8485",
       "target": "server_agent_service_agentservice_normalizequeuedcontent",
       "weight": 1.0
     },
@@ -14671,7 +14671,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8507",
+      "source_location": "L8509",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -14683,7 +14683,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8494",
+      "source_location": "L8496",
       "target": "server_agent_service_agentservice_runcommand",
       "weight": 1.0
     },
@@ -14695,7 +14695,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8458",
+      "source_location": "L8460",
       "target": "server_agent_service_agentservice_serializequeue",
       "weight": 1.0
     },
@@ -14707,7 +14707,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8498",
+      "source_location": "L8500",
       "target": "server_agent_service_agentservice_startmessage",
       "weight": 1.0
     },
@@ -14719,7 +14719,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8522",
+      "source_location": "L8524",
       "target": "server_agent_service_agentservice_wakesdkqueue",
       "weight": 1.0
     },
@@ -14731,7 +14731,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8520",
+      "source_location": "L8522",
       "target": "server_agent_service_agentservice_waketerminalqueue",
       "weight": 1.0
     },
@@ -14743,7 +14743,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8450",
+      "source_location": "L8452",
       "target": "server_queued_dispatch_queueconflict",
       "weight": 1.0
     },
@@ -14755,7 +14755,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8460",
+      "source_location": "L8462",
       "target": "server_session_store_sessionstore_backend",
       "weight": 1.0
     },
@@ -14767,7 +14767,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8488",
+      "source_location": "L8490",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -14779,7 +14779,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8459",
+      "source_location": "L8461",
       "target": "server_session_store_sessionstore_readafterwrites",
       "weight": 1.0
     },
@@ -14791,7 +14791,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8468",
+      "source_location": "L8470",
       "target": "server_session_store_sessionstore_recoveryseed",
       "weight": 1.0
     },
@@ -14803,7 +14803,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8482",
+      "source_location": "L8484",
       "target": "server_terminal_session_terminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -14815,7 +14815,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8470",
+      "source_location": "L8472",
       "target": "server_terminal_session_terminalsessioncontroller_sending",
       "weight": 1.0
     },
@@ -14827,7 +14827,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_dispatchqueuedprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8444",
+      "source_location": "L8446",
       "target": "shared_contracts_queuedpromptdispatchresult",
       "weight": 1.0
     },
@@ -15115,7 +15115,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8874",
+      "source_location": "L8876",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -15127,7 +15127,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8873",
+      "source_location": "L8875",
       "target": "server_agent_service_agentservice_terminalcommandfeedback",
       "weight": 1.0
     },
@@ -15139,7 +15139,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8850",
+      "source_location": "L8852",
       "target": "server_queued_dispatch_queueconflict",
       "weight": 1.0
     },
@@ -15151,7 +15151,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8843",
+      "source_location": "L8845",
       "target": "server_queued_dispatch_queueddelivery",
       "weight": 1.0
     },
@@ -15163,7 +15163,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8871",
+      "source_location": "L8873",
       "target": "server_queued_dispatch_queueddelivery_accept",
       "weight": 1.0
     },
@@ -15175,7 +15175,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8864",
+      "source_location": "L8866",
       "target": "server_queued_dispatch_queueddelivery_refuse",
       "weight": 1.0
     },
@@ -15187,7 +15187,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8862",
+      "source_location": "L8864",
       "target": "server_queued_dispatch_queueddelivery_submit",
       "weight": 1.0
     },
@@ -15199,7 +15199,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8868",
+      "source_location": "L8870",
       "target": "server_queued_dispatch_terminalrefused",
       "weight": 1.0
     },
@@ -15211,7 +15211,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8874",
+      "source_location": "L8876",
       "target": "server_session_store_sessionstore_addmessage",
       "weight": 1.0
     },
@@ -15223,7 +15223,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8880",
+      "source_location": "L8882",
       "target": "server_session_store_sessionstore_markterminalpromptdispatched",
       "weight": 1.0
     },
@@ -15235,7 +15235,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8852",
+      "source_location": "L8854",
       "target": "server_session_store_sessionstore_readafterwrites",
       "weight": 1.0
     },
@@ -15247,7 +15247,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8849",
+      "source_location": "L8851",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -15259,7 +15259,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8849",
+      "source_location": "L8851",
       "target": "server_terminal_session_isterminaloverlay",
       "weight": 1.0
     },
@@ -15271,7 +15271,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8848",
+      "source_location": "L8850",
       "target": "server_terminal_session_terminalsessioncontroller_capture",
       "weight": 1.0
     },
@@ -15283,7 +15283,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8863",
+      "source_location": "L8865",
       "target": "server_terminal_session_terminalsessioncontroller_send",
       "weight": 1.0
     },
@@ -15295,7 +15295,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_dispatchtargetedterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8843",
+      "source_location": "L8845",
       "target": "shared_contracts_queuedprompt",
       "weight": 1.0
     },
@@ -15343,7 +15343,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8565",
+      "source_location": "L8567",
       "target": "server_agent_service_agentservice_drainnextterminalprompt",
       "weight": 1.0
     },
@@ -15355,7 +15355,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8572",
+      "source_location": "L8574",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -15367,7 +15367,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8570",
+      "source_location": "L8572",
       "target": "server_agent_service_agentservice_retryterminalqueueclaim",
       "weight": 1.0
     },
@@ -15379,7 +15379,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8575",
+      "source_location": "L8577",
       "target": "server_agent_service_agentservice_waketerminalqueue",
       "weight": 1.0
     },
@@ -15391,7 +15391,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8551",
+      "source_location": "L8553",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -15403,7 +15403,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8569",
+      "source_location": "L8571",
       "target": "server_session_store_sessionstore_terminalqueuedispatch",
       "weight": 1.0
     },
@@ -15415,7 +15415,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8611",
+      "source_location": "L8613",
       "target": "server_agent_service_agentservice_awaitingacceptedstartuprecovery",
       "weight": 1.0
     },
@@ -15427,7 +15427,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8601",
+      "source_location": "L8603",
       "target": "server_agent_service_agentservice_hasstartupqueuelifecycle",
       "weight": 1.0
     },
@@ -15439,7 +15439,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8653",
+      "source_location": "L8655",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -15451,7 +15451,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8624",
+      "source_location": "L8626",
       "target": "server_agent_service_agentservice_retryterminalqueueclaim",
       "weight": 1.0
     },
@@ -15463,7 +15463,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8586",
+      "source_location": "L8588",
       "target": "server_agent_service_agentservice_serializequeue",
       "weight": 1.0
     },
@@ -15475,7 +15475,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8593",
+      "source_location": "L8595",
       "target": "server_agent_service_agentservice_settleterminalqueue",
       "weight": 1.0
     },
@@ -15487,7 +15487,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8673",
+      "source_location": "L8675",
       "target": "server_agent_service_isuncertaindelivery",
       "weight": 1.0
     },
@@ -15499,7 +15499,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8648",
+      "source_location": "L8650",
       "target": "server_session_store_sessionstore_claimterminalqueuedprompt",
       "weight": 1.0
     },
@@ -15511,32 +15511,8 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8587",
+      "source_location": "L8589",
       "target": "server_session_store_sessionstore_get",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_agent_service_agentservice_drainnextterminalprompt",
-      "source_file": "server/agent-service.ts",
-      "source_location": "L8597",
-      "target": "server_session_store_sessionstore_readafterwrites",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_agent_service_agentservice_drainnextterminalprompt",
-      "source_file": "server/agent-service.ts",
-      "source_location": "L8607",
-      "target": "server_session_store_sessionstore_recoveryseed",
       "weight": 1.0
     },
     {
@@ -15548,6 +15524,30 @@
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
       "source_location": "L8599",
+      "target": "server_session_store_sessionstore_readafterwrites",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_agent_service_agentservice_drainnextterminalprompt",
+      "source_file": "server/agent-service.ts",
+      "source_location": "L8609",
+      "target": "server_session_store_sessionstore_recoveryseed",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_agent_service_agentservice_drainnextterminalprompt",
+      "source_file": "server/agent-service.ts",
+      "source_location": "L8601",
       "target": "server_session_store_sessionstore_terminalqueuedispatch",
       "weight": 1.0
     },
@@ -15559,7 +15559,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8636",
+      "source_location": "L8638",
       "target": "server_terminal_session_composerholdstext",
       "weight": 1.0
     },
@@ -15571,7 +15571,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8643",
+      "source_location": "L8645",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -15583,7 +15583,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8643",
+      "source_location": "L8645",
       "target": "server_terminal_session_isterminaloverlay",
       "weight": 1.0
     },
@@ -15595,7 +15595,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8636",
+      "source_location": "L8638",
       "target": "server_terminal_session_isterminalsessioninuseprompt",
       "weight": 1.0
     },
@@ -15607,7 +15607,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8635",
+      "source_location": "L8637",
       "target": "server_terminal_session_terminalsessioncontroller_capture",
       "weight": 1.0
     },
@@ -15619,7 +15619,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8631",
+      "source_location": "L8633",
       "target": "server_terminal_session_terminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -15631,7 +15631,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8665",
+      "source_location": "L8667",
       "target": "server_terminal_session_terminalsessioncontroller_send",
       "weight": 1.0
     },
@@ -15643,7 +15643,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8619",
+      "source_location": "L8621",
       "target": "server_terminal_session_terminalsessioncontroller_sending",
       "weight": 1.0
     },
@@ -15655,7 +15655,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainnextterminalprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8664",
+      "source_location": "L8666",
       "target": "server_terminal_session_terminalsessioncontroller_sendwhenidle",
       "weight": 1.0
     },
@@ -15667,7 +15667,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8408",
+      "source_location": "L8410",
       "target": "server_agent_service_agentservice_normalizequeuedcontent",
       "weight": 1.0
     },
@@ -15679,7 +15679,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8421",
+      "source_location": "L8423",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -15691,7 +15691,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8411",
+      "source_location": "L8413",
       "target": "server_agent_service_agentservice_runcommand",
       "weight": 1.0
     },
@@ -15703,7 +15703,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8402",
+      "source_location": "L8404",
       "target": "server_agent_service_agentservice_serializequeue",
       "weight": 1.0
     },
@@ -15715,7 +15715,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8379",
+      "source_location": "L8381",
       "target": "server_agent_service_agentservice_settlequeueadmission",
       "weight": 1.0
     },
@@ -15727,7 +15727,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8414",
+      "source_location": "L8416",
       "target": "server_agent_service_agentservice_startmessage",
       "weight": 1.0
     },
@@ -15739,7 +15739,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8439",
+      "source_location": "L8441",
       "target": "server_agent_service_agentservice_wakesdkqueue",
       "weight": 1.0
     },
@@ -15751,7 +15751,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8440",
+      "source_location": "L8442",
       "target": "server_agent_service_agentservice_waketerminalqueue",
       "weight": 1.0
     },
@@ -15763,7 +15763,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8397",
+      "source_location": "L8399",
       "target": "server_queued_dispatch_queueconflict",
       "weight": 1.0
     },
@@ -15775,7 +15775,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8362",
+      "source_location": "L8364",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -15787,7 +15787,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8381",
+      "source_location": "L8383",
       "target": "server_session_store_sessionstore_readafterwrites",
       "weight": 1.0
     },
@@ -15799,7 +15799,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8363",
+      "source_location": "L8365",
       "target": "server_session_store_sessionstore_recoveryseed",
       "weight": 1.0
     },
@@ -15811,7 +15811,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8364",
+      "source_location": "L8366",
       "target": "server_session_store_sessionstore_terminalqueuedispatch",
       "weight": 1.0
     },
@@ -15823,7 +15823,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainsdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8386",
+      "source_location": "L8388",
       "target": "shared_background_tasks_hasrunningbackgroundagent",
       "weight": 1.0
     },
@@ -15835,7 +15835,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8539",
+      "source_location": "L8541",
       "target": "server_agent_service_agentservice_drainadmittedterminalqueue",
       "weight": 1.0
     },
@@ -15847,7 +15847,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8530",
+      "source_location": "L8532",
       "target": "server_agent_service_agentservice_isterminalrecoverypending",
       "weight": 1.0
     },
@@ -15859,7 +15859,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_drainterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8532",
+      "source_location": "L8534",
       "target": "server_agent_service_agentservice_retryterminalqueueclaim",
       "weight": 1.0
     },
@@ -15979,7 +15979,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_ensureloaded",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6869",
+      "source_location": "L6871",
       "target": "server_agent_service_agentservice_attachsdksession",
       "weight": 1.0
     },
@@ -15991,7 +15991,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_ensureloaded",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6855",
+      "source_location": "L6857",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -16387,7 +16387,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_flushsessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7964",
+      "source_location": "L7966",
       "target": "server_agent_service_agentservice_handlesessionmetadata",
       "weight": 1.0
     },
@@ -16399,7 +16399,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_flushsessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7966",
+      "source_location": "L7968",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -16411,7 +16411,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_flushsessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7961",
+      "source_location": "L7963",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -16459,7 +16459,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8113",
+      "source_location": "L8115",
       "target": "server_agent_service_activitykind",
       "weight": 1.0
     },
@@ -16471,7 +16471,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8144",
+      "source_location": "L8146",
       "target": "server_agent_service_activityresult",
       "weight": 1.0
     },
@@ -16483,7 +16483,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8051",
+      "source_location": "L8053",
       "target": "server_agent_service_agentservice_handlesessionmetadata",
       "weight": 1.0
     },
@@ -16495,7 +16495,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8123",
+      "source_location": "L8125",
       "target": "server_agent_service_agentservice_liveactivitygroupid",
       "weight": 1.0
     },
@@ -16507,7 +16507,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8071",
+      "source_location": "L8073",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -16519,7 +16519,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8062",
+      "source_location": "L8064",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -16531,7 +16531,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8050",
+      "source_location": "L8052",
       "target": "server_agent_service_agentservice_rememberliveactivityevent",
       "weight": 1.0
     },
@@ -16543,7 +16543,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8061",
+      "source_location": "L8063",
       "target": "server_agent_service_agentservice_syncbackgroundtasks",
       "weight": 1.0
     },
@@ -16555,7 +16555,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8068",
+      "source_location": "L8070",
       "target": "server_agent_service_eventagentid",
       "weight": 1.0
     },
@@ -16567,7 +16567,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8107",
+      "source_location": "L8109",
       "target": "server_agent_service_recordvalue",
       "weight": 1.0
     },
@@ -16579,7 +16579,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8107",
+      "source_location": "L8109",
       "target": "server_agent_service_stringvalue",
       "weight": 1.0
     },
@@ -16591,7 +16591,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8120",
+      "source_location": "L8122",
       "target": "server_agent_service_toolactivitycontent",
       "weight": 1.0
     },
@@ -16603,7 +16603,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8147",
+      "source_location": "L8149",
       "target": "server_session_store_sessionstore_finishtaskcompletion",
       "weight": 1.0
     },
@@ -16615,7 +16615,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8154",
+      "source_location": "L8156",
       "target": "server_session_store_sessionstore_finishtoolactivity",
       "weight": 1.0
     },
@@ -16627,7 +16627,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8049",
+      "source_location": "L8051",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -16639,7 +16639,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8088",
+      "source_location": "L8090",
       "target": "server_session_store_sessionstore_setmessagecontent",
       "weight": 1.0
     },
@@ -16651,7 +16651,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8116",
+      "source_location": "L8118",
       "target": "server_session_store_sessionstore_starttoolactivity",
       "weight": 1.0
     },
@@ -16663,7 +16663,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8072",
+      "source_location": "L8074",
       "target": "server_session_store_sessionstore_streammessage",
       "weight": 1.0
     },
@@ -16675,7 +16675,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8005",
+      "source_location": "L8007",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -16687,7 +16687,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8006",
+      "source_location": "L8008",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -16699,7 +16699,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7999",
+      "source_location": "L8001",
       "target": "server_agent_service_eventagentid",
       "weight": 1.0
     },
@@ -16711,7 +16711,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8028",
+      "source_location": "L8030",
       "target": "server_agent_service_runtimeinfofromevents",
       "weight": 1.0
     },
@@ -16723,7 +16723,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8034",
+      "source_location": "L8036",
       "target": "server_agent_service_runtimeinfomatches",
       "weight": 1.0
     },
@@ -16735,7 +16735,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8017",
+      "source_location": "L8019",
       "target": "server_session_store_sessionstore_updateautomatictitle",
       "weight": 1.0
     },
@@ -16747,7 +16747,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8026",
+      "source_location": "L8028",
       "target": "server_session_store_sessionstore_updateif",
       "weight": 1.0
     },
@@ -16759,7 +16759,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_handlesessionmetadata",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8003",
+      "source_location": "L8005",
       "target": "server_session_store_sessionstore_updateworkingdirectory",
       "weight": 1.0
     },
@@ -16843,7 +16843,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hasstartupqueuelifecycle",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8699",
+      "source_location": "L8701",
       "target": "server_session_store_sessionstore_backend",
       "weight": 1.0
     },
@@ -16855,7 +16855,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hasstartupqueuelifecycle",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8699",
+      "source_location": "L8701",
       "target": "server_session_store_sessionstore_ismanagedopen",
       "weight": 1.0
     },
@@ -16867,7 +16867,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_hasstartupqueuelifecycle",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8696",
+      "source_location": "L8698",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -16879,7 +16879,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_hasunanswereduserinputrow",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7514",
+      "source_location": "L7516",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -16891,7 +16891,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7031",
+      "source_location": "L7033",
       "target": "server_agent_service_agentservice_ensureloaded",
       "weight": 1.0
     },
@@ -16903,7 +16903,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7029",
+      "source_location": "L7031",
       "target": "server_agent_service_agentservice_observetranscript",
       "weight": 1.0
     },
@@ -16915,7 +16915,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7041",
+      "source_location": "L7043",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -16927,7 +16927,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7034",
+      "source_location": "L7036",
       "target": "server_agent_service_copilotsessionlike_getevents",
       "weight": 1.0
     },
@@ -16939,7 +16939,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7034",
+      "source_location": "L7036",
       "target": "server_agent_service_messagesfromhistory",
       "weight": 1.0
     },
@@ -16951,7 +16951,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7030",
+      "source_location": "L7032",
       "target": "server_session_store_sessionstore_iscurrenttranscript",
       "weight": 1.0
     },
@@ -16963,7 +16963,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7030",
+      "source_location": "L7032",
       "target": "server_session_store_sessionstore_readafterwrites",
       "weight": 1.0
     },
@@ -16975,7 +16975,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7032",
+      "source_location": "L7034",
       "target": "server_session_store_sessionstore_replacemessages",
       "weight": 1.0
     },
@@ -16987,7 +16987,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_hydratesession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7028",
+      "source_location": "L7030",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -17011,7 +17011,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_istoolcallcomplete",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7543",
+      "source_location": "L7545",
       "target": "server_agent_service_recordvalue",
       "weight": 1.0
     },
@@ -17023,7 +17023,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_istoolcallcomplete",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7543",
+      "source_location": "L7545",
       "target": "server_agent_service_stringvalue",
       "weight": 1.0
     },
@@ -17335,7 +17335,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_liveactivitygroupid",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7931",
+      "source_location": "L7933",
       "target": "server_agent_service_activitygroupidfor",
       "weight": 1.0
     },
@@ -17347,7 +17347,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_liveactivitygroupid",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7932",
+      "source_location": "L7934",
       "target": "server_agent_service_recordvalue",
       "weight": 1.0
     },
@@ -17359,7 +17359,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_liveactivitygroupid",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7932",
+      "source_location": "L7934",
       "target": "server_agent_service_stringvalue",
       "weight": 1.0
     },
@@ -17647,7 +17647,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_observetranscript",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7505",
+      "source_location": "L7507",
       "target": "server_session_store_sessionstore_observetranscript",
       "weight": 1.0
     },
@@ -17659,7 +17659,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_observetranscript",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7504",
+      "source_location": "L7506",
       "target": "server_session_store_transcriptobservation",
       "weight": 1.0
     },
@@ -17983,7 +17983,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_publicsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9069",
+      "source_location": "L9071",
       "target": "server_session_store_sessionstore_failedprompt",
       "weight": 1.0
     },
@@ -17995,7 +17995,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_publicsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9070",
+      "source_location": "L9072",
       "target": "server_session_store_sessionstore_recoveryresend",
       "weight": 1.0
     },
@@ -18007,7 +18007,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_publicsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9065",
+      "source_location": "L9067",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -18019,7 +18019,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_publish",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9062",
+      "source_location": "L9064",
       "target": "server_agent_service_agentservice_publicsession",
       "weight": 1.0
     },
@@ -18031,7 +18031,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_publish",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9060",
+      "source_location": "L9062",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -18043,7 +18043,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_readbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7777",
+      "source_location": "L7779",
       "target": "server_agent_service_agentservice_replacebackgroundtasks",
       "weight": 1.0
     },
@@ -18055,7 +18055,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_readbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7787",
+      "source_location": "L7789",
       "target": "server_agent_service_isunsupportedbackgroundtaskerror",
       "weight": 1.0
     },
@@ -18067,7 +18067,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_readbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7830",
+      "source_location": "L7832",
       "target": "server_background_task_adapter_normalizebackgroundtask",
       "weight": 1.0
     },
@@ -18079,7 +18079,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_readbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7770",
+      "source_location": "L7772",
       "target": "shared_contracts_backgroundtasksnapshot",
       "weight": 1.0
     },
@@ -18595,7 +18595,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverhiddenuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7472",
+      "source_location": "L7474",
       "target": "server_agent_service_agentservice_hasunanswereduserinputrow",
       "weight": 1.0
     },
@@ -18607,7 +18607,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverhiddenuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7476",
+      "source_location": "L7478",
       "target": "server_agent_service_agentservice_observetranscript",
       "weight": 1.0
     },
@@ -18619,7 +18619,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverhiddenuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7501",
+      "source_location": "L7503",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -18631,7 +18631,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverhiddenuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7482",
+      "source_location": "L7484",
       "target": "server_agent_service_pendinguserinputfromevents",
       "weight": 1.0
     },
@@ -18643,7 +18643,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverhiddenuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7465",
+      "source_location": "L7467",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -18655,7 +18655,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverhiddenuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7492",
+      "source_location": "L7494",
       "target": "server_session_store_sessionstore_updatetranscriptifcurrent",
       "weight": 1.0
     },
@@ -18667,7 +18667,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6982",
+      "source_location": "L6984",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -18679,7 +18679,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6963",
+      "source_location": "L6965",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -18691,7 +18691,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6999",
+      "source_location": "L7001",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -18703,7 +18703,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6955",
+      "source_location": "L6957",
       "target": "server_session_store_sessionstore_readafterwrites",
       "weight": 1.0
     },
@@ -18715,7 +18715,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6982",
+      "source_location": "L6984",
       "target": "server_session_store_sessionstore_setopen",
       "weight": 1.0
     },
@@ -18727,7 +18727,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6954",
+      "source_location": "L6956",
       "target": "server_session_store_sessionstore_shouldrecoverterminalsession",
       "weight": 1.0
     },
@@ -18739,7 +18739,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7001",
+      "source_location": "L7003",
       "target": "server_session_store_sessionstore_update",
       "weight": 1.0
     },
@@ -18751,7 +18751,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsession",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6960",
+      "source_location": "L6962",
       "target": "server_terminal_session_terminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -18763,7 +18763,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6941",
+      "source_location": "L6943",
       "target": "server_agent_service_agentservice_reconcileuntrackedterminaldispatches",
       "weight": 1.0
     },
@@ -18775,7 +18775,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6938",
+      "source_location": "L6940",
       "target": "server_agent_service_agentservice_recoverterminalsession",
       "weight": 1.0
     },
@@ -18787,7 +18787,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_recoverterminalsessions",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6937",
+      "source_location": "L6939",
       "target": "server_agent_service_agentservice_serializelifecycle",
       "weight": 1.0
     },
@@ -18811,7 +18811,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_refreshdiscovery",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7186",
+      "source_location": "L7188",
       "target": "server_agent_service_agentservice_discoversessions",
       "weight": 1.0
     },
@@ -18823,7 +18823,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_refreshdiscovery",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7190",
+      "source_location": "L7192",
       "target": "server_agent_service_agentservice_dispatchreadyrecoveryseeds",
       "weight": 1.0
     },
@@ -18835,7 +18835,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_refreshdiscovery",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7189",
+      "source_location": "L7191",
       "target": "server_agent_service_agentservice_finishstartuprecovery",
       "weight": 1.0
     },
@@ -18847,7 +18847,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_refreshdiscovery",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7194",
+      "source_location": "L7196",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -18871,7 +18871,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_refreshtranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7209",
+      "source_location": "L7211",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -18883,7 +18883,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_refreshtranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7207",
+      "source_location": "L7209",
       "target": "server_agent_service_agentservice_synctranscripts",
       "weight": 1.0
     },
@@ -18895,7 +18895,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_rememberliveactivityevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7888",
+      "source_location": "L7890",
       "target": "server_agent_service_recordvalue",
       "weight": 1.0
     },
@@ -18907,7 +18907,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_rememberliveactivityevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7891",
+      "source_location": "L7893",
       "target": "server_agent_service_stringvalue",
       "weight": 1.0
     },
@@ -18919,7 +18919,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_rememberliveactivityevent",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7870",
+      "source_location": "L7872",
       "target": "shared_contracts_activitykind",
       "weight": 1.0
     },
@@ -19159,7 +19159,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_replacebackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7840",
+      "source_location": "L7842",
       "target": "shared_contracts_backgroundtask",
       "weight": 1.0
     },
@@ -19171,7 +19171,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_replacebackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7840",
+      "source_location": "L7842",
       "target": "shared_contracts_backgroundtasksnapshot",
       "weight": 1.0
     },
@@ -19375,7 +19375,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6635",
+      "source_location": "L6637",
       "target": "server_agent_service_agentservice_acceptsdkreply",
       "weight": 1.0
     },
@@ -19387,7 +19387,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6609",
+      "source_location": "L6611",
       "target": "server_agent_service_agentservice_acceptterminalformreply",
       "weight": 1.0
     },
@@ -19399,7 +19399,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6658",
+      "source_location": "L6660",
       "target": "server_agent_service_agentservice_handleterminalformreplyerror",
       "weight": 1.0
     },
@@ -19411,7 +19411,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6606",
+      "source_location": "L6608",
       "target": "server_agent_service_agentservice_istoolcallcomplete",
       "weight": 1.0
     },
@@ -19423,7 +19423,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6740",
+      "source_location": "L6742",
       "target": "server_agent_service_agentservice_publicsession",
       "weight": 1.0
     },
@@ -19435,7 +19435,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6739",
+      "source_location": "L6741",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -19447,7 +19447,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6586",
+      "source_location": "L6588",
       "target": "server_agent_service_agentservice_resumeterminalformreply",
       "weight": 1.0
     },
@@ -19459,7 +19459,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6594",
+      "source_location": "L6596",
       "target": "server_agent_service_agentservice_sdkinputchoice",
       "weight": 1.0
     },
@@ -19471,7 +19471,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6790",
+      "source_location": "L6792",
       "target": "server_agent_service_agentservice_sendmessage",
       "weight": 1.0
     },
@@ -19483,7 +19483,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6593",
+      "source_location": "L6595",
       "target": "server_agent_service_agentservice_settlesdkreply",
       "weight": 1.0
     },
@@ -19495,7 +19495,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6827",
+      "source_location": "L6829",
       "target": "server_agent_service_agentservice_terminalcontinuationstate",
       "weight": 1.0
     },
@@ -19507,7 +19507,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6661",
+      "source_location": "L6663",
       "target": "server_agent_service_agentservice_waitfortoolcompletion",
       "weight": 1.0
     },
@@ -19519,7 +19519,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6793",
+      "source_location": "L6795",
       "target": "server_agent_service_persistedformanswer",
       "weight": 1.0
     },
@@ -19531,7 +19531,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6745",
+      "source_location": "L6747",
       "target": "server_agent_service_terminalformsteps",
       "weight": 1.0
     },
@@ -19543,7 +19543,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6632",
+      "source_location": "L6634",
       "target": "server_agent_service_validateuserinputform",
       "weight": 1.0
     },
@@ -19555,7 +19555,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6736",
+      "source_location": "L6738",
       "target": "server_session_store_sessionstore_clearpendingrequest",
       "weight": 1.0
     },
@@ -19567,7 +19567,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6582",
+      "source_location": "L6584",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -19579,7 +19579,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6662",
+      "source_location": "L6664",
       "target": "server_terminal_session_terminalformreplyerror",
       "weight": 1.0
     },
@@ -19591,7 +19591,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6651",
+      "source_location": "L6653",
       "target": "server_terminal_session_terminalsessioncontroller_dismissuserinput",
       "weight": 1.0
     },
@@ -19603,7 +19603,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6752",
+      "source_location": "L6754",
       "target": "server_terminal_session_terminalsessioncontroller_filluserinputform",
       "weight": 1.0
     },
@@ -19615,7 +19615,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6646",
+      "source_location": "L6648",
       "target": "server_terminal_session_terminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -19627,7 +19627,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6809",
+      "source_location": "L6811",
       "target": "server_terminal_session_terminalsessioncontroller_replyuserinput",
       "weight": 1.0
     },
@@ -19639,7 +19639,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6577",
+      "source_location": "L6579",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -19651,7 +19651,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_replyuserinputinternal",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6577",
+      "source_location": "L6579",
       "target": "shared_contracts_userinputreplyinput",
       "weight": 1.0
     },
@@ -19663,7 +19663,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestelicitation",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9010",
+      "source_location": "L9012",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -19675,7 +19675,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestelicitation",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9016",
+      "source_location": "L9018",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -19687,7 +19687,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestelicitation",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8982",
+      "source_location": "L8984",
       "target": "server_agent_service_userinputformfromschema",
       "weight": 1.0
     },
@@ -19699,7 +19699,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestelicitation",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8973",
+      "source_location": "L8975",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -19711,7 +19711,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestelicitation",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8999",
+      "source_location": "L9001",
       "target": "server_session_store_sessionstore_update",
       "weight": 1.0
     },
@@ -19723,7 +19723,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestpermission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8958",
+      "source_location": "L8960",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -19735,7 +19735,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestpermission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8964",
+      "source_location": "L8966",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -19747,7 +19747,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestpermission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8936",
+      "source_location": "L8938",
       "target": "server_agent_service_permissiontitle",
       "weight": 1.0
     },
@@ -19759,7 +19759,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestpermission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8930",
+      "source_location": "L8932",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -19771,7 +19771,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestpermission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8947",
+      "source_location": "L8949",
       "target": "server_session_store_sessionstore_update",
       "weight": 1.0
     },
@@ -19783,7 +19783,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9049",
+      "source_location": "L9051",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -19795,7 +19795,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9055",
+      "source_location": "L9057",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -19807,7 +19807,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9025",
+      "source_location": "L9027",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -19819,7 +19819,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_requestuserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9038",
+      "source_location": "L9040",
       "target": "server_session_store_sessionstore_update",
       "weight": 1.0
     },
@@ -20419,7 +20419,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_retryterminalqueueclaim",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8713",
+      "source_location": "L8715",
       "target": "server_agent_service_agentservice_awaitingacceptedstartuprecovery",
       "weight": 1.0
     },
@@ -20431,7 +20431,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_retryterminalqueueclaim",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8712",
+      "source_location": "L8714",
       "target": "server_agent_service_agentservice_hasstartupqueuelifecycle",
       "weight": 1.0
     },
@@ -20443,7 +20443,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_retryterminalqueueclaim",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8710",
+      "source_location": "L8712",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -20599,7 +20599,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8231",
+      "source_location": "L8233",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -20611,7 +20611,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8278",
+      "source_location": "L8280",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -20623,7 +20623,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8286",
+      "source_location": "L8288",
       "target": "server_agent_service_agentservice_wakesdkqueue",
       "weight": 1.0
     },
@@ -20635,7 +20635,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8186",
+      "source_location": "L8188",
       "target": "server_agent_service_copilotsessionlike_sendandwait",
       "weight": 1.0
     },
@@ -20647,7 +20647,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8167",
+      "source_location": "L8169",
       "target": "server_queued_dispatch_acceptancereceipt",
       "weight": 1.0
     },
@@ -20659,7 +20659,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8235",
+      "source_location": "L8237",
       "target": "server_queued_dispatch_explicitlyrefused",
       "weight": 1.0
     },
@@ -20671,7 +20671,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8167",
+      "source_location": "L8169",
       "target": "server_queued_dispatch_queueddelivery",
       "weight": 1.0
     },
@@ -20683,7 +20683,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8180",
+      "source_location": "L8182",
       "target": "server_queued_sdk_prompt_queuedsdkprompt",
       "weight": 1.0
     },
@@ -20695,7 +20695,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8210",
+      "source_location": "L8212",
       "target": "server_session_store_sessionstore_finishmessage",
       "weight": 1.0
     },
@@ -20707,7 +20707,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8190",
+      "source_location": "L8192",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -20719,7 +20719,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8204",
+      "source_location": "L8206",
       "target": "server_session_store_sessionstore_setmessagecontent",
       "weight": 1.0
     },
@@ -20731,7 +20731,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_runprompt",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8211",
+      "source_location": "L8213",
       "target": "server_session_store_sessionstore_updateif",
       "weight": 1.0
     },
@@ -21835,7 +21835,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settlequeueadmission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8301",
+      "source_location": "L8303",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -21847,7 +21847,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settlequeueadmission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8295",
+      "source_location": "L8297",
       "target": "server_session_store_sessionstore_settlesdkqueueadmission",
       "weight": 1.0
     },
@@ -21859,7 +21859,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_settlequeueadmission",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8291",
+      "source_location": "L8293",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -22003,7 +22003,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8828",
+      "source_location": "L8830",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -22015,7 +22015,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8813",
+      "source_location": "L8815",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -22027,7 +22027,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8839",
+      "source_location": "L8841",
       "target": "server_agent_service_agentservice_retryterminalqueueclaim",
       "weight": 1.0
     },
@@ -22039,7 +22039,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8787",
+      "source_location": "L8789",
       "target": "server_agent_service_agentservice_terminalcommandfeedback",
       "weight": 1.0
     },
@@ -22051,7 +22051,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8779",
+      "source_location": "L8781",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -22063,7 +22063,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8807",
+      "source_location": "L8809",
       "target": "server_session_store_sessionstore_settleterminalqueuedprompt",
       "weight": 1.0
     },
@@ -22075,7 +22075,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8803",
+      "source_location": "L8805",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -22087,7 +22087,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8802",
+      "source_location": "L8804",
       "target": "server_terminal_session_isterminaloverlay",
       "weight": 1.0
     },
@@ -22099,7 +22099,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_settleterminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8800",
+      "source_location": "L8802",
       "target": "server_terminal_session_terminalsessioncontroller_capture",
       "weight": 1.0
     },
@@ -22951,7 +22951,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7747",
+      "source_location": "L7749",
       "target": "server_agent_service_agentservice_readbackgroundtasks",
       "weight": 1.0
     },
@@ -22963,7 +22963,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7757",
+      "source_location": "L7759",
       "target": "server_agent_service_agentservice_wakesdkqueue",
       "weight": 1.0
     },
@@ -22975,7 +22975,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7737",
+      "source_location": "L7739",
       "target": "shared_background_tasks_hasrunningbackgroundagent",
       "weight": 1.0
     },
@@ -22987,7 +22987,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_syncbackgroundtasks",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7717",
+      "source_location": "L7719",
       "target": "shared_contracts_backgroundtasksnapshot",
       "weight": 1.0
     },
@@ -22999,7 +22999,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncexternalworkspace",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7709",
+      "source_location": "L7711",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -23011,7 +23011,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncexternalworkspace",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7713",
+      "source_location": "L7715",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -23023,7 +23023,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncexternalworkspace",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7704",
+      "source_location": "L7706",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -23035,7 +23035,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncexternalworkspace",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7707",
+      "source_location": "L7709",
       "target": "server_session_store_sessionstore_syncworkspacemetadata",
       "weight": 1.0
     },
@@ -23047,7 +23047,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncexternalworkspace",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7711",
+      "source_location": "L7713",
       "target": "server_terminal_session_terminalsessioncontroller_rename",
       "weight": 1.0
     },
@@ -23059,7 +23059,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminalupdatenotice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7446",
+      "source_location": "L7448",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -23071,7 +23071,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminalupdatenotice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7425",
+      "source_location": "L7427",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -23083,7 +23083,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminalupdatenotice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7439",
+      "source_location": "L7441",
       "target": "server_session_store_sessionstore_updateif",
       "weight": 1.0
     },
@@ -23095,7 +23095,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminalupdatenotice",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7435",
+      "source_location": "L7437",
       "target": "server_terminal_session_terminalsessioncontroller_updatenotice",
       "weight": 1.0
     },
@@ -23107,7 +23107,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminaluserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7604",
+      "source_location": "L7606",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -23119,7 +23119,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminaluserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7610",
+      "source_location": "L7612",
       "target": "server_agent_service_agentservice_terminalcontinuationstate",
       "weight": 1.0
     },
@@ -23131,7 +23131,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminaluserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7572",
+      "source_location": "L7574",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -23143,7 +23143,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminaluserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7598",
+      "source_location": "L7600",
       "target": "server_session_store_sessionstore_update",
       "weight": 1.0
     },
@@ -23155,7 +23155,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminaluserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7587",
+      "source_location": "L7589",
       "target": "server_terminal_session_terminalsessioncontroller_pendingpermission",
       "weight": 1.0
     },
@@ -23167,7 +23167,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_syncterminaluserinput",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7621",
+      "source_location": "L7623",
       "target": "server_terminal_session_terminalsessioncontroller_pendinguserinput",
       "weight": 1.0
     },
@@ -23179,7 +23179,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7248",
+      "source_location": "L7250",
       "target": "server_agent_service_agentservice_drainterminalqueue",
       "weight": 1.0
     },
@@ -23191,7 +23191,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7229",
+      "source_location": "L7231",
       "target": "server_agent_service_agentservice_isterminalrecoverypending",
       "weight": 1.0
     },
@@ -23203,7 +23203,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7258",
+      "source_location": "L7260",
       "target": "server_agent_service_agentservice_observetranscript",
       "weight": 1.0
     },
@@ -23215,7 +23215,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7238",
+      "source_location": "L7240",
       "target": "server_agent_service_agentservice_persistterminalpromptdispatch",
       "weight": 1.0
     },
@@ -23227,7 +23227,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7239",
+      "source_location": "L7241",
       "target": "server_agent_service_agentservice_publish",
       "weight": 1.0
     },
@@ -23239,7 +23239,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7267",
+      "source_location": "L7269",
       "target": "server_agent_service_agentservice_recoverhiddenuserinput",
       "weight": 1.0
     },
@@ -23251,7 +23251,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7276",
+      "source_location": "L7278",
       "target": "server_agent_service_agentservice_replacebackgroundtasks",
       "weight": 1.0
     },
@@ -23263,7 +23263,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7261",
+      "source_location": "L7263",
       "target": "server_agent_service_agentservice_syncexternalworkspace",
       "weight": 1.0
     },
@@ -23275,7 +23275,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7263",
+      "source_location": "L7265",
       "target": "server_agent_service_agentservice_syncterminalupdatenotice",
       "weight": 1.0
     },
@@ -23287,7 +23287,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7262",
+      "source_location": "L7264",
       "target": "server_agent_service_agentservice_syncterminaluserinput",
       "weight": 1.0
     },
@@ -23299,7 +23299,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7326",
+      "source_location": "L7328",
       "target": "server_agent_service_eventagentid",
       "weight": 1.0
     },
@@ -23311,7 +23311,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7308",
+      "source_location": "L7310",
       "target": "server_agent_service_isforegroundcompletionevent",
       "weight": 1.0
     },
@@ -23323,7 +23323,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7287",
+      "source_location": "L7289",
       "target": "server_agent_service_messagesfromhistory",
       "weight": 1.0
     },
@@ -23335,7 +23335,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7288",
+      "source_location": "L7290",
       "target": "server_agent_service_pendinguserinputfromevents",
       "weight": 1.0
     },
@@ -23347,7 +23347,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7343",
+      "source_location": "L7345",
       "target": "server_agent_service_runtimeinfofromevents",
       "weight": 1.0
     },
@@ -23359,7 +23359,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7301",
+      "source_location": "L7303",
       "target": "server_agent_service_statusfromevents",
       "weight": 1.0
     },
@@ -23371,7 +23371,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7344",
+      "source_location": "L7346",
       "target": "server_agent_service_workingdirectoryfromevents",
       "weight": 1.0
     },
@@ -23383,7 +23383,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7273",
+      "source_location": "L7275",
       "target": "server_background_task_adapter_backgroundtasksfromevents",
       "weight": 1.0
     },
@@ -23395,7 +23395,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7311",
+      "source_location": "L7313",
       "target": "server_session_store_sessionstore_clearqueuedispatch",
       "weight": 1.0
     },
@@ -23407,7 +23407,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7232",
+      "source_location": "L7234",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -23419,7 +23419,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7259",
+      "source_location": "L7261",
       "target": "server_session_store_sessionstore_iscurrenttranscript",
       "weight": 1.0
     },
@@ -23431,7 +23431,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7302",
+      "source_location": "L7304",
       "target": "server_session_store_sessionstore_queuedispatchat",
       "weight": 1.0
     },
@@ -23443,7 +23443,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_synctranscripts",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7335",
+      "source_location": "L7337",
       "target": "server_session_store_sessionstore_replacetranscript",
       "weight": 1.0
     },
@@ -23503,7 +23503,7 @@
       "relation": "indirect_call",
       "source": "server_agent_service_agentservice_terminalcontinuationstate",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7669",
+      "source_location": "L7671",
       "target": "server_agent_service_isbackgroundtaskevent",
       "weight": 1.0
     },
@@ -23515,7 +23515,7 @@
       "relation": "indirect_call",
       "source": "server_agent_service_agentservice_terminalcontinuationstate",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7666",
+      "source_location": "L7668",
       "target": "server_agent_service_isforegroundlifecycleevent",
       "weight": 1.0
     },
@@ -23527,7 +23527,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_terminalcontinuationstate",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7680",
+      "source_location": "L7682",
       "target": "server_agent_service_statusfromevents",
       "weight": 1.0
     },
@@ -23539,7 +23539,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_terminalcontinuationstate",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7670",
+      "source_location": "L7672",
       "target": "server_background_task_adapter_backgroundtasksfromevents",
       "weight": 1.0
     },
@@ -23551,7 +23551,7 @@
       "relation": "references",
       "source": "server_agent_service_agentservice_terminalcontinuationstate",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7654",
+      "source_location": "L7656",
       "target": "shared_contracts_sessionstatus",
       "weight": 1.0
     },
@@ -23731,7 +23731,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_validatedirectory",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9089",
+      "source_location": "L9091",
       "target": "server_agent_service_agentservice_validatesessiondirectory",
       "weight": 1.0
     },
@@ -23755,7 +23755,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_waitfortoolcompletion",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7558",
+      "source_location": "L7560",
       "target": "server_agent_service_agentservice_istoolcallcomplete",
       "weight": 1.0
     },
@@ -23767,7 +23767,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_wakedeferredqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8315",
+      "source_location": "L8317",
       "target": "server_agent_service_agentservice_wakesdkqueue",
       "weight": 1.0
     },
@@ -23779,7 +23779,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_wakedeferredqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8313",
+      "source_location": "L8315",
       "target": "server_agent_service_agentservice_waketerminalqueue",
       "weight": 1.0
     },
@@ -23791,7 +23791,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_wakedeferredqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8309",
+      "source_location": "L8311",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -23803,7 +23803,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_wakesdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8325",
+      "source_location": "L8327",
       "target": "server_agent_service_agentservice_drainsdkqueue",
       "weight": 1.0
     },
@@ -23815,7 +23815,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_wakesdkqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8326",
+      "source_location": "L8328",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -23827,7 +23827,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_waketerminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8341",
+      "source_location": "L8343",
       "target": "server_agent_service_agentservice_drainterminalqueue",
       "weight": 1.0
     },
@@ -23839,7 +23839,7 @@
       "relation": "calls",
       "source": "server_agent_service_agentservice_waketerminalqueue",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8343",
+      "source_location": "L8345",
       "target": "server_agent_service_agentservice_publisherror",
       "weight": 1.0
     },
@@ -120527,7 +120527,7 @@
       "label": ".assertRecoveryBackgroundTasksSettled()",
       "norm_label": ".assertrecoverybackgroundtaskssettled()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8755"
+      "source_location": "L8757"
     },
     {
       "_callable": true,
@@ -120539,7 +120539,7 @@
       "label": ".assertRecoverySeedReplacementAvailable()",
       "norm_label": ".assertrecoveryseedreplacementavailable()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8745"
+      "source_location": "L8747"
     },
     {
       "_callable": true,
@@ -120551,7 +120551,7 @@
       "label": ".assertRecoverySeedSettled()",
       "norm_label": ".assertrecoveryseedsettled()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8739"
+      "source_location": "L8741"
     },
     {
       "_callable": true,
@@ -120563,7 +120563,7 @@
       "label": ".assertStartupDispatchSettled()",
       "norm_label": ".assertstartupdispatchsettled()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8918"
+      "source_location": "L8920"
     },
     {
       "_callable": true,
@@ -120587,7 +120587,7 @@
       "label": ".assertTerminalQueueSettled()",
       "norm_label": ".assertterminalqueuesettled()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8725"
+      "source_location": "L8727"
     },
     {
       "_callable": true,
@@ -120611,7 +120611,7 @@
       "label": ".attachSdkSession()",
       "norm_label": ".attachsdksession()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6878"
+      "source_location": "L6880"
     },
     {
       "_callable": true,
@@ -120623,7 +120623,7 @@
       "label": ".attachSession()",
       "norm_label": ".attachsession()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7939"
+      "source_location": "L7941"
     },
     {
       "_callable": true,
@@ -120635,7 +120635,7 @@
       "label": ".awaitingAcceptedStartupRecovery()",
       "norm_label": ".awaitingacceptedstartuprecovery()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8702"
+      "source_location": "L8704"
     },
     {
       "_callable": true,
@@ -120707,7 +120707,7 @@
       "label": ".clearUpdateNoticeForExited()",
       "norm_label": ".clearupdatenoticeforexited()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7391"
+      "source_location": "L7393"
     },
     {
       "_callable": true,
@@ -120827,7 +120827,7 @@
       "label": ".discoverSessions()",
       "norm_label": ".discoversessions()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7053"
+      "source_location": "L7055"
     },
     {
       "_callable": true,
@@ -120839,7 +120839,7 @@
       "label": ".discoverTerminalSessions()",
       "norm_label": ".discoverterminalsessions()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7045"
+      "source_location": "L7047"
     },
     {
       "_callable": true,
@@ -120863,7 +120863,7 @@
       "label": ".dispatchQueuedPrompt()",
       "norm_label": ".dispatchqueuedprompt()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8444"
+      "source_location": "L8446"
     },
     {
       "_callable": true,
@@ -120899,7 +120899,7 @@
       "label": ".dispatchTargetedTerminalPrompt()",
       "norm_label": ".dispatchtargetedterminalprompt()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8843"
+      "source_location": "L8845"
     },
     {
       "_callable": true,
@@ -120923,7 +120923,7 @@
       "label": ".drainAdmittedTerminalQueue()",
       "norm_label": ".drainadmittedterminalqueue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8542"
+      "source_location": "L8544"
     },
     {
       "_callable": true,
@@ -120935,7 +120935,7 @@
       "label": ".drainNextTerminalPrompt()",
       "norm_label": ".drainnextterminalprompt()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8585"
+      "source_location": "L8587"
     },
     {
       "_callable": true,
@@ -120947,7 +120947,7 @@
       "label": ".drainSdkQueue()",
       "norm_label": ".drainsdkqueue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8350"
+      "source_location": "L8352"
     },
     {
       "_callable": true,
@@ -120959,7 +120959,7 @@
       "label": ".drainTerminalQueue()",
       "norm_label": ".drainterminalqueue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8528"
+      "source_location": "L8530"
     },
     {
       "_callable": true,
@@ -120995,7 +120995,7 @@
       "label": ".ensureLoaded()",
       "norm_label": ".ensureloaded()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6839"
+      "source_location": "L6841"
     },
     {
       "_callable": true,
@@ -121079,7 +121079,7 @@
       "label": ".flushSessionMetadata()",
       "norm_label": ".flushsessionmetadata()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7955"
+      "source_location": "L7957"
     },
     {
       "_callable": true,
@@ -121115,7 +121115,7 @@
       "label": ".handleSessionEvent()",
       "norm_label": ".handlesessionevent()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8047"
+      "source_location": "L8049"
     },
     {
       "_callable": true,
@@ -121127,7 +121127,7 @@
       "label": ".handleSessionMetadata()",
       "norm_label": ".handlesessionmetadata()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7971"
+      "source_location": "L7973"
     },
     {
       "_callable": true,
@@ -121151,7 +121151,7 @@
       "label": ".hasStartupQueueLifecycle()",
       "norm_label": ".hasstartupqueuelifecycle()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8696"
+      "source_location": "L8698"
     },
     {
       "_callable": true,
@@ -121163,7 +121163,7 @@
       "label": ".hasUnansweredUserInputRow()",
       "norm_label": ".hasunanswereduserinputrow()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7514"
+      "source_location": "L7516"
     },
     {
       "_callable": true,
@@ -121187,7 +121187,7 @@
       "label": ".hydrateSession()",
       "norm_label": ".hydratesession()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7028"
+      "source_location": "L7030"
     },
     {
       "_callable": true,
@@ -121211,7 +121211,7 @@
       "label": ".isToolCallComplete()",
       "norm_label": ".istoolcallcomplete()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7534"
+      "source_location": "L7536"
     },
     {
       "_callable": true,
@@ -121355,7 +121355,7 @@
       "label": ".liveActivityGroupId()",
       "norm_label": ".liveactivitygroupid()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7909"
+      "source_location": "L7911"
     },
     {
       "_callable": true,
@@ -121415,7 +121415,7 @@
       "label": ".observeTranscript()",
       "norm_label": ".observetranscript()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7504"
+      "source_location": "L7506"
     },
     {
       "_callable": true,
@@ -121487,7 +121487,7 @@
       "label": ".publicSession()",
       "norm_label": ".publicsession()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9065"
+      "source_location": "L9067"
     },
     {
       "_callable": true,
@@ -121499,7 +121499,7 @@
       "label": ".publish()",
       "norm_label": ".publish()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9060"
+      "source_location": "L9062"
     },
     {
       "_callable": true,
@@ -121511,7 +121511,7 @@
       "label": ".publishError()",
       "norm_label": ".publisherror()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9079"
+      "source_location": "L9081"
     },
     {
       "_callable": true,
@@ -121523,7 +121523,7 @@
       "label": ".readBackgroundTasks()",
       "norm_label": ".readbackgroundtasks()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7770"
+      "source_location": "L7772"
     },
     {
       "_callable": true,
@@ -121631,7 +121631,7 @@
       "label": ".recoverHiddenUserInput()",
       "norm_label": ".recoverhiddenuserinput()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7461"
+      "source_location": "L7463"
     },
     {
       "_callable": true,
@@ -121643,7 +121643,7 @@
       "label": ".recoverTerminalSession()",
       "norm_label": ".recoverterminalsession()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6951"
+      "source_location": "L6953"
     },
     {
       "_callable": true,
@@ -121655,7 +121655,7 @@
       "label": ".recoverTerminalSessions()",
       "norm_label": ".recoverterminalsessions()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6929"
+      "source_location": "L6931"
     },
     {
       "_callable": true,
@@ -121679,7 +121679,7 @@
       "label": ".refreshDiscovery()",
       "norm_label": ".refreshdiscovery()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7182"
+      "source_location": "L7184"
     },
     {
       "_callable": true,
@@ -121703,7 +121703,7 @@
       "label": ".refreshTranscripts()",
       "norm_label": ".refreshtranscripts()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7203"
+      "source_location": "L7205"
     },
     {
       "_callable": true,
@@ -121715,7 +121715,7 @@
       "label": ".rememberLiveActivityEvent()",
       "norm_label": ".rememberliveactivityevent()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7870"
+      "source_location": "L7872"
     },
     {
       "_callable": true,
@@ -121763,7 +121763,7 @@
       "label": ".replaceBackgroundTasks()",
       "norm_label": ".replacebackgroundtasks()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7840"
+      "source_location": "L7842"
     },
     {
       "_callable": true,
@@ -121811,7 +121811,7 @@
       "label": ".replyUserInputInternal()",
       "norm_label": ".replyuserinputinternal()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L6577"
+      "source_location": "L6579"
     },
     {
       "_callable": true,
@@ -121823,7 +121823,7 @@
       "label": ".requestElicitation()",
       "norm_label": ".requestelicitation()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8969"
+      "source_location": "L8971"
     },
     {
       "_callable": true,
@@ -121835,7 +121835,7 @@
       "label": ".requestPermission()",
       "norm_label": ".requestpermission()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8926"
+      "source_location": "L8928"
     },
     {
       "_callable": true,
@@ -121847,7 +121847,7 @@
       "label": ".requestUserInput()",
       "norm_label": ".requestuserinput()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9021"
+      "source_location": "L9023"
     },
     {
       "_callable": true,
@@ -121967,7 +121967,7 @@
       "label": ".retryTerminalQueueClaim()",
       "norm_label": ".retryterminalqueueclaim()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8709"
+      "source_location": "L8711"
     },
     {
       "_callable": true,
@@ -121991,7 +121991,7 @@
       "label": ".runPrompt()",
       "norm_label": ".runprompt()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8167"
+      "source_location": "L8169"
     },
     {
       "_callable": true,
@@ -122183,7 +122183,7 @@
       "label": ".serializeQueue()",
       "norm_label": ".serializequeue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8883"
+      "source_location": "L8885"
     },
     {
       "_callable": true,
@@ -122195,7 +122195,7 @@
       "label": ".serializeTerminalAdmission()",
       "norm_label": ".serializeterminaladmission()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8900"
+      "source_location": "L8902"
     },
     {
       "_callable": true,
@@ -122219,7 +122219,7 @@
       "label": ".settleQueueAdmission()",
       "norm_label": ".settlequeueadmission()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8291"
+      "source_location": "L8293"
     },
     {
       "_callable": true,
@@ -122255,7 +122255,7 @@
       "label": ".settleTerminalQueue()",
       "norm_label": ".settleterminalqueue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8774"
+      "source_location": "L8776"
     },
     {
       "_callable": true,
@@ -122411,7 +122411,7 @@
       "label": ".syncBackgroundTasks()",
       "norm_label": ".syncbackgroundtasks()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7717"
+      "source_location": "L7719"
     },
     {
       "_callable": true,
@@ -122423,7 +122423,7 @@
       "label": ".syncExternalWorkspace()",
       "norm_label": ".syncexternalworkspace()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7695"
+      "source_location": "L7697"
     },
     {
       "_callable": true,
@@ -122435,7 +122435,7 @@
       "label": ".syncTerminalUpdateNotice()",
       "norm_label": ".syncterminalupdatenotice()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7421"
+      "source_location": "L7423"
     },
     {
       "_callable": true,
@@ -122447,7 +122447,7 @@
       "label": ".syncTerminalUserInput()",
       "norm_label": ".syncterminaluserinput()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7565"
+      "source_location": "L7567"
     },
     {
       "_callable": true,
@@ -122459,7 +122459,7 @@
       "label": ".syncTranscripts()",
       "norm_label": ".synctranscripts()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7218"
+      "source_location": "L7220"
     },
     {
       "_callable": true,
@@ -122483,7 +122483,7 @@
       "label": ".terminalContinuationState()",
       "norm_label": ".terminalcontinuationstate()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7654"
+      "source_location": "L7656"
     },
     {
       "_callable": true,
@@ -122531,7 +122531,7 @@
       "label": ".validateDirectory()",
       "norm_label": ".validatedirectory()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L9088"
+      "source_location": "L9090"
     },
     {
       "_callable": true,
@@ -122567,7 +122567,7 @@
       "label": ".waitForToolCompletion()",
       "norm_label": ".waitfortoolcompletion()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L7551"
+      "source_location": "L7553"
     },
     {
       "_callable": true,
@@ -122579,7 +122579,7 @@
       "label": ".wakeDeferredQueue()",
       "norm_label": ".wakedeferredqueue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8308"
+      "source_location": "L8310"
     },
     {
       "_callable": true,
@@ -122591,7 +122591,7 @@
       "label": ".wakeSdkQueue()",
       "norm_label": ".wakesdkqueue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8319"
+      "source_location": "L8321"
     },
     {
       "_callable": true,
@@ -122603,7 +122603,7 @@
       "label": ".wakeTerminalQueue()",
       "norm_label": ".waketerminalqueue()",
       "source_file": "server/agent-service.ts",
-      "source_location": "L8333"
+      "source_location": "L8335"
     },
     {
       "_callable": true,

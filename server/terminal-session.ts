@@ -228,6 +228,7 @@ export class TmuxTerminalSessionController
       owner: TerminalOwner
       pane: string
       text: string
+      cursor: TerminalCursor
     }
   >()
   private readonly terminalDraftRecoveryBySession = new Map<string, string>()
@@ -1374,6 +1375,12 @@ export class TmuxTerminalSessionController
     if (!composerHoldsText(currentPane)) {
       return currentPane
     }
+    const recoverable = composerText(currentPane) === readable
+      ? losslessComposerText(currentPane)
+      : undefined
+    const recoveryCursor = recoverable === undefined
+      ? undefined
+      : await captureTerminalCursor(owner.target)
     const conditions = [
       `#{==:#{pane_id},${owner.target}}`,
       `#{==:#{pane_pid},${owner.rootPid}}`,
@@ -1398,6 +1405,9 @@ export class TmuxTerminalSessionController
       await new Promise((resolve) => setTimeout(resolve, 50))
       const clearedPane = await capturePane(owner.target, 2_000)
       const text = composerText(clearedPane)
+      const clearedCursor = recoveryCursor === undefined
+        ? undefined
+        : await captureTerminalCursor(owner.target, 2_000)
       if (
         text !== undefined &&
         terminalInputReady(clearedPane) &&
@@ -1420,7 +1430,11 @@ export class TmuxTerminalSessionController
         previousEmpty = text
         previousPreservedPane = undefined
       } else if (
+        recoverable !== undefined &&
+        recoveryCursor !== undefined &&
         text === readable &&
+        losslessComposerText(clearedPane) === recoverable &&
+        sameTerminalCursor(clearedCursor, recoveryCursor) &&
         terminalInputReady(clearedPane) &&
         composerHoldsText(clearedPane) &&
         !isTerminalOverlay(clearedPane) &&
@@ -1443,6 +1457,7 @@ export class TmuxTerminalSessionController
               finalOwner,
               clearedPane,
               text,
+              recoveryCursor,
             )
             throw new TerminalDraftConflictError(
               'The terminal clear could not be confirmed, and the original terminal text is still present. The app draft was not sent.',
@@ -1742,9 +1757,11 @@ export class TmuxTerminalSessionController
           return false
         }
         const pane = await capturePane(owner.target)
+        const cursor = await captureTerminalCursor(owner.target)
         return (
           pane === recovery.pane &&
-          composerText(pane) === recovery.text &&
+          losslessComposerText(pane) === recovery.text &&
+          sameTerminalCursor(cursor, recovery.cursor) &&
           terminalInputReady(pane) &&
           composerHoldsText(pane) &&
           !isTerminalOverlay(pane) &&
@@ -1821,6 +1838,7 @@ export class TmuxTerminalSessionController
     owner: TerminalOwner,
     pane: string,
     text: string,
+    cursor: TerminalCursor,
   ): TerminalDraftRecovery {
     this.invalidateTerminalDraftRecovery(sessionId)
     const id = randomUUID()
@@ -1829,6 +1847,7 @@ export class TmuxTerminalSessionController
       owner: { ...owner },
       pane,
       text,
+      cursor,
     })
     this.terminalDraftRecoveryBySession.set(sessionId, id)
     return { id }
@@ -3880,6 +3899,48 @@ function composerText(pane: string): string | undefined {
   const lines = pane.split('\n').map((line) => line.trimEnd())
   const frame = terminalComposerFrame(lines, false)
   return frame ? composerFrameText(lines, frame) : undefined
+}
+
+function losslessComposerText(pane: string): string | undefined {
+  const lines = pane.split('\n').map((line) => line.trimEnd())
+  const frame = terminalComposerFrame(lines, false)
+  if (!frame || frame.bottom - frame.top !== 2) {
+    return undefined
+  }
+  const text = composerFrameText(lines, frame)
+  return pastedPlaceholderCount(text.replace(/\s+/gu, '')) === 0
+    ? text
+    : undefined
+}
+
+interface TerminalCursor {
+  x: number
+  y: number
+}
+
+function sameTerminalCursor(
+  left: TerminalCursor | undefined,
+  right: TerminalCursor,
+): boolean {
+  return left?.x === right.x && left.y === right.y
+}
+
+async function captureTerminalCursor(
+  target: string,
+  timeout?: number,
+): Promise<TerminalCursor> {
+  const { stdout } = await execFileAsync('tmux', [
+    'display-message',
+    '-p',
+    '-t',
+    target,
+    '#{cursor_x}:#{cursor_y}',
+  ], { timeout })
+  const match = /^(\d+):(\d+)$/.exec(stdout.trim())
+  if (!match) {
+    throw new Error('tmux returned an invalid cursor position')
+  }
+  return { x: Number(match[1]), y: Number(match[2]) }
 }
 
 export function composerHoldsText(pane: string): boolean {

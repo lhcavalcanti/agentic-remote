@@ -231,9 +231,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 144,
+  "communities": 157,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9970,
+  "edges": 9985,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -405,8 +405,8 @@
     "server/terminal-form-viewport.test.ts": "0e371aad468716325fddd7e89bc0fb8533a3edc90a4611f29540affd7f79ba03",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
-    "server/terminal-session.test.ts": "d97d646d1f775655b582d6fc30f14c77ad157b1cfe69962904a1976b2b376828",
-    "server/terminal-session.ts": "dbf7f2c6d0e630bf95a76e3cde6a4d78421903994a51961bc2fd4bf1a13a865a",
+    "server/terminal-session.test.ts": "72bf44d1c6f4da5a8d2e322f53cd59ce2f82789ffa289d8c54665891ab5a29bb",
+    "server/terminal-session.ts": "5144b45b5cc794f9ffe364e3de9df5a1ee85ded6f44975187ac721a934d2a770",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -447,8 +447,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "544845377c11cc1a36e9f72ce7f3304e6141de4f078dd7a49d23b7a3d81518a2",
-    "src/App.tsx": "79d8f30dcc600d342ab8739ad518b5e6ae313c5912990baf447761230e03e0b5",
+    "src/App.test.tsx": "557e73d2e623384a040dd76f56b7ee1ece15d0f02b28b0c4a5b8c0a0036a8a50",
+    "src/App.tsx": "5db98dbcaf4f60b6964f0437d2e9a8fbfb1726c49f2cfeadd8a047159548d484",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -522,7 +522,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 3516,
+  "nodes": 3521,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -579,43 +579,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "bbf8a8267d6eeb65fd4e93aa38fd0c36b1be6100cca4665997b8312c3353c824",
-    "communities.json": "e47bcdb3cb07f7b7f3e89cc2af66cd5d5c3ee802e3082f2837a838e669f46415",
-    "graph.html": "1bd1d17563b17608e910ac178f38b4821d4cdfc6c6bed4d060b78e5a021fa084",
-    "graph.json": "cbf0253f9807cf286f2b3b2cefcf49e160b0af9443784b6ede7e72560b16f196"
+    "GRAPH_REPORT.md": "82f59e6f655f56fec1a7d3ca0a4d64136b5ed3293cba9c5f9a7833e50b4a2be7",
+    "communities.json": "1409d3e0c4435742645534c8251167cbef7a8c1b4124c3197d235aa8c9aaaaf7",
+    "graph.html": "ccd905bda1260e27e0ee61fdb1762913e1a3988e15b2ddd5f5e1e9124a5ca7ee",
+    "graph.json": "19f757c9a0f3d8c723180356405963eee4c7436612c4e4d457cdd5bf660014f1"
   },
   "schema_version": 1,
-  "source_commit": "c3fce4f85331366337112cd0436848fa0ae8a0a2",
-  "source_fingerprint": "dca0c2cec41eb5be7369e72e0c3714f7d9ec8ca6c41e87f0eea4388a3f9950de",
+  "source_commit": "03e952a2e458c729694d06d4cfe7658f44fb0ed8",
+  "source_fingerprint": "39a48dfef8545dc0d2e285e47101196f1b5fcea4c7c9356642b347aed2f96744",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/app.ts",
-    "server/claude-agent-service.ts",
-    "server/computer-manager.ts",
-    "server/hub-routes.ts",
-    "server/multi-node.test.ts",
-    "server/node-routes.ts",
-    "server/provider-session-service.ts",
-    "server/recovery-resend-durability.test.ts",
-    "server/remote-node-client.test.ts",
-    "server/remote-node-client.ts",
-    "server/remote-node-errors.ts",
-    "server/session-service.ts",
-    "server/submission-error-http.test.ts",
     "server/terminal-session.test.ts",
     "server/terminal-session.ts",
-    "shared/contracts.ts",
-    "shared/submission-error.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/App.test.tsx",
-    "src/App.tsx",
-    "src/api.test.ts",
-    "src/api.ts"
+    "src/App.tsx"
   ]
 }

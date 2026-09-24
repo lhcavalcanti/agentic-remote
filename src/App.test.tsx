@@ -6862,6 +6862,99 @@ describe('App', () => {
     expect(submitTerminalDraft).toHaveBeenCalledOnce()
   })
 
+  it('keeps newer typing after confirmed terminal submission', async () => {
+    const conflict = Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    )
+    const recovery = Object.assign(
+      new Error('The original terminal text is still present'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        terminalDraftRecovery: {
+          id: '97978a77-d6a3-479a-9648-e32408b05333',
+        },
+        uncertainDelivery: false,
+      },
+    )
+    let rejectClear!: (reason: unknown) => void
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(conflict)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        rejectClear = reject
+      }))
+    vi.mocked(submitTerminalDraft).mockResolvedValue(session)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Owned app draft' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    }))
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    fireEvent.change(textarea, { target: { value: 'Newer typing' } })
+    await act(async () => rejectClear(recovery))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Owned app draft\n\nNewer typing'),
+    )
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Send existing terminal text',
+    }))
+
+    await waitFor(() => expect(textarea).toHaveValue('Newer typing'))
+  })
+
+  it('treats an acknowledgement without delivery metadata as uncertain', async () => {
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(Object.assign(
+        new Error('Terminal text is blocking this message'),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          uncertainDelivery: false,
+        },
+      ))
+      .mockRejectedValueOnce(Object.assign(
+        new Error('The original terminal text is still present'),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          terminalDraftRecovery: {
+            id: 'c83e70eb-461f-4465-9d93-834ba06e8b2b',
+          },
+          uncertainDelivery: false,
+        },
+      ))
+    vi.mocked(submitTerminalDraft).mockRejectedValue(
+      new Error('The response acknowledgement was malformed'),
+    )
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Retain this app draft' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Send existing terminal text',
+    }))
+
+    expect(await screen.findByText(
+      'Delivery could not be confirmed. Your message was restored; it may already have been sent or queued. Check the conversation and queue before sending again.',
+    )).toBeVisible()
+    expect(textarea).toHaveValue('Retain this app draft')
+  })
+
   it.each(['direct', 'collapsed paste'] as const)(
     'does not clear terminal text for an app-local command from a %s',
     async (source) => {

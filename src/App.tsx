@@ -903,6 +903,60 @@ function prependComposerContent(
   }
 }
 
+function removePrependedComposerContent(
+  submitted: ComposerContent,
+  existing: ComposerContent,
+): ComposerContent | undefined {
+  const submittedKeys = new Set(submitted.pastes.map((paste) => paste.key))
+  const currentSubmittedPastes = new Map(
+    existing.pastes
+      .filter((paste) => submittedKeys.has(paste.key))
+      .map((paste) => [paste.key, paste]),
+  )
+  let cursor = 0
+  let prefix = ''
+  for (const paste of [...submitted.pastes].sort(
+    (left, right) => left.start - right.start,
+  )) {
+    const oldLabel = collapsedPasteLabel(paste)
+    const currentPaste = currentSubmittedPastes.get(paste.key)
+    if (
+      !currentPaste ||
+      currentPaste.content !== paste.content ||
+      currentPaste.lineCount !== paste.lineCount ||
+      paste.start < cursor ||
+      submitted.text.slice(paste.start, paste.start + oldLabel.length) !==
+        oldLabel
+    ) {
+      return undefined
+    }
+    prefix += submitted.text.slice(cursor, paste.start)
+    if (currentPaste.start !== prefix.length) {
+      return undefined
+    }
+    prefix += collapsedPasteLabel(currentPaste)
+    cursor = paste.start + oldLabel.length
+  }
+  prefix += submitted.text.slice(cursor)
+  if (!existing.text.startsWith(prefix)) {
+    return undefined
+  }
+  let removedLength = prefix.length
+  if (existing.text.length > prefix.length) {
+    const separator = prefix.endsWith('\n') ? '\n' : '\n\n'
+    if (!existing.text.startsWith(separator, prefix.length)) {
+      return undefined
+    }
+    removedLength += separator.length
+  }
+  return {
+    text: existing.text.slice(removedLength),
+    pastes: existing.pastes
+      .filter((paste) => !submittedKeys.has(paste.key))
+      .map((paste) => ({ ...paste, start: paste.start - removedLength })),
+  }
+}
+
 function recoverPendingComposerDraft(
   draft: ComposerDraft,
   deliveryUncertain = true,
@@ -6674,7 +6728,7 @@ function App() {
   const [replacingTerminalDraft, setReplacingTerminalDraft] = useState(false)
   const [submittingTerminalDraft, setSubmittingTerminalDraft] = useState(false)
   const [terminalDraftConflicts, setTerminalDraftConflicts] = useState<
-    Record<string, { recoveryId?: string; appDraft?: string }>
+    Record<string, { recoveryId?: string; appDraft?: ComposerContent }>
   >({})
   const [cancelling, setCancelling] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
@@ -11737,7 +11791,7 @@ function App() {
     key: string,
     blocked: boolean,
     recoveryId?: string,
-    appDraft?: string,
+    appDraft?: ComposerContent,
   ) {
     setTerminalDraftConflicts((current) => {
       if (blocked) {
@@ -12002,7 +12056,7 @@ function App() {
           liveKey,
           true,
           terminalDraftRecovery?.id,
-          terminalDraftRecovery ? displayContent : undefined,
+          terminalDraftRecovery ? submission : undefined,
         )
       }
       if (
@@ -12169,8 +12223,14 @@ function App() {
       setTerminalDraftConflict(liveKey, false)
       updateComposerDrafts([liveKey], (current) => {
         const draft = current[liveKey]
-        if (!draft || draft.text !== recovery.appDraft) return current
-        return writeComposerContent(current, liveKey, { text: '', pastes: [] })
+        if (!draft || !recovery.appDraft) return current
+        const remaining = removePrependedComposerContent(
+          recovery.appDraft,
+          draft,
+        )
+        return remaining
+          ? writeComposerContent(current, liveKey, remaining)
+          : current
       })
       const updatedKey = sessionKey(updated)
       if (
@@ -12184,7 +12244,7 @@ function App() {
       if (!composerMounted.current) return
       const liveKey = followReplacementsRef.current(key)
       setTerminalDraftConflict(liveKey, true)
-      if (deliveryUncertaintyFromError(caught) === true) {
+      if (deliveryUncertaintyFromError(caught) !== false) {
         updateComposerDrafts([liveKey], (current) => {
           const draft = current[liveKey]
           return draft

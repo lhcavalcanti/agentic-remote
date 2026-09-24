@@ -571,6 +571,42 @@ describe('TmuxTerminalSessionController', () => {
   }, 15_000)
 
   it.each([
+    ['wrapped', 'first rendered row\n┃ second rendered row'],
+    ['collapsed', '[Pasted text #1]'],
+  ])('does not offer recovery for %s composer text', async (
+    _kind,
+    initialText,
+  ) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      initialText,
+      'boxed',
+      '',
+      true,
+    )
+
+    await expect(controller.send(
+      sessionId,
+      'Preserved app draft',
+      false,
+      { replaceExistingInput: true },
+    )).rejects.toMatchObject({
+      statusCode: 409,
+      terminalDraftConflict: true,
+      uncertainDelivery: false,
+      terminalDraftRecovery: undefined,
+    })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: [],
+    })
+  }, 15_000)
+
+  it.each([
     ['text', readyComposer('changed terminal text'), 'changed terminal text'],
     ['frame', `${readyComposer('preserved terminal text')}\nChanged footer`, 'Changed footer'],
     ['readiness', readyComposer('preserved terminal text', true), 'Working · esc interrupt'],
@@ -591,6 +627,41 @@ describe('TmuxTerminalSessionController', () => {
       () => controller.capture(sessionId),
       (pane) => Boolean(pane?.includes(marker)),
     )
+
+    await expect(controller.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: [],
+    })
+  }, 15_000)
+
+  it('refuses recovery when invisible terminal input moves the cursor', async () => {
+    const {
+      controller,
+      sessionId,
+      output,
+      recoveryId,
+      tmuxSession,
+    } = await preservedDraftRecovery(
+      `${readyComposer('preserved terminal text')}\u001b[1D`,
+    )
+    const cursor = async () => (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        tmuxSession,
+        '#{cursor_x}:#{cursor_y}',
+      ])
+    ).stdout.trim()
+    const originalCursor = await cursor()
+    await execFileAsync('tmux', ['send-keys', '-t', tmuxSession, 'C-]'])
+    await eventually(cursor, (current) => current !== originalCursor)
 
     await expect(controller.submitExistingInput(sessionId, recoveryId))
       .rejects.toMatchObject({

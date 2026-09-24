@@ -143,6 +143,7 @@ async function horizontalFormFixture(options: {
   repaint?: boolean
   lookalikeTabs?: boolean
   initialSelected?: number[]
+  jumpAfterTab?: { from: number; to: number }
 } = {}) {
   const output = path.join(root, 'horizontal-receipt.json')
   const executable = path.join(root, 'copilot-horizontal-form.mjs')
@@ -164,6 +165,7 @@ const question = ${JSON.stringify(question)}
 const fields = ${JSON.stringify(fields)}
 const lookalikeTabs = ${options.lookalikeTabs === true}
 const fullWidth = ${options.fullWidth || 200}
+const jumpAfterTab = ${JSON.stringify(options.jumpAfterTab)}
 let pending = '', active = ${options.activeField || 0}, closed = false
 const selected = ${JSON.stringify(options.initialSelected)} || Array(fields.length).fill(0)
 const receipt = { keys: [], actions: [], widths: [] }
@@ -244,7 +246,9 @@ process.stdin.on('data', data => {
     pending = pending.slice(1)
     if (key === '\\t') {
       receipt.keys.push('Tab')
-      active = Math.min(fields.length - 1, active + 1)
+      active = jumpAfterTab && active === jumpAfterTab.from
+        ? jumpAfterTab.to
+        : Math.min(fields.length - 1, active + 1)
       draw()
     } else if (key === '\\r') {
       receipt.keys.push('Enter')
@@ -348,6 +352,40 @@ describe('bounded terminal form viewport', () => {
     },
     30_000,
   )
+
+  it('refuses to resume after focus jumps over an unkeyed field', async () => {
+    const fields = ['Release', 'Live', 'Bypass', 'Overwrite']
+    const f = await horizontalFormFixture({
+      fields,
+      initialSelected: [0, 0, 0, 0],
+      jumpAfterTab: { from: 0, to: 2 },
+    })
+    const steps = fields.map(() => ({
+      kind: 'select' as const,
+      optionCount: 3,
+      index: 1,
+    }))
+
+    const error = await f.controller
+      .fillUserInputForm(f.sessionId, steps, f.identity)
+      .catch((caught: unknown) => caught)
+    expect(error).toMatchObject({
+      outcome: 'resumable',
+      resumeFields: [0, 1],
+    })
+
+    await expect(
+      f.controller.resumeUserInputForm(
+        f.sessionId,
+        steps,
+        f.identity,
+        (error as TerminalFormReplyError).resumeFields,
+      ),
+    ).resolves.toBe(false)
+    expect((await f.receipt()).actions).toEqual([])
+    expect((await f.receipt()).keys.filter((key) => key === 'Enter'))
+      .toHaveLength(0)
+  }, 30_000)
 
   it('classifies an interruption after final Enter as submitted uncertainty', async () => {
     const fields = ['Release', 'Live', 'Bypass', 'Overwrite']

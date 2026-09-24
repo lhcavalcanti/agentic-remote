@@ -115,12 +115,14 @@ export interface TerminalSessionController {
   ): Promise<boolean>
   /**
    * Resumes a partially keyed structured form from the field whose focus can
-   * be proven in a fresh capture.
+   * be proven in a fresh capture. When expectedFields is present, focus must
+   * still be at one of the positions reachable at the interrupted boundary.
    */
   resumeUserInputForm?(
     sessionId: string,
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
+    expectedFields?: readonly number[],
   ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(
@@ -176,6 +178,7 @@ export class TerminalFormReplyError extends Error {
     message: string,
     readonly outcome: 'not-submitted' | 'resumable' | 'uncertain' | 'submitted',
     options?: ErrorOptions,
+    readonly resumeFields?: readonly number[],
   ) {
     super(message, options)
     this.name = 'TerminalFormReplyError'
@@ -876,8 +879,9 @@ export class TmuxTerminalSessionController
     sessionId: string,
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
+    expectedFields?: readonly number[],
   ): Promise<boolean> {
-    return this.writeUserInputForm(sessionId, steps, form, true)
+    return this.writeUserInputForm(sessionId, steps, form, true, expectedFields)
   }
 
   private async writeUserInputForm(
@@ -885,6 +889,7 @@ export class TmuxTerminalSessionController
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
     resume: boolean,
+    expectedFields?: readonly number[],
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const owner = await this.boundOwner(sessionId)
@@ -914,6 +919,9 @@ export class TmuxTerminalSessionController
         }
         let start = parseTerminalFormActiveField(pane, form)
         if (start === undefined) {
+          return false
+        }
+        if (resume && expectedFields && !expectedFields.includes(start)) {
           return false
         }
         if (!resume) {
@@ -947,9 +955,10 @@ export class TmuxTerminalSessionController
         // From here onward a failure can leave deterministic field progress in
         // the live form. AgentService retains the exact answer and retries only
         // through resumeUserInputForm after checking tool completion.
-        retainForResume()
+        retainForResume([start])
         const commitKeys = terminalFormCommitKeys(steps.length)
         for (let position = start; position < steps.length; position += 1) {
+          retainForResume([position])
           const step = steps[position]
           if (step.kind === 'checklist') {
             const ticked = terminalChecklistState(await capture(), step.optionCount)
@@ -997,6 +1006,9 @@ export class TmuxTerminalSessionController
             }
           }
           // Tab changes fields; Enter accepts the entire form, exactly once.
+          if (commitKeys[position] === 'Tab') {
+            retainForResume([position, position + 1])
+          }
           await press(commitKeys[position], position)
           await new Promise((resolve) => setTimeout(resolve, 90))
           if (commitKeys[position] === 'Tab') {
@@ -1012,6 +1024,7 @@ export class TmuxTerminalSessionController
             if (!arrived) {
               return false
             }
+            retainForResume([position + 1])
           }
         }
         return submitTerminalForm(capture, (ms) =>
@@ -1113,7 +1126,7 @@ export class TmuxTerminalSessionController
       capture: () => Promise<string>
       press: (key: string, field?: number) => Promise<void>
       paste: (value: string, field: number) => Promise<void>
-      retainForResume: () => void
+      retainForResume: (fields: readonly number[]) => void
     }) => Promise<boolean>,
   ): Promise<boolean> {
     let original: FormViewport | undefined
@@ -1121,6 +1134,7 @@ export class TmuxTerminalSessionController
     let deadline = Infinity
     let attempted = false
     let resumableStarted = false
+    let resumeFields: readonly number[] | undefined
     let result = false
     let failure: unknown
     const processStart = async () => {
@@ -1267,8 +1281,9 @@ export class TmuxTerminalSessionController
       if (terminalFormShowsFields(pane, form)) {
         result = await operation({
           capture,
-          retainForResume: () => {
+          retainForResume: (fields) => {
             resumableStarted = true
+            resumeFields = [...fields]
           },
           press: async (key, field) => {
             await validateInput(field)
@@ -1319,6 +1334,7 @@ export class TmuxTerminalSessionController
         }`,
         outcome,
         failure ? { cause: failure } : undefined,
+        resumeFields,
       )
     }
     return result

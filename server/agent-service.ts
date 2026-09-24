@@ -6557,6 +6557,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           question: receipt.request.question,
           fields: receipt.request.form!.fields.map((field) => field.title),
         },
+        receipt.error.resumeFields,
       ) ?? false
     } catch (error) {
       resumed = await this.handleTerminalFormReplyError(

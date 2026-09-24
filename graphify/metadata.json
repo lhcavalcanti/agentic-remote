@@ -309,7 +309,7 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "f3aaa437c1ae9161b0502a6049ebecb4f287892cf4d79101c834c1b098e1d8f1",
     "server/agent-service.test.ts": "f95b76a19873bc6b287629d6e1fd8770070f1077997ff4f6cc3cee3debb3e632",
-    "server/agent-service.ts": "703e7ebb25b74ed4ead9b4a774c8027c008f519d5c0cc18499bb98ef2414c50f",
+    "server/agent-service.ts": "4d92ba7d5796bbffc3b3e9e11f70127689353605130ab5de701d59872066f9d5",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -386,7 +386,7 @@
     "server/session-order-routes.test.ts": "f236e04e93136fcf8723a9f8f495db954191c75d5207e4d9e7b6c7849132c4f5",
     "server/session-order-store.test.ts": "88555a7da042e82a2b84906bbf9d2a09c660086c3ef0a71f03d40195114606ae",
     "server/session-order-store.ts": "911dd89bde3e1df844d99f06aa46fb19f3a2d5dbb895102c2053468bfb918233",
-    "server/session-reply-durability.test.ts": "fd794b4317786cfa0b335779c7a1b357c717e7f4b88acaa6cff6093e74d84de8",
+    "server/session-reply-durability.test.ts": "f7afc4bd78eb646f32d6b139d64360af5f4083d1900cb8050b1b358912572346",
     "server/session-resource-cancellation.test.ts": "cda2bdb53d746f5062c123d18289a61b745fb1b9da5ee642c3142d01310b06a8",
     "server/session-resource-clear.test.ts": "ac21d9f42d9e286f93f615050db510f1f0fea26a67d9d4b03e31b1450c109bd4",
     "server/session-resource-providers.test.ts": "b0161d4199270b7ceac13052b7ddf090a44dcb89f2d07a3c5eaba39f11739222",
@@ -402,11 +402,11 @@
     "server/session-store.ts": "eebf62974fc8407a556536e517e21733098f920032d7e261e688c9e9fc355055",
     "server/submission-error-http.test.ts": "4e575bc36df1c861a90b30fced64147af534723abcc00f1985f36e1104e27162",
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
-    "server/terminal-form-viewport.test.ts": "06ced122485950678b22f5e25d1111d412a480f94bcd510eb833b1eea517bb42",
+    "server/terminal-form-viewport.test.ts": "74df0bb67ab2742396bbd73fbd77a21e5cba2d1229f644743fda775e55b74c28",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
     "server/terminal-session.test.ts": "5e6fa5aa71c86e801a60341902bfb380b14d2b47dccf93051530460cc09bcf0d",
-    "server/terminal-session.ts": "56e84d240f5f4cc717b44f803cfc98b4a47c9c05f74b74b71797b2397271bb26",
+    "server/terminal-session.ts": "09ea7690daeb6bb223dcb1c1b1083737fa826705403a96713167da8af3ed6119",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -579,25 +579,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "dff8afe394ed13490486899fffcf6badf7ead73488ace18da98cd633feef397e",
+    "GRAPH_REPORT.md": "d602e6b7ab00b4097c2f7c7437fb2ff6d08655c1421561e396c3702046ed52c7",
     "communities.json": "4feecaeb67d7e0df9dfe96e4625e35101d5e194c6f78fd1f13e8c46060ee29e0",
-    "graph.html": "e92af8b897615b4069c78d4a04c05e56296cab2b199483247f3ab1e72c5b1eb1",
-    "graph.json": "e0b5d948b5ba25b5d82e8e78f23dd0cf483e67e714f06a5716499d90225687c1"
+    "graph.html": "175fe7f44978e29cf4a954de650e215c561e56109c7dd33ec7db825611160d32",
+    "graph.json": "13e0124ac01e44840e5234b7671742f89546b8290b1055cd7fc70ef99d2a8577"
   },
   "schema_version": 1,
-  "source_commit": "c3fce4f85331366337112cd0436848fa0ae8a0a2",
-  "source_fingerprint": "4875c849fbb5e2c070b1c62e22e93ce1fcdf385e796d1fc3fcc4ac154036dbfa",
+  "source_commit": "fab993a14e0406de5cb467c702791aeb00893e2a",
+  "source_fingerprint": "6ee39d68d0cbf9eb67f136ba08e2b4096e7ab061c5b8cbd0f19ff99a97f5cf38",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
-    "server/agent-service.test.ts",
     "server/agent-service.ts",
     "server/session-reply-durability.test.ts",
     "server/terminal-form-viewport.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/terminal-session.ts"
   ]
 }

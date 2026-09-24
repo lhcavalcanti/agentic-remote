@@ -401,6 +401,8 @@ describe('Reply durability regressions', () => {
     const f = await terminalFormFixture()
     f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
       'Interrupted after a field commit', 'resumable',
+      undefined,
+      [0, 1],
     ))
 
     await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
@@ -415,6 +417,7 @@ describe('Reply durability regressions', () => {
       sessionId,
       [{ kind: 'select', optionCount: 3, index: 0 }],
       { question: 'Confirm the full synthetic question?', fields: ['Confirm'] },
+      [0, 1],
     )
     expect(f.dismiss).not.toHaveBeenCalled()
     expect(f.terminal.send).not.toHaveBeenCalled()

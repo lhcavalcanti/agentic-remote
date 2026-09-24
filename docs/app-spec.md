@@ -413,6 +413,14 @@ Questions and permissions are the highest-priority UI state.
   send** beside the restored draft. It MUST require confirmation, revalidate
   the same idle tmux owner and readable composer, clear only by explicit user
   request, and refuse without pasting if the pane changes or gains new text.
+- If that clear cannot be confirmed and the same readable composer remains
+  stable, the app MAY offer **Send existing terminal text**. It MUST require
+  confirmation and a single-use recovery identifier bound to the session,
+  owner, and exact stable composer snapshot. The owner, frame, text, and idle
+  readiness MUST be revalidated before sending one Enter and no other
+  keystrokes. Any mismatch or restart MUST refuse without input and retain the
+  app draft. Confirmed submission MUST clear that app copy; an uncertain Enter
+  acknowledgement MUST retain it with duplicate-send guidance and no retry.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject

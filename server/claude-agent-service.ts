@@ -986,6 +986,13 @@ export class ClaudeAgentService
     }
   }
 
+  async submitTerminalDraft(): Promise<SessionDetail> {
+    throw Object.assign(
+      new Error('Existing terminal text can only be submitted for tmux-backed Copilot sessions.'),
+      { statusCode: 409, uncertainDelivery: false },
+    )
+  }
+
   private async admitSend(
     sessionId: string,
     content: string,

@@ -1694,6 +1694,10 @@ describe('Review 5125727881 runtime boundaries', () => {
       service['sendAdmittedMessage'] = async () => snapshot
       return service.sendMessage(sessionId, 'Independent text')
     },
+    submitTerminalDraft: async ({ service }, snapshot) => {
+      service.submitTerminalDraft = async () => service['publicSession'](snapshot)
+      return service.submitTerminalDraft(sessionId, { recoveryId: randomUUID() })
+    },
     executeCommand: async ({ service }, snapshot) => {
       service['executeAdmittedCommand'] = async () => snapshot
       return service.executeCommand(sessionId, '/usage independent')

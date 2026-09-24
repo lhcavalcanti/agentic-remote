@@ -21,6 +21,7 @@ import type {
   SessionSkillsSnapshot,
   SessionMcpServersSnapshot,
   SlashCommand,
+  SubmitTerminalDraftInput,
 } from '../shared/contracts.js'
 
 export interface SessionService {
@@ -89,6 +90,10 @@ export interface SessionService {
     enqueue?: boolean,
     acknowledgesFailure?: string,
     replaceTerminalDraft?: boolean,
+  ): Promise<SessionDetail>
+  submitTerminalDraft?(
+    sessionId: string,
+    input: SubmitTerminalDraftInput,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
   /** Resource readers must settle and release their own work on cancellation. */

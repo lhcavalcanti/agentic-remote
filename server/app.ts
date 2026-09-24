@@ -11,6 +11,7 @@ import {
   deliveryUncertaintyFromError,
   SubmissionError,
   terminalDraftConflictFromError,
+  terminalDraftRecoveryFromError,
 } from '../shared/submission-error.js'
 import { AgentService } from './agent-service.js'
 import { ClaudeAgentService } from './claude-agent-service.js'
@@ -133,6 +134,7 @@ export async function buildApp(
     const submission = error instanceof SubmissionError ? error.submission : undefined
     const explicitUncertainty = deliveryUncertaintyFromError(error)
     const terminalDraftConflict = terminalDraftConflictFromError(error)
+    const terminalDraftRecovery = terminalDraftRecoveryFromError(error)
     if (error instanceof TranscriptionError || error instanceof FileUploadError) {
       return reply.code(error.statusCode).send({ error: error.message })
     }
@@ -149,6 +151,7 @@ export async function buildApp(
           ? {}
           : { uncertainDelivery: explicitUncertainty }),
         ...(terminalDraftConflict ? { terminalDraftConflict: true } : {}),
+        ...(terminalDraftRecovery ? { terminalDraftRecovery } : {}),
       })
     }
     const message = error instanceof Error ? error.message : 'Unexpected server error'
@@ -165,6 +168,7 @@ export async function buildApp(
         ? {}
         : { uncertainDelivery: explicitUncertainty }),
       ...(terminalDraftConflict ? { terminalDraftConflict: true } : {}),
+      ...(terminalDraftRecovery ? { terminalDraftRecovery } : {}),
     })
   })
 

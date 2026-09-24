@@ -68,6 +68,10 @@ const sendMessageSchema = z.object({
   replaceTerminalDraft: z.boolean().optional(),
 })
 
+const submitTerminalDraftSchema = z.object({
+  recoveryId: z.string().uuid(),
+})
+
 const permissionReplySchema = z.object({
   optionId: z.string().trim().min(1).max(500),
 })
@@ -959,6 +963,20 @@ export async function registerHubRoutes(
       const input = sendMessageSchema.parse(request.body)
       return reply.code(202).send({
         session: await manager.sendMessage(
+          request.params.computerId,
+          request.params.sessionId,
+          input,
+        ),
+      })
+    },
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/terminal-draft',
+    async (request, reply) => {
+      const input = submitTerminalDraftSchema.parse(request.body)
+      return reply.code(202).send({
+        session: await manager.submitTerminalDraft(
           request.params.computerId,
           request.params.sessionId,
           input,

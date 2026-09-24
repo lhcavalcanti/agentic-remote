@@ -75,6 +75,7 @@ import {
   suspendSession,
   replyUserInput,
   sendMessage,
+  submitTerminalDraft,
   sendTestPushNotification,
   searchWorkspace,
   setSessionNotificationsMuted,
@@ -181,6 +182,7 @@ vi.mock('./api', async (importOriginal) => ({
   suspendSession: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
+  submitTerminalDraft: vi.fn(),
   executeCommand: vi.fn(),
   getPushSettings: vi.fn(),
   cancelSession: vi.fn(),
@@ -6735,6 +6737,129 @@ describe('App', () => {
     expect(screen.getByRole('button', {
       name: 'Clear terminal text and send',
     })).toBeEnabled()
+  })
+
+  it('confirms and submits unchanged terminal text without sending the app draft', async () => {
+    const conflict = Object.assign(
+      new Error('Terminal text is blocking this message'),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      },
+    )
+    const recovery = Object.assign(
+      new Error(
+        'The terminal clear could not be confirmed, and the original terminal text is still present.',
+      ),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        terminalDraftRecovery: {
+          id: '841fd505-2200-4c4d-bfe5-f2259ef347a3',
+        },
+        uncertainDelivery: false,
+      },
+    )
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(conflict)
+      .mockRejectedValueOnce(recovery)
+    vi.mocked(submitTerminalDraft).mockResolvedValue(session)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, {
+      target: { value: 'Keep this app draft until terminal submission' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    }))
+    const submitExisting = await screen.findByRole('button', {
+      name: 'Send existing terminal text',
+    })
+    expect(textarea).toHaveValue(
+      'Keep this app draft until terminal submission',
+    )
+    fireEvent.click(submitExisting)
+
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining(
+      'Only Enter will be sent. The app draft will not be pasted.',
+    ))
+    await waitFor(() =>
+      expect(submitTerminalDraft).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        { recoveryId: '841fd505-2200-4c4d-bfe5-f2259ef347a3' },
+      ),
+    )
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains the app draft with duplicate guidance after uncertain Enter', async () => {
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(Object.assign(
+        new Error('Terminal text is blocking this message'),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          uncertainDelivery: false,
+        },
+      ))
+      .mockRejectedValueOnce(Object.assign(
+        new Error('The original terminal text is still present'),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          terminalDraftRecovery: {
+            id: '49817941-21ad-4779-a298-c831eec03853',
+          },
+          uncertainDelivery: false,
+        },
+      ))
+    const guidance =
+      'Enter may have submitted the terminal text, but its acknowledgement was lost. The app draft was kept; check the conversation before sending it to avoid a duplicate.'
+    vi.mocked(submitTerminalDraft).mockRejectedValue(Object.assign(
+      new Error(guidance),
+      {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: true,
+      },
+    ))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, {
+      target: { value: 'Retain this app draft' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Clear terminal text and send',
+    }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Send existing terminal text',
+    }))
+
+    expect(
+      (await screen.findAllByText(guidance))
+        .some((message) => message.closest('.error-banner')),
+    ).toBe(true)
+    expect(textarea).toHaveValue('Retain this app draft')
+    expect(screen.queryByRole('button', {
+      name: 'Send existing terminal text',
+    })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', {
+      name: 'Clear terminal text and send',
+    })).toBeDisabled()
+    expect(screen.getByText(
+      'Delivery could not be confirmed. Your message was restored; it may already have been sent or queued. Check the conversation and queue before sending again.',
+    )).toBeVisible()
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+    expect(submitTerminalDraft).toHaveBeenCalledOnce()
   })
 
   it.each(['direct', 'collapsed paste'] as const)(

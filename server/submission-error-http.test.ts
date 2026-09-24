@@ -95,4 +95,41 @@ describe('submission error HTTP contract', () => {
       await runtime.app.close()
     }
   })
+
+  it('serializes a bounded terminal draft recovery identifier', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'submission-http-'))
+    directories.push(directory)
+    const runtime = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      role: 'node',
+    })
+    runtime.app.get('/synthetic-terminal-draft-recovery', async () => {
+      throw Object.assign(new Error('The original terminal text remains'), {
+        statusCode: 409,
+        terminalDraftConflict: true,
+        terminalDraftRecovery: {
+          id: 'bb7bd745-0318-48a8-bfb3-4c622b08f2b3',
+        },
+        uncertainDelivery: false,
+      })
+    })
+
+    try {
+      const response = await runtime.app.inject(
+        '/synthetic-terminal-draft-recovery',
+      )
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toEqual({
+        error: 'The original terminal text remains',
+        terminalDraftConflict: true,
+        terminalDraftRecovery: {
+          id: 'bb7bd745-0318-48a8-bfb3-4c622b08f2b3',
+        },
+        uncertainDelivery: false,
+      })
+    } finally {
+      await runtime.app.close()
+    }
+  })
 })

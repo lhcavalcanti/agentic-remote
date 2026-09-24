@@ -26,6 +26,7 @@ import type {
   RuntimeOptions,
   SessionRecoveryReason,
   SendMessageInput,
+  SubmitTerminalDraftInput,
   SessionKnowledgeBinding,
   SessionFileUpload,
   SlashCommand,
@@ -37,6 +38,7 @@ import type {
 } from '../shared/contracts'
 import {
   httpDeliveryUncertain,
+  parseTerminalDraftRecovery,
   parseSubmissionReceipt,
   SubmissionError,
 } from '../shared/submission-error'
@@ -54,6 +56,7 @@ async function responseError(
         statusCode?: number
         submission?: unknown
         terminalDraftConflict?: unknown
+        terminalDraftRecovery?: unknown
         uncertainDelivery?: unknown
       }
     | null
@@ -68,6 +71,9 @@ async function responseError(
   const submission = parseSubmissionReceipt(payload?.submission)
   const options = {
     terminalDraftConflict: payload?.terminalDraftConflict === true,
+    terminalDraftRecovery: parseTerminalDraftRecovery(
+      payload?.terminalDraftRecovery,
+    ),
     uncertainDelivery: httpDeliveryUncertain(
       response.status,
       payload?.uncertainDelivery,
@@ -863,6 +869,21 @@ export async function sendMessage(
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     `${sessionPath(computerId, sessionId)}/messages`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  )
+  return response.session
+}
+
+export async function submitTerminalDraft(
+  computerId: string,
+  sessionId: string,
+  input: SubmitTerminalDraftInput,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/terminal-draft`,
     {
       method: 'POST',
       body: JSON.stringify(input),

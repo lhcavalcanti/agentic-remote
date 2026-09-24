@@ -19,6 +19,7 @@ import type {
   RuntimeOptions,
   SessionRecoveryReason,
   SendMessageInput,
+  SubmitTerminalDraftInput,
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
@@ -32,7 +33,10 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
-import { parseSubmissionReceipt } from '../shared/submission-error.js'
+import {
+  parseSubmissionReceipt,
+  parseTerminalDraftRecovery,
+} from '../shared/submission-error.js'
 import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import { RemoteNodeRedirectError, RemoteNodeRequestError } from './remote-node-errors.js'
 import {
@@ -516,6 +520,20 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.session
   }
 
+  async submitTerminalDraft(
+    sessionId: string,
+    input: SubmitTerminalDraftInput,
+  ): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/terminal-draft`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    )
+    return response.session
+  }
+
   async executeCommand(
     sessionId: string,
     input: ExecuteCommandInput,
@@ -696,6 +714,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
             error?: string
             submission?: unknown
             terminalDraftConflict?: boolean
+            terminalDraftRecovery?: unknown
             uncertainDelivery?: boolean
           }
         | null
@@ -705,6 +724,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         parseSubmissionReceipt(payload?.submission),
         payload?.uncertainDelivery,
         payload?.terminalDraftConflict,
+        parseTerminalDraftRecovery(payload?.terminalDraftRecovery),
       )
     }
     if (markOnline) {

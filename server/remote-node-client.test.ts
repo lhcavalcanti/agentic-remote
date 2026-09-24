@@ -130,6 +130,9 @@ describe('paired-node redirect isolation', () => {
       () => remote.restartSession('fixture'),
       () => remote.moveToTerminal('fixture'),
       () => remote.sendMessage('fixture', { content: 'Startup admission' }),
+      () => remote.submitTerminalDraft('fixture', {
+        recoveryId: 'ad25520d-8066-43e4-988b-d55e421992d2',
+      }),
       () => remote.executeCommand('fixture', { command: '/usage' }),
     ]) {
       await operation()
@@ -173,6 +176,9 @@ describe('paired-node redirect isolation', () => {
         response.end(JSON.stringify({
           error: 'Synthetic node refusal',
           terminalDraftConflict: true,
+          terminalDraftRecovery: {
+            id: '810f44b9-d79a-48a3-9744-bf42355676cb',
+          },
           uncertainDelivery,
         }))
       })
@@ -182,6 +188,9 @@ describe('paired-node redirect isolation', () => {
       .rejects.toMatchObject({
         statusCode: 409,
         terminalDraftConflict: true,
+        terminalDraftRecovery: {
+          id: '810f44b9-d79a-48a3-9744-bf42355676cb',
+        },
         uncertainDelivery,
         message: 'Synthetic node refusal',
       })

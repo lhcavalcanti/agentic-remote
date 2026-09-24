@@ -46,6 +46,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   lastCreateReasoningEffort?: RuntimeReasoningEffort
   lastCreateContextTier?: 'default' | 'long_context'
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
+  lastTerminalDraftRecovery?: { sessionId: string; recoveryId: string }
   readonly backgroundTaskSnapshots = new Map<string, BackgroundTaskSnapshot>()
 
   constructor(...sessions: SessionDetail[]) {
@@ -440,6 +441,19 @@ class FakeSessionService extends EventEmitter implements SessionService {
 
     session.updatedAt = new Date().toISOString()
     this.emitEvent({ type: 'session.upserted', session: structuredClone(session) })
+    return structuredClone(session)
+  }
+
+  async submitTerminalDraft(
+    sessionId: string,
+    input: { recoveryId: string },
+  ): Promise<SessionDetail> {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error('Session not found')
+    this.lastTerminalDraftRecovery = {
+      sessionId,
+      recoveryId: input.recoveryId,
+    }
     return structuredClone(session)
   }
 
@@ -1416,6 +1430,18 @@ describe('multi-node hub', () => {
       await expect(upserted).resolves.toMatchObject({
         type: 'session.upserted',
         session: { computerName: 'worker-node' },
+      })
+      const terminalDraft = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/terminal-draft`,
+        payload: {
+          recoveryId: 'c179d28f-6150-49f1-b37a-8e66c617100b',
+        },
+      })
+      expect(terminalDraft.statusCode, terminalDraft.body).toBe(202)
+      expect(remoteService.lastTerminalDraftRecovery).toEqual({
+        sessionId: 'remote-session',
+        recoveryId: 'c179d28f-6150-49f1-b37a-8e66c617100b',
       })
 
       const removed = waitForEvent(

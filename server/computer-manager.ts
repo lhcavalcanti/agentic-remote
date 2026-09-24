@@ -21,6 +21,7 @@ import type {
   ProviderRuntimeOptions,
   RenameSessionInput,
   SendMessageInput,
+  SubmitTerminalDraftInput,
   UserInputReplyInput,
   RuntimeOptions,
   SessionFileUpload,
@@ -874,6 +875,30 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.replaceTerminalDraft,
           )
         : await this.requireClient(computerId).sendMessage(sessionId, input)
+    return managedSession(session, computer)
+  }
+
+  async submitTerminalDraft(
+    computerId: string,
+    sessionId: string,
+    input: SubmitTerminalDraftInput,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    let session: SessionDetail
+    if (computerId === this.identity.info.id) {
+      if (!this.localService.submitTerminalDraft) {
+        throw Object.assign(
+          new Error('Existing terminal text cannot be submitted by this runtime.'),
+          { statusCode: 409, uncertainDelivery: false },
+        )
+      }
+      session = await this.localService.submitTerminalDraft(sessionId, input)
+    } else {
+      session = await this.requireClient(computerId).submitTerminalDraft(
+        sessionId,
+        input,
+      )
+    }
     return managedSession(session, computer)
   }
 

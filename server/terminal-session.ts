@@ -12,6 +12,7 @@ import type {
   PendingUserInput,
   SessionRuntimeInfo,
 } from '../shared/contracts.js'
+import type { TerminalDraftRecovery } from '../shared/submission-error.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -121,6 +122,11 @@ export interface TerminalSessionController {
     options?: TerminalSendOptions,
   ): Promise<boolean>
   sendWhenIdle?(sessionId: string, content: string): Promise<boolean>
+  submitExistingInput?(
+    sessionId: string,
+    recoveryId: string,
+    confirm?: () => void | Promise<void>,
+  ): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
   canHandleStartupPrompt?(
@@ -179,7 +185,10 @@ export class TerminalDraftConflictError extends Error {
   readonly uncertainDelivery = false
   readonly terminalDraftConflict = true
 
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly terminalDraftRecovery?: TerminalDraftRecovery,
+  ) {
     super(message)
     this.name = 'TerminalDraftConflictError'
   }
@@ -212,6 +221,16 @@ export class TmuxTerminalSessionController
     string,
     { pid: number; target: string }
   >()
+  private readonly terminalDraftRecoveries = new Map<
+    string,
+    {
+      sessionId: string
+      owner: TerminalOwner
+      pane: string
+      text: string
+    }
+  >()
+  private readonly terminalDraftRecoveryBySession = new Map<string, string>()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
     expiresAt: number
@@ -285,6 +304,7 @@ export class TmuxTerminalSessionController
     input: ConfigureRuntimeInput,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      this.invalidateTerminalDraftRecovery(sessionId)
       const resolvedCwd = await realpath(cwd)
       if (!(await stat(resolvedCwd)).isDirectory()) {
         throw new Error('Terminal working directory is not a folder')
@@ -357,6 +377,8 @@ export class TmuxTerminalSessionController
     commitReplacement: () => Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      this.invalidateTerminalDraftRecovery(sessionId)
+      this.invalidateTerminalDraftRecovery(replacementId)
       const resolvedCwd = await realpath(cwd)
       if (!(await stat(resolvedCwd)).isDirectory()) {
         throw new Error('Terminal working directory is not a folder')
@@ -433,6 +455,7 @@ export class TmuxTerminalSessionController
     confirm?: () => void | Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      this.invalidateTerminalDraftRecovery(sessionId)
       const owner = await this.boundOwner(sessionId)
       if (!owner) {
         this.inputReadySessions.delete(sessionId)
@@ -533,6 +556,7 @@ export class TmuxTerminalSessionController
 
   async restart(sessionId: string, cwd: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      this.invalidateTerminalDraftRecovery(sessionId)
       const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
@@ -1369,6 +1393,7 @@ export class TmuxTerminalSessionController
       )
     }
     let previousEmpty: string | undefined
+    let previousPreservedPane: string | undefined
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50))
       const clearedPane = await capturePane(owner.target, 2_000)
@@ -1393,8 +1418,45 @@ export class TmuxTerminalSessionController
           )
         }
         previousEmpty = text
+        previousPreservedPane = undefined
+      } else if (
+        text === readable &&
+        terminalInputReady(clearedPane) &&
+        composerHoldsText(clearedPane) &&
+        !isTerminalOverlay(clearedPane) &&
+        !parseTerminalPermission(clearedPane) &&
+        !parseTerminalUserInput(clearedPane) &&
+        !parseTerminalFormPrompt(clearedPane) &&
+        !isTerminalAgentWorking(clearedPane)
+      ) {
+        previousEmpty = undefined
+        if (clearedPane === previousPreservedPane) {
+          const finalOwner = await this.owner(sessionId, owner.target, true)
+          if (
+            finalOwner &&
+            finalOwner.pid === owner.pid &&
+            finalOwner.rootPid === owner.rootPid &&
+            finalOwner.target === owner.target
+          ) {
+            const recovery = this.rememberTerminalDraftRecovery(
+              sessionId,
+              finalOwner,
+              clearedPane,
+              text,
+            )
+            throw new TerminalDraftConflictError(
+              'The terminal clear could not be confirmed, and the original terminal text is still present. The app draft was not sent.',
+              recovery,
+            )
+          }
+          throw new TerminalDraftConflictError(
+            'The terminal owner changed after the clear was attempted. The app draft was not sent.',
+          )
+        }
+        previousPreservedPane = clearedPane
       } else {
         previousEmpty = undefined
+        previousPreservedPane = undefined
       }
     }
     throw new TerminalDraftConflictError(
@@ -1410,6 +1472,7 @@ export class TmuxTerminalSessionController
     options: TerminalSendOptions = {},
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      this.invalidateTerminalDraftRecovery(sessionId)
       const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
       const expectedTarget = readyOwner?.target ?? automaticOwner?.target
@@ -1643,6 +1706,140 @@ export class TmuxTerminalSessionController
         ], { timeout: 2_000 }).catch(() => undefined)
       }
     })
+  }
+
+  async submitExistingInput(
+    sessionId: string,
+    recoveryId: string,
+    confirm?: () => void | Promise<void>,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const recovery = this.terminalDraftRecoveries.get(recoveryId)
+      if (recovery) {
+        this.terminalDraftRecoveries.delete(recoveryId)
+        if (
+          this.terminalDraftRecoveryBySession.get(recovery.sessionId) ===
+          recoveryId
+        ) {
+          this.terminalDraftRecoveryBySession.delete(recovery.sessionId)
+        }
+      } else {
+        this.invalidateTerminalDraftRecovery(sessionId)
+      }
+      if (!recovery || recovery.sessionId !== sessionId) {
+        throw new TerminalDraftConflictError(
+          'That terminal-text recovery is no longer available. No key was sent.',
+        )
+      }
+      const matchesRecovery = async (): Promise<boolean> => {
+        const owner = await this.owner(sessionId, recovery.owner.target, true)
+        if (
+          !owner ||
+          owner.pid !== recovery.owner.pid ||
+          owner.rootPid !== recovery.owner.rootPid ||
+          owner.target !== recovery.owner.target
+        ) {
+          return false
+        }
+        const pane = await capturePane(owner.target)
+        return (
+          pane === recovery.pane &&
+          composerText(pane) === recovery.text &&
+          terminalInputReady(pane) &&
+          composerHoldsText(pane) &&
+          !isTerminalOverlay(pane) &&
+          !parseTerminalPermission(pane) &&
+          !parseTerminalUserInput(pane) &&
+          !parseTerminalFormPrompt(pane) &&
+          !isTerminalAgentWorking(pane)
+        )
+      }
+      const recoveryStillMatches = async (): Promise<boolean> => {
+        try {
+          return await matchesRecovery()
+        } catch (error) {
+          throw new TerminalDraftConflictError(
+            `The terminal could not be revalidated. No key was sent, and the app draft was kept: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          )
+        }
+      }
+      if (
+        !(await recoveryStillMatches()) ||
+        !(await recoveryStillMatches())
+      ) {
+        throw new TerminalDraftConflictError(
+          'The terminal owner, frame, text, or readiness changed. No key was sent, and the app draft was kept.',
+        )
+      }
+      await confirm?.()
+      if (!(await recoveryStillMatches())) {
+        throw new TerminalDraftConflictError(
+          'The terminal owner, frame, text, or readiness changed. No key was sent, and the app draft was kept.',
+        )
+      }
+      const conditions = [
+        `#{==:#{pane_id},${recovery.owner.target}}`,
+        `#{==:#{pane_pid},${recovery.owner.rootPid}}`,
+      ]
+      let result
+      try {
+        result = await execFileAsync('tmux', [
+          'if-shell',
+          '-F',
+          '-t',
+          recovery.owner.target,
+          conditions.reduce((left, right) => `#{&&:${left},${right}}`),
+          `send-keys -t ${recovery.owner.target} Enter ; display-message -p submitted`,
+          'display-message -p changed',
+        ], { timeout: 2_000 })
+      } catch (error) {
+        throw Object.assign(
+          new Error(
+            'Enter may have submitted the terminal text, but its acknowledgement was lost. The app draft was kept; check the conversation before sending it to avoid a duplicate.',
+            { cause: error },
+          ),
+          {
+            statusCode: 409,
+            uncertainDelivery: true,
+            terminalDraftConflict: true,
+          },
+        )
+      }
+      if (result.stdout.trim() !== 'submitted') {
+        throw new TerminalDraftConflictError(
+          'The terminal owner changed before submission. No key was sent, and the app draft was kept.',
+        )
+      }
+      return true
+    })
+  }
+
+  private rememberTerminalDraftRecovery(
+    sessionId: string,
+    owner: TerminalOwner,
+    pane: string,
+    text: string,
+  ): TerminalDraftRecovery {
+    this.invalidateTerminalDraftRecovery(sessionId)
+    const id = randomUUID()
+    this.terminalDraftRecoveries.set(id, {
+      sessionId,
+      owner: { ...owner },
+      pane,
+      text,
+    })
+    this.terminalDraftRecoveryBySession.set(sessionId, id)
+    return { id }
+  }
+
+  private invalidateTerminalDraftRecovery(sessionId: string): void {
+    const id = this.terminalDraftRecoveryBySession.get(sessionId)
+    if (id) {
+      this.terminalDraftRecoveries.delete(id)
+      this.terminalDraftRecoveryBySession.delete(sessionId)
+    }
   }
 
   private async finishSend(

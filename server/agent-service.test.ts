@@ -5514,6 +5514,14 @@ describe('AgentService deletion', () => {
     const terminal = {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
+      submitExistingInput: vi.fn(async (
+        _sessionId: string,
+        _recoveryId: string,
+        confirm?: () => void | Promise<void>,
+      ) => {
+        await confirm?.()
+        return true
+      }),
       cancel: vi.fn(async () => true),
     }
     const service = new AgentService(
@@ -5606,6 +5614,22 @@ describe('AgentService deletion', () => {
       service.store.get(client.session.sessionId)?.queuedCount ?? 0,
     ).toBe(0)
     expect(client.session.sentPrompts).toEqual([])
+    await service.store.update(client.session.sessionId, (stored) => {
+      stored.status = 'idle'
+      stored.activity = undefined
+    })
+    service['waitForTerminalEventLog'] = async () => true
+    await expect(service.submitTerminalDraft(client.session.sessionId, {
+      recoveryId: '854b7ff7-a093-4d6a-ae55-1ec31ea7fae2',
+    })).resolves.toMatchObject({
+      activity: 'Sent to terminal',
+    })
+    expect(terminal.submitExistingInput).toHaveBeenCalledOnce()
+    expect(terminal.submitExistingInput).toHaveBeenCalledWith(
+      client.session.sessionId,
+      '854b7ff7-a093-4d6a-ae55-1ec31ea7fae2',
+      expect.any(Function),
+    )
     await service.stop()
   })
 

@@ -126,6 +126,7 @@ async function deliveryFixture(
   initialText = '',
   composerStyle: 'boxed' | 'flat' = 'boxed',
   transcript = '',
+  ignoreClear = false,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -142,6 +143,7 @@ const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll(
 const makeComposer = ${(composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
 const composer = (text = '', working = false) => ${JSON.stringify(transcript ? `${transcript}\n` : '')} + makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const repaint = ${JSON.stringify(repaintPane)}
+const ignoreClear = ${JSON.stringify(ignoreClear)}
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
 process.stdin.on('data', (data) => {
@@ -153,9 +155,9 @@ process.stdin.on('data', (data) => {
   if (input.includes('\\x15')) {
     received.clears = (received.clears || 0) + input.split('\\x15').length - 1
     input = input.replaceAll('\\x15', '')
-    pasted = undefined
+    if (!ignoreClear) pasted = undefined
     writeReceipt(received)
-    draw(composer('', ${working}))
+    draw(composer(pasted, ${working}))
   }
   const end = input.indexOf('\\x1b[201~')
   if (pasted === undefined && end >= 0) {
@@ -506,6 +508,218 @@ describe('TmuxTerminalSessionController', () => {
       pastes: ['Preserved app draft'],
       submits: ['enter'],
     })
+  }, 15_000)
+
+  async function preservedDraftRecovery(
+    repaintPane?: string,
+  ) {
+    const fixture = await deliveryFixture(
+      false,
+      undefined,
+      repaintPane,
+      '',
+      'preserved terminal text',
+      'boxed',
+      '',
+      true,
+    )
+    const error = await fixture.controller.send(
+      fixture.sessionId,
+      'Preserved app draft',
+      false,
+      { replaceExistingInput: true },
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+    expect(error).toMatchObject({
+      statusCode: 409,
+      terminalDraftConflict: true,
+      uncertainDelivery: false,
+      terminalDraftRecovery: { id: expect.any(String) },
+    })
+    return {
+      ...fixture,
+      recoveryId: (error as {
+        terminalDraftRecovery: { id: string }
+      }).terminalDraftRecovery.id,
+    }
+  }
+
+  it('submits a preserved draft with one guarded Enter after an unconfirmed clear', async () => {
+    const { controller, sessionId, output, recoveryId } =
+      await preservedDraftRecovery()
+
+    await expect(
+      controller.submitExistingInput(sessionId, recoveryId),
+    ).resolves.toBe(true)
+
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: ['enter'],
+    })
+    await expect(controller.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    expect(await readFile(output, 'utf8')).toBe(received)
+  }, 15_000)
+
+  it.each([
+    ['text', readyComposer('changed terminal text'), 'changed terminal text'],
+    ['frame', `${readyComposer('preserved terminal text')}\nChanged footer`, 'Changed footer'],
+    ['readiness', readyComposer('preserved terminal text', true), 'Working · esc interrupt'],
+  ] as const)('refuses a recovery after the terminal %s changes', async (
+    _change,
+    changedPane,
+    marker,
+  ) => {
+    const {
+      controller,
+      sessionId,
+      output,
+      recoveryId,
+      tmuxSession,
+    } = await preservedDraftRecovery(changedPane)
+    await execFileAsync('tmux', ['send-keys', '-t', tmuxSession, 'C-]'])
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => Boolean(pane?.includes(marker)),
+    )
+
+    await expect(controller.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: [],
+    })
+  }, 15_000)
+
+  it('refuses a recovery after owner validation changes', async () => {
+    const { controller, sessionId, output, recoveryId } =
+      await preservedDraftRecovery()
+    const internals = controller as unknown as {
+      owner(
+        id: string,
+        target?: string,
+        fresh?: boolean,
+      ): Promise<{
+        pid: number
+        rootPid: number
+        target: string
+      } | undefined>
+    }
+    const original = internals.owner.bind(controller)
+    internals.owner = vi.fn(async (id, target, fresh) => {
+      const owner = await original(id, target, fresh)
+      return owner && fresh ? { ...owner, pid: owner.pid + 1 } : owner
+    })
+
+    await expect(controller.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: [],
+    })
+  }, 15_000)
+
+  it('classifies a pre-Enter owner read failure as definitely unsent', async () => {
+    const { controller, sessionId, output, recoveryId } =
+      await preservedDraftRecovery()
+    const internals = controller as unknown as {
+      owner(
+        id: string,
+        target?: string,
+        fresh?: boolean,
+      ): Promise<{
+        pid: number
+        rootPid: number
+        target: string
+      } | undefined>
+    }
+    internals.owner = vi.fn(async () => {
+      throw new Error('Synthetic owner read failure')
+    })
+
+    await expect(controller.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: [],
+    })
+  }, 15_000)
+
+  it('invalidates a recovery when the controller restarts', async () => {
+    const { sessionId, output, recoveryId } =
+      await preservedDraftRecovery()
+    const restarted = new TmuxTerminalSessionController()
+
+    await expect(restarted.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: [],
+    })
+  }, 15_000)
+
+  it('reports a lost Enter acknowledgement without retrying it', async () => {
+    const { controller, sessionId, output, recoveryId, directory } =
+      await preservedDraftRecovery()
+    const realTmux = (
+      await execFileAsync('sh', ['-c', 'command -v tmux'])
+    ).stdout.trim()
+    const bin = path.join(directory, 'bin')
+    await mkdir(bin)
+    const wrapper = path.join(bin, 'tmux')
+    await writeFile(wrapper, [
+      '#!/usr/bin/env bash',
+      '"$REAL_TMUX" "$@" || exit "$?"',
+      'if [[ "$1" == if-shell && "$*" == *"display-message -p submitted"* ]]; then',
+      '  echo "acknowledgement lost after Enter" >&2',
+      '  exit 1',
+      'fi',
+    ].join('\n'))
+    await chmod(wrapper, 0o755)
+    vi.stubEnv('REAL_TMUX', realTmux)
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH}`)
+
+    await expect(controller.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        uncertainDelivery: true,
+      })
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1,
+      pastes: [],
+      submits: ['enter'],
+    })
+    await expect(controller.submitExistingInput(sessionId, recoveryId))
+      .rejects.toMatchObject({ uncertainDelivery: false })
+    expect(await readFile(output, 'utf8')).toBe(received)
   }, 15_000)
 
   it('does not clear an existing draft while the terminal is working', async () => {

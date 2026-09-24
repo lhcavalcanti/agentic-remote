@@ -36,6 +36,30 @@ export function terminalDraftConflictFromError(error: unknown): boolean {
   )
 }
 
+export interface TerminalDraftRecovery {
+  id: string
+}
+
+export function parseTerminalDraftRecovery(
+  value: unknown,
+): TerminalDraftRecovery | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const id = Reflect.get(value, 'id')
+  return typeof id === 'string' && id.length > 0 && id.length <= 64
+    ? { id }
+    : undefined
+}
+
+export function terminalDraftRecoveryFromError(
+  error: unknown,
+): TerminalDraftRecovery | undefined {
+  return error && typeof error === 'object'
+    ? parseTerminalDraftRecovery(Reflect.get(error, 'terminalDraftRecovery'))
+    : undefined
+}
+
 const legacyDefinitiveHttpRefusals = new Set([
   400, 401, 403, 404, 405, 410, 413, 415, 422, 429,
 ])
@@ -63,6 +87,7 @@ export class SubmissionError extends Error {
   readonly submission?: SubmissionReceipt
   readonly uncertainDelivery: boolean
   readonly terminalDraftConflict: boolean
+  readonly terminalDraftRecovery?: TerminalDraftRecovery
 
   constructor(
     message: string,
@@ -70,6 +95,7 @@ export class SubmissionError extends Error {
     submission?: SubmissionReceipt,
     options?: ErrorOptions & {
       terminalDraftConflict?: boolean
+      terminalDraftRecovery?: TerminalDraftRecovery
       uncertainDelivery?: boolean
     },
   ) {
@@ -79,5 +105,6 @@ export class SubmissionError extends Error {
     this.submission = submission
     this.uncertainDelivery = options?.uncertainDelivery ?? submission?.accepted === true
     this.terminalDraftConflict = options?.terminalDraftConflict === true
+    this.terminalDraftRecovery = options?.terminalDraftRecovery
   }
 }

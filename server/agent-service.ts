@@ -6,6 +6,7 @@ import {
   deliveryUncertaintyFromError,
   SubmissionError,
   terminalDraftConflictFromError,
+  terminalDraftRecoveryFromError,
 } from '../shared/submission-error.js'
 import {
   hasActiveBackgroundTasks,
@@ -57,6 +58,7 @@ import type {
   RuntimeReasoningEffort,
   SessionStatus,
   SlashCommand,
+  SubmitTerminalDraftInput,
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
@@ -3782,6 +3784,124 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  async submitTerminalDraft(
+    sessionId: string,
+    input: SubmitTerminalDraftInput,
+  ): Promise<SessionDetail> {
+    try {
+      return await this.admissions.run(sessionId, async () => {
+        if (this.stopped) throw queueConflict('The session service is stopping.')
+        if (!this.terminalController.submitExistingInput) {
+          throw Object.assign(
+            new Error(
+              'Existing terminal text can only be submitted for tmux-backed Copilot sessions.',
+            ),
+            {
+              statusCode: 409,
+              terminalDraftConflict: true,
+              uncertainDelivery: false,
+            },
+          )
+        }
+        const releaseDispatch = this.holdDispatch(sessionId)
+        let enterAcknowledged = false
+        try {
+          const submitted = await this.terminalController.submitExistingInput(
+            sessionId,
+            input.recoveryId,
+            async () => {
+              await this.store.readAfterWrites(sessionId)
+              this.assertTerminalQueueSettled(sessionId)
+              this.assertRecoverySeedSettled(sessionId)
+              this.queuedDispatches.assertAvailable(sessionId)
+              const current = this.store.get(sessionId)
+              if (!current || this.deletingSessions.has(sessionId)) {
+                throw Object.assign(new Error('Session not found'), {
+                  statusCode: 404,
+                  uncertainDelivery: false,
+                })
+              }
+              if (
+                current.suspended ||
+                this.suspendingSessions.has(sessionId) ||
+                this.admissionClosed.has(sessionId) ||
+                current.pendingPermission ||
+                current.pendingUserInput ||
+                current.status === 'running' ||
+                current.status === 'waiting' ||
+                this.activePrompts.has(sessionId) ||
+                this.drainingSessions.has(sessionId) ||
+                this.terminalAdmissionOperations.has(sessionId)
+              ) {
+                throw Object.assign(
+                  new Error(
+                    'The session is no longer idle and ready. No key was sent, and the app draft was kept.',
+                  ),
+                  {
+                    statusCode: 409,
+                    terminalDraftConflict: true,
+                    uncertainDelivery: false,
+                  },
+                )
+              }
+            },
+          )
+          if (!submitted) {
+            throw Object.assign(
+              new Error('The terminal text was not submitted. The app draft was kept.'),
+              {
+                statusCode: 409,
+                terminalDraftConflict: true,
+                uncertainDelivery: false,
+              },
+            )
+          }
+          enterAcknowledged = true
+          this.admissions.markCommitted(sessionId)
+          const dispatchedAt = new Date().toISOString()
+          this.pendingTerminalPromptDispatches.set(sessionId, dispatchedAt)
+          const accepted = this.store.get(sessionId)
+          if (accepted) this.publish(accepted)
+          const delivered = await this.persistTerminalPromptDispatch(
+            sessionId,
+            dispatchedAt,
+          )
+          this.publish(delivered)
+          if (await this.waitForTerminalEventLog(sessionId)) {
+            return this.publicSession(this.store.get(sessionId) || delivered)
+          }
+          const untracked = await this.store.clearUntrackedTerminalDispatch(
+            sessionId,
+            dispatchedAt,
+          )
+          this.publish(untracked)
+          return this.publicSession(untracked)
+        } catch (error) {
+          if (!enterAcknowledged) {
+            if (isUncertainDelivery(error)) {
+              this.admissions.markCommitted(sessionId)
+            }
+            throw error
+          }
+          throw new SubmissionError(
+            'The terminal text was submitted, but later confirmation failed. The app draft was kept; check the conversation before sending it to avoid a duplicate.',
+            409,
+            undefined,
+            {
+              cause: error,
+              terminalDraftConflict: true,
+              uncertainDelivery: true,
+            },
+          )
+        } finally {
+          releaseDispatch()
+        }
+      })
+    } finally {
+      this.wakeDeferredQueue(sessionId)
+    }
+  }
+
   private async sendAdmittedMessage(
     sessionId: string,
     rawContent: string,
@@ -4040,6 +4160,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }, {
       cause: error,
       terminalDraftConflict: terminalDraftConflictFromError(error),
+      terminalDraftRecovery: terminalDraftRecoveryFromError(error),
       uncertainDelivery: accepted || isUncertainDelivery(error),
     })
   }

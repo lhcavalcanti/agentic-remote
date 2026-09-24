@@ -18,6 +18,7 @@ import type {
   SessionSkillsSnapshot,
   SessionMcpServersSnapshot,
   SlashCommand,
+  SubmitTerminalDraftInput,
   UserInputReplyInput,
   WorkspaceFile,
   WorkspaceListing,
@@ -268,6 +269,20 @@ export class ProviderSessionService
       acknowledgesFailure,
       replaceTerminalDraft,
     )
+  }
+
+  submitTerminalDraft(
+    sessionId: string,
+    input: SubmitTerminalDraftInput,
+  ): Promise<SessionDetail> {
+    const service = this.serviceFor(sessionId)
+    if (!service.submitTerminalDraft) {
+      throw Object.assign(
+        new Error('Existing terminal text cannot be submitted by this runtime.'),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
+    return service.submitTerminalDraft(sessionId, input)
   }
 
   listCommands(sessionId: string): Promise<SlashCommand[]> {

@@ -2,6 +2,7 @@ import {
   httpDeliveryUncertain,
   SubmissionError,
   type SubmissionReceipt,
+  type TerminalDraftRecovery,
 } from '../shared/submission-error.js'
 
 export class RemoteNodeRequestError extends SubmissionError {
@@ -11,9 +12,11 @@ export class RemoteNodeRequestError extends SubmissionError {
     submission?: SubmissionReceipt,
     uncertainDelivery?: boolean,
     terminalDraftConflict?: boolean,
+    terminalDraftRecovery?: TerminalDraftRecovery,
   ) {
     super(message, statusCode, submission, {
       terminalDraftConflict,
+      terminalDraftRecovery,
       uncertainDelivery: httpDeliveryUncertain(
         statusCode,
         uncertainDelivery,

@@ -499,6 +499,10 @@ export interface SendMessageInput {
   acknowledgesFailure?: string
 }
 
+export interface SubmitTerminalDraftInput {
+  recoveryId: string
+}
+
 export interface AudioTranscription {
   transcript: string
   durationSeconds: number

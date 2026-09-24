@@ -72,6 +72,10 @@ const sendMessageSchema = z.object({
   replaceTerminalDraft: z.boolean().optional(),
 })
 
+const submitTerminalDraftSchema = z.object({
+  recoveryId: z.string().uuid(),
+})
+
 const permissionReplySchema = z.object({
   optionId: z.string().trim().min(1).max(500),
 })
@@ -510,6 +514,25 @@ export async function registerNodeRoutes(
               input.enqueue,
               input.acknowledgesFailure,
               input.replaceTerminalDraft,
+            ),
+          })
+        },
+      )
+
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/terminal-draft',
+        async (request, reply) => {
+          const input = submitTerminalDraftSchema.parse(request.body)
+          if (!service.submitTerminalDraft) {
+            throw Object.assign(
+              new Error('Existing terminal text cannot be submitted by this runtime.'),
+              { statusCode: 409, uncertainDelivery: false },
+            )
+          }
+          return reply.code(202).send({
+            session: await service.submitTerminalDraft(
+              request.params.sessionId,
+              input,
             ),
           })
         },

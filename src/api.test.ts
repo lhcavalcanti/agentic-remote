@@ -16,6 +16,7 @@ import {
   removeQueuedPrompt,
   readKnowledgeFile,
   sendMessage,
+  submitTerminalDraft,
   sendTestPushNotification,
   transcribeAudio,
   uploadSessionFile,
@@ -33,6 +34,25 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('posts a terminal draft recovery identifier to the owning session', async () => {
+    const session = { id: 'session', computerId: 'computer', messages: [] }
+    const fetch = vi.fn(async () => Response.json({ session }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(submitTerminalDraft('computer', 'session', {
+      recoveryId: 'e9955846-2a80-4576-97ae-08746cc5caa6',
+    })).resolves.toEqual(session)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/computers/computer/sessions/session/terminal-draft',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          recoveryId: 'e9955846-2a80-4576-97ae-08746cc5caa6',
+        }),
+      }),
+    )
+  })
+
   it('turns a non-JSON gateway response into an actionable hub error', async () => {
     vi.stubGlobal(
       'fetch',
@@ -145,6 +165,26 @@ describe('API request headers', () => {
       .rejects.toMatchObject({
         statusCode: 409,
         terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+  })
+
+  it('preserves valid terminal draft recovery metadata from HTTP errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'The original terminal text remains',
+      terminalDraftConflict: true,
+      terminalDraftRecovery: {
+        id: '5cbc679e-769d-4d32-9a88-38e6df7c579a',
+      },
+      uncertainDelivery: false,
+    }, { status: 409 })))
+
+    await expect(sendMessage('computer', 'session', { content: 'hello' }))
+      .rejects.toMatchObject({
+        terminalDraftConflict: true,
+        terminalDraftRecovery: {
+          id: '5cbc679e-769d-4d32-9a88-38e6df7c579a',
+        },
         uncertainDelivery: false,
       })
   })

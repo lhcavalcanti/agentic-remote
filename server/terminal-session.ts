@@ -113,6 +113,15 @@ export interface TerminalSessionController {
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
   ): Promise<boolean>
+  /**
+   * Resumes a partially keyed structured form from the field whose focus can
+   * be proven in a fresh capture.
+   */
+  resumeUserInputForm?(
+    sessionId: string,
+    steps: TerminalFormStep[],
+    form: TerminalFormIdentity,
+  ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(
     sessionId: string,
@@ -165,7 +174,7 @@ export class TerminalFormReplyError extends Error {
 
   constructor(
     message: string,
-    readonly outcome: 'not-submitted' | 'uncertain' | 'submitted',
+    readonly outcome: 'not-submitted' | 'resumable' | 'uncertain' | 'submitted',
     options?: ErrorOptions,
   ) {
     super(message, options)
@@ -860,6 +869,23 @@ export class TmuxTerminalSessionController
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
   ): Promise<boolean> {
+    return this.writeUserInputForm(sessionId, steps, form, false)
+  }
+
+  async resumeUserInputForm(
+    sessionId: string,
+    steps: TerminalFormStep[],
+    form: TerminalFormIdentity,
+  ): Promise<boolean> {
+    return this.writeUserInputForm(sessionId, steps, form, true)
+  }
+
+  private async writeUserInputForm(
+    sessionId: string,
+    steps: TerminalFormStep[],
+    form: TerminalFormIdentity,
+    resume: boolean,
+  ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const owner = await this.boundOwner(sessionId)
       if (
@@ -868,12 +894,14 @@ export class TmuxTerminalSessionController
         steps.length !== form.fields.length ||
         form.fields.length === 0 ||
         // Repeated titles make the focused field ambiguous, and the answer is
-        // written per position, so the message path is used instead.
+        // written per position, so no keys are sent.
         new Set(form.fields).size !== form.fields.length
       ) {
         return false
       }
-      return this.withFormViewport(sessionId, owner, form, async ({ capture, press, paste }) => {
+      return this.withFormViewport(sessionId, owner, form, async ({
+        capture, press, paste, retainForResume,
+      }) => {
         let pane = await capture()
         // A form being open says nothing about which request it belongs to. The
         // request that was answered may have closed and another opened in its
@@ -884,34 +912,45 @@ export class TmuxTerminalSessionController
         ) {
           return false
         }
-        // The steps are written from the first field onwards, but an attached
-        // client can leave any field focused. Walking focus back with shift+tab
-        // is what stops the answers landing one field over.
-        for (let attempt = 0; attempt < form.fields.length; attempt += 1) {
-          const active = parseTerminalFormActiveField(pane, form)
-          if (active === 0) {
-            break
-          }
-          if (active === undefined) {
-            return false
-          }
-          await press('BTab', active)
-          // The CLI repaints on its own schedule, so the move is waited for
-          // rather than assumed: reading too early would see the old field and
-          // send another shift+tab, overshooting the one being aimed at.
-          for (let settle = 0; settle < 20; settle += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 100))
-            pane = await capture()
-            if (parseTerminalFormActiveField(pane, form) !== active) {
-              break
-            }
-          }
-        }
-        if (parseTerminalFormActiveField(pane, form) !== 0) {
+        let start = parseTerminalFormActiveField(pane, form)
+        if (start === undefined) {
           return false
         }
+        if (!resume) {
+          // A fresh reply must write every field. An attached client may have
+          // moved focus, so normalize it before any answer values are keyed.
+          for (let attempt = 0; attempt < form.fields.length; attempt += 1) {
+            if (start === 0) {
+              break
+            }
+            await press('BTab', start)
+            // The CLI repaints on its own schedule, so the move is waited for
+            // rather than assumed: reading too early would see the old field
+            // and overshoot the one being aimed at.
+            for (let settle = 0; settle < 20; settle += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 100))
+              pane = await capture()
+              const active = parseTerminalFormActiveField(pane, form)
+              if (active !== start) {
+                if (active === undefined) {
+                  return false
+                }
+                start = active
+                break
+              }
+            }
+          }
+          if (start !== 0) {
+            return false
+          }
+        }
+        // From here onward a failure can leave deterministic field progress in
+        // the live form. AgentService retains the exact answer and retries only
+        // through resumeUserInputForm after checking tool completion.
+        retainForResume()
         const commitKeys = terminalFormCommitKeys(steps.length)
-        for (const [position, step] of steps.entries()) {
+        for (let position = start; position < steps.length; position += 1) {
+          const step = steps[position]
           if (step.kind === 'checklist') {
             const ticked = terminalChecklistState(await capture(), step.optionCount)
             if (!ticked) {
@@ -1074,12 +1113,14 @@ export class TmuxTerminalSessionController
       capture: () => Promise<string>
       press: (key: string, field?: number) => Promise<void>
       paste: (value: string, field: number) => Promise<void>
+      retainForResume: () => void
     }) => Promise<boolean>,
   ): Promise<boolean> {
     let original: FormViewport | undefined
     let expanded: FormViewport | undefined
     let deadline = Infinity
     let attempted = false
+    let resumableStarted = false
     let result = false
     let failure: unknown
     const processStart = async () => {
@@ -1226,6 +1267,9 @@ export class TmuxTerminalSessionController
       if (terminalFormShowsFields(pane, form)) {
         result = await operation({
           capture,
+          retainForResume: () => {
+            resumableStarted = true
+          },
           press: async (key, field) => {
             await validateInput(field)
             await sendInput(
@@ -1258,11 +1302,18 @@ export class TmuxTerminalSessionController
         }
       }
     }
-    if (failure || (attempted && !result)) {
-      const outcome = result ? 'submitted' : attempted ? 'uncertain' : 'not-submitted'
+    if (failure || (attempted && !result) || (resumableStarted && !result)) {
+      const outcome = result
+        ? 'submitted'
+        : attempted
+          ? 'uncertain'
+          : resumableStarted
+            ? 'resumable'
+            : 'not-submitted'
       throw new TerminalFormReplyError(
         `${result ? 'The terminal reply was submitted, but cleanup failed'
           : attempted ? 'The terminal reply may have been submitted; do not resend it'
+            : resumableStarted ? 'The terminal form reply was interrupted and can only be resumed with the same values'
             : 'The terminal form could not be safely answered'}: ${
           failure instanceof Error ? failure.message : 'completion was not confirmed'
         }`,

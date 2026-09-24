@@ -42,11 +42,14 @@ async function formFixture(lines = 52, repaint = true, options: {
   ].join('\n')
   const field = 'Synthetic decision'
   await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+import { renameSync, writeFileSync } from 'node:fs'
 const output = ${JSON.stringify(output)}
 let pending = '', selected = 0, closed = false, second = false
 const receipt = { keys: [], actions: [], heights: [] }
-function save() { writeFileSync(output, JSON.stringify(receipt)) }
+function save() {
+  writeFileSync(output + '.tmp', JSON.stringify(receipt))
+  renameSync(output + '.tmp', output)
+}
 function draw() {
   receipt.heights.push(process.stdout.rows)
   save()
@@ -139,6 +142,7 @@ async function horizontalFormFixture(options: {
   height?: number
   repaint?: boolean
   lookalikeTabs?: boolean
+  initialSelected?: number[]
 } = {}) {
   const output = path.join(root, 'horizontal-receipt.json')
   const executable = path.join(root, 'copilot-horizontal-form.mjs')
@@ -154,20 +158,25 @@ async function horizontalFormFixture(options: {
     'Continue on existing model-definition conflicts',
   ]
   await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+import { renameSync, writeFileSync } from 'node:fs'
 const output = ${JSON.stringify(output)}
 const question = ${JSON.stringify(question)}
 const fields = ${JSON.stringify(fields)}
 const lookalikeTabs = ${options.lookalikeTabs === true}
 const fullWidth = ${options.fullWidth || 200}
 let pending = '', active = ${options.activeField || 0}, closed = false
-const selected = Array(fields.length).fill(0)
+const selected = ${JSON.stringify(options.initialSelected)} || Array(fields.length).fill(0)
 const receipt = { keys: [], actions: [], widths: [] }
-function save() { writeFileSync(output, JSON.stringify(receipt)) }
+function save() {
+  writeFileSync(output + '.tmp', JSON.stringify(receipt))
+  renameSync(output + '.tmp', output)
+}
 function tabs() {
   if (lookalikeTabs) return '  Different release   Unrelated field  →'
   if (process.stdout.columns >= fullWidth) return '  ' + fields.join('   ')
-  if (active === 0) return '  ' + fields.slice(0, 4).join('   ') + '  →'
+  if (active === 0) {
+    return '  ' + fields.slice(0, Math.min(4, fields.length - 1)).join('   ') + '  →'
+  }
   if (active === fields.length - 1) {
     return '  ←  ' + fields.slice(1).join('   ')
   }
@@ -292,6 +301,93 @@ draw()
 }
 
 describe('bounded terminal form viewport', () => {
+  it.each([0, 1, 2])(
+    'resumes an all-default enum and boolean form after Tab boundary %i',
+    async (boundary) => {
+      const fields = ['Release', 'Live', 'Bypass', 'Overwrite']
+      const f = await horizontalFormFixture({
+        fields,
+        initialSelected: [1, 0, 0, 0],
+      })
+      const steps = [
+        { kind: 'select' as const, optionCount: 3, index: 0 },
+        { kind: 'select' as const, optionCount: 3, index: 1 },
+        { kind: 'select' as const, optionCount: 3, index: 1 },
+        { kind: 'select' as const, optionCount: 3, index: 1 },
+      ]
+      const withViewport = f.controller['withFormViewport'].bind(f.controller)
+      let interrupted = false
+      f.controller['withFormViewport'] = async (
+        sessionId, owner, form, operation,
+      ) => withViewport(sessionId, owner, form, async (controls) =>
+        operation({
+          ...controls,
+          press: async (key, field) => {
+            await controls.press(key, field)
+            if (!interrupted && key === 'Tab' && field === boundary) {
+              interrupted = true
+              throw new Error(`Interrupted after Tab ${boundary}`)
+            }
+          },
+        }))
+
+      await expect(
+        f.controller.fillUserInputForm(f.sessionId, steps, f.identity),
+      ).rejects.toMatchObject({ outcome: 'resumable' })
+
+      await expect(
+        f.controller.resumeUserInputForm(f.sessionId, steps, f.identity),
+      ).resolves.toBe(true)
+      expect((await f.receipt()).actions).toEqual([
+        { action: 'accept', selected: [0, 1, 1, 1] },
+      ])
+      expect((await f.receipt()).keys.filter((key) => key === 'Enter'))
+        .toHaveLength(1)
+      expect((await f.receipt()).keys.filter((key) => key === 'BTab'))
+        .toHaveLength(0)
+    },
+    30_000,
+  )
+
+  it('classifies an interruption after final Enter as submitted uncertainty', async () => {
+    const fields = ['Release', 'Live', 'Bypass', 'Overwrite']
+    const f = await horizontalFormFixture({
+      fields,
+      initialSelected: [1, 0, 0, 0],
+    })
+    const steps = [
+      { kind: 'select' as const, optionCount: 3, index: 0 },
+      { kind: 'select' as const, optionCount: 3, index: 1 },
+      { kind: 'select' as const, optionCount: 3, index: 1 },
+      { kind: 'select' as const, optionCount: 3, index: 1 },
+    ]
+    const withViewport = f.controller['withFormViewport'].bind(f.controller)
+    f.controller['withFormViewport'] = async (
+      sessionId, owner, form, operation,
+    ) => withViewport(sessionId, owner, form, async (controls) =>
+      operation({
+        ...controls,
+        press: async (key, field) => {
+          await controls.press(key, field)
+          if (key === 'Enter') {
+            throw new Error('Interrupted after Enter')
+          }
+        },
+      }))
+
+    await expect(
+      f.controller.fillUserInputForm(f.sessionId, steps, f.identity),
+    ).rejects.toMatchObject({ outcome: 'uncertain' })
+    await expect(
+      f.controller.resumeUserInputForm(f.sessionId, steps, f.identity),
+    ).resolves.toBe(false)
+    expect((await f.receipt()).actions).toEqual([
+      { action: 'accept', selected: [0, 1, 1, 1] },
+    ])
+    expect((await f.receipt()).keys.filter((key) => key === 'Enter'))
+      .toHaveLength(1)
+  }, 30_000)
+
   it('expands horizontally paginated five-field tabs and restores 120x29', async () => {
     const f = await horizontalFormFixture()
     const before = await f.geometry()

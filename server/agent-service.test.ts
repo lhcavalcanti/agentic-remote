@@ -8523,7 +8523,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('cancels the form and answers in a message when it cannot be filled', async () => {
+  it('does not dismiss or send a fallback when the exact form cannot be filled', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -8556,8 +8556,6 @@ describe('AgentService deletion', () => {
       pendingPermission: vi.fn(async () => undefined),
       pendingUserInput: vi.fn(async () => undefined),
       replyUserInput: vi.fn(async () => true),
-      // Escape cancels the tool the agent was waiting on, which it records as
-      // complete; that is what makes typing the answer safe afterwards.
       dismissUserInput: vi.fn(async () => {
         events.push(
           JSON.parse(`{
@@ -8592,20 +8590,17 @@ describe('AgentService deletion', () => {
     await service.start()
     const sessionId = client.session.sessionId
     const values = { confirmTransfer: true }
-    await service.replyUserInput(
-      sessionId,
-      'persisted-user-input:ask-call',
+    await expect(service.replyUserInput(
+      sessionId, 'persisted-user-input:ask-call',
       { answer: JSON.stringify(values), wasFreeform: false, values },
-    )
-
-    // Closing the prompt first keeps the answer out of the form's fields.
-    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
-      question: 'Confirm the transfer',
-      fields: ['Confirm'],
+    )).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: false,
     })
-    const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
-    expect(content).toContain('confirmTransfer: true')
-    expect(content).not.toContain('{"confirmTransfer"')
+    expect(terminal.dismissUserInput).not.toHaveBeenCalled()
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(service.store.get(sessionId)?.pendingUserInput?.requestId)
+      .toBe('persisted-user-input:ask-call')
     await service.stop()
   })
 
@@ -8642,8 +8637,6 @@ describe('AgentService deletion', () => {
       pendingPermission: vi.fn(async () => undefined),
       pendingUserInput: vi.fn(async () => undefined),
       replyUserInput: vi.fn(async () => true),
-      // Escape never lands, so the tool stays open and the form keeps the
-      // keyboard.
       dismissUserInput: vi.fn(async () => false),
       fillUserInputForm: vi.fn(async () => false),
     }
@@ -8675,12 +8668,12 @@ describe('AgentService deletion', () => {
         values,
       }),
     ).rejects.toMatchObject({
-      message: expect.stringContaining('still showing its prompt'),
+      message: expect.stringContaining('No dismissal or fallback answer was sent'),
       statusCode: 409,
+      uncertainDelivery: false,
     })
 
-    // Typing now would land in the open form and submit every other field at
-    // its default, which is the corruption this path exists to avoid.
+    expect(terminal.dismissUserInput).not.toHaveBeenCalled()
     expect(terminal.send).not.toHaveBeenCalled()
     await service.stop()
   })

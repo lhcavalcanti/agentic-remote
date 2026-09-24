@@ -219,13 +219,11 @@ interface AcceptedSdkReply {
   terminal?: boolean
 }
 
-interface TerminalFormContinuation {
+interface TerminalFormResumption {
   input: UserInputReplyInput
   request: PendingUserInput
-  content: string
-  dismissed: boolean
-  dismissalError: TerminalFormReplyError
-  sendError?: TerminalFormReplyError | SubmissionError
+  steps: TerminalFormStep[]
+  error: TerminalFormReplyError
 }
 
 export interface CopilotSessionLike {
@@ -964,9 +962,8 @@ export function pendingUserInputFromEvents(
 
 /**
  * Turns an answered form into the moves that fill the agent's own form.
- * Anything that cannot be mapped confidently returns undefined, so the caller
- * falls back to cancelling the prompt and answering in a message rather than
- * submitting a value the user did not choose.
+ * Anything that cannot be mapped confidently returns undefined so no terminal
+ * input is sent.
  */
 export function terminalFormSteps(
   form: UserInputForm,
@@ -1689,7 +1686,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     error: TerminalFormReplyError
     choice: SdkReplyChoice
   }>()
-  private readonly terminalFormContinuations = new Map<string, TerminalFormContinuation>()
+  private readonly terminalFormResumptions = new Map<string, TerminalFormResumption>()
   private readonly terminalInputReplies = new Map<string, {
     input: UserInputReplyInput
     completion: Promise<SessionDetail>
@@ -2226,7 +2223,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await Promise.allSettled(this.sdkReplyWrites())
     this.acceptedSdkReplies.clear()
     this.terminalFormUncertainty.clear()
-    this.terminalFormContinuations.clear()
+    this.terminalFormResumptions.clear()
     this.terminalUserInputChecks.clear()
     this.terminalUpdateChecks.clear()
     this.answeredTerminalPermissions.clear()
@@ -6270,8 +6267,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const key of this.terminalFormUncertainty.keys()) {
       if (JSON.parse(key)[0] === sessionId) this.terminalFormUncertainty.delete(key)
     }
-    for (const key of this.terminalFormContinuations.keys()) {
-      if (JSON.parse(key)[0] === sessionId) this.terminalFormContinuations.delete(key)
+    for (const key of this.terminalFormResumptions.keys()) {
+      if (JSON.parse(key)[0] === sessionId) this.terminalFormResumptions.delete(key)
     }
   }
 
@@ -6487,6 +6484,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async handleTerminalFormReplyError(
     sessionId: string, requestId: string, input: UserInputReplyInput, error: unknown,
+    request?: PendingUserInput,
+    steps?: TerminalFormStep[],
   ): Promise<boolean> {
     if (!(error instanceof TerminalFormReplyError)) return false
     this.publishError(sessionId, error)
@@ -6494,7 +6493,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.answeredPersistedInputs.get(sessionId)?.requestId === requestId) {
       this.answeredPersistedInputs.delete(sessionId)
     }
-    if (error.outcome === 'uncertain') {
+    const key = JSON.stringify([sessionId, requestId])
+    if (error.outcome === 'resumable' && request && steps) {
+      this.terminalFormResumptions.set(key, {
+        input: structuredClone(input),
+        request: structuredClone(request),
+        steps: structuredClone(steps),
+        error,
+      })
+    } else if (error.outcome === 'uncertain') {
+      this.terminalFormResumptions.delete(key)
       this.terminalFormUncertainty.set(JSON.stringify([sessionId, requestId]), {
         error, choice: structuredClone(this.sdkInputChoice(input, 'elicitation')),
       })
@@ -6506,7 +6514,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private acceptTerminalFormReply(
     sessionId: string, requestId: string, input: UserInputReplyInput,
   ): Promise<SessionDetail> {
-    this.terminalFormUncertainty.delete(JSON.stringify([sessionId, requestId]))
+    const key = JSON.stringify([sessionId, requestId])
+    this.terminalFormUncertainty.delete(key)
+    this.terminalFormResumptions.delete(key)
     this.answeredPersistedInputs.set(sessionId, { requestId, expiresAt: Date.now() + 60_000 })
     const choice = this.sdkInputChoice(input, 'elicitation')
     this.acceptedSdkReplies.set(requestId, {
@@ -6515,116 +6525,52 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.settleSdkReply(sessionId, requestId, choice)
   }
 
-  private async continueTerminalFormReply(
+  private async resumeTerminalFormReply(
     sessionId: string, requestId: string, input: UserInputReplyInput,
   ): Promise<SessionDetail> {
     const key = JSON.stringify([sessionId, requestId])
-    const receipt = this.terminalFormContinuations.get(key)!
+    const receipt = this.terminalFormResumptions.get(key)!
     if (!isDeepStrictEqual(receipt.input, input)) {
       throw Object.assign(new Error(
-        'The original terminal answer is still pending. Retry that exact reply only; its values cannot be replaced.',
+        'The interrupted terminal form still retains its original answer. Retry that exact reply only; its values cannot be replaced.',
       ), { statusCode: 409, uncertainDelivery: true })
     }
-    if (receipt.sendError) throw receipt.sendError
-    if (!receipt.dismissed) {
-      if (!(await this.isToolCallComplete(sessionId, requestId.slice('persisted-user-input:'.length)))) {
-        throw receipt.dismissalError
-      }
-      receipt.dismissed = true
+    const toolCallId = requestId.slice('persisted-user-input:'.length)
+    if (await this.isToolCallComplete(sessionId, toolCallId)) {
+      return this.acceptTerminalFormReply(sessionId, requestId, input)
     }
     const current = await this.store.readAfterWrites(sessionId)
-    if (current.pendingPermission || (current.pendingUserInput &&
-        !isDeepStrictEqual(current.pendingUserInput, receipt.request))) {
-      receipt.sendError = new TerminalFormReplyError(
-        'The terminal question changed before its retained answer could be continued. Nothing was resent; check the conversation.',
-        'uncertain',
+    if (current.pendingPermission ||
+        !isDeepStrictEqual(current.pendingUserInput, receipt.request)) {
+      receipt.error = new TerminalFormReplyError(
+        'The terminal question changed before its retained answer could be resumed. No keys were sent.',
+        'not-submitted',
       )
-      throw receipt.sendError
+      throw receipt.error
     }
-    // Escape only freed the keyboard; it did not deliver these values. Keep
-    // the original continuation through a refused card write or send receipt.
-    const cleared = await this.store.clearPendingRequest(
-      sessionId, 'pendingUserInput', requestId, { status: 'idle' },
-    )
-    if (cleared.pendingUserInput || cleared.pendingPermission) {
-      receipt.sendError = new TerminalFormReplyError(
-        'A new terminal question arrived while saving the retained answer. Nothing was resent; check the conversation.',
-        'uncertain',
-      )
-      throw receipt.sendError
-    }
-    this.publish(cleared)
-    let sent: SessionDetail
+    let resumed = false
     try {
-      sent = await this.sendMessage(sessionId, receipt.content, false)
+      resumed = await this.terminalController.resumeUserInputForm?.(
+        sessionId,
+        receipt.steps,
+        {
+          question: receipt.request.question,
+          fields: receipt.request.form!.fields.map((field) => field.title),
+        },
+      ) ?? false
     } catch (error) {
-      if (error instanceof SubmissionError && error.submission?.accepted) {
-        receipt.sendError = error
-        throw error
-      }
-      if (deliveryUncertaintyFromError(error) === false) throw error
-      receipt.sendError = new TerminalFormReplyError(
-        'The retained terminal answer may have been delivered, but its receipt was not confirmed. Do not resend it.',
-        'uncertain', { cause: error },
+      resumed = await this.handleTerminalFormReplyError(
+        sessionId, requestId, receipt.input, error, receipt.request, receipt.steps,
       )
-      this.publishError(sessionId, receipt.sendError)
-      throw receipt.sendError
     }
-    this.terminalFormContinuations.delete(key)
-    return sent
-  }
-
-  private async dismissTerminalFormForContinuation(
-    sessionId: string, request: PendingUserInput, input: UserInputReplyInput,
-  ): Promise<SessionDetail> {
-    const requestId = request.requestId
-    const key = JSON.stringify([sessionId, requestId])
-    const receipt: TerminalFormContinuation = {
-      input: structuredClone(input),
-      request: structuredClone(request),
-      content: persistedFormAnswer(request, input.values || {}),
-      dismissed: false,
-      dismissalError: new TerminalFormReplyError(
-        'The fallback dismissal was sent, but completion was not confirmed. The original answer is retained; do not resend the dismissal.',
-        'uncertain',
-      ),
+    if (!resumed) {
+      receipt.error = new TerminalFormReplyError(
+        'The exact terminal form and its focused field could not be proven. No keys were sent.',
+        'not-submitted',
+      )
+      throw receipt.error
     }
-    this.terminalFormContinuations.set(key, receipt)
-    let dismissed = false
-    try {
-      dismissed = await this.terminalController.dismissUserInput?.(sessionId, {
-        question: receipt.request.question,
-        fields: receipt.request.form!.fields.map((field) => field.title),
-      }) ?? false
-    } catch (error) {
-      this.publishError(sessionId, error)
-      if (error instanceof TerminalFormReplyError && error.outcome === 'not-submitted') {
-        this.terminalFormContinuations.delete(key)
-        this.answeredPersistedInputs.delete(sessionId)
-        throw error
-      }
-      if (error instanceof TerminalFormReplyError) {
-        dismissed = error.outcome === 'submitted'
-        if (!dismissed) receipt.dismissalError = error
-      } else {
-        receipt.sendError = new TerminalFormReplyError(
-          'The fallback dismissal outcome could not be verified. The original answer is retained; check the conversation before sending more work.',
-          'uncertain', { cause: error },
-        )
-      }
-      if (!dismissed) return this.continueTerminalFormReply(sessionId, requestId, input)
-    }
-    if (!dismissed) {
-      this.terminalFormContinuations.delete(key)
-      this.answeredPersistedInputs.delete(sessionId)
-      throw Object.assign(new Error(
-        'The agent is still showing its prompt, so the answer was not sent. Try again.',
-      ), { statusCode: 409 })
-    }
-    receipt.dismissed = await this.waitForToolCompletion(
-      sessionId, requestId.slice('persisted-user-input:'.length),
-    )
-    return this.continueTerminalFormReply(sessionId, requestId, input)
+    return this.acceptTerminalFormReply(sessionId, requestId, input)
   }
 
   private async replyUserInputInternal(
@@ -6635,8 +6581,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
       throw new Error('Session is no longer available')
     }
-    if (this.terminalFormContinuations.has(JSON.stringify([sessionId, requestId]))) {
-      return this.continueTerminalFormReply(sessionId, requestId, input)
+    if (this.terminalFormResumptions.has(JSON.stringify([sessionId, requestId]))) {
+      return this.resumeTerminalFormReply(sessionId, requestId, input)
     }
     const accepted = this.acceptedSdkReplies.get(requestId)
     if (accepted) {
@@ -6804,7 +6750,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           steps &&
           (await this.terminalController
             .fillUserInputForm?.(sessionId, steps, identity)
-            .catch((error: unknown) => this.handleTerminalFormReplyError(sessionId, requestId, input, error)))
+            .catch((error: unknown) => this.handleTerminalFormReplyError(
+              sessionId, requestId, input, error, request, steps,
+            )))
         // Filling reports failure for a capture that timed out as well as for
         // keys never sent, and the last Enter may already have submitted the
         // form. Answering again would then submit a second time, so the agent
@@ -6819,10 +6767,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return this.acceptTerminalFormReply(sessionId, requestId, input)
         }
       }
-      this.queuedDispatches.assertAvailable(sessionId)
       if (terminalBacked && request.form) {
-        return this.dismissTerminalFormForContinuation(sessionId, request, input)
+        this.answeredPersistedInputs.delete(sessionId)
+        throw new TerminalFormReplyError(
+          'The exact terminal form and its focused field could not be proven. No dismissal or fallback answer was sent.',
+          'not-submitted',
+        )
       }
+      this.queuedDispatches.assertAvailable(sessionId)
       if (terminalBacked) {
         const dismissed =
           (await this.terminalController

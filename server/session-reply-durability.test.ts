@@ -100,24 +100,16 @@ async function terminalFormFixture() {
   const terminal = setup.service['terminalController']
   terminal.has = vi.fn(async () => true)
   const fill = vi.fn(async () => true)
+  const resume = vi.fn(async () => true)
   const dismiss = vi.fn(async () => true)
   terminal.fillUserInputForm = fill
+  terminal.resumeUserInputForm = resume
   terminal.dismissUserInput = dismiss
   const complete = vi.fn(async () => false)
   setup.service['isToolCallComplete'] = complete
   const input = { answer: '{"confirm":true}', wasFreeform: false, values: { confirm: true } }
   const reply = (value: UserInputReplyInput = input) => setup.service.replyUserInput(sessionId, requestId, value)
-  return { ...setup, terminal, fill, dismiss, complete, requestId, input, reply }
-}
-
-async function fallbackFormFixture() {
-  const f = await terminalFormFixture()
-  f.fill.mockResolvedValue(false)
-  const wait = vi.fn(async () => false)
-  f.service['waitForToolCompletion'] = wait
-  const send = vi.spyOn(f.service, 'sendMessage')
-    .mockImplementation(async () => f.store.get(sessionId)!)
-  return { ...f, wait, send }
+  return { ...setup, terminal, fill, resume, dismiss, complete, requestId, input, reply }
 }
 
 async function claudeFixture() {
@@ -405,174 +397,206 @@ describe('Reply durability regressions', () => {
     expect(f.service['terminalFormUncertainty'].size).toBe(0)
   })
 
-  it.each(['uncertain error', 'completion timeout', 'cleanup error'] as const)(
-    'continues the original fallback answer once after a delayed dismissal %s', async (failure) => {
-      const f = await fallbackFormFixture()
-      if (failure !== 'completion timeout') {
-        f.dismiss.mockRejectedValueOnce(new TerminalFormReplyError(
-          'Synthetic fallback dismissal', failure === 'cleanup error' ? 'submitted' : 'uncertain',
-        ))
-      }
-      await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
-      await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
-      await expect(f.reply({ ...f.input, values: { confirm: false } })).rejects
-        .toMatchObject({ statusCode: 409, uncertainDelivery: true })
-      expect(f.send).not.toHaveBeenCalled()
+  it('retains and resumes an interrupted terminal form only for the identical reply', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Interrupted after a field commit', 'resumable',
+    ))
 
-      f.complete.mockResolvedValue(true)
-      await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
-      expect(f.send).toHaveBeenCalledExactlyOnceWith(
-        sessionId, 'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true', false,
-      )
-      expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, {
-        question: 'Confirm the full synthetic question?', fields: ['Confirm'],
-      })
-      expect(f.fill).toHaveBeenCalledOnce()
-      await expect(f.reply()).rejects.toThrow('no longer pending')
-      expect(f.send).toHaveBeenCalledOnce()
-    },
-  )
-
-  it.each(['immediate', 'delayed'] as const)(
-    'retains the fallback answer after %s dismissal and a failed pending-card write', async (timing) => {
-      const f = await fallbackFormFixture()
-      if (timing === 'delayed') {
-        f.dismiss.mockRejectedValueOnce(new TerminalFormReplyError('Unconfirmed fallback Escape', 'uncertain'))
-        await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
-        f.complete.mockResolvedValue(true)
-      } else {
-        f.wait.mockResolvedValue(true)
-      }
-      vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
-      await expect(f.reply()).rejects.toThrow('disk full')
-      expect(f.send).not.toHaveBeenCalled()
-      f.complete.mockResolvedValue(true)
-      await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
-      expect(f.send).toHaveBeenCalledExactlyOnceWith(
-        sessionId, 'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true', false,
-      )
-      expect(f.dismiss).toHaveBeenCalledOnce()
-      expect(f.fill).toHaveBeenCalledOnce()
-    },
-  )
-
-  it('joins fallback continuation retries and preserves the captured fields and values', async () => {
-    const f = await fallbackFormFixture()
-    const values = { confirm: true, detail: '**Literal** `payload` > 1\nkeep: false' }
-    await f.store.update(sessionId, (session) => {
-      session.pendingUserInput!.form!.fields.push({ name: 'detail', title: 'Detail', type: 'string', required: true })
-    })
-    const original = { answer: JSON.stringify(values), wasFreeform: false, values: { ...values } }
-    f.dismiss.mockRejectedValueOnce(new TerminalFormReplyError('Unconfirmed fallback Escape', 'uncertain'))
-    await expect(f.reply(original)).rejects.toMatchObject({ uncertainDelivery: true })
-    original.values.detail = 'changed after the first call'
-    await expect(f.reply(original)).rejects.toMatchObject({ statusCode: 409, uncertainDelivery: true })
-    const held = holdCompletion()
-    f.send.mockImplementation(async () => { await held.done; return f.store.get(sessionId)! })
-    f.complete.mockResolvedValue(true)
-    const retry = { ...original, values }
-    const first = f.reply(retry)
-    await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce())
-    const second = f.reply(retry)
-    await expect(f.reply(original)).rejects.toMatchObject({ statusCode: 409 })
-    held.finish()
-    await Promise.all([first, second])
-    expect(f.send).toHaveBeenCalledExactlyOnceWith(
-      sessionId,
-      'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true\n- detail: **Literal** `payload` > 1\nkeep: false',
-      false,
-    )
-    expect(f.dismiss).toHaveBeenCalledOnce()
-  })
-
-  it.each([true, undefined])('retains fallback send uncertainty (%s) without using the earlier tool completion as delivery', async (uncertainDelivery) => {
-    const f = await fallbackFormFixture()
-    f.wait.mockResolvedValue(true)
-    f.send.mockRejectedValueOnce(Object.assign(new Error('Synthetic lost send receipt'), { uncertainDelivery }))
     await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
-    f.complete.mockResolvedValue(true)
-    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(f.service['terminalFormResumptions'].size).toBe(1)
     await expect(f.reply({ ...f.input, values: { confirm: false } })).rejects
       .toMatchObject({ statusCode: 409, uncertainDelivery: true })
-    expect(f.send).toHaveBeenCalledOnce()
-    expect(f.dismiss).toHaveBeenCalledOnce()
-  })
 
-  it('retries the retained continuation only after an explicitly unsent message refusal', async () => {
-    const f = await fallbackFormFixture()
-    f.wait.mockResolvedValue(true)
-    f.send.mockRejectedValueOnce(Object.assign(new Error('Refused before delivery'), { uncertainDelivery: false }))
-    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: false })
-    f.complete.mockResolvedValue(true)
-    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
-    expect(f.send).toHaveBeenCalledTimes(2)
-    expect(f.send.mock.calls[0]).toEqual(f.send.mock.calls[1])
-    expect(f.fill).toHaveBeenCalledOnce()
-    expect(f.dismiss).toHaveBeenCalledOnce()
-  })
-
-  it('retains a real accepted continuation receipt after post-send persistence fails', async () => {
-    const f = await fallbackFormFixture()
-    f.send.mockRestore()
-    f.wait.mockResolvedValue(true)
-    vi.mocked(f.terminal.send).mockImplementation(async () => {
-      vi.mocked(rename).mockRejectedValueOnce(new Error('post-send disk full'))
-      return true
-    })
-    await expect(f.reply()).rejects.toMatchObject({
-      uncertainDelivery: true, submission: { sessionId, accepted: true },
-    })
-    f.complete.mockResolvedValue(true)
-    await expect(f.reply()).rejects.toMatchObject({
-      uncertainDelivery: true, submission: { sessionId, accepted: true },
-    })
-    expect(f.terminal.send).toHaveBeenCalledOnce()
-    expect(vi.mocked(f.terminal.send).mock.calls[0]?.[1]).toBe(
-      'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true',
+    const settled = await f.reply()
+    expect(settled).toMatchObject({ status: 'running', pendingUserInput: undefined })
+    expect(f.complete).toHaveBeenCalledBefore(f.resume)
+    expect(f.resume).toHaveBeenCalledExactlyOnceWith(
+      sessionId,
+      [{ kind: 'select', optionCount: 3, index: 0 }],
+      { question: 'Confirm the full synthetic question?', fields: ['Confirm'] },
     )
-    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
   })
 
-  it('keeps an unclassified fallback dismissal uncertain even if the tool completes later', async () => {
-    const f = await fallbackFormFixture()
-    f.dismiss.mockRejectedValueOnce(new Error('Unknown owner/delivery failure'))
+  it('settles a retained interrupted reply from tool completion without resending keys', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Interrupted after a field commit', 'resumable',
+    ))
     await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
     f.complete.mockResolvedValue(true)
-    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
-    expect(f.send).not.toHaveBeenCalled()
-    expect(f.dismiss).toHaveBeenCalledOnce()
-    f.service['forgetSdkReplies'](sessionId)
-    expect(f.service['terminalFormContinuations'].size).toBe(0)
+
+    await expect(f.reply()).resolves.toMatchObject({
+      status: 'running', pendingUserInput: undefined,
+    })
+    expect(f.resume).not.toHaveBeenCalled()
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
   })
 
-  it('continues the retained original when the completed tool no longer has a pending card', async () => {
-    const f = await fallbackFormFixture()
-    f.dismiss.mockRejectedValueOnce(new TerminalFormReplyError('Unconfirmed fallback Escape', 'uncertain'))
+  it('settles a completion race during resumption without sending another Enter', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Interrupted after a field commit', 'resumable',
+    ))
     await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
-    await f.store.clearPendingRequest(sessionId, 'pendingUserInput', f.requestId, { status: 'idle' })
+    f.complete
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    f.resume.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Final Enter may have been delivered', 'uncertain',
+    ))
+
+    await expect(f.reply()).resolves.toMatchObject({
+      status: 'running', pendingUserInput: undefined,
+    })
+    expect(f.resume).toHaveBeenCalledOnce()
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it('never resumes again after final-Enter uncertainty during resumption', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Interrupted after a field commit', 'resumable',
+    ))
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    f.resume.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Final Enter may have been delivered', 'uncertain',
+    ))
+
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(f.resume).toHaveBeenCalledOnce()
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+
     f.complete.mockResolvedValue(true)
-    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
-    expect(f.send).toHaveBeenCalledExactlyOnceWith(
-      sessionId, 'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true', false,
-    )
-    expect(f.dismiss).toHaveBeenCalledOnce()
+    await expect(f.reply()).resolves.toMatchObject({
+      status: 'running', pendingUserInput: undefined,
+    })
+    expect(f.resume).toHaveBeenCalledOnce()
   })
 
-  it.each(['request', 'question', 'fields'] as const)('does not clear or send into changed %s identity after the fallback completion arrives', async (changed) => {
-    const f = await fallbackFormFixture()
-    f.dismiss.mockRejectedValueOnce(new TerminalFormReplyError('Unconfirmed fallback Escape', 'uncertain'))
+  it('keeps the retained reply when the exact form focus cannot be proven', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Interrupted after a field commit', 'resumable',
+    ))
+    f.resume.mockResolvedValue(false)
     await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    await expect(f.reply()).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: false,
+      message: expect.stringContaining('No keys were sent'),
+    })
+    expect(f.service['terminalFormResumptions'].size).toBe(1)
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it.each(['request', 'question', 'fields'] as const)(
+    'does not resume into a changed terminal form %s identity',
+    async (changed) => {
+      const f = await terminalFormFixture()
+      f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+        'Interrupted after a field commit', 'resumable',
+      ))
+      await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+      await f.store.update(sessionId, (session) => {
+        if (changed === 'request') {
+          session.pendingUserInput!.requestId = 'persisted-user-input:next-form'
+        }
+        if (changed === 'question') {
+          session.pendingUserInput!.question = 'A different question with the same fields?'
+        }
+        if (changed === 'fields') {
+          session.pendingUserInput!.form!.fields[0].name = 'otherConfirmation'
+        }
+      })
+      const pending = f.store.get(sessionId)?.pendingUserInput
+
+      await expect(f.reply()).rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+      })
+      expect(f.store.get(sessionId)?.pendingUserInput).toEqual(pending)
+      expect(f.resume).not.toHaveBeenCalled()
+      expect(f.dismiss).not.toHaveBeenCalled()
+      expect(f.terminal.send).not.toHaveBeenCalled()
+    },
+  )
+
+  it('settles an all-default enum and three-boolean form as running', async () => {
+    const f = await terminalFormFixture()
+    const values = {
+      release: 'stable',
+      live: false,
+      bypass: false,
+      overwrite: false,
+    }
     await f.store.update(sessionId, (session) => {
-      if (changed === 'request') session.pendingUserInput!.requestId = 'persisted-user-input:next-form'
-      if (changed === 'question') session.pendingUserInput!.question = 'A different question with the same fields?'
-      if (changed === 'fields') session.pendingUserInput!.form!.fields[0].name = 'otherConfirmation'
+      session.pendingUserInput!.form = {
+        fields: [
+          {
+            name: 'release', title: 'Release', type: 'string', required: true,
+            default: 'stable', options: [
+              { value: 'stable', label: 'Stable' },
+              { value: 'canary', label: 'Canary' },
+            ],
+          },
+          { name: 'live', title: 'Live', type: 'boolean', required: true, default: false },
+          { name: 'bypass', title: 'Bypass', type: 'boolean', required: true, default: false },
+          { name: 'overwrite', title: 'Overwrite', type: 'boolean', required: true, default: false },
+        ],
+      }
     })
-    const pending = f.store.get(sessionId)?.pendingUserInput
-    f.complete.mockResolvedValue(true)
+    const input = {
+      answer: JSON.stringify(values),
+      wasFreeform: false,
+      values,
+    }
+    const settled = await f.reply(input)
+
+    expect(settled).toMatchObject({ status: 'running', pendingUserInput: undefined })
+    expect(f.fill).toHaveBeenCalledExactlyOnceWith(sessionId, [
+      { kind: 'select', optionCount: 3, index: 0 },
+      { kind: 'select', optionCount: 3, index: 1 },
+      { kind: 'select', optionCount: 3, index: 1 },
+      { kind: 'select', optionCount: 3, index: 1 },
+    ], {
+      question: 'Confirm the full synthetic question?',
+      fields: ['Release', 'Live', 'Bypass', 'Overwrite'],
+    })
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it('refuses dismissal and fallback delivery when an exact form cannot be proven', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockResolvedValue(false)
+
+    await expect(f.reply()).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it('retires retained terminal form progress with the session', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'Interrupted after a field commit', 'resumable',
+    ))
     await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
-    expect(f.store.get(sessionId)?.pendingUserInput).toEqual(pending)
-    expect(f.send).not.toHaveBeenCalled()
-    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.service['terminalFormResumptions'].size).toBe(1)
+
+    f.service['forgetSdkReplies'](sessionId)
+    expect(f.service['terminalFormResumptions'].size).toBe(0)
   })
 
   it.each(['cancel', 'decline'] as const)('does not duplicate an uncertain terminal %s', async (action) => {

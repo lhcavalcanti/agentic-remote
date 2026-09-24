@@ -378,10 +378,15 @@ Questions and permissions are the highest-priority UI state.
 - Wrapped control hints MAY trigger a bounded viewport check, but MUST NOT
   replace verification of the complete question. Each successive long form
   MUST independently verify its identity and restore its viewport.
-- Completion of a fallback dismissal MUST NOT count as delivery of the answer.
-  The running service MUST retain the original answer continuation across late
-  dismissal confirmation and refuse conflicting retries or replay after an
-  uncertain send. A receipt for an earlier question MUST NOT clear a newer one.
+- If structured form entry is interrupted before submission, the running
+  service MUST retain the exact answer by session and request. An identical
+  retry MUST check tool completion first, then resume at the focused field only
+  after revalidating the exact form, owner, and focus; a conflicting retry MUST
+  be rejected.
+- Once final submission may have occurred, retries MUST check completion
+  without sending another Enter. If form identity, owner, focus, or completion
+  cannot be proven, the app MUST NOT dismiss the form or send a fallback
+  message.
 - Safe Yes/choice and Stop actions MUST be available.
 - Cancelling or declining a persisted terminal question MUST dismiss the
   matching live form and confirm completion before hiding its card. A failed

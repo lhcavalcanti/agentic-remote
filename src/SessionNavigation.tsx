@@ -348,11 +348,13 @@ export function SessionNavigation({
   onNewSession,
   query,
   filter,
+  showSuspended,
   creationError,
   loadingError,
   onDismissCreationError,
   onQueryChange: setQuery,
   onFilterChange: setFilter,
+  onShowSuspendedChange: setShowSuspended,
   pendingCreations = [],
   ...actions
 }: SessionActions & {
@@ -365,12 +367,14 @@ export function SessionNavigation({
   onNewSession: () => void
   query: string
   filter: SessionFilter
+  showSuspended: boolean
   creationError?: string
   loadingError?: string
   onDismissCreationError?: () => void
   pendingCreations?: PendingSessionCreation[]
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
+  onShowSuspendedChange: (show: boolean) => void
 }) {
   const searchRef = useRef<HTMLInputElement>(null)
   const { groups, counts, shown, filtering } = view
@@ -460,6 +464,18 @@ export function SessionNavigation({
               <span aria-hidden="true">{entry.count}</span>
             </button>
           ))}
+          <button
+            aria-label="Include suspended sessions"
+            aria-pressed={showSuspended}
+            className="session-filter session-filter--suspended"
+            onClick={() => setShowSuspended(!showSuspended)}
+            title={showSuspended ? 'Hide suspended sessions' : 'Show suspended sessions'}
+            type="button"
+          >
+            <Pause aria-hidden="true" size={11} />
+            Suspended
+            <span aria-hidden="true">{counts.suspended}</span>
+          </button>
         </div>
         {filtering ? (
           <div className="session-list__results">
@@ -470,6 +486,7 @@ export function SessionNavigation({
               onClick={() => {
                 setQuery('')
                 setFilter('all')
+                setShowSuspended(true)
               }}
               type="button"
             >

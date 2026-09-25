@@ -84,16 +84,26 @@ function NavigationHarness({
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
+  const [showSuspended, setShowSuspended] = useState(true)
   return (
     <DndContext>
       <SessionNavigation
         {...actions}
         backgroundTasks={snapshots}
-        view={sessionNavigationView(computerList, sessions, snapshots, query, filter)}
+        view={sessionNavigationView(
+          computerList,
+          sessions,
+          snapshots,
+          query,
+          filter,
+          showSuspended,
+        )}
         query={query}
         filter={filter}
+        showSuspended={showSuspended}
         onQueryChange={setQuery}
         onFilterChange={setFilter}
+        onShowSuspendedChange={setShowSuspended}
         loading={loading}
         loadingError={loadingError}
         selectedKey="studio:review"
@@ -128,8 +138,10 @@ describe('session navigation', () => {
           view={sessionNavigationView([], new Map(), {}, '', 'all')}
           query=""
           filter="all"
+          showSuspended
           onQueryChange={vi.fn()}
           onFilterChange={vi.fn()}
+          onShowSuspendedChange={vi.fn()}
           loading={false}
           loadingError="The gateway could not reach Agentic Remote."
           selectedKey={undefined}
@@ -201,6 +213,42 @@ describe('session navigation', () => {
     expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('1 of 4 sessions')
     fireEvent.click(screen.getByRole('button', { name: 'View background tasks for Build docs' }))
     expect(actions.onOpenSessionTasks).toHaveBeenCalledWith(worker)
+  })
+
+  it('hides and restores sessions paused through the suspension control', () => {
+    const suspended = {
+      ...session,
+      id: 'paused',
+      title: 'Paused planning',
+      suspended: true,
+    }
+    const sessions = new Map(sessionsByComputer)
+    sessions.set('studio', [session, question, suspended])
+    render(navigation(sessions))
+
+    const toggle = screen.getByRole('button', { name: 'Include suspended sessions' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveTextContent('Suspended1')
+    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
+
+    fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('button', { name: /^Paused planning,/ })).toBeNull()
+    expect(screen.getByRole('status', { name: 'Session filter results' }))
+      .toHaveTextContent('4 of 5 sessions')
+    expect(screen.getByRole('region', { name: 'Studio' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Build node' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Travel laptop' })).toBeVisible()
+    expect(screen.getByLabelText('Reorder Review the release'))
+      .toHaveAttribute('aria-disabled', 'true')
+    expect(actions.onSelectSession).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
+    expect(screen.queryByRole('status', { name: 'Session filter results' })).toBeNull()
   })
 
   it('keeps task access inline with session metadata', () => {

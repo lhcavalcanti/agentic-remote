@@ -41,7 +41,7 @@ describe('shared session navigation view', () => {
     const view = sessionNavigationView(computers, grouped, {}, 'missing', 'all')
     expect(view.groups.map((group) => group.computer)).toEqual(computers)
     expect(view.visible).toEqual([])
-    expect(view.counts).toEqual({ all: 3, attention: 1, working: 0 })
+    expect(view.counts).toEqual({ all: 3, attention: 1, working: 0, suspended: 0 })
     expect(stepVisibleSession(view.visible, 'one:first', 1)).toBeUndefined()
     expect(stepVisibleSession(view.visible, 'one:first', -1)).toBeUndefined()
   })
@@ -52,5 +52,25 @@ describe('shared session navigation view', () => {
     expect(view.shown).toBe(1)
     expect(view.filtering).toBe(true)
     expect(stepVisibleSession(view.visible, 'one:first', 1)).toBe(last)
+  })
+
+  it('removes suspended sessions from rows and keyboard navigation when hidden', () => {
+    const suspended = {
+      ...first,
+      id: 'paused',
+      title: 'Paused planning',
+      suspended: true,
+    }
+    const sessions = new Map(grouped)
+    sessions.set('one', [first, hidden, suspended])
+
+    const view = sessionNavigationView(computers, sessions, {}, '', 'all', false)
+
+    expect(view.counts).toEqual({ all: 4, attention: 1, working: 0, suspended: 1 })
+    expect(view.visible).toEqual([first, hidden, last])
+    expect(view.groups.map((group) => group.computer)).toEqual(computers)
+    expect(view.filtering).toBe(true)
+    expect(stepVisibleSession(view.visible, 'one:paused', 1)).toBe(first)
+    expect(stepVisibleSession(view.visible, 'one:paused', -1)).toBe(last)
   })
 })

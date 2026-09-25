@@ -18,7 +18,7 @@ export interface SessionNavigationView {
     sessions: ManagedSession[]
     total: number
   }[]
-  counts: Record<SessionFilter, number>
+  counts: Record<SessionFilter, number> & { suspended: number }
   visible: ManagedSession[]
   shown: number
   filtering: boolean
@@ -30,8 +30,9 @@ export function sessionNavigationView(
   backgroundTasks: Record<string, BackgroundTaskSnapshot>,
   query: string,
   filter: SessionFilter,
+  showSuspended = true,
 ): SessionNavigationView {
-  const counts = { all: 0, attention: 0, working: 0 }
+  const counts = { all: 0, attention: 0, working: 0, suspended: 0 }
   const groups = computers.map((computer) => {
     const sessions = sessionsByComputer.get(computer.id) || []
     const classified = sessions.map((session) => ({
@@ -45,11 +46,13 @@ export function sessionNavigationView(
     counts.all += sessions.length
     counts.attention += classified.filter(({ state }) => state.needsAttention).length
     counts.working += classified.filter(({ state }) => state.working).length
+    counts.suspended += classified.filter(({ session }) => session.suspended === true).length
     return {
       computer,
       total: sessions.length,
       sessions: classified.filter(({ session, state }) =>
-        matchesSessionSearch(session, query, computer.name) &&
+        (showSuspended || session.suspended !== true) &&
+          matchesSessionSearch(session, query, computer.name) &&
           (filter === 'all' ||
             (filter === 'attention' && state.needsAttention) ||
             (filter === 'working' && state.working)),
@@ -62,7 +65,7 @@ export function sessionNavigationView(
     counts,
     visible,
     shown: visible.length,
-    filtering: query.trim().length > 0 || filter !== 'all',
+    filtering: query.trim().length > 0 || filter !== 'all' || !showSuspended,
   }
 }
 

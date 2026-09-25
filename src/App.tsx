@@ -6808,6 +6808,7 @@ function App() {
   )
   const [sessionQuery, setSessionQuery] = useState('')
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
+  const [showSuspendedSessions, setShowSuspendedSessions] = useState(true)
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
@@ -7159,9 +7160,21 @@ function App() {
   }, [orderedComputers, sessionOrder, sessions, sessionSort, backgroundTaskSnapshots])
   const navigationView = useMemo(
     () => sessionNavigationView(
-      orderedComputers, sessionsByComputer, backgroundTaskSnapshots, sessionQuery, sessionFilter,
+      orderedComputers,
+      sessionsByComputer,
+      backgroundTaskSnapshots,
+      sessionQuery,
+      sessionFilter,
+      showSuspendedSessions,
     ),
-    [orderedComputers, sessionsByComputer, backgroundTaskSnapshots, sessionQuery, sessionFilter],
+    [
+      orderedComputers,
+      sessionsByComputer,
+      backgroundTaskSnapshots,
+      sessionQuery,
+      sessionFilter,
+      showSuspendedSessions,
+    ],
   )
   const selected = useMemo(
     () => sessions.find((session) => sessionKey(session) === selectedKey),
@@ -13775,8 +13788,10 @@ function App() {
                 view={navigationView}
                 query={sessionQuery}
                 filter={sessionFilter}
+                showSuspended={showSuspendedSessions}
                 onQueryChange={setSessionQuery}
                 onFilterChange={setSessionFilter}
+                onShowSuspendedChange={setShowSuspendedSessions}
                 creationError={
                   !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
                     ? sessionCreationError

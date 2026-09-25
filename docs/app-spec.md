@@ -60,10 +60,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - The Sessions drawer MUST show all configured computers.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
-- Sessions MUST offer metadata search and All, Needs you, and Working filters.
-  Filtering MUST keep every configured computer visible and MUST NOT change
-  the selected session, its draft, or its Knowledge position. Reordering MUST
-  be disabled while filtered so hidden sessions are not reordered implicitly.
+- Sessions MUST offer metadata search and All, Needs you, and Working filters,
+  plus a browser-local Suspended visibility toggle that defaults to showing
+  sessions paused through Agentic Remote. Filtering MUST keep every configured
+  computer visible and MUST NOT change the selected session, its draft, or its
+  Knowledge position. Hidden suspended sessions MUST also be excluded from
+  keyboard next/previous navigation. Reordering MUST be disabled while filtered
+  so hidden sessions are not reordered implicitly. Clearing filters MUST restore
+  suspended-session visibility.
 - Session ordering MUST be explicit. Custom order remains the backward-
   compatible default; Recent activity, Attention first, and Name views MAY
   reorder the displayed sessions within each computer without rewriting the

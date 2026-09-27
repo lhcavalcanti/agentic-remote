@@ -625,6 +625,8 @@ export interface SessionOrderSnapshot {
    * appends on its own, so a non-empty order does not mean a migration ran.
    */
   bootstrapped: boolean
+  /** Shared visibility for sessions paused through Agentic Remote. */
+  showSuspended: boolean
   order: Record<string, string[]>
 }
 

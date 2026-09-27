@@ -49,6 +49,7 @@ import {
   listCommands,
   listComputers,
   fetchSessionOrder,
+  saveSessionVisibility,
   saveSessionOrderLane,
   bootstrapSessionOrder,
   listDirectories,
@@ -93,8 +94,9 @@ const dragHandlers = vi.hoisted(() =>
 let hubSessionOrder: {
   revision: number
   bootstrapped: boolean
+  showSuspended: boolean
   order: Record<string, string[]>
-} = { revision: 0, bootstrapped: false, order: {} }
+} = { revision: 0, bootstrapped: false, showSuspended: true, order: {} }
 
 vi.mock('@dnd-kit/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
@@ -141,6 +143,7 @@ vi.mock('./api', async (importOriginal) => ({
   listSessions: vi.fn(),
   listSessionListing: vi.fn(),
   fetchSessionOrder: vi.fn(),
+  saveSessionVisibility: vi.fn(),
   saveSessionOrderLane: vi.fn(),
   bootstrapSessionOrder: vi.fn(),
   listBackgroundTasks: vi.fn(),
@@ -1492,7 +1495,12 @@ describe('App', () => {
     // A faithful stand-in for the hub's order: it starts empty, accepts one
     // bootstrap, and commits lane writes with a rising revision, so the tests
     // exercise the same convergence rules the real store enforces.
-    hubSessionOrder = { revision: 0, bootstrapped: false, order: {} }
+    hubSessionOrder = {
+      revision: 0,
+      bootstrapped: false,
+      showSuspended: true,
+      order: {},
+    }
     vi.mocked(fetchSessionOrder).mockImplementation(async () =>
       structuredClone(hubSessionOrder),
     )
@@ -1501,6 +1509,7 @@ describe('App', () => {
         hubSessionOrder = {
           revision: hubSessionOrder.revision + 1,
           bootstrapped: true,
+          showSuspended: hubSessionOrder.showSuspended,
           order: { ...hubSessionOrder.order, ...structuredClone(order) },
         }
       }
@@ -1510,7 +1519,16 @@ describe('App', () => {
       hubSessionOrder = {
         revision: hubSessionOrder.revision + 1,
         bootstrapped: hubSessionOrder.bootstrapped,
+        showSuspended: hubSessionOrder.showSuspended,
         order: { ...hubSessionOrder.order, [computerId]: [...lane] },
+      }
+      return structuredClone(hubSessionOrder)
+    })
+    vi.mocked(saveSessionVisibility).mockImplementation(async (showSuspended) => {
+      hubSessionOrder = {
+        ...hubSessionOrder,
+        revision: hubSessionOrder.revision + 1,
+        showSuspended,
       }
       return structuredClone(hubSessionOrder)
     })
@@ -13641,6 +13659,7 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 9,
       bootstrapped: true,
+      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:hub-b`, `${computer.id}:hub-a`] },
     }
 
@@ -13672,6 +13691,91 @@ describe('App', () => {
     await waitFor(() => expect(titles()).toEqual(['Bravo', 'Alpha']))
   })
 
+  it('persists suspended visibility and accepts newer changes from another device', async () => {
+    const paused = {
+      ...session,
+      id: 'shared-paused',
+      title: 'Paused planning',
+      suspended: true,
+      messages: [],
+    }
+    const items = [session, paused]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    hubSessionOrder = {
+      revision: 3,
+      bootstrapped: true,
+      showSuspended: false,
+      order: {
+        [computer.id]: items.map((item) => `${computer.id}:${item.id}`),
+      },
+    }
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const toggle = await screen.findByRole('button', {
+      name: 'Include suspended sessions',
+    })
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'))
+    expect(screen.queryByRole('button', { name: /^Paused planning,/ })).toBeNull()
+
+    hubSessionOrder = { ...hubSessionOrder, revision: 4, showSuspended: true }
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.order.updated',
+          order: hubSessionOrder,
+        }),
+      } as MessageEvent)
+    })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
+
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.order.updated',
+          order: { ...hubSessionOrder, revision: 3, showSuspended: false },
+        }),
+      } as MessageEvent)
+    })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(saveSessionVisibility).toHaveBeenCalledWith(false))
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'))
+    expect(screen.queryByRole('button', { name: /^Paused planning,/ })).toBeNull()
+  })
+
+  it('keeps the committed visibility when saving it fails', async () => {
+    const paused = {
+      ...session,
+      id: 'failed-paused',
+      title: 'Paused planning',
+      suspended: true,
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([session, paused])
+    vi.mocked(saveSessionVisibility).mockRejectedValueOnce(new Error('Hub unavailable'))
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const toggle = await screen.findByRole('button', {
+      name: 'Include suspended sessions',
+    })
+    fireEvent.click(toggle)
+
+    expect(await screen.findAllByText(
+      'Could not save suspended-session visibility: Hub unavailable',
+    )).not.toHaveLength(0)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
+  })
+
   it('renders a reorder committed by another client, and ignores a stale one', async () => {
     const items = [
       { ...session, id: 'live-a', title: 'Alpha' },
@@ -13684,6 +13788,7 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 4,
       bootstrapped: true,
+      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
     }
     render(<App />)
@@ -13699,6 +13804,7 @@ describe('App', () => {
           order: {
             revision: 5,
             bootstrapped: true,
+            showSuspended: true,
             order: { [computer.id]: [`${computer.id}:live-b`, `${computer.id}:live-a`] },
           },
         }),
@@ -13714,6 +13820,7 @@ describe('App', () => {
           order: {
             revision: 4,
             bootstrapped: true,
+            showSuspended: true,
             order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
           },
         }),
@@ -13752,6 +13859,7 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
+      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:gap-a`, `${computer.id}:gap-b`] },
     }
     render(<App />)
@@ -13765,6 +13873,7 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 3,
       bootstrapped: true,
+      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:gap-b`, `${computer.id}:gap-a`] },
     }
     await act(async () => {
@@ -13787,6 +13896,7 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
+      showSuspended: true,
       order: { [computer.id]: [key('race-a'), key('race-b'), key('race-c')] },
     }
     render(<App />)
@@ -13804,6 +13914,7 @@ describe('App', () => {
             order: {
               revision: 50,
               bootstrapped: true,
+              showSuspended: true,
               order: { [computer.id]: [key('race-c'), key('race-b'), key('race-a')] },
             },
           }),

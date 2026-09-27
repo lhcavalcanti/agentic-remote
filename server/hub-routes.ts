@@ -22,6 +22,10 @@ const sessionOrderKeys = z.array(z.string().trim().min(1).max(300)).max(2000)
 
 const sessionOrderLaneSchema = z.object({ order: sessionOrderKeys })
 
+const sessionOrderPreferencesSchema = z.object({
+  showSuspended: z.boolean(),
+})
+
 const sessionOrderBootstrapSchema = z.object({
   order: z.record(z.string().trim().min(1).max(200), sessionOrderKeys),
 })
@@ -651,6 +655,15 @@ export async function registerHubRoutes(
   app.get('/api/session-order', async () => ({
     sessionOrder: requireSessionOrder().snapshot(),
   }))
+
+  app.put('/api/session-order', async (request) => {
+    const input = sessionOrderPreferencesSchema.parse(request.body)
+    return {
+      sessionOrder: await commitOrder((store) =>
+        store.setShowSuspended(input.showSuspended),
+      ),
+    }
+  })
 
   app.put<{ Params: { computerId: string } }>(
     '/api/session-order/:computerId',

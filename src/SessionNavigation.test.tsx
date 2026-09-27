@@ -101,6 +101,7 @@ function NavigationHarness({
         query={query}
         filter={filter}
         showSuspended={showSuspended}
+        showSuspendedSaving={false}
         onQueryChange={setQuery}
         onFilterChange={setFilter}
         onShowSuspendedChange={setShowSuspended}
@@ -139,6 +140,7 @@ describe('session navigation', () => {
           query=""
           filter="all"
           showSuspended
+          showSuspendedSaving={false}
           onQueryChange={vi.fn()}
           onFilterChange={vi.fn()}
           onShowSuspendedChange={vi.fn()}

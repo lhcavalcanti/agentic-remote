@@ -304,6 +304,17 @@ export async function fetchSessionOrder(): Promise<SessionOrderSnapshot> {
   return response.sessionOrder
 }
 
+/** Saves the hub-owned session-list visibility shared by every browser. */
+export async function saveSessionVisibility(
+  showSuspended: boolean,
+): Promise<SessionOrderSnapshot> {
+  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
+    '/api/session-order',
+    { method: 'PUT', body: JSON.stringify({ showSuspended }) },
+  )
+  return response.sessionOrder
+}
+
 /** Submits one computer's lane, so a stale view cannot rewrite the others. */
 export async function saveSessionOrderLane(
   computerId: string,

@@ -23,11 +23,15 @@ afterEach(async () => {
 describe('SessionOrderStore', () => {
   it('starts empty and advances a revision only when something changes', async () => {
     const { store: order } = await store()
-    expect(order.snapshot()).toEqual({ revision: 0, bootstrapped: false, order: {} })
+    expect(order.snapshot()).toEqual({
+      revision: 0, bootstrapped: false, showSuspended: true, order: {},
+    })
     expect(order.isBootstrapped()).toBe(false)
 
     const first = await order.appendSession('pc', 'a')
-    expect(first).toEqual({ revision: 1, bootstrapped: false, order: { pc: ['pc:a'] } })
+    expect(first).toEqual({
+      revision: 1, bootstrapped: false, showSuspended: true, order: { pc: ['pc:a'] },
+    })
 
     // Discovering the same session again is not news.
     const repeat = await order.appendSession('pc', 'a')
@@ -42,7 +46,12 @@ describe('SessionOrderStore', () => {
 
     const reloaded = new SessionOrderStore(directory)
     await reloaded.initialize()
-    expect(reloaded.snapshot()).toEqual({ revision: 3, bootstrapped: false, order: { pc: ['pc:b', 'pc:a'] } })
+    expect(reloaded.snapshot()).toEqual({
+      revision: 3,
+      bootstrapped: false,
+      showSuspended: true,
+      order: { pc: ['pc:b', 'pc:a'] },
+    })
   })
 
   it('writes the state file privately', async () => {
@@ -83,7 +92,23 @@ describe('SessionOrderStore', () => {
     )
     const order = new SessionOrderStore(directory)
     await order.initialize()
-    expect(order.snapshot()).toEqual({ revision: 4, bootstrapped: false, order: { pc: ['pc:a', 'pc:b'] } })
+    expect(order.snapshot()).toEqual({
+      revision: 4,
+      bootstrapped: false,
+      showSuspended: true,
+      order: { pc: ['pc:a', 'pc:b'] },
+    })
+  })
+
+  it('shares suspended visibility durably and advances only on a change', async () => {
+    const { store: order, directory } = await store()
+    const hidden = await order.setShowSuspended(false)
+    expect(hidden).toMatchObject({ revision: 1, showSuspended: false })
+    expect((await order.setShowSuspended(false)).revision).toBe(1)
+
+    const reloaded = new SessionOrderStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.snapshot()).toEqual(hidden)
   })
 
   it('reorders one lane without touching another', async () => {
@@ -333,6 +358,12 @@ describe('SessionOrderStore', () => {
     const written = JSON.parse(
       await readFile(path.join(directory, 'session-order.json'), 'utf8'),
     ) as Record<string, unknown>
-    expect(written).toEqual({ version: 1, revision: 1, bootstrapped: false, order: { pc: ['pc:a'] } })
+    expect(written).toEqual({
+      version: 1,
+      revision: 1,
+      bootstrapped: false,
+      showSuspended: true,
+      order: { pc: ['pc:a'] },
+    })
   })
 })

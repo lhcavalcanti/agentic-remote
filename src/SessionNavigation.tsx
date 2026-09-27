@@ -349,6 +349,7 @@ export function SessionNavigation({
   query,
   filter,
   showSuspended,
+  showSuspendedSaving,
   creationError,
   loadingError,
   onDismissCreationError,
@@ -368,6 +369,7 @@ export function SessionNavigation({
   query: string
   filter: SessionFilter
   showSuspended: boolean
+  showSuspendedSaving: boolean
   creationError?: string
   loadingError?: string
   onDismissCreationError?: () => void
@@ -466,10 +468,14 @@ export function SessionNavigation({
           ))}
           <button
             aria-label="Include suspended sessions"
+            aria-busy={showSuspendedSaving}
             aria-pressed={showSuspended}
             className="session-filter session-filter--suspended"
+            disabled={showSuspendedSaving}
             onClick={() => setShowSuspended(!showSuspended)}
-            title={showSuspended ? 'Hide suspended sessions' : 'Show suspended sessions'}
+            title={showSuspendedSaving
+              ? 'Saving suspended-session visibility'
+              : showSuspended ? 'Hide suspended sessions' : 'Show suspended sessions'}
             type="button"
           >
             <Pause aria-hidden="true" size={11} />
@@ -483,11 +489,15 @@ export function SessionNavigation({
               {shown} of {counts.all} sessions
             </span>
             <button
+              disabled={showSuspendedSaving}
               onClick={() => {
                 setQuery('')
                 setFilter('all')
                 setShowSuspended(true)
               }}
+              title={showSuspendedSaving
+                ? 'Wait for suspended-session visibility to finish saving'
+                : undefined}
               type="button"
             >
               Clear filters

@@ -219,6 +219,7 @@ import {
   readWorkspaceFile,
   restartSession,
   resumeSession,
+  saveSessionVisibility,
   suspendSession,
   fetchSessionOrder,
   saveSessionOrderLane,
@@ -6786,6 +6787,9 @@ function App() {
   // rather than written back. -1 means "nothing acknowledged yet", which keeps
   // revision 0 (an empty hub) from looking like a snapshot already applied.
   const [sessionOrderRevision, setSessionOrderRevision] = useState(-1)
+  const [showSuspendedSessions, setShowSuspendedSessions] = useState(true)
+  const [savingSuspendedVisibility, setSavingSuspendedVisibility] = useState(false)
+  const savingSuspendedVisibilityRef = useRef(false)
   const sessionOrderRef = useRef(sessionOrder)
   sessionOrderRef.current = sessionOrder
   const sessionOrderRevisionRef = useRef(sessionOrderRevision)
@@ -6800,6 +6804,7 @@ function App() {
       acknowledgedSessionOrderRef.current = snapshot.order
       setSessionOrderRevision(snapshot.revision)
       setSessionOrder(snapshot.order)
+      setShowSuspendedSessions(snapshot.showSuspended !== false)
     },
     [],
   )
@@ -6808,7 +6813,6 @@ function App() {
   )
   const [sessionQuery, setSessionQuery] = useState('')
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
-  const [showSuspendedSessions, setShowSuspendedSessions] = useState(true)
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
@@ -13676,6 +13680,30 @@ function App() {
     }
   }
 
+  function changeShowSuspendedSessions(showSuspended: boolean) {
+    if (
+      savingSuspendedVisibilityRef.current ||
+      showSuspended === showSuspendedSessions
+    ) return
+    savingSuspendedVisibilityRef.current = true
+    setSavingSuspendedVisibility(true)
+    void (async () => {
+      try {
+        applySessionOrderSnapshot(await saveSessionVisibility(showSuspended))
+      } catch (caught) {
+        void syncSessionOrderRef.current()
+        setError(
+          `Could not save suspended-session visibility: ${
+            caught instanceof Error ? caught.message : String(caught)
+          }`,
+        )
+      } finally {
+        savingSuspendedVisibilityRef.current = false
+        setSavingSuspendedVisibility(false)
+      }
+    })()
+  }
+
   return (
     <div
       className={`app-shell ${
@@ -13789,9 +13817,10 @@ function App() {
                 query={sessionQuery}
                 filter={sessionFilter}
                 showSuspended={showSuspendedSessions}
+                showSuspendedSaving={savingSuspendedVisibility}
                 onQueryChange={setSessionQuery}
                 onFilterChange={setSessionFilter}
-                onShowSuspendedChange={setShowSuspendedSessions}
+                onShowSuspendedChange={changeShowSuspendedSessions}
                 creationError={
                   !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
                     ? sessionCreationError

@@ -15,6 +15,7 @@ interface SessionOrderState {
    * appended session would lock every device out of its saved arrangement.
    */
   bootstrapped: boolean
+  showSuspended: boolean
   order: Record<string, string[]>
 }
 
@@ -49,6 +50,7 @@ export class SessionOrderStore {
     version: STATE_VERSION,
     revision: 0,
     bootstrapped: false,
+    showSuspended: true,
     order: {},
   }
   /**
@@ -100,6 +102,7 @@ export class SessionOrderStore {
       version: STATE_VERSION,
       revision: typeof parsed.revision === 'number' && parsed.revision >= 0 ? parsed.revision : 0,
       bootstrapped: parsed.bootstrapped === true,
+      showSuspended: parsed.showSuspended !== false,
       order,
     }
   }
@@ -108,6 +111,7 @@ export class SessionOrderStore {
     return {
       revision: this.state.revision,
       bootstrapped: this.state.bootstrapped,
+      showSuspended: this.state.showSuspended,
       order: structuredClone(this.state.order),
     }
   }
@@ -115,6 +119,15 @@ export class SessionOrderStore {
   /** Whether a pre-hub browser order has already been taken. */
   isBootstrapped(): boolean {
     return this.state.bootstrapped
+  }
+
+  /** Shares suspended-session visibility across every browser on this hub. */
+  async setShowSuspended(showSuspended: boolean): Promise<SessionOrderSnapshot> {
+    return this.commit((_order, state) => {
+      if (state.showSuspended === showSuspended) return false
+      state.showSuspended = showSuspended
+      return true
+    })
   }
 
   /** The position a session currently holds, for carrying it onto a successor. */
@@ -307,6 +320,7 @@ export class SessionOrderStore {
         version: STATE_VERSION,
         revision: previous.revision + 1,
         bootstrapped: staged.bootstrapped,
+        showSuspended: staged.showSuspended,
         order: draft,
       }
       try {

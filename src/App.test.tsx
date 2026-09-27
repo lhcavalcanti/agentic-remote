@@ -13776,6 +13776,54 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
   })
 
+  it('does not let Clear filters race an in-flight visibility save', async () => {
+    const paused = {
+      ...session,
+      id: 'pending-paused',
+      title: 'Paused planning',
+      suspended: true,
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([session, paused])
+    let finish!: (snapshot: typeof hubSessionOrder) => void
+    vi.mocked(saveSessionVisibility).mockImplementationOnce(() =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), {
+      target: { value: 'Project' },
+    })
+    const toggle = screen.getByRole('button', {
+      name: 'Include suspended sessions',
+    })
+    fireEvent.click(toggle)
+
+    const clear = screen.getByRole('button', { name: 'Clear filters' })
+    expect(clear).toBeDisabled()
+    fireEvent.click(clear)
+    expect(screen.getByRole('searchbox', { name: 'Search sessions' }))
+      .toHaveValue('Project')
+
+    const hidden = {
+      ...hubSessionOrder,
+      revision: hubSessionOrder.revision + 1,
+      showSuspended: false,
+    }
+    finish(hidden)
+    await waitFor(() => expect(clear).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(clear)
+    await waitFor(() => expect(saveSessionVisibility).toHaveBeenLastCalledWith(true))
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByRole('searchbox', { name: 'Search sessions' })).toHaveValue('')
+  })
+
   it('renders a reorder committed by another client, and ignores a stale one', async () => {
     const items = [
       { ...session, id: 'live-a', title: 'Alpha' },

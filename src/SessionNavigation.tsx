@@ -489,11 +489,15 @@ export function SessionNavigation({
               {shown} of {counts.all} sessions
             </span>
             <button
+              disabled={showSuspendedSaving}
               onClick={() => {
                 setQuery('')
                 setFilter('all')
                 setShowSuspended(true)
               }}
+              title={showSuspendedSaving
+                ? 'Wait for suspended-session visibility to finish saving'
+                : undefined}
               type="button"
             >
               Clear filters

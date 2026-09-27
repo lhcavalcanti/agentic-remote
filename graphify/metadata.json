@@ -447,7 +447,7 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "894d6c653bd934b7428f05551336838ce1345c01b8c1766050cb1fc7e74921ce",
+    "src/App.test.tsx": "e38566a9cb8d6443a26977723f6548ee00bc434a6789e853601de5c5fd9a2e49",
     "src/App.tsx": "fbfb6d46dce324cd38b7dc413e009d79aa1a38e64c080aebb44c24840cd30cea",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
@@ -466,8 +466,8 @@
     "src/ReaderWorkspace.tsx": "b41d6deb855fdac4e5dc7d9e27a2d7c540e917b680db5584a6dd987af68f3c13",
     "src/SessionActions.test.tsx": "8c3b1e18436507aa07a61b4f229b77466c086ecb3a6f195865ae0f7e41a028c6",
     "src/SessionActions.tsx": "058d8adc943e9f0dcf42cbce3c58c4b5c550b47816a98769c9c894fb2e32d563",
-    "src/SessionNavigation.test.tsx": "7b5aed28c7c9290b94d5381d2a483ca07226f18e9054f1bbaa34cdf27013a750",
-    "src/SessionNavigation.tsx": "d5075e4d3c8034a55e08048ce9fe12cba12dd10d595e523649453b2b0080cf38",
+    "src/SessionNavigation.test.tsx": "b7623bb64be075a4d7436ad4c0040537dd20adca92c37c0a93a2445b94108faa",
+    "src/SessionNavigation.tsx": "7550c4f2fb0c5a516b515e6c225dc83b3d2b489f99116755b761fa492384c5ed",
     "src/SessionResources.test.tsx": "a856d939f3da4bf2f40c315d958dfd2931b47bfe4db345bbc2cb02b58effc7ec",
     "src/SessionResources.tsx": "e1d59c13b923197f6c57f02b0ed86abc867c4dea8c21c2950b7748140ef35b1f",
     "src/WorkspaceFileIcon.tsx": "db618b1c32aa836c6dcfc6f8676a1b9071b558aa10a3801023cbde601596a3f1",
@@ -487,7 +487,7 @@
     "src/features/prompts/PromptCards.test.tsx": "53427c6b4d7ff7ece561d930f35ea9921e2b75b11b487670660a0d00f5767479",
     "src/features/prompts/PromptCards.tsx": "6d23f53748d6c60de9e4f47f0b6c36c1776586f69009ad3c53ec3680547fcafd",
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
-    "src/index.css": "2dea92e6811e1c7e8a489e976ac575561dc8d8579302c6805c4185bbd44ac5ff",
+    "src/index.css": "36ae09b288a4b338b5375a17c0bed84bee417b6cdbf47da253bb1c665431f6bb",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -579,30 +579,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "8e5f431014fb081f760c15f9034229c960d3855e272fa35a449804f5ce706f33",
+    "GRAPH_REPORT.md": "bb715d8a318ce57a6ba9553f91290503532f00baf41bac5dcf2010eab494aed9",
     "communities.json": "6da879a43d5e6017af3ddd21bcdcfd62f3d3593a043a8359907b8e7bff801701",
-    "graph.html": "ac89806d9b04779a6bb87355e3d34d714807422ee8428ec5358bedb9cb5a3cfa",
-    "graph.json": "3005d08ade6cf5470585de6aab34e3e334acd930baf4f7e746d41ae5b2d70f9d"
+    "graph.html": "cbcad3803283654b63604be31b73568f4ab2d406f49151478b16b942626897e0",
+    "graph.json": "933fa755197dfeba4c88deffb2ba44351c73732192b081b1ae385c944bd033b7"
   },
   "schema_version": 1,
-  "source_commit": "32f4c03009a1f039bfaf53d487849b5b5a0c1b08",
-  "source_fingerprint": "6029a704ab7c11913db7042e323d774a84191c99f1a42d2eee69a466f632ba0b",
+  "source_commit": "3394ebd698fbf957b51965e8119e11007000d40a",
+  "source_fingerprint": "b410568730d525d669080c753661909468296b530ace5952050e8f86905f59a2",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
-    "server/hub-routes.ts",
-    "server/session-order-routes.test.ts",
-    "server/session-order-store.test.ts",
-    "server/session-order-store.ts",
-    "shared/contracts.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/App.test.tsx",
-    "src/App.tsx",
     "src/SessionNavigation.test.tsx",
     "src/SessionNavigation.tsx",
-    "src/api.ts"
+    "src/index.css"
   ]
 }

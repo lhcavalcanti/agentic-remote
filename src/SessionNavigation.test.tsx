@@ -74,6 +74,8 @@ function NavigationHarness({
   snapshots = backgroundTasks,
   loading = false,
   loadingError,
+  initialShowSuspended = true,
+  showSuspendedSaving = false,
 }: {
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
@@ -81,10 +83,12 @@ function NavigationHarness({
   snapshots?: Record<string, BackgroundTaskSnapshot>
   loading?: boolean
   loadingError?: string
+  initialShowSuspended?: boolean
+  showSuspendedSaving?: boolean
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
-  const [showSuspended, setShowSuspended] = useState(true)
+  const [showSuspended, setShowSuspended] = useState(initialShowSuspended)
   return (
     <DndContext>
       <SessionNavigation
@@ -101,7 +105,7 @@ function NavigationHarness({
         query={query}
         filter={filter}
         showSuspended={showSuspended}
-        showSuspendedSaving={false}
+        showSuspendedSaving={showSuspendedSaving}
         onQueryChange={setQuery}
         onFilterChange={setFilter}
         onShowSuspendedChange={setShowSuspended}
@@ -251,6 +255,21 @@ describe('session navigation', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
     expect(screen.queryByRole('status', { name: 'Session filter results' })).toBeNull()
+  })
+
+  it('holds Clear filters while suspended visibility is being saved', () => {
+    render(
+      <NavigationHarness
+        initialShowSuspended={false}
+        showSuspendedSaving
+      />,
+    )
+
+    const clear = screen.getByRole('button', { name: 'Clear filters' })
+    expect(clear).toBeDisabled()
+    fireEvent.click(clear)
+    expect(screen.getByRole('button', { name: 'Include suspended sessions' }))
+      .toHaveAttribute('aria-pressed', 'false')
   })
 
   it('keeps task access inline with session metadata', () => {

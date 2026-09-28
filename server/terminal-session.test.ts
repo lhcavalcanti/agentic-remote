@@ -397,6 +397,30 @@ describe('TmuxTerminalSessionController', () => {
     expect(await controller.has(sessionId)).toBe(true)
   }, 15_000)
 
+  it('remembers an owner discovered by has so a later exit is confirmable', async () => {
+    const { controller, sessionId } = await ownedStartupFixture()
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        pid: number
+        target: string
+        rootPid: number
+      } | undefined>
+      inputReadySessions: Map<string, unknown>
+      automaticStartupSessions: Map<string, unknown>
+    }
+    expect(await controller.has(sessionId)).toBe(true)
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    expect(owner).toBeDefined()
+    inspectable.inputReadySessions.delete(sessionId)
+    inspectable.automaticStartupSessions.delete(sessionId)
+    process.kill(owner!.pid, 'SIGTERM')
+
+    await expect(eventually(
+      () => controller.ownerStopped(sessionId),
+      (stopped) => stopped,
+    )).resolves.toBe(true)
+  }, 15_000)
+
   it('dismisses an overlay instead of terminating its idle CLI', async () => {
     const overlay = [
       'Working - esc interrupt',

@@ -214,6 +214,8 @@ export class TmuxTerminalSessionController
     string,
     { pid: number; target: string; rootPid: number }
   >()
+  /** Owner identity observed without claiming that its composer is ready. */
+  private readonly knownOwners = new Map<string, TerminalOwner>()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
     expiresAt: number
@@ -244,19 +246,24 @@ export class TmuxTerminalSessionController
   }
 
   async has(sessionId: string): Promise<boolean> {
-    return Boolean(
-      (await this.target(sessionId)) ?? (await this.target(sessionId, true)),
-    )
+    const owner =
+      (await this.owner(sessionId)) ??
+      (await this.owner(sessionId, undefined, true))
+    if (!owner) return false
+    this.knownOwners.set(sessionId, owner)
+    return true
   }
 
   async ownerStopped(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
-      const expected = readyOwner ?? automaticOwner
+      const expected =
+        readyOwner ?? automaticOwner ?? this.knownOwners.get(sessionId)
       if (!expected) return false
       const current = await this.owner(sessionId, expected.target, true)
       if (current) {
+        this.knownOwners.set(sessionId, current)
         if (
           current.target === expected.target &&
           current.rootPid === expected.rootPid
@@ -271,6 +278,7 @@ export class TmuxTerminalSessionController
       if (!(await this.paneStopped(expected))) return false
       this.inputReadySessions.delete(sessionId)
       this.automaticStartupSessions.delete(sessionId)
+      this.knownOwners.delete(sessionId)
       return true
     })
   }

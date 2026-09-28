@@ -405,8 +405,8 @@
     "server/terminal-form-viewport.test.ts": "0e371aad468716325fddd7e89bc0fb8533a3edc90a4611f29540affd7f79ba03",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "a78e8bf16e7bb2cb8447951aecc92eef03a43a76f4f74638203b4c8e195850da",
-    "server/terminal-session.ts": "979c0df7a5db5588131e7858e6c97ecf20c19384b82f7bb30cedec69dd213218",
+    "server/terminal-session.test.ts": "349147cfdfb67b73eaf1cbe560a0326c73c3aae8d17acffd40ff7f05a2eaafcb",
+    "server/terminal-session.ts": "98a8a369b0c1dbb5fc4604ea16157cc4c39192d8f9ace86561615b44eeb55f48",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -579,18 +579,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "07c72c8def55baf5ffd096d96215498962b7895cfbefff75cecd42fc051b16ef",
-    "communities.json": "82e79300f46e1fb0eed7914debec128ca909b403729f78ec2b2a696344fffca6",
-    "graph.html": "80c5822d23485559a327f49f2f45ebb7f3c0ff2ebc407c7fba2d0886516d7120",
-    "graph.json": "cd73ad0ae538a811bafc5569ec7099082a37ae14f06724780eaa664a6e51d819"
+    "GRAPH_REPORT.md": "999a691262a45052589b1305140be6fd1e8ab3d62df39553b43c2ea1588a0857",
+    "communities.json": "df414d10e5c81981bc102dbb15f42fa5369be5a1c5291ce6bfc176bbb8ce2492",
+    "graph.html": "4317993b4abdaa54a923da75edc71cc07769ccfb118a256bc2bb6937fdd3cbb7",
+    "graph.json": "488d2672493a24f823e62bc65bf0d436a7a25e545a02931c05245a97c90f6df8"
   },
   "schema_version": 1,
-  "source_commit": "72dc7de135864b6d9761b4f0425a0eb6737cfde2",
-  "source_fingerprint": "c3ea698e2313c648dcd8daf4671d6fb25981e2033e18c5297fc6756ccf0c41ec",
+  "source_commit": "d79d13ddbffda2d4b494839b4a7f6d848028b149",
+  "source_fingerprint": "adab0e736d79ecef68be5334d24a44a2ed3af8a50561ec86851af49c442dd18b",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/terminal-send-uncertainty.test.ts",
+    "server/terminal-session.test.ts",
     "server/terminal-session.ts"
   ]
 }

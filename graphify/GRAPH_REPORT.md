@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `c3ea698e2313c648dcd8daf4671d6fb25981e2033e18c5297fc6756ccf0c41ec`
+Snapshot: `adab0e736d79ecef68be5334d24a44a2ed3af8a50561ec86851af49c442dd18b`
 
-Source checkout: `72dc7de135864b6d9761b4f0425a0eb6737cfde2`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `d79d13ddbffda2d4b494839b4a7f6d848028b149`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -12,7 +12,7 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 
 
 ## Corpus Check
-- 230 files · ~467,842 words
+- 230 files · ~467,955 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -33,24 +33,24 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 - agent-service.ts
 - agentic-remote-promotion-monitor
 - markdown-navigation.ts
-- queueConflict
 - terminal-session.ts
+- queueConflict
 - CopilotSessionLike
 - pwa.ts
 - bundle
-- terminal-startup-queue.test.ts
 - RemoteNodeClient
 - background-task-adapter.ts
 - lib.rs
+- terminal-startup-queue.test.ts
 - ProviderSessionService
 - shell.ts
 - .readAfterWrites
 - config.rs
 - hub-routes.ts
 - knowledge-tree.ts
-- TmuxTerminalSessionController
 - .get
 - claude-agent-service.ts
+- TmuxTerminalSessionController
 - devDependencies
 - agentic-remote
 - .replyUserInputInternal
@@ -70,8 +70,8 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 - terminal-session.test.ts
 - scripts
 - PushNotificationService
-- noTmuxServer
 - compilerOptions
+- noTmuxServer
 - transcription-service.ts
 - SessionKnowledgeStore
 - session-resource-clear.test.ts
@@ -234,13 +234,13 @@ Nodes (67): agentic-remote-promotion-monitor script, ALLOWED_ORIGINS, ALLOWED_RO
 Cohesion: 0.06
 Nodes (52): UserInputField, UserInputFieldValue, followMarkdownLink(), KnowledgeReader(), markdownComponentsFor(), MarkdownImage(), missingDocumentFragment(), WorkspaceDialog() (+44 more)
 
-### Community 12 - "queueConflict"
+### Community 12 - "terminal-session.ts"
+Cohesion: 0.09
+Nodes (46): TerminalFormContinuation, activeBottomFrame(), boxedComposerFrame(), cleanDialogLine(), clearAutomaticStartupPrompts(), COMPOSER_PLACEHOLDERS, composerFrameText(), containsCopiedInteractiveFrame() (+38 more)
+
+### Community 13 - "queueConflict"
 Cohesion: 0.11
 Nodes (16): acceptanceReceipt(), errorMessage(), explicitlyRefused(), hasUncertainDelivery(), ownsDispatchRecovery(), preflight(), preparePrompt(), queueConflict() (+8 more)
-
-### Community 13 - "terminal-session.ts"
-Cohesion: 0.11
-Nodes (44): activeBottomFrame(), boxedComposerFrame(), cleanDialogLine(), clearAutomaticStartupPrompts(), COMPOSER_PLACEHOLDERS, composerFrameText(), containsCopiedInteractiveFrame(), desktopInstallPromptIdentity() (+36 more)
 
 ### Community 14 - "CopilotSessionLike"
 Cohesion: 0.05
@@ -254,21 +254,21 @@ Nodes (39): directories, AppVersion, parseAppVersion(), deletePushSubscription()
 Cohesion: 0.05
 Nodes (43): agentic, app, appimage, deb, desktop, dmg, icons/128x128@2x.png, icons/128x128.png (+35 more)
 
-### Community 17 - "terminal-startup-queue.test.ts"
-Cohesion: 0.09
-Nodes (33): directories, execFileAsync, processExists(), tmuxSessions, waitForProcessExit(), TerminalFormContinuation, exec, formFixture() (+25 more)
-
-### Community 18 - "RemoteNodeClient"
+### Community 17 - "RemoteNodeClient"
 Cohesion: 0.07
 Nodes (6): headerSafe(), RemoteNodeClient, BackgroundTaskSnapshot, RemovedQueuedPrompt, WorkspaceFile, WorkspaceListing
 
-### Community 19 - "background-task-adapter.ts"
+### Community 18 - "background-task-adapter.ts"
 Cohesion: 0.12
 Nodes (39): attachmentModeValue(), backgroundHandoff(), BackgroundTaskEventOptions, backgroundTasksFromEvents(), booleanValue(), CopilotTaskInfo, CopilotTaskProgress, eventString() (+31 more)
 
-### Community 20 - "lib.rs"
+### Community 19 - "lib.rs"
 Cohesion: 0.14
 Nodes (34): AppHandle, HubConfig, IntoIterator, Item, Mutex, bridge_ready(), build_tray(), config_dir() (+26 more)
+
+### Community 20 - "terminal-startup-queue.test.ts"
+Cohesion: 0.10
+Nodes (31): directories, execFileAsync, processExists(), tmuxSessions, waitForProcessExit(), exec, formFixture(), horizontalFormFixture() (+23 more)
 
 ### Community 22 - "shell.ts"
 Cohesion: 0.10
@@ -290,17 +290,17 @@ Nodes (37): addComputerSchema, configureRuntimeSchema, createSessionSchema, dire
 Cohesion: 0.09
 Nodes (35): WorkspaceEntry, listKnowledgeEntries(), readKnowledgeFile(), applyRootChoice(), cancelKnowledgeRestore(), collapseKnowledgeTree(), createRoot(), knowledgeBasePathFor() (+27 more)
 
-### Community 27 - "TmuxTerminalSessionController"
-Cohesion: 0.16
-Nodes (6): copilotCommand(), execFileAsync, processCommand(), submitTerminalForm(), TmuxTerminalSessionController, PendingPermission
-
-### Community 28 - ".get"
+### Community 27 - ".get"
 Cohesion: 0.12
 Nodes (3): isMissingSessionError(), removeCopilotSessionFiles(), TranscriptObservation
 
-### Community 29 - "claude-agent-service.ts"
+### Community 28 - "claude-agent-service.ts"
 Cohesion: 0.11
 Nodes (23): AuthStatusRunner, ClaudeAgentServiceEvents, ClaudeQuestion, execFileAsync, isClaudeAuthenticationError(), PendingClaudeInput, PendingClaudePermission, PendingClaudeReply (+15 more)
+
+### Community 29 - "TmuxTerminalSessionController"
+Cohesion: 0.15
+Nodes (8): copilotCommand(), execFileAsync, processAncestors(), processCommand(), submitTerminalForm(), tmuxTargetForPid(), TmuxTerminalSessionController, PendingPermission
 
 ### Community 30 - "devDependencies"
 Cohesion: 0.06
@@ -374,13 +374,13 @@ Nodes (26): dependencies, @tauri-apps/api, description, devDependencies, @tauri-
 Cohesion: 0.19
 Nodes (3): HubEventSource, PushNotificationService, registerPushRoutes()
 
-### Community 49 - "noTmuxServer"
-Cohesion: 0.11
-Nodes (18): listTmuxSessions(), processAncestors(), tmuxTargetForPid(), noTmuxServer(), processGone(), procVisible(), socketIdentity(), directories (+10 more)
-
-### Community 50 - "compilerOptions"
+### Community 49 - "compilerOptions"
 Cohesion: 0.08
 Nodes (24): compilerOptions, allowArbitraryExtensions, allowImportingTsExtensions, erasableSyntaxOnly, jsx, lib, module, moduleDetection (+16 more)
+
+### Community 50 - "noTmuxServer"
+Cohesion: 0.12
+Nodes (16): listTmuxSessions(), noTmuxServer(), processGone(), procVisible(), socketIdentity(), directories, { execute }, files (+8 more)
 
 ### Community 51 - "transcription-service.ts"
 Cohesion: 0.11

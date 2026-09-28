@@ -28,7 +28,7 @@ describe('Native send effect classification', () => {
     { failureAt: 'terminal settings restoration', uncertain: true },
   ])('classifies $failureAt without inventing confirmed delivery', async ({ failureAt, uncertain }) => {
     const controller = new TmuxTerminalSessionController()
-    const owner = { pid: 1234, target: '%owned' }
+    const owner = { pid: 1234, target: '%owned', rootPid: 1234 }
     vi.spyOn(controller as unknown as {
       owner(id: string): Promise<typeof owner>
     }, 'owner').mockResolvedValue(owner)

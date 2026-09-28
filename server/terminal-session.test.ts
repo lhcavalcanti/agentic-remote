@@ -331,6 +331,146 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it('keeps startup ownership when a wrapper is replaced in the same pane', async () => {
+    const overlay = [
+      'Settings',
+      '❯ allowedUrls (default)',
+      '/ search · ↑/↓ navigate · tab switch scope · enter edit',
+      'esc close',
+    ].join('\n')
+    const { controller, sessionId, replacementPath } =
+      await ownedStartupFixture(overlay)
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        pid: number
+        target: string
+        rootPid: number
+      } | undefined>
+      automaticStartupSessions: Map<string, {
+        pid: number
+        target: string
+        rootPid: number
+      }>
+    }
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    const automatic = inspectable.automaticStartupSessions.get(sessionId)
+    expect(owner).toBeDefined()
+    expect(automatic).toBeDefined()
+    inspectable.automaticStartupSessions.set(sessionId, {
+      ...automatic!,
+      // The pane root is stable while Copilot replaces its wrapper process.
+      pid: owner!.pid + 100_000,
+      rootPid: owner!.rootPid,
+    })
+    await writeFile(replacementPath, readyComposer())
+    process.kill(owner!.pid, 'SIGUSR2')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => Boolean(pane?.includes('╹')),
+    )
+
+    const originalOwner = inspectable.owner.bind(controller)
+    let cachedMiss = true
+    const spy = vi.spyOn(inspectable, 'owner').mockImplementation(
+      async (id, target, fresh) => {
+        if (cachedMiss && target === automatic!.target && !fresh) {
+          cachedMiss = false
+          return undefined
+        }
+        return originalOwner(id, target, fresh)
+      },
+    )
+    try {
+      await expect(controller.resolveStartupPrompt(sessionId)).resolves.toBe(true)
+      expect(await controller.inputReady(sessionId)).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  }, 15_000)
+
+  it('does not interrupt an idle composer when stale status offers Stop', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture()
+
+    await expect(controller.cancel(sessionId)).resolves.toBe(true)
+
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
+    expect(await controller.has(sessionId)).toBe(true)
+  }, 15_000)
+
+  it('remembers an owner discovered by has so a later exit is confirmable', async () => {
+    const { controller, sessionId } = await ownedStartupFixture()
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        pid: number
+        target: string
+        rootPid: number
+      } | undefined>
+      inputReadySessions: Map<string, unknown>
+      automaticStartupSessions: Map<string, unknown>
+    }
+    expect(await controller.has(sessionId)).toBe(true)
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    expect(owner).toBeDefined()
+    inspectable.inputReadySessions.delete(sessionId)
+    inspectable.automaticStartupSessions.delete(sessionId)
+    process.kill(owner!.pid, 'SIGTERM')
+
+    await expect(eventually(
+      () => controller.ownerStopped(sessionId),
+      (stopped) => stopped,
+    )).resolves.toBe(true)
+  }, 15_000)
+
+  it('does not confirm loss when the session reopened in another pane', async () => {
+    const controller = new TmuxTerminalSessionController()
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        pid: number
+        target: string
+        rootPid: number
+      } | undefined>
+      knownOwners: Map<string, {
+        pid: number
+        target: string
+        rootPid: number
+      }>
+    }
+    inspectable.knownOwners.set('moved', {
+      pid: 10,
+      target: '%old',
+      rootPid: 10,
+    })
+    vi.spyOn(inspectable, 'owner')
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        pid: 20,
+        target: '%new',
+        rootPid: 20,
+      })
+
+    await expect(controller.ownerStopped('moved')).resolves.toBe(false)
+  })
+
+  it('dismisses an overlay instead of terminating its idle CLI', async () => {
+    const overlay = [
+      'Working - esc interrupt',
+      'Settings',
+      '❯ allowedUrls (default)',
+      '/ search · ↑/↓ navigate · tab switch scope · enter edit',
+      'esc close',
+    ].join('\n')
+    const { controller, sessionId, output } = await ownedStartupFixture(overlay)
+
+    await expect(controller.cancel(sessionId)).resolves.toBe(true)
+
+    const dismissed = await eventually(
+      () => readFile(output, 'utf8'),
+      (receipt) => JSON.parse(receipt).keys === '\u001b',
+    )
+    expect(JSON.parse(dismissed).keys).toBe('\u001b')
+    expect(await controller.has(sessionId)).toBe(true)
+  }, 15_000)
+
   it.each([
     ['an empty composer', readyComposer()],
     ['an existing draft', readyComposer('Keep this native draft')],

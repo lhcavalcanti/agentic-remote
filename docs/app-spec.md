@@ -424,6 +424,12 @@ Questions and permissions are the highest-priority UI state.
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
   startup screens, dialogs, non-composer frames, and existing drafts.
+- Startup ownership MUST follow the same tmux pane and root process when the
+  Copilot wrapper replaces itself with a native child. Stop MUST send an
+  interrupt only while the terminal advertises active work; on an idle composer
+  it MUST send nothing, and on a keyboard-owning dialog it MUST dismiss rather
+  than terminate the CLI. Restarting a managed session whose terminal owner has
+  vanished MUST persist its SDK fallback before reporting success.
 - A complete model, effort, and context footer MUST NOT make an otherwise live
   composer appear unavailable. Unrelated output below the frame MUST still
   prevent it from being treated as a live composer.

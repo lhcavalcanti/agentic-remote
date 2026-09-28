@@ -3189,14 +3189,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error('Session can only restart while idle')
     }
+    let terminalRestarted = false
     if (this.externalSessionIds.has(id)) {
-      if (!this.terminalController.restart) {
-        throw new Error('Terminal session restart is not available')
+      let restartError: unknown
+      try {
+        terminalRestarted =
+          Boolean(this.terminalController.restart) &&
+          await this.terminalController.restart!(id, stored.cwd)
+      } catch (error) {
+        restartError = error
       }
-      if (!(await this.terminalController.restart(id, stored.cwd))) {
+      if (!terminalRestarted) {
+        const ownerStopped =
+          (await this.terminalController.ownerStopped?.(id)) === true
+        if (!ownerStopped) {
+          if (restartError) throw restartError
+          throw new Error(
+            'The terminal owner is still available or could not be confirmed stopped',
+          )
+        }
+      }
+      if (!terminalRestarted && !this.store.isManagedOpen(id)) {
         throw new Error('External terminal is no longer available')
       }
-    } else {
+    }
+    if (!terminalRestarted) {
       // Retired before anything is torn down. A read that settles while the
       // old runtime is being disconnected still answers for it, and releasing
       // the queue on that answer sends the prompt into the runtime being
@@ -3216,6 +3233,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.backgroundTaskTracker.remove(id)
       this.replaceBackgroundTasks(id, [], previousTasks.supported)
       const attached = await this.attachSdkSession(id)
+      try {
+        await this.store.setBackend(id, 'sdk')
+      } catch (error) {
+        if (this.sessions.get(id) === attached) {
+          await attached.disconnect()
+          this.sessions.delete(id)
+        }
+        throw error
+      }
+      this.externalSessionIds.delete(id)
       await this.syncBackgroundTasks(id, attached, false).catch((error: unknown) =>
         this.publishError(id, error),
       )
@@ -3232,7 +3259,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.publish(restarted)
     // Only an SDK session drains through this path. A tmux session keeps its
     // own runtime, and waking it here would start a second owner beside it.
-    if (restarted.queuedPrompts?.length && !this.externalSessionIds.has(id)) {
+    if (restarted.queuedPrompts?.length && !terminalRestarted) {
       this.wakeSdkQueue(id)
     }
     return restarted

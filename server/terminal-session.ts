@@ -802,7 +802,7 @@ export class TmuxTerminalSessionController
       const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
       const expectedTarget = automaticOwner?.target ?? readyOwner?.target
-      const owner = await this.owner(sessionId, expectedTarget)
+      let owner = await this.owner(sessionId, expectedTarget)
       if (
         owner &&
         readyOwner?.pid === owner.pid &&
@@ -812,17 +812,25 @@ export class TmuxTerminalSessionController
       }
       if (
         !owner &&
-        expectedTarget &&
-        (await this.owner(sessionId, undefined, true))
+        expectedTarget
       ) {
-        this.inputReadySessions.delete(sessionId)
-        this.automaticStartupSessions.delete(sessionId)
-        throw Object.assign(
-          new Error(
-            'The terminal session reopened in a different pane. Check it there before continuing startup.',
-          ),
-          { statusCode: 409 },
-        )
+        const freshOwner = await this.owner(sessionId, undefined, true)
+        if (
+          freshOwner &&
+          automaticOwner?.target === freshOwner.target &&
+          automaticOwner.rootPid === freshOwner.rootPid
+        ) {
+          owner = freshOwner
+        } else if (freshOwner) {
+          this.inputReadySessions.delete(sessionId)
+          this.automaticStartupSessions.delete(sessionId)
+          throw Object.assign(
+            new Error(
+              'The terminal session reopened in a different pane. Check it there before continuing startup.',
+            ),
+            { statusCode: 409 },
+          )
+        }
       }
       if (
         !owner ||
@@ -1291,9 +1299,7 @@ export class TmuxTerminalSessionController
         return false
       }
       const pane = await capturePane(target)
-      if (isTerminalAgentWorking(pane)) {
-        await execFileAsync('tmux', ['send-keys', '-t', target, '-H', '03'])
-      } else if (
+      if (
         isTerminalOverlay(pane) ||
         isTerminalSessionInUsePrompt(pane) ||
         parseTerminalPermission(pane) ||
@@ -1301,6 +1307,8 @@ export class TmuxTerminalSessionController
         parseTerminalFormPrompt(pane)
       ) {
         await execFileAsync('tmux', ['send-keys', '-t', target, 'Escape'])
+      } else if (isTerminalAgentWorking(pane)) {
+        await execFileAsync('tmux', ['send-keys', '-t', target, '-H', '03'])
       }
       return true
     })

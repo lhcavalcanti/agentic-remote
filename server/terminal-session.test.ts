@@ -369,8 +369,23 @@ describe('TmuxTerminalSessionController', () => {
       (pane) => Boolean(pane?.includes('╹')),
     )
 
-    await expect(controller.resolveStartupPrompt(sessionId)).resolves.toBe(true)
-    expect(await controller.inputReady(sessionId)).toBe(true)
+    const originalOwner = inspectable.owner.bind(controller)
+    let cachedMiss = true
+    const spy = vi.spyOn(inspectable, 'owner').mockImplementation(
+      async (id, target, fresh) => {
+        if (cachedMiss && target === automatic!.target && !fresh) {
+          cachedMiss = false
+          return undefined
+        }
+        return originalOwner(id, target, fresh)
+      },
+    )
+    try {
+      await expect(controller.resolveStartupPrompt(sessionId)).resolves.toBe(true)
+      expect(await controller.inputReady(sessionId)).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
   }, 15_000)
 
   it('does not interrupt an idle composer when stale status offers Stop', async () => {
@@ -384,6 +399,7 @@ describe('TmuxTerminalSessionController', () => {
 
   it('dismisses an overlay instead of terminating its idle CLI', async () => {
     const overlay = [
+      'Working - esc interrupt',
       'Settings',
       '❯ allowedUrls (default)',
       '/ search · ↑/↓ navigate · tab switch scope · enter edit',

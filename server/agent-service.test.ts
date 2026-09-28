@@ -3077,7 +3077,7 @@ describe('AgentService deletion', () => {
     await service.start()
     const created = await service.createSession(directory)
     await service.store.setBackend(created.id, 'terminal')
-    service['externalSessionIds'].delete(created.id)
+    service['externalSessionIds'].add(created.id)
 
     const restarted = await service.restartSession(created.id)
 

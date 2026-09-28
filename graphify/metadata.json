@@ -308,8 +308,8 @@
     "server/active-sessions.ts": "872f54657ac39271fb18b7b44fc01db06c693c101641e4147a16797fe16941fc",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "f3aaa437c1ae9161b0502a6049ebecb4f287892cf4d79101c834c1b098e1d8f1",
-    "server/agent-service.test.ts": "149a7e618a27ee36278d8e08621d7aee635746ec89a8d1b27fb93af599deff19",
-    "server/agent-service.ts": "893d1b0bf9691bba42201895000794e1ad07952f9b98c01475c5ebfe33a52cca",
+    "server/agent-service.test.ts": "7e1fdde79fd51c130bf70c99b51a766e020702d7cc57217a6fef78a8aa36178a",
+    "server/agent-service.ts": "2bb6e2a0acedd11d81e4c8c2444bed5567b61ffaa32a74481231f85e81c3585a",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -405,8 +405,8 @@
     "server/terminal-form-viewport.test.ts": "0e371aad468716325fddd7e89bc0fb8533a3edc90a4611f29540affd7f79ba03",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
-    "server/terminal-session.test.ts": "09fb652f367b32787d9759c865f424e806ce9b7f2c74ed6210987d3d4c84d272",
-    "server/terminal-session.ts": "e6f3f787689bfe289e3bccf6f07c60cc48e00e51339e60b851fd27dbcac108e4",
+    "server/terminal-session.test.ts": "a78e8bf16e7bb2cb8447951aecc92eef03a43a76f4f74638203b4c8e195850da",
+    "server/terminal-session.ts": "709b2db8b81956f9f00deefdecbfea4a752bd25fbcfdb2256be93d460527856d",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -579,24 +579,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "9dbb0c407fd8e55cfb7f1c5caf2863c937600132deaa525bcb93d32593d2d4ff",
-    "communities.json": "362bda9513c3ce083b115843241a77375a791e44502426232762716d9ec4447b",
-    "graph.html": "74f861f53cffa6ef89bea6cb0c0601c2e7dc96930630747324eb1b6944a24e45",
-    "graph.json": "01b6285e6c73d2133364969d446ee6e6878fcca0923a05cc51c17f612b459657"
+    "GRAPH_REPORT.md": "e4fe3d6e7414fa822b9c67abab814d285b8794d649d924a91024394b0dc6096e",
+    "communities.json": "2d84f88c470cc7462fdd5d594bde5554e3a9d60c4015d83a876ed0c4c779635c",
+    "graph.html": "9f06d1f35666d6d8620264628f2a69995fbcb2c2cd3057ef33647fe136208250",
+    "graph.json": "81f01e93013d69b2bfd59227b60b026b2c112b492c2930f36e415ae326002183"
   },
   "schema_version": 1,
-  "source_commit": "2246dcf56e229f9f76513c1cdab246aaca5b4ec0",
-  "source_fingerprint": "5fae8a596e661b98e6d18d4a3d1f61889a25b2700293e53c342c57d55ff43d2a",
+  "source_commit": "6bdd8d57047770a55b8a82f127d4fa3c5b57019a",
+  "source_fingerprint": "60a6145b8028373e6f0d2a60ae9eb794fa5214d0ac8eea7308161c86e8c5d5fd",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
     "server/agent-service.test.ts",
     "server/agent-service.ts",
     "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/terminal-session.ts"
   ]
 }

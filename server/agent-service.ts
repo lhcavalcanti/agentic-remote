@@ -3189,14 +3189,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error('Session can only restart while idle')
     }
+    let terminalRestarted = false
     if (this.externalSessionIds.has(id)) {
-      if (!this.terminalController.restart) {
-        throw new Error('Terminal session restart is not available')
-      }
-      if (!(await this.terminalController.restart(id, stored.cwd))) {
+      terminalRestarted =
+        Boolean(this.terminalController.restart) &&
+        await this.terminalController.restart!(id, stored.cwd)
+      if (!terminalRestarted && !this.store.isManagedOpen(id)) {
         throw new Error('External terminal is no longer available')
       }
-    } else {
+    }
+    if (!terminalRestarted) {
       // Retired before anything is torn down. A read that settles while the
       // old runtime is being disconnected still answers for it, and releasing
       // the queue on that answer sends the prompt into the runtime being
@@ -3242,7 +3244,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.publish(restarted)
     // Only an SDK session drains through this path. A tmux session keeps its
     // own runtime, and waking it here would start a second owner beside it.
-    if (restarted.queuedPrompts?.length && !this.externalSessionIds.has(id)) {
+    if (restarted.queuedPrompts?.length && !terminalRestarted) {
       this.wakeSdkQueue(id)
     }
     return restarted

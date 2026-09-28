@@ -341,6 +341,7 @@ beforeEach(() => {
   vi.spyOn(TmuxTerminalSessionController.prototype, 'send').mockResolvedValue(false)
   vi.spyOn(TmuxTerminalSessionController.prototype, 'capture').mockResolvedValue(undefined)
   vi.spyOn(TmuxTerminalSessionController.prototype, 'cancel').mockResolvedValue(false)
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'ownerStopped').mockResolvedValue(false)
 })
 
 describe('AgentService deletion', () => {
@@ -3078,6 +3079,7 @@ describe('AgentService deletion', () => {
     const created = await service.createSession(directory)
     await service.store.setBackend(created.id, 'terminal')
     service['externalSessionIds'].add(created.id)
+    vi.mocked(service['terminalController'].ownerStopped!).mockResolvedValueOnce(true)
 
     const restarted = await service.restartSession(created.id)
 
@@ -3088,6 +3090,29 @@ describe('AgentService deletion', () => {
       executionMode: 'sdk',
     })
     expect(client.resumedSessionIds).toContain(created.id)
+    await service.stop()
+  })
+
+  it('does not duplicate an ambiguously owned managed terminal during Restart', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    await service.store.setBackend(created.id, 'terminal')
+    service['externalSessionIds'].add(created.id)
+
+    await expect(service.restartSession(created.id)).rejects.toThrow(
+      /still available|could not be confirmed stopped/,
+    )
+    expect(service.store.backend(created.id)).toBe('terminal')
+    expect(client.resumedSessionIds).not.toContain(created.id)
     await service.stop()
   })
 

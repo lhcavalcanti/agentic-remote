@@ -231,9 +231,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 133,
+  "communities": 151,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9877,
+  "edges": 9883,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -308,8 +308,8 @@
     "server/active-sessions.ts": "872f54657ac39271fb18b7b44fc01db06c693c101641e4147a16797fe16941fc",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "f3aaa437c1ae9161b0502a6049ebecb4f287892cf4d79101c834c1b098e1d8f1",
-    "server/agent-service.test.ts": "7e1fdde79fd51c130bf70c99b51a766e020702d7cc57217a6fef78a8aa36178a",
-    "server/agent-service.ts": "2bb6e2a0acedd11d81e4c8c2444bed5567b61ffaa32a74481231f85e81c3585a",
+    "server/agent-service.test.ts": "82bebf09c00f079c9565be6399aa960796e90a3a8d42e2dffcc24b232dc46033",
+    "server/agent-service.ts": "8d1877d77973f6a89499cad15096eb8f529fbd410a3ee19c1dc16e1e16f38395",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -404,9 +404,9 @@
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
     "server/terminal-form-viewport.test.ts": "0e371aad468716325fddd7e89bc0fb8533a3edc90a4611f29540affd7f79ba03",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
-    "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
+    "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
     "server/terminal-session.test.ts": "a78e8bf16e7bb2cb8447951aecc92eef03a43a76f4f74638203b4c8e195850da",
-    "server/terminal-session.ts": "709b2db8b81956f9f00deefdecbfea4a752bd25fbcfdb2256be93d460527856d",
+    "server/terminal-session.ts": "979c0df7a5db5588131e7858e6c97ecf20c19384b82f7bb30cedec69dd213218",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -522,7 +522,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 3500,
+  "nodes": 3502,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -579,18 +579,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e4fe3d6e7414fa822b9c67abab814d285b8794d649d924a91024394b0dc6096e",
-    "communities.json": "2d84f88c470cc7462fdd5d594bde5554e3a9d60c4015d83a876ed0c4c779635c",
-    "graph.html": "9f06d1f35666d6d8620264628f2a69995fbcb2c2cd3057ef33647fe136208250",
-    "graph.json": "81f01e93013d69b2bfd59227b60b026b2c112b492c2930f36e415ae326002183"
+    "GRAPH_REPORT.md": "07c72c8def55baf5ffd096d96215498962b7895cfbefff75cecd42fc051b16ef",
+    "communities.json": "82e79300f46e1fb0eed7914debec128ca909b403729f78ec2b2a696344fffca6",
+    "graph.html": "80c5822d23485559a327f49f2f45ebb7f3c0ff2ebc407c7fba2d0886516d7120",
+    "graph.json": "cd73ad0ae538a811bafc5569ec7099082a37ae14f06724780eaa664a6e51d819"
   },
   "schema_version": 1,
-  "source_commit": "6bdd8d57047770a55b8a82f127d4fa3c5b57019a",
-  "source_fingerprint": "60a6145b8028373e6f0d2a60ae9eb794fa5214d0ac8eea7308161c86e8c5d5fd",
+  "source_commit": "72dc7de135864b6d9761b4f0425a0eb6737cfde2",
+  "source_fingerprint": "c3ea698e2313c648dcd8daf4671d6fb25981e2033e18c5297fc6756ccf0c41ec",
   "working_tree_changes": [
     "server/agent-service.test.ts",
     "server/agent-service.ts",
-    "server/terminal-session.test.ts",
+    "server/terminal-send-uncertainty.test.ts",
     "server/terminal-session.ts"
   ]
 }

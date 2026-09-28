@@ -3191,9 +3191,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     let terminalRestarted = false
     if (this.externalSessionIds.has(id)) {
-      terminalRestarted =
-        Boolean(this.terminalController.restart) &&
-        await this.terminalController.restart!(id, stored.cwd)
+      let restartError: unknown
+      try {
+        terminalRestarted =
+          Boolean(this.terminalController.restart) &&
+          await this.terminalController.restart!(id, stored.cwd)
+      } catch (error) {
+        restartError = error
+      }
+      if (!terminalRestarted) {
+        const ownerStopped =
+          (await this.terminalController.ownerStopped?.(id)) === true
+        if (!ownerStopped) {
+          if (restartError) throw restartError
+          throw new Error(
+            'The terminal owner is still available or could not be confirmed stopped',
+          )
+        }
+      }
       if (!terminalRestarted && !this.store.isManagedOpen(id)) {
         throw new Error('External terminal is no longer available')
       }

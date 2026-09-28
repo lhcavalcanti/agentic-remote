@@ -66,6 +66,8 @@ export interface TerminalSessionController {
     commitReplacement: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
+  /** True only when a previously identified owner is confirmed gone. */
+  ownerStopped?(sessionId: string): Promise<boolean>
   /** Ends the window running a session without forgetting the session. */
   /**
    * Ends the session's runtime.
@@ -206,7 +208,7 @@ export class TmuxTerminalSessionController
   private readonly operations = new Map<string, Promise<unknown>>()
   private readonly inputReadySessions = new Map<
     string,
-    { pid: number; target: string }
+    TerminalOwner
   >()
   private readonly automaticStartupSessions = new Map<
     string,
@@ -245,6 +247,32 @@ export class TmuxTerminalSessionController
     return Boolean(
       (await this.target(sessionId)) ?? (await this.target(sessionId, true)),
     )
+  }
+
+  async ownerStopped(sessionId: string): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const readyOwner = this.inputReadySessions.get(sessionId)
+      const automaticOwner = this.automaticStartupSessions.get(sessionId)
+      const expected = readyOwner ?? automaticOwner
+      if (!expected) return false
+      const current = await this.owner(sessionId, expected.target, true)
+      if (current) {
+        if (
+          current.target === expected.target &&
+          current.rootPid === expected.rootPid
+        ) {
+          const owners = readyOwner
+            ? this.inputReadySessions
+            : this.automaticStartupSessions
+          owners.set(sessionId, current)
+        }
+        return false
+      }
+      if (!(await this.paneStopped(expected))) return false
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
+      return true
+    })
   }
 
   async rename(sessionId: string, title: string): Promise<boolean> {
@@ -868,6 +896,7 @@ export class TmuxTerminalSessionController
       this.inputReadySessions.set(sessionId, {
         pid: validatedOwner.pid,
         target: validatedOwner.target,
+        rootPid: validatedOwner.rootPid,
       })
       this.automaticStartupSessions.delete(sessionId)
       return true
@@ -1579,6 +1608,7 @@ export class TmuxTerminalSessionController
       this.inputReadySessions.set(sessionId, {
         pid: currentOwner.pid,
         target: currentOwner.target,
+        rootPid: currentOwner.rootPid,
       })
       this.automaticStartupSessions.delete(sessionId)
       const buffer = `agentic-remote-${randomUUID()}`
@@ -2033,6 +2063,7 @@ export class TmuxTerminalSessionController
             this.inputReadySessions.set(sessionId, {
               pid: validatedOwner.pid,
               target: validatedOwner.target,
+              rootPid: validatedOwner.rootPid,
             })
             this.automaticStartupSessions.delete(sessionId)
           } else {

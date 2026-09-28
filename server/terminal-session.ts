@@ -261,7 +261,9 @@ export class TmuxTerminalSessionController
       const expected =
         readyOwner ?? automaticOwner ?? this.knownOwners.get(sessionId)
       if (!expected) return false
-      const current = await this.owner(sessionId, expected.target, true)
+      const current =
+        (await this.owner(sessionId, expected.target, true)) ??
+        (await this.owner(sessionId, undefined, true))
       if (current) {
         this.knownOwners.set(sessionId, current)
         if (

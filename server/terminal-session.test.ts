@@ -421,6 +421,36 @@ describe('TmuxTerminalSessionController', () => {
     )).resolves.toBe(true)
   }, 15_000)
 
+  it('does not confirm loss when the session reopened in another pane', async () => {
+    const controller = new TmuxTerminalSessionController()
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        pid: number
+        target: string
+        rootPid: number
+      } | undefined>
+      knownOwners: Map<string, {
+        pid: number
+        target: string
+        rootPid: number
+      }>
+    }
+    inspectable.knownOwners.set('moved', {
+      pid: 10,
+      target: '%old',
+      rootPid: 10,
+    })
+    vi.spyOn(inspectable, 'owner')
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        pid: 20,
+        target: '%new',
+        rootPid: 20,
+      })
+
+    await expect(controller.ownerStopped('moved')).resolves.toBe(false)
+  })
+
   it('dismisses an overlay instead of terminating its idle CLI', async () => {
     const overlay = [
       'Working - esc interrupt',

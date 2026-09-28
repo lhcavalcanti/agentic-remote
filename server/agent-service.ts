@@ -3216,6 +3216,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.backgroundTaskTracker.remove(id)
       this.replaceBackgroundTasks(id, [], previousTasks.supported)
       const attached = await this.attachSdkSession(id)
+      try {
+        await this.store.setBackend(id, 'sdk')
+      } catch (error) {
+        if (this.sessions.get(id) === attached) {
+          await attached.disconnect()
+          this.sessions.delete(id)
+        }
+        throw error
+      }
+      this.externalSessionIds.delete(id)
       await this.syncBackgroundTasks(id, attached, false).catch((error: unknown) =>
         this.publishError(id, error),
       )

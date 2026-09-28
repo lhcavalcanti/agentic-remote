@@ -3064,6 +3064,33 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('persists SDK ownership when Restart recovers a vanished managed terminal', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    await service.store.setBackend(created.id, 'terminal')
+    service['externalSessionIds'].delete(created.id)
+
+    const restarted = await service.restartSession(created.id)
+
+    expect(restarted.executionMode).toBe('sdk')
+    expect(service.store.backend(created.id)).toBe('sdk')
+    await expect(service.openSession(created.id)).resolves.toMatchObject({
+      id: created.id,
+      executionMode: 'sdk',
+    })
+    expect(client.resumedSessionIds).toContain(created.id)
+    await service.stop()
+  })
+
   it('handles SDK ask-user requests through the session UI state', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

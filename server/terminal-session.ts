@@ -210,7 +210,7 @@ export class TmuxTerminalSessionController
   >()
   private readonly automaticStartupSessions = new Map<
     string,
-    { pid: number; target: string }
+    { pid: number; target: string; rootPid: number }
   >()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
@@ -316,6 +316,7 @@ export class TmuxTerminalSessionController
         this.automaticStartupSessions.set(sessionId, {
           pid: nextOwner.pid,
           target: nextOwner.target,
+          rootPid: nextOwner.rootPid,
         })
       } catch (error) {
         try {
@@ -336,6 +337,7 @@ export class TmuxTerminalSessionController
           this.automaticStartupSessions.set(sessionId, {
             pid: restoredOwner.pid,
             target: restoredOwner.target,
+            rootPid: restoredOwner.rootPid,
           })
         } catch (rollbackError) {
           throw new AggregateError(
@@ -393,6 +395,7 @@ export class TmuxTerminalSessionController
         this.automaticStartupSessions.set(replacementId, {
           pid: nextOwner.pid,
           target: nextOwner.target,
+          rootPid: nextOwner.rootPid,
         })
       } catch (error) {
         this.inputReadySessions.delete(replacementId)
@@ -415,6 +418,7 @@ export class TmuxTerminalSessionController
           this.automaticStartupSessions.set(sessionId, {
             pid: restoredOwner.pid,
             target: restoredOwner.target,
+            rootPid: restoredOwner.rootPid,
           })
         } catch (rollbackError) {
           throw new AggregateError(
@@ -557,6 +561,7 @@ export class TmuxTerminalSessionController
       this.automaticStartupSessions.set(sessionId, {
         pid: nextOwner.pid,
         target: nextOwner.target,
+        rootPid: nextOwner.rootPid,
       })
       return true
     })
@@ -773,7 +778,7 @@ export class TmuxTerminalSessionController
     const owner = await this.owner(sessionId, automaticOwner?.target)
     return (
       owner !== undefined &&
-      automaticOwner?.pid === owner.pid &&
+      automaticOwner?.rootPid === owner.rootPid &&
       automaticOwner.target === owner.target &&
       isTerminalDesktopInstallPrompt(pane)
     )
@@ -821,14 +826,19 @@ export class TmuxTerminalSessionController
       }
       if (
         !owner ||
-        automaticOwner?.pid !== owner.pid ||
+        automaticOwner?.rootPid !== owner.rootPid ||
         automaticOwner.target !== owner.target
       ) {
         return false
       }
+      let validatedOwner = owner
       const validateOwner = async () => {
         const current = await this.owner(sessionId, owner.target, true)
-        if (!current || current.pid !== owner.pid) {
+        if (
+          !current ||
+          current.target !== owner.target ||
+          current.rootPid !== owner.rootPid
+        ) {
           throw Object.assign(
             new Error(
               'The terminal owner changed while its startup prompt was being resolved.',
@@ -836,6 +846,7 @@ export class TmuxTerminalSessionController
             { statusCode: 409 },
           )
         }
+        validatedOwner = current
       }
       const startup = await waitForTerminalStartup(
         owner.target,
@@ -847,8 +858,8 @@ export class TmuxTerminalSessionController
       }
       await validateOwner()
       this.inputReadySessions.set(sessionId, {
-        pid: owner.pid,
-        target: owner.target,
+        pid: validatedOwner.pid,
+        target: validatedOwner.target,
       })
       this.automaticStartupSessions.delete(sessionId)
       return true
@@ -1279,7 +1290,18 @@ export class TmuxTerminalSessionController
       if (!target) {
         return false
       }
-      await execFileAsync('tmux', ['send-keys', '-t', target, '-H', '03'])
+      const pane = await capturePane(target)
+      if (isTerminalAgentWorking(pane)) {
+        await execFileAsync('tmux', ['send-keys', '-t', target, '-H', '03'])
+      } else if (
+        isTerminalOverlay(pane) ||
+        isTerminalSessionInUsePrompt(pane) ||
+        parseTerminalPermission(pane) ||
+        parseTerminalUserInput(pane) ||
+        parseTerminalFormPrompt(pane)
+      ) {
+        await execFileAsync('tmux', ['send-keys', '-t', target, 'Escape'])
+      }
       return true
     })
   }
@@ -2009,6 +2031,7 @@ export class TmuxTerminalSessionController
             this.automaticStartupSessions.set(sessionId, {
               pid: validatedOwner.pid,
               target: validatedOwner.target,
+              rootPid: validatedOwner.rootPid,
             })
           }
           return { sessionName, windowId }

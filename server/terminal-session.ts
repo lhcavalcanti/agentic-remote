@@ -192,6 +192,7 @@ const MAX_FORM_VIEWPORT_HEIGHT = 256
 const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
 const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
+const REPLACEMENT_COMPOSER_TIMEOUT_MS = 8_000
 
 function formViewportTimeout(fieldCount: number): number {
   return Math.min(
@@ -1588,30 +1589,44 @@ export class TmuxTerminalSessionController
         !parseTerminalFormPrompt(paneBeforePaste)
       ) {
         let replacementOwner = currentOwner
-        const ready = await waitForTerminalStartup(
-          currentOwner.target,
-          false,
-          async () => {
-            const latestOwner = await this.owner(
-              sessionId,
-              replacementOwner.target,
-              true,
-            )
-            if (
-              !latestOwner ||
-              latestOwner.target !== replacementOwner.target ||
-              latestOwner.rootPid !== replacementOwner.rootPid
-            ) {
-              throw Object.assign(
-                new Error(
-                  'The terminal owner changed while replacement waited for its composer.',
-                ),
-                { statusCode: 409 },
+        let ready: Awaited<ReturnType<typeof waitForTerminalStartup>>
+        try {
+          ready = await waitForTerminalStartup(
+            currentOwner.target,
+            false,
+            async () => {
+              const latestOwner = await this.owner(
+                sessionId,
+                replacementOwner.target,
+                true,
               )
-            }
-            replacementOwner = latestOwner
-          },
-        )
+              if (
+                !latestOwner ||
+                latestOwner.target !== replacementOwner.target ||
+                latestOwner.rootPid !== replacementOwner.rootPid
+              ) {
+                throw Object.assign(
+                  new Error(
+                    'The terminal owner changed while replacement waited for its composer.',
+                  ),
+                  { statusCode: 409 },
+                )
+              }
+              replacementOwner = latestOwner
+            },
+            REPLACEMENT_COMPOSER_TIMEOUT_MS,
+          )
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            /did not become ready/i.test(error.message)
+          ) {
+            throw new TerminalDraftConflictError(
+              'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
+            )
+          }
+          throw error
+        }
         if (ready === 'ready') {
           currentOwner = replacementOwner
           paneBeforePaste = await capturePane(currentOwner.target)
@@ -2376,8 +2391,9 @@ async function waitForTerminalStartup(
   target: string,
   handleAutomaticPrompts = true,
   validateOwner: () => Promise<void> = async () => undefined,
+  timeoutMs = TERMINAL_STARTUP_TIMEOUT_MS,
 ): Promise<'ready' | 'action-required'> {
-  const deadline = Date.now() + TERMINAL_STARTUP_TIMEOUT_MS
+  const deadline = Date.now() + timeoutMs
   let readyFrames = 0
   while (Date.now() < deadline) {
     const pane = await capturePane(target, Math.max(1, deadline - Date.now()))

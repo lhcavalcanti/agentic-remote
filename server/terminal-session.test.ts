@@ -127,6 +127,7 @@ async function deliveryFixture(
   composerStyle: 'boxed' | 'flat' = 'boxed',
   transcript = '',
   transientRepaintMs = 0,
+  injectedText = '',
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -145,6 +146,10 @@ const composer = (text = '', working = false) => ${JSON.stringify(transcript ? `
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
+process.on('SIGUSR1', () => {
+  pasted = ${JSON.stringify(injectedText || undefined)}
+  draw(composer(pasted || '', ${working}))
+})
 process.on('SIGUSR2', () => {
   draw('Loading terminal frame')
   setTimeout(() => draw(composer(pasted || '', ${working})), ${transientRepaintMs})
@@ -659,10 +664,18 @@ describe('TmuxTerminalSessionController', () => {
       undefined,
       undefined,
       '',
-      'stale terminal text',
+      '',
       'boxed',
       '',
       500,
+      'stale terminal text',
+    )
+    await expect(controller.send(sessionId, 'Warm up owner', false))
+      .resolves.toBe(true)
+    process.kill(Number(panePid), 'SIGUSR1')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => composerHoldsText(pane || ''),
     )
     await expect(controller.send(sessionId, 'Preserved app draft', false))
       .rejects.toMatchObject({
@@ -688,10 +701,59 @@ describe('TmuxTerminalSessionController', () => {
     )
     expect(JSON.parse(received)).toEqual({
       clears: 1,
-      pastes: ['Preserved app draft'],
+      pastes: ['Warm up owner', 'Preserved app draft'],
+      submits: ['enter', 'enter'],
+    })
+  }, 20_000)
+
+  it('classifies a persistent non-composer replacement timeout without clearing', async () => {
+    const { controller, sessionId, output, panePid } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      '',
+      'boxed',
+      '',
+      60_000,
+      'stale terminal text',
+    )
+    await expect(controller.send(sessionId, 'Warm up owner', false))
+      .resolves.toBe(true)
+    process.kill(Number(panePid), 'SIGUSR1')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => composerHoldsText(pane || ''),
+    )
+    await expect(controller.send(sessionId, 'Preserved app draft', false))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    process.kill(Number(panePid), 'SIGUSR2')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => pane?.includes('Loading terminal frame') === true,
+    )
+
+    await expect(controller.send(
+      sessionId,
+      'Preserved app draft',
+      false,
+      { replaceExistingInput: true },
+    )).rejects.toMatchObject({
+      statusCode: 409,
+      terminalDraftConflict: true,
+      uncertainDelivery: false,
+      message: expect.stringContaining('Nothing was cleared or pasted'),
+    })
+
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      pastes: ['Warm up owner'],
       submits: ['enter'],
     })
-  }, 15_000)
+  }, 20_000)
 
   it('does not clear an existing draft while the terminal is working', async () => {
     const { controller, sessionId, output } = await deliveryFixture(

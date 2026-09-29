@@ -405,8 +405,8 @@
     "server/terminal-form-viewport.test.ts": "0e371aad468716325fddd7e89bc0fb8533a3edc90a4611f29540affd7f79ba03",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "ce35c60c5eee4e4f5d3f20c02b738cf3e2d64af92341b2919af3ab1cbd978848",
-    "server/terminal-session.ts": "99ea4b01c710dbe5e1066711777a4265432efeea8239bb46c2aa948ef67efbd0",
+    "server/terminal-session.test.ts": "62b4407838cfa83360ff126796d3c28db195fa2c2b8132cb8f96b29d9f246e5d",
+    "server/terminal-session.ts": "a1dbb422238b64717cc000be497465558193466a2dfa399e2d4ca480d7e85be9",
     "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -579,16 +579,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "61d312bfd9290cf6ac61e87407b36d3ad81c457d947471e9d6efed887538a594",
+    "GRAPH_REPORT.md": "0a8adffb396a4ddcf51aadf16009362d8c759b2e1b043c7300b63e6fbb4ba0c2",
     "communities.json": "030f43507cf460ebe05022af5a6c8dfa92e4e3d33051a54330b6175853318e93",
-    "graph.html": "05161cde1001fcb683e6610120964fb5e9b917145e931ef86b0fb6bafc51ab33",
-    "graph.json": "8ff8d5ee6d96be7afffd107e452b2f95eac517151de5353334b20323eca3973a"
+    "graph.html": "60108953b5e5783a18451e4cff7b6fb2f5ee94c047d8c17d68fb0e9e8dc2d727",
+    "graph.json": "34349b79a48f44647d77bda9d69d6f630692355e979600cecdf46db0e01f1c1a"
   },
   "schema_version": 1,
-  "source_commit": "cc0c5bf70ef255098d22c7cff85a107a996be025",
-  "source_fingerprint": "e7623e511729a6f5408cdee70a4fe07255dd213fc6b8b878363d747b98906e36",
+  "source_commit": "ffa5dbb401e6a17cdddf033bba12bf242f5a6d98",
+  "source_fingerprint": "002abd02e8f4d011c14c2c8d2bd153c2fc3ad8a457a5bc8af70a1b45ba5b1a25",
   "working_tree_changes": [
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts"
   ]
 }

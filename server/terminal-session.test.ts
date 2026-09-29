@@ -126,6 +126,7 @@ async function deliveryFixture(
   initialText = '',
   composerStyle: 'boxed' | 'flat' = 'boxed',
   transcript = '',
+  transientRepaintMs = 0,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -144,6 +145,10 @@ const composer = (text = '', working = false) => ${JSON.stringify(transcript ? `
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
+process.on('SIGUSR2', () => {
+  draw('Loading terminal frame')
+  setTimeout(() => draw(composer(pasted || '', ${working})), ${transientRepaintMs})
+})
 process.stdin.on('data', (data) => {
   if (repaint !== undefined && data.includes(29)) {
     draw(repaint)
@@ -193,7 +198,7 @@ draw(composer(${JSON.stringify(initialText)}, ${working}))
   const controller = new TmuxTerminalSessionController()
   const readyMarker = composerStyle === 'flat' ? 'open sidebar' : '╹'
   await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes(readyMarker)))
-  return { controller, sessionId, output, directory, tmuxSession }
+  return { controller, sessionId, output, directory, tmuxSession, panePid }
 }
 
 async function ownedStartupFixture(initialPane?: string, footer = '') {
@@ -630,6 +635,46 @@ describe('TmuxTerminalSessionController', () => {
         uncertainDelivery: false,
       })
     expect(await readFile(output, 'utf8')).toBe('')
+
+    await expect(controller.send(
+      sessionId,
+      'Preserved app draft',
+      false,
+      { replaceExistingInput: true },
+    )).resolves.toBe(true)
+
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1,
+      pastes: ['Preserved app draft'],
+      submits: ['enter'],
+    })
+  }, 15_000)
+
+  it('waits through a transient non-composer frame before replacing a draft', async () => {
+    const { controller, sessionId, output, panePid } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      'stale terminal text',
+      'boxed',
+      '',
+      500,
+    )
+    await expect(controller.send(sessionId, 'Preserved app draft', false))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    process.kill(Number(panePid), 'SIGUSR2')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => pane?.includes('Loading terminal frame') === true,
+    )
 
     await expect(controller.send(
       sessionId,

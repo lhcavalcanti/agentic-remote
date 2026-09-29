@@ -1565,7 +1565,7 @@ export class TmuxTerminalSessionController
         await new Promise((resolve) => setTimeout(resolve, 50))
         paneBeforePaste = await capturePane(owner.target)
       }
-      const currentOwner = await this.owner(sessionId, owner.target, true)
+      let currentOwner = await this.owner(sessionId, owner.target, true)
       if (!currentOwner || currentOwner.pid !== owner.pid) {
         this.inputReadySessions.delete(sessionId)
         this.automaticStartupSessions.delete(sessionId)
@@ -1577,6 +1577,46 @@ export class TmuxTerminalSessionController
         )
       }
       paneBeforePaste = await capturePane(currentOwner.target)
+      if (
+        options.replaceExistingInput &&
+        !terminalInputReady(paneBeforePaste) &&
+        !isTerminalOverlay(paneBeforePaste) &&
+        !isTerminalAgentWorking(paneBeforePaste) &&
+        !isTerminalSessionInUsePrompt(paneBeforePaste) &&
+        !parseTerminalPermission(paneBeforePaste) &&
+        !parseTerminalUserInput(paneBeforePaste) &&
+        !parseTerminalFormPrompt(paneBeforePaste)
+      ) {
+        let replacementOwner = currentOwner
+        const ready = await waitForTerminalStartup(
+          currentOwner.target,
+          false,
+          async () => {
+            const latestOwner = await this.owner(
+              sessionId,
+              replacementOwner.target,
+              true,
+            )
+            if (
+              !latestOwner ||
+              latestOwner.target !== replacementOwner.target ||
+              latestOwner.rootPid !== replacementOwner.rootPid
+            ) {
+              throw Object.assign(
+                new Error(
+                  'The terminal owner changed while replacement waited for its composer.',
+                ),
+                { statusCode: 409 },
+              )
+            }
+            replacementOwner = latestOwner
+          },
+        )
+        if (ready === 'ready') {
+          currentOwner = replacementOwner
+          paneBeforePaste = await capturePane(currentOwner.target)
+        }
+      }
       if (isTerminalSessionInUsePrompt(paneBeforePaste)) {
         throw Object.assign(
           new Error(

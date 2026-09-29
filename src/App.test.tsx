@@ -6701,6 +6701,69 @@ describe('App', () => {
     expect(textarea).toHaveValue('')
   })
 
+  it('uses the refreshed recovery token for the automatic replacement', async () => {
+    const oldToken = 'resend:old-terminal-conflict'
+    const freshToken = 'resend:fresh-terminal-conflict'
+    const content = 'Recovered prompt blocked by stale tmux text'
+    const failed: ManagedSession = {
+      ...session,
+      messages: [],
+      failedPrompt: {
+        content,
+        failedAt: oldToken,
+        uncertain: true,
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(Object.assign(
+        new Error('Terminal text is blocking this recovered prompt'),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          uncertainDelivery: false,
+          submission: {
+            sessionId: session.id,
+            failedAt: freshToken,
+            accepted: false,
+          },
+        },
+      ))
+      .mockResolvedValueOnce({
+        ...failed,
+        failedPrompt: undefined,
+      })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(textarea).toHaveValue(content))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          acknowledgesFailure: freshToken,
+          content,
+          enqueue: false,
+          replaceTerminalDraft: true,
+        },
+      ),
+    )
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      'computer-1',
+      'session-1',
+      {
+        acknowledgesFailure: oldToken,
+        content,
+        enqueue: false,
+      },
+    )
+  })
+
   it('restores the draft and shows the guarded replacement refusal', async () => {
     const initial = Object.assign(
       new Error('Terminal text is blocking this message'),
@@ -6786,8 +6849,9 @@ describe('App', () => {
   })
 
   it.each(['direct', 'collapsed paste'] as const)(
-    'keeps an app-local command local from a %s',
+    'keeps an app-local command local without a command catalog from a %s',
     async (source) => {
+    vi.mocked(listCommands).mockRejectedValueOnce(new Error('Catalog unavailable'))
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
 
@@ -6807,6 +6871,9 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
+    expect(
+      await screen.findByRole('dialog', { name: 'Status line' }),
+    ).toBeInTheDocument()
     expect(sendMessage).not.toHaveBeenCalled()
     expect(executeCommand).not.toHaveBeenCalled()
     },

@@ -11825,7 +11825,15 @@ function App() {
             ),
         )
       : undefined
-    if (command?.name === 'statusline') {
+    const effectiveCommandName = command?.name || commandName
+    const appLocalCommand =
+      Boolean(resourceCommand) ||
+      ['statusline', 'clear', 'restart'].includes(effectiveCommandName) ||
+      (
+        commandName === 'cwd' &&
+        !trimmedContent.slice(commandName.length + 1).trim()
+      )
+    if (effectiveCommandName === 'statusline') {
       const input = trimmedContent.slice(commandName.length + 1).trim().toLowerCase()
       if (input === 'off') {
         setStatusline((current) => ({ ...current, enabled: false }))
@@ -11839,7 +11847,7 @@ function App() {
       reofferFailedPrompt(targetKey)
       return
     }
-    if (command?.name === 'clear') {
+    if (effectiveCommandName === 'clear') {
       consumeLocalCommand()
       // The session this became. Everything the recovery was carrying has just
       // moved here, and offering it against the key that is gone left the
@@ -11851,7 +11859,7 @@ function App() {
       reofferFailedPrompt(replacementKey ?? targetKey)
       return
     }
-    if (command?.name === 'restart') {
+    if (effectiveCommandName === 'restart') {
       consumeLocalCommand()
       await restartSelectedSession()
       focusComposer(targetKey)
@@ -11885,6 +11893,7 @@ function App() {
     // Which failure this send is answering, so the recovery that runs after it
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
+    let acknowledgedFailure = submission.acknowledgesFailure
     let admitted = false
     try {
       admitted = updateComposerDrafts([targetKey], (current) => ({
@@ -11908,12 +11917,15 @@ function App() {
       submissionsInFlight.current.add(targetKey)
       submissionAnchors.current.add(targetKey)
       setSending(true)
-      const dispatch = (replaceTerminalDraft = false) =>
+      const dispatch = (
+        replaceTerminalDraft = false,
+        acknowledgesFailure = acknowledgedFailure,
+      ) =>
         isCommand
           ? executeCommand(selected.computerId, selected.id, {
               // A restored prompt can be a slash command, and it answers the
               // failure just as a message does.
-              acknowledgesFailure: submission.acknowledgesFailure,
+              acknowledgesFailure,
               command: content,
               enqueue: shouldEnqueue,
               ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
@@ -11921,7 +11933,7 @@ function App() {
           : sendMessage(selected.computerId, selected.id, {
               // Whatever they were handed back is answered by this, whether
               // they sent it as it was, edited it, or replaced it outright.
-              acknowledgesFailure: submission.acknowledgesFailure,
+              acknowledgesFailure,
               content,
               enqueue: shouldEnqueue,
               ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
@@ -11932,12 +11944,16 @@ function App() {
       } catch (caught) {
         if (
           shouldEnqueue ||
+          appLocalCommand ||
           !terminalDraftConflictFromError(caught) ||
           deliveryUncertaintyFromError(caught) !== false
         ) {
           throw caught
         }
-        response = await dispatch(true)
+        acknowledgedFailure =
+          submissionReceiptFromError(caught)?.failedAt ??
+          acknowledgedFailure
+        response = await dispatch(true, acknowledgedFailure)
       }
       const updated = currentSessionResponse(response)
       if (!composerMounted.current) {
@@ -11957,7 +11973,7 @@ function App() {
           },
         }
       })
-      const acknowledged = submission.acknowledgesFailure
+      const acknowledged = acknowledgedFailure
       acknowledgedStamp = acknowledged
       if (restoredFailures.current.get(liveKey) === acknowledged) {
         restoredFailures.current.delete(liveKey)

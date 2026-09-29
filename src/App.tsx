@@ -6670,10 +6670,6 @@ function App() {
   const [sessionLoadError, setSessionLoadError] = useState<string>()
   const [sessionLoadAttempt, setSessionLoadAttempt] = useState(0)
   const [sending, setSending] = useState(false)
-  const [replacingTerminalDraft, setReplacingTerminalDraft] = useState(false)
-  const [terminalDraftConflicts, setTerminalDraftConflicts] = useState<
-    Record<string, true>
-  >({})
   const [cancelling, setCancelling] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [uploadingFile, setUploadingFile] = useState(false)
@@ -9436,7 +9432,6 @@ function App() {
           sessionKnowledgeRootRef.current.forgetSession(event.computerId, event.sessionId)
           setResourcesView((view) => view?.ownerKey === `${event.computerId}:${event.sessionId}` ? undefined : view)
           const removedKey = `${event.computerId}:${event.sessionId}`
-          setTerminalDraftConflict(removedKey, false)
           // Said outright, so a later answer that simply does not mention it
           // is not what settles it, and a delayed clear response must not put
           // it back.
@@ -11747,23 +11742,7 @@ function App() {
     setSidebarOpen(false)
   }
 
-  function setTerminalDraftConflict(key: string, blocked: boolean) {
-    setTerminalDraftConflicts((current) => {
-      if (blocked) {
-        return current[key] ? current : { ...current, [key]: true }
-      }
-      if (!current[key]) {
-        return current
-      }
-      const { [key]: _removed, ...remaining } = current
-      return remaining
-    })
-  }
-
-  async function submitMessage(
-    enqueue = false,
-    replaceTerminalDraft = false,
-  ) {
+  async function submitMessage(enqueue = false) {
     const displayContent = composer
     const trimmedDisplay = displayContent.trim()
     if (!selected || !trimmedDisplay || sending) {
@@ -11846,7 +11825,15 @@ function App() {
             ),
         )
       : undefined
-    if (command?.name === 'statusline') {
+    const effectiveCommandName = command?.name || commandName
+    const appLocalCommand =
+      Boolean(resourceCommand) ||
+      ['statusline', 'clear', 'restart'].includes(effectiveCommandName) ||
+      (
+        commandName === 'cwd' &&
+        !trimmedContent.slice(commandName.length + 1).trim()
+      )
+    if (effectiveCommandName === 'statusline') {
       const input = trimmedContent.slice(commandName.length + 1).trim().toLowerCase()
       if (input === 'off') {
         setStatusline((current) => ({ ...current, enabled: false }))
@@ -11860,7 +11847,7 @@ function App() {
       reofferFailedPrompt(targetKey)
       return
     }
-    if (command?.name === 'clear') {
+    if (effectiveCommandName === 'clear') {
       consumeLocalCommand()
       // The session this became. Everything the recovery was carrying has just
       // moved here, and offering it against the key that is gone left the
@@ -11872,7 +11859,7 @@ function App() {
       reofferFailedPrompt(replacementKey ?? targetKey)
       return
     }
-    if (command?.name === 'restart') {
+    if (effectiveCommandName === 'restart') {
       consumeLocalCommand()
       await restartSelectedSession()
       focusComposer(targetKey)
@@ -11906,6 +11893,7 @@ function App() {
     // Which failure this send is answering, so the recovery that runs after it
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
+    let acknowledgedFailure = submission.acknowledgesFailure
     let admitted = false
     try {
       admitted = updateComposerDrafts([targetKey], (current) => ({
@@ -11929,29 +11917,49 @@ function App() {
       submissionsInFlight.current.add(targetKey)
       submissionAnchors.current.add(targetKey)
       setSending(true)
-      const response = isCommand
-        ? await executeCommand(selected.computerId, selected.id, {
-            // A restored prompt can be a slash command, and it answers the
-            // failure just as a message does.
-            acknowledgesFailure: submission.acknowledgesFailure,
-            command: content,
-            enqueue: shouldEnqueue,
-            ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
-          })
-        : await sendMessage(selected.computerId, selected.id, {
-            // Whatever they were handed back is answered by this, whether
-            // they sent it as it was, edited it, or replaced it outright.
-            acknowledgesFailure: submission.acknowledgesFailure,
-            content,
-            enqueue: shouldEnqueue,
-            ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
-          })
+      const dispatch = (
+        replaceTerminalDraft = false,
+        acknowledgesFailure = acknowledgedFailure,
+      ) =>
+        isCommand
+          ? executeCommand(selected.computerId, selected.id, {
+              // A restored prompt can be a slash command, and it answers the
+              // failure just as a message does.
+              acknowledgesFailure,
+              command: content,
+              enqueue: shouldEnqueue,
+              ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
+            })
+          : sendMessage(selected.computerId, selected.id, {
+              // Whatever they were handed back is answered by this, whether
+              // they sent it as it was, edited it, or replaced it outright.
+              acknowledgesFailure,
+              content,
+              enqueue: shouldEnqueue,
+              ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
+            })
+      let response: ManagedSession
+      try {
+        response = await dispatch()
+      } catch (caught) {
+        if (
+          shouldEnqueue ||
+          appLocalCommand ||
+          !terminalDraftConflictFromError(caught) ||
+          deliveryUncertaintyFromError(caught) !== false
+        ) {
+          throw caught
+        }
+        acknowledgedFailure =
+          submissionReceiptFromError(caught)?.failedAt ??
+          acknowledgedFailure
+        response = await dispatch(true, acknowledgedFailure)
+      }
       const updated = currentSessionResponse(response)
       if (!composerMounted.current) {
         return
       }
       const liveKey = followReplacementsRef.current(targetKey)
-      setTerminalDraftConflict(liveKey, false)
       updateComposerDrafts([], (current) => {
         const draft = current[liveKey]
         if (draft?.pendingSubmission?.id !== submission.id) {
@@ -11965,7 +11973,7 @@ function App() {
           },
         }
       })
-      const acknowledged = submission.acknowledgesFailure
+      const acknowledged = acknowledgedFailure
       acknowledgedStamp = acknowledged
       if (restoredFailures.current.get(liveKey) === acknowledged) {
         restoredFailures.current.delete(liveKey)
@@ -11999,10 +12007,6 @@ function App() {
         return
       }
       const liveKey = followReplacementsRef.current(targetKey)
-      const terminalDraftConflict = terminalDraftConflictFromError(caught)
-      if (terminalDraftConflict) {
-        setTerminalDraftConflict(liveKey, true)
-      }
       if (
         liveKey === targetKey &&
         !removedSessions.current.has(targetKey) &&
@@ -12050,7 +12054,10 @@ function App() {
           if (deferred && tokens.has(deferred.stamp)) unshownFailures.current.delete(liveKey)
           if (receipt.failedAt) warnedUncertain.current.set(liveKey, receipt.failedAt)
         } else {
-          const token = receipt?.failedAt ?? submittedRecoveryToken
+          const token =
+            receipt?.failedAt ??
+            acknowledgedFailure ??
+            submittedRecoveryToken
           if (token) {
             rememberRestoredDraft(liveKey, token, displayContent, true)
             handledFailures.current.set(liveKey, token)
@@ -12067,13 +12074,7 @@ function App() {
           (selectedRef.current && sessionKey(selectedRef.current) === liveKey) ||
           (!selectedRef.current && selectedKey === liveKey)
         ) {
-          setError(
-            terminalDraftConflict && !replaceTerminalDraft
-              ? undefined
-              : caught instanceof Error
-                ? caught.message
-                : String(caught),
-          )
+          setError(caught instanceof Error ? caught.message : String(caught))
         }
       }
     } finally {
@@ -12102,33 +12103,6 @@ function App() {
         }
         focusComposer(liveKey)
       }
-    }
-  }
-
-  async function replaceTerminalDraftAndSend() {
-    if (
-      !selected ||
-      sending ||
-      replacingTerminalDraft ||
-      !composer.trim()
-    ) {
-      return
-    }
-    const key = sessionKey(selected)
-    if (
-      !terminalDraftConflicts[key] ||
-      terminalDraftReplacementUnavailable ||
-      !window.confirm(
-        `Clear the unsent terminal text in "${selected.title}" and send this app draft?\n\nThe terminal text will be deleted and cannot be recovered. If the terminal changes before the replacement, the app draft will not be sent.`,
-      )
-    ) {
-      return
-    }
-    setReplacingTerminalDraft(true)
-    try {
-      await submitMessage(false, true)
-    } finally {
-      setReplacingTerminalDraft(false)
     }
   }
 
@@ -12421,36 +12395,6 @@ function App() {
   const readonlyResourceCommand = useMemo(() => editingQueuedPromptId ? undefined : sessionResourceCommand(
     terminalDraftExpandedContent,
   ), [editingQueuedPromptId, terminalDraftExpandedContent])
-  const terminalDraftCommand = terminalDraftExpandedContent.trim().startsWith('/')
-    ? terminalDraftExpandedContent.trim().slice(1).split(/\s+/, 1)[0].toLowerCase()
-    : ''
-  const terminalDraftCommandDefinition = terminalDraftCommand
-    ? commands.find(
-        (candidate) =>
-          candidate.name.toLowerCase() === terminalDraftCommand ||
-          slashShortcut(candidate.name) === terminalDraftCommand ||
-          candidate.aliases?.some(
-            (alias) => alias.toLowerCase() === terminalDraftCommand,
-          ),
-      )
-    : undefined
-  const terminalDraftLocalCommand =
-    Boolean(readonlyResourceCommand) ||
-    ['statusline', 'clear', 'restart'].includes(
-      terminalDraftCommandDefinition?.name || terminalDraftCommand,
-    ) ||
-    (
-      terminalDraftCommand === 'cwd' &&
-      !terminalDraftExpandedContent.trim()
-        .slice(terminalDraftCommand.length + 1)
-        .trim()
-    )
-  const terminalDraftReplacementUnavailable = editingQueuedPromptId
-    ? 'Finish or cancel the queued-message edit before replacing terminal text.'
-    : terminalDraftLocalCommand
-      ? 'Use the normal action for this command; it does not replace terminal text.'
-      : undefined
-
   function forgetQueuedEdit(key: string, promptId: string) {
     updateComposerDrafts([], (current) => {
       const draft = current[key]
@@ -13021,7 +12965,6 @@ function App() {
   ): string | undefined {
     const targetKey = sessionKey(target)
     const replacementKey = sessionKey(replacement)
-    setTerminalDraftConflict(targetKey, false)
     replacedInto.current.set(targetKey, replacementKey)
     const liveKey = followReplacementsRef.current(replacementKey)
     const liveIsGone = removedSessions.current.has(liveKey)
@@ -13529,7 +13472,6 @@ function App() {
     try {
       await deleteSession(selected.computerId, selected.id)
       const closedKey = sessionKey(selected)
-      setTerminalDraftConflict(closedKey, false)
       removedSessions.current.add(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
@@ -14603,39 +14545,6 @@ function App() {
                 </button>
               </div>
             ) : null}
-            {selectedKey && terminalDraftConflicts[selectedKey] ? (
-              <div
-                className="terminal-draft-conflict"
-                id="terminal-draft-conflict"
-                role="alert"
-              >
-                <div>
-                  <strong>Terminal text is blocking this draft</strong>
-                  <span>
-                    {terminalDraftReplacementUnavailable ||
-                      'This deletes the unsent text currently in tmux, then sends the app draft.'}
-                  </span>
-                </div>
-                <button
-                  disabled={
-                    replacingTerminalDraft ||
-                    sending ||
-                    !composer.trim() ||
-                    !selectedComputerOnline ||
-                    selected.suspended === true ||
-                    (selected.status !== 'idle' && selected.status !== 'error') ||
-                    Boolean(selected.pendingPermission || selected.pendingUserInput) ||
-                    Boolean(terminalDraftReplacementUnavailable)
-                  }
-                  onClick={() => void replaceTerminalDraftAndSend()}
-                  title={terminalDraftReplacementUnavailable}
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" size={15} />
-                  {replacingTerminalDraft ? 'Clearing…' : 'Clear terminal text and send'}
-                </button>
-              </div>
-            ) : null}
             {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain &&
               !selected.queuedDispatch && !queuedEditUnconfirmed ? (
               <div className="error-banner" id="composer-delivery-warning" role="status">
@@ -14707,8 +14616,6 @@ function App() {
                     [
                       selected.queuedDispatch || queuedEditUnconfirmed
                         ? 'queued-dispatch-warning'
-                        : selectedKey && terminalDraftConflicts[selectedKey]
-                          ? 'terminal-draft-conflict'
                         : selectedKey && composerDrafts[selectedKey]?.deliveryUncertain
                           ? 'composer-delivery-warning'
                           : undefined,
@@ -14815,7 +14722,6 @@ function App() {
                       aria-label="Queue message"
                       className="send-button send-button--queue"
                       disabled={!composer.trim() || sending || Boolean(queueActionId) ||
-                        replacingTerminalDraft ||
                         Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
                       onClick={() => void submitMessage(true)}
                       title="Queue behind the current response"
@@ -14835,7 +14741,7 @@ function App() {
                         : 'Send message'
                     }
                     className="send-button"
-                    disabled={!composer.trim() || sending || replacingTerminalDraft ||
+                    disabled={!composer.trim() || sending ||
                       (!readonlyResourceCommand && (
                       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
                       queuedEditUnconfirmed || selected.suspended === true ||

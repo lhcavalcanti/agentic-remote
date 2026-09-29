@@ -3398,58 +3398,6 @@ button {
   cursor: not-allowed;
 }
 
-.terminal-draft-conflict {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
-  padding: 9px 10px;
-  color: var(--muted-strong);
-  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border));
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--warning) 9%, transparent);
-  font-size: 12px;
-}
-
-.terminal-draft-conflict > div {
-  display: grid;
-  flex: 1 1 260px;
-  gap: 2px;
-  min-width: 0;
-}
-
-.terminal-draft-conflict strong {
-  color: var(--text);
-  font-size: 12.5px;
-}
-
-.terminal-draft-conflict span {
-  overflow-wrap: anywhere;
-}
-
-.terminal-draft-conflict button {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 36px;
-  max-width: 100%;
-  padding: 7px 10px;
-  color: var(--text);
-  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--warning) 14%, var(--panel));
-  font: inherit;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.terminal-draft-conflict button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
 .queued-prompt:last-child {
   border-bottom: 0;
 }
@@ -6631,15 +6579,6 @@ button {
 
   .queued-edit-banner__save,
   .queued-edit-banner > .icon-button {
-    min-height: 44px;
-  }
-
-  .terminal-draft-conflict {
-    align-items: stretch;
-  }
-
-  .terminal-draft-conflict button {
-    width: 100%;
     min-height: 44px;
   }
 

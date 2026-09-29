@@ -141,6 +141,7 @@ ${fixtureReceiptWriter(output)}
 let input = ''
 let pasted = ${JSON.stringify(initialText || undefined)}
 const received = { pastes: [], submits: [] }
+let replacementStable = true
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 const makeComposer = ${(composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
 const composer = (text = '', working = false) => ${JSON.stringify(transcript ? `${transcript}\n` : '')} + makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
@@ -155,6 +156,17 @@ process.on('SIGUSR2', () => {
   draw(${JSON.stringify(transientPane)})
   setTimeout(() => draw(composer(pasted || '', ${working})), ${transientRepaintMs})
 })
+process.on('SIGURG', () => {
+  replacementStable = false
+  draw('Initial replacement repaint')
+  setTimeout(() => draw(composer(pasted || '', ${working})), 100)
+  setTimeout(() => draw(${JSON.stringify(transientPane)}), 800)
+  setTimeout(() => {
+    replacementStable = true
+    process.stdout.write('\\x1b[3J')
+    draw(composer(pasted || '', ${working}))
+  }, ${800 + transientRepaintMs})
+})
 process.stdin.on('data', (data) => {
   if (repaint !== undefined && data.includes(29)) {
     draw(repaint)
@@ -163,6 +175,7 @@ process.stdin.on('data', (data) => {
   input += data.toString()
   if (input.includes('\\x15')) {
     received.clears = (received.clears || 0) + input.split('\\x15').length - 1
+    if (!replacementStable) received.earlyClear = true
     input = input.replaceAll('\\x15', '')
     pasted = undefined
     writeReceipt(received)
@@ -733,6 +746,72 @@ describe('TmuxTerminalSessionController', () => {
       pastes: ['Warm up owner', 'Preserved app draft'],
       submits: ['enter', 'enter'],
     })
+  }, 20_000)
+
+  it('does not clear through a briefly painted composer before delayed loading', async () => {
+    const loadingPane = [
+      'Loading Copilot session',
+      '◎ Loading: 1 instruction, 1 plugin, 6 hooks, 27 skills, 2 MCP servers',
+    ].join('\n')
+    const { controller, sessionId, output, panePid } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      '',
+      'boxed',
+      '',
+      1_000,
+      'stale terminal text',
+      loadingPane,
+    )
+    await expect(controller.send(sessionId, 'Warm up owner', false))
+      .resolves.toBe(true)
+    process.kill(Number(panePid), 'SIGUSR1')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => composerHoldsText(pane || ''),
+    )
+    await expect(controller.send(sessionId, 'Preserved app draft', false))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    process.kill(Number(panePid), 'SIGURG')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => pane?.includes('Initial replacement repaint') === true,
+    )
+
+    let accepted = false
+    try {
+      accepted = await controller.send(
+        sessionId,
+        'Preserved app draft',
+        false,
+        { replaceExistingInput: true },
+      )
+    } catch (error) {
+      expect(error).toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    }
+
+    const received = JSON.parse(await readFile(output, 'utf8'))
+    expect(received.earlyClear).toBeUndefined()
+    expect(received).toEqual(accepted
+      ? {
+          clears: 1,
+          pastes: ['Warm up owner', 'Preserved app draft'],
+          submits: ['enter', 'enter'],
+        }
+      : {
+          pastes: ['Warm up owner'],
+          submits: ['enter'],
+        })
   }, 20_000)
 
   it('classifies a persistent non-composer replacement timeout without clearing', async () => {

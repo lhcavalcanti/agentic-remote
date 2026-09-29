@@ -11940,6 +11940,7 @@ function App() {
       const response = await dispatch(
         !shouldEnqueue &&
           !appLocalCommand &&
+          (selected.status === 'idle' || selected.status === 'error') &&
           selected.provider === 'copilot' &&
           selected.executionMode === 'tmux',
       )

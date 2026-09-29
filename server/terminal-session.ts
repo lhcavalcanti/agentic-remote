@@ -193,7 +193,7 @@ const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
 const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
 const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
-const REPLACEMENT_READY_FRAMES = 1
+const REPLACEMENT_READY_FRAMES = 30
 
 function formViewportTimeout(fieldCount: number): number {
   return Math.min(
@@ -1595,9 +1595,12 @@ export class TmuxTerminalSessionController
         )
       }
       paneBeforePaste = await capturePane(currentOwner.target)
+      const replacementComposerHasText =
+        composerText(paneBeforePaste) !== undefined &&
+        composerHoldsText(paneBeforePaste)
       if (
         options.replaceExistingInput &&
-        !terminalInputReady(paneBeforePaste) &&
+        (replacementComposerHasText || !terminalInputReady(paneBeforePaste)) &&
         !isTerminalOverlay(paneBeforePaste) &&
         !isTerminalAgentWorking(paneBeforePaste) &&
         !isTerminalSessionInUsePrompt(paneBeforePaste) &&

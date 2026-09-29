@@ -6698,6 +6698,51 @@ describe('App', () => {
     expect(textarea).toHaveValue('')
   })
 
+  it('does not request terminal replacement for running steering or allowed commands', async () => {
+    const running = {
+      ...session,
+      status: 'running' as const,
+      executionMode: 'tmux' as const,
+      provider: 'copilot' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([running])
+    vi.mocked(getSession).mockResolvedValue(running)
+    vi.mocked(sendMessage).mockResolvedValue(running)
+    vi.mocked(executeCommand).mockResolvedValue(running)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(listCommands).toHaveBeenCalled())
+
+    fireEvent.change(textarea, { target: { value: 'Steer the current response' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          acknowledgesFailure: undefined,
+          content: 'Steer the current response',
+          enqueue: false,
+        },
+      ),
+    )
+
+    await waitFor(() => expect(textarea).not.toBeDisabled())
+    fireEvent.change(textarea, { target: { value: '/usage' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() =>
+      expect(executeCommand).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          acknowledgesFailure: undefined,
+          command: '/usage',
+          enqueue: false,
+        },
+      ),
+    )
+  })
+
   it('sends a recovered prompt with guarded replacement and its current token', async () => {
     const oldToken = 'resend:old-terminal-conflict'
     const content = 'Recovered prompt blocked by stale tmux text'

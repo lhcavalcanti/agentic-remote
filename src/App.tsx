@@ -178,7 +178,6 @@ import {
 import {
   deliveryUncertaintyFromError,
   submissionReceiptFromError,
-  terminalDraftConflictFromError,
 } from '../shared/submission-error'
 import {
   activateSession,
@@ -11893,7 +11892,7 @@ function App() {
     // Which failure this send is answering, so the recovery that runs after it
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
-    let acknowledgedFailure = submission.acknowledgesFailure
+    const acknowledgedFailure = submission.acknowledgesFailure
     let admitted = false
     try {
       admitted = updateComposerDrafts([targetKey], (current) => ({
@@ -11938,23 +11937,13 @@ function App() {
               enqueue: shouldEnqueue,
               ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
             })
-      let response: ManagedSession
-      try {
-        response = await dispatch()
-      } catch (caught) {
-        if (
-          shouldEnqueue ||
-          appLocalCommand ||
-          !terminalDraftConflictFromError(caught) ||
-          deliveryUncertaintyFromError(caught) !== false
-        ) {
-          throw caught
-        }
-        acknowledgedFailure =
-          submissionReceiptFromError(caught)?.failedAt ??
-          acknowledgedFailure
-        response = await dispatch(true, acknowledgedFailure)
-      }
+      const response = await dispatch(
+        !shouldEnqueue &&
+          !appLocalCommand &&
+          (selected.status === 'idle' || selected.status === 'error') &&
+          selected.provider === 'copilot' &&
+          selected.executionMode === 'tmux',
+      )
       const updated = currentSessionResponse(response)
       if (!composerMounted.current) {
         return

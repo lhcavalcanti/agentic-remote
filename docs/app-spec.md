@@ -414,14 +414,16 @@ Questions and permissions are the highest-priority UI state.
   and long lines scrolled within the composer. A late confirmed paste MUST NOT
   be reported as a failure solely because the first wait expired.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
-  On a typed, definitely-unsent conflict, the app MUST retry the same captured
-  submission once with guarded terminal-draft replacement and MUST NOT show an
-  intermediate banner or confirmation. Replacement MUST prepare the new buffer
-  first, revalidate the same idle tmux owner and readable composer, clear the
-  stale text, observe a stable empty composer, then paste and submit exactly
-  once. A changed, working, unreadable, dialog-owning, or newly occupied pane
-  MUST refuse without pasting; that final reason MUST restore the app draft and
-  remain visible. Uncertain delivery and queued sends MUST never auto-replace.
+  Eligible immediate sends to an idle or errored tmux session MUST request
+  guarded terminal-draft replacement in the original attempt and MUST NOT show
+  an intermediate banner or confirmation. The server MUST prepare the new
+  buffer first, revalidate the same idle tmux owner and a stably readable
+  composer across repaint frames, clear stale text only when it is present,
+  observe a stable empty composer, then paste and submit exactly once.
+  A changed, working, unreadable, dialog-owning, or newly occupied pane MUST
+  refuse without pasting; that reason MUST restore the app draft and remain
+  visible. Running or waiting sessions, uncertain delivery, queued sends,
+  SDK/Claude sessions, and app-local commands MUST never request replacement.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject

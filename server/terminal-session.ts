@@ -192,7 +192,8 @@ const MAX_FORM_VIEWPORT_HEIGHT = 256
 const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
 const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
-const REPLACEMENT_COMPOSER_TIMEOUT_MS = 8_000
+const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
+const REPLACEMENT_READY_FRAMES = 1
 
 function formViewportTimeout(fieldCount: number): number {
   return Math.min(
@@ -222,6 +223,8 @@ export class TmuxTerminalSessionController
     expiresAt: number
     processes: ReturnType<typeof findActiveCopilotProcesses>
   }
+  private readonly replacementComposerTimeoutMs =
+    REPLACEMENT_COMPOSER_TIMEOUT_MS
 
   async create(
     sessionId: string,
@@ -1521,22 +1524,36 @@ export class TmuxTerminalSessionController
           )
         }
       } else {
-        const startup = await waitForTerminalStartup(
-          owner.target,
-          automaticOwner?.pid === owner.pid &&
-            automaticOwner.target === owner.target,
-          async () => {
-            const current = await this.owner(sessionId, owner.target, true)
-            if (!current || current.pid !== owner.pid) {
-              throw Object.assign(
-                new Error(
-                  'The terminal owner changed while it was becoming ready.',
-                ),
-                { statusCode: 409 },
-              )
-            }
-          },
-        )
+        let startup: Awaited<ReturnType<typeof waitForTerminalStartup>>
+        try {
+          startup = await waitForTerminalStartup(
+            owner.target,
+            automaticOwner?.pid === owner.pid &&
+              automaticOwner.target === owner.target,
+            async () => {
+              const current = await this.owner(sessionId, owner.target, true)
+              if (!current || current.pid !== owner.pid) {
+                throw Object.assign(
+                  new Error(
+                    'The terminal owner changed while it was becoming ready.',
+                  ),
+                  { statusCode: 409 },
+                )
+              }
+            },
+          )
+        } catch (error) {
+          if (
+            options.replaceExistingInput &&
+            error instanceof Error &&
+            /did not become ready/i.test(error.message)
+          ) {
+            throw new TerminalDraftConflictError(
+              'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
+            )
+          }
+          throw error
+        }
         if (startup !== 'ready') {
           const pane = await capturePane(owner.target)
           throw Object.assign(
@@ -1614,7 +1631,10 @@ export class TmuxTerminalSessionController
               }
               replacementOwner = latestOwner
             },
-            REPLACEMENT_COMPOSER_TIMEOUT_MS,
+            isTerminalLoading(paneBeforePaste)
+              ? TERMINAL_STARTUP_TIMEOUT_MS
+              : this.replacementComposerTimeoutMs,
+            REPLACEMENT_READY_FRAMES,
           )
         } catch (error) {
           if (
@@ -2392,6 +2412,7 @@ async function waitForTerminalStartup(
   handleAutomaticPrompts = true,
   validateOwner: () => Promise<void> = async () => undefined,
   timeoutMs = TERMINAL_STARTUP_TIMEOUT_MS,
+  requiredReadyFrames = 30,
 ): Promise<'ready' | 'action-required'> {
   const deadline = Date.now() + timeoutMs
   let readyFrames = 0
@@ -2423,7 +2444,7 @@ async function waitForTerminalStartup(
       // replaces it. Require the composer to remain available long enough for
       // those startup prompts to appear and be handled.
       readyFrames += 1
-      if (readyFrames >= 30) {
+      if (readyFrames >= requiredReadyFrames) {
         await validateOwner()
         return 'ready'
       }
@@ -2534,12 +2555,26 @@ function isTerminalModelFooter(line: string, previousLine = ''): boolean {
   )
 }
 
+function isTerminalWorkspaceFooter(line: string): boolean {
+  const trimmed = line.trim()
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= 240 &&
+    /(?:^|\s)@\s+files\b/iu.test(trimmed) &&
+    /(?:^|\s)#\s+issues\b/iu.test(trimmed) &&
+    /\bctrl\+\S+\s+show reasoning\b/iu.test(trimmed) &&
+    /·\s*(?:Auto$|Claude\b|Copilot\b|Gemini\b|GPT(?:\b|-)|Grok\b|MAI\b|o\d\b|Raptor\b)/iu
+      .test(trimmed)
+  )
+}
+
 function isTerminalComposerFooter(lines: string[]): boolean {
   return lines.every(
     (line, index) =>
       isTerminalChrome(line) ||
       isTerminalContextFooter(line) ||
       isTerminalModelFooter(line, lines[index - 1]) ||
+      isTerminalWorkspaceFooter(line) ||
       /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||
@@ -2733,6 +2768,12 @@ export function isTerminalOverlay(pane: string): boolean {
 // the frames whose new lines belong to a turn rather than to a command.
 export function isTerminalAgentWorking(pane: string): boolean {
   return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
+}
+
+function isTerminalLoading(pane: string): boolean {
+  return /[◉◎]\s*Loading:/i.test(
+    terminalControlLines(pane).slice(-6).join(' '),
+  )
 }
 
 /**

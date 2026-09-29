@@ -6665,19 +6665,15 @@ describe('App', () => {
     )
   })
 
-  it('automatically clears a verified terminal draft and sends once', async () => {
-    vi.mocked(sendMessage)
-      .mockRejectedValueOnce(Object.assign(
-        new Error(
-          'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
-        ),
-        {
-          statusCode: 409,
-          terminalDraftConflict: true,
-          uncertainDelivery: false,
-        },
-      ))
-      .mockResolvedValueOnce(session)
+  it('requests guarded terminal replacement in the original tmux send', async () => {
+    const terminalSession = {
+      ...session,
+      executionMode: 'tmux' as const,
+      provider: 'copilot' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([terminalSession])
+    vi.mocked(getSession).mockResolvedValue(terminalSession)
+    vi.mocked(sendMessage).mockResolvedValueOnce(terminalSession)
     const confirm = vi.spyOn(window, 'confirm')
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
@@ -6689,24 +6685,68 @@ describe('App', () => {
         'computer-1',
         'session-1',
         {
+          acknowledgesFailure: undefined,
           content: 'Send the preserved app draft',
           enqueue: false,
           replaceTerminalDraft: true,
         },
       ),
     )
-    expect(sendMessage).toHaveBeenCalledTimes(2)
+    expect(sendMessage).toHaveBeenCalledOnce()
     expect(confirm).not.toHaveBeenCalled()
     expect(screen.queryByText('Terminal text is blocking this draft')).toBeNull()
     expect(textarea).toHaveValue('')
   })
 
-  it('uses the refreshed recovery token for the automatic replacement', async () => {
+  it('sends a recovered prompt with guarded replacement and its current token', async () => {
     const oldToken = 'resend:old-terminal-conflict'
-    const freshToken = 'resend:fresh-terminal-conflict'
     const content = 'Recovered prompt blocked by stale tmux text'
     const failed: ManagedSession = {
       ...session,
+      executionMode: 'tmux',
+      provider: 'copilot',
+      messages: [],
+      failedPrompt: {
+        content,
+        failedAt: oldToken,
+        uncertain: true,
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    vi.mocked(sendMessage).mockResolvedValueOnce({
+      ...failed,
+      failedPrompt: undefined,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(textarea).toHaveValue(content))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          acknowledgesFailure: oldToken,
+          content,
+          enqueue: false,
+          replaceTerminalDraft: true,
+        },
+      ),
+    )
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('uses the refusal token after a guarded replacement fails', async () => {
+    const oldToken = 'resend:old-receiptless-replacement'
+    const freshToken = 'resend:fresh-receiptless-replacement'
+    const content = 'Recovered prompt whose replacement is refused'
+    const failed: ManagedSession = {
+      ...session,
+      executionMode: 'tmux',
+      provider: 'copilot',
       messages: [],
       failedPrompt: {
         content,
@@ -6718,7 +6758,7 @@ describe('App', () => {
     vi.mocked(getSession).mockResolvedValue(failed)
     vi.mocked(sendMessage)
       .mockRejectedValueOnce(Object.assign(
-        new Error('Terminal text is blocking this recovered prompt'),
+        new Error('The terminal changed before replacement'),
         {
           statusCode: 409,
           terminalDraftConflict: true,
@@ -6737,6 +6777,10 @@ describe('App', () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
     await waitFor(() => expect(textarea).toHaveValue(content))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(textarea).toHaveValue(content))
+    expect(sendMessage).toHaveBeenCalledOnce()
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
@@ -6752,91 +6796,16 @@ describe('App', () => {
         },
       ),
     )
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      1,
-      'computer-1',
-      'session-1',
-      {
-        acknowledgesFailure: oldToken,
-        content,
-        enqueue: false,
-      },
-    )
-  })
-
-  it('keeps the refreshed token after a receiptless replacement refusal', async () => {
-    const oldToken = 'resend:old-receiptless-replacement'
-    const freshToken = 'resend:fresh-receiptless-replacement'
-    const content = 'Recovered prompt whose replacement is refused'
-    const failed: ManagedSession = {
-      ...session,
-      messages: [],
-      failedPrompt: {
-        content,
-        failedAt: oldToken,
-        uncertain: true,
-      },
-    }
-    vi.mocked(listSessions).mockResolvedValue([failed])
-    vi.mocked(getSession).mockResolvedValue(failed)
-    vi.mocked(sendMessage)
-      .mockRejectedValueOnce(Object.assign(
-        new Error('Terminal text is blocking this recovered prompt'),
-        {
-          statusCode: 409,
-          terminalDraftConflict: true,
-          uncertainDelivery: false,
-          submission: {
-            sessionId: session.id,
-            failedAt: freshToken,
-            accepted: false,
-          },
-        },
-      ))
-      .mockRejectedValueOnce(Object.assign(
-        new Error('The terminal changed before replacement'),
-        {
-          statusCode: 409,
-          terminalDraftConflict: true,
-          uncertainDelivery: false,
-        },
-      ))
-      .mockResolvedValueOnce({
-        ...failed,
-        failedPrompt: undefined,
-      })
-    render(<App />)
-    const textarea = await screen.findByLabelText('Message')
-    await waitFor(() => expect(textarea).toHaveValue(content))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    await waitFor(() => expect(textarea).toHaveValue(content))
-    expect(sendMessage).toHaveBeenCalledTimes(2)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-
-    await waitFor(() =>
-      expect(sendMessage).toHaveBeenLastCalledWith(
-        'computer-1',
-        'session-1',
-        {
-          acknowledgesFailure: freshToken,
-          content,
-          enqueue: false,
-        },
-      ),
-    )
   })
 
   it('restores the draft and shows the guarded replacement refusal', async () => {
-    const initial = Object.assign(
-      new Error('Terminal text is blocking this message'),
-      {
-        statusCode: 409,
-        terminalDraftConflict: true,
-        uncertainDelivery: false,
-      },
-    )
+    const terminalSession = {
+      ...session,
+      executionMode: 'tmux' as const,
+      provider: 'copilot' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([terminalSession])
+    vi.mocked(getSession).mockResolvedValue(terminalSession)
     const changed = Object.assign(
       new Error(
         'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
@@ -6847,9 +6816,7 @@ describe('App', () => {
         uncertainDelivery: false,
       },
     )
-    vi.mocked(sendMessage)
-      .mockRejectedValueOnce(initial)
-      .mockRejectedValueOnce(changed)
+    vi.mocked(sendMessage).mockRejectedValueOnce(changed)
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
     fireEvent.change(textarea, { target: { value: 'Keep this draft visible' } })
@@ -6861,11 +6828,28 @@ describe('App', () => {
         .some((message) => message.closest('.error-banner')),
     ).toBe(true)
     expect(textarea).toHaveValue('Keep this draft visible')
-    expect(sendMessage).toHaveBeenCalledTimes(2)
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1',
+      'session-1',
+      {
+        acknowledgesFailure: undefined,
+        content: 'Keep this draft visible',
+        enqueue: false,
+        replaceTerminalDraft: true,
+      },
+    )
     expect(screen.queryByText('Terminal text is blocking this draft')).toBeNull()
   })
 
   it('does not auto-replace a conflict with uncertain delivery', async () => {
+    const terminalSession = {
+      ...session,
+      executionMode: 'tmux' as const,
+      provider: 'copilot' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([terminalSession])
+    vi.mocked(getSession).mockResolvedValue(terminalSession)
     vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(
       new Error('The terminal request outcome is unknown'),
       {
@@ -6882,11 +6866,26 @@ describe('App', () => {
 
     await waitFor(() => expect(textarea).toHaveValue('Keep this uncertain draft'))
     expect(sendMessage).toHaveBeenCalledOnce()
+    expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1',
+      'session-1',
+      {
+        acknowledgesFailure: undefined,
+        content: 'Keep this uncertain draft',
+        enqueue: false,
+        replaceTerminalDraft: true,
+      },
+    )
     expect(screen.getByText(/Delivery could not be confirmed/)).toBeVisible()
   })
 
   it('does not auto-replace a queued send', async () => {
-    const running = { ...session, status: 'running' as const }
+    const running = {
+      ...session,
+      status: 'running' as const,
+      executionMode: 'tmux' as const,
+      provider: 'copilot' as const,
+    }
     vi.mocked(listSessions).mockResolvedValue([running])
     vi.mocked(getSession).mockResolvedValue(running)
     vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(

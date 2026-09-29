@@ -128,6 +128,7 @@ async function deliveryFixture(
   transcript = '',
   transientRepaintMs = 0,
   injectedText = '',
+  transientPane = 'Loading terminal frame',
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -151,7 +152,7 @@ process.on('SIGUSR1', () => {
   draw(composer(pasted || '', ${working}))
 })
 process.on('SIGUSR2', () => {
-  draw('Loading terminal frame')
+  draw(${JSON.stringify(transientPane)})
   setTimeout(() => draw(composer(pasted || '', ${working})), ${transientRepaintMs})
 })
 process.stdin.on('data', (data) => {
@@ -550,6 +551,34 @@ describe('TmuxTerminalSessionController', () => {
     })
   }, 15_000)
 
+  it('replaces a stale draft from a cache-cold Copilot 1.0.89 workspace composer', async () => {
+    const footer =
+      ' @ files · # issues                 ctrl+t show reasoning · GPT-5.6 Sol'
+    const { controller, sessionId, output } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      footer,
+      'stale terminal text',
+    )
+
+    await expect(controller.send(
+      sessionId,
+      'Replacement from the app',
+      false,
+      { replaceExistingInput: true },
+    )).resolves.toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1,
+      pastes: ['Replacement from the app'],
+      submits: ['enter'],
+    })
+  }, 15_000)
+
   it('sends through the flat composer used by Copilot v1.0.87', async () => {
     const { controller, sessionId, output } = await deliveryFixture(
       false,
@@ -753,7 +782,60 @@ describe('TmuxTerminalSessionController', () => {
       pastes: ['Warm up owner'],
       submits: ['enter'],
     })
-  }, 20_000)
+  }, 45_000)
+
+  it('waits through delayed Copilot loading before replacing a draft', async () => {
+    const loadingPane = [
+      'Loading Copilot session',
+      '◎ Loading: 1 instruction, 1 plugin, 6 hooks, 27 skills, 2 MCP servers',
+    ].join('\n')
+    const { controller, sessionId, output, panePid } = await deliveryFixture(
+      false,
+      undefined,
+      undefined,
+      '',
+      '',
+      'boxed',
+      '',
+      9_000,
+      'stale terminal text',
+      loadingPane,
+    )
+    await expect(controller.send(sessionId, 'Warm up owner', false))
+      .resolves.toBe(true)
+    process.kill(Number(panePid), 'SIGUSR1')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => composerHoldsText(pane || ''),
+    )
+    await expect(controller.send(sessionId, 'Preserved app draft', false))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      })
+    process.kill(Number(panePid), 'SIGUSR2')
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => pane?.includes('◎ Loading:') === true,
+    )
+
+    await expect(controller.send(
+      sessionId,
+      'Preserved app draft',
+      false,
+      { replaceExistingInput: true },
+    )).resolves.toBe(true)
+
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length > 1),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1,
+      pastes: ['Warm up owner', 'Preserved app draft'],
+      submits: ['enter', 'enter'],
+    })
+  }, 25_000)
 
   it('does not clear an existing draft while the terminal is working', async () => {
     const { controller, sessionId, output } = await deliveryFixture(

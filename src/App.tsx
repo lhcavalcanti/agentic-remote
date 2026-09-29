@@ -12054,7 +12054,10 @@ function App() {
           if (deferred && tokens.has(deferred.stamp)) unshownFailures.current.delete(liveKey)
           if (receipt.failedAt) warnedUncertain.current.set(liveKey, receipt.failedAt)
         } else {
-          const token = receipt?.failedAt ?? submittedRecoveryToken
+          const token =
+            receipt?.failedAt ??
+            acknowledgedFailure ??
+            submittedRecoveryToken
           if (token) {
             rememberRestoredDraft(liveKey, token, displayContent, true)
             handledFailures.current.set(liveKey, token)

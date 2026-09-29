@@ -6764,6 +6764,70 @@ describe('App', () => {
     )
   })
 
+  it('keeps the refreshed token after a receiptless replacement refusal', async () => {
+    const oldToken = 'resend:old-receiptless-replacement'
+    const freshToken = 'resend:fresh-receiptless-replacement'
+    const content = 'Recovered prompt whose replacement is refused'
+    const failed: ManagedSession = {
+      ...session,
+      messages: [],
+      failedPrompt: {
+        content,
+        failedAt: oldToken,
+        uncertain: true,
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(Object.assign(
+        new Error('Terminal text is blocking this recovered prompt'),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          uncertainDelivery: false,
+          submission: {
+            sessionId: session.id,
+            failedAt: freshToken,
+            accepted: false,
+          },
+        },
+      ))
+      .mockRejectedValueOnce(Object.assign(
+        new Error('The terminal changed before replacement'),
+        {
+          statusCode: 409,
+          terminalDraftConflict: true,
+          uncertainDelivery: false,
+        },
+      ))
+      .mockResolvedValueOnce({
+        ...failed,
+        failedPrompt: undefined,
+      })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(textarea).toHaveValue(content))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(textarea).toHaveValue(content))
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          acknowledgesFailure: freshToken,
+          content,
+          enqueue: false,
+        },
+      ),
+    )
+  })
+
   it('restores the draft and shows the guarded replacement refusal', async () => {
     const initial = Object.assign(
       new Error('Terminal text is blocking this message'),

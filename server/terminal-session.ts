@@ -2603,6 +2603,11 @@ function flatComposerFrame(
   lines: string[],
   requireLive = true,
 ): TerminalComposerFrame | undefined {
+  // Free-text form fields share the flat frame and prompt marker, but their
+  // accept/cancel controls still own the keyboard.
+  if (requireLive && hasTerminalFormFooter(lines)) {
+    return undefined
+  }
   for (let bottom = lines.length - 1; bottom >= 0; bottom -= 1) {
     if (
       !FLAT_COMPOSER_EDGE.test(lines[bottom]) ||
@@ -2725,7 +2730,11 @@ function terminalControlLines(pane: string): string[] {
 
 export function hasClippedTerminalFormFooter(pane: string): boolean {
   if (hasLiveTerminalComposer(pane)) return false
-  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  return hasTerminalFormFooter(terminalControlLines(pane))
+}
+
+function hasTerminalFormFooter(rawLines: readonly string[]): boolean {
+  const lines = rawLines.map(cleanDialogLine)
   while (lines.length && (!lines.at(-1) || /^[─━]+$/u.test(lines.at(-1)!))) lines.pop()
   const trailing: string[] = []
   // Only adjacent control words can belong to the wrapped footer. Blank

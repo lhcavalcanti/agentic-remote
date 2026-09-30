@@ -136,13 +136,16 @@ async function horizontalFormFixture(options: {
   activeField?: number
   fields?: string[]
   fullWidth?: number
+  width?: number
   height?: number
   repaint?: boolean
   lookalikeTabs?: boolean
+  textField?: number
+  question?: string
 } = {}) {
   const output = path.join(root, 'horizontal-receipt.json')
   const executable = path.join(root, 'copilot-horizontal-form.mjs')
-  const question =
+  const question = options.question ||
     'The promotion script requires rollout metadata and an explicit M365 bypass. ' +
     'All three names contain `-m365`, so automation otherwise refuses them; GB200 ' +
     'also has the acknowledged API test failure. Confirm the exact rollout settings.'
@@ -160,6 +163,8 @@ const question = ${JSON.stringify(question)}
 const fields = ${JSON.stringify(fields)}
 const lookalikeTabs = ${options.lookalikeTabs === true}
 const fullWidth = ${options.fullWidth || 200}
+const textField = ${options.textField ?? -1}
+let textValue = 'Default synthetic model IDs'
 let pending = '', active = ${options.activeField || 0}, closed = false
 const selected = Array(fields.length).fill(0)
 const receipt = { keys: [], actions: [], widths: [] }
@@ -178,16 +183,24 @@ function draw() {
   save()
   const lines = closed ? ['Finished', '╻▄▄▄▄▄▄▄▄', '┃', '╹▀▀▀▀▀▀▀▀', ' / commands'] : [
     ' Copilot needs information.',
-    ' ' + question,
+    ...question.split('\\n').map(line => ' ' + line),
     '',
     tabs(),
     '',
     ' ' + fields[active] + ':',
-    selected[active] === 0 ? ' ❯ Yes' : '   Yes',
-    selected[active] === 1 ? ' ❯ No' : '   No',
-    '   Other (type your answer)',
+    ...(active === textField ? [
+      '─'.repeat(process.stdout.columns),
+      ' ❯ ' + textValue,
+      '─'.repeat(process.stdout.columns),
+    ] : [
+      selected[active] === 0 ? ' ❯ Yes' : '   Yes',
+      selected[active] === 1 ? ' ❯ No' : '   No',
+      '   Other (type your answer)',
+    ]),
     '',
-    ' ↑/↓ select · enter accept · tab next · ctrl+d decline · esc cancel',
+    active === textField
+      ? ' enter accept · shift+tab prev · ctrl+d decline · esc cancel'
+      : ' ↑/↓ select · enter accept · tab next · ctrl+d decline · esc cancel',
     '─'.repeat(process.stdout.columns),
   ]
   process.stdout.write(
@@ -196,16 +209,29 @@ function draw() {
   )
 }
 function finish(action) {
-  receipt.actions.push({ action, selected: [...selected] })
+  receipt.actions.push({
+    action, selected: [...selected],
+    ...(textField >= 0 ? { textValue } : {}),
+  })
   closed = true
   draw()
 }
 process.stdin.setRawMode(true)
-process.stdout.write('\\x1b[?1049h')
+process.stdout.write('\\x1b[?1049h\\x1b[?2004h')
 process.stdout.on('resize', () => { if (${options.repaint !== false}) draw() })
 process.stdin.on('data', data => {
   pending += data.toString()
   while (pending) {
+    if (pending.startsWith('\\x1b[200~')) {
+      const end = pending.indexOf('\\x1b[201~')
+      if (end < 0) return
+      if (active === textField) textValue += pending.slice(6, end)
+      receipt.keys.push('paste')
+      pending = pending.slice(end + 6)
+      draw()
+      continue
+    }
+    if (pending.length > 1 && '\\x1b[200~'.startsWith(pending)) return
     if (pending[0] === '\\x1b') {
       if (pending.length < 3) {
         setTimeout(() => {
@@ -233,7 +259,11 @@ process.stdin.on('data', data => {
     }
     const key = pending[0]
     pending = pending.slice(1)
-    if (key === '\\t') {
+    if (key === '\\x15') {
+      receipt.keys.push('C-u')
+      textValue = ''
+      draw()
+    } else if (key === '\\t') {
       receipt.keys.push('Tab')
       active = Math.min(fields.length - 1, active + 1)
       draw()
@@ -251,7 +281,7 @@ draw()
   const sessionId = randomUUID()
   const tmux = `horizontal-${sessionId.slice(0, 8)}`
   await exec('tmux', [
-    'new-session', '-d', '-s', tmux, '-x', '120',
+    'new-session', '-d', '-s', tmux, '-x', String(options.width || 120),
     '-y', String(options.height || 29),
     process.execPath, executable, '--session-id', sessionId,
   ])
@@ -266,11 +296,9 @@ draw()
   vi.stubEnv('COPILOT_HOME', home)
   const controller = new TmuxTerminalSessionController()
   const identity = { question, fields }
-  const steps = fields.map((_, index) => ({
-    kind: 'select' as const,
-    optionCount: 3,
-    index: index % 2,
-  }))
+  const steps = fields.map((_, index) => index === options.textField
+    ? { kind: 'text' as const, value: 'control-model-001, treatment-model-001' }
+    : { kind: 'select' as const, optionCount: 3, index: index % 2 })
   const capture = async () => (await exec('tmux', [
     'capture-pane', '-J', '-p', '-t', tmux, '-S', '-40',
   ])).stdout
@@ -285,13 +313,89 @@ draw()
   })
   const receipt = async () => JSON.parse(await readFile(output, 'utf8')) as {
     keys: string[]
-    actions: { action: string; selected: number[] }[]
+    actions: { action: string; selected: number[]; textValue?: string }[]
     widths: number[]
   }
   return { controller, identity, steps, sessionId, tmux, capture, geometry, receipt }
 }
 
+async function textFieldFormFixture(clipped: boolean, activeField = 1) {
+  const question = clipped
+    ? Array.from({ length: 24 }, (_, index) =>
+        `Synthetic routing choice ${index}: retain the exact approved model identifiers.`).join('\n')
+    : 'Choose the synthetic routing shape and model identifiers.'
+  return horizontalFormFixture({
+    activeField,
+    fields: ['Routing paths', 'New dev model IDs'],
+    textField: 1,
+    fullWidth: 80,
+    width: 80,
+    height: 24,
+    question,
+  })
+}
+
 describe('bounded terminal form viewport', () => {
+  it.each([
+    { layout: 'complete', activeField: 0 },
+    { layout: 'complete', activeField: 1 },
+    { layout: 'clipped', activeField: 0 },
+    { layout: 'clipped', activeField: 1 },
+  ])(
+    'recognizes a $layout form from field $activeField when its text field resembles a composer',
+    async ({ layout, activeField }) => {
+      const f = await textFieldFormFixture(layout === 'clipped', activeField)
+      const before = await f.geometry()
+      expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+        .toBe(true)
+      expect(await f.geometry()).toEqual(before)
+      const receipt = await f.receipt()
+      expect(receipt.keys.filter((key) => key === 'Enter')).toHaveLength(1)
+      expect(receipt.keys.filter((key) => key === 'Tab')).toHaveLength(1)
+      expect(receipt.actions).toEqual([{
+        action: 'accept',
+        selected: [0, 0],
+        textValue: 'control-model-001, treatment-model-001',
+      }])
+      expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+        .toBe(false)
+      expect((await f.receipt()).actions).toHaveLength(1)
+    },
+    30_000,
+  )
+
+  it.each([false, true])(
+    'refuses a different question in a free-text form (clipped=%s)',
+    async (clipped) => {
+      const f = await textFieldFormFixture(clipped)
+      const before = await f.geometry()
+      const other = { ...f.identity, question: `${f.identity.question} A different approval.` }
+      expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, other))
+        .toBe(false)
+      expect(await f.geometry()).toEqual(before)
+      expect((await f.receipt()).keys).toEqual([])
+      expect((await f.receipt()).actions).toEqual([])
+    },
+    15_000,
+  )
+
+  it.each(['cancel', 'decline'] as const)(
+    '%s recognizes a free-text form without mistaking it for a composer',
+    async (action) => {
+      const f = await textFieldFormFixture(false)
+      const before = await f.geometry()
+      expect(await f.controller.dismissUserInput(f.sessionId, f.identity, action))
+        .toBe(true)
+      expect(await f.geometry()).toEqual(before)
+      expect((await f.receipt()).actions).toEqual([{
+        action,
+        selected: [0, 0],
+        textValue: 'Default synthetic model IDs',
+      }])
+    },
+    15_000,
+  )
+
   it('expands horizontally paginated five-field tabs and restores 120x29', async () => {
     const f = await horizontalFormFixture()
     const before = await f.geometry()

@@ -13893,6 +13893,80 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /^Paused planning,/ })).toBeNull()
   })
 
+  it('reorders active sessions with their trailing hidden suspended blocks', async () => {
+    const alpha = { ...session, id: 'block-alpha', title: 'Alpha' }
+    const alphaPaused = {
+      ...session,
+      id: 'block-alpha-paused',
+      title: 'Alpha paused',
+      suspended: true,
+      messages: [],
+    }
+    const bravo = {
+      ...session,
+      id: 'block-bravo',
+      title: 'Bravo',
+      messages: [],
+    }
+    const bravoPaused = {
+      ...session,
+      id: 'block-bravo-paused',
+      title: 'Bravo paused',
+      suspended: true,
+      messages: [],
+    }
+    const charlie = {
+      ...session,
+      id: 'block-charlie',
+      title: 'Charlie',
+      messages: [],
+    }
+    const items = [alpha, alphaPaused, bravo, bravoPaused, charlie]
+    const keys = items.map((item) => `${computer.id}:${item.id}`)
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? alpha,
+    )
+    hubSessionOrder = {
+      revision: 5,
+      bootstrapped: true,
+      showSuspended: false,
+      order: { [computer.id]: keys },
+    }
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', {
+        name: 'Include suspended sessions',
+      })).toHaveAttribute('aria-pressed', 'false'),
+    )
+    expect(screen.queryByRole('button', { name: /^Alpha paused,/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Bravo paused,/ })).toBeNull()
+    expect(screen.getByLabelText('Reorder Alpha')).not
+      .toHaveAttribute('aria-disabled', 'true')
+
+    act(() => {
+      finishReorder(
+        'session-navigation',
+        `session:${keys[0]}`,
+        `session:${keys[2]}`,
+      )
+    })
+
+    const expected = [keys[2], keys[3], keys[0], keys[1], keys[4]]
+    await waitFor(() =>
+      expect(saveSessionOrderLane).toHaveBeenCalledWith(computer.id, expected),
+    )
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('.session-item__open strong')]
+          .map((element) => element.textContent),
+      ).toEqual(['Bravo', 'Alpha', 'Charlie']),
+    )
+  })
+
   it('keeps the committed visibility when saving it fails', async () => {
     const paused = {
       ...session,

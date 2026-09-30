@@ -179,6 +179,30 @@ describe('session navigation', () => {
     expect(screen.getByRole('region', { name: 'Travel laptop' })).toBeVisible()
   })
 
+  it('allows custom dragging when only suspended sessions are hidden', () => {
+    const suspended = {
+      ...session,
+      id: 'paused-review',
+      title: 'Paused review',
+      suspended: true,
+    }
+    const sessions = new Map(sessionsByComputer)
+    sessions.set('studio', [session, suspended, question])
+
+    render(
+      <NavigationHarness
+        initialShowSuspended={false}
+        sessions={sessions}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /^Paused review,/ })).toBeNull()
+    expect(screen.getByLabelText('Reorder Review the release')).not
+      .toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByLabelText('Reorder Choose a direction')).not
+      .toHaveAttribute('aria-disabled', 'true')
+  })
+
   it('filters attention without changing selection or hiding any computer', () => {
     render(navigation())
     fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
@@ -247,7 +271,7 @@ describe('session navigation', () => {
     expect(screen.getByRole('region', { name: 'Build node' })).toBeVisible()
     expect(screen.getByRole('region', { name: 'Travel laptop' })).toBeVisible()
     expect(screen.getByLabelText('Reorder Review the release'))
-      .toHaveAttribute('aria-disabled', 'true')
+      .toHaveAttribute('aria-disabled', 'false')
     expect(actions.onSelectSession).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))

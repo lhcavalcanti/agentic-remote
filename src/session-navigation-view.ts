@@ -22,6 +22,7 @@ export interface SessionNavigationView {
   visible: ManagedSession[]
   shown: number
   filtering: boolean
+  reorderDisabled: boolean
 }
 
 export function sessionNavigationView(
@@ -66,7 +67,34 @@ export function sessionNavigationView(
     visible,
     shown: visible.length,
     filtering: query.trim().length > 0 || filter !== 'all' || !showSuspended,
+    reorderDisabled: query.trim().length > 0 || filter !== 'all',
   }
+}
+
+export function reorderSessionLaneWithHiddenFollowers(
+  order: readonly string[],
+  activeKey: string,
+  overKey: string,
+  visibleKeys: ReadonlySet<string>,
+): string[] {
+  const leadingHidden: string[] = []
+  const blocks: string[][] = []
+  for (const key of order) {
+    if (visibleKeys.has(key)) {
+      blocks.push([key])
+    } else if (blocks.length > 0) {
+      blocks[blocks.length - 1].push(key)
+    } else {
+      leadingHidden.push(key)
+    }
+  }
+  const from = blocks.findIndex(([key]) => key === activeKey)
+  const to = blocks.findIndex(([key]) => key === overKey)
+  if (from < 0 || to < 0 || from === to) return [...order]
+  const next = blocks.map((block) => [...block])
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved)
+  return [...leadingHidden, ...next.flat()]
 }
 
 export function stepVisibleSession(

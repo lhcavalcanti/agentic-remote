@@ -110,6 +110,7 @@ import {
   type PendingSessionCreation,
 } from './SessionNavigation'
 import {
+  reorderSessionLaneWithHiddenFollowers,
   sessionNavigationView,
   stepVisibleSession,
   type SessionFilter,
@@ -13550,6 +13551,10 @@ function App() {
       setError('Choose Custom order before rearranging sessions.')
       return
     }
+    if (navigationView.reorderDisabled) {
+      setError('Clear session search and choose All before rearranging sessions.')
+      return
+    }
     const activeKey = activeId.slice('session:'.length)
     const overKey = overId.slice('session:'.length)
     const activeSession = sessions.find(
@@ -13570,7 +13575,22 @@ function App() {
     const to = order.indexOf(overKey)
     if (from < 0 || to < 0) return
     const computerId = activeSession.computerId
-    const lane = arrayMove(order, from, to)
+    const lane = showSuspendedSessions
+      ? arrayMove(order, from, to)
+      : reorderSessionLaneWithHiddenFollowers(
+          order,
+          activeKey,
+          overKey,
+          new Set(
+            sessions
+              .filter(
+                (session) =>
+                  session.computerId === computerId &&
+                  session.suspended !== true,
+              )
+              .map(sessionKey),
+          ),
+        )
     // Move it now so the drag lands where it was dropped, but keep what the
     // hub last acknowledged: if the write fails the list has to go back, not
     // sit in a position no other device will ever agree with.

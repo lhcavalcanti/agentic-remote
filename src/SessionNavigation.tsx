@@ -142,7 +142,7 @@ function SortableSessionItem({
     <div
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
-      )} ${presentation.state === 'tasks' ? 'session-item--background-running' : ''} ${
+      )} ${presentation.working && runningBackgroundTasks > 0 ? 'session-item--background-running' : ''} ${
         session.suspended ? 'session-item--suspended' : ''
       } ${presentation.needsAttention ? 'session-item--attention' : ''} ${
         selected ? 'session-item--active' : ''

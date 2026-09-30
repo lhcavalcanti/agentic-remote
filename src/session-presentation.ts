@@ -97,10 +97,10 @@ export function sessionPresentation(
             ? 'error'
             : session.suspended
               ? 'suspended'
-              : (snapshot?.runningCount || 0) > 0
-                ? 'tasks'
-                : session.status === 'running'
-                  ? 'running'
+              : session.status === 'running'
+                ? 'running'
+                : (snapshot?.runningCount || 0) > 0
+                  ? 'tasks'
                   : 'idle'
   const needsAttention = ['question', 'permission', 'waiting', 'unconfirmed', 'error'].includes(
     state,

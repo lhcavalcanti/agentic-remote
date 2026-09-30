@@ -309,6 +309,37 @@ describe('session navigation', () => {
     expect(actions.onSelectSession).toHaveBeenCalledWith(worker)
   })
 
+  it('shows Working alongside the task count until foreground work ends', () => {
+    const running = { ...worker, status: 'running' as const }
+    const sessions = new Map(sessionsByComputer)
+    sessions.set('worker', [running])
+    const rendered = render(navigation(sessions))
+    const task = screen.getByRole('button', { name: 'View background tasks for Build docs' })
+    const open = screen.getByRole('button', { name: /^Build docs,/ })
+
+    expect(within(open).getByText('Working')).toBeVisible()
+    expect(within(open).queryByText('Tasks')).toBeNull()
+    expect(open).toHaveAccessibleName(/Working/)
+    expect(open.closest('.session-item')).toHaveClass('session-item--background-running')
+    expect(task).toHaveTextContent('1 task')
+    fireEvent.click(task)
+    expect(actions.onOpenSessionTasks).toHaveBeenCalledWith(running)
+
+    rendered.rerender(navigation())
+    const idleOpen = screen.getByRole('button', { name: /^Build docs,/ })
+    expect(within(idleOpen).getByText('Tasks')).toBeVisible()
+    expect(idleOpen.closest('.session-item')).toHaveClass('session-item--background-running')
+    expect(screen.getByRole('button', { name: 'View background tasks for Build docs' }))
+      .toHaveTextContent('1 task')
+
+    rendered.rerender(<NavigationHarness sessions={sessions} snapshots={{}} />)
+    const foregroundOnly = screen.getByRole('button', { name: /^Build docs,/ })
+    expect(within(foregroundOnly).getByText('Working')).toBeVisible()
+    expect(foregroundOnly.closest('.session-item')).not.toHaveClass('session-item--background-running')
+    expect(screen.queryByRole('button', { name: 'View background tasks for Build docs' }))
+      .toBeNull()
+  })
+
   it('updates the filtered list when an answer is no longer pending', () => {
     const rendered = render(navigation())
     fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))

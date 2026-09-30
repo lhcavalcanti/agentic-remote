@@ -135,6 +135,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - A session MUST use the blue active-task treatment while at least one
   background task is running. With no running background task, the existing
   green and gray session treatments MUST remain unchanged.
+- A foreground response in progress MUST show Working rather than Tasks,
+  even while background tasks run. The existing X tasks action MUST retain
+  the running count and task access. An idle foreground with running background
+  tasks MUST still show Tasks; attention, suspension, and offline states retain
+  their existing precedence.
 - A running SDK background agent MUST make the session row read as active even
   when no foreground turn is open. The composer MUST keep immediate Send
   available and MUST offer Queue; queued text waits for the tracked background

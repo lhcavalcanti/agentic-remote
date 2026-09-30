@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
-import { sessionNavigationView, stepVisibleSession } from './session-navigation-view'
+import {
+  reorderSessionLaneWithHiddenFollowers,
+  sessionNavigationView,
+  stepVisibleSession,
+} from './session-navigation-view'
 
 const computers: ComputerSummary[] = [
   { id: 'one', name: 'Studio', isLocal: true, online: true },
@@ -51,6 +55,7 @@ describe('shared session navigation view', () => {
     expect(view.visible).toEqual([last])
     expect(view.shown).toBe(1)
     expect(view.filtering).toBe(true)
+    expect(view.reorderDisabled).toBe(true)
     expect(stepVisibleSession(view.visible, 'one:first', 1)).toBe(last)
   })
 
@@ -70,7 +75,38 @@ describe('shared session navigation view', () => {
     expect(view.visible).toEqual([first, hidden, last])
     expect(view.groups.map((group) => group.computer)).toEqual(computers)
     expect(view.filtering).toBe(true)
+    expect(view.reorderDisabled).toBe(false)
     expect(stepVisibleSession(view.visible, 'one:paused', 1)).toBe(first)
     expect(stepVisibleSession(view.visible, 'one:paused', -1)).toBe(last)
+  })
+
+  it('moves hidden followers with their visible session block', () => {
+    expect(reorderSessionLaneWithHiddenFollowers(
+      ['active-a', 'paused-a1', 'paused-a2', 'active-b', 'paused-b', 'active-c'],
+      'active-a',
+      'active-b',
+      new Set(['active-a', 'active-b', 'active-c']),
+    )).toEqual([
+      'active-b',
+      'paused-b',
+      'active-a',
+      'paused-a1',
+      'paused-a2',
+      'active-c',
+    ])
+  })
+
+  it('keeps leading hidden sessions ahead of reordered blocks', () => {
+    expect(reorderSessionLaneWithHiddenFollowers(
+      ['paused-leading', 'active-a', 'paused-a', 'active-b'],
+      'active-b',
+      'active-a',
+      new Set(['active-a', 'active-b']),
+    )).toEqual([
+      'paused-leading',
+      'active-b',
+      'active-a',
+      'paused-a',
+    ])
   })
 })

@@ -105,7 +105,7 @@ function SortableSessionItem({
   backgroundTasks,
   computerName,
   online,
-  filtering,
+  reorderDisabled,
   sorting,
   onSelectSession,
   onOpenSessionTasks,
@@ -117,7 +117,7 @@ function SortableSessionItem({
   backgroundTasks?: BackgroundTaskSnapshot
   computerName: string
   online: boolean
-  filtering: boolean
+  reorderDisabled: boolean
   sorting: boolean
 }) {
   const {
@@ -129,7 +129,7 @@ function SortableSessionItem({
     isDragging,
   } = useSortable({
     id: `session:${sessionKey(session)}`,
-    disabled: filtering || sorting,
+    disabled: reorderDisabled || sorting,
   })
   const presentation = sessionPresentation(session, backgroundTasks, online)
   const activity = sessionActivityTime(session.updatedAt)
@@ -248,6 +248,7 @@ function SortableComputerGroup({
   pendingCreations = [],
   total,
   filtering,
+  reorderDisabled,
   sorting,
   backgroundTasks,
   selectedKey,
@@ -258,6 +259,7 @@ function SortableComputerGroup({
   pendingCreations?: PendingSessionCreation[]
   total: number
   filtering: boolean
+  reorderDisabled: boolean
   sorting: boolean
   backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
@@ -269,7 +271,7 @@ function SortableComputerGroup({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `computer:${computer.id}`, disabled: filtering })
+  } = useSortable({ id: `computer:${computer.id}`, disabled: reorderDisabled })
   return (
     <section
       aria-label={computer.name}
@@ -319,7 +321,7 @@ function SortableComputerGroup({
               {...actions}
               backgroundTasks={taskSnapshot(backgroundTasks, session)}
               computerName={computer.name}
-              filtering={filtering}
+              reorderDisabled={reorderDisabled}
               sorting={sorting}
               key={sessionKey(session)}
               online={computer.online}
@@ -379,7 +381,7 @@ export function SessionNavigation({
   onShowSuspendedChange: (show: boolean) => void
 }) {
   const searchRef = useRef<HTMLInputElement>(null)
-  const { groups, counts, shown, filtering } = view
+  const { groups, counts, shown, filtering, reorderDisabled } = view
   const filters: { id: SessionFilter; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: counts.all },
     { id: 'attention', label: 'Needs you', count: counts.attention },
@@ -535,6 +537,7 @@ export function SessionNavigation({
                 computer={group.computer}
                 backgroundTasks={backgroundTasks}
                 filtering={filtering}
+                reorderDisabled={reorderDisabled}
                 sorting={sort !== 'custom'}
                 key={group.computer.id}
                 pendingCreations={pendingCreations.filter(

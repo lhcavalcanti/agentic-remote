@@ -67,9 +67,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   committed state visible and report the failure. Filtering MUST keep every
   configured computer visible and MUST NOT change the selected session, its
   draft, or its Knowledge position. Hidden suspended sessions MUST also be
-  excluded from keyboard next/previous navigation. Reordering MUST be disabled
-  while filtered so hidden sessions are not reordered implicitly. Clearing
-  filters MUST restore and persist suspended-session visibility.
+  excluded from keyboard next/previous navigation. Search and the Needs you or
+  Working filters MUST disable reordering. With Custom order, All selected and
+  no search, active sessions MAY still be reordered while suspended sessions
+  are hidden: each active session MUST move with the contiguous suspended
+  sessions immediately following it, while leading suspended sessions without
+  an active predecessor retain their position. Clearing filters MUST restore
+  and persist suspended-session visibility.
 - Session ordering MUST be explicit. Custom order remains the backward-
   compatible default; Recent activity, Attention first, and Name views MAY
   reorder the displayed sessions within each computer without rewriting the

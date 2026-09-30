@@ -281,6 +281,8 @@ A local-only monitor may run this sequence on an opt-in machine:
    changes.
 5. Prepare a validation worktree under `state_dir`, pinned to the candidate
    commit, and install dependencies and run the configured validation there.
+   The full Vitest suite runs with one worker and a 30-second per-test timeout,
+   matching the stable local gate for timing-sensitive tmux and recovery tests.
    Validating in the development checkout ties the result to a workspace: it
    can sit on a filesystem chosen for working rather than for running a suite,
    where the runner gives up waiting for its own workers and reports a timeout

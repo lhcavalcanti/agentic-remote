@@ -62,7 +62,7 @@ function client(): CopilotClientLike {
   }
 }
 
-async function fixture() {
+async function fixture(readinessTimeoutMs = 10_000) {
   const id = randomUUID()
   const workspace = path.join(root, 'workspace')
   const stateDirectory = path.join(root, 'state')
@@ -137,7 +137,7 @@ draw(); save()
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       return undefined
     }
-  }, (receipt) => receipt?.pid === pid)
+  }, (receipt) => receipt?.pid === pid, readinessTimeoutMs)
   expect(ready?.pid).toBe(pid)
   const directory = path.join(copilotHome, 'session-state', id)
   await mkdir(directory, { recursive: true })
@@ -364,7 +364,7 @@ describe('Persisted native queue startup', () => {
   }, 15_000)
 
   it('does not create, reopen or dispatch merely because a queue exists without a live owner', async () => {
-    const native = await fixture()
+    const native = await fixture(20_000)
     await native.seed(['Must stay queued'])
     const runtime = native.connect()
     runtime.finder.mockResolvedValue([])
@@ -377,7 +377,7 @@ describe('Persisted native queue startup', () => {
     expect(runtime.store.get(native.id)?.isOpen).toBe(false)
     expect((await native.persisted()).queuedPrompts).toHaveLength(1)
     expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
-  }, 15_000)
+  }, 30_000)
 
   it('does not retain stale startup intent when a failed start is retried after closure', async () => {
     const native = await fixture()

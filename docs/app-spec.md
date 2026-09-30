@@ -376,6 +376,9 @@ Questions and permissions are the highest-priority UI state.
   MUST NOT implicitly approve a takeover. An old confirmation in scrollback
   MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
+- A form's free-text field MUST NOT be mistaken for the chat composer.
+  Its accept/cancel controls identify a form for inspection, but replies MUST
+  still verify the complete question and field headings before sending keys.
 - Question identity matching MUST tolerate terminal line wrapping, including
   breaks within words, while still requiring the complete question and field
   headings. A failed match MUST preserve the pending request and surface an

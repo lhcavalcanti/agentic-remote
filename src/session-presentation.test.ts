@@ -131,6 +131,17 @@ describe('session presentation', () => {
     })
   })
 
+  it('prioritizes foreground Working status over running background tasks', () => {
+    expect(sessionPresentation({ ...session, status: 'running' }, tasks))
+      .toEqual({
+        state: 'running',
+        label: 'Working',
+        description: 'Working',
+        working: true,
+        needsAttention: false,
+      })
+  })
+
   it('recognizes idle foreground sessions with background work without inventing completion', () => {
     expect(sessionPresentation(session, tasks)).toMatchObject({
       state: 'tasks', working: true, needsAttention: false,
@@ -148,7 +159,12 @@ describe('session presentation', () => {
 
   it('does not advertise cached offline work as live, but keeps its attention discoverable', () => {
     expect(sessionPresentation({ ...session, status: 'running' }, tasks, false))
-      .toMatchObject({ state: 'offline', working: false, needsAttention: false })
+      .toMatchObject({
+        state: 'offline',
+        working: false,
+        needsAttention: false,
+        description: 'Computer offline. Last known state: working.',
+      })
     expect(sessionPresentation({ ...session, status: 'waiting' }, tasks, false))
       .toMatchObject({
         state: 'offline',

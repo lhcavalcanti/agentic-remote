@@ -19,6 +19,12 @@ describe('reproducible promotion setup', () => {
     expect(script).not.toContain('gh run')
     expect(script).toContain('git -C "$DEV_ROOT" pull --ff-only')
     expect(script).toContain('running validation tests')
+    const testConfig = await readFile(
+      new URL('../vite.config.ts', import.meta.url),
+      'utf8',
+    )
+    expect(testConfig).toContain('maxWorkers: 1')
+    expect(testConfig).toContain('testTimeout: 30_000')
     // Validation belongs somewhere of its own: the development checkout can
     // sit on a filesystem chosen for working rather than for running a suite.
     expect(script).toContain('git -C "$DEV_ROOT" worktree add --detach')

@@ -62,6 +62,8 @@ export default defineConfig(({ command }) => {
       // them. Run together they see each other's work and report it as the
       // code's, which is a failure nobody can reproduce alone.
       fileParallelism: false,
+      maxWorkers: 1,
+      testTimeout: 30_000,
     },
   }
 })

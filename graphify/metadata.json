@@ -271,7 +271,7 @@
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
     "docs/background-tasks.md": "abf445416b911d739f60c295fc40ebc13b1a3de1f3fdebd81deb18e4df47ee45",
-    "docs/deployment-promotion.md": "c9e0d1d717f1a8d8b4146f59c4be2def5db22821e2996029a2baefb7f56d6ba9",
+    "docs/deployment-promotion.md": "3f10fdb53868fd997e7bbea7c1be9fdb8a65f2d35cf1cbf633ba784873d35056",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
     "docs/mockups/brand-logo.html": "1a1a3efd305260cfba6c2cf5d6eb0f5ec5a68472a010a0eaf9dfd426436766c1",
@@ -347,7 +347,7 @@
     "server/paths.ts": "11789bf5288ae72e1ce71a17f75b02c1432912d9dc5c5b859f0d1855100b2c14",
     "server/promotion-monitor.test.ts": "26c8ac58be92d4bd4288166f5a17203da68e99f0d5e36d1c00f22bda7e6db008",
     "server/promotion-setup-execution.test.ts": "999bfc6d9bd6ba181b8e725b14989fe1f5daec5316faef2d3aadbc0a3fe7e8e4",
-    "server/promotion-setup.test.ts": "3fe421c94526566700c3030f85ee6226837a41b8110348d17ba39312cc531292",
+    "server/promotion-setup.test.ts": "50bd91a9f484183f59ef7c379990a8a4ca1412016b54af12115926591bd53742",
     "server/prompt-form-layout.test.ts": "74ae644b07a6a745c1541c4106492b27b24729dffdbe9d90f111125b06373ce6",
     "server/provider-session-service.test.ts": "a992bdd3e052c487125012533959b89e9477a261e537c1d79751a6685fd2272c",
     "server/provider-session-service.ts": "1ac8c9478b1597c48ecedcf4df9b5649e788f6143880db957d4852fa49429432",
@@ -407,7 +407,7 @@
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
     "server/terminal-session.test.ts": "9ef6924817227742f376d376e5bd2f9cc21f591df9b9daf853d5a994c5742d6c",
     "server/terminal-session.ts": "8e0a1177fd13c5e2bdfae892acb446869279b488333a62e8d30909e1557a14c0",
-    "server/terminal-startup-queue.test.ts": "ce97dce7d66603a07d30e29de376692fc9c03bd74fbaa8bd71d9ad33b9c33c50",
+    "server/terminal-startup-queue.test.ts": "2ee28c089002f46176e31f8f281e44083af4b202a91dbff5ab652e97c0801ae3",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
     "server/tmux-errors.ts": "c81388a0558de865caf123ae67302e6581c978dec3f2f6e2ea5a215ec6637d2b",
@@ -519,7 +519,7 @@
     "tsconfig.json": "91434fd9d32940ba5f1347be26f2c7ff676e7c1e203dba03e9986d71915755ff",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
     "tsconfig.server.json": "c3022e22834e731724ffa817c01bd2e4654184f9031945ffcbff4f489dca93bb",
-    "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
+    "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
   "nodes": 3502,
@@ -579,19 +579,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5469ca23c63bd5cbc2b5c69923a7c354cbf045b582896b96b0bc3629ae0c7fe7",
+    "GRAPH_REPORT.md": "591ea8a771fedc8ba2836d0193c758faebfb86e61169677b9545e09dd5a4f882",
     "communities.json": "6fbf5f11317683d6f3be5023ed4ad9d6d8923686b0de5c2ad92f5a9460f7b775",
-    "graph.html": "195d1567951a015fbfb4aecf08dd7dc9d2cbaa56282d43b49ab347e0deef6ddf",
-    "graph.json": "a620b09247127ec808baf9eadd842604d47235c2b972c30945fcd2e3fdd3d6c2"
+    "graph.html": "c97e26093c95f66338e24b5b2c79adcc547d4c94c7b18e9947d7aa29d139d1f1",
+    "graph.json": "616d7cdc294e57d4aebf1caf60624a0aae1f7d8f8963b4c761776b8cf9cee4e8"
   },
   "schema_version": 1,
-  "source_commit": "4621d7aa499bc71411df49e47e2d957e3144b33f",
-  "source_fingerprint": "f128d4becc48d26d568d626545e7638dbe511faf1179350f81220eb97edf556e",
+  "source_commit": "c9dbb8b54a0332e8c9c0c2d5824fd415ec2a4f78",
+  "source_fingerprint": "93155e304638a48feb0450cc7046ef5efe43777a6fb98f37522673ad4bcc9076",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "docs/deployment-promotion.md",
+    "server/promotion-setup.test.ts",
+    "server/terminal-startup-queue.test.ts",
+    "vite.config.ts"
   ]
 }

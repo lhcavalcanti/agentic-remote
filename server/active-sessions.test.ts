@@ -14,6 +14,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   findActiveCopilotProcesses,
+  isDirectCopilotSessionProcess,
   stopActiveCopilotSession,
 } from './active-sessions.js'
 import {
@@ -127,9 +128,17 @@ describe('active Copilot processes', () => {
       processes.filter((processInfo) => processInfo.sessionId === sessionId),
     ).toEqual([{ pid, sessionId, source: 'argument' }])
 
+    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(true)
+    expect(await isDirectCopilotSessionProcess(pid, 'aaaaaaaa-1234-1234-1234-123456789abc'))
+      .toBe(false)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'different-home'))
+    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+
     await stopActiveCopilotSession(sessionId)
 
     expect(await waitForProcessExit(pid)).toBe(true)
+    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
   })
 
   it('selects the nested Copilot process instead of its argument wrapper', async () => {
@@ -193,6 +202,12 @@ describe('active Copilot processes', () => {
       ),
     ).toEqual([{ pid: childPid, sessionId, source: 'argument' }])
 
+    const wrapperPid = Number.parseInt((await execFileAsync(
+      'tmux', ['display-message', '-p', '-t', tmuxSession, '#{pane_pid}'],
+    )).stdout, 10)
+    expect(await isDirectCopilotSessionProcess(wrapperPid, sessionId)).toBe(false)
+    expect(await isDirectCopilotSessionProcess(childPid, sessionId)).toBe(true)
+
     await stopActiveCopilotSession(sessionId)
     expect(await waitForProcessExit(childPid)).toBe(true)
   })
@@ -235,6 +250,7 @@ describe('active Copilot processes', () => {
         (processInfo) => processInfo.sessionId === sessionId,
       ),
     ).toBe(false)
+    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
   })
 
   it('terminates a lock-discovered external Copilot process', async () => {
@@ -279,6 +295,7 @@ describe('active Copilot processes', () => {
     )
     vi.stubEnv('COPILOT_HOME', copilotHome)
 
+    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
     await stopActiveCopilotSession(sessionId)
 
     expect(await waitForProcessExit(pid)).toBe(true)

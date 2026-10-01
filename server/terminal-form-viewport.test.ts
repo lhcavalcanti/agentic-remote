@@ -31,10 +31,13 @@ async function formFixture(lines = 52, repaint = true, options: {
   width?: number
   height?: number
   argumentOwned?: boolean
+  question?: string
+  narrowQuestion?: string[]
+  unverifiedWidths?: number[]
 } = {}) {
   const output = path.join(root, 'receipt.json')
   const executable = path.join(root, 'copilot-clipped-form.mjs')
-  const question = [
+  const question = options.question || [
     '**Synthetic confirmation — no operations will be executed.**',
     '```json',
     ...Array.from({ length: lines }, (_, index) => `  "setting_${index}": "retain every payload character",`),
@@ -46,14 +49,19 @@ async function formFixture(lines = 52, repaint = true, options: {
 import { writeFileSync } from 'node:fs'
 const output = ${JSON.stringify(output)}
 let pending = '', selected = 0, closed = false, second = false
-const receipt = { keys: [], actions: [], heights: [] }
+const receipt = { keys: [], actions: [], heights: [], widths: [] }
 function save() { writeFileSync(output, JSON.stringify(receipt)) }
 function draw() {
   receipt.heights.push(process.stdout.rows)
+  receipt.widths.push(process.stdout.columns)
   save()
   const lines = closed ? ['Finished', '╻▄▄▄▄▄▄▄▄', '┃', '╹▀▀▀▀▀▀▀▀', ' / commands'] : [
     ' Copilot needs information.',
-    ...${JSON.stringify(question)}.split('\\n').map(line => ' ' + line),
+    ...((process.stdout.columns < 160 ||
+      ${JSON.stringify(options.unverifiedWidths || [])}.includes(process.stdout.columns)) &&
+      ${Boolean(options.narrowQuestion)}
+      ? ${JSON.stringify(options.narrowQuestion || [])}
+      : ${JSON.stringify(question)}.split('\\n')).map(line => ' ' + line),
     ...(second ? [' Second synthetic question.'] : []),
     '', ' ${field}:',
     ...['Default', 'Non-default'].map((label, index) => (index === selected ? ' ❯ ' : '   ') + label),
@@ -124,7 +132,7 @@ draw()
     localPolicy: (await exec('tmux', ['show-options', '-wqv', '-t', tmux, 'window-size'])).stdout.trim(),
   })
   const receipt = async () => JSON.parse(await readFile(output, 'utf8')) as {
-    keys: string[]; actions: { action: string; selected: number }[]; heights: number[]
+    keys: string[]; actions: { action: string; selected: number }[]; heights: number[]; widths: number[]
   }
   const next = async () => {
     await exec('tmux', ['send-keys', '-t', tmux, '-l', 'n'])
@@ -361,6 +369,96 @@ async function textFieldFormFixture(clipped: boolean, activeField = 1, nested = 
 }
 
 describe('bounded terminal form viewport', () => {
+  it.each([300, 512])('never narrows a clipped original %s-column viewport', async (width) => {
+    const prefix = 'Synthetic confirmation only. The old catalog '.padEnd(65, 'x')
+    const tail = Array.from({ length: 30 }, (_, index) => `Synthetic payload ${index}.`)
+    const question = `${prefix}model/endpoint inventory remains historical.\n${tail.join('\n')}`
+    const f = await formFixture(0, true, {
+      width, height: 24, question,
+      narrowQuestion: [`${prefix}model/`, 'endpoint inventory remains historical.', ...tail],
+      unverifiedWidths: [width],
+    })
+    const before = await f.geometry()
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(false)
+    expect(await f.geometry()).toEqual(before)
+    const receipt = await f.receipt()
+    expect(receipt.widths.every(recorded => recorded >= width)).toBe(true)
+    expect(receipt.keys).toEqual([])
+    expect(receipt.actions).toEqual([])
+  }, 15_000)
+
+  it('tries another bounded reflow when maximum-width wrapping remains ambiguous', async () => {
+    const prefix = 'Synthetic confirmation only. The old catalog '.padEnd(65, 'x')
+    const question = `${prefix}model/endpoint inventory remains historical.`
+    const f = await formFixture(0, true, {
+      width: 80, height: 40, question,
+      narrowQuestion: [`${prefix}model/`, 'endpoint inventory remains historical.'],
+      unverifiedWidths: [256],
+    })
+    const before = await f.geometry()
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(true)
+    expect(await f.geometry()).toEqual(before)
+    const receipt = await f.receipt()
+    expect(receipt.widths).toContain(256)
+    expect(receipt.widths).toContain(240)
+    expect(Math.min(...receipt.widths)).toBeGreaterThanOrEqual(80)
+    expect(receipt.actions).toEqual([{ action: 'accept', selected: 1 }])
+    expect(receipt.keys.filter(key => key === 'Enter')).toHaveLength(1)
+  }, 15_000)
+
+  it.each([false, true])(
+    'reflows a padded single-field question before exact verification (vertically clipped=%s)',
+    async (clipped) => {
+      const prefix = 'Synthetic confirmation only. The old catalog '.padEnd(65, 'x')
+      const tail = Array.from({ length: 30 }, (_, index) =>
+        `Synthetic payload ${index}: retain every exact identifier.`)
+      const question = `${prefix}model/endpoint inventory remains historical.\n${tail.join('\n')}`
+      const f = await formFixture(0, true, {
+        width: 80, height: clipped ? 24 : 80, question,
+        narrowQuestion: [`${prefix}model/`, 'endpoint inventory remains historical.', ...tail],
+      })
+      const before = await f.geometry()
+      expect(terminalFormShowsFields(await f.capture(), f.identity)).toBe(false)
+      expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+        .toBe(true)
+      expect(await f.geometry()).toEqual(before)
+      const receipt = await f.receipt()
+      expect(receipt.widths).toContain(256)
+      expect(receipt.actions).toEqual([{ action: 'accept', selected: 1 }])
+      expect(receipt.keys.filter((key) => key === 'Enter')).toHaveLength(1)
+    },
+    20_000,
+  )
+
+  it.each(['added-space', 'removed-space', 'different-identifier'])(
+    'does not authorize %s after read-only question reflow',
+    async (difference) => {
+      const prefix = 'Synthetic confirmation only. The old catalog '.padEnd(65, 'x')
+      const question = `${prefix}model/endpoint inventory remains historical.`
+      const liveQuestion = difference === 'added-space'
+        ? question.replace('model/endpoint', 'model/ endpoint')
+        : difference === 'removed-space'
+          ? question.replace('inventory remains', 'inventoryremains')
+          : question.replace('endpoint', 'different')
+      const f = await formFixture(0, true, {
+        width: 80, height: 40, question: liveQuestion,
+        narrowQuestion: [`${prefix}model/`, liveQuestion.slice(prefix.length + 6).trim()],
+      })
+      const before = await f.geometry()
+      expect(await f.controller.fillUserInputForm(
+        f.sessionId, f.steps, { ...f.identity, question },
+      )).toBe(false)
+      expect(await f.geometry()).toEqual(before)
+      const receipt = await f.receipt()
+      expect(receipt.keys).toEqual([])
+      expect(receipt.actions).toEqual([])
+      if (difference !== 'different-identifier') expect(receipt.widths).toContain(256)
+    },
+    15_000,
+  )
+
   it.each([
     { layout: 'complete', activeField: 0 },
     { layout: 'complete', activeField: 1 },

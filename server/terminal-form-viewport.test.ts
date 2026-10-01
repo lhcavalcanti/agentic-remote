@@ -369,6 +369,25 @@ async function textFieldFormFixture(clipped: boolean, activeField = 1, nested = 
 }
 
 describe('bounded terminal form viewport', () => {
+  it.each([300, 512])('never narrows a clipped original %s-column viewport', async (width) => {
+    const prefix = 'Synthetic confirmation only. The old catalog '.padEnd(65, 'x')
+    const tail = Array.from({ length: 30 }, (_, index) => `Synthetic payload ${index}.`)
+    const question = `${prefix}model/endpoint inventory remains historical.\n${tail.join('\n')}`
+    const f = await formFixture(0, true, {
+      width, height: 24, question,
+      narrowQuestion: [`${prefix}model/`, 'endpoint inventory remains historical.', ...tail],
+      unverifiedWidths: [width],
+    })
+    const before = await f.geometry()
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(false)
+    expect(await f.geometry()).toEqual(before)
+    const receipt = await f.receipt()
+    expect(receipt.widths.every(recorded => recorded >= width)).toBe(true)
+    expect(receipt.keys).toEqual([])
+    expect(receipt.actions).toEqual([])
+  }, 15_000)
+
   it('tries another bounded reflow when maximum-width wrapping remains ambiguous', async () => {
     const prefix = 'Synthetic confirmation only. The old catalog '.padEnd(65, 'x')
     const question = `${prefix}model/endpoint inventory remains historical.`

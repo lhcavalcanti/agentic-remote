@@ -1272,7 +1272,9 @@ export class TmuxTerminalSessionController
               hasTerminalFormQuestionReflowCandidate(pane, form))
           ) break
         }
-        const reflowWidths = [MAX_FORM_VIEWPORT_WIDTH]
+        const reflowWidths = original.width <= MAX_FORM_VIEWPORT_WIDTH
+          ? [MAX_FORM_VIEWPORT_WIDTH]
+          : []
         for (
           let width = MAX_FORM_VIEWPORT_WIDTH - FORM_QUESTION_REFLOW_WIDTH_STEP;
           width >= Math.max(MIN_FORM_QUESTION_REFLOW_WIDTH, original.width);

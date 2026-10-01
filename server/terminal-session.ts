@@ -972,7 +972,7 @@ export class TmuxTerminalSessionController
         if (parseTerminalFormActiveField(pane, form) !== 0) {
           return false
         }
-        const commitKeys = terminalFormCommitKeys(steps.length)
+        const commitKeys = terminalFormCommitKeys(steps.length, steps)
         for (const [position, step] of steps.entries()) {
           if (step.kind === 'checklist') {
             const ticked = terminalChecklistState(await capture(), step.optionCount)
@@ -1019,10 +1019,11 @@ export class TmuxTerminalSessionController
               await new Promise((resolve) => setTimeout(resolve, 45))
             }
           }
-          // Tab changes fields; Enter accepts the entire form, exactly once.
+          // A choice must be accepted before leaving it; text and checklist
+          // values are already applied. The final acceptance submits the form.
           await press(commitKeys[position], position)
           await new Promise((resolve) => setTimeout(resolve, 90))
-          if (commitKeys[position] === 'Tab') {
+          if (position < steps.length - 1) {
             let arrived = false
             for (let attempt = 0; attempt < 20; attempt += 1) {
               pane = await capture()
@@ -1292,7 +1293,8 @@ export class TmuxTerminalSessionController
             await validateInput(field)
             await sendInput(
               `send-keys -t ${owner.target} ${key}`,
-              ['Enter', 'Escape', 'C-d'].includes(key),
+              key === 'Escape' || key === 'C-d' ||
+                (key === 'Enter' && (field === undefined || field === form.fields.length - 1)),
             )
           },
           paste: async (value, field) => {
@@ -2549,12 +2551,13 @@ function isTerminalContextFooter(line: string): boolean {
 
 function isTerminalModelFooter(line: string, previousLine = ''): boolean {
   const trimmed = line.trim()
+  const model = trimmed.replace(/^ctrl\+t\s+show reasoning\s+·\s+/iu, '')
   return (
     trimmed.length > 0 &&
     trimmed.length <= 160 &&
     /(?:open sidebar|\/\s*commands|tab next tab)/iu.test(previousLine) &&
     /^(?:Auto$|Claude\b|Copilot\b|Gemini\b|GPT(?:\b|-)|Grok\b|MAI\b|o\d\b|Raptor\b)/iu
-      .test(trimmed)
+      .test(model)
   )
 }
 
@@ -2862,14 +2865,16 @@ export function terminalCommandOutput(
 /**
  * The key that ends each field, in order.
  *
- * The CLI prints its own contract along the bottom of the form — `enter
- * accept · tab next` — so Enter is not a way of moving on. Sending it between
- * fields submits the form with every field after it at whatever it opened
- * with, which is how a confirmation nobody agreed to gets answered.
+ * Enter accepts a single-choice widget and advances it; Tab only navigates
+ * away without accepting its highlight. Text and checklist edits are applied
+ * before navigation, and the final field acceptance submits the form.
  */
-export function terminalFormCommitKeys(fieldCount: number): string[] {
+export function terminalFormCommitKeys(
+  fieldCount: number,
+  steps: readonly TerminalFormStep[] = [],
+): string[] {
   return Array.from({ length: fieldCount }, (_, index) =>
-    index === fieldCount - 1 ? 'Enter' : 'Tab',
+    index === fieldCount - 1 || steps[index]?.kind === 'select' ? 'Enter' : 'Tab',
   )
 }
 

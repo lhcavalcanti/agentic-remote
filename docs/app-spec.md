@@ -376,6 +376,10 @@ Questions and permissions are the highest-priority UI state.
   MUST NOT implicitly approve a takeover. An old confirmation in scrollback
   MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
+- Single-choice fields MUST accept the highlighted option before advancing;
+  navigation alone MUST NOT substitute its previous default for the app's
+  submitted value. Every field change MUST verify the next expected field.
+  Intermediate choice acceptance MUST NOT count as whole-form submission.
 - A form's free-text field MUST NOT be mistaken for the chat composer.
   Its accept/cancel controls identify a form for inspection, but replies MUST
   still verify the complete question and field headings before sending keys.
@@ -447,8 +451,10 @@ Questions and permissions are the highest-priority UI state.
   than terminate the CLI. Restarting a managed session whose terminal owner has
   vanished MUST persist its SDK fallback before reporting success.
 - A complete model, effort, and context footer MUST NOT make an otherwise live
-  composer appear unavailable. Unrelated output below the frame MUST still
-  prevent it from being treated as a live composer.
+  composer appear unavailable. A wrapped reasoning/model line after the
+  command/sidebar hints MUST remain recognizable without a context counter.
+  Unrelated output below the frame MUST still prevent it from being treated as
+  a live composer.
 - Losing a paste acknowledgement MUST report uncertain delivery rather than
   authorize an automatic retry. Readiness MUST be checked again after owner
   validation and before the paste.

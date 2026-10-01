@@ -592,6 +592,51 @@ describe('TmuxTerminalSessionController', () => {
     })
   }, 15_000)
 
+  it.each([
+    'GPT-5.6 Sol',
+    'GPT-5.6 Sol Fast (Internal only)',
+  ])('recognizes the wrapped reasoning/model footer in Copilot 1.0.90: %s', async (model) => {
+    const footer = [
+      ' ← open sidebar · Interactive · Allow All · / commands · ? help · tab next tab',
+      ` ctrl+t show reasoning · ${model}`,
+    ].join('\n')
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    expect(await controller.send(sessionId, 'Wrapped footer proof', false)).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Wrapped footer proof'], submits: ['enter'],
+    })
+  }, 15_000)
+
+  it.each([
+    'ctrl+t show reasoning · Unknown footer',
+    'ctrl+t show reasoning: GPT-5.6 Sol',
+  ])('rejects malformed wrapped reasoning/model metadata: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+  })
+
+  it('preserves an existing draft under the wrapped reasoning/model footer', async () => {
+    const footer = ' ctrl+t show reasoning · GPT-5.6 Sol'
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, 'Preserve this native draft', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    await expect(controller.send(sessionId, 'Do not append', false))
+      .rejects.toMatchObject({ statusCode: 409, terminalDraftConflict: true, uncertainDelivery: false })
+    expect(await readFile(output, 'utf8')).toBe('')
+    expect(await controller.capture(sessionId)).toContain('Preserve this native draft')
+  }, 15_000)
+
   it('sends through the flat composer used by Copilot v1.0.87', async () => {
     const { controller, sessionId, output } = await deliveryFixture(
       false,
@@ -4296,6 +4341,14 @@ describe('terminalFormCommitKeys', () => {
 
   it('accepts immediately when the form has one field', () => {
     expect(terminalFormCommitKeys(1)).toEqual(['Enter'])
+  })
+
+  it('accepts single-choice values before advancing, rather than dropping the highlight', () => {
+    expect(terminalFormCommitKeys(3, [
+      { kind: 'select', optionCount: 3, index: 1 },
+      { kind: 'text', value: 'Exact text' },
+      { kind: 'select', optionCount: 3, index: 0 },
+    ])).toEqual(['Enter', 'Tab', 'Enter'])
   })
 })
 

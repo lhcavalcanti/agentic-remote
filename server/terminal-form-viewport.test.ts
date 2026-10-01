@@ -167,6 +167,7 @@ const textField = ${options.textField ?? -1}
 let textValue = 'Default synthetic model IDs'
 let pending = '', active = ${options.activeField || 0}, closed = false
 const selected = Array(fields.length).fill(0)
+const accepted = [...selected]
 const receipt = { keys: [], actions: [], widths: [] }
 function save() { writeFileSync(output, JSON.stringify(receipt)) }
 function tabs() {
@@ -193,8 +194,8 @@ function draw() {
       ' ❯ ' + textValue,
       '─'.repeat(process.stdout.columns),
     ] : [
-      selected[active] === 0 ? ' ❯ Yes' : '   Yes',
-      selected[active] === 1 ? ' ❯ No' : '   No',
+      selected[active] === 0 ? ' ❯ Yes' : accepted[active] === 0 ? ' ✓ Yes' : '   Yes',
+      selected[active] === 1 ? ' ❯ No' : accepted[active] === 1 ? ' ✓ No' : '   No',
       '   Other (type your answer)',
     ]),
     '',
@@ -210,7 +211,7 @@ function draw() {
 }
 function finish(action) {
   receipt.actions.push({
-    action, selected: [...selected],
+    action, selected: [...accepted],
     ...(textField >= 0 ? { textValue } : {}),
   })
   closed = true
@@ -247,6 +248,7 @@ process.stdin.on('data', data => {
       if (key === 'Z') {
         receipt.keys.push('BTab')
         active = Math.max(0, active - 1)
+        selected[active] = accepted[active]
       } else {
         receipt.keys.push(key === 'A' ? 'Up' : 'Down')
         selected[active] = key === 'A'
@@ -266,10 +268,18 @@ process.stdin.on('data', data => {
     } else if (key === '\\t') {
       receipt.keys.push('Tab')
       active = Math.min(fields.length - 1, active + 1)
+      selected[active] = accepted[active]
       draw()
     } else if (key === '\\r') {
       receipt.keys.push('Enter')
-      finish('accept')
+      if (active !== textField) accepted[active] = selected[active]
+      if (active === fields.length - 1) {
+        finish('accept')
+      } else {
+        active += 1
+        selected[active] = accepted[active]
+        draw()
+      }
     } else if (key === '\\x04') {
       receipt.keys.push('C-d')
       finish('decline')
@@ -350,8 +360,8 @@ describe('bounded terminal form viewport', () => {
         .toBe(true)
       expect(await f.geometry()).toEqual(before)
       const receipt = await f.receipt()
-      expect(receipt.keys.filter((key) => key === 'Enter')).toHaveLength(1)
-      expect(receipt.keys.filter((key) => key === 'Tab')).toHaveLength(1)
+      expect(receipt.keys.filter((key) => key === 'Enter')).toHaveLength(2)
+      expect(receipt.keys.filter((key) => key === 'Tab')).toHaveLength(0)
       expect(receipt.actions).toEqual([{
         action: 'accept',
         selected: [0, 0],
@@ -363,6 +373,48 @@ describe('bounded terminal form viewport', () => {
     },
     30_000,
   )
+
+  it.each([false, true])(
+    'commits a non-default choice before advancing to a text field (clipped=%s)',
+    async (clipped) => {
+      const f = await textFieldFormFixture(clipped)
+      f.steps[0] = { kind: 'select', optionCount: 3, index: 1 }
+      const before = await f.geometry()
+      expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+        .toBe(true)
+      expect(await f.geometry()).toEqual(before)
+      const receipt = await f.receipt()
+      expect(receipt.actions).toEqual([{
+        action: 'accept',
+        selected: [1, 0],
+        textValue: 'control-model-001, treatment-model-001',
+      }])
+      expect(receipt.keys.filter((key) => key === 'Enter')).toHaveLength(2)
+    },
+    30_000,
+  )
+
+  it('does not classify intermediate choice acceptance as a submitted form', async () => {
+    const f = await textFieldFormFixture(false)
+    const owner = f.controller['owner'].bind(f.controller)
+    f.controller['owner'] = async (...args) => {
+      const receipt = await f.receipt()
+      if (receipt.keys.includes('Enter') && receipt.actions.length === 0) {
+        throw new Error('Synthetic owner read failure after field acceptance')
+      }
+      return owner(...args)
+    }
+    try {
+      await expect(f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+        .rejects.toMatchObject({ outcome: 'not-submitted', uncertainDelivery: false })
+    } finally {
+      f.controller['owner'] = owner
+    }
+    expect((await f.receipt()).actions).toEqual([])
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(true)
+    expect((await f.receipt()).actions).toHaveLength(1)
+  }, 30_000)
 
   it.each([false, true])(
     'refuses a different question in a free-text form (clipped=%s)',
@@ -410,8 +462,8 @@ describe('bounded terminal form viewport', () => {
 
     expect(await f.geometry()).toEqual(before)
     expect((await f.receipt()).widths).toContain(256)
-    expect((await f.receipt()).keys.filter((key) => key === 'Tab')).toHaveLength(4)
-    expect((await f.receipt()).keys.filter((key) => key === 'Enter')).toHaveLength(1)
+    expect((await f.receipt()).keys.filter((key) => key === 'Tab')).toHaveLength(0)
+    expect((await f.receipt()).keys.filter((key) => key === 'Enter')).toHaveLength(5)
     expect((await f.receipt()).actions).toEqual([
       { action: 'accept', selected: [0, 1, 0, 1, 0] },
     ])
@@ -448,9 +500,9 @@ describe('bounded terminal form viewport', () => {
     }
     expect(await f.geometry()).toEqual(before)
     expect((await f.receipt()).keys.filter((key) => key === 'Tab'))
-      .toHaveLength(7)
+      .toHaveLength(0)
     expect((await f.receipt()).keys.filter((key) => key === 'Enter'))
-      .toHaveLength(1)
+      .toHaveLength(8)
   }, 30_000)
 
   it.each([2, 4])(

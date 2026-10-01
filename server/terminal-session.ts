@@ -189,6 +189,8 @@ export class TerminalDraftConflictError extends Error {
 
 const MAX_FORM_VIEWPORT_WIDTH = 256
 const MAX_FORM_VIEWPORT_HEIGHT = 256
+const MIN_FORM_QUESTION_REFLOW_WIDTH = 128
+const FORM_QUESTION_REFLOW_WIDTH_STEP = 16
 const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
 const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
@@ -1227,7 +1229,10 @@ export class TmuxTerminalSessionController
         const clippedVertically =
           !promptVisible && hasClippedTerminalFormFooter(pane)
         const clippedHorizontally =
-          promptVisible && hasClippedTerminalFormTabs(pane, form)
+          promptVisible && (
+            hasClippedTerminalFormTabs(pane, form) ||
+            hasTerminalFormQuestionReflowCandidate(pane, form)
+          )
         if (!clippedVertically && !clippedHorizontally) return false
         original = await this.readFormViewport(owner)
         if (
@@ -1261,28 +1266,50 @@ export class TmuxTerminalSessionController
         for (let attempt = 0; attempt < 30; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 100))
           pane = await capture()
-          if (terminalFormShowsFields(pane, form)) break
+          if (
+            terminalFormShowsFields(pane, form) ||
+            (expanded.width < MAX_FORM_VIEWPORT_WIDTH &&
+              hasTerminalFormQuestionReflowCandidate(pane, form))
+          ) break
         }
-        if (
-          !terminalFormShowsFields(pane, form) &&
-          expanded.width < MAX_FORM_VIEWPORT_WIDTH &&
-          parseTerminalFormPrompt(pane) &&
-          hasClippedTerminalFormTabs(pane, form)
+        const reflowWidths = [MAX_FORM_VIEWPORT_WIDTH]
+        for (
+          let width = MAX_FORM_VIEWPORT_WIDTH - FORM_QUESTION_REFLOW_WIDTH_STEP;
+          width >= Math.max(MIN_FORM_QUESTION_REFLOW_WIDTH, original.width);
+          width -= FORM_QUESTION_REFLOW_WIDTH_STEP
         ) {
-          const previous = expanded
+          reflowWidths.push(width)
+        }
+        for (const width of reflowWidths) {
+          const previous: FormViewport | undefined = expanded
+          if (!previous) throw new Error('The inspected terminal viewport is unavailable')
+          if (terminalFormShowsFields(pane, form)) break
+          if (width === previous.width) continue
+          const questionReflow = hasTerminalFormQuestionReflowCandidate(pane, form)
+          if (
+            !parseTerminalFormPrompt(pane) ||
+            (width === MAX_FORM_VIEWPORT_WIDTH
+              ? !questionReflow && !hasClippedTerminalFormTabs(pane, form)
+              : !questionReflow)
+          ) break
           await validateOwner()
           if (!sameViewport(await this.readFormViewport(owner), previous)) {
             throw new Error(
-              'The terminal viewport changed before its horizontally paginated form could be widened',
+              'The terminal viewport changed before its form could be widened',
             )
           }
           await validateOwner()
-          expanded = { ...previous, width: MAX_FORM_VIEWPORT_WIDTH }
-          await this.changeFormViewport(previous, expanded)
+          const next: FormViewport = { ...previous, width }
+          expanded = next
+          await this.changeFormViewport(previous, next)
           for (let attempt = 0; attempt < 30; attempt += 1) {
             await new Promise((resolve) => setTimeout(resolve, 100))
             pane = await capture()
-            if (terminalFormShowsFields(pane, form)) break
+            if (
+              terminalFormShowsFields(pane, form) ||
+              (terminalBoxWrap(terminalControlLines(pane)).width === width &&
+                hasTerminalFormQuestionReflowCandidate(pane, form))
+            ) break
           }
         }
       }
@@ -3060,16 +3087,35 @@ function terminalFormTabsIndex(
   if (index < 0) {
     return -1
   }
-  const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+  return terminalFormTabsMatch(lines[index], form) ? index : -1
+}
+
+function terminalFormTabsMatch(line: string, form: TerminalFormIdentity): boolean {
+  const tabs = line.split(/\s{2,}/).filter(Boolean)
   if (form.fields.length === 1) {
     return tabs.length === 1 && tabs[0].replace(/:$/, '') === form.fields[0]
-      ? index
-      : -1
   }
   return tabs.length === form.fields.length &&
     tabs.every((tab, slot) => tabNames(tab, form.fields[slot]))
-    ? index
-    : -1
+}
+
+function hasTerminalFormQuestionReflowCandidate(
+  pane: string,
+  form: TerminalFormIdentity,
+): boolean {
+  if (form.fields.length === 0 || !form.question.trim() || !parseTerminalFormPrompt(pane)) {
+    return false
+  }
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  const header = lines.findLastIndex((line) => /^Copilot needs information\.?$/i.test(line))
+  const tabs = lines.findLastIndex(
+    (line, index) => index > header && terminalFormTabsMatch(line, form),
+  )
+  if (header < 0 || tabs <= header) return false
+  // This qualifies read-only reflow, never input. The enlarged pane must still
+  // pass the complete identity matcher, including its word-boundary checks.
+  return lines.slice(header + 1, tabs).join('').replace(/\s/gu, '') ===
+    form.question.replace(/\s/gu, '')
 }
 
 function hasClippedTerminalFormTabs(

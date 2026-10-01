@@ -395,6 +395,14 @@ Questions and permissions are the highest-priority UI state.
   keys. The app MUST restore the previous size and sizing policy on completion
   or failure without overwriting intervening operator changes; it MUST NOT
   resize shared windows or a window whose ownership changed.
+- A complete-looking question whose padded line wrapping prevents exact
+  verification MAY trigger bounded read-only horizontal reflow. A
+  whitespace-insensitive comparison MUST only qualify inspection, never
+  authorize input; the complete question, word boundaries, and fields MUST
+  still pass exact verification after reflow before any key is sent.
+  Inspection MAY try a bounded sequence of wider layouts when the maximum
+  width remains ambiguous, without shrinking below the original width or
+  extending the operation deadline.
 - The temporary viewport operation budget MUST scale with the number of form
   fields while retaining a hard upper bound, so verified multi-field forms can
   complete without leaving an enlarged window indefinitely.

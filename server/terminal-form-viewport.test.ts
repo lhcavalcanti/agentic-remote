@@ -30,6 +30,7 @@ async function formFixture(lines = 52, repaint = true, options: {
   footer?: string[]
   width?: number
   height?: number
+  argumentOwned?: boolean
 } = {}) {
   const output = path.join(root, 'receipt.json')
   const executable = path.join(root, 'copilot-clipped-form.mjs')
@@ -99,13 +100,14 @@ draw()
 `)
   const sessionId = randomUUID()
   const tmux = `form-${sessionId.slice(0, 8)}`
+  const home = path.join(root, 'copilot-home')
   await exec('tmux', [
     'new-session', '-d', '-s', tmux, '-x', String(options.width || 120), '-y', String(options.height || 40),
+    ...(options.argumentOwned === false ? [] : ['-e', `COPILOT_HOME=${home}`]),
     process.execPath, executable, '--session-id', sessionId,
   ])
   const pid = Number((await exec('tmux', ['display-message', '-p', '-t', tmux, '#{pane_pid}'])).stdout.trim())
   await waitForProcessCommand(pid, [executable])
-  const home = path.join(root, 'copilot-home')
   const session = path.join(home, 'session-state', sessionId)
   await mkdir(session, { recursive: true })
   await writeFile(path.join(session, `inuse.${pid}.lock`), `${pid}\n`)
@@ -142,6 +144,8 @@ async function horizontalFormFixture(options: {
   lookalikeTabs?: boolean
   textField?: number
   question?: string
+  argumentOwned?: boolean
+  nested?: boolean
 } = {}) {
   const output = path.join(root, 'horizontal-receipt.json')
   const executable = path.join(root, 'copilot-horizontal-form.mjs')
@@ -290,16 +294,26 @@ draw()
 `)
   const sessionId = randomUUID()
   const tmux = `horizontal-${sessionId.slice(0, 8)}`
+  const home = path.join(root, 'copilot-home')
+  const launcher = path.join(root, 'copilot-form-launcher.mjs')
+  if (options.nested) {
+    await writeFile(launcher, `
+import { spawn } from 'node:child_process'
+const child = spawn(process.execPath, process.argv.slice(2), { stdio: 'inherit' })
+child.on('exit', () => process.exit())
+`)
+  }
   await exec('tmux', [
     'new-session', '-d', '-s', tmux, '-x', String(options.width || 120),
     '-y', String(options.height || 29),
-    process.execPath, executable, '--session-id', sessionId,
+    ...(options.argumentOwned === false ? [] : ['-e', `COPILOT_HOME=${home}`]),
+    process.execPath, ...(options.nested ? [launcher] : []),
+    executable, '--session-id', sessionId,
   ])
   const pid = Number((await exec(
     'tmux', ['display-message', '-p', '-t', tmux, '#{pane_pid}'],
   )).stdout.trim())
   await waitForProcessCommand(pid, [executable])
-  const home = path.join(root, 'copilot-home')
   const session = path.join(home, 'session-state', sessionId)
   await mkdir(session, { recursive: true })
   await writeFile(path.join(session, `inuse.${pid}.lock`), `${pid}\n`)
@@ -329,7 +343,7 @@ draw()
   return { controller, identity, steps, sessionId, tmux, capture, geometry, receipt }
 }
 
-async function textFieldFormFixture(clipped: boolean, activeField = 1) {
+async function textFieldFormFixture(clipped: boolean, activeField = 1, nested = false) {
   const question = clipped
     ? Array.from({ length: 24 }, (_, index) =>
         `Synthetic routing choice ${index}: retain the exact approved model identifiers.`).join('\n')
@@ -342,6 +356,7 @@ async function textFieldFormFixture(clipped: boolean, activeField = 1) {
     width: 80,
     height: 24,
     question,
+    nested,
   })
 }
 
@@ -396,8 +411,8 @@ describe('bounded terminal form viewport', () => {
 
   it('does not classify intermediate choice acceptance as a submitted form', async () => {
     const f = await textFieldFormFixture(false)
-    const owner = f.controller['owner'].bind(f.controller)
-    f.controller['owner'] = async (...args) => {
+    const owner = f.controller['formOwner'].bind(f.controller)
+    f.controller['formOwner'] = async (...args) => {
       const receipt = await f.receipt()
       if (receipt.keys.includes('Enter') && receipt.actions.length === 0) {
         throw new Error('Synthetic owner read failure after field acceptance')
@@ -408,13 +423,53 @@ describe('bounded terminal form viewport', () => {
       await expect(f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
         .rejects.toMatchObject({ outcome: 'not-submitted', uncertainDelivery: false })
     } finally {
-      f.controller['owner'] = owner
+      f.controller['formOwner'] = owner
     }
     expect((await f.receipt()).actions).toEqual([])
     expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
       .toBe(true)
     expect((await f.receipt()).actions).toHaveLength(1)
   }, 30_000)
+
+  it.each([false, true])('finishes a clipped non-default form without repeating slow host-wide discovery (nested=%s)', async (nested) => {
+    const f = await textFieldFormFixture(true, 1, nested)
+    f.steps[0] = { kind: 'select', optionCount: 3, index: 1 }
+    const discover = f.controller['activeProcesses'].bind(f.controller)
+    const discoveryCalls: boolean[] = []
+    f.controller['activeProcesses'] = async (fresh = false) => {
+      discoveryCalls.push(fresh)
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      return discover(fresh)
+    }
+    const before = await f.geometry()
+    const started = performance.now()
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(true)
+    expect(performance.now() - started).toBeLessThan(17_500)
+    expect(discoveryCalls).toEqual([false])
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).actions).toEqual([{
+      action: 'accept',
+      selected: [1, 0],
+      textValue: 'control-model-001, treatment-model-001',
+    }])
+  }, 30_000)
+
+  it('retains fresh discovery for lock-only form owners', async () => {
+    const f = await formFixture(52, true, { argumentOwned: false })
+    const discover = f.controller['activeProcesses'].bind(f.controller)
+    const discoveryCalls: boolean[] = []
+    f.controller['activeProcesses'] = (fresh = false) => {
+      discoveryCalls.push(fresh)
+      return discover(fresh)
+    }
+    const before = await f.geometry()
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(true)
+    expect(discoveryCalls).toContain(true)
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).actions).toEqual([{ action: 'accept', selected: 1 }])
+  }, 15_000)
 
   it.each([false, true])(
     'refuses a different question in a free-text form (clipped=%s)',

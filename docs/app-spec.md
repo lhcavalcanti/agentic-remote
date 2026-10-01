@@ -398,6 +398,11 @@ Questions and permissions are the highest-priority UI state.
 - The temporary viewport operation budget MUST scale with the number of form
   fields while retaining a hard upper bound, so verified multi-field forms can
   complete without leaving an enlarged window indefinitely.
+- Bound leaf CLIs with explicit session arguments SHOULD revalidate their live
+  process identity and pane directly rather than repeat host-wide discovery
+  for every form key. Session-state ownership, process-start identity, and the
+  exact pane root and ancestry MUST remain freshly checked. Wrapper and lock-only owners
+  MUST retain discovery when that direct proof is unavailable.
 - Wrapped control hints MAY trigger a bounded viewport check, but MUST NOT
   replace verification of the complete question. Each successive long form
   MUST independently verify its identity and restore its viewport.

@@ -4,7 +4,7 @@ import { TERMINAL_STARTUP_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { findActiveCopilotProcesses } from './active-sessions.js'
+import { findActiveCopilotProcesses, isDirectCopilotSessionProcess } from './active-sessions.js'
 import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 import type {
   ConfigureRuntimeInput,
@@ -18,8 +18,8 @@ const execFileAsync = promisify(execFile)
 /**
  * One field of the agent's structured form. Fields are tabs: a select is
  * driven by moving the cursor, a text field by replacing its contents. Moving
- * between them is Tab, and Enter accepts the whole form, so Enter is pressed
- * once, at the end.
+ * between text/checklist fields is Tab; a single-choice field needs Enter to
+ * save its highlight and advance. Acceptance on the last field submits.
  */
 export type TerminalFormStep =
   | { kind: 'select'; optionCount: number; index: number }
@@ -1151,7 +1151,7 @@ export class TmuxTerminalSessionController
     }
     const started = await processStart()
     const validateOwner = async () => {
-      const current = await this.owner(sessionId, owner.target, true)
+      const current = await this.formOwner(sessionId, owner)
       if (!current || current.pid !== owner.pid || current.rootPid !== owner.rootPid ||
           await processStart() !== started) {
         throw new Error('The terminal owner changed while answering its form')
@@ -1954,6 +1954,23 @@ export class TmuxTerminalSessionController
       }
     }
     return undefined
+  }
+
+  private async formOwner(
+    sessionId: string,
+    expected: TerminalOwner,
+  ): Promise<TerminalOwner | undefined> {
+    if (!(await isDirectCopilotSessionProcess(expected.pid, sessionId))) {
+      return this.owner(sessionId, expected.target, true)
+    }
+    const { stdout } = await execFileAsync('tmux', [
+      'display-message', '-p', '-t', expected.target,
+      '#{pane_id}\t#{pane_pid}',
+    ], { timeout: 2_000 })
+    return stdout.trim() === `${expected.target}\t${expected.rootPid}` &&
+      (await processAncestors(expected.pid)).has(expected.rootPid)
+      ? expected
+      : undefined
   }
 
   private async boundOwner(

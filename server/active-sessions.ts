@@ -358,6 +358,21 @@ export async function findActiveCopilotProcesses(): Promise<
   return findActiveProcesses()
 }
 
+/** Fresh identity proof for a leaf CLI; wrappers and lock-only owners need discovery. */
+export async function isDirectCopilotSessionProcess(
+  pid: number,
+  sessionId: string,
+): Promise<boolean> {
+  if (
+    !(await processStillMatches({ pid, sessionId, source: 'argument' }, sessionId)) ||
+    !(await processUsesSessionState(pid)) ||
+    !(await isCopilotProcess(pid))
+  ) {
+    return false
+  }
+  return !(await readFile(`/proc/${pid}/task/${pid}/children`, 'utf8')).trim()
+}
+
 export async function findActiveCopilotSessions(): Promise<DiscoveredSession[]> {
   const sessions: DiscoveredSession[] = []
   for (const processInfo of await findActiveProcesses()) {

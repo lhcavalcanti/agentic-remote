@@ -3133,13 +3133,17 @@ function hasClippedTerminalFormTabs(
   if (index < 0) {
     return false
   }
-  const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
-  const clippedLeft = tabs[0] === '←'
-  const clippedRight = tabs.at(-1) === '→'
+  const row = lines[index]
+  const clippedLeft = /^←\s+/u.test(row)
+  const clippedRight = /\s+→$/u.test(row)
   if (!clippedLeft && !clippedRight) {
     return false
   }
-  const visible = tabs.filter((tab) => tab !== '←' && tab !== '→')
+  const visible = row
+    .replace(/^←\s+/u, '')
+    .replace(/\s+→$/u, '')
+    .split(/\s{2,}/)
+    .filter(Boolean)
   if (visible.length === 0 || visible.length >= form.fields.length) {
     return false
   }

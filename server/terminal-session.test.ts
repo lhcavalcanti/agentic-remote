@@ -647,6 +647,8 @@ describe('TmuxTerminalSessionController', () => {
     downloadedUpdateFooter,
     'v1.0.92 downloaded · next launch or /restart',
     'v1.0.92-1 downloaded · next\nlaunch or /restart',
+    'v1.0.92-alpha.1 downloaded · next\nlaunch or /restart',
+    'v1.0.92-01alpha+build.01 downloaded · next\nlaunch or /restart',
   ])('admits the exact downloaded-update footer: %s', async (footer) => {
     const { controller, sessionId, output } = await deliveryFixture(
       false, undefined, undefined, footer, '', 'flat',
@@ -673,6 +675,19 @@ describe('TmuxTerminalSessionController', () => {
     downloadedUpdateFooter.replace('Autopilot', 'Unknown view'),
     `${downloadedUpdateFooter}\nUnrelated output`,
   ])('refuses downloaded-update footer lookalikes without input: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+  })
+
+  it.each([
+    '1.0.92', 'V1.0.92', 'v01.0.92', 'v1.00.92', 'v1.0.092',
+    'v1.0.92-', 'v1.0.92-alpha..1', 'v1.0.92-alpha_1', 'v1.0.92-01',
+    'v1.0.92-alpha.01', 'v1.0.92+build..1', 'v1.0.92+',
+  ])('refuses invalid downloaded-update version %s even beside valid command hints', async (version) => {
+    const footer = downloadedUpdateFooter.replace('v1.0.92', version)
     const { controller, sessionId, output } = await deliveryFixture(
       false, undefined, undefined, footer, '', 'flat',
     )

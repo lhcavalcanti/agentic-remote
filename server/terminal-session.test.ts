@@ -104,6 +104,12 @@ function flatReadyComposer(
   ].join('\n')
 }
 
+const downloadedUpdateFooter = [
+  ' v1.0.92 downloaded · next     · ← open    · Autopilot ·    · / commands · tab',
+  ' launch or /restart              sidebar     Allow All        next tab',
+  ' ctrl+t show reasoning · GPT-5.6 Sol Fast (Internal only) · 1.1M context',
+].join('\n')
+
 const shellReadyComposer =
   "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
 
@@ -635,6 +641,71 @@ describe('TmuxTerminalSessionController', () => {
       .rejects.toMatchObject({ statusCode: 409, terminalDraftConflict: true, uncertainDelivery: false })
     expect(await readFile(output, 'utf8')).toBe('')
     expect(await controller.capture(sessionId)).toContain('Preserve this native draft')
+  }, 15_000)
+
+  it.each([
+    downloadedUpdateFooter,
+    'v1.0.92 downloaded · next launch or /restart',
+    'v1.0.92-1 downloaded · next\nlaunch or /restart',
+  ])('admits the exact downloaded-update footer: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    expect(await controller.send(sessionId, 'Downloaded footer proof', false)).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Downloaded footer proof'], submits: ['enter'],
+    })
+  }, 15_000)
+
+  it.each([
+    'v1.0.92 downloaded · next',
+    'v1.0.92 downloaded · next\nlaunch or /update',
+    'downloaded · next\nlaunch or /restart',
+    'v1.0.92unknown downloaded · next\nlaunch or /restart',
+    'v1.0.92 downloaded · next\nlaunch or /restart unrelated output',
+    downloadedUpdateFooter.replace('launch or /restart', 'approve or /restart'),
+    downloadedUpdateFooter.replace('Allow All', 'Approve deployment'),
+    downloadedUpdateFooter.replace('Autopilot', 'Unknown view'),
+    `${downloadedUpdateFooter}\nUnrelated output`,
+  ])('refuses downloaded-update footer lookalikes without input: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+  })
+
+  it('preserves native drafts beneath the downloaded-update footer', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, downloadedUpdateFooter, 'Keep my native text', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    await expect(controller.send(sessionId, 'Do not append', false))
+      .rejects.toMatchObject({ statusCode: 409, terminalDraftConflict: true, uncertainDelivery: false })
+    expect(await readFile(output, 'utf8')).toBe('')
+    expect(await controller.capture(sessionId)).toContain('Keep my native text')
+  }, 15_000)
+
+  it('does not admit an overlay below the downloaded-update footer', async () => {
+    const footer = `${downloadedUpdateFooter}\nSettings\n↑/↓ navigate · enter edit · esc close`
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+  })
+
+  it('finishes owned terminal startup beneath the downloaded-update footer', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture(undefined, downloadedUpdateFooter)
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      keys: '', pastes: [], submits: 0,
+    })
   }, 15_000)
 
   it('sends through the flat composer used by Copilot v1.0.87', async () => {

@@ -2620,6 +2620,22 @@ function isTerminalWorkspaceFooter(line: string): boolean {
   )
 }
 
+function isTerminalDownloadedUpdateFooter(lines: string[], index: number): boolean {
+  const notice = /^\s*v?\d+\.\d+\.\d+(?:-[\w.-]+)? downloaded\s*·\s*next$/u
+  const continuation = /^\s*launch or \/restart\s*$/u
+  const columns = /^\s*v?\d+\.\d+\.\d+(?:-[\w.-]+)? downloaded\s*·\s*next\s*·\s*← open\s*·\s*(?:Interactive|Autopilot|Plan)\s*·\s*·\s*\/ commands\s*·\s*tab\s*$/u
+  const columnContinuation = /^\s*launch or \/restart\s+sidebar\s+Allow All\s+next tab\s*$/u
+  const paired = (first = '', second = '') =>
+    (notice.test(first) && continuation.test(second)) ||
+    (columns.test(first) && columnContinuation.test(second))
+  return (
+    /^\s*v?\d+\.\d+\.\d+(?:-[\w.-]+)? downloaded\s*·\s*next launch or \/restart\s*$/u
+      .test(lines[index]) ||
+    paired(lines[index], lines[index + 1]) ||
+    paired(lines[index - 1], lines[index])
+  )
+}
+
 function isTerminalComposerFooter(lines: string[]): boolean {
   return lines.every(
     (line, index) =>
@@ -2627,6 +2643,7 @@ function isTerminalComposerFooter(lines: string[]): boolean {
       isTerminalContextFooter(line) ||
       isTerminalModelFooter(line, lines[index - 1]) ||
       isTerminalWorkspaceFooter(line) ||
+      isTerminalDownloadedUpdateFooter(lines, index) ||
       /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||

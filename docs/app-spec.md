@@ -395,6 +395,10 @@ Questions and permissions are the highest-priority UI state.
   keys. The app MUST restore the previous size and sizing policy on completion
   or failure without overwriting intervening operator changes; it MUST NOT
   resize shared windows or a window whose ownership changed.
+- Outer form-tab pagination arrows MUST remain recognizable when separated
+  from visible tabs by one space. They MAY qualify read-only inspection only
+  when the visible tab names match a contiguous subset of the known fields;
+  they MUST NOT replace full question and field verification before input.
 - A complete-looking question whose padded line wrapping prevents exact
   verification MAY trigger bounded read-only horizontal reflow. A
   whitespace-insensitive comparison MUST only qualify inspection, never

@@ -361,7 +361,9 @@ closing a session permanently deletes it.
    expected working folder, and no real user work in the transcript.
 3. Close it with `DELETE /api/computers/:computerId/sessions/:sessionId` on
    the owning hub. Then confirm it has no tmux pane, Copilot process, or
-   `~/.copilot/session-state/<id>` directory.
+   session-state directory under the owning runtime's Copilot home
+   (`$COPILOT_HOME/session-state/<id>`, which defaults to
+   `~/.copilot/session-state/<id>`).
 4. A production hub can rediscover a development fixture or SDK smoke session
    from shared provider history. After any restart or discovery interval,
    check the open and history lists for the recorded IDs and close any that

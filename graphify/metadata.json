@@ -289,7 +289,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "485f4d3f6cb291b4ab7d5e6762bf776d37e8531e97f47ae17eccd66ad999d976",
     "index.html": "e0d2f884b7b7eb4f07ec876ea370cae926bb02512ab30cfe47d3cb0dd62b87f3",
-    "package.json": "3c61cb478c42acab635edb73f173980e8c14f9b0d05464bc93f99210cc69ac02",
+    "package.json": "f88270cee4d1e5ba625be1bd9092225401da878598fdae1d698e2c3efcd91a94",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -579,16 +579,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "47d76a50bf35c36bebc72f0fe8421a004f1ee8b60d52694a5932755411f0c1bd",
+    "GRAPH_REPORT.md": "87f6bf488a2a426842dbc0f3056aab395e5f9a69766fac4e42fbb51712a55059",
     "communities.json": "553723216b4b2c0016b786db2e88907fc1b5143c7b94f2ebf0656ed0ee5d607f",
-    "graph.html": "e7771e8b9972b2d44a35dc9bd80c3856bf30c305e77ea4cba678daae7f5532b9",
-    "graph.json": "a7e4da8356804956a5d6c2e390ee4f1ae42b3a859b30d3f6d1497f4f74ef0cea"
+    "graph.html": "231ca7116e2f0edd352956ad19df3afb9024b211b26ecfe3ea1264374ddbb5d1",
+    "graph.json": "36aed73f9c75fd6544564cd248ee7356025b16ad1aec191b708e7bb7fc8959fe"
   },
   "schema_version": 1,
-  "source_commit": "15e01362a5496eb2a38c7c42d50c37bd36c35ac9",
-  "source_fingerprint": "06a3ff3acfb615afc88806fccc824fc14b7b5999366acc9d2e068b2c033cd22a",
-  "working_tree_changes": [
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts"
-  ]
+  "source_commit": "6684f596dbbb03d27e18952a57cefecf7c981203",
+  "source_fingerprint": "27029e224fdb5fb69641f27fcf7b985d11990db35d20799f503c03783bd3bdd0",
+  "working_tree_changes": []
 }

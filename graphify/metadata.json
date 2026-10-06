@@ -239,7 +239,7 @@
   "inputs": {
     ".github/copilot-instructions.md": "15a3fe1c5de27c9cc24a3b26697b794876c6b7dda4fbe08ab1cc4523eaa1a2fe",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "fd4c6c0a2c475accecae906f375bdde4ba5513624fb9fbd089d2a5f0db32bb39",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "12c290c20e09b3969db6604b83a0a28a9055696bdfa8d08e8e42e1a5a153b511",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -579,39 +579,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6daed7fb7b565768301fe9634ebb5881f22edaa0b4d61c002b59c258bec42795",
+    "GRAPH_REPORT.md": "b0490f728e760512caec444b9562d042827f414ed46bae442388b269ce21c580",
     "communities.json": "333c851f303d3ca1b46658ce015b0a650a47dc95d8455a92e10e884f8f00ee49",
-    "graph.html": "c0f32de6d94515ad3af4bfe65e12ee9435e3a99fd6cd1b623e2ad7dce4ef869a",
-    "graph.json": "fbf83444ddfdb54c0702543a4188eb9838baa5081da3dbf7089ff1d63be4cf87"
+    "graph.html": "fe9f88be34dda8ea5591f542ecb90e170550d74f16ca32fd7badeed5e6aff984",
+    "graph.json": "ad990de3a4f68f33ea7b3b955e313d36dffac58753a116edb11c9e54c72fb3fc"
   },
   "schema_version": 1,
-  "source_commit": "7c86eadabd16841e969d47f6523b82ddcb43912e",
-  "source_fingerprint": "e569e223b007c2cebcf7bb7d6eb2745319f2c77bfb5271f3842028bb02dc39d9",
+  "source_commit": "364ff50afbdc95beb3352efb2ce5384e750d5caf",
+  "source_fingerprint": "03c474fc598a2a3088732800f5835b3d883d2f510fe4d0bbd3bc9be1b76cd061",
   "working_tree_changes": [
-    "docs/background-tasks.md",
-    "docs/sdk-architecture-roadmap.md",
-    "package.json",
-    "server/agent-service-recovery.test.ts",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/background-task-adapter.ts",
-    "server/conversation-recovery.test.ts",
-    "server/queued-dispatch.test.ts",
-    "server/queued-provider-dispatch.test.ts",
-    "server/recovery-resend-durability.test.ts",
-    "server/recovery-seed-guards.test.ts",
-    "server/recovery-seed-legacy-fixture.ts",
-    "server/session-admission-lifecycle.test.ts",
-    "server/session-clear-transcript.test.ts",
-    "server/session-enqueue-clear.test.ts",
-    "server/session-reply-durability.test.ts",
-    "server/session-resource-clear.test.ts",
-    "server/session-resource-providers.test.ts",
-    "server/session-store-providers.test.ts",
-    "server/terminal-startup-queue.test.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    ".github/skills/agentic-remote-navigation/SKILL.md"
   ]
 }

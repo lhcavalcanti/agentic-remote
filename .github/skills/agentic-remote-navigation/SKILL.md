@@ -349,6 +349,32 @@ After the PR is merged and the commit is graduated:
 Only clean up paths owned by the task. Do not remove dirty, unmerged, or
 unowned worktrees without explicit approval.
 
+### Test session cleanup
+
+Close every session a test or verification creates as soon as its evidence is
+recorded, on development and production hubs alike. In Agentic Remote,
+closing a session permanently deletes it.
+
+1. Record each test session's ID when it is created, and give it a disposable
+   prompt that says it is a synthetic check.
+2. Before closing, verify that provenance: the expected title or prompt, the
+   expected working folder, and no real user work in the transcript.
+3. Close it with `DELETE /api/computers/:computerId/sessions/:sessionId` on
+   the owning hub. Then confirm it has no tmux pane, Copilot process, or
+   session-state directory under the owning runtime's Copilot home
+   (`$COPILOT_HOME/session-state/<id>`, which defaults to
+   `~/.copilot/session-state/<id>`).
+4. A production hub can rediscover a development fixture or SDK smoke session
+   from shared provider history. After any restart or discovery interval,
+   check the open and history lists for the recorded IDs and close any that
+   reappear.
+5. Close stalled test probes created by other tooling, such as evaluation
+   scenarios stuck on a trust prompt, only when their prompt proves they are
+   disposable. Archive their transcripts first if their results may matter.
+
+Never close a session only because its title looks like a test, and never
+close user work.
+
 ## Rolling out
 
 1. Deploy and validate on the **development hub** first.

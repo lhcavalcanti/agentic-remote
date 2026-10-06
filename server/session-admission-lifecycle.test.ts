@@ -105,7 +105,7 @@ async function fixture(provider: 'copilot' | 'claude') {
         switchTo: async () => ({ modelId: 'fixture' }),
       },
       name: { set: async () => {} },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
   }
   const client: CopilotClientLike = {

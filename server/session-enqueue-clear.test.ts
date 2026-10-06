@@ -77,14 +77,14 @@ async function fixture(provider: 'copilot' | 'claude' | 'native') {
       rpc: {
         commands: {
           list: vi.fn(async () => ({ commands: [] })),
-          enqueue: vi.fn(async () => ({ queued: true })),
+          enqueue: vi.fn(async (): Promise<{ queued: true; queueId: string } | { queued: false }> => ({ queued: true, queueId: 'queued-command' })),
           invoke: vi.fn(async () => ({ kind: 'completed' as const, message: 'Done' })),
         },
         model: {
           getCurrent: vi.fn(async () => ({ modelId: 'synthetic' })),
           switchTo: vi.fn(async () => ({ modelId: 'synthetic' })),
         },
-        name: { set: vi.fn(async () => {}) }, mode: { set: vi.fn(async () => {}) },
+        name: { set: vi.fn(async () => {}) }, mode: { set: vi.fn(async () => ({ status: 'applied', modelChanged: false })) },
       },
     }
   }
@@ -473,7 +473,7 @@ describe('Clear joins committed enqueue admissions', () => {
     vi.mocked(runtime.sdk.rpc.commands.enqueue).mockImplementationOnce(async () => {
       entered.finish()
       await finish.promise
-      return { queued }
+      return queued ? { queued, queueId: 'queued-command' } : { queued }
     })
     const command = runtime.service.executeCommand(id, '/help  preserve spacing', true)
       .then((value) => ({ value }), (error: unknown) => ({ error }))

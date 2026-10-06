@@ -46,7 +46,7 @@ class DeferredSession implements CopilotSessionLike {
   modeSetError?: Error
   readonly runtimeSwitches: Array<{
     modelId: string
-    reasoningEffort?: string
+    reasoningEffort?: string | null
     contextTier?: string
   }> = []
   currentRuntime: {
@@ -67,7 +67,7 @@ class DeferredSession implements CopilotSessionLike {
       getCurrent: async () => ({ ...this.currentRuntime }),
       switchTo: async (input: {
         modelId: string
-        reasoningEffort?: string
+        reasoningEffort?: string | null
         contextTier?: string
       }) => {
         this.runtimeSwitches.push(input)
@@ -92,6 +92,7 @@ class DeferredSession implements CopilotSessionLike {
           throw this.modeSetError
         }
         this.modeSwitches.push(mode)
+        return { status: 'applied', modelChanged: false }
       },
     },
     commands: {
@@ -139,7 +140,7 @@ class DeferredSession implements CopilotSessionLike {
           text: 'command output',
         }
       },
-      enqueue: async () => ({ queued: true }),
+      enqueue: async () => ({ queued: true as const, queueId: 'queued-command' }),
     },
     tasks: {
       list: async () => ({ tasks: this.backgroundTasks }),
@@ -1339,6 +1340,98 @@ describe('AgentService deletion', () => {
       runningCount: 0,
       tasks: [{ id: 'task-1', status: 'cancelled', canCancel: false }],
     })
+    await service.stop()
+  })
+
+  it('ignores SDK client-owned tasks and progress when listing background tasks', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    ;(client.session.backgroundTasks as unknown[]).push({
+      type: 'client',
+      id: 'client-task',
+      clientTaskId: 'owner-key',
+      status: 'running',
+      startedAt: '2026-10-05T18:00:00.000Z',
+    })
+    client.session.backgroundTasks.push({
+      type: 'shell',
+      id: 'shell-task',
+      description: 'Run the build',
+      status: 'running',
+      startedAt: '2026-10-05T18:00:01.000Z',
+    })
+    ;(client.session.taskProgress as Map<string, unknown>).set('shell-task', { type: 'client' })
+
+    const listed = await service.listBackgroundTasks(created.id)
+    expect(listed.tasks.map((task) => task.id)).toEqual(['shell-task'])
+    expect(listed.tasks[0].progress).toBeUndefined()
+    expect(listed.runningCount).toBe(1)
+    await service.stop()
+  })
+
+  it.each([
+    [{ kind: 'set-model', model: 'fixture-model', warning: 'Uses premium requests' }, 'Model set to fixture-model\n\nUses premium requests'],
+    [{ kind: 'set-plan-model', planModel: 'plan-model', message: 'Plan model set to plan-model' }, 'Plan model set to plan-model'],
+    [{ kind: 'add-timeline-entry', entry: { type: 'info', text: '\u001b[1mTimeline note\u001b[0m' } }, 'Timeline note'],
+    [{ kind: 'show-dialog', dialog: { kind: 'model-picker' } }, '/usage'],
+  ] as const)('renders SDK slash-command result %o as a notice', async (result, expected) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    await service.createSession(directory)
+    vi.spyOn(client.session.rpc.commands, 'invoke').mockResolvedValueOnce(
+      result as unknown as Awaited<ReturnType<typeof client.session.rpc.commands.invoke>>,
+    )
+    const updated = await service.executeCommand(client.session.sessionId, '/usage')
+    expect(updated.messages.filter((message) => message.role === 'notice').at(-1)?.content)
+      .toBe(expected)
+    await service.stop()
+  })
+
+  it('keeps legacy factory permission titles from older runtimes', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    vi.spyOn(client, 'createSession').mockImplementationOnce(async (config) => {
+      client.createdConfigs.push(config)
+      return new DeferredSession('factory-session')
+    })
+    const guarded = await service.createSession(directory, false, false)
+    const handler = client.createdConfigs.at(-1)?.onPermissionRequest
+    if (!handler) throw new Error('Permission handler was not configured')
+    const response = handler(
+      { kind: 'factory', operation: 'author', name: 'release-notes' } as unknown as Parameters<typeof handler>[0],
+      { sessionId: guarded.id },
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(guarded.id)?.pendingPermission?.title).toBe('Author factory release-notes'),
+    )
+    const request = service.store.get(guarded.id)!.pendingPermission!
+    await service.replyPermission(guarded.id, request.requestId, 'allow-once')
+    await expect(response).resolves.toEqual({ kind: 'approve-once' })
     await service.stop()
   })
 

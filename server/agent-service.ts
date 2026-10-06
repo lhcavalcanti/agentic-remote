@@ -74,6 +74,8 @@ import {
 import { queuedSdkPrompt } from './queued-sdk-prompt.js'
 import {
   backgroundTasksFromEvents,
+  isBackgroundTaskInfo,
+  isBackgroundTaskProgress,
   MAX_BACKGROUND_TASKS,
   normalizeBackgroundTask,
   type CopilotTaskInfo,
@@ -1577,6 +1579,11 @@ function normalizedTitle(value: string | undefined, fallback: string): string {
 }
 
 function permissionTitle(request: PermissionRequest): string {
+  // Older runtimes still send factory permissions after SDK 1.0.16 dropped the kind.
+  const legacy = request as { kind: string; operation?: string; name?: string }
+  if (legacy.kind === 'factory') {
+    return `${legacy.operation === 'author' ? 'Author' : 'Run'} factory ${legacy.name}`
+  }
   switch (request.kind) {
     case 'shell':
       return request.intention || request.fullCommandText
@@ -1596,8 +1603,6 @@ function permissionTitle(request: PermissionRequest): string {
       return request.hookMessage || `Run hook for ${request.toolName}`
     case 'extension-management':
       return `Manage extension ${request.extensionName}`
-    case 'factory':
-      return `${request.operation === 'author' ? 'Author' : 'Run'} factory ${request.name}`
     case 'extension-permission-access':
       return `Allow extension ${request.extensionName}`
   }
@@ -5995,12 +6000,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           ? stripAnsi(result.text)
           : result.kind === 'completed'
             ? result.message || canonicalCommand
-            : `${result.title}\n\n${result.options
-                .map(
-                  (option) =>
-                    `- /${canonicalName} ${option.name} — ${option.description}`,
-                )
-                .join('\n')}`
+            : result.kind === 'select-subcommand'
+              ? `${result.title}\n\n${result.options
+                  .map(
+                    (option) =>
+                      `- /${canonicalName} ${option.name} — ${option.description}`,
+                  )
+                  .join('\n')}`
+              : result.kind === 'add-timeline-entry'
+                ? stripAnsi(result.entry.text) || canonicalCommand
+                : result.kind === 'set-plan-model'
+                  ? result.message || canonicalCommand
+                  : result.kind === 'set-model'
+                    ? [`Model set to ${result.model}`, result.warning].filter(Boolean).join('\n\n')
+                    : canonicalCommand
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
@@ -7863,9 +7876,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
 
-    let listed: { tasks: CopilotTaskInfo[] }
+    let listed: CopilotTaskInfo[]
     try {
-      listed = await tasks.list()
+      listed = (await tasks.list()).tasks.filter(isBackgroundTaskInfo)
     } catch (error) {
       if (isUnsupportedBackgroundTaskError(error)) {
         return install([], false)
@@ -7873,7 +7886,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw error
     }
 
-    const entries = [...listed.tasks]
+    const entries = [...listed]
       .sort(
         (left, right) =>
           Number(
@@ -7894,7 +7907,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         let progress: CopilotTaskProgress | null | undefined
         if (tasks.getProgress) {
           try {
-            progress = (await tasks.getProgress({ id: task.id })).progress
+            const current = (await tasks.getProgress({ id: task.id })).progress
+            progress = isBackgroundTaskProgress(current) ? current : current === null ? null : undefined
           } catch (error) {
             if (!isUnsupportedBackgroundTaskError(error)) {
               throw error

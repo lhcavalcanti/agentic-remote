@@ -50,14 +50,14 @@ function sdkSession(
       commands: {
         list: async () => ({ commands: [] }),
         invoke: async () => ({ kind: 'text', text: '' }),
-        enqueue: async () => ({ queued: true }),
+        enqueue: async () => ({ queued: true as const, queueId: 'queued-command' }),
       },
       name: { set: async () => {} },
       model: {
         getCurrent: async () => ({ modelId: 'gpt-test' }),
         switchTo: async () => ({ modelId: 'gpt-test' }),
       },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
   }
 }

@@ -193,7 +193,7 @@ async function copilotRunFixture(outcome: 'idle' | 'error' = 'idle') {
         getCurrent: async () => ({ modelId: 'fixture' }),
         switchTo: async () => ({ modelId: 'fixture' }),
       },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
     sendAndWait: async () => {
       await provider.done

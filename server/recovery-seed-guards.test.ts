@@ -67,7 +67,7 @@ async function fixture(backend: 'sdk' | 'terminal', state: SeedState = 'pending'
   }
   const sent: string[] = []
   const invoked = vi.fn(async () => ({ kind: 'text' as const, text: 'Synthetic provider mutation' }))
-  const enqueued = vi.fn(async () => ({ queued: true }))
+  const enqueued = vi.fn(async (): Promise<{ queued: true; queueId: string } | { queued: false }> => ({ queued: true, queueId: 'queued-command' }))
   const commands = vi.fn(async () => ({
     commands: [
       { name: 'model', kind: 'builtin' as const, description: 'Synthetic mutation', allowDuringAgentExecution: true },
@@ -99,7 +99,7 @@ async function fixture(backend: 'sdk' | 'terminal', state: SeedState = 'pending'
         switchTo: async () => ({ modelId: 'fixture' }),
       },
       name: { set: async () => {} },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
   }
   const resume = vi.fn(async () => sdk)

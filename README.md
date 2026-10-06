@@ -83,7 +83,7 @@ indexes tracked code locally; it does not send source to an external model.
 ## Requirements
 
 - Linux with systemd user services
-- Node.js 22+
+- Node.js 22.12+
 - pnpm
 - An installed and authenticated GitHub Copilot CLI
 - tmux for terminal-backed Copilot sessions

@@ -395,6 +395,10 @@ Questions and permissions are the highest-priority UI state.
   keys. The app MUST restore the previous size and sizing policy on completion
   or failure without overwriting intervening operator changes; it MUST NOT
   resize shared windows or a window whose ownership changed.
+- Outer form-tab pagination arrows MUST remain recognizable when separated
+  from visible tabs by one space. They MAY qualify read-only inspection only
+  when the visible tab names match a contiguous subset of the known fields;
+  they MUST NOT replace full question and field verification before input.
 - A complete-looking question whose padded line wrapping prevents exact
   verification MAY trigger bounded read-only horizontal reflow. A
   whitespace-insensitive comparison MUST only qualify inspection, never
@@ -468,6 +472,11 @@ Questions and permissions are the highest-priority UI state.
   command/sidebar hints MUST remain recognizable without a context counter.
   Unrelated output below the frame MUST still prevent it from being treated as
   a live composer.
+- An exact downloaded-update notice and its adjacent wrapped continuation MUST
+  NOT hide a readable composer or block terminal startup. The known wrapped
+  sidebar, mode, permission, and tab hints MUST remain recognizable together;
+  incomplete notices, unrelated output, and keyboard-owning dialogs MUST still
+  refuse input.
 - Losing a paste acknowledgement MUST report uncertain delivery rather than
   authorize an automatic retry. Readiness MUST be checked again after owner
   validation and before the paste.

@@ -231,9 +231,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 157,
+  "communities": 139,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9915,
+  "edges": 9917,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -258,7 +258,7 @@
     ".gitignore": "b4880167586d0b59633db90e9c656e8cfdfce739b6d4f234bcecb7317257b76b",
     ".oxlintrc.json": "07c58c79b4cf22b23a6f2b8179b11b19c52ac01e0045111dec7a66522e6428b5",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
-    "README.md": "b933cfb8fa40f93bd291a1d5e58ffd39f932348721c98d87350e9b94469811ab",
+    "README.md": "3bab0eefc0f4eec2e83f3cbe87780e6b29897ac471beb08ea7182d275c805267",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "15c19d1af00aea4cf9e62f64224cdf9cf74bea4f545f5a39157a1af82e88e7c5",
     "bin/agentic-remote-promotion-monitor": "f6e11a8ba43a0ea6489f1abddba32a5f9ab809aa576fb926e4cfc24b9d28f064",
@@ -289,7 +289,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "485f4d3f6cb291b4ab7d5e6762bf776d37e8531e97f47ae17eccd66ad999d976",
     "index.html": "e0d2f884b7b7eb4f07ec876ea370cae926bb02512ab30cfe47d3cb0dd62b87f3",
-    "package.json": "f88270cee4d1e5ba625be1bd9092225401da878598fdae1d698e2c3efcd91a94",
+    "package.json": "8ed4b3d952fb7f48c79f7408402d6f6846bba8ce0bf97376c6b967ecb00c69f9",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -431,10 +431,10 @@
     "shared/queued-commands.ts": "95db5810221a9ff989f6a741d7588a4a9d604e3cd683214feff0284957e15a10",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "d7428a02a633a065f1aab2da1d9140b3b97253b591a8425e69bd2f7a8a08b2e9",
+    "shell/README.md": "58ae29e859992ea661f2c42e2fb7a7b14fbad7048964ce4296b293910a8e86b8",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "404ad9adbba77b208ee27a3bdffd1739de996c9c2969045b0a6f97cee5b66f0f",
-    "shell/src-tauri/Cargo.toml": "e8de892b9842d7389dccb11ba3538c009a749669f5f5c7c010240c926ce642bd",
+    "shell/package.json": "d9347b537813807813282e0f0b14c543fd000c1ef853d138d20ba01b05edbee2",
+    "shell/src-tauri/Cargo.toml": "24a1b1d776dd122a049089bad9303c777b902a41254eee28a8bc63e5b8b4e4cb",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -442,7 +442,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "5bd4bd08e12ca79b2536ca23932254e054fb74643a4e67ae92e1847dc65d6b78",
+    "shell/src-tauri/tauri.conf.json": "9a6f7ce93807ef3aac6157a4982a2efd49e85f4abacb8132781f055b2f4c2073",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -522,7 +522,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3512,
+  "nodes": 3514,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -579,13 +579,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "87f6bf488a2a426842dbc0f3056aab395e5f9a69766fac4e42fbb51712a55059",
-    "communities.json": "553723216b4b2c0016b786db2e88907fc1b5143c7b94f2ebf0656ed0ee5d607f",
-    "graph.html": "231ca7116e2f0edd352956ad19df3afb9024b211b26ecfe3ea1264374ddbb5d1",
-    "graph.json": "36aed73f9c75fd6544564cd248ee7356025b16ad1aec191b708e7bb7fc8959fe"
+    "GRAPH_REPORT.md": "c5e3d02cd418eacdc6a9e84825fab06ae3ad13ff51b53838480a077dd89af3f8",
+    "communities.json": "851bc88969a4ac71cc396b75d65017ca7822e5f9e8ccbc3d15ec2c19062098d0",
+    "graph.html": "af5fac8bacb1f4bd563f112c0f58c9eb4c8fa61c1fe831f58f71ec45e14b7151",
+    "graph.json": "ee9be95894c98e6b61697450e5aca0ca979021bc94b9e5a1c28feaaabd8f7ea2"
   },
   "schema_version": 1,
-  "source_commit": "6684f596dbbb03d27e18952a57cefecf7c981203",
-  "source_fingerprint": "27029e224fdb5fb69641f27fcf7b985d11990db35d20799f503c03783bd3bdd0",
+  "source_commit": "e1374a5ea1c92bf9a2aae13e9f9f41f36709a629",
+  "source_fingerprint": "0031b58612e34d50f13382c59cefa9cf8ca3bd49cf69371c18d41fe538d276f6",
   "working_tree_changes": []
 }

@@ -58,7 +58,7 @@ async function copilotFixture(mode: 'loaded' | 'unloaded' | 'tmux' | 'suspended'
     disconnect: vi.fn(async () => {}),
     rpc: {
       name: { set: vi.fn(async () => {}) },
-      mode: { set: vi.fn(async () => {}) },
+      mode: { set: vi.fn(async () => ({ status: 'applied', modelChanged: false })) },
       model: {
         getCurrent: vi.fn(async () => ({ modelId: 'fixture' })),
         switchTo: vi.fn(async () => ({ modelId: 'fixture' })),
@@ -66,7 +66,7 @@ async function copilotFixture(mode: 'loaded' | 'unloaded' | 'tmux' | 'suspended'
       commands: {
         list: vi.fn(async () => ({ commands: [] })),
         invoke: vi.fn(async () => ({ kind: 'text' as const, text: 'No invocation' })),
-        enqueue: vi.fn(async () => ({ queued: true })),
+        enqueue: vi.fn(async (): Promise<{ queued: true; queueId: string } | { queued: false }> => ({ queued: true, queueId: 'queued-command' })),
       },
       skills: { list: vi.fn(async (): Promise<Skills> => ({ skills: [
         { name: 'live', description: 'Session override', source: 'project', enabled: false, userInvocable: true },

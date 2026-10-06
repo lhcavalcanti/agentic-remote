@@ -41,11 +41,33 @@ export interface CopilotTaskProgress {
   pid?: number
 }
 
+/** Tasks registered by SDK clients rather than started by the agent. */
+export interface CopilotClientTaskInfo {
+  type: 'client'
+  id: string
+}
+
+export interface CopilotClientTaskProgress {
+  type: 'client'
+}
+
+export function isBackgroundTaskInfo(
+  task: CopilotTaskInfo | CopilotClientTaskInfo,
+): task is CopilotTaskInfo {
+  return task.type === 'agent' || task.type === 'shell'
+}
+
+export function isBackgroundTaskProgress(
+  progress: CopilotTaskProgress | CopilotClientTaskProgress | null | undefined,
+): progress is CopilotTaskProgress {
+  return progress?.type === 'agent' || progress?.type === 'shell'
+}
+
 export interface CopilotTasksApi {
-  list: () => Promise<{ tasks: CopilotTaskInfo[] }>
+  list: () => Promise<{ tasks: Array<CopilotTaskInfo | CopilotClientTaskInfo> }>
   refresh?: () => Promise<unknown>
   getProgress?: (params: { id: string }) => Promise<{
-    progress?: CopilotTaskProgress | null
+    progress?: CopilotTaskProgress | CopilotClientTaskProgress | null
   }>
   cancel?: (params: { id: string }) => Promise<{ cancelled: boolean }>
 }

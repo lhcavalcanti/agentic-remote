@@ -48,14 +48,14 @@ for (let boot = 0; boot < 2; boot += 1) {
       commands: {
         list: async () => ({ commands: [] }),
         invoke: async () => ({ kind: 'text', text: 'Synthetic command' }),
-        enqueue: async () => ({ queued: true }),
+        enqueue: async () => ({ queued: true as const, queueId: 'queued-command' }),
       },
       model: {
         getCurrent: async () => ({ modelId: 'fixture' }),
         switchTo: async () => ({ modelId: 'fixture' }),
       },
       name: { set: async () => {} },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
   }
   const client: CopilotClientLike = {

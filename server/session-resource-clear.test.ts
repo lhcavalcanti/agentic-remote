@@ -83,9 +83,9 @@ async function providerFixture(variant: Variant) {
       commands: {
         list: vi.fn(async () => ({ commands: [] })),
         invoke: vi.fn(async () => ({ kind: 'text' as const, text: '' })),
-        enqueue: vi.fn(async () => ({ queued: true })),
+        enqueue: vi.fn(async (): Promise<{ queued: true; queueId: string } | { queued: false }> => ({ queued: true, queueId: 'queued-command' })),
       },
-      name: { set: vi.fn(async () => {}) }, mode: { set: vi.fn(async () => {}) },
+      name: { set: vi.fn(async () => {}) }, mode: { set: vi.fn(async () => ({ status: 'applied', modelChanged: false })) },
       model: {
         getCurrent: vi.fn(async () => ({ modelId: 'fixture' })),
         switchTo: vi.fn(async () => ({ modelId: 'fixture' })),

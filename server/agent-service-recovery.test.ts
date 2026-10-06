@@ -50,14 +50,14 @@ function sdkSession(sessionId: string): CopilotSessionLike {
       commands: {
         list: async () => ({ commands: [] }),
         invoke: async () => ({ kind: 'text', text: 'Unused' }),
-        enqueue: async () => ({ queued: true }),
+        enqueue: async () => ({ queued: true as const, queueId: 'queued-command' }),
       },
       name: { set: async () => {} },
       model: {
         getCurrent: async () => ({ modelId: 'fixture-model' }),
         switchTo: async () => ({ modelId: 'fixture-model' }),
       },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
   }
 }

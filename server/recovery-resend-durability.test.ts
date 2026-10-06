@@ -88,10 +88,10 @@ async function fixture(kind: SendKind = 'message') {
           }],
         }),
         invoke: async () => ({ kind: 'text', text: 'Usage' }),
-        enqueue: async () => ({ queued: true }),
+        enqueue: async () => ({ queued: true as const, queueId: 'queued-command' }),
       },
       name: { set: async () => {} },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
       model: {
         getCurrent: async () => ({ modelId: 'fixture' }),
         switchTo: async ({ modelId }) => ({ modelId }),

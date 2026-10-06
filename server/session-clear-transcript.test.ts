@@ -79,7 +79,7 @@ async function fixture(loaded = true) {
         switchTo: vi.fn(async () => ({ modelId: 'fixture' })),
       },
       name: { set: vi.fn(async () => {}) },
-      mode: { set: vi.fn(async () => {}) },
+      mode: { set: vi.fn(async () => ({ status: 'applied', modelChanged: false })) },
     },
   })
   const sdk = runtime(id)

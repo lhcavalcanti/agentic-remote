@@ -57,7 +57,7 @@ function copilotSession() {
     },
     rpc: {
       name: { set: vi.fn(async () => {}) },
-      mode: { set: vi.fn(async () => {}) },
+      mode: { set: vi.fn(async () => ({ status: 'applied', modelChanged: false })) },
       model: {
         getCurrent: async () => ({ modelId: 'fixture' }),
         switchTo: async () => ({ modelId: 'fixture' }),
@@ -71,7 +71,7 @@ function copilotSession() {
         invoke: vi.fn(async (_options: { name: string; input?: string }): Promise<
           { kind: 'text'; text: string } | { kind: 'agent-prompt'; prompt: string; displayPrompt: string }
         > => ({ kind: 'text', text: 'Command accepted' })),
-        enqueue: vi.fn(async () => ({ queued: true })),
+        enqueue: vi.fn(async (): Promise<{ queued: true; queueId: string } | { queued: false }> => ({ queued: true, queueId: 'queued-command' })),
       },
     },
   }

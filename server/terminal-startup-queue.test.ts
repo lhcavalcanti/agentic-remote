@@ -47,7 +47,7 @@ function client(): CopilotClientLike {
         getCurrent: async () => ({ modelId: 'synthetic' }),
         switchTo: async () => ({ modelId: 'synthetic' }),
       },
-      name: { set: async () => {} }, mode: { set: async () => {} },
+      name: { set: async () => {} }, mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
   })
   return {

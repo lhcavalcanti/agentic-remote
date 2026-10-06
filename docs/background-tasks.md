@@ -10,7 +10,7 @@ conversation transcript or persisted session state.
 
 ## SDK and release review
 
-The pinned `@github/copilot-sdk` version is 1.0.11. Its experimental
+The pinned `@github/copilot-sdk` version is 1.0.16. Its experimental
 session-scoped task RPC exposes:
 
 | SDK surface | Agentic Remote use |
@@ -21,11 +21,11 @@ session-scoped task RPC exposes:
 | `session.rpc.tasks.cancel({ id })` | Cancel a running or waiting task |
 | `session.background_tasks_changed` | Invalidate the local snapshot and list again |
 
-At this review point, SDK 1.0.11 is the latest stable SDK. The lockfile's
-bundled Copilot runtime is 1.0.80, while the latest stable CLI release is
-1.0.82; the preview SDK release does not replace the task RPC. This feature
-uses the pinned stable API and leaves runtime upgrades as a separate,
-rollbackable release change.
+SDK 1.0.16 is the latest stable SDK at this review point. It negotiates the
+same protocol version 3 as 1.0.11 and the installed Copilot CLI 1.0.92.
+`tasks.list()` and `tasks.getProgress()` can also return SDK client-owned
+`client` tasks; Agentic Remote ignores those and shows only agent and shell
+tasks. Runtime upgrades remain separate, rollbackable release changes.
 
 The SDK status is `running`, `idle`, `completed`, `failed`, or `cancelled`.
 The UI contract includes the requested `queued` state by presenting SDK

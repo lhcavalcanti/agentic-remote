@@ -144,14 +144,14 @@ function sdkSession(sessionId: string) {
       commands: {
         list: async () => ({ commands: [] }),
         invoke: async () => ({ kind: 'text', text: 'Unused' }),
-        enqueue: async () => ({ queued: true }),
+        enqueue: async () => ({ queued: true as const, queueId: 'queued-command' }),
       },
       name: { set: async () => {} },
       model: {
         getCurrent: async () => ({ modelId: 'configured-model' }),
         switchTo: async () => ({ modelId: 'configured-model' }),
       },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
     },
   }
   return session
@@ -185,6 +185,7 @@ async function clearFixture(failure?: 'model' | 'mode' | 'create') {
       created.emit(event('session.mode_changed', { newMode: 'plan' }))
       await store.flush()
       if (failure === 'mode') throw new Error('Mode configuration failed')
+      return { status: 'applied', modelChanged: false }
     })
     return created
   })

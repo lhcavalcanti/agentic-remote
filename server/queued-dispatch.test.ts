@@ -98,11 +98,11 @@ function sdkSession() {
         getCurrent: async () => ({ modelId: 'model' }),
         switchTo: async () => ({ modelId: 'model' }),
       },
-      mode: { set: async () => {} },
+      mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
       commands: {
         list: async () => ({ commands: [] }),
         invoke: async () => ({ kind: 'text', text: 'Done' }),
-        enqueue: async () => ({ queued: true }),
+        enqueue: async () => ({ queued: true as const, queueId: 'queued-command' }),
       },
     },
   }

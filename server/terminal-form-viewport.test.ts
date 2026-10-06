@@ -154,6 +154,8 @@ async function horizontalFormFixture(options: {
   question?: string
   argumentOwned?: boolean
   nested?: boolean
+  compactPagination?: boolean
+  paginationRow?: string
 } = {}) {
   const output = path.join(root, 'horizontal-receipt.json')
   const executable = path.join(root, 'copilot-horizontal-form.mjs')
@@ -174,6 +176,7 @@ const output = ${JSON.stringify(output)}
 const question = ${JSON.stringify(question)}
 const fields = ${JSON.stringify(fields)}
 const lookalikeTabs = ${options.lookalikeTabs === true}
+const compactPagination = ${options.compactPagination === true}
 const fullWidth = ${options.fullWidth || 200}
 const textField = ${options.textField ?? -1}
 let textValue = 'Default synthetic model IDs'
@@ -184,7 +187,15 @@ const receipt = { keys: [], actions: [], widths: [] }
 function save() { writeFileSync(output, JSON.stringify(receipt)) }
 function tabs() {
   if (lookalikeTabs) return '  Different release   Unrelated field  →'
-  if (process.stdout.columns >= fullWidth) return '  ' + fields.join('   ')
+  if (process.stdout.columns >= fullWidth) {
+    return '  ' + fields.map((field, index) =>
+      compactPagination && index === active ? '[' + field + ']' : field).join('   ')
+  }
+  if (${Boolean(options.paginationRow)}) return ${JSON.stringify(options.paginationRow || '')}
+  if (compactPagination) {
+    return '  ' + (active > 0 ? '← ' : '') + '[' + fields[active] + ']' +
+      (active < fields.length - 1 ? ' →' : '')
+  }
   if (active === 0) return '  ' + fields.slice(0, 4).join('   ') + '  →'
   if (active === fields.length - 1) {
     return '  ←  ' + fields.slice(1).join('   ')
@@ -369,6 +380,85 @@ async function textFieldFormFixture(clipped: boolean, activeField = 1, nested = 
 }
 
 describe('bounded terminal form viewport', () => {
+  it.each([0, 1, 2])('recognizes single-space outer pagination from field %s', async (activeField) => {
+    const f = await horizontalFormFixture({
+      activeField, compactPagination: true, width: 80, fullWidth: 200,
+      fields: ['Synthetic source publication', 'Synthetic frozen model', 'Synthetic final check'],
+      textField: 1,
+      question: 'Synthetic publication and fixed evaluation model only; no engine or service writes.',
+    })
+    f.steps[1] = { kind: 'text', value: 'gpt-6.1-sol' }
+    const before = await f.geometry()
+    expect(terminalFormShowsFields(await f.capture(), f.identity)).toBe(false)
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(true)
+    expect(await f.geometry()).toEqual(before)
+    const receipt = await f.receipt()
+    expect(receipt.widths).toContain(256)
+    expect(receipt.actions).toEqual([{
+      action: 'accept', selected: [0, 0, 0], textValue: 'gpt-6.1-sol',
+    }])
+  }, 20_000)
+
+  it.each([
+    '[Unrelated source approval] →',
+    '[Synthetic source publication]→',
+    '←[Synthetic frozen model]',
+    '[Synthetic source publication] → unrelated output',
+    'prefix → [Synthetic source publication]',
+  ])('refuses compact pagination lookalike %s', async (paginationRow) => {
+    const f = await horizontalFormFixture({
+      compactPagination: true, paginationRow, width: 80, fullWidth: 200,
+      fields: ['Synthetic source publication', 'Synthetic frozen model'],
+      textField: 1,
+      question: 'Synthetic publication and fixed model; no operations are authorized.',
+    })
+    const before = await f.geometry()
+    expect(await f.controller.fillUserInputForm(f.sessionId, f.steps, f.identity))
+      .toBe(false)
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).keys).toEqual([])
+    expect((await f.receipt()).widths).not.toContain(256)
+  }, 15_000)
+
+  it('refuses another question above compact pagination', async () => {
+    const f = await horizontalFormFixture({
+      compactPagination: true, width: 80, fullWidth: 200,
+      fields: ['Synthetic source publication', 'Synthetic frozen model'],
+      question: 'Only the exact synthetic question may be answered.',
+    })
+    const before = await f.geometry()
+    expect(await f.controller.fillUserInputForm(
+      f.sessionId, f.steps, { ...f.identity, question: 'A different synthetic question.' },
+    )).toBe(false)
+    expect(await f.geometry()).toEqual(before)
+    expect((await f.receipt()).keys).toEqual([])
+    expect((await f.receipt()).widths).not.toContain(256)
+  })
+
+  it.each(['cancel', 'decline'] as const)(
+    '%s dismisses compact pagination without submitting field values',
+    async (action) => {
+      const f = await horizontalFormFixture({
+        activeField: 1, compactPagination: true, width: 80, fullWidth: 200,
+        fields: ['Synthetic source publication', 'Synthetic frozen model'],
+        textField: 1,
+        question: 'Synthetic confirmation only; no real source or model action.',
+      })
+      const before = await f.geometry()
+      expect(await f.controller.dismissUserInput(f.sessionId, f.identity, action))
+        .toBe(true)
+      expect(await f.geometry()).toEqual(before)
+      const receipt = await f.receipt()
+      expect(receipt.widths).toContain(256)
+      expect(receipt.actions).toEqual([{
+        action, selected: [0, 0], textValue: 'Default synthetic model IDs',
+      }])
+      expect(receipt.keys.filter(key => key === 'Enter')).toEqual([])
+    },
+    15_000,
+  )
+
   it.each([300, 512])('never narrows a clipped original %s-column viewport', async (width) => {
     const prefix = 'Synthetic confirmation only. The old catalog '.padEnd(65, 'x')
     const tail = Array.from({ length: 30 }, (_, index) => `Synthetic payload ${index}.`)

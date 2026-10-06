@@ -2620,6 +2620,34 @@ function isTerminalWorkspaceFooter(line: string): boolean {
   )
 }
 
+function terminalDownloadedUpdateBody(line = ''): string | undefined {
+  const match = /^\s*v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\s+(downloaded\s*·.*)$/u.exec(line)
+  if (!match || match[4]?.split('.').some((identifier) => /^0\d+$/u.test(identifier))) {
+    return undefined
+  }
+  return match[5]
+}
+
+function isTerminalDownloadedUpdateFooter(lines: string[], index: number): boolean {
+  const notice = /^downloaded\s*·\s*next$/u
+  const continuation = /^\s*launch or \/restart\s*$/u
+  const columns = /^downloaded\s*·\s*next\s*·\s*← open\s*·\s*(?:Interactive|Autopilot|Plan)\s*·\s*·\s*\/ commands\s*·\s*tab\s*$/u
+  const columnContinuation = /^\s*launch or \/restart\s+sidebar\s+Allow All\s+next tab\s*$/u
+  const paired = (first = '', second = '') => {
+    const body = terminalDownloadedUpdateBody(first)
+    return body !== undefined && (
+      (notice.test(body) && continuation.test(second)) ||
+      (columns.test(body) && columnContinuation.test(second))
+    )
+  }
+  const body = terminalDownloadedUpdateBody(lines[index])
+  return (
+    (body !== undefined && /^downloaded\s*·\s*next launch or \/restart\s*$/u.test(body)) ||
+    paired(lines[index], lines[index + 1]) ||
+    paired(lines[index - 1], lines[index])
+  )
+}
+
 function isTerminalComposerFooter(lines: string[]): boolean {
   return lines.every(
     (line, index) =>
@@ -2627,6 +2655,7 @@ function isTerminalComposerFooter(lines: string[]): boolean {
       isTerminalContextFooter(line) ||
       isTerminalModelFooter(line, lines[index - 1]) ||
       isTerminalWorkspaceFooter(line) ||
+      isTerminalDownloadedUpdateFooter(lines, index) ||
       /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||

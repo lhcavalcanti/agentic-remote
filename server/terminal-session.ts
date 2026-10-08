@@ -2620,20 +2620,33 @@ function isTerminalWorkspaceFooter(line: string): boolean {
   )
 }
 
-const DOWNLOADED_UPDATE_NOTICE =
-  /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)? downloaded · next launch or \/restart$/u
+const DOWNLOADED_UPDATE_VERSION =
+  /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
+const DOWNLOADED_UPDATE_NOTICE = ' downloaded · next launch or /restart'
 
 interface DownloadedUpdateCell {
   optional?: boolean
+  /** Whether wrapped text could still complete this cell. Prefix-closed. */
+  allows(prefix: string): boolean
   accepts(text: string): boolean
 }
 
-const exactCell = (...texts: string[]): DownloadedUpdateCell['accepts'] =>
-  (text) => texts.includes(text)
+const exactCell = (texts: string[], optional = false): DownloadedUpdateCell => ({
+  optional,
+  allows: (prefix) => texts.some((text) => text.startsWith(prefix)),
+  accepts: (text) => texts.includes(text),
+})
 
 const DOWNLOADED_UPDATE_NOTICE_CELL: DownloadedUpdateCell = {
+  allows: (prefix) => {
+    const space = prefix.indexOf(' ')
+    const version = space < 0 ? prefix : prefix.slice(0, space)
+    return /^(?:v[0-9A-Za-z.+-]*)?$/u.test(version) &&
+      (space < 0 || DOWNLOADED_UPDATE_NOTICE.startsWith(prefix.slice(space)))
+  },
   accepts: (text) => {
-    const match = DOWNLOADED_UPDATE_NOTICE.exec(text)
+    if (!text.endsWith(DOWNLOADED_UPDATE_NOTICE)) return false
+    const match = DOWNLOADED_UPDATE_VERSION.exec(text.slice(0, -DOWNLOADED_UPDATE_NOTICE.length))
     return Boolean(match) && !match![4]?.split('.').some((part) => /^0\d+$/u.test(part))
   },
 }
@@ -2644,39 +2657,24 @@ const DOWNLOADED_UPDATE_LAYOUTS: DownloadedUpdateCell[][] = [
   [DOWNLOADED_UPDATE_NOTICE_CELL],
   [
     DOWNLOADED_UPDATE_NOTICE_CELL,
-    { accepts: exactCell('← open sidebar') },
-    { optional: true, accepts: exactCell('Interactive', 'Autopilot', 'Plan') },
-    { optional: true, accepts: exactCell('Allow All') },
-    { accepts: exactCell('/ commands') },
-    { optional: true, accepts: exactCell('? help') },
-    { accepts: exactCell('tab next tab') },
+    exactCell(['← open sidebar']),
+    exactCell(['Interactive', 'Autopilot', 'Plan'], true),
+    exactCell(['Allow All'], true),
+    exactCell(['/ commands']),
+    exactCell(['? help'], true),
+    exactCell(['tab next tab']),
   ],
 ]
-
-// No cell is longer than the wrapped notice (`downloaded · next launch or
-// /restart`), which bounds the search on an unexpected version-led row.
-const MAX_WRAPPED_CELL_TOKENS = 8
-
-// A wrapped row loses the space at its break, so each break may have been a
-// space or the middle of a word.
-function wrappedCellMatches(parts: string[], cell: DownloadedUpdateCell): boolean {
-  const present = parts.filter(Boolean)
-  if (!present.length) return false
-  for (let mask = 0; mask < 2 ** (present.length - 1); mask += 1) {
-    const text = present.reduce((joined, part, index) =>
-      index ? joined + ((mask >> (index - 1)) & 1 ? ' ' : '') + part : part, '')
-    if (cell.accepts(text)) return true
-  }
-  return false
-}
 
 /**
  * Whether these rows are Copilot's downloaded-update footer row.
  *
  * The first row holds each cell's start, separated by `·`. Every continuation
  * row holds the wrapped remainders of those same cells, in the same order,
- * though not always under them. Each cell must reproduce its exact text, so
- * reordered, repeated or unknown words refuse input.
+ * though not always under them, and a cell may wrap over any number of rows.
+ * A wrap loses the space at its break, so each break may have been a space or
+ * the middle of a word. Each cell must reproduce its exact text, so reordered,
+ * repeated or unknown words refuse input.
  */
 function isDownloadedUpdateFooterRows(rows: string[]): boolean {
   const [first, ...continuations] = rows
@@ -2688,31 +2686,36 @@ function isDownloadedUpdateFooterRows(rows: string[]): boolean {
   return DOWNLOADED_UPDATE_LAYOUTS.some((layout) => {
     const failed = new Set<string>()
     const match = (cell: number, segment: number, positions: number[]): boolean => {
-      const key = `${cell}:${segment}:${positions.join(',')}`
-      if (failed.has(key)) return false
       if (cell === layout.length) {
         return segment === segments.length &&
           positions.every((position, row) => position === tokens[row].length)
       }
+      const key = `${cell}:${segment}:${positions.join(',')}`
+      if (failed.has(key)) return false
       if (layout[cell].optional && match(cell + 1, segment, positions)) return true
       // Only the notice contains a `·` of its own.
       for (const taken of cell ? [1] : [1, 2]) {
         if (segment + taken > segments.length) continue
         const start = segments.slice(segment, segment + taken).join(' · ')
-        const ends = positions.reduce<number[][]>((combinations, position, row) =>
-          combinations.flatMap((prefix) => Array.from(
-            { length: Math.min(tokens[row].length - position, MAX_WRAPPED_CELL_TOKENS) + 1 },
-            (_, offset) => [...prefix, position + offset],
-          )), [[]])
-        for (const end of ends) {
-          const parts = [start, ...end.map((stop, row) =>
-            tokens[row].slice(positions[row], stop).join(' '))]
-          if (wrappedCellMatches(parts, layout[cell]) &&
-              match(cell + 1, segment + taken, end)) return true
-        }
+        if (layout[cell].allows(start) && wrap(cell, segment + taken, start, 0, positions)) return true
       }
       failed.add(key)
       return false
+    }
+    // Extends one cell through the continuation rows. Once a cell has text, it
+    // ends at the first row that adds none.
+    const wrap = (cell: number, segment: number, text: string, row: number, positions: number[]): boolean => {
+      if (text && layout[cell].accepts(text) && match(cell + 1, segment, positions)) return true
+      if (row === tokens.length) return false
+      for (let end = positions[row] + 1; end <= tokens[row].length; end += 1) {
+        const part = tokens[row].slice(positions[row], end).join(' ')
+        const next = positions.map((position, index) => index === row ? end : position)
+        const candidates = (text ? [`${text} ${part}`, `${text}${part}`] : [part])
+          .filter((candidate) => layout[cell].allows(candidate))
+        if (!candidates.length) break
+        if (candidates.some((candidate) => wrap(cell, segment, candidate, row + 1, next))) return true
+      }
+      return !text && wrap(cell, segment, text, row + 1, positions)
     }
     return match(0, 0, continuations.map(() => 0))
   })
@@ -2721,10 +2724,8 @@ function isDownloadedUpdateFooterRows(rows: string[]): boolean {
 /** The rows of the downloaded-update footer below a composer, if any. */
 function downloadedUpdateFooterBlock(lines: string[]): { start: number; end: number } | undefined {
   for (let start = 0; start < lines.length; start += 1) {
-    for (let count = Math.min(3, lines.length - start); count > 0; count -= 1) {
-      if (isDownloadedUpdateFooterRows(lines.slice(start, start + count))) {
-        return { start, end: start + count - 1 }
-      }
+    for (let end = lines.length - 1; end >= start; end -= 1) {
+      if (isDownloadedUpdateFooterRows(lines.slice(start, end + 1))) return { start, end }
     }
   }
   return undefined

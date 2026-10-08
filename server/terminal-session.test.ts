@@ -656,6 +656,8 @@ describe('TmuxTerminalSessionController', () => {
     'v1.0.94 downloaded · next launch or /res     · ← open sidebar · / commands · tab next\ntart                                tab',
     'v1.0.94 downloaded · next launch or /restart · ← open sidebar · Plan · · / commands · tab next tab\n                                                Allow All',
     'v1.0.94 downloaded · next launch or /restart · ← open sidebar · / commands · ? help · tab next tab',
+    ' v1.0.94                 · ← open sidebar · / commands · tab next tab\n downloaded · next launch or /restart',
+    ' v1.0.94 downloaded · next launch or /restart · ← open side · / commands · tab next tab\n                                                bar',
     'v1.0.92 downloaded · next launch or /restart',
     'v1.0.92-1 downloaded · next\nlaunch or /restart',
     'v1.0.92-alpha.1 downloaded · next\nlaunch or /restart',
@@ -693,6 +695,11 @@ describe('TmuxTerminalSessionController', () => {
     wideDownloadedUpdateFooter.replace('? help', '? help me'),
     wideDownloadedUpdateFooter.replace('← open', 'open'),
     wideDownloadedUpdateFooter.replace('v1.0.94', 'v1.0.94-'),
+    'v1.0.94 downloaded · next launch or /restart · ← sidebar open · / commands · tab next tab',
+    'v1.0.94 downloaded · next launch or /restart · ← open sidebar · tab next tab · / commands',
+    'v1.0.94 downloaded · next launch or /restart · ← open sidebar · / commands · tab next tab\n← unknown',
+    wideDownloadedUpdateFooter.replace(' restart ', ' tab ').replace(' tab\n', ' restart\n'),
+    `v1.0.94 downloaded · next · ← open sidebar · / commands · tab next tab\n${'launch or tab '.repeat(60)}`,
   ])('refuses downloaded-update footer lookalikes without input: %s', async (footer) => {
     const { controller, sessionId, output } = await deliveryFixture(
       false, undefined, undefined, footer, '', 'flat',

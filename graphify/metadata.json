@@ -231,9 +231,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 141,
+  "communities": 156,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9934,
+  "edges": 9935,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -405,8 +405,8 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "fe5f2ede11fb88ec53a7cf08b91027e7d8d14d1bd9a2507d2484303d025c74ff",
-    "server/terminal-session.ts": "cccf83cb39d8b3c67ee075317c7e17db68bf622a745d89fb9e353f089a068bce",
+    "server/terminal-session.test.ts": "e84cd8c499340c874860d8fb5961553f3c895dddc8b973b1bcb56d9e0a467711",
+    "server/terminal-session.ts": "343746da48390becb20cbf65870cede3826c40115990def3572f308277cf6647",
     "server/terminal-startup-queue.test.ts": "34d67d9887bfcc8506a2b99c44eba34d3f3e839fc8a053c33f4c236930eaaf01",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -522,7 +522,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3524,
+  "nodes": 3525,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -579,22 +579,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "33a8db9da386db40d248e56a3e31674e4d1ab61a67a936149379a824b369fa79",
-    "communities.json": "5f3ce27552b5997ed237cce0a4ad5ec073b095b7307c921c0538f4a587159c7d",
-    "graph.html": "0ec457ccedf76d20b2df0a5613a3a1ab2166fc08c6c3d0b7a320a40458e8f8f7",
-    "graph.json": "c808b1208a8975dc97ecfd7d6a4f1bb63d0152bf3223993e17029618995d5c61"
+    "GRAPH_REPORT.md": "aca0d519e836eee90852c8e754f16f8182fb480115cdbe17f1e95164e53c223b",
+    "communities.json": "6f752c1703112acaf9c9af77d22fdc22faa55dbb4668c7ca378a45214bb9a89a",
+    "graph.html": "71b6f54f4eab73ee35fedbcc44cf58047944c605fb0d1cb081bbf206d50cd227",
+    "graph.json": "0f6695696368a1f829301a77957f9c7593cee3e77bd14f3ec0076036c2780ae1"
   },
   "schema_version": 1,
-  "source_commit": "c9073abd8fc58f50c2c8692d52cd45aa379548d2",
-  "source_fingerprint": "0556cf977f11e55636399ad7fe98bf32b47fba0eb92643594a8d1bcb4da8648e",
+  "source_commit": "9ee5887a7b1777e8923e090b4784fe8697f5aff3",
+  "source_fingerprint": "1b66ce6241d282e7518a9696bbd32341885b45a1e3a4d79c2bf75115caa7eed9",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
     "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/terminal-session.ts"
   ]
 }

@@ -110,6 +110,13 @@ const downloadedUpdateFooter = [
   ' ctrl+t show reasoning · GPT-5.6 Sol Fast (Internal only) · 1.1M context',
 ].join('\n')
 
+// Copilot 1.0.93 at 120 columns, captured from a live session.
+const wideDownloadedUpdateFooter = [
+  ' v1.0.94 downloaded · next launch or /     · ← open sidebar ·Interactive · Allow All· / commands · ? help · tab next   ',
+  ' restart                                                                              tab',
+  ' ctrl+t show reasoning · GPT-6 Sol · 872K context             ',
+].join('\n')
+
 const shellReadyComposer =
   "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
 
@@ -645,6 +652,10 @@ describe('TmuxTerminalSessionController', () => {
 
   it.each([
     downloadedUpdateFooter,
+    wideDownloadedUpdateFooter,
+    'v1.0.94 downloaded · next launch or /res     · ← open sidebar · / commands · tab next\ntart                                tab',
+    'v1.0.94 downloaded · next launch or /restart · ← open sidebar · Plan · · / commands · tab next tab\n                                                Allow All',
+    'v1.0.94 downloaded · next launch or /restart · ← open sidebar · / commands · ? help · tab next tab',
     'v1.0.92 downloaded · next launch or /restart',
     'v1.0.92-1 downloaded · next\nlaunch or /restart',
     'v1.0.92-alpha.1 downloaded · next\nlaunch or /restart',
@@ -674,6 +685,14 @@ describe('TmuxTerminalSessionController', () => {
     downloadedUpdateFooter.replace('Allow All', 'Approve deployment'),
     downloadedUpdateFooter.replace('Autopilot', 'Unknown view'),
     `${downloadedUpdateFooter}\nUnrelated output`,
+    wideDownloadedUpdateFooter.replace(' restart ', ' rest '),
+    wideDownloadedUpdateFooter.replace(' restart ', ' restart approve '),
+    wideDownloadedUpdateFooter.replace(' tab\n', ' tab tab\n'),
+    wideDownloadedUpdateFooter.replace('Allow All', 'Allow'),
+    wideDownloadedUpdateFooter.replace('Interactive', 'Interactive · Autopilot'),
+    wideDownloadedUpdateFooter.replace('? help', '? help me'),
+    wideDownloadedUpdateFooter.replace('← open', 'open'),
+    wideDownloadedUpdateFooter.replace('v1.0.94', 'v1.0.94-'),
   ])('refuses downloaded-update footer lookalikes without input: %s', async (footer) => {
     const { controller, sessionId, output } = await deliveryFixture(
       false, undefined, undefined, footer, '', 'flat',
@@ -720,6 +739,22 @@ describe('TmuxTerminalSessionController', () => {
     expect(await controller.inputReady(sessionId)).toBe(true)
     expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
       keys: '', pastes: [], submits: 0,
+    })
+  }, 15_000)
+
+  it('replaces a stale draft beneath the wide downloaded-update footer of a boxed composer', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, wideDownloadedUpdateFooter, 'stale terminal text',
+    )
+    await expect(controller.send(
+      sessionId, 'Wide footer replacement', false, { replaceExistingInput: true },
+    )).resolves.toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      clears: 1, pastes: ['Wide footer replacement'], submits: ['enter'],
     })
   }, 15_000)
 

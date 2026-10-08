@@ -2628,24 +2628,72 @@ function terminalDownloadedUpdateBody(line = ''): string | undefined {
   return match[5]
 }
 
-function isTerminalDownloadedUpdateFooter(lines: string[], index: number): boolean {
-  const notice = /^downloaded\s*·\s*next$/u
-  const continuation = /^\s*launch or \/restart\s*$/u
-  const columns = /^downloaded\s*·\s*next\s*·\s*← open\s*·\s*(?:Interactive|Autopilot|Plan)\s*·\s*·\s*\/ commands\s*·\s*tab\s*$/u
-  const columnContinuation = /^\s*launch or \/restart\s+sidebar\s+Allow All\s+next tab\s*$/u
-  const paired = (first = '', second = '') => {
-    const body = terminalDownloadedUpdateBody(first)
-    return body !== undefined && (
-      (notice.test(body) && continuation.test(second)) ||
-      (columns.test(body) && columnContinuation.test(second))
-    )
+const DOWNLOADED_UPDATE_NOTICE = 'downloaded·nextlaunchor/restart'
+const DOWNLOADED_UPDATE_HINTS = new Map([
+  ['←', 1], ['open', 1], ['sidebar', 1], ['/', 1], ['commands', 1], ['tab', 2], ['next', 1],
+])
+const DOWNLOADED_UPDATE_OPTIONAL_HINTS = [['Interactive'], ['Autopilot'], ['Plan'], ['Allow', 'All'], ['?', 'help']]
+
+// The hint cells may wrap word by word at any width, but only into this exact
+// closed vocabulary: each optional cell at most once and no other word.
+function isDownloadedUpdateHintSet(words: string[]): boolean {
+  if (words.length === 0) return true
+  const counts = new Map<string, number>()
+  for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1)
+  for (const [word, count] of DOWNLOADED_UPDATE_HINTS) {
+    if (counts.get(word) !== count) return false
+    counts.delete(word)
   }
-  const body = terminalDownloadedUpdateBody(lines[index])
-  return (
-    (body !== undefined && /^downloaded\s*·\s*next launch or \/restart\s*$/u.test(body)) ||
-    paired(lines[index], lines[index + 1]) ||
-    paired(lines[index - 1], lines[index])
-  )
+  let modes = 0
+  for (const cell of DOWNLOADED_UPDATE_OPTIONAL_HINTS) {
+    const present = cell.map((word) => counts.get(word) ?? 0)
+    if (present.some((count) => count !== present[0]) || present[0] > 1) return false
+    if (present[0] && cell.length === 1) modes += 1
+    for (const word of cell) counts.delete(word)
+  }
+  return modes <= 1 && counts.size === 0
+}
+
+function hintWords(text: string): string[] {
+  return text.split(/[\s·]+/u).filter(Boolean)
+}
+
+// Copilot draws the downloaded-update notice as the first cell of a footer row
+// whose cells wrap independently. Returns how many rows the footer used, or
+// undefined unless the notice and every hint cell are reproduced exactly.
+function downloadedUpdateFooterRows(first?: string, second?: string): 1 | 2 | undefined {
+  const body = terminalDownloadedUpdateBody(first)
+  if (body === undefined) return undefined
+  const split = /^(.*?)\s*·\s*(←.*)$/u.exec(body)
+  const head = (split ? split[1] : body).replace(/\s+/gu, '')
+  if (!head.startsWith('downloaded·next') || !DOWNLOADED_UPDATE_NOTICE.startsWith(head)) {
+    return undefined
+  }
+  const remaining = DOWNLOADED_UPDATE_NOTICE.slice(head.length)
+  const firstHints = hintWords(split?.[2] ?? '')
+  if (second !== undefined) {
+    const tokens = second.trim().split(/\s+/u).filter(Boolean)
+    let consumed = ''
+    let index = 0
+    while (consumed.length < remaining.length && index < tokens.length) {
+      consumed += tokens[index]
+      index += 1
+      if (!remaining.startsWith(consumed)) break
+    }
+    const rest = tokens.slice(index).flatMap(hintWords)
+    if (consumed === remaining && rest.length && isDownloadedUpdateHintSet([...firstHints, ...rest])) {
+      return 2
+    }
+    if (consumed === remaining && remaining && !rest.length && isDownloadedUpdateHintSet(firstHints)) {
+      return 2
+    }
+  }
+  return !remaining && isDownloadedUpdateHintSet(firstHints) ? 1 : undefined
+}
+
+function isTerminalDownloadedUpdateFooter(lines: string[], index: number): boolean {
+  return downloadedUpdateFooterRows(lines[index], lines[index + 1]) !== undefined ||
+    downloadedUpdateFooterRows(lines[index - 1], lines[index]) === 2
 }
 
 function isTerminalComposerFooter(lines: string[]): boolean {

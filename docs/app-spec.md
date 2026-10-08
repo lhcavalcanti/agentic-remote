@@ -473,10 +473,12 @@ Questions and permissions are the highest-priority UI state.
   Unrelated output below the frame MUST still prevent it from being treated as
   a live composer.
 - An exact downloaded-update notice and its adjacent wrapped continuation MUST
-  NOT hide a readable composer or block terminal startup. The known wrapped
-  sidebar, mode, permission, and tab hints MUST remain recognizable together;
-  incomplete notices, unrelated output, and keyboard-owning dialogs MUST still
-  refuse input.
+  NOT hide a readable composer or block terminal startup at any terminal width.
+  The notice and the sidebar, mode, permission, help, and tab hint cells wrap
+  independently; they MUST remain recognizable wherever they wrap. A strict
+  version token and a closed hint vocabulary are still required: incomplete
+  notices, unknown or repeated words, unrelated output, and keyboard-owning
+  dialogs MUST still refuse input.
 - Losing a paste acknowledgement MUST report uncertain delivery rather than
   authorize an automatic retry. Readiness MUST be checked again after owner
   validation and before the paste.

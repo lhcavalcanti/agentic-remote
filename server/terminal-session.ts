@@ -2620,47 +2620,139 @@ function isTerminalWorkspaceFooter(line: string): boolean {
   )
 }
 
-function terminalDownloadedUpdateBody(line = ''): string | undefined {
-  const match = /^\s*v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\s+(downloaded\s*·.*)$/u.exec(line)
-  if (!match || match[4]?.split('.').some((identifier) => /^0\d+$/u.test(identifier))) {
-    return undefined
-  }
-  return match[5]
+const DOWNLOADED_UPDATE_VERSION =
+  /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
+const DOWNLOADED_UPDATE_NOTICE = ' downloaded · next launch or /restart'
+
+interface DownloadedUpdateCell {
+  optional?: boolean
+  /** Whether wrapped text could still complete this cell. Prefix-closed. */
+  allows(prefix: string): boolean
+  accepts(text: string): boolean
 }
 
-function isTerminalDownloadedUpdateFooter(lines: string[], index: number): boolean {
-  const notice = /^downloaded\s*·\s*next$/u
-  const continuation = /^\s*launch or \/restart\s*$/u
-  const columns = /^downloaded\s*·\s*next\s*·\s*← open\s*·\s*(?:Interactive|Autopilot|Plan)\s*·\s*·\s*\/ commands\s*·\s*tab\s*$/u
-  const columnContinuation = /^\s*launch or \/restart\s+sidebar\s+Allow All\s+next tab\s*$/u
-  const paired = (first = '', second = '') => {
-    const body = terminalDownloadedUpdateBody(first)
-    return body !== undefined && (
-      (notice.test(body) && continuation.test(second)) ||
-      (columns.test(body) && columnContinuation.test(second))
-    )
+const exactCell = (texts: string[], optional = false): DownloadedUpdateCell => ({
+  optional,
+  allows: (prefix) => texts.some((text) => text.startsWith(prefix)),
+  accepts: (text) => texts.includes(text),
+})
+
+const DOWNLOADED_UPDATE_NOTICE_CELL: DownloadedUpdateCell = {
+  allows: (prefix) => {
+    const space = prefix.indexOf(' ')
+    const version = space < 0 ? prefix : prefix.slice(0, space)
+    return /^(?:v[0-9A-Za-z.+-]*)?$/u.test(version) &&
+      (space < 0 || DOWNLOADED_UPDATE_NOTICE.startsWith(prefix.slice(space)))
+  },
+  accepts: (text) => {
+    if (!text.endsWith(DOWNLOADED_UPDATE_NOTICE)) return false
+    const match = DOWNLOADED_UPDATE_VERSION.exec(text.slice(0, -DOWNLOADED_UPDATE_NOTICE.length))
+    return Boolean(match) && !match![4]?.split('.').some((part) => /^0\d+$/u.test(part))
+  },
+}
+
+// The hint cells always follow the notice in this order. Mode, permission and
+// help are optional; every other word refuses the footer.
+const DOWNLOADED_UPDATE_LAYOUTS: DownloadedUpdateCell[][] = [
+  [DOWNLOADED_UPDATE_NOTICE_CELL],
+  [
+    DOWNLOADED_UPDATE_NOTICE_CELL,
+    exactCell(['← open sidebar']),
+    exactCell(['Interactive', 'Autopilot', 'Plan'], true),
+    exactCell(['Allow All'], true),
+    exactCell(['/ commands']),
+    exactCell(['? help'], true),
+    exactCell(['tab next tab']),
+  ],
+]
+
+/**
+ * Whether these rows are Copilot's downloaded-update footer row.
+ *
+ * The first row holds each cell's start, separated by `·`. Every continuation
+ * row holds the wrapped remainders of those same cells, in the same order,
+ * though not always under them, and a cell may wrap over any number of rows.
+ * A wrap loses the space at its break, so each break may have been a space or
+ * the middle of a word. Each cell must reproduce its exact text, so reordered,
+ * repeated or unknown words refuse input.
+ */
+function isDownloadedUpdateFooterRows(rows: string[]): boolean {
+  const [first, ...continuations] = rows
+  if (!first || !/^\s*v\d/u.test(first)) return false
+  const normalize = (text: string) => text.trim().replace(/\s+/gu, ' ')
+  const segments = first.split('·').map(normalize)
+  const tokens = continuations.map((row) => normalize(row).split(' ').filter(Boolean))
+  if (tokens.some((row) => !row.length)) return false
+  return DOWNLOADED_UPDATE_LAYOUTS.some((layout) => {
+    const failed = new Set<string>()
+    const match = (cell: number, segment: number, positions: number[]): boolean => {
+      if (cell === layout.length) {
+        return segment === segments.length &&
+          positions.every((position, row) => position === tokens[row].length)
+      }
+      const key = `${cell}:${segment}:${positions.join(',')}`
+      if (failed.has(key)) return false
+      if (layout[cell].optional && match(cell + 1, segment, positions)) return true
+      // Only the notice contains a `·` of its own.
+      for (const taken of cell ? [1] : [1, 2]) {
+        if (segment + taken > segments.length) continue
+        const start = segments.slice(segment, segment + taken).join(' · ')
+        if (layout[cell].allows(start) && wrap(cell, segment + taken, start, 0, positions)) return true
+      }
+      failed.add(key)
+      return false
+    }
+    // Extends one cell through the continuation rows. Once a cell has text, it
+    // ends at the first row that adds none.
+    const wrap = (cell: number, segment: number, text: string, row: number, positions: number[]): boolean => {
+      if (text && layout[cell].accepts(text) && match(cell + 1, segment, positions)) return true
+      if (row === tokens.length) return false
+      for (let end = positions[row] + 1; end <= tokens[row].length; end += 1) {
+        const part = tokens[row].slice(positions[row], end).join(' ')
+        const next = positions.map((position, index) => index === row ? end : position)
+        const candidates = (text ? [`${text} ${part}`, `${text}${part}`] : [part])
+          .filter((candidate) => layout[cell].allows(candidate))
+        if (!candidates.length) break
+        if (candidates.some((candidate) => wrap(cell, segment, candidate, row + 1, next))) return true
+      }
+      return !text && wrap(cell, segment, text, row + 1, positions)
+    }
+    return match(0, 0, continuations.map(() => 0))
+  })
+}
+
+/** The rows of the downloaded-update footer below a composer, if any. */
+function downloadedUpdateFooterBlock(lines: string[]): { start: number; end: number } | undefined {
+  for (let start = 0; start < lines.length; start += 1) {
+    for (let end = lines.length - 1; end >= start; end -= 1) {
+      if (isDownloadedUpdateFooterRows(lines.slice(start, end + 1))) return { start, end }
+    }
   }
-  const body = terminalDownloadedUpdateBody(lines[index])
-  return (
-    (body !== undefined && /^downloaded\s*·\s*next launch or \/restart\s*$/u.test(body)) ||
-    paired(lines[index], lines[index + 1]) ||
-    paired(lines[index - 1], lines[index])
-  )
+  return undefined
 }
 
 function isTerminalComposerFooter(lines: string[]): boolean {
-  return lines.every(
-    (line, index) =>
-      isTerminalChrome(line) ||
+  const update = downloadedUpdateFooterBlock(lines)
+  return lines.every((line, index) => {
+    if (update && index >= update.start && index <= update.end) return true
+    const availableUpdate =
+      /\/update\b/u.test(line) && /\bv?\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)
+    // A version-led row that is not an exact update footer is never chrome,
+    // even when it also carries familiar command hints.
+    if (/^\s*v\d/u.test(line) && !availableUpdate) return false
+    // Nothing the update footer draws continues below it, so an arrow-led
+    // line there is not footer chrome.
+    const chrome = isTerminalChrome(line) &&
+      !(update && index > update.end && /^\s*[←↑↓→]/u.test(line))
+    return chrome ||
       isTerminalContextFooter(line) ||
       isTerminalModelFooter(line, lines[index - 1]) ||
       isTerminalWorkspaceFooter(line) ||
-      isTerminalDownloadedUpdateFooter(lines, index) ||
       /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||
-      (/\/update\b/u.test(line) && /\bv?\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),
-  )
+      availableUpdate
+  })
 }
 
 function composerFrameText(

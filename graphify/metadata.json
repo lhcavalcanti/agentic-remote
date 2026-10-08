@@ -231,9 +231,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 148,
+  "communities": 145,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9925,
+  "edges": 9935,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -265,7 +265,7 @@
     "bin/agentic-remote-promotion-setup": "26eada3ab215d1d359ebcbb2d12f373db87d2a18529bc505c7efa76d4d6f5ed6",
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "32e99a965bb340faf9a6975a5e446089368d2566e78c0e0971bc76b8487333a4",
+    "docs/app-spec.md": "a6cfc7989ce1e285ec629c19fd3db54dfd7904abb5742c438df029ddeda89650",
     "docs/architecture.md": "e7953f78d5f3cb83c4b1366ae981da0e1c57711f2110eb5f5bba6071a14ed2e6",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -289,7 +289,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "485f4d3f6cb291b4ab7d5e6762bf776d37e8531e97f47ae17eccd66ad999d976",
     "index.html": "e0d2f884b7b7eb4f07ec876ea370cae926bb02512ab30cfe47d3cb0dd62b87f3",
-    "package.json": "8c51285c01ab55a6afe7456dcc32b054ee50f313d966a5ad7d5a99e1f53b726c",
+    "package.json": "36e31038b18a09cdd6feb7391e2bdca3de5b42c2ec46ba4dd7da6f51f90d918d",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -405,8 +405,8 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "b2a9db74cdf1917dbd30e8578951a4f0f36bba4a3ee03f453b3c76979f6b1be9",
-    "server/terminal-session.ts": "cc651b35de8ad5bb8fd79785900d469de7604c93d31af61a1c7952311381ee53",
+    "server/terminal-session.test.ts": "022b210ffa050d5de40e5fb71d6bb9c0ee7681133d80fbcd5a73ff96bb763b3c",
+    "server/terminal-session.ts": "db3f9f4710652c6aeaa7b2149768f7647ffac4c6b462dc0384b25652097d46c6",
     "server/terminal-startup-queue.test.ts": "34d67d9887bfcc8506a2b99c44eba34d3f3e839fc8a053c33f4c236930eaaf01",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -431,10 +431,10 @@
     "shared/queued-commands.ts": "95db5810221a9ff989f6a741d7588a4a9d604e3cd683214feff0284957e15a10",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "643a126a0a62898e515f46072cde82ee527869e9b2d6995261a81c0c3a67bc8f",
+    "shell/README.md": "2266344af334cbdf0ab4e7f0b5230c3ce4217d192c00af1e2ee1f7c578680fe2",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "a779fe7f38efdd33a12d3d9b5ffd53ef5e9779059b65f09b58065aaa19237156",
-    "shell/src-tauri/Cargo.toml": "d3d21f74b9d9547d6846531196eb597f53108718f2d450e6dc792d0a18ced60b",
+    "shell/package.json": "cb7260f9051dcd449d3a3290baa34064fb5e11dbb7972e0891c014d6c14bf2b8",
+    "shell/src-tauri/Cargo.toml": "6478f5e81c7f5bfc8bb92017548702dbbc665cda26313f5ae2376c83077d28fa",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -442,7 +442,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "0f70c28f24a6a7b69228be4370954f24f8be98eb072e09b5b0c60962c4553f63",
+    "shell/src-tauri/tauri.conf.json": "0954a4a1ca7efd0f79ff18e5e7f057f24f9c915044df7aaccf86e05614292939",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -522,7 +522,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3518,
+  "nodes": 3525,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -579,15 +579,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b0490f728e760512caec444b9562d042827f414ed46bae442388b269ce21c580",
-    "communities.json": "333c851f303d3ca1b46658ce015b0a650a47dc95d8455a92e10e884f8f00ee49",
-    "graph.html": "fe9f88be34dda8ea5591f542ecb90e170550d74f16ca32fd7badeed5e6aff984",
-    "graph.json": "ad990de3a4f68f33ea7b3b955e313d36dffac58753a116edb11c9e54c72fb3fc"
+    "GRAPH_REPORT.md": "8dbe708728bb8840c380381164dfeb15541b9c8c6c787231c050d96d82bae9de",
+    "communities.json": "36c6debeb9e30788c11919440e8170f0afaf25e1baba6008d5117170fba5a7a4",
+    "graph.html": "5574708964cfd278d505c3bdd7411900c2ffffcec1a82414cd4409ad8fd5c224",
+    "graph.json": "54d492c15d70a17287581f79cf05d93bbf6f58238b89c6d51f52e1fdb9fae8e6"
   },
   "schema_version": 1,
-  "source_commit": "364ff50afbdc95beb3352efb2ce5384e750d5caf",
-  "source_fingerprint": "03c474fc598a2a3088732800f5835b3d883d2f510fe4d0bbd3bc9be1b76cd061",
+  "source_commit": "5c3e7ab4c9f861e05d0d747dae1e7dba9cb53ee7",
+  "source_fingerprint": "a05be3c1620c0793fa1d047b4a87630fb18dfe90a65ddde49cffecee384d0a1f",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md"
+    "docs/app-spec.md",
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts"
   ]
 }

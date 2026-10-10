@@ -231,9 +231,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 154,
+  "communities": 153,
   "community_algorithm": "louvain-seed-42",
-  "edges": 9972,
+  "edges": 9974,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -308,8 +308,8 @@
     "server/active-sessions.ts": "a83d2687d265453d74a4ca0a1861e12d519cce85f38feccd6cafea61ebbd8c5e",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "3c4f6b79c70a9f2f012aa0d3797539dfdca25780edaed9e577cb1c2d3871fd9d",
-    "server/agent-service.test.ts": "d7f8cc9064c2fd7e72c1a0ca57bd91b2ec3391e224f764f38ef226f3f4fb4ca9",
-    "server/agent-service.ts": "d9ef0439b743bceb34e0b52c810beb90cb7575c512e8c05713009be25fe0542a",
+    "server/agent-service.test.ts": "add7aeefdf5e8d33125de3c9304d86ddd2ffcba8f71226c138ec1c3173c2b34b",
+    "server/agent-service.ts": "0982c869cabd7a1202ed2d84d5438c7418cc1833fec32acdd2da7ad9213a72c2",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -579,34 +579,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "11fd7751c035b1d50afcca2af35ca868ff33347f67c5c59065413f4061e0d9b9",
-    "communities.json": "341024af03f834e2f7b5ece10ccb12fd8de15b7aa7b387058343e3fb272366c1",
-    "graph.html": "230906e3c4ee7581ea915d9e70f95be9673598be03d2c232d7192f0dff89d55f",
-    "graph.json": "be8be32ae47a3074379c8b339d6baef568ee6b999115fc34a50f2163e4ce64dd"
+    "GRAPH_REPORT.md": "9aa82b076d9e0af22ca90953924964ca39030fa7f57e7fbc9f8680be23712430",
+    "communities.json": "a5d67beb79b06d35d1662a6d757505b42b370d3fd3c5744af013ad18c47f3004",
+    "graph.html": "a3ee341c0b4f5c837b0e00d100cd7def5fae42565dadbb2bf18dcdea890eff79",
+    "graph.json": "82cd02c133516473da43ca3417dc0e2a34b8fe480ee67322b1cad51689674c3f"
   },
   "schema_version": 1,
-  "source_commit": "3fca519aa6813f1b60f14fa92b277b5b134e5143",
-  "source_fingerprint": "bebc1d8768862e3e77b1c59089af4dd67cd4a15f56da717d872f60cb61656bba",
+  "source_commit": "8abbf2c8e87d8c833a20fc9a60b2a401a5a7dd3f",
+  "source_fingerprint": "5e1ceed3e58e486ff4c3b8b3265c62fd6d1962207db7818352c67b5ddffc3785",
   "working_tree_changes": [
-    "README.md",
-    "docs/app-spec.md",
-    "package.json",
     "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/claude-agent-service.test.ts",
-    "server/claude-agent-service.ts",
-    "server/computer-manager.ts",
-    "server/hub-routes.ts",
-    "server/multi-node.test.ts",
-    "server/node-routes.ts",
-    "server/provider-session-service.ts",
-    "server/session-service.ts",
-    "shared/contracts.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/agent-service.ts"
   ]
 }

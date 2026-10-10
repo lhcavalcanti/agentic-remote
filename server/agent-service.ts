@@ -3603,8 +3603,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             .catch((error: unknown) =>
               this.publishError(replacementId, error),
             )
+        }
+        // A session can keep a mode without a model, and a fresh one always
+        // starts Interactive.
+        const storedMode = runtime?.mode || agentMode(stored.runtime?.mode)
+        if (fresh && (runtime || (storedMode && storedMode !== 'interactive'))) {
           await fresh.rpc.mode
-            .set({ mode: runtime.mode || 'interactive' })
+            .set({ mode: storedMode || 'interactive' })
             .catch((error: unknown) =>
               this.publishError(replacementId, error),
             )
@@ -7011,6 +7016,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.requestUserInput(invocation.sessionId, request),
         onElicitationRequest: (context) => this.requestElicitation(context),
       })
+      // The replacement starts Interactive; the session keeps the mode it
+      // was created or configured with.
+      const storedMode = agentMode(stored.runtime?.mode)
+      if (storedMode && storedMode !== 'interactive') {
+        await sdkSession.rpc.mode
+          .set({ mode: storedMode })
+          .catch((error: unknown) => this.publishError(sessionId, error))
+      }
     }
     if (this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId)) {
       await sdkSession.disconnect()

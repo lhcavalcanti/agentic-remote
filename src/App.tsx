@@ -13457,11 +13457,11 @@ function App() {
       return
     }
 
+    const closedKey = sessionKey(selected)
     setDeleting(true)
     setError(undefined)
     try {
       await deleteSession(selected.computerId, selected.id)
-      const closedKey = sessionKey(selected)
       removedSessions.current.add(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
@@ -13474,12 +13474,20 @@ function App() {
       // Drafts are cleared for a closed session, and so is everything the
       // knowledge panel remembered about it.
       forgetKnowledgeSession(closedKey)
-      const remaining = sessions.filter(
-        (session) => sessionKey(session) !== sessionKey(selected),
+      // The list and the selection may both have moved on while the delete was
+      // in flight, so the removal applies to what is current now.
+      const withoutClosed = (current: ManagedSession[]) =>
+        current.filter((session) => sessionKey(session) !== closedKey)
+      const remaining = withoutClosed(sessionsRef.current)
+      sessionsRef.current = remaining
+      setSessions(withoutClosed)
+      // Only a reader still on the closed session is moved. One who picked
+      // another session while it closed stays where they chose.
+      setSelectedKey((current) =>
+        current === closedKey
+          ? remaining[0] ? sessionKey(remaining[0]) : undefined
+          : current,
       )
-      setSessions(remaining)
-      const next = remaining[0]
-      setSelectedKey(next ? sessionKey(next) : undefined)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {

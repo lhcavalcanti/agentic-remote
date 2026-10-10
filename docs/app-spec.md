@@ -269,7 +269,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   commit atomically with the identity change, and stale provider listings MUST
   NOT recreate those identities.
 - Delete MUST close the owning provider process/session after confirmation and
-  remove Agentic Remote state and session uploads.
+  remove Agentic Remote state and session uploads. A session selected while
+  another one is closing MUST stay selected; only a reader still on the closed
+  session moves to a remaining one.
 
 ### 3.4 Host reboot and power-loss recovery
 

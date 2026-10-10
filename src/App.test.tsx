@@ -10439,6 +10439,68 @@ describe('App', () => {
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
   })
 
+  it('keeps the session chosen while another one was closing', async () => {
+    const thirdSession: ManagedSession = {
+      ...session,
+      id: 'session-3',
+      title: 'Third chat',
+      cwd: '/home/tester/src/third',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+      messages: [],
+    }
+    const listed = [session, secondSession, thirdSession]
+    vi.mocked(listSessions).mockResolvedValue(listed)
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      listed.find((entry) => entry.id === sessionId) || session,
+    )
+    let finishDelete: (() => void) | undefined
+    vi.mocked(deleteSession).mockReturnValueOnce(new Promise<void>((resolve) => {
+      finishDelete = resolve
+    }))
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(sessionAction('Close session'))
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /^Third chat,/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Third chat,/ }))
+        .toHaveAttribute('aria-current', 'page'),
+    )
+
+    await act(async () => {
+      finishDelete?.()
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: /^Third chat,/ }))
+      .toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: /^Second chat,/ }))
+      .not.toHaveAttribute('aria-current')
+  })
+
+  it('moves a reader still on a closed session to a remaining one', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(sessionAction('Close session'))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Second chat,/ }))
+        .toHaveAttribute('aria-current', 'page'),
+    )
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument()
+  })
+
   it('clears Copilot and UI history from the header and slash command', async () => {
     render(<App />)
     await screen.findByText('Hello agent')

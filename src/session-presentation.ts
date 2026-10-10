@@ -2,6 +2,7 @@ import type {
   AgentProvider,
   BackgroundTaskSnapshot,
   ManagedSession,
+  SessionExecutionMode,
 } from '../shared/contracts'
 
 export function sessionKey(
@@ -185,6 +186,108 @@ export function sortSessionView(
     }
     return recentFirst(left, right)
   })
+}
+
+/**
+ * One computer's sessions in display order. `sessions` arrive newest first,
+ * which is also the order of any the custom order does not rank yet.
+ */
+export function orderSessionLane(
+  sessions: readonly ManagedSession[],
+  customOrder: readonly string[],
+  sort: SessionSort,
+  snapshots: Record<string, BackgroundTaskSnapshot>,
+): ManagedSession[] {
+  const rank = new Map(customOrder.map((key, index) => [key, index]))
+  return sortSessionView(
+    [...sessions].sort(
+      (left, right) =>
+        (rank.get(sessionKey(left)) ?? Number.MAX_SAFE_INTEGER) -
+        (rank.get(sessionKey(right)) ?? Number.MAX_SAFE_INTEGER),
+    ),
+    sort,
+    snapshots,
+  )
+}
+
+export interface SessionCreationDraft {
+  id: string
+  computerId: string
+  cwd: string
+  provider?: AgentProvider
+  executionMode?: SessionExecutionMode
+}
+
+// Computers name a new session after its folder. A bare `~` resolves to a home
+// folder this browser cannot see, so that name is only an estimate.
+function newSessionTitle(cwd: string, provider?: AgentProvider): string {
+  return cwd.replace(/\/+$/u, '').split('/').pop() ||
+    (provider === 'claude' ? 'New Claude session' : 'New session')
+}
+
+/**
+ * Where sessions being created will appear, in display order.
+ *
+ * A new session starts idle, named after its folder and newer than anything
+ * else on its computer, and the custom order appends it once it exists. Each
+ * placement lists the existing sessions that will follow it, nearest first.
+ *
+ * Creations on one computer are sent one after another, so they finish in
+ * the order they started.
+ *
+ * @param sessions One computer's sessions, newest first.
+ * @param creations That computer's pending creations, oldest first.
+ */
+export function pendingSessionPlacements(
+  sessions: readonly ManagedSession[],
+  creations: readonly SessionCreationDraft[],
+  customOrder: readonly string[],
+  sort: SessionSort,
+  snapshots: Record<string, BackgroundTaskSnapshot>,
+): { id: string; followers: string[] }[] {
+  if (!creations.length) return []
+  const newest = sessions.reduce((latest, session) => {
+    const time = Date.parse(session.updatedAt)
+    return Number.isFinite(time) && time > latest ? time : latest
+  }, 0)
+  const standIns = creations.map((creation, index): ManagedSession => ({
+    id: creation.id,
+    computerId: creation.computerId,
+    computerName: '',
+    provider: creation.provider,
+    executionMode: creation.executionMode,
+    cwd: creation.cwd,
+    title: newSessionTitle(creation.cwd, creation.provider),
+    updatedAt: new Date(newest + index + 1).toISOString(),
+    status: 'idle',
+    messages: [],
+  }))
+  const pending = new Set(standIns.map(sessionKey))
+  // The browser appends sessions it has not ordered yet, newest first, and
+  // each creation once it finishes.
+  const ranked = new Set(customOrder)
+  const lane = [
+    ...customOrder,
+    ...sessions.map(sessionKey).filter((key) => !ranked.has(key)),
+    ...standIns.map(sessionKey),
+  ]
+  const ordered = orderSessionLane(
+    [...standIns].reverse().concat(sessions),
+    lane,
+    sort,
+    snapshots,
+  )
+  return ordered.flatMap((session, index) =>
+    pending.has(sessionKey(session))
+      ? [{
+          id: session.id,
+          followers: ordered
+            .slice(index + 1)
+            .map(sessionKey)
+            .filter((key) => !pending.has(key)),
+        }]
+      : [],
+  )
 }
 
 const sessionDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })

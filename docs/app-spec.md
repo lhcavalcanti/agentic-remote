@@ -179,12 +179,16 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   Claude subscription login flow.
 - Submitting a valid new session MUST close the creation sheet immediately and
   show a noninteractive pending row in the owning computer group until creation
-  finishes. The row MUST identify the provider, execution mode, folder, and
+  finishes. The row MUST stand where the created session will appear in the
+  current sort and be scrolled into view; in Custom order that is the end of
+  its computer's lane. Creations on one computer MUST be sent in submission
+  order, each after the previous one settles, so each finishes where its row
+  stood. The row MUST identify the provider, execution mode, folder, and
   creation state without relying on motion alone. Success MUST replace it with
-  the created session; failure MUST remove it and surface the error in the
-  active sheet, drawer, or conversation. An older creation response MUST NOT
-  close or reset a newer sheet, re-enable its submission, or steal selection
-  from newer navigation or creation intent.
+  the created session in that place; failure MUST remove it and surface the
+  error in the active sheet, drawer, or conversation. An older creation
+  response MUST NOT close or reset a newer sheet, re-enable its submission, or
+  steal selection from newer navigation or creation intent.
 
 ### 3.3 Rename, restart, recover, clear, and delete
 

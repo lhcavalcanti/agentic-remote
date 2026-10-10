@@ -3,6 +3,8 @@ import type { BackgroundTaskSnapshot, ManagedSession } from '../shared/contracts
 import {
   executionModeName,
   matchesSessionSearch,
+  orderSessionLane,
+  pendingSessionPlacements,
   providerName,
   sessionKey,
   sessionPresentation,
@@ -89,6 +91,96 @@ describe('session presentation', () => {
         .toEqual(['first', 'newer', 'older'])
       expect(sortSessionView([session, { ...session, id: 'tie' }], 'name', {}).map((item) => item.id))
         .toEqual(['same-id', 'tie'])
+    })
+
+    it('orders a lane by its custom rank before applying the view sort', () => {
+      const unranked = { ...session, id: 'unranked', updatedAt: '2026-10-01T00:00:00Z' }
+      const lane = orderSessionLane(
+        [unranked, newer, older],
+        ['studio:older', 'studio:newer'],
+        'custom',
+        {},
+      )
+      expect(lane.map((item) => item.id)).toEqual(['older', 'newer', 'unranked'])
+      expect(orderSessionLane([unranked, newer, older], ['studio:older'], 'recent', {})
+        .map((item) => item.id)).toEqual(['unranked', 'newer', 'older'])
+    })
+
+    describe('pending creation placement', () => {
+      const creation = {
+        id: 'pending-1',
+        computerId: 'studio',
+        cwd: '~/projects/kiln',
+        provider: 'copilot' as const,
+        executionMode: 'tmux' as const,
+      }
+      const lane = [newer, older]
+      const order = ['studio:newer', 'studio:older']
+
+      it('places a creation where the custom order will append its session', () => {
+        expect(pendingSessionPlacements(lane, [creation], order, 'custom', {}))
+          .toEqual([{ id: 'pending-1', followers: [] }])
+        const unranked = { ...session, id: 'unranked', updatedAt: '2026-08-15T00:00:00Z' }
+        expect(pendingSessionPlacements(
+          [newer, unranked, older], [creation], order, 'custom', {},
+        )).toEqual([{ id: 'pending-1', followers: [] }])
+      })
+
+      it('keeps a pending creation in place when the one before it finishes', () => {
+        const later = { ...creation, id: 'pending-2' }
+        expect(pendingSessionPlacements(lane, [creation, later], order, 'custom', {}))
+          .toEqual([
+            { id: 'pending-1', followers: [] },
+            { id: 'pending-2', followers: [] },
+          ])
+        const finished = { ...newer, id: 'pending-1-session', updatedAt: '2026-09-02T00:00:00Z' }
+        const after = [finished, ...lane]
+        const appended = [...order, 'studio:pending-1-session']
+        expect(orderSessionLane(after, appended, 'custom', {}).map((item) => item.id))
+          .toEqual(['newer', 'older', 'pending-1-session'])
+        expect(pendingSessionPlacements(after, [later], appended, 'custom', {}))
+          .toEqual([{ id: 'pending-2', followers: [] }])
+        expect(pendingSessionPlacements(lane, [creation, later], order, 'recent', {})[0].id)
+          .toBe('pending-2')
+        expect(pendingSessionPlacements(after, [later], appended, 'recent', {}))
+          .toEqual([{ id: 'pending-2', followers: ['studio:pending-1-session', 'studio:newer', 'studio:older'] }])
+      })
+
+      it('places the newest creation first by recent activity', () => {
+        const later = { ...creation, id: 'pending-2' }
+        expect(pendingSessionPlacements(lane, [creation, later], order, 'recent', {}))
+          .toEqual([
+            { id: 'pending-2', followers: ['studio:newer', 'studio:older'] },
+            { id: 'pending-1', followers: ['studio:newer', 'studio:older'] },
+          ])
+        const future = { ...newer, id: 'future', updatedAt: '2099-01-01T00:00:00Z' }
+        expect(pendingSessionPlacements([future, ...lane], [creation], order, 'recent', {}))
+          .toEqual([{ id: 'pending-1', followers: ['studio:future', 'studio:newer', 'studio:older'] }])
+      })
+
+      it('places a creation as an idle session in attention order', () => {
+        const working = { ...older, id: 'working', status: 'running' as const }
+        const question = {
+          ...older, id: 'question',
+          pendingUserInput: { requestId: 'q', question: 'Choose?', choices: [], allowFreeform: true },
+        }
+        const suspended = { ...newer, id: 'suspended', suspended: true }
+        expect(pendingSessionPlacements(
+          [suspended, newer, working, question], [creation], [], 'attention', {},
+        )).toEqual([{ id: 'pending-1', followers: ['studio:newer', 'studio:suspended'] }])
+      })
+
+      it('places a creation by its folder name, after equal names', () => {
+        const kiln = { ...older, id: 'kiln', title: 'kiln' }
+        const atlas = { ...older, id: 'atlas', title: 'atlas' }
+        const zinc = { ...older, id: 'zinc', title: 'zinc' }
+        expect(pendingSessionPlacements(
+          [zinc, kiln, atlas], [creation], ['studio:zinc', 'studio:kiln', 'studio:atlas'], 'name', {},
+        )).toEqual([{ id: 'pending-1', followers: ['studio:zinc'] }])
+        expect(pendingSessionPlacements(
+          [zinc], [{ ...creation, cwd: '/', provider: 'claude' }], [], 'name', {},
+        )).toEqual([{ id: 'pending-1', followers: ['studio:zinc'] }])
+      })
     })
 
     it('shows local activity time with full context and an explicit unknown state', () => {

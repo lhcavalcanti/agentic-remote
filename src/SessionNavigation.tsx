@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   SortableContext,
   useSortable,
@@ -30,6 +30,8 @@ export type PendingSessionCreation = Pick<
   'computerId' | 'cwd' | 'executionMode' | 'provider'
 > & {
   id: string
+  /** The shown session the created one will precede; absent when it lands last. */
+  before?: string
 }
 
 type SessionActions = {
@@ -59,13 +61,22 @@ export function SessionState({ presentation }: {
 function PendingSessionItem({
   creation,
   computerName,
+  position,
 }: {
   creation: PendingSessionCreation
   computerName: string
+  position: number
 }) {
   const description = `Creating ${providerName(creation.provider)} session on ${computerName} in ${creation.cwd}`
+  const rowRef = useRef<HTMLDivElement>(null)
+  // Its place can be below the visible part of a long list, and a new sort or
+  // another session arriving can move it there.
+  useEffect(() => {
+    rowRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [position])
   return (
     <div
+      ref={rowRef}
       aria-label={description}
       className={`session-item session-item--creating session-item--tone-${computerTone(
         creation.computerId,
@@ -272,6 +283,18 @@ function SortableComputerGroup({
     transition,
     isDragging,
   } = useSortable({ id: `computer:${computer.id}`, disabled: reorderDisabled })
+  const shownKeys = new Set(sessions.map(sessionKey))
+  const rows: ({ session: ManagedSession } | { creation: PendingSessionCreation })[] = [
+    ...sessions.flatMap((session) => [
+      ...pendingCreations
+        .filter((creation) => creation.before === sessionKey(session))
+        .map((creation) => ({ creation })),
+      { session },
+    ]),
+    ...pendingCreations
+      .filter((creation) => !creation.before || !shownKeys.has(creation.before))
+      .map((creation) => ({ creation })),
+  ]
   return (
     <section
       aria-label={computer.name}
@@ -309,26 +332,28 @@ function SortableComputerGroup({
         strategy={verticalListSortingStrategy}
       >
         <div className="computer-session-group__sessions">
-          {pendingCreations.map((creation) => (
-            <PendingSessionItem
-              computerName={computer.name}
-              creation={creation}
-              key={creation.id}
-            />
-          ))}
-          {sessions.map((session) => (
-            <SortableSessionItem
-              {...actions}
-              backgroundTasks={taskSnapshot(backgroundTasks, session)}
-              computerName={computer.name}
-              reorderDisabled={reorderDisabled}
-              sorting={sorting}
-              key={sessionKey(session)}
-              online={computer.online}
-              selected={sessionKey(session) === selectedKey}
-              session={session}
-            />
-          ))}
+          {rows.map((row, position) =>
+            'creation' in row ? (
+              <PendingSessionItem
+                computerName={computer.name}
+                creation={row.creation}
+                key={row.creation.id}
+                position={position}
+              />
+            ) : (
+              <SortableSessionItem
+                {...actions}
+                backgroundTasks={taskSnapshot(backgroundTasks, row.session)}
+                computerName={computer.name}
+                reorderDisabled={reorderDisabled}
+                sorting={sorting}
+                key={sessionKey(row.session)}
+                online={computer.online}
+                selected={sessionKey(row.session) === selectedKey}
+                session={row.session}
+              />
+            ),
+          )}
           {sessions.length === 0 && pendingCreations.length === 0 ? (
             <p className="computer-session-group__empty">
               {filtering ? 'No matching sessions' : 'No open sessions'}

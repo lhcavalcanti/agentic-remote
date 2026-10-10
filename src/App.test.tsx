@@ -7221,7 +7221,53 @@ describe('App', () => {
     expect(screen.getAllByText('Fresh session').length).toBeGreaterThan(0)
   })
 
+  it('keeps a pending session in the place its created session takes', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    let finishCreation: ((created: ManagedSession) => void) | undefined
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishCreation = resolve
+      }),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^Second chat,/ })
+    const rows = () => {
+      const lane = screen.getByRole('region', { name: 'development' })
+      return [
+        ...lane.querySelectorAll('.computer-session-group__sessions > *'),
+      ].map((row) =>
+        row.getAttribute('role') === 'status'
+          ? 'pending'
+          : row.querySelector('.session-item__text strong')?.textContent,
+      )
+    }
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+    const before = rows()
+    expect(before.at(-1)).toBe('pending')
+    expect(before).toHaveLength(3)
+
+    await act(async () => {
+      finishCreation?.({
+        ...session,
+        id: 'created-session',
+        title: 'Fresh session',
+        updatedAt: '2026-07-23T00:00:00.000Z',
+        messages: [],
+      })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(rows()).toEqual([...before.slice(0, -1), 'Fresh session']))
+  })
+
   it('keeps the newer selection when overlapping creations finish out of order', async () => {
+    const worker = { ...computer, id: 'computer-2', name: 'worker-node', isLocal: false }
+    vi.mocked(listComputers).mockResolvedValue([computer, worker])
     let finishOlder: ((created: ManagedSession) => void) | undefined
     let finishNewer: ((created: ManagedSession) => void) | undefined
     vi.mocked(createSession)
@@ -7241,6 +7287,9 @@ describe('App', () => {
     })
 
     fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getAllByLabelText('Computer')[0], {
+      target: { value: 'computer-2' },
+    })
     fireEvent.change(screen.getByLabelText('Agent provider'), {
       target: { value: 'claude' },
     })
@@ -7249,13 +7298,16 @@ describe('App', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
     await screen.findByRole('status', {
-      name: 'Creating Claude Agent session on development in ~',
+      name: 'Creating Claude Agent session on worker-node in ~',
     })
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2))
 
     await act(async () => {
       finishNewer?.({
         ...session,
         id: 'newer-created-session',
+        computerId: worker.id,
+        computerName: worker.name,
         provider: 'claude',
         executionMode: 'sdk',
         title: 'Newer session',
@@ -7283,6 +7335,99 @@ describe('App', () => {
       .toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('button', { name: /^Older session,/ }))
       .not.toHaveAttribute('aria-current')
+  })
+
+  it('creates sessions on one computer in submission order, each in its place', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    const finishers: ((created: ManagedSession) => void)[] = []
+    vi.mocked(createSession).mockImplementation(() =>
+      new Promise((resolve) => {
+        finishers.push(resolve)
+      }),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^Second chat,/ })
+    const rows = () => [
+      ...screen.getByRole('region', { name: 'development' })
+        .querySelectorAll('.computer-session-group__sessions > *'),
+    ].map((row) =>
+      row.getAttribute('role') === 'status'
+        ? row.getAttribute('aria-label')
+        : row.querySelector('.session-item__text strong')?.textContent,
+    )
+    const create = async (provider: string, label: string) => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+      fireEvent.change(screen.getByLabelText('Agent provider'), {
+        target: { value: provider },
+      })
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+      await screen.findByRole('status', { name: label })
+    }
+    const first = 'Creating GitHub Copilot session on development in ~'
+    const second = 'Creating Claude Agent session on development in ~'
+    await create('copilot', first)
+    await create('claude', second)
+    expect(createSession).toHaveBeenCalledOnce()
+    const existing = rows().slice(0, 2)
+    expect(rows()).toEqual([...existing, first, second])
+
+    await act(async () => {
+      finishers[0]({ ...session, id: 'first-created', title: 'First new', updatedAt: '2026-07-23T00:00:00.000Z', messages: [] })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2))
+    expect(rows()).toEqual([...existing, 'First new', second])
+
+    await act(async () => {
+      finishers[1]({
+        ...session, id: 'second-created', title: 'Second new', provider: 'claude',
+        executionMode: 'sdk', updatedAt: '2026-07-23T00:00:05.000Z', messages: [],
+      })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(rows()).toEqual([...existing, 'First new', 'Second new']))
+  })
+
+  it('sends the next creation on a computer once the earlier one fails', async () => {
+    let failFirst: ((error: Error) => void) | undefined
+    vi.mocked(createSession)
+      .mockReturnValueOnce(new Promise((_resolve, reject) => {
+        failFirst = reject
+      }))
+      .mockResolvedValueOnce({ ...session, id: 'second-created', title: 'Second new', messages: [] })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await screen.findByRole('status', {
+      name: 'Creating Claude Agent session on development in ~',
+    })
+    expect(createSession).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      failFirst?.(new Error('Folder is not available'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('Folder is not available')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getAllByText('Second new').length).toBeGreaterThan(0),
+    )
   })
 
   it('shows a failed creation inside a reopened new-session sheet', async () => {

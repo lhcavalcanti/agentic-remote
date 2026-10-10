@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type {
+  AgentMode,
   AgentProvider,
   BackgroundTask,
   ConfigureRuntimeInput,
@@ -45,6 +46,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   lastCreateModel?: string
   lastCreateReasoningEffort?: RuntimeReasoningEffort
   lastCreateContextTier?: 'default' | 'long_context'
+  lastCreateMode?: AgentMode
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
   readonly backgroundTaskSnapshots = new Map<string, BackgroundTaskSnapshot>()
 
@@ -199,10 +201,12 @@ class FakeSessionService extends EventEmitter implements SessionService {
     model?: string,
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
+    mode?: AgentMode,
   ): Promise<SessionDetail> {
     if (this.createError) {
       throw this.createError
     }
+    this.lastCreateMode = mode
     this.lastCreateTerminalBacked = terminalBacked
     this.lastCreateAllowAllPermissions = allowAllPermissions
     this.lastCreateModel = model
@@ -1224,9 +1228,18 @@ describe('multi-node hub', () => {
           model: 'remote-model',
           reasoningEffort: 'high',
           contextTier: 'long_context',
+          mode: 'plan',
         },
       })
       expect(created.statusCode, created.body).toBe(201)
+      expect(remoteService.lastCreateMode).toBe('plan')
+      const unknownMode = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions`,
+        payload: { cwd: '/srv/new-session', mode: 'shell' },
+      })
+      expect(unknownMode.statusCode).toBe(400)
+      expect(remoteService.lastCreateMode).toBe('plan')
       expect(remoteService.lastCreateTerminalBacked).toBe(true)
       expect(remoteService.lastCreateAllowAllPermissions).toBe(true)
       expect(remoteService.lastCreateModel).toBe('remote-model')

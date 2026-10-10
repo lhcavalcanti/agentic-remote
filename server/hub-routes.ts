@@ -44,6 +44,7 @@ const createSessionSchema = z.object({
   model: z.string().trim().min(1).max(200).optional(),
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   contextTier: z.enum(['default', 'long_context']).optional(),
+  mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
 })
 
 const renameSessionSchema = z.object({

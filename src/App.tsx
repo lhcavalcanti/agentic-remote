@@ -145,6 +145,7 @@ import {
 import remarkGfm from 'remark-gfm'
 import { remarkSafeBreaks } from './remark-safe-breaks'
 import type {
+  AgentMode,
   AgentProvider,
   AgentProviderCapability,
   ActivityKind,
@@ -429,6 +430,8 @@ type DefaultRuntimeSelection = {
   model: string
   reasoningEffort: RuntimeReasoningEffort | ''
   contextTier: 'default' | 'long_context'
+  /** Blank starts Interactive, as a provider does without one. */
+  mode: Exclude<AgentMode, 'interactive'> | ''
 }
 
 type DefaultRuntimeSettings = Record<AgentProvider, DefaultRuntimeSelection>
@@ -437,6 +440,19 @@ const emptyRuntimeSelection: DefaultRuntimeSelection = {
   model: '',
   reasoningEffort: '',
   contextTier: 'default',
+  mode: '',
+}
+
+function defaultAgentMode(value: unknown): DefaultRuntimeSelection['mode'] {
+  return value === 'plan' || value === 'autopilot' ? value : ''
+}
+
+function agentModeName(mode: AgentMode, provider: AgentProvider): string {
+  return mode === 'plan'
+    ? 'Plan'
+    : mode === 'autopilot'
+      ? provider === 'claude' ? 'Auto' : 'Autopilot'
+      : 'Interactive'
 }
 
 type DefaultSessionFolders = Record<string, string>
@@ -1736,6 +1752,7 @@ function readDefaultRuntimeSettings(): DefaultRuntimeSettings {
         : '',
       contextTier:
         fields.contextTier === 'long_context' ? 'long_context' : 'default',
+      mode: defaultAgentMode(fields.mode),
     }
   }
   return {
@@ -2287,6 +2304,9 @@ function NewSessionDialog({
                   contextTier: defaultRuntime.contextTier,
                 }
               : {}),
+            ...(defaultRuntimes[provider].mode
+              ? { mode: defaultRuntimes[provider].mode }
+              : {}),
           }),
           pendingCreation,
         )
@@ -2433,6 +2453,13 @@ function NewSessionDialog({
                   {defaultRuntime?.contextTier.replace('_', ' ')}
                 </strong>{' '}
                 context.
+              </small>
+            ) : null}
+            {savedDefaultRuntime.mode ? (
+              <small className="field__hint">
+                New sessions start in{' '}
+                <strong>{agentModeName(savedDefaultRuntime.mode, provider)}</strong>{' '}
+                mode.
               </small>
             ) : null}
             {runtimeError ? (
@@ -2948,6 +2975,7 @@ function normalizedRuntimeSelection(
     contextTier: model.contextTiers.includes(selection.contextTier)
       ? selection.contextTier
       : 'default',
+    mode: selection.mode,
   }
 }
 
@@ -2998,7 +3026,8 @@ function sameRuntimeSelection(
   return (
     left.model === right.model &&
     left.reasoningEffort === right.reasoningEffort &&
-    left.contextTier === right.contextTier
+    left.contextTier === right.contextTier &&
+    left.mode === right.mode
   )
 }
 
@@ -3038,7 +3067,7 @@ function DefaultRuntimeControls({
               className="dialog-select"
               onChange={(event) => {
                 if (!event.target.value) {
-                  onChange({ ...emptyRuntimeSelection })
+                  onChange({ ...emptyRuntimeSelection, mode: selection.mode })
                   return
                 }
                 const model = models.find(
@@ -3051,6 +3080,7 @@ function DefaultRuntimeControls({
                   model: model.id,
                   reasoningEffort: model.reasoningEfforts[0] || '',
                   contextTier: 'default',
+                  mode: selection.mode,
                 })
               }}
               value={selection.model.trim()}
@@ -3125,6 +3155,23 @@ function DefaultRuntimeControls({
           ) : null}
         </>
       ) : null}
+      <label className="field">
+        <span>Agent mode</span>
+        <select
+          aria-label={`${name} default agent mode`}
+          className="dialog-select"
+          onChange={(event) =>
+            onChange({ ...selection, mode: defaultAgentMode(event.target.value) })
+          }
+          value={selection.mode}
+        >
+          {(['interactive', 'plan', 'autopilot'] as const).map((mode) => (
+            <option key={mode} value={mode === 'interactive' ? '' : mode}>
+              {agentModeName(mode, provider)}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   )
 }
@@ -3857,7 +3904,7 @@ function AppSettingsDialog({
         <h3>Session defaults</h3>
         <p className="dialog-message">
           New sessions use these provider settings. Existing sessions keep
-          their current model, effort, and context.
+          their current model, effort, context, and agent mode.
         </p>
         {(['copilot', 'claude'] as const).map((provider) => (
           <DefaultRuntimeControls

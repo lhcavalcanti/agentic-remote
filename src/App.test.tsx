@@ -2914,6 +2914,84 @@ describe('App', () => {
     expect(screen.getByLabelText('Claude Agent default model')).toHaveValue('')
   })
 
+  it('persists a default agent mode per provider and starts new sessions in it', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const copilotMode = await screen.findByLabelText('GitHub Copilot default agent mode')
+    expect(copilotMode).toHaveValue('')
+    expect([...copilotMode.querySelectorAll('option')].map((option) => option.textContent))
+      .toEqual(['Interactive', 'Plan', 'Autopilot'])
+    const claudeMode = screen.getByLabelText('Claude Agent default agent mode')
+    expect([...claudeMode.querySelectorAll('option')].map((option) => option.textContent))
+      .toEqual(['Interactive', 'Plan', 'Auto'])
+    fireEvent.change(copilotMode, { target: { value: 'autopilot' } })
+    fireEvent.change(claudeMode, { target: { value: 'plan' } })
+    await screen.findByLabelText('GitHub Copilot default model')
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default model'), {
+      target: { value: 'fixture-model' },
+    })
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default model'), {
+      target: { value: '' },
+    })
+    expect(screen.getByLabelText('GitHub Copilot default agent mode')).toHaveValue('autopilot')
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toMatchObject({ copilot: { model: '', mode: 'autopilot' }, claude: { mode: 'plan' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    expect(screen.getByText(/New sessions start in/)).toHaveTextContent(
+      'New sessions start in Autopilot mode.',
+    )
+    const createButton = screen.getByRole('button', { name: 'Create session' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+        mode: 'autopilot',
+      }),
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+    expect(screen.getByText(/New sessions start in/)).toHaveTextContent(
+      'New sessions start in Plan mode.',
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenLastCalledWith('computer-1', expect.objectContaining({
+        provider: 'claude',
+        mode: 'plan',
+      })),
+    )
+  })
+
+  it('ignores an unknown stored default agent mode', async () => {
+    localStorage.setItem('agentic-remote:default-models', JSON.stringify({
+      copilot: { model: '', reasoningEffort: '', contextTier: 'default', mode: 'shell' },
+    }))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(await screen.findByLabelText('GitHub Copilot default agent mode')).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    expect(screen.queryByText(/New sessions start in/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() => expect(createSession).toHaveBeenCalled())
+    expect(vi.mocked(createSession).mock.calls.at(-1)?.[1]).not.toHaveProperty('mode')
+  })
+
   it('persists SDK-backed provider runtime defaults and applies them to new sessions', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -2951,11 +3029,13 @@ describe('App', () => {
         model: 'fixture-model',
         reasoningEffort: 'xhigh',
         contextTier: 'long_context',
+        mode: '',
       },
       claude: {
         model: 'provider-model',
         reasoningEffort: 'low',
         contextTier: 'default',
+        mode: '',
       },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
@@ -3064,11 +3144,13 @@ describe('App', () => {
           model: '',
           reasoningEffort: '',
           contextTier: 'default',
+          mode: '',
         },
         claude: {
           model: '',
           reasoningEffort: '',
           contextTier: 'default',
+          mode: '',
         },
       }),
     )
@@ -3158,11 +3240,13 @@ describe('App', () => {
         model: 'node-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
+        mode: '',
       },
       claude: {
         model: '',
         reasoningEffort: '',
         contextTier: 'default',
+        mode: '',
       },
     })
   })
@@ -3217,11 +3301,13 @@ describe('App', () => {
         model: 'node-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
+        mode: '',
       },
       claude: {
         model: 'node-claude-model',
         reasoningEffort: 'high',
         contextTier: 'default',
+        mode: '',
       },
     })
   })
@@ -3258,6 +3344,7 @@ describe('App', () => {
       model: 'node-claude-model',
       reasoningEffort: 'high',
       contextTier: 'default',
+      mode: '',
     })
   })
 
@@ -3303,11 +3390,13 @@ describe('App', () => {
         model: 'removed-model',
         reasoningEffort: 'max',
         contextTier: 'long_context',
+        mode: '',
       },
       claude: {
         model: 'provider-model',
         reasoningEffort: 'max',
         contextTier: 'long_context',
+        mode: '',
       },
     })
   })

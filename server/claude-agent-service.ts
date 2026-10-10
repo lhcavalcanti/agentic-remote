@@ -16,6 +16,7 @@ import {
   type SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import type {
+  AgentMode,
   AgentProvider,
   AgentProviderCapability,
   BackgroundTaskSnapshot,
@@ -458,6 +459,7 @@ export class ClaudeAgentService
     model?: string,
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
+    mode?: AgentMode,
   ): Promise<SessionDetail> {
     if (provider !== 'claude') {
       throw new Error(`Provider ${provider} is not handled by Claude Agent`)
@@ -504,7 +506,7 @@ export class ClaudeAgentService
           ...(defaultModel ? { model: defaultModel.id } : {}),
           ...(effort ? { reasoningEffort: effort } : {}),
           contextTier: tier,
-          mode: 'interactive',
+          mode: mode || 'interactive',
         },
       },
       { managedOpen: true, backend: 'sdk' },

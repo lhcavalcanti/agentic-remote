@@ -570,6 +570,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.model,
             input.reasoningEffort,
             input.contextTier,
+            input.mode,
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)

@@ -9,7 +9,7 @@ import type {
   ComputerSummary,
   ManagedSession,
 } from '../shared/contracts'
-import { SessionNavigation } from './SessionNavigation'
+import { SessionNavigation, type PendingSessionCreation } from './SessionNavigation'
 import type { SessionSort } from './session-presentation'
 import { sessionNavigationView, type SessionFilter } from './session-navigation-view'
 
@@ -76,6 +76,7 @@ function NavigationHarness({
   loadingError,
   initialShowSuspended = true,
   showSuspendedSaving = false,
+  pendingCreations,
 }: {
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
@@ -85,6 +86,7 @@ function NavigationHarness({
   loadingError?: string
   initialShowSuspended?: boolean
   showSuspendedSaving?: boolean
+  pendingCreations?: PendingSessionCreation[]
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
@@ -111,6 +113,7 @@ function NavigationHarness({
         onShowSuspendedChange={setShowSuspended}
         loading={loading}
         loadingError={loadingError}
+        pendingCreations={pendingCreations}
         selectedKey="studio:review"
         sort={sort}
       />
@@ -159,6 +162,67 @@ describe('session navigation', () => {
     expect(screen.queryByText('Loading sessions...')).toBeNull()
     expect(screen.queryByText('No sessions here.')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retry loading sessions' })).toBeNull()
+  })
+
+  it('draws each pending creation where its session will appear', () => {
+    const scrolled: Element[] = []
+    const scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this)
+    })
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+    try {
+      const creating = (id: string, cwd: string, before?: string): PendingSessionCreation => ({
+        id, computerId: 'studio', cwd, provider: 'copilot', executionMode: 'tmux', before,
+      })
+      render(
+        <NavigationHarness
+          pendingCreations={[
+            creating('first', '~/kiln', 'studio:question'),
+            creating('last', '~/zinc'),
+            creating('hidden-follower', '~/atlas', 'studio:gone'),
+          ]}
+        />,
+      )
+      const studio = screen.getByRole('region', { name: 'Studio' })
+      const rows = within(studio).getAllByRole('button', { name: /,/ })
+        .concat(within(studio).getAllByRole('status'))
+        .sort((left, right) =>
+          left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
+        .map((row) => row.getAttribute('aria-label')?.split(',')[0])
+      expect(rows).toEqual([
+        'Review the release',
+        'Creating GitHub Copilot session on Studio in ~/kiln',
+        'Choose a direction',
+        'Creating GitHub Copilot session on Studio in ~/zinc',
+        'Creating GitHub Copilot session on Studio in ~/atlas',
+      ])
+      expect(scrolled).toHaveLength(3)
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
+  })
+
+  it('brings a pending creation back into view only when its place changes', () => {
+    const scrollIntoView = vi.fn()
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+    try {
+      const creating = (before?: string): PendingSessionCreation[] => [{
+        id: 'pending', computerId: 'studio', cwd: '~/kiln', provider: 'copilot', before,
+      }]
+      const rendered = render(<NavigationHarness pendingCreations={creating()} />)
+      expect(scrollIntoView).toHaveBeenCalledOnce()
+      rendered.rerender(<NavigationHarness pendingCreations={creating()} />)
+      expect(scrollIntoView).toHaveBeenCalledOnce()
+      rendered.rerender(<NavigationHarness pendingCreations={creating('studio:review')} />)
+      expect(scrollIntoView).toHaveBeenCalledTimes(2)
+      const row = screen.getByRole('status', { name: /in ~\/kiln$/ })
+      expect(scrollIntoView.mock.contexts.at(-1)).toBe(row)
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
   })
 
   it('offers explicit ordering without mutating the custom list or selection', () => {

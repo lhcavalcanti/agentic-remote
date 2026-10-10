@@ -118,11 +118,12 @@ import {
 import {
   computerTone,
   executionModeName,
+  orderSessionLane,
+  pendingSessionPlacements,
   providerName,
   sessionKey,
   sessionSortFrom,
   shortPath,
-  sortSessionView,
   taskSnapshot,
 } from './session-presentation'
 import type { SessionSort } from './session-presentation'
@@ -1986,7 +1987,12 @@ type SessionCreationHandle = {
   intent: number
   selectionIntent: number
   selectedKey?: string
+  /** Settles once earlier creations on the same computer have finished. */
+  turn: Promise<void>
+  /** Lets the next creation on the same computer go ahead. */
+  finish: () => void
 }
+
 
 function NewSessionDialog({
   open,
@@ -2263,6 +2269,7 @@ function NewSessionDialog({
           provider,
         })
         setSubmitting(false)
+        await pendingCreation.turn
         onCreated(
           await createSession(computerId, {
             cwd,
@@ -6839,6 +6846,12 @@ function App() {
   const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
   const selectedKeyStateRef = useRef(selectedKey)
   const pendingSessionCreationIdRef = useRef(0)
+  // Creations on one computer are sent one after another. Their computer seats
+  // each session as it is stored, so this is what lets every one finish in the
+  // place its pending row was drawn. There is deliberately no timeout: going
+  // ahead early would let a later creation take an earlier row's place, and a
+  // creation that never answers is already showing as stuck on that computer.
+  const sessionCreationQueues = useRef(new Map<string, Promise<void>>())
   const sessionCreationIntentRef = useRef(0)
   const sessionSelectionIntentRef = useRef(0)
   const newSessionOpenRef = useRef(false)
@@ -7142,18 +7155,14 @@ function App() {
   const sessionsByComputer = useMemo(() => {
     const grouped = new Map<string, ManagedSession[]>()
     for (const computer of orderedComputers) {
-      const rank = new Map(
-        (sessionOrder[computer.id] || []).map((key, index) => [key, index]),
-      )
       grouped.set(
         computer.id,
-        sortSessionView(sessions
-          .filter((session) => session.computerId === computer.id)
-          .sort(
-            (left, right) =>
-              (rank.get(sessionKey(left)) ?? Number.MAX_SAFE_INTEGER) -
-              (rank.get(sessionKey(right)) ?? Number.MAX_SAFE_INTEGER),
-          ), sessionSort, backgroundTaskSnapshots),
+        orderSessionLane(
+          sessions.filter((session) => session.computerId === computer.id),
+          sessionOrder[computer.id] || [],
+          sessionSort,
+          backgroundTaskSnapshots,
+        ),
       )
     }
     return grouped
@@ -7174,6 +7183,42 @@ function App() {
       sessionQuery,
       sessionFilter,
       showSuspendedSessions,
+    ],
+  )
+  // A pending row stands where its session will appear, so finishing the
+  // creation does not move it.
+  const placedSessionCreations = useMemo(
+    () => orderedComputers.flatMap((computer) => {
+      const creations = pendingSessionCreations.filter(
+        (creation) => creation.computerId === computer.id,
+      )
+      if (!creations.length) return []
+      const shown = new Set(
+        navigationView.groups
+          .find((group) => group.computer.id === computer.id)
+          ?.sessions.map(sessionKey),
+      )
+      return pendingSessionPlacements(
+        sessions.filter((session) => session.computerId === computer.id),
+        creations,
+        sessionOrder[computer.id] || [],
+        sessionSort,
+        backgroundTaskSnapshots,
+      ).flatMap(({ id, followers }) => {
+        const creation = creations.find((entry) => entry.id === id)
+        return creation
+          ? [{ ...creation, before: followers.find((key) => shown.has(key)) }]
+          : []
+      })
+    }),
+    [
+      backgroundTaskSnapshots,
+      navigationView,
+      orderedComputers,
+      pendingSessionCreations,
+      sessionOrder,
+      sessionSort,
+      sessions,
     ],
   )
   const selected = useMemo(
@@ -11687,11 +11732,26 @@ function App() {
     creation: Omit<PendingSessionCreation, 'id'>,
   ): SessionCreationHandle {
     const id = `pending-session-${++pendingSessionCreationIdRef.current}`
+    const turn =
+      sessionCreationQueues.current.get(creation.computerId) ?? Promise.resolve()
+    let finish = () => {}
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const queued = turn.then(() => finished)
+    sessionCreationQueues.current.set(creation.computerId, queued)
+    void queued.then(() => {
+      if (sessionCreationQueues.current.get(creation.computerId) === queued) {
+        sessionCreationQueues.current.delete(creation.computerId)
+      }
+    })
     const handle = {
       id,
       intent: sessionCreationIntentRef.current,
       selectionIntent: sessionSelectionIntentRef.current,
       selectedKey: selectedKeyStateRef.current,
+      turn,
+      finish,
     }
     setPendingSessionCreations((current) => [...current, { ...creation, id }])
     setSessionCreationError(undefined)
@@ -11705,6 +11765,7 @@ function App() {
     creation: SessionCreationHandle,
     message: string,
   ) {
+    creation.finish()
     setPendingSessionCreations((current) =>
       current.filter((pending) => pending.id !== creation.id),
     )
@@ -11724,6 +11785,7 @@ function App() {
       )
     }
     setSessions((current) => upsertSession(current, session))
+    creation?.finish()
     const shouldSelect =
       !creation ||
       (
@@ -13789,7 +13851,7 @@ function App() {
                 onDismissCreationError={() => setSessionCreationError(undefined)}
                 onNewSession={openNewSession}
                 loading={loading}
-                pendingCreations={pendingSessionCreations}
+                pendingCreations={placedSessionCreations}
                 onOpenSessionTasks={openTasksForSession}
                 onSelectSession={selectSession}
                 onToggleSessionSuspended={(session) =>

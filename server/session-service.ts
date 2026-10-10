@@ -1,5 +1,6 @@
 import type { DirectoryScope } from './directory-browser.js'
 import type {
+  AgentMode,
   AgentProvider,
   AgentProviderCapability,
   BackgroundTaskSnapshot,
@@ -40,6 +41,7 @@ export interface SessionService {
     model?: string,
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
+    mode?: AgentMode,
   ): Promise<SessionDetail>
   uploadFile(
     sessionId: string,

@@ -3511,6 +3511,56 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('starts new SDK sessions in the requested agent mode', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const services: AgentService[] = []
+    const fresh = async () => {
+      const client = new FakeCopilotClient()
+      client.models = [configurableModel()]
+      const service = new AgentService(
+        new SessionStore(path.join(directory, `state-${services.length}`)),
+        client,
+        async () => [],
+        async () => undefined,
+      )
+      services.push(service)
+      await service.start()
+      return { client, service }
+    }
+    try {
+      const moded = await fresh()
+      const created = await moded.service.createSession(
+        directory, false, true, 'copilot', undefined, undefined, undefined, 'autopilot',
+      )
+      expect(moded.client.session.modeSwitches).toEqual(['autopilot'])
+      expect(moded.client.createdConfigs.at(-1)).not.toHaveProperty('mode')
+      expect(created.runtime?.mode).toBe('autopilot')
+
+      const plain = await fresh()
+      const unmoded = await plain.service.createSession(directory, false)
+      expect(plain.client.session.modeSwitches).toEqual([])
+      expect(unmoded.runtime).not.toHaveProperty('mode')
+
+      const refused = await fresh()
+      refused.client.session.modeSetError = new Error('Mode unavailable')
+      await expect(refused.service.createSession(
+        directory, false, true, 'copilot', undefined, undefined, undefined, 'plan',
+      )).rejects.toThrow('Mode unavailable')
+      expect(refused.client.deletedSessionIds).toContain(refused.client.session.sessionId)
+      expect(refused.service.listSessions()).toEqual([])
+
+      const invalid = await fresh()
+      await expect(invalid.service.createSession(
+        directory, false, true, 'copilot', undefined, undefined, undefined,
+        'shell' as unknown as 'plan',
+      )).rejects.toThrow('Selected agent mode is not supported')
+      expect(invalid.client.createdConfigs).toEqual([])
+    } finally {
+      for (const service of services) await service.stop()
+    }
+  })
+
   it('refreshes SDK models and omits effort for models without effort support', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -3934,6 +3984,17 @@ describe('AgentService deletion', () => {
       path.basename(directory),
       false,
     )
+    const planned = await service.createSession(
+      directory, true, true, 'copilot', undefined, undefined, undefined, 'plan',
+    )
+    expect(terminal.create).toHaveBeenLastCalledWith(
+      planned.id,
+      directory,
+      path.basename(directory),
+      true,
+      { mode: 'plan' },
+    )
+    expect(planned.runtime?.mode).toBe('plan')
     const renamed = await service.renameSession(created.id, 'Renamed terminal')
     expect(renamed.title).toBe('Renamed terminal')
     expect(terminal.rename).toHaveBeenCalledWith(

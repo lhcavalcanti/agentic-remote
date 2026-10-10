@@ -1,6 +1,7 @@
 import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
+  AgentMode,
   AgentProvider,
   AgentProviderCapability,
   BackgroundTaskSnapshot,
@@ -122,6 +123,7 @@ export class ProviderSessionService
     model?: string,
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
+    mode?: AgentMode,
   ): Promise<SessionDetail> {
     const service = provider === 'claude' ? this.claude : this.copilot
     return service.createSession(
@@ -132,6 +134,7 @@ export class ProviderSessionService
       model,
       reasoningEffort,
       contextTier,
+      mode,
     )
   }
 

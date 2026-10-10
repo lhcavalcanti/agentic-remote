@@ -379,6 +379,22 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(sessionId)).toBeUndefined()
   })
 
+  it('starts a new Claude session in the requested agent mode', async () => {
+    let sessionId = ''
+    const { directory, queryCalls, service } = await fixture(async function* () {
+      yield* textResult(sessionId)
+    })
+    const created = await service.createSession(
+      directory, false, true, 'claude', undefined, undefined, undefined, 'autopilot',
+    )
+    sessionId = created.id
+    expect(created.runtime?.mode).toBe('autopilot')
+
+    await service.sendMessage(sessionId, 'hello')
+    await waitForIdle(service, sessionId)
+    expect(queryCalls.at(-1)).toMatchObject({ sessionId, permissionMode: 'auto' })
+  })
+
   it('uses requested Claude runtime defaults for a new session', async () => {
     const { directory, service } = await fixture(async function* () {})
 

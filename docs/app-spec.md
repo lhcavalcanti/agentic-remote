@@ -972,8 +972,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
   agent mode.
 - App settings MUST expose independent optional default model IDs for Copilot
   and Claude. Blank defaults MUST preserve each provider's own default.
+- App settings MUST expose a default agent mode for Copilot and Claude,
+  Interactive unless changed. A new session MUST start in that mode, whether
+  SDK- or tmux-backed, and persist it so recovery restores it; a mode the
+  provider refuses MUST fail creation rather than start another mode.
 - Provider defaults MUST apply only when creating a new session; existing
-  sessions MUST keep their selected runtime model.
+  sessions MUST keep their selected runtime model and mode.
 - Context choices MUST show token capacity rather than labels such as Default or
   Long.
 - Supported modes are Interactive, Plan, and Autopilot.

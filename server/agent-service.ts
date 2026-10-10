@@ -2516,9 +2516,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     model?: string,
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
+    mode?: AgentMode,
   ): Promise<SessionDetail> {
     if (provider !== 'copilot') {
       throw new Error(`Provider ${provider} is not handled by Copilot`)
+    }
+    if (mode !== undefined && !agentMode(mode)) {
+      throw new RuntimeConfigurationError('Selected agent mode is not supported', 400)
     }
     const cwd = await this.validateDirectory(inputPath)
     const runtime = await this.creationRuntime(
@@ -2527,14 +2531,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       contextTier,
     )
     return this.publicSession(await this.runSessionCreation(() => terminalBacked
-      ? this.createTerminalSession(cwd, allowAllPermissions, runtime)
-      : this.createSdkSession(cwd, allowAllPermissions, runtime)))
+      ? this.createTerminalSession(
+          cwd,
+          allowAllPermissions,
+          runtime || mode ? { ...runtime, ...(mode ? { mode } : {}) } : undefined,
+        )
+      : this.createSdkSession(cwd, allowAllPermissions, runtime, mode)))
   }
 
   private async createSdkSession(
     cwd: string,
     allowAllPermissions: boolean,
     runtime?: CreationRuntime,
+    mode?: AgentMode,
   ): Promise<SessionDetail> {
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
@@ -2559,6 +2568,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.sessions.set(sdkSession.sessionId, sdkSession)
       this.hydratedSessions.add(sdkSession.sessionId)
       this.attachSession(sdkSession)
+      // The SDK has no initial mode, so it is set before the session is kept;
+      // a refusal discards the new session like any other creation failure.
+      if (mode) await sdkSession.rpc.mode.set({ mode })
 
       const now = new Date().toISOString()
       const session = await this.store.create(
@@ -2573,6 +2585,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           runtime: {
             allowAllPermissions,
             ...runtime,
+            ...(mode ? { mode } : {}),
           },
         },
         { managedOpen: true, backend: 'sdk' },

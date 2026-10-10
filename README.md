@@ -214,7 +214,7 @@ matrix.
 ## Use
 
 - **New session**: choose computer, provider, folder, and the configured provider
-  default model.
+  default model and agent mode.
 - **Open previous**: resume provider history known to Agentic Remote.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
@@ -224,7 +224,8 @@ matrix.
 - **Skills / MCP servers**: use **Session actions** or `/skill`, `/skills`, and
   `/mcp` to inspect resource metadata without sending a prompt or changing
   configuration. Optional text after the command filters the list.
-- **App settings**: configure separate default model IDs for Copilot and Claude.
+- **App settings**: configure separate default models and agent modes for
+  Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Knowledge**: a per-session panel that docks beside the conversation or
   expands over it, with an in-place folder tree, remembered expansion and

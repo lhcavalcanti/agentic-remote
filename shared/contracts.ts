@@ -482,6 +482,8 @@ export interface CreateSessionInput {
   model?: string
   reasoningEffort?: RuntimeReasoningEffort
   contextTier?: 'default' | 'long_context'
+  /** A session started without one is Interactive. */
+  mode?: AgentMode
 }
 
 export interface SendMessageInput {

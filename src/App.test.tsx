@@ -3301,11 +3301,13 @@ describe('App', () => {
         model: 'node-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
+        mode: '',
       },
       claude: {
         model: 'node-claude-model',
         reasoningEffort: 'high',
         contextTier: 'default',
+        mode: '',
       },
     })
   })
@@ -3342,6 +3344,7 @@ describe('App', () => {
       model: 'node-claude-model',
       reasoningEffort: 'high',
       contextTier: 'default',
+      mode: '',
     })
   })
 

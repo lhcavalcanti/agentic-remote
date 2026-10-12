@@ -2617,7 +2617,15 @@ const FOOTER_HINT_SLOTS = [
   ['? help'],
   ['tab next tab'],
 ]
+const FOOTER_HINTS = new Set(FOOTER_HINT_SLOTS.flat())
 const FOOTER_REASONING = 'ctrl+t show reasoning'
+
+// A row that names any hint cell, or carries the reasoning hint after other
+// text, is a hint row and is held to the hint grammar.
+function isTerminalHintRow(line: string): boolean {
+  return /\S\s+ctrl\+t\b/u.test(line) ||
+    line.split('·').some((cell) => FOOTER_HINTS.has(cell.trim().replace(/\s+/gu, ' ')))
+}
 const FOOTER_MODEL = /^(?:Auto$|Claude\b|Copilot\b|Gemini\b|GPT(?:\b|-)|Grok\b|MAI\b|o\d\b|Raptor\b)/iu
 const FOOTER_MODEL_FAMILIES = ['Auto', 'Claude', 'Copilot', 'Gemini', 'GPT', 'Grok', 'MAI', 'o', 'Raptor']
 
@@ -2798,10 +2806,12 @@ function isTerminalComposerFooter(lines: string[]): boolean {
     // A version-led row that is not an exact update footer is never chrome,
     // even when it also carries familiar command hints.
     if (/^\s*v\d/u.test(line) && !availableUpdate) return false
-    // A row with the reasoning hint after other text is the one-row footer,
-    // judged by its grammar alone rather than by the looser hint patterns.
-    if (/\S\s+ctrl\+t\b/u.test(line)) {
-      return isTerminalCompactHintFooter(line) || isTerminalWorkspaceFooter(line)
+    // Hint rows are judged by the hint grammar alone rather than by the looser
+    // patterns below, so reordered or unknown cells refuse input.
+    if (isTerminalHintRow(line)) {
+      return isTerminalCompactHintFooter(line) ||
+        isTerminalWorkspaceFooter(line) ||
+        /^\s*\/\s*commands\s*$/u.test(line)
     }
     // Nothing the update footer draws continues below it, so an arrow-led
     // line there is not footer chrome.

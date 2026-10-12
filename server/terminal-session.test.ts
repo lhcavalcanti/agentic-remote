@@ -672,6 +672,10 @@ describe('TmuxTerminalSessionController', () => {
     ' / commands · Interactive · Allow All       ctrl+t show reasoning · GPT-6.1 Sol',
     ' Interactive · Allow All · ? help · / commands   ctrl+t show reasoning · GPT-6.1 Sol',
     ' / commands · Interactive · A ctrl+t show reasoning · GPT-',
+    ' / commands · Interactive · Allow All',
+    ' Allow All · Interactive',
+    ' ← open sidebar · Unknown view · / commands',
+    ' / commands · Deploy now',
     ' Interactive',
     ' Interactive · Allow All · / commands\nUnrelated output',
   ])('refuses one-row footer lookalikes without input: %s', async (footer) => {

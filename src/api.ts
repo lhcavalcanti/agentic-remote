@@ -28,6 +28,8 @@ import type {
   SendMessageInput,
   SessionKnowledgeBinding,
   SessionFileUpload,
+  SideQuestionAnswer,
+  SideQuestionInput,
   SlashCommand,
   UpdateSessionKnowledgeRootInput,
   UserInputReplyInput,
@@ -931,6 +933,22 @@ export async function cancelSession(
     method: 'POST',
     body: '{}',
   })
+}
+
+/** Answers a question from the session's conversation without prompting it. */
+export async function askSession(
+  computerId: string,
+  sessionId: string,
+  question: string,
+): Promise<string> {
+  const response = await request<SideQuestionAnswer>(
+    `${sessionPath(computerId, sessionId)}/ask`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ question } satisfies SideQuestionInput),
+    },
+  )
+  return response.answer
 }
 
 export async function listBackgroundTasks(

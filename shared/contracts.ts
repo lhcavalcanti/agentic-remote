@@ -14,6 +14,8 @@ export interface AgentProviderCapability {
   supportsQueuedPromptDispatch?: boolean
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
+  /** Answers side questions about a session without prompting it. */
+  supportsSideQuestions?: boolean
   unavailableReason?: string
 }
 
@@ -484,6 +486,14 @@ export interface CreateSessionInput {
   contextTier?: 'default' | 'long_context'
   /** A session started without one is Interactive. */
   mode?: AgentMode
+}
+
+export interface SideQuestionInput {
+  question: string
+}
+
+export interface SideQuestionAnswer {
+  answer: string
 }
 
 export interface SendMessageInput {

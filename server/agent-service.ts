@@ -104,6 +104,14 @@ import {
   sessionEventLogVersion,
   sessionWorkspaceVersion,
 } from './event-log.js'
+import {
+  SIDE_QUESTION_MAX_LENGTH,
+  SIDE_QUESTION_RUNTIME_IDLE_MS,
+  SIDE_QUESTION_TIMEOUT_MS,
+  SideQuestionError,
+  sideQuestionBoundary,
+  withSideQuestionTimeout,
+} from './side-question.js'
 import { listHomeDirectories,
   type DirectoryScope,
 } from './directory-browser.js'
@@ -252,6 +260,7 @@ export interface CopilotSessionLike {
     name: Pick<CopilotSession['rpc']['name'], 'set'>
     model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
+    ui?: Pick<CopilotSession['rpc']['ui'], 'ephemeralQuery'>
   }
 }
 
@@ -269,6 +278,7 @@ export interface CopilotClientLike extends CopilotResourceClient {
     models: Pick<CopilotClient['rpc']['models'], 'list'>
     skills?: Pick<CopilotClient['rpc']['skills'], 'discover'>
     mcp?: Pick<CopilotClient['rpc']['mcp'], 'discover'>
+    sessions?: Pick<CopilotClient['rpc']['sessions'], 'fork'>
   }
 }
 
@@ -1677,6 +1687,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingTerminalPromptDispatches = new Map<string, string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
+  private sideQuestionTimeoutMs = SIDE_QUESTION_TIMEOUT_MS
+  private sideQuestionIdleMs = SIDE_QUESTION_RUNTIME_IDLE_MS
+  private sideQuestionRuntime?: {
+    client: CopilotClientLike
+    started: Promise<void>
+    active: number
+    idleTimer?: ReturnType<typeof setTimeout>
+  }
   private readonly backgroundTaskTracker = new BackgroundTaskTracker()
   private readonly backgroundTaskSyncs = new Map<
     string,
@@ -1890,6 +1908,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       new TmuxTerminalSessionController(),
     private readonly workspaceReader = readSessionWorkspaceMetadata,
     private readonly workspaceVersion = sessionWorkspaceVersion,
+    // Side questions fork through a runtime of their own. One that has the
+    // source session loaded records the fork in that session's history.
+    private readonly sideQuestionClientFactory: () => CopilotClientLike = () =>
+      new CopilotClient({
+        connection: RuntimeConnection.forStdio({
+          path: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
+        }),
+        logLevel: 'error',
+        useLoggedInUser: true,
+      }),
   ) {
     super()
     this.client = client
@@ -1908,8 +1936,116 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsQueuedPromptDispatch: true,
         supportsSessionResources: true,
         supportsContextRecovery: true,
+        supportsSideQuestions: true,
       },
     ]
+  }
+
+  /**
+   * Answers a question from a session's conversation without prompting it.
+   *
+   * The saved history is forked into a temporary SDK session, so neither an
+   * SDK session nor a tmux one is touched; a turn still under way is left out
+   * of the fork, since a question asked over it is answered as that turn.
+   * Discovery waits while the fork exists, and the fork is always deleted.
+   */
+  async askSession(id: string, question: string): Promise<string> {
+    const text = question.trim()
+    if (!text) throw new SideQuestionError('Ask a question first.', 400)
+    if (text.length > SIDE_QUESTION_MAX_LENGTH) {
+      throw new SideQuestionError(
+        `Side questions are limited to ${SIDE_QUESTION_MAX_LENGTH} characters.`,
+        400,
+      )
+    }
+    if (this.stopped) throw new SideQuestionError('The session service is stopping', 503)
+    if (!this.store.get(id)) throw new SideQuestionError('Session not found', 404)
+    const boundary = sideQuestionBoundary(await this.sessionEventReader(id))
+    return this.runSessionCreation(() => this.withSideQuestionClient(async (client) => {
+      const fork = client.rpc.sessions?.fork
+      if (!fork) {
+        throw new SideQuestionError(
+          'Side questions need a newer GitHub Copilot on this computer.',
+          501,
+        )
+      }
+      let forkId: string | undefined
+      let forked: CopilotSessionLike | undefined
+      try {
+        forkId = (await fork({
+          sessionId: id,
+          ...(boundary ? { toEventId: boundary } : {}),
+        })).sessionId
+        this.deletedSessionIds.add(forkId)
+        forked = await client.resumeSession(forkId, {
+          streaming: false,
+          onPermissionRequest: () => ({ kind: 'user-not-available' }),
+        })
+        const ask = forked.rpc.ui?.ephemeralQuery
+        if (!ask) {
+          throw new SideQuestionError(
+            'Side questions need a newer GitHub Copilot on this computer.',
+            501,
+          )
+        }
+        const { answer } = await withSideQuestionTimeout(
+          ask({ question: text }),
+          this.sideQuestionTimeoutMs,
+        )
+        return answer
+      } finally {
+        await forked?.disconnect().catch(() => undefined)
+        if (forkId) {
+          await client.deleteSession(forkId).catch((error: unknown) => {
+            console.error(`Could not delete side-question fork ${forkId}`, error)
+          })
+        }
+      }
+    }))
+  }
+
+  /** Runs with the side-question runtime, starting it if it is not running. */
+  private async withSideQuestionClient<T>(
+    run: (client: CopilotClientLike) => Promise<T>,
+  ): Promise<T> {
+    let runtime = this.sideQuestionRuntime
+    if (!runtime) {
+      const client = this.sideQuestionClientFactory()
+      const started = client.start()
+      runtime = { client, started, active: 0 }
+      this.sideQuestionRuntime = runtime
+      const current = runtime
+      started.catch(() => {
+        if (this.sideQuestionRuntime === current) this.sideQuestionRuntime = undefined
+      })
+    }
+    if (runtime.idleTimer) clearTimeout(runtime.idleTimer)
+    runtime.idleTimer = undefined
+    runtime.active += 1
+    try {
+      await runtime.started
+      return await run(runtime.client)
+    } finally {
+      runtime.active -= 1
+      if (!runtime.active && this.sideQuestionRuntime === runtime && !this.stopped) {
+        const idle = runtime
+        idle.idleTimer = setTimeout(() => void this.closeSideQuestionRuntime(idle), this.sideQuestionIdleMs)
+        idle.idleTimer.unref?.()
+      }
+    }
+  }
+
+  private async closeSideQuestionRuntime(
+    runtime = this.sideQuestionRuntime,
+  ): Promise<void> {
+    if (!runtime || runtime.active) return
+    if (this.sideQuestionRuntime === runtime) this.sideQuestionRuntime = undefined
+    if (runtime.idleTimer) clearTimeout(runtime.idleTimer)
+    const started = await runtime.started.then(() => true, () => false)
+    if (started) {
+      const errors = await runtime.client.stop().catch((error: unknown) => [error])
+      if (errors.length) console.error('Could not stop the side-question runtime', errors)
+    }
   }
 
   start(): Promise<void> {
@@ -2240,6 +2376,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.backgroundTaskResyncNeeded.clear()
     this.backgroundTaskGenerations.clear()
     await Promise.all([...this.sessionCreations])
+    await this.closeSideQuestionRuntime()
     await Promise.all([...this.lifecycleLocks.values()])
     await Promise.allSettled([...this.queueOperations.values()])
     const admissionSettlements = await Promise.allSettled(

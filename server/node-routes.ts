@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { SIDE_QUESTION_MAX_LENGTH } from './side-question.js'
 import type { ServerEvent } from '../shared/contracts.js'
 import {
   FileUploadError,
@@ -19,6 +20,10 @@ import {
 
 export const AUDIO_FILENAME_HEADER = 'x-agentic-audio-filename'
 export const AUDIO_TYPE_HEADER = 'x-agentic-audio-type'
+
+const sideQuestionSchema = z.object({
+  question: z.string().trim().min(1).max(SIDE_QUESTION_MAX_LENGTH),
+})
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
@@ -538,6 +543,20 @@ export async function registerNodeRoutes(
         async (request, reply) => {
           await service.cancel(request.params.sessionId)
           return reply.code(202).send({ ok: true })
+        },
+      )
+
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/ask',
+        async (request) => {
+          const input = sideQuestionSchema.parse(request.body)
+          if (!service.askSession) {
+            throw Object.assign(
+              new Error('Side questions are not available on this computer.'),
+              { statusCode: 501 },
+            )
+          }
+          return { answer: await service.askSession(request.params.sessionId, input.question) }
         },
       )
 

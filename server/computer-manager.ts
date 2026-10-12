@@ -905,6 +905,23 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     await this.requireClient(computerId).cancel(sessionId)
   }
 
+  async askSession(
+    computerId: string,
+    sessionId: string,
+    question: string,
+  ): Promise<string> {
+    if (computerId === this.identity.info.id) {
+      if (!this.localService.askSession) {
+        throw Object.assign(
+          new Error('Side questions are not available on this computer.'),
+          { statusCode: 501 },
+        )
+      }
+      return this.localService.askSession(sessionId, question)
+    }
+    return this.requireClient(computerId).askSession(sessionId, question)
+  }
+
   async listBackgroundTasks(
     computerId: string,
     sessionId: string,

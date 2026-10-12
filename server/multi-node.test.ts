@@ -47,6 +47,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   lastCreateReasoningEffort?: RuntimeReasoningEffort
   lastCreateContextTier?: 'default' | 'long_context'
   lastCreateMode?: AgentMode
+  lastSideQuestion?: { sessionId: string; question: string }
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
   readonly backgroundTaskSnapshots = new Map<string, BackgroundTaskSnapshot>()
 
@@ -476,6 +477,11 @@ class FakeSessionService extends EventEmitter implements SessionService {
   }
 
   async cancel() {}
+
+  async askSession(sessionId: string, question: string): Promise<string> {
+    this.lastSideQuestion = { sessionId, question }
+    return `Remote answer: ${question}`
+  }
 
   async listBackgroundTasks(
     sessionId: string,
@@ -1233,6 +1239,26 @@ describe('multi-node hub', () => {
       })
       expect(created.statusCode, created.body).toBe(201)
       expect(remoteService.lastCreateMode).toBe('plan')
+      const asked = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/ask`,
+        payload: { question: '  What changed?  ' },
+      })
+      expect(asked.statusCode, asked.body).toBe(200)
+      expect(asked.json()).toEqual({ answer: 'Remote answer: What changed?' })
+      expect(remoteService.lastSideQuestion).toEqual({
+        sessionId: 'remote-session',
+        question: 'What changed?',
+      })
+      for (const question of ['   ', 'x'.repeat(4_001)]) {
+        const refused = await hub.app.inject({
+          method: 'POST',
+          url: `/api/computers/${remoteComputerId}/sessions/remote-session/ask`,
+          payload: { question },
+        })
+        expect(refused.statusCode).toBe(400)
+      }
+      expect(remoteService.lastSideQuestion?.question).toBe('What changed?')
       const unknownMode = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions`,

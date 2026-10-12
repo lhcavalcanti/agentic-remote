@@ -326,6 +326,19 @@ export class ProviderSessionService
     return this.serviceFor(sessionId).cancel(sessionId)
   }
 
+  askSession(sessionId: string, question: string): Promise<string> {
+    const service = this.serviceFor(sessionId)
+    const provider = service.getSession(sessionId)?.provider || 'copilot'
+    if (!service.askSession || !service.providers().some((capability) =>
+      capability.id === provider && capability.supportsSideQuestions === true)) {
+      return Promise.reject(Object.assign(
+        new Error('Side questions are available for GitHub Copilot sessions only.'),
+        { statusCode: 400 },
+      ))
+    }
+    return service.askSession(sessionId, question)
+  }
+
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot> {
     return this.serviceFor(sessionId).listBackgroundTasks(sessionId)
   }

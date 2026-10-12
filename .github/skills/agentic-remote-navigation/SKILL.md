@@ -99,6 +99,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Claude Agent lifecycle | `server/claude-agent-service.ts` |
 | Provider aggregation | `server/provider-session-service.ts` |
 | Session persistence | `server/session-store.ts` |
+| Side questions (`/ask`) | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Copilot event log reading | `server/event-log.ts` |
 | tmux behavior | `server/terminal-session.ts` |
 | Hub routes and origin policy | `server/hub-routes.ts` |

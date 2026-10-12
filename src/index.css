@@ -2142,7 +2142,8 @@ button {
   font-size: 11px;
 }
 
-.knowledge-toggle {
+.knowledge-toggle,
+.side-question-toggle {
   display: inline-flex;
   width: auto;
   flex: 0 0 auto;
@@ -4714,6 +4715,124 @@ button {
   margin-bottom: 24px;
 }
 
+/* A side question is an aside to the conversation, so its answers hang off a
+   dashed margin rule rather than looking like transcript messages. */
+.dialog.side-question-dialog {
+  display: flex;
+  width: min(100%, 620px);
+  max-height: min(760px, calc(var(--visual-viewport-height, 100dvh) - 36px));
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.side-question-dialog .dialog__header {
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+}
+
+.side-question-dialog__intro {
+  flex: 0 0 auto;
+  margin: 0 0 14px;
+}
+
+.side-question-list {
+  display: flex;
+  min-height: 0;
+  margin: 0 0 16px;
+  padding: 0 4px 0 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.side-question {
+  padding: 2px 0 2px 14px;
+  border-left: 2px dashed var(--border-strong);
+}
+
+.side-question--answered {
+  border-left-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+}
+
+.side-question--failed {
+  border-left-color: var(--danger);
+}
+
+.side-question__question {
+  display: flex;
+  margin: 0 0 8px;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.side-question__question svg {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.side-question__thinking {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.side-question__failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.side-question__failure .form-error {
+  margin: 0;
+}
+
+.side-question-form {
+  flex: 0 0 auto;
+}
+
+.side-question-form textarea {
+  width: 100%;
+  min-height: 76px;
+  max-height: 180px;
+  padding: 10px 12px;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  outline: 0;
+  background: var(--bg);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.side-question-form textarea:focus {
+  border-color: var(--accent-focus);
+}
+
+.side-question-form__actions {
+  display: flex;
+  margin-top: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .dialog.session-resources-dialog {
   display: flex;
   width: min(100%, 720px);
@@ -5032,6 +5151,11 @@ button {
 @media (max-width: 960px) {
   .dialog.session-resources-dialog {
     height: min(720px, calc(var(--visual-viewport-height, 100dvh) - 8px));
+    padding: 16px;
+  }
+
+  .dialog.side-question-dialog {
+    max-height: calc(var(--visual-viewport-height, 100dvh) - 8px);
     padding: 16px;
   }
 }
@@ -6516,7 +6640,8 @@ button {
     display: none;
   }
 
-  .knowledge-toggle {
+  .knowledge-toggle,
+  .side-question-toggle {
     padding: 0;
   }
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { SIDE_QUESTION_MAX_LENGTH } from './side-question.js'
 import type {
   HubEvent,
   SessionOrderSnapshot,
@@ -34,6 +35,10 @@ const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
   token: z.string().trim().min(1).max(500),
   name: z.string().trim().min(1).max(100).optional(),
+})
+
+const sideQuestionSchema = z.object({
+  question: z.string().trim().min(1).max(SIDE_QUESTION_MAX_LENGTH),
 })
 
 const createSessionSchema = z.object({
@@ -986,6 +991,20 @@ export async function registerHubRoutes(
     async (request, reply) => {
       await manager.cancel(request.params.computerId, request.params.sessionId)
       return reply.code(202).send({ ok: true })
+    },
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/ask',
+    async (request) => {
+      const input = sideQuestionSchema.parse(request.body)
+      return {
+        answer: await manager.askSession(
+          request.params.computerId,
+          request.params.sessionId,
+          input.question,
+        ),
+      }
     },
   )
 

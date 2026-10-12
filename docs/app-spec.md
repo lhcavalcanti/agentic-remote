@@ -331,6 +331,26 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   layouts. Loading, empty, unavailable and error states MUST remain actionable;
   viewing metadata MUST NOT dismiss an unanswered agent question or permission.
 
+### 3.6 Side questions
+
+- A Copilot session MUST offer **Ask** in its header, and `/ask` or `/btw` in
+  the composer, when its owning computer advertises side questions. Other
+  providers and computers that do not advertise them MUST NOT offer it.
+- The owning computer MUST answer from the session's saved conversation
+  through its Copilot SDK, without tools. A side question MUST NOT send or
+  queue a prompt, type into a tmux pane, add to the session's history, or
+  change its status, whether the session is SDK- or tmux-backed.
+- The saved history is forked into a temporary session that is deleted
+  afterwards. The fork MUST NOT appear in session lists or history. While a
+  turn is unfinished, the fork MUST stop before that turn's first prompt, so the
+  question is not answered as that prompt.
+- Questions are limited to 4,000 characters and two minutes. A failure MUST be
+  shown beside its question with a retry and MUST NOT affect the session.
+- Answers belong to the page: kept per session until reload, discarded when the
+  session is closed, and never persisted or sent elsewhere.
+- Return MUST follow the composer: it asks on a desktop and inserts a newline
+  on a phone, where **Ask** sends; Ctrl/Cmd+Enter asks on either.
+
 ## 4. Conversation timeline
 
 - User messages, assistant messages, notices, and tool activity MUST remain in
@@ -1194,6 +1214,7 @@ Every material release SHOULD preserve:
 - Session-rooted path confinement and remote routing
 - Markdown, PDF, search, reading mode, and Knowledge folders
 - Numeric context and Interactive/Plan/Autopilot runtime controls
+- Side questions answered without prompting or changing the session
 - Dynamic Island and home-indicator safe areas
 - Bundle-only PWA update detection
 
@@ -1204,6 +1225,7 @@ Every material release SHOULD preserve:
 | UI, composer, workspace, Knowledge | `src/App.tsx`, `src/index.css` |
 | Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
 | Session-actions disclosure | `src/SessionActions.tsx` |
+| Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Browser API client | `src/api.ts` |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |

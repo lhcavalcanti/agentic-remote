@@ -104,6 +104,8 @@ export interface SessionService {
     replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
+  /** Answers a side question from the conversation without prompting it. */
+  askSession?(sessionId: string, question: string): Promise<string>
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>
   cancelBackgroundTask(
     sessionId: string,

@@ -62,6 +62,7 @@ import {
   ListPlus,
   Maximize2,
   Menu,
+  MessageCircleQuestion,
   MessageSquare,
   Minimize2,
   Mic,
@@ -144,6 +145,10 @@ import {
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
 import { remarkSafeBreaks } from './remark-safe-breaks'
+import { SideQuestionDialog } from './SideQuestions'
+import { sideQuestionCommand } from './side-question-command'
+import { phoneEnterCreatesNewline } from './enter-behavior'
+import type { SideQuestionEntry } from './SideQuestions'
 import type {
   AgentMode,
   AgentProvider,
@@ -186,6 +191,7 @@ import {
   activateSession,
   addComputer,
   cancelBackgroundTask,
+  askSession,
   cancelSession,
   clearConversation,
   recoverConversation,
@@ -338,13 +344,6 @@ const messageDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 })
-
-function phoneEnterCreatesNewline(): boolean {
-  return (
-    window.matchMedia?.('(pointer: coarse)').matches ||
-    window.innerWidth <= 960
-  )
-}
 
 function slashShortcut(value: string): string {
   const parts = value.split(/[-_]/)
@@ -1849,6 +1848,13 @@ const webCommands: SlashCommand[] = [
     name: 'restart',
     description: 'Restart Copilot while preserving this conversation',
     allowDuringAgentExecution: false,
+  },
+  {
+    name: 'ask',
+    aliases: ['btw'],
+    description: 'Ask a side question without sending it to the session',
+    inputHint: '<question>',
+    allowDuringAgentExecution: true,
   },
   ...sessionResourceCommands,
 ]
@@ -6424,6 +6430,11 @@ function App() {
   >(undefined)
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
+  // Side questions belong to the session they were asked about and live only
+  // as long as this page: they are never part of the conversation.
+  const [sideQuestionKey, setSideQuestionKey] = useState<string>()
+  const [sideQuestions, setSideQuestions] = useState<Record<string, SideQuestionEntry[]>>({})
+  const sideQuestionIdRef = useRef(0)
   const [resourcesView, setResourcesView] = useState<SessionResourcesView>()
   const resourcesViewId = useRef(0)
   const closeSessionResources = useCallback(() => setResourcesView(undefined), [])
@@ -7552,12 +7563,20 @@ function App() {
     binding: shortcutOverrides[entry.id] || entry.binding,
   }))
 
+  const selectedSupportsSideQuestions = Boolean(selected) && computerProviders(
+    computers.find((computer) => computer.id === selected?.computerId),
+  ).find((provider) => provider.id === (selected?.provider || 'copilot'))
+    ?.supportsSideQuestions === true
+  const sideQuestionOpen = Boolean(
+    selected && sideQuestionKey === sessionKey(selected) && selectedSupportsSideQuestions,
+  )
   const hasBlockingUi =
     newSessionOpen ||
     computersOpen ||
     statuslineOpen ||
     settingsOpen ||
     runtimeOpen ||
+    sideQuestionOpen ||
     Boolean(resourcesView) ||
     (renameOpen && Boolean(selected)) ||
     (cwdOpen && Boolean(selected)) ||
@@ -9172,7 +9191,7 @@ function App() {
             ...webCommands.filter(
               (webCommand) =>
                 (selected?.provider !== 'claude' ||
-                  webCommand.name !== 'cwd') &&
+                  (webCommand.name !== 'cwd' && webCommand.name !== 'ask')) &&
                 !nativeCommands.some(
                   (command) => command.name === webCommand.name,
                 ),
@@ -10855,6 +10874,7 @@ function App() {
       [settingsOpen, () => setSettingsOpen(false)],
       [statuslineOpen, () => setStatuslineOpen(false)],
       [runtimeOpen, () => setRuntimeOpen(false)],
+      [sideQuestionOpen, () => setSideQuestionKey(undefined)],
       [backgroundTasksOpen, () => setBackgroundTasksOpen(false)],
       [renameOpen, () => setRenameOpen(false)],
       [cwdOpen, () => setCwdOpen(false)],
@@ -11642,6 +11662,39 @@ function App() {
     setError(undefined)
   }
 
+  async function askSideQuestion(session: ManagedSession, question: string) {
+    const key = sessionKey(session)
+    const id = `side-question-${++sideQuestionIdRef.current}`
+    const settle = (change: Partial<SideQuestionEntry>) =>
+      setSideQuestions((current) => current[key]
+        ? {
+            ...current,
+            [key]: current[key].map((entry) => entry.id === id ? { ...entry, ...change } : entry),
+          }
+        : current)
+    setSideQuestions((current) => ({
+      ...current,
+      [key]: [...(current[key] || []), { id, question, status: 'pending' as const }].slice(-20),
+    }))
+    try {
+      settle({ status: 'answered', answer: await askSession(session.computerId, session.id, question) })
+    } catch (caught) {
+      settle({
+        status: 'failed',
+        error: caught instanceof Error ? caught.message : String(caught),
+      })
+    }
+  }
+
+  function openSideQuestion(question = '') {
+    if (!selected || !selectedSupportsSideQuestions) return
+    setSideQuestionKey(sessionKey(selected))
+    if (question && selectedComputerOnline &&
+      !sideQuestions[sessionKey(selected)]?.some((entry) => entry.status === 'pending')) {
+      void askSideQuestion(selected, question)
+    }
+  }
+
   function openSessionResources(tab: SessionResourceTab, filter = '') {
     if (!selected || !stillListed(selected)) {
       setError('Choose an available session before inspecting its resources.')
@@ -11922,6 +11975,16 @@ function App() {
       settleSubmission()
       reofferFailedPrompt(targetKey)
       openSessionResources(resourceCommand.tab, resourceCommand.filter)
+      return
+    }
+    // Answered beside the session, never by it: a tmux pane would open its own
+    // modal for `/ask`, and an SDK session would take it as a prompt.
+    const sideQuestion = selectedSupportsSideQuestions ? sideQuestionCommand(content) : undefined
+    if (sideQuestion) {
+      consumeLocalCommand()
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
+      openSideQuestion(sideQuestion.question)
       return
     }
     const command = isCommand
@@ -13583,6 +13646,10 @@ function App() {
       // Drafts are cleared for a closed session, and so is everything the
       // knowledge panel remembered about it.
       forgetKnowledgeSession(closedKey)
+      setSideQuestions((current) => {
+        const { [closedKey]: _closed, ...remaining } = current
+        return remaining
+      })
       // The list and the selection may both have moved on while the delete was
       // in flight, so the removal applies to what is current now.
       const withoutClosed = (current: ManagedSession[]) =>
@@ -14229,6 +14296,20 @@ function App() {
             <BookOpen size={18} />
             <span className="header-action-label">Knowledge</span>
           </button>
+          {selected && selectedSupportsSideQuestions ? (
+            <button
+              aria-label="Ask a side question"
+              className={`icon-button side-question-toggle ${
+                sideQuestionOpen ? 'icon-button--active' : ''
+              }`}
+              onClick={() => openSideQuestion()}
+              title="Ask about this session without sending it a prompt (/ask)"
+              type="button"
+            >
+              <MessageCircleQuestion size={18} />
+              <span className="header-action-label">Ask</span>
+            </button>
+          ) : null}
           <button
             aria-label="New session"
             className="icon-button"
@@ -15317,6 +15398,26 @@ function App() {
         updateRegistration={updateRegistration}
         updatingApp={updatingApp}
       />
+      {sideQuestionOpen && selected ? (
+        <SideQuestionDialog
+          entries={sideQuestions[sessionKey(selected)] || []}
+          markdownComponents={mermaidComponents}
+          onAsk={(question) => void askSideQuestion(selected, question)}
+          onClose={() => setSideQuestionKey(undefined)}
+          onRetry={(entry) => {
+            const key = sessionKey(selected)
+            setSideQuestions((current) => ({
+              ...current,
+              [key]: (current[key] || []).filter((candidate) => candidate.id !== entry.id),
+            }))
+            void askSideQuestion(selected, entry.question)
+          }}
+          sessionTitle={selected.title}
+          unavailableReason={selectedComputerOnline
+            ? undefined
+            : `Reconnect ${selected.computerName} to ask about this session.`}
+        />
+      ) : null}
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}
         onConfigured={(session) => {

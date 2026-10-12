@@ -218,6 +218,9 @@ matrix.
 - **Open previous**: resume provider history known to Agentic Remote.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
+- **Ask**: use the header button or `/ask` (`/btw`) to ask a quick side question
+  about a Copilot session. The owning computer answers from the conversation
+  without tools; nothing is sent to the session or saved.
 - **Runtime**: configure supported model, effort, context, and mode options.
 - **Background tasks**: inspect live task progress, output, errors, timestamps,
   and cancel supported tasks from the session header.

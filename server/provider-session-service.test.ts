@@ -15,6 +15,7 @@ function provider(id: AgentProvider, supported = true) {
       id, name: id, available: true, terminalBacked: false,
       ...(supported ? { supportsQueuedPromptDispatch: true } : {}),
       supportsContextRecovery: id === 'copilot' && supported,
+      supportsSideQuestions: id === 'copilot' && supported,
     }],
     dispatchQueuedPrompt: vi.fn(async (_sessionId: string, promptId: string, _content: string) => ({
       outcome: 'sent' as const, promptId, attemptId: '11111111-1111-4111-8111-111111111111', session,
@@ -22,6 +23,7 @@ function provider(id: AgentProvider, supported = true) {
     removeQueuedPrompt: vi.fn(async () => ({
       session, prompt: { id: 'prompt', content: 'original', createdAt: session.updatedAt },
     })),
+    askSession: vi.fn(async (_sessionId: string, question: string) => `Answer: ${question}`),
     recoverConversation: vi.fn(async () => ({
       ...session,
       id: `${id}-recovered`,
@@ -76,5 +78,29 @@ describe('provider queued dispatch aggregation', () => {
     )
     expect(() => aggregate.recoverConversation('claude-session', 'manual'))
       .toThrow('does not support conversation recovery')
+  })
+
+  it('routes side questions only to a provider that advertises them', async () => {
+    const copilot = provider('copilot')
+    const claude = provider('claude')
+    const aggregate = new ProviderSessionService(
+      copilot as unknown as SessionService,
+      claude as unknown as SessionService,
+    )
+
+    await expect(aggregate.askSession('copilot-session', 'Why?')).resolves.toBe('Answer: Why?')
+    expect(copilot.askSession).toHaveBeenCalledExactlyOnceWith('copilot-session', 'Why?')
+    await expect(aggregate.askSession('claude-session', 'Why?')).rejects.toMatchObject({
+      statusCode: 400,
+      message: 'Side questions are available for GitHub Copilot sessions only.',
+    })
+    expect(claude.askSession).not.toHaveBeenCalled()
+
+    const unadvertised = provider('copilot', false)
+    await expect(new ProviderSessionService(
+      unadvertised as unknown as SessionService,
+      claude as unknown as SessionService,
+    ).askSession('copilot-session', 'Why?')).rejects.toMatchObject({ statusCode: 400 })
+    expect(unadvertised.askSession).not.toHaveBeenCalled()
   })
 })

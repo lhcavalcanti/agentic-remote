@@ -2607,6 +2607,72 @@ function isTerminalModelFooter(line: string, previousLine = ''): boolean {
   )
 }
 
+// The hint cells in the order Copilot draws them; each slot appears at most
+// once, and only the mode and permission slots have alternatives.
+const FOOTER_HINT_SLOTS = [
+  ['← open sidebar'],
+  ['Interactive', 'Plan', 'Autopilot'],
+  ['Allow All', 'Manual Approval'],
+  ['/ commands'],
+  ['? help'],
+  ['tab next tab'],
+]
+const FOOTER_HINTS = new Set(FOOTER_HINT_SLOTS.flat())
+const FOOTER_REASONING = 'ctrl+t show reasoning'
+
+// A row that names any hint cell, or carries the reasoning hint after other
+// text, is a hint row and is held to the hint grammar.
+function isTerminalHintRow(line: string): boolean {
+  return /\S\s+ctrl\+t\b/u.test(line) ||
+    line.split('·').some((cell) => FOOTER_HINTS.has(cell.trim().replace(/\s+/gu, ' ')))
+}
+const FOOTER_MODEL = /^(?:Auto$|Claude\b|Copilot\b|Gemini\b|GPT(?:\b|-)|Grok\b|MAI\b|o\d\b|Raptor\b)/iu
+const FOOTER_MODEL_FAMILIES = ['Auto', 'Claude', 'Copilot', 'Gemini', 'GPT', 'Grok', 'MAI', 'o', 'Raptor']
+
+// The reasoning hint, cut short, or followed by a model that may itself be cut.
+function isFooterReasoningModel(text: string): boolean {
+  if (FOOTER_REASONING.startsWith(text)) return text.startsWith('ctrl+t')
+  if (!text.startsWith(FOOTER_REASONING)) return false
+  const rest = text.slice(FOOTER_REASONING.length)
+  if (rest === ' ·') return true
+  if (!rest.startsWith(' · ')) return false
+  const model = rest.slice(3)
+  return FOOTER_MODEL.test(model) ||
+    (model.length < 7 && FOOTER_MODEL_FAMILIES.some((family) =>
+      family.toLowerCase().startsWith(model.toLowerCase())))
+}
+
+/**
+ * Whether a footer row is hint cells followed by the model, as Copilot fits
+ * them on one row.
+ *
+ * At narrower widths it drops hint cells, and cuts the last hint and the
+ * model mid-word. Every hint must still be a known cell in Copilot's order,
+ * each slot at most once, and only the last may be cut short.
+ */
+function isTerminalCompactHintFooter(line: string): boolean {
+  const trimmed = line.trim().replace(/\s+/gu, ' ')
+  if (!trimmed || trimmed.length > 240) return false
+  const modelAt = trimmed.search(/(?:^|\s)ctrl\+t(?:\s|$)/u)
+  const hints = modelAt < 0 ? trimmed : trimmed.slice(0, modelAt).trim()
+  const model = modelAt < 0 ? '' : trimmed.slice(modelAt).trim()
+  if (model && !isFooterReasoningModel(model)) return false
+  const cells = hints ? hints.split('·').map((cell) => cell.trim()).filter(Boolean) : []
+  // Hints alone, without the model beside them, need more than one cell to be
+  // told apart from a stray word.
+  if (!cells.length || (!model && cells.length < 2)) return false
+  let slot = -1
+  for (const [index, cell] of cells.entries()) {
+    const last = index === cells.length - 1
+    const next = FOOTER_HINT_SLOTS.findIndex((candidates, position) =>
+      position > slot &&
+      candidates.some((candidate) => candidate === cell || (last && candidate.startsWith(cell))))
+    if (next < 0) return false
+    slot = next
+  }
+  return true
+}
+
 function isTerminalWorkspaceFooter(line: string): boolean {
   const trimmed = line.trim()
   return (
@@ -2740,6 +2806,13 @@ function isTerminalComposerFooter(lines: string[]): boolean {
     // A version-led row that is not an exact update footer is never chrome,
     // even when it also carries familiar command hints.
     if (/^\s*v\d/u.test(line) && !availableUpdate) return false
+    // Hint rows are judged by the hint grammar alone rather than by the looser
+    // patterns below, so reordered or unknown cells refuse input.
+    if (isTerminalHintRow(line)) {
+      return isTerminalCompactHintFooter(line) ||
+        isTerminalWorkspaceFooter(line) ||
+        /^\s*\/\s*commands\s*$/u.test(line)
+    }
     // Nothing the update footer draws continues below it, so an arrow-led
     // line there is not footer chrome.
     const chrome = isTerminalChrome(line) &&
@@ -2747,6 +2820,7 @@ function isTerminalComposerFooter(lines: string[]): boolean {
     return chrome ||
       isTerminalContextFooter(line) ||
       isTerminalModelFooter(line, lines[index - 1]) ||
+      isTerminalCompactHintFooter(line) ||
       isTerminalWorkspaceFooter(line) ||
       /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||

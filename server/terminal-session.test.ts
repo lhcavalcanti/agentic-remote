@@ -627,6 +627,65 @@ describe('TmuxTerminalSessionController', () => {
     })
   }, 15_000)
 
+  // Copilot 1.0.96 drops hint cells to keep the model on the same row, and
+  // cuts the last hint and the model mid-word at the narrowest widths.
+  it.each([
+    ' Interactive · Allow All · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Plan · Allow All · / commands              ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Autopilot · Allow All · / commands         ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Allow All · / command ctrl+t show reasoning · GPT-6.1 So',
+    ' Interactive · Allow All · / c ctrl+t show reasoning · GPT-',
+    ' Interactive · Allow All · / commands ctrl+t show reasoning · G',
+    ' Interactive · Allow All · / commands ctrl+t show reas',
+    ' ← open sidebar · Plan · Manual Approval · / commands          ctrl+t show reasoning · Claude Sonnet 5',
+    ' ← open sidebar · Interactive · Allow All · / commands · ? help · tab next tab',
+    ' Interactive · A ctrl+t show reasoning · GPT-',
+    ' Interactive · Allow All · / commands ctrl+t show reasoning · o',
+    ' Interactive · Allow All · / commands ctrl+t show reasoning · o3-mini',
+    ' Interactive · Allow All · / commands ctrl+t show reasoning ·',
+  ])('recognizes the one-row footer of Copilot 1.0.96: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    expect(await controller.send(sessionId, 'One-row footer proof', false)).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['One-row footer proof'], submits: ['enter'],
+    })
+  }, 15_000)
+
+  it.each([
+    ' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Interactive · / commands      ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Plan · / commands             ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Allow All · Manual Approval   ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Allow All · / cx ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · / c · Allow All      ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Allow All · / commands   ctrl+t show reasoning · Unknown footer',
+    ' Interactive · Allow All · / commands   ctrl+t delete everything',
+    ' Interactive · Allow All · / commands   ctrl+t show reasoning · Xy',
+    ' Allow All · Interactive · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
+    ' / commands · Interactive · Allow All       ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Allow All · ? help · / commands   ctrl+t show reasoning · GPT-6.1 Sol',
+    ' / commands · Interactive · A ctrl+t show reasoning · GPT-',
+    ' / commands · Interactive · Allow All',
+    ' Allow All · Interactive',
+    ' ← open sidebar · Unknown view · / commands',
+    ' / commands · Deploy now',
+    ' Interactive',
+    ' Interactive · Allow All · / commands\nUnrelated output',
+  ])('refuses one-row footer lookalikes without input: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+  })
+
   it.each([
     'ctrl+t show reasoning · Unknown footer',
     'ctrl+t show reasoning: GPT-5.6 Sol',

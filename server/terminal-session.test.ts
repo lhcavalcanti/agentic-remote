@@ -639,6 +639,10 @@ describe('TmuxTerminalSessionController', () => {
     ' Interactive · Allow All · / commands ctrl+t show reas',
     ' ← open sidebar · Plan · Manual Approval · / commands          ctrl+t show reasoning · Claude Sonnet 5',
     ' ← open sidebar · Interactive · Allow All · / commands · ? help · tab next tab',
+    ' Interactive · A ctrl+t show reasoning · GPT-',
+    ' Interactive · Allow All · / commands ctrl+t show reasoning · o',
+    ' Interactive · Allow All · / commands ctrl+t show reasoning · o3-mini',
+    ' Interactive · Allow All · / commands ctrl+t show reasoning ·',
   ])('recognizes the one-row footer of Copilot 1.0.96: %s', async (footer) => {
     const { controller, sessionId, output } = await deliveryFixture(
       false, undefined, undefined, footer, '', 'flat',
@@ -664,6 +668,10 @@ describe('TmuxTerminalSessionController', () => {
     ' Interactive · Allow All · / commands   ctrl+t show reasoning · Unknown footer',
     ' Interactive · Allow All · / commands   ctrl+t delete everything',
     ' Interactive · Allow All · / commands   ctrl+t show reasoning · Xy',
+    ' Allow All · Interactive · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
+    ' / commands · Interactive · Allow All       ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Allow All · ? help · / commands   ctrl+t show reasoning · GPT-6.1 Sol',
+    ' / commands · Interactive · A ctrl+t show reasoning · GPT-',
     ' Interactive',
     ' Interactive · Allow All · / commands\nUnrelated output',
   ])('refuses one-row footer lookalikes without input: %s', async (footer) => {

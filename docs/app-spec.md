@@ -480,9 +480,10 @@ Questions and permissions are the highest-priority UI state.
   a live composer.
 - A footer row that fits the hint cells and the reasoning/model hint on one
   line MUST remain recognizable when Copilot drops hint cells or cuts the last
-  hint or the model short to fit. Every hint MUST still be a known cell, with
-  at most one mode and one permission; unknown, repeated or cut-short earlier
-  cells, and an unknown model, MUST refuse input.
+  hint or the model short to fit. Such a row MUST be judged by that grammar
+  alone: every hint a known cell in Copilot's order, each slot at most once,
+  and only the last cut short. Unknown, repeated, reordered or cut-short
+  earlier cells, and an unknown model, MUST refuse input.
 - An exact downloaded-update notice and its wrapped continuation rows MUST
   NOT hide a readable composer or block terminal startup at any terminal width.
   The notice and the sidebar, mode, permission, help, and tab hint cells wrap

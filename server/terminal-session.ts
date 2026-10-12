@@ -2607,28 +2607,28 @@ function isTerminalModelFooter(line: string, previousLine = ''): boolean {
   )
 }
 
-const FOOTER_HINT_CELLS = [
-  '← open sidebar',
-  'Interactive',
-  'Plan',
-  'Autopilot',
-  'Allow All',
-  'Manual Approval',
-  '/ commands',
-  '? help',
-  'tab next tab',
+// The hint cells in the order Copilot draws them; each slot appears at most
+// once, and only the mode and permission slots have alternatives.
+const FOOTER_HINT_SLOTS = [
+  ['← open sidebar'],
+  ['Interactive', 'Plan', 'Autopilot'],
+  ['Allow All', 'Manual Approval'],
+  ['/ commands'],
+  ['? help'],
+  ['tab next tab'],
 ]
-const FOOTER_MODE_CELLS = new Set(['Interactive', 'Plan', 'Autopilot'])
-const FOOTER_PERMISSION_CELLS = new Set(['Allow All', 'Manual Approval'])
 const FOOTER_REASONING = 'ctrl+t show reasoning'
 const FOOTER_MODEL = /^(?:Auto$|Claude\b|Copilot\b|Gemini\b|GPT(?:\b|-)|Grok\b|MAI\b|o\d\b|Raptor\b)/iu
-const FOOTER_MODEL_FAMILIES = ['Auto', 'Claude', 'Copilot', 'Gemini', 'GPT', 'Grok', 'MAI', 'Raptor']
+const FOOTER_MODEL_FAMILIES = ['Auto', 'Claude', 'Copilot', 'Gemini', 'GPT', 'Grok', 'MAI', 'o', 'Raptor']
 
 // The reasoning hint, cut short, or followed by a model that may itself be cut.
 function isFooterReasoningModel(text: string): boolean {
   if (FOOTER_REASONING.startsWith(text)) return text.startsWith('ctrl+t')
-  if (!text.startsWith(`${FOOTER_REASONING} · `)) return false
-  const model = text.slice(FOOTER_REASONING.length + 3)
+  if (!text.startsWith(FOOTER_REASONING)) return false
+  const rest = text.slice(FOOTER_REASONING.length)
+  if (rest === ' ·') return true
+  if (!rest.startsWith(' · ')) return false
+  const model = rest.slice(3)
   return FOOTER_MODEL.test(model) ||
     (model.length < 7 && FOOTER_MODEL_FAMILIES.some((family) =>
       family.toLowerCase().startsWith(model.toLowerCase())))
@@ -2639,8 +2639,8 @@ function isFooterReasoningModel(text: string): boolean {
  * them on one row.
  *
  * At narrower widths it drops hint cells, and cuts the last hint and the
- * model mid-word. Every hint must still be a known cell, at most one mode and
- * one permission, and only the last may be cut short.
+ * model mid-word. Every hint must still be a known cell in Copilot's order,
+ * each slot at most once, and only the last may be cut short.
  */
 function isTerminalCompactHintFooter(line: string): boolean {
   const trimmed = line.trim().replace(/\s+/gu, ' ')
@@ -2653,19 +2653,16 @@ function isTerminalCompactHintFooter(line: string): boolean {
   // Hints alone, without the model beside them, need more than one cell to be
   // told apart from a stray word.
   if (!cells.length || (!model && cells.length < 2)) return false
-  const seen = new Set<string>()
-  let modes = 0
-  let permissions = 0
+  let slot = -1
   for (const [index, cell] of cells.entries()) {
     const last = index === cells.length - 1
-    const known = FOOTER_HINT_CELLS.find((candidate) =>
-      candidate === cell || (last && candidate.startsWith(cell)))
-    if (!known || seen.has(known)) return false
-    seen.add(known)
-    if (FOOTER_MODE_CELLS.has(known)) modes += 1
-    if (FOOTER_PERMISSION_CELLS.has(known)) permissions += 1
+    const next = FOOTER_HINT_SLOTS.findIndex((candidates, position) =>
+      position > slot &&
+      candidates.some((candidate) => candidate === cell || (last && candidate.startsWith(cell))))
+    if (next < 0) return false
+    slot = next
   }
-  return modes <= 1 && permissions <= 1
+  return true
 }
 
 function isTerminalWorkspaceFooter(line: string): boolean {
@@ -2801,6 +2798,11 @@ function isTerminalComposerFooter(lines: string[]): boolean {
     // A version-led row that is not an exact update footer is never chrome,
     // even when it also carries familiar command hints.
     if (/^\s*v\d/u.test(line) && !availableUpdate) return false
+    // A row with the reasoning hint after other text is the one-row footer,
+    // judged by its grammar alone rather than by the looser hint patterns.
+    if (/\S\s+ctrl\+t\b/u.test(line)) {
+      return isTerminalCompactHintFooter(line) || isTerminalWorkspaceFooter(line)
+    }
     // Nothing the update footer draws continues below it, so an arrow-led
     // line there is not footer chrome.
     const chrome = isTerminalChrome(line) &&

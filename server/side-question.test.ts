@@ -2,8 +2,27 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   SideQuestionError,
   sideQuestionBoundary,
+  sideQuestionPrompt,
   withSideQuestionTimeout,
 } from './side-question.js'
+
+describe('side question prompt', () => {
+  it('asks a first question as it was typed', () => {
+    expect(sideQuestionPrompt('What changed?')).toBe('What changed?')
+    expect(sideQuestionPrompt('What changed?', [])).toBe('What changed?')
+  })
+
+  it('carries earlier answers, oldest first, ahead of a follow-up', () => {
+    expect(sideQuestionPrompt('And then?', [
+      { question: 'First?', answer: 'One.' },
+      { question: 'Second?', answer: 'Two.' },
+    ])).toBe([
+      'Earlier side questions about this conversation, with your answers:',
+      'Question: First?\nAnswer: One.\n\nQuestion: Second?\nAnswer: Two.',
+      'Follow-up question: And then?',
+    ].join('\n\n'))
+  })
+})
 
 describe('side question boundary', () => {
   it('forks everything when no turn is unfinished', () => {

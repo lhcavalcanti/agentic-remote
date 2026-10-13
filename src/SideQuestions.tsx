@@ -1,13 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent } from 'react'
+import { useEffect, useRef } from 'react'
+import type { KeyboardEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { LoaderCircle, MessageCircleQuestion } from 'lucide-react'
-import { DialogFrame } from './components/DialogFrame'
+import { LoaderCircle, MessageCircleQuestion, X } from 'lucide-react'
 import { remarkSafeBreaks } from './remark-safe-breaks'
-import { SIDE_QUESTION_MAX_LENGTH } from '../shared/side-question'
-import { phoneEnterCreatesNewline } from './enter-behavior'
 
 export interface SideQuestionEntry {
   id: string
@@ -17,35 +14,35 @@ export interface SideQuestionEntry {
   error?: string
 }
 
-export function SideQuestionDialog({
-  sessionTitle,
+/**
+ * A session's side questions. While it is open the message bar asks here
+ * instead of messaging the session, and the draft typed for the session is
+ * left as it was.
+ */
+export interface SideThread {
+  open: boolean
+  draft: string
+  entries: SideQuestionEntry[]
+}
+
+/** The thread docked above the message bar while asking aside. */
+export function SideQuestionPanel({
   entries,
-  initialQuestion = '',
   unavailableReason,
   markdownComponents,
-  onAsk,
   onRetry,
+  onClear,
   onClose,
 }: {
-  sessionTitle: string
   entries: SideQuestionEntry[]
-  initialQuestion?: string
   unavailableReason?: string
   markdownComponents?: Components
-  onAsk: (question: string) => void
   onRetry: (entry: SideQuestionEntry) => void
+  onClear: () => void
   onClose: () => void
 }) {
-  const [question, setQuestion] = useState(initialQuestion)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLOListElement>(null)
   const pending = entries.some((entry) => entry.status === 'pending')
-  const trimmed = question.trim()
-  const canAsk = Boolean(trimmed) && !pending && !unavailableReason
-
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
 
   const latest = entries.at(-1)
   useEffect(() => {
@@ -53,39 +50,38 @@ export function SideQuestionDialog({
     if (list) list.scrollTop = list.scrollHeight
   }, [latest?.id, latest?.status])
 
-  function submit(event?: FormEvent) {
-    event?.preventDefault()
-    if (!canAsk) return
-    onAsk(trimmed)
-    setQuestion('')
-  }
-
-  // Return behaves as it does in the composer: it asks on a desktop and adds a
-  // line on a phone, where the Ask button sends.
-  const returnAddsLine = phoneEnterCreatesNewline()
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
-    if (event.ctrlKey || event.metaKey || (!returnAddsLine && !event.shiftKey)) {
-      event.preventDefault()
-      submit()
-    }
+  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape' || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    onClose()
   }
 
   return (
-    <DialogFrame
-      className="side-question-dialog"
-      eyebrow="Side question"
-      onClose={onClose}
-      title="Ask about this session"
-    >
-      <p className="dialog-message side-question-dialog__intro">
-        Answered from <strong>{sessionTitle}</strong>’s conversation without
-        tools. Nothing is sent to the session, and answers are gone when you
-        reload.
-      </p>
+    <section aria-label="Side questions" className="side-thread" onKeyDown={onKeyDown}>
+      <header className="side-thread__header">
+        <MessageCircleQuestion aria-hidden="true" className="side-thread__icon" size={15} />
+        <p className="side-thread__title">
+          <strong>Side questions</strong>
+          <span>Answered from this conversation. Nothing is sent to the session.</span>
+        </p>
+        {entries.length && !pending ? (
+          <button className="side-thread__clear" onClick={onClear} type="button">
+            Clear
+          </button>
+        ) : null}
+        <button
+          aria-label="Back to message"
+          className="icon-button side-thread__close"
+          onClick={onClose}
+          title="Back to your message (Esc)"
+          type="button"
+        >
+          <X size={16} />
+        </button>
+      </header>
       {entries.length ? (
         <ol
-          aria-label="Side questions"
+          aria-label="Side question thread"
           aria-live="polite"
           className="side-question-list"
           ref={listRef}
@@ -97,7 +93,7 @@ export function SideQuestionDialog({
               key={entry.id}
             >
               <p className="side-question__question">
-                <MessageCircleQuestion aria-hidden="true" size={15} />
+                <MessageCircleQuestion aria-hidden="true" size={14} />
                 <span>{entry.question}</span>
               </p>
               {entry.status === 'pending' ? (
@@ -105,7 +101,7 @@ export function SideQuestionDialog({
                   <LoaderCircle
                     aria-hidden="true"
                     className="activity-message__spinner"
-                    size={15}
+                    size={14}
                   />
                   Thinking…
                 </p>
@@ -135,34 +131,9 @@ export function SideQuestionDialog({
           ))}
         </ol>
       ) : null}
-      <form className="side-question-form" onSubmit={submit}>
-        <label className="field">
-          <span>Question</span>
-          <textarea
-            aria-label="Side question"
-            maxLength={SIDE_QUESTION_MAX_LENGTH}
-            onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="What do you want to know about this conversation?"
-            ref={inputRef}
-            rows={3}
-            value={question}
-          />
-        </label>
-        {unavailableReason ? (
-          <p className="form-error" role="status">{unavailableReason}</p>
-        ) : null}
-        <div className="side-question-form__actions">
-          <small className="field__hint">
-            {returnAddsLine
-              ? 'Return adds a new line. Tap Ask to send.'
-              : 'Enter to ask, Shift+Enter for a new line.'}
-          </small>
-          <button className="primary-button" disabled={!canAsk} type="submit">
-            {pending ? 'Waiting…' : 'Ask'}
-          </button>
-        </div>
-      </form>
-    </DialogFrame>
+      {unavailableReason ? (
+        <p className="side-thread__unavailable" role="status">{unavailableReason}</p>
+      ) : null}
+    </section>
   )
 }

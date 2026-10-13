@@ -2,7 +2,11 @@ import { timingSafeEqual } from 'node:crypto'
 import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { SIDE_QUESTION_MAX_LENGTH } from './side-question.js'
+import {
+  SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
+  SIDE_QUESTION_EARLIER_LIMIT,
+  SIDE_QUESTION_MAX_LENGTH,
+} from './side-question.js'
 import type { ServerEvent } from '../shared/contracts.js'
 import {
   FileUploadError,
@@ -23,6 +27,10 @@ export const AUDIO_TYPE_HEADER = 'x-agentic-audio-type'
 
 const sideQuestionSchema = z.object({
   question: z.string().trim().min(1).max(SIDE_QUESTION_MAX_LENGTH),
+  earlier: z.array(z.object({
+    question: z.string().trim().min(1).max(SIDE_QUESTION_MAX_LENGTH),
+    answer: z.string().trim().min(1).max(SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH),
+  })).max(SIDE_QUESTION_EARLIER_LIMIT).optional(),
 })
 
 const createSessionSchema = z.object({
@@ -556,7 +564,13 @@ export async function registerNodeRoutes(
               { statusCode: 501 },
             )
           }
-          return { answer: await service.askSession(request.params.sessionId, input.question) }
+          return {
+            answer: await service.askSession(
+              request.params.sessionId,
+              input.question,
+              input.earlier,
+            ),
+          }
         },
       )
 

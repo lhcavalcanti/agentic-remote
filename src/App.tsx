@@ -145,10 +145,15 @@ import {
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
 import { remarkSafeBreaks } from './remark-safe-breaks'
-import { SideQuestionDialog } from './SideQuestions'
+import { SideQuestionPanel } from './SideQuestions'
 import { sideQuestionCommand } from './side-question-command'
 import { phoneEnterCreatesNewline } from './enter-behavior'
-import type { SideQuestionEntry } from './SideQuestions'
+import type { SideQuestionEntry, SideThread } from './SideQuestions'
+import {
+  SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
+  SIDE_QUESTION_EARLIER_LIMIT,
+  SIDE_QUESTION_MAX_LENGTH,
+} from '../shared/side-question'
 import type {
   AgentMode,
   AgentProvider,
@@ -1827,7 +1832,7 @@ const statuslineOptions: Array<{
 
 /** Drops the side questions of the sessions `gone` names. */
 function withoutSideQuestions(gone: (key: string) => boolean) {
-  return (current: Record<string, SideQuestionEntry[]>) => {
+  return (current: Record<string, SideThread>) => {
     const kept = Object.entries(current).filter(([key]) => !gone(key))
     return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept)
   }
@@ -6442,9 +6447,9 @@ function App() {
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   // Side questions belong to the session they were asked about and live only
   // as long as this page: they are never part of the conversation.
-  const [sideQuestionKey, setSideQuestionKey] = useState<string>()
-  const [sideQuestionDraft, setSideQuestionDraft] = useState('')
-  const [sideQuestions, setSideQuestions] = useState<Record<string, SideQuestionEntry[]>>({})
+  // Per session, so a question keeps running while another session is open
+  // and its answer is waiting on return. Held for the life of the page only.
+  const [sideQuestions, setSideQuestions] = useState<Record<string, SideThread>>({})
   const sideQuestionIdRef = useRef(0)
   const [resourcesView, setResourcesView] = useState<SessionResourcesView>()
   const resourcesViewId = useRef(0)
@@ -7578,16 +7583,19 @@ function App() {
     computers.find((computer) => computer.id === selected?.computerId),
   ).find((provider) => provider.id === (selected?.provider || 'copilot'))
     ?.supportsSideQuestions === true
-  const sideQuestionOpen = Boolean(
-    selected && sideQuestionKey === sessionKey(selected) && selectedSupportsSideQuestions,
+  const selectedSideThread = selected ? sideQuestions[sessionKey(selected)] : undefined
+  // The message bar asks aside while the selected session's thread is open.
+  const askingAside = Boolean(selectedSupportsSideQuestions && selectedSideThread?.open)
+  const sideQuestionPending = Boolean(
+    selectedSideThread?.entries.some((entry) => entry.status === 'pending'),
   )
+  const sideQuestionDraft = askingAside ? selectedSideThread?.draft || '' : undefined
   const hasBlockingUi =
     newSessionOpen ||
     computersOpen ||
     statuslineOpen ||
     settingsOpen ||
     runtimeOpen ||
-    sideQuestionOpen ||
     Boolean(resourcesView) ||
     (renameOpen && Boolean(selected)) ||
     (cwdOpen && Boolean(selected)) ||
@@ -7696,6 +7704,7 @@ function App() {
     [commandQuery, composer, sessionCommands],
   )
   const showCommandMenu =
+    !askingAside &&
     commandSuggestions.length > 0 &&
     !composer.slice(1).includes(' ') &&
     !commandMenuDismissed
@@ -9870,7 +9879,7 @@ function App() {
         timeline.scrollTop = timeline.scrollHeight
       }
     }
-  }, [composer, viewportHeight])
+  }, [composer, sideQuestionDraft, viewportHeight])
 
   // Puts text in the composer as a thing of its own, with no paste metadata
   // carried over. Reconciling would keep a tracked label that happens to match
@@ -10907,7 +10916,6 @@ function App() {
       [settingsOpen, () => setSettingsOpen(false)],
       [statuslineOpen, () => setStatuslineOpen(false)],
       [runtimeOpen, () => setRuntimeOpen(false)],
-      [sideQuestionOpen, () => setSideQuestionKey(undefined)],
       [backgroundTasksOpen, () => setBackgroundTasksOpen(false)],
       [renameOpen, () => setRenameOpen(false)],
       [cwdOpen, () => setCwdOpen(false)],
@@ -11695,22 +11703,45 @@ function App() {
     setError(undefined)
   }
 
+  function updateSideThread(key: string, change: (thread: SideThread) => SideThread) {
+    setSideQuestions((current) => ({
+      ...current,
+      [key]: change(current[key] || { open: false, draft: '', entries: [] }),
+    }))
+  }
+
   async function askSideQuestion(session: ManagedSession, question: string) {
     const key = sessionKey(session)
     const id = `side-question-${++sideQuestionIdRef.current}`
+    // Every answer comes from a fresh fork that knows nothing of this thread,
+    // so a follow-up takes the earlier answers with it.
+    const earlier = (sideQuestions[key]?.entries || [])
+      .filter((entry) => entry.status === 'answered' && entry.answer?.trim())
+      .slice(-SIDE_QUESTION_EARLIER_LIMIT)
+      .map((entry) => ({
+        question: entry.question,
+        answer: entry.answer!.trim().slice(0, SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH),
+      }))
     const settle = (change: Partial<SideQuestionEntry>) =>
       setSideQuestions((current) => current[key]
         ? {
             ...current,
-            [key]: current[key].map((entry) => entry.id === id ? { ...entry, ...change } : entry),
+            [key]: {
+              ...current[key],
+              entries: current[key].entries.map((entry) =>
+                entry.id === id ? { ...entry, ...change } : entry),
+            },
           }
         : current)
-    setSideQuestions((current) => ({
-      ...current,
-      [key]: [...(current[key] || []), { id, question, status: 'pending' as const }],
+    updateSideThread(key, (thread) => ({
+      ...thread,
+      entries: [...thread.entries, { id, question, status: 'pending' }],
     }))
     try {
-      settle({ status: 'answered', answer: await askSession(session.computerId, session.id, question) })
+      settle({
+        status: 'answered',
+        answer: await askSession(session.computerId, session.id, question, earlier),
+      })
     } catch (caught) {
       settle({
         status: 'failed',
@@ -11719,15 +11750,55 @@ function App() {
     }
   }
 
+  /**
+   * Turns the message bar to side questions for the selected session, asking
+   * `question` straight away when it can be asked.
+   */
   function openSideQuestion(question = '') {
     if (!selected || !selectedSupportsSideQuestions) return
-    setSideQuestionKey(sessionKey(selected))
-    const canAsk = selectedComputerOnline &&
-      !sideQuestions[sessionKey(selected)]?.some((entry) => entry.status === 'pending')
-    // A question that cannot be asked yet waits in the dialog rather than
-    // being dropped with the composer text it came from.
-    setSideQuestionDraft(question && !canAsk ? question : '')
-    if (question && canAsk) void askSideQuestion(selected, question)
+    const key = sessionKey(selected)
+    const canAsk = Boolean(question) && selectedComputerOnline && !sideQuestionPending
+    // One that cannot be asked yet waits in the bar rather than being dropped
+    // with the message text it came from.
+    updateSideThread(key, (thread) => ({
+      ...thread,
+      open: true,
+      draft: question && !canAsk ? question : thread.draft,
+    }))
+    if (canAsk) void askSideQuestion(selected, question)
+    window.requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }))
+  }
+
+  /** Returns the message bar to the session; the thread and its draft stay. */
+  function closeSideQuestion() {
+    if (!selected) return
+    updateSideThread(sessionKey(selected), (thread) => ({ ...thread, open: false }))
+    window.requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }))
+  }
+
+  function submitSideQuestion() {
+    if (!selected || !askingAside || !selectedSideThread) return
+    const typed = selectedSideThread.draft.trim()
+    const question = (sideQuestionCommand(typed)?.question ?? typed).trim()
+    if (!question || sideQuestionPending || !selectedComputerOnline) return
+    updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft: '' }))
+    void askSideQuestion(selected, question)
+  }
+
+  function sideQuestionKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeSideQuestion()
+      return
+    }
+    if (event.key !== 'Enter') return
+    // As for messages: Return asks on a desktop and adds a line on a phone,
+    // where the Ask button sends; Ctrl/Cmd+Enter asks on either.
+    if (event.ctrlKey || event.metaKey || (!event.shiftKey && !phoneEnterCreatesNewline())) {
+      event.preventDefault()
+      submitSideQuestion()
+    }
   }
 
   function openSessionResources(tab: SessionResourceTab, filter = '') {
@@ -13584,7 +13655,7 @@ function App() {
     if (
       target instanceof Element &&
       target.closest(
-        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle, .knowledge-panel, .sidebar-knowledge, .session-actions',
+        '[role="dialog"], .composer, .side-thread, .user-input-card, .permission-card, .drag-handle, .knowledge-panel, .sidebar-knowledge, .session-actions',
       )
     ) {
       return
@@ -14332,11 +14403,15 @@ function App() {
           {selected && selectedSupportsSideQuestions ? (
             <button
               aria-label="Ask a side question"
+              aria-pressed={askingAside}
               className={`icon-button side-question-toggle ${
-                sideQuestionOpen ? 'icon-button--active' : ''
+                askingAside ? 'icon-button--active' : ''
               }`}
-              onClick={() => openSideQuestion()}
-              title="Ask about this session without sending it a prompt (/ask)"
+              disabled={!askingAside && (Boolean(editingQueuedPromptId) || recording)}
+              onClick={() => askingAside ? closeSideQuestion() : openSideQuestion()}
+              title={askingAside
+                ? 'Back to your message (Esc)'
+                : 'Ask about this session without sending it a prompt (/ask)'}
               type="button"
             >
               <MessageCircleQuestion size={18} />
@@ -14813,10 +14888,31 @@ function App() {
               </div>
             ) : null}
             </div>
+            {askingAside && selectedSideThread ? (
+              <SideQuestionPanel
+                entries={selectedSideThread.entries}
+                markdownComponents={mermaidComponents}
+                onClear={() => updateSideThread(sessionKey(selected), (thread) => ({
+                  ...thread,
+                  entries: [],
+                }))}
+                onClose={closeSideQuestion}
+                onRetry={(entry) => {
+                  updateSideThread(sessionKey(selected), (thread) => ({
+                    ...thread,
+                    entries: thread.entries.filter((candidate) => candidate.id !== entry.id),
+                  }))
+                  void askSideQuestion(selected, entry.question)
+                }}
+                unavailableReason={selectedComputerOnline
+                  ? undefined
+                  : `Reconnect ${selected.computerName} to ask about this session.`}
+              />
+            ) : null}
             <div
               className={`composer ${
-                selectedQueueAvailable ? 'composer--running' : ''
-              }`}
+                selectedQueueAvailable && !askingAside ? 'composer--running' : ''
+              } ${askingAside ? 'composer--aside' : ''}`}
               onDragOver={(event) => {
                 if (event.dataTransfer.types.includes('Files')) {
                   event.preventDefault()
@@ -14851,8 +14947,8 @@ function App() {
               ) : null}
               <div className="composer-text-panel">
                 <textarea
-                  aria-label="Message"
-                  aria-describedby={
+                  aria-label={askingAside ? 'Side question' : 'Message'}
+                  aria-describedby={askingAside ? undefined :
                     [
                       selected.queuedDispatch || queuedEditUnconfirmed
                         ? 'queued-dispatch-warning'
@@ -14866,19 +14962,31 @@ function App() {
                   // A suspended session has nothing running to send to. The
                   // conversation stays here to be read; writing to it is what
                   // resuming is for.
-                  disabled={selected.suspended === true}
-                  onBeforeInput={composerBeforeInput}
-                  onCut={composerCut}
+                  // Asking aside reads the saved conversation, which a
+                  // suspended session still has.
+                  disabled={selected.suspended === true && !askingAside}
+                  maxLength={askingAside ? SIDE_QUESTION_MAX_LENGTH : undefined}
+                  onBeforeInput={askingAside ? undefined : composerBeforeInput}
+                  onCut={askingAside ? undefined : composerCut}
                   onChange={(event) => {
+                    if (askingAside) {
+                      const draft = event.target.value
+                      updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft }))
+                      return
+                    }
                     composerChanged(
                       event.target.value,
                       (event.nativeEvent as InputEvent).inputType,
                     )
                   }}
-                  onKeyDown={composerKeyDown}
-                  onPaste={composerPasted}
+                  onKeyDown={askingAside ? sideQuestionKeyDown : composerKeyDown}
+                  onPaste={askingAside ? undefined : composerPasted}
                   placeholder={
-                    selected.suspended
+                    askingAside
+                      ? selectedSideThread?.entries.length
+                        ? 'Ask a follow-up…'
+                        : 'Ask about this conversation…'
+                      : selected.suspended
                       ? 'Suspended · resume to send'
                       : editingQueuedPromptId
                         ? phoneEnterCreatesNewline()
@@ -14888,7 +14996,7 @@ function App() {
                   }
                   ref={composerRef}
                   rows={1}
-                  value={composer}
+                  value={sideQuestionDraft ?? composer}
                 />
               </div>
               <input
@@ -14921,6 +15029,35 @@ function App() {
                     <Square fill="currentColor" size={12} />
                     Stop & transcribe
                   </button>
+                </div>
+              ) : askingAside ? (
+                <div className="composer-actions">
+                  <span className="composer-actions__spacer" />
+                  <button
+                    aria-label="Ask side question"
+                    className="send-button send-button--aside"
+                    disabled={!sideQuestionDraft?.trim() || sideQuestionPending ||
+                      !selectedComputerOnline}
+                    onClick={submitSideQuestion}
+                    title={sideQuestionPending
+                      ? 'Waiting for the answer to the last side question'
+                      : 'Ask without sending anything to the session'}
+                    type="button"
+                  >
+                    <MessageCircleQuestion size={18} />
+                    <span className="send-button__label">Ask</span>
+                  </button>
+                  {selected.status === 'running' ? (
+                    <button
+                      aria-label="Stop response"
+                      className="send-button send-button--stop"
+                      disabled={cancelling}
+                      onClick={() => void stopSelectedSession()}
+                      type="button"
+                    >
+                      <Square fill="currentColor" size={15} />
+                    </button>
+                  ) : null}
                 </div>
               ) : (
                 <div className="composer-actions">
@@ -15081,7 +15218,22 @@ function App() {
               </button>
             ) : null}
             <p className="composer-hint">
-              {recording
+              {askingAside
+                ? (
+                  <>
+                    <span className="composer-hint__desktop">
+                      {sideQuestionPending
+                        ? 'Answering… you can type your follow-up · Esc back to your message'
+                        : 'Enter asks · Shift+Enter newline · Esc back to your message'}
+                    </span>
+                    <span className="composer-hint__mobile">
+                      {sideQuestionPending
+                        ? 'Answering… you can type your follow-up'
+                        : 'Tap Ask · Return adds a line'}
+                    </span>
+                  </>
+                )
+                : recording
                 ? `Recording ${recordingDuration(recordingSeconds)}…`
                 : transcribing
                 ? 'Transcribing audio…'
@@ -15431,28 +15583,6 @@ function App() {
         updateRegistration={updateRegistration}
         updatingApp={updatingApp}
       />
-      {sideQuestionOpen && selected ? (
-        <SideQuestionDialog
-          entries={sideQuestions[sessionKey(selected)] || []}
-          initialQuestion={sideQuestionDraft}
-          key={sessionKey(selected)}
-          markdownComponents={mermaidComponents}
-          onAsk={(question) => void askSideQuestion(selected, question)}
-          onClose={() => setSideQuestionKey(undefined)}
-          onRetry={(entry) => {
-            const key = sessionKey(selected)
-            setSideQuestions((current) => ({
-              ...current,
-              [key]: (current[key] || []).filter((candidate) => candidate.id !== entry.id),
-            }))
-            void askSideQuestion(selected, entry.question)
-          }}
-          sessionTitle={selected.title}
-          unavailableReason={selectedComputerOnline
-            ? undefined
-            : `Reconnect ${selected.computerName} to ask about this session.`}
-        />
-      ) : null}
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}
         onConfigured={(session) => {

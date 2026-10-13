@@ -219,8 +219,10 @@ matrix.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
 - **Ask**: use the header button or `/ask` (`/btw`) to ask a quick side question
-  about a Copilot session. The owning computer answers from the conversation
-  without tools; nothing is sent to the session or saved.
+  about a Copilot session. The thread docks above the message bar, which asks
+  follow-ups until you go back to your message. The owning computer answers
+  from the conversation without tools; nothing is sent to the session or saved,
+  and an answer keeps coming while you work in another session.
 - **Runtime**: configure supported model, effort, context, and mode options.
 - **Background tasks**: inspect live task progress, output, errors, timestamps,
   and cancel supported tasks from the session header.

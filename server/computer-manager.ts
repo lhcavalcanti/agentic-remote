@@ -31,6 +31,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
+  SideQuestionExchange,
 } from '../shared/contracts.js'
 import {
   ComputerRegistry,
@@ -909,6 +910,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     sessionId: string,
     question: string,
+    earlier?: readonly SideQuestionExchange[],
   ): Promise<string> {
     if (computerId === this.identity.info.id) {
       if (!this.localService.askSession) {
@@ -917,9 +919,9 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           { statusCode: 501 },
         )
       }
-      return this.localService.askSession(sessionId, question)
+      return this.localService.askSession(sessionId, question, earlier)
     }
-    return this.requireClient(computerId).askSession(sessionId, question)
+    return this.requireClient(computerId).askSession(sessionId, question, earlier)
   }
 
   async listBackgroundTasks(

@@ -488,8 +488,16 @@ export interface CreateSessionInput {
   mode?: AgentMode
 }
 
+/** An earlier side question and its answer, carried by a follow-up. */
+export interface SideQuestionExchange {
+  question: string
+  answer: string
+}
+
 export interface SideQuestionInput {
   question: string
+  /** Earlier side answers in this thread, oldest first. */
+  earlier?: SideQuestionExchange[]
 }
 
 export interface SideQuestionAnswer {

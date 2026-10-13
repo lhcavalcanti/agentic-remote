@@ -26,6 +26,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
+  SideQuestionExchange,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import { ComputerManager } from './computer-manager.js'
@@ -47,7 +48,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   lastCreateReasoningEffort?: RuntimeReasoningEffort
   lastCreateContextTier?: 'default' | 'long_context'
   lastCreateMode?: AgentMode
-  lastSideQuestion?: { sessionId: string; question: string }
+  lastSideQuestion?: { sessionId: string; question: string; earlier?: readonly SideQuestionExchange[] }
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
   readonly backgroundTaskSnapshots = new Map<string, BackgroundTaskSnapshot>()
 
@@ -478,8 +479,12 @@ class FakeSessionService extends EventEmitter implements SessionService {
 
   async cancel() {}
 
-  async askSession(sessionId: string, question: string): Promise<string> {
-    this.lastSideQuestion = { sessionId, question }
+  async askSession(
+    sessionId: string,
+    question: string,
+    earlier?: readonly SideQuestionExchange[],
+  ): Promise<string> {
+    this.lastSideQuestion = { sessionId, question, ...(earlier ? { earlier } : {}) }
     return `Remote answer: ${question}`
   }
 
@@ -1250,15 +1255,36 @@ describe('multi-node hub', () => {
         sessionId: 'remote-session',
         question: 'What changed?',
       })
-      for (const question of ['   ', 'x'.repeat(4_001)]) {
+      const followUp = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/ask`,
+        payload: {
+          question: 'And then?',
+          earlier: [{ question: ' What changed? ', answer: ' The parser. ' }],
+        },
+      })
+      expect(followUp.statusCode, followUp.body).toBe(200)
+      expect(remoteService.lastSideQuestion).toEqual({
+        sessionId: 'remote-session',
+        question: 'And then?',
+        earlier: [{ question: 'What changed?', answer: 'The parser.' }],
+      })
+      const exchange = { question: 'Q?', answer: 'A.' }
+      for (const payload of [
+        { question: '   ' },
+        { question: 'x'.repeat(4_001) },
+        { question: 'Next?', earlier: Array.from({ length: 7 }, () => exchange) },
+        { question: 'Next?', earlier: [{ question: 'Q?', answer: 'x'.repeat(16_001) }] },
+        { question: 'Next?', earlier: [{ question: 'Q?', answer: '  ' }] },
+      ]) {
         const refused = await hub.app.inject({
           method: 'POST',
           url: `/api/computers/${remoteComputerId}/sessions/remote-session/ask`,
-          payload: { question },
+          payload,
         })
         expect(refused.statusCode).toBe(400)
       }
-      expect(remoteService.lastSideQuestion?.question).toBe('What changed?')
+      expect(remoteService.lastSideQuestion?.question).toBe('And then?')
       const unknownMode = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions`,

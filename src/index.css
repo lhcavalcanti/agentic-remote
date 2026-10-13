@@ -4715,35 +4715,95 @@ button {
   margin-bottom: 24px;
 }
 
-/* A side question is an aside to the conversation, so its answers hang off a
-   dashed margin rule rather than looking like transcript messages. */
-.dialog.side-question-dialog {
+/* A side question is an aside to the conversation. Its thread docks above the
+   message bar on a dashed outline, and the bar takes the same outline while it
+   asks aside, so a question is never mistaken for a message to the session.
+   Answers hang off a dashed margin rule rather than looking like transcript
+   messages. */
+.composer-area {
+  --aside-rule: color-mix(in srgb, var(--accent) 50%, var(--border-strong));
+}
+
+.side-thread {
   display: flex;
-  width: min(100%, 620px);
-  max-height: min(760px, calc(var(--visual-viewport-height, 100dvh) - 36px));
   min-height: 0;
+  max-height: min(420px, calc(var(--visual-viewport-height, 100dvh) * 0.46));
+  margin: 0 0 8px;
+  flex: 0 1 auto;
   flex-direction: column;
+  border: 1px dashed var(--aside-rule);
+  border-radius: 14px;
+  background: var(--panel);
   overflow: hidden;
 }
 
-.side-question-dialog .dialog__header {
+.side-thread__header {
+  display: flex;
   flex: 0 0 auto;
-  margin-bottom: 10px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
 }
 
-.side-question-dialog__intro {
+.side-thread__icon {
   flex: 0 0 auto;
-  margin: 0 0 14px;
+  color: var(--accent);
+}
+
+.side-thread__title {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  flex: 1;
+  flex-direction: column;
+  line-height: 1.35;
+}
+
+.side-thread__title strong {
+  font-size: 12.5px;
+}
+
+.side-thread__title span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.side-thread__clear {
+  min-height: 36px;
+  padding: 0 12px;
+  flex: 0 0 auto;
+  color: var(--muted-strong);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.side-thread__clear:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.side-thread__close {
+  flex: 0 0 auto;
+}
+
+.side-thread__unavailable {
+  margin: 0;
+  padding: 0 14px 10px;
+  color: var(--muted-strong);
+  font-size: 12px;
 }
 
 .side-question-list {
   display: flex;
   min-height: 0;
-  margin: 0 0 16px;
-  padding: 0 4px 0 0;
+  margin: 0;
+  padding: 4px 14px 12px;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   overflow-y: auto;
   overscroll-behavior: contain;
   list-style: none;
@@ -4755,7 +4815,7 @@ button {
 }
 
 .side-question--answered {
-  border-left-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  border-left-color: var(--aside-rule);
 }
 
 .side-question--failed {
@@ -4764,7 +4824,7 @@ button {
 
 .side-question__question {
   display: flex;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   align-items: flex-start;
   gap: 8px;
   color: var(--muted-strong);
@@ -4801,36 +4861,32 @@ button {
   margin: 0;
 }
 
-.side-question-form {
-  flex: 0 0 auto;
+.composer--aside > .composer-text-panel,
+.composer--aside > .composer-actions {
+  border-style: dashed;
+  border-color: var(--aside-rule);
 }
 
-.side-question-form textarea {
-  width: 100%;
-  min-height: 76px;
-  max-height: 180px;
-  padding: 10px 12px;
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: 11px;
-  outline: 0;
-  background: var(--bg);
-  font: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-  resize: vertical;
-}
-
-.side-question-form textarea:focus {
+.composer--aside > .composer-text-panel:focus-within {
   border-color: var(--accent-focus);
 }
 
-.side-question-form__actions {
-  display: flex;
-  margin-top: 10px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+@media (hover: hover) {
+ @container composer (min-width: 620px) {
+  .composer.composer--aside {
+    border-style: dashed;
+    border-color: var(--aside-rule);
+  }
+
+  .composer.composer--aside:focus-within {
+    border-color: var(--accent-focus);
+  }
+
+  .composer.composer--aside > .composer-text-panel,
+  .composer.composer--aside > .composer-actions {
+    border: 0;
+  }
+ }
 }
 
 .dialog.session-resources-dialog {
@@ -5151,11 +5207,6 @@ button {
 @media (max-width: 960px) {
   .dialog.session-resources-dialog {
     height: min(720px, calc(var(--visual-viewport-height, 100dvh) - 8px));
-    padding: 16px;
-  }
-
-  .dialog.side-question-dialog {
-    max-height: calc(var(--visual-viewport-height, 100dvh) - 8px);
     padding: 16px;
   }
 }

@@ -10669,6 +10669,12 @@ describe('App', () => {
       providers: computer.providers?.map((provider) =>
         provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
     }
+    const thread = () => screen.queryByRole('region', { name: 'Side questions' })
+    const askFromBar = (question: string) => {
+      const bar = screen.getByLabelText('Side question')
+      fireEvent.change(bar, { target: { value: question } })
+      fireEvent.keyDown(bar, { key: 'Enter' })
+    }
 
     it('hides side questions where the computer has not advertised them', async () => {
       render(<App />)
@@ -10676,42 +10682,104 @@ describe('App', () => {
       expect(screen.queryByRole('button', { name: 'Ask a side question' })).not.toBeInTheDocument()
     })
 
-    it('answers a side question without prompting the session', async () => {
+    it('asks from the message bar without prompting the session or losing its draft', async () => {
       vi.mocked(listComputers).mockResolvedValue([sideComputer])
       let answer: ((value: string) => void) | undefined
       vi.mocked(askSession).mockReturnValueOnce(new Promise((resolve) => { answer = resolve }))
       render(<App />)
       await screen.findByText('Hello agent')
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Keep this draft' } })
 
-      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
-      const dialog = screen.getByRole('dialog', { name: 'Ask about this session' })
-      const input = within(dialog).getByLabelText('Side question')
-      expect(input).toHaveFocus()
-      fireEvent.change(input, { target: { value: '  What did we decide?  ' } })
-      fireEvent.keyDown(input, { key: 'Enter' })
+      const toggle = await screen.findByRole('button', { name: 'Ask a side question' })
+      fireEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(thread()).toBeInTheDocument()
+      const bar = screen.getByLabelText('Side question')
+      expect(bar).toHaveValue('')
+      expect(screen.queryByLabelText('Message')).not.toBeInTheDocument()
+      await waitFor(() => expect(bar).toHaveFocus())
+      askFromBar('  What did we decide?  ')
 
       await waitFor(() =>
-        expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'What did we decide?'),
+        expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'What did we decide?', []),
       )
-      expect(input).toHaveValue('')
-      expect(within(dialog).getByRole('status')).toHaveTextContent('Thinking…')
-      expect(within(dialog).getByRole('button', { name: 'Waiting…' })).toBeDisabled()
+      expect(bar).toHaveValue('')
+      expect(within(thread()!).getByRole('status')).toHaveTextContent('Thinking…')
+      fireEvent.change(bar, { target: { value: 'Typed while waiting' } })
+      expect(screen.getByRole('button', { name: 'Ask side question' })).toBeDisabled()
       await act(async () => answer?.('**Use SQLite.**'))
-      expect(within(dialog).getByText('Use SQLite.').tagName).toBe('STRONG')
+      expect(within(thread()!).getByText('Use SQLite.').tagName).toBe('STRONG')
+      expect(screen.getByRole('button', { name: 'Ask side question' })).toBeEnabled()
       expect(sendMessage).not.toHaveBeenCalled()
       expect(executeCommand).not.toHaveBeenCalled()
 
-      fireEvent.keyDown(document, { key: 'Escape' })
-      await waitFor(() =>
-        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
+      fireEvent.keyDown(bar, { key: 'Escape' })
+      expect(thread()).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft')
+      expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+      fireEvent.click(toggle)
+      expect(within(thread()!).getByText('Use SQLite.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Side question')).toHaveValue('Typed while waiting')
+      fireEvent.click(within(thread()!).getByRole('button', { name: 'Back to message' }))
+      expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft')
+    })
+
+    it('carries earlier answers with a follow-up', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      const long = `Two options: SQLite and Postgres.${' More.'.repeat(4_000)}`
+      vi.mocked(askSession)
+        .mockResolvedValueOnce(long)
+        .mockRejectedValueOnce(new Error('Model unavailable'))
+        .mockResolvedValueOnce('Postgres needs a server.')
+      render(<App />)
+      await screen.findByText('Hello agent')
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+      askFromBar('Which databases?')
+      expect(await screen.findByText(/^Two options: SQLite and Postgres\./)).toBeInTheDocument()
+      askFromBar('Fails?')
+      expect(await within(thread()!).findByRole('alert')).toHaveTextContent('Model unavailable')
+      askFromBar('And the second one?')
+
+      expect(await screen.findByText('Postgres needs a server.')).toBeInTheDocument()
+      expect(askSession).toHaveBeenLastCalledWith('computer-1', 'session-1', 'And the second one?', [
+        { question: 'Which databases?', answer: long.slice(0, 16_000) },
+      ])
+      fireEvent.click(within(thread()!).getByRole('button', { name: 'Clear' }))
+      expect(screen.queryByText('Postgres needs a server.')).not.toBeInTheDocument()
+      expect(thread()).toBeInTheDocument()
+    })
+
+    it('keeps asking while another session is open and shows the answer on return', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === secondSession.id ? secondSession : session,
       )
-      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
-      expect(await screen.findByText('Use SQLite.')).toBeInTheDocument()
-      expect(screen.getByText('What did we decide?')).toBeInTheDocument()
+      let answer: ((value: string) => void) | undefined
+      vi.mocked(askSession).mockReturnValueOnce(new Promise((resolve) => { answer = resolve }))
+      render(<App />)
+      await screen.findByText('Hello agent')
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+      askFromBar('Still there?')
+      await waitFor(() => expect(askSession).toHaveBeenCalledOnce())
+
+      fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Second chat,/ })).toHaveAttribute('aria-current', 'page'),
+      )
+      expect(thread()).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Message')).toBeInTheDocument()
+      await act(async () => answer?.('Yes, still here.'))
+
+      fireEvent.click(screen.getByRole('button', { name: /^Project chat,/ }))
+      expect(await screen.findByText('Yes, still here.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Side question')).toBeInTheDocument()
     })
 
     it.each(['/ask Which file changed?', '/btw Which file changed?'])(
-      'opens %s from the composer instead of sending it',
+      'asks %s from the message bar instead of sending it',
       async (command) => {
         vi.mocked(listComputers).mockResolvedValue([sideComputer])
         vi.mocked(askSession).mockResolvedValueOnce('`src/App.tsx`')
@@ -10721,11 +10789,12 @@ describe('App', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
         await waitFor(() =>
-          expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'Which file changed?'),
+          expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'Which file changed?', []),
         )
-        expect(await screen.findByRole('dialog', { name: 'Ask about this session' })).toBeInTheDocument()
-        expect(await screen.findByText('src/App.tsx')).toBeInTheDocument()
-        expect(textarea).toHaveValue('')
+        expect(await within(thread()!).findByText('src/App.tsx')).toBeInTheDocument()
+        expect(screen.getByLabelText('Side question')).toHaveValue('')
+        fireEvent.keyDown(screen.getByLabelText('Side question'), { key: 'Escape' })
+        expect(screen.getByLabelText('Message')).toHaveValue('')
         expect(sendMessage).not.toHaveBeenCalled()
         expect(executeCommand).not.toHaveBeenCalled()
       },
@@ -10738,7 +10807,8 @@ describe('App', () => {
       fireEvent.change(textarea, { target: { value: '/ask' } })
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
-      expect(await screen.findByRole('dialog', { name: 'Ask about this session' })).toBeInTheDocument()
+      expect(await screen.findByRole('region', { name: 'Side questions' })).toBeInTheDocument()
+      expect(screen.getByLabelText('Side question')).toHaveValue('')
       expect(askSession).not.toHaveBeenCalled()
       expect(sendMessage).not.toHaveBeenCalled()
       expect(executeCommand).not.toHaveBeenCalled()
@@ -10753,19 +10823,39 @@ describe('App', () => {
         render(<App />)
         await screen.findByText('Hello agent')
         fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
-        const dialog = screen.getByRole('dialog', { name: 'Ask about this session' })
-        expect(within(dialog).getByText('Return adds a new line. Tap Ask to send.')).toBeInTheDocument()
-        const input = within(dialog).getByLabelText('Side question')
-        fireEvent.change(input, { target: { value: 'Two lines?' } })
-        expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(true)
+        const bar = screen.getByLabelText('Side question')
+        fireEvent.change(bar, { target: { value: 'Two lines?' } })
+        expect(fireEvent.keyDown(bar, { key: 'Enter' })).toBe(true)
         expect(askSession).not.toHaveBeenCalled()
-        fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+        fireEvent.keyDown(bar, { key: 'Enter', ctrlKey: true })
         await waitFor(() =>
-          expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'Two lines?'),
+          expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'Two lines?', []),
         )
       } finally {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
       }
+    })
+
+    it('shows a failed side question and asks it again', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(askSession)
+        .mockRejectedValueOnce(new Error('Model unavailable'))
+        .mockResolvedValueOnce('Fine now.')
+      render(<App />)
+      await screen.findByText('Hello agent')
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+      fireEvent.change(screen.getByLabelText('Side question'), {
+        target: { value: 'Are tests passing?' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+
+      expect(await within(thread()!).findByRole('alert')).toHaveTextContent('Model unavailable')
+      fireEvent.click(within(thread()!).getByRole('button', { name: 'Try again' }))
+
+      expect(await within(thread()!).findByText('Fine now.')).toBeInTheDocument()
+      expect(within(thread()!).queryByRole('alert')).not.toBeInTheDocument()
+      expect(vi.mocked(askSession).mock.calls.map((call) => call[2]))
+        .toEqual(['Are tests passing?', 'Are tests passing?'])
     })
 
     it('offers /ask only where the computer answers it and otherwise sends it on', async () => {
@@ -10783,7 +10873,7 @@ describe('App', () => {
           .toBe(1),
       )
       expect(askSession).not.toHaveBeenCalled()
-      expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument()
+      expect(thread()).not.toBeInTheDocument()
     })
 
     it('lists /ask where the computer answers side questions', async () => {
@@ -10795,7 +10885,7 @@ describe('App', () => {
       expect(await screen.findByRole('option', { name: /\/ask/ })).toBeInTheDocument()
     })
 
-    it('keeps a /ask question that cannot be asked yet in the dialog', async () => {
+    it('keeps a /ask question that cannot be asked yet in the bar', async () => {
       vi.mocked(listComputers).mockResolvedValue([sideComputer])
       vi.mocked(askSession).mockReturnValueOnce(new Promise(() => {}))
       render(<App />)
@@ -10803,30 +10893,27 @@ describe('App', () => {
       fireEvent.change(textarea, { target: { value: '/ask First?' } })
       fireEvent.keyDown(textarea, { key: 'Enter' })
       await waitFor(() => expect(askSession).toHaveBeenCalledTimes(1))
-      fireEvent.keyDown(document, { key: 'Escape' })
-      await waitFor(() =>
-        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
-      )
+      fireEvent.keyDown(screen.getByLabelText('Side question'), { key: 'Escape' })
 
-      fireEvent.change(textarea, { target: { value: '/ask Second?' } })
-      fireEvent.keyDown(textarea, { key: 'Enter' })
-      const busy = await screen.findByRole('dialog', { name: 'Ask about this session' })
-      expect(within(busy).getByLabelText('Side question')).toHaveValue('Second?')
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/ask Second?' } })
+      fireEvent.keyDown(screen.getByLabelText('Message'), { key: 'Enter' })
+      expect(await screen.findByLabelText('Side question')).toHaveValue('Second?')
+      fireEvent.keyDown(screen.getByLabelText('Side question'), { key: 'Enter' })
       expect(askSession).toHaveBeenCalledTimes(1)
-      fireEvent.keyDown(document, { key: 'Escape' })
-      await waitFor(() =>
-        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
-      )
+      fireEvent.change(screen.getByLabelText('Side question'), { target: { value: '' } })
+      fireEvent.keyDown(screen.getByLabelText('Side question'), { key: 'Escape' })
 
       act(() => {
         MockWebSocket.instances[0]?.onmessage?.({
           data: JSON.stringify({ type: 'computer.updated', computer: { ...sideComputer, online: false } }),
         } as MessageEvent)
       })
-      fireEvent.change(textarea, { target: { value: '/ask Offline?' } })
-      fireEvent.keyDown(textarea, { key: 'Enter' })
-      const offline = await screen.findByRole('dialog', { name: 'Ask about this session' })
-      expect(within(offline).getByLabelText('Side question')).toHaveValue('Offline?')
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/ask Offline?' } })
+      fireEvent.keyDown(screen.getByLabelText('Message'), { key: 'Enter' })
+      expect(await screen.findByLabelText('Side question')).toHaveValue('Offline?')
+      expect(within(thread()!).getByText('Reconnect development to ask about this session.'))
+        .toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Ask side question' })).toBeDisabled()
       expect(askSession).toHaveBeenCalledTimes(1)
     })
 
@@ -10842,7 +10929,6 @@ describe('App', () => {
       fireEvent.change(textarea, { target: { value: '/ask Remember?' } })
       fireEvent.keyDown(textarea, { key: 'Enter' })
       expect(await screen.findByText('Remembered answer.')).toBeInTheDocument()
-      fireEvent.keyDown(document, { key: 'Escape' })
 
       act(() => {
         MockWebSocket.instances[0]?.onmessage?.({
@@ -10861,8 +10947,9 @@ describe('App', () => {
       await waitFor(() =>
         expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page'),
       )
+      expect(thread()).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
-      await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(await screen.findByRole('region', { name: 'Side questions' })).toBeInTheDocument()
       expect(screen.queryByText('Remembered answer.')).not.toBeInTheDocument()
     })
 
@@ -10904,7 +10991,7 @@ describe('App', () => {
       await waitFor(() =>
         expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument(),
       )
-      expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument()
+      expect(thread()).not.toBeInTheDocument()
       expect(askSession).not.toHaveBeenCalled()
     })
 
@@ -10920,7 +11007,6 @@ describe('App', () => {
       fireEvent.change(textarea, { target: { value: '/ask Snapshot?' } })
       fireEvent.keyDown(textarea, { key: 'Enter' })
       expect(await screen.findByText('Snapshot answer.')).toBeInTheDocument()
-      fireEvent.keyDown(document, { key: 'Escape' })
 
       let finishOlder!: (value: Awaited<ReturnType<typeof listSessionListing>>) => void
       const calls = vi.mocked(listSessionListing).mock.calls.length
@@ -10946,32 +11032,8 @@ describe('App', () => {
         expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page'),
       )
       fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
-      await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(await screen.findByRole('region', { name: 'Side questions' })).toBeInTheDocument()
       expect(screen.queryByText('Snapshot answer.')).not.toBeInTheDocument()
-    })
-
-    it('shows a failed side question and asks it again', async () => {
-      vi.mocked(listComputers).mockResolvedValue([sideComputer])
-      vi.mocked(askSession)
-        .mockRejectedValueOnce(new Error('Model unavailable'))
-        .mockResolvedValueOnce('Fine now.')
-      render(<App />)
-      await screen.findByText('Hello agent')
-      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
-      const dialog = screen.getByRole('dialog', { name: 'Ask about this session' })
-      fireEvent.change(within(dialog).getByLabelText('Side question'), {
-        target: { value: 'Are tests passing?' },
-      })
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Ask' }))
-
-      expect(await within(dialog).findByRole('alert')).toHaveTextContent('Model unavailable')
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
-
-      expect(await within(dialog).findByText('Fine now.')).toBeInTheDocument()
-      expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
-      expect(askSession).toHaveBeenCalledTimes(2)
-      expect(vi.mocked(askSession).mock.calls.map((call) => call[2]))
-        .toEqual(['Are tests passing?', 'Are tests passing?'])
     })
   })
 

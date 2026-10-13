@@ -352,8 +352,23 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   separately, so neither the request nor shutdown can hang on it. A failure
   MUST be shown beside its question with a retry and MUST NOT affect the
   session.
+- Side questions MUST dock above the message bar, not open over the
+  conversation. While the thread is open the message bar asks aside: it is
+  labelled as a side question, shares the thread's dashed outline, offers
+  **Ask** in place of Send, attachments, recording, and Queue, and MUST NOT
+  send, queue, or run a command. **Stop** remains. Escape, **Back to
+  message**, or **Ask** again returns the bar to the session's own draft,
+  which MUST be left exactly as it was.
+- The thread belongs to its session. It MUST keep answering while another
+  session is selected, and the answer, the open thread, and any follow-up
+  being typed MUST be there on return.
+- Follow-ups MUST carry up to six earlier answered questions from the thread,
+  oldest first, as context. **Clear** empties the thread.
+- One question per session is answered at a time. A follow-up can be typed
+  while one is being answered, and **Ask** is available again once the answer
+  arrives.
 - A `/ask` question that cannot be asked yet, because the computer is offline
-  or another question is pending, MUST open in the dialog rather than be lost.
+  or another question is pending, MUST wait in the bar rather than be lost.
 - Answers belong to the page: kept per session until reload, discarded when the
   session is closed or removed, or its computer is removed, and never
   persisted or sent elsewhere.
@@ -1224,6 +1239,7 @@ Every material release SHOULD preserve:
 - Markdown, PDF, search, reading mode, and Knowledge folders
 - Numeric context and Interactive/Plan/Autopilot runtime controls
 - Side questions answered without prompting or changing the session
+- Side questions docked above the message bar, kept per session, with follow-ups
 - Dynamic Island and home-indicator safe areas
 - Bundle-only PWA update detection
 

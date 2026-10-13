@@ -10743,9 +10743,12 @@ describe('App', () => {
 
       fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
       const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
-      fireEvent.drop(screen.getByLabelText('Side question').closest('.composer')!, {
-        dataTransfer: { files: [file], types: ['Files'] },
-      })
+      const bar = screen.getByLabelText('Side question').closest('.composer')!
+      const dataTransfer = { files: [file], types: ['Files'], dropEffect: 'copy' }
+      // Not cancelled, the browser would open the file in place of the app.
+      expect(fireEvent.dragOver(bar, { dataTransfer })).toBe(false)
+      expect(dataTransfer.dropEffect).toBe('none')
+      expect(fireEvent.drop(bar, { dataTransfer })).toBe(false)
       await act(async () => {})
       expect(transcribeAudio).not.toHaveBeenCalled()
       expect(uploadSessionFile).not.toHaveBeenCalled()

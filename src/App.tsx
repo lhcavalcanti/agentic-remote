@@ -14929,13 +14929,15 @@ function App() {
                 selectedQueueAvailable && !askingAside ? 'composer--running' : ''
               } ${askingAside ? 'composer--aside' : ''}`}
               // A file is for the session; while the bar asks aside it would
-              // land in the draft it is keeping out of sight.
+              // land in the draft it is keeping out of sight. The drop is
+              // still taken here, so the browser does not open the file.
               onDragOver={(event) => {
-                if (!askingAside && event.dataTransfer.types.includes('Files')) {
+                if (event.dataTransfer.types.includes('Files')) {
                   event.preventDefault()
+                  if (askingAside) event.dataTransfer.dropEffect = 'none'
                 }
               }}
-              onDrop={askingAside ? undefined : audioDropped}
+              onDrop={askingAside ? (event) => event.preventDefault() : audioDropped}
             >
               {showCommandMenu ? (
                 <div className="command-menu" role="listbox" aria-label="Commands">

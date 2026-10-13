@@ -459,8 +459,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "7a32018aa3c72b8913274e90b846954442895c30e945d8c05967eb2ef12350c2",
-    "src/App.tsx": "7636ece37da0470cd01df33dd5855bfb8f5348da3d1b40e15a06869a04a13681",
+    "src/App.test.tsx": "81eccd6de1c95fe64a28fd06e484f7d65c7ca582f427e06667f2dc390e36e2a6",
+    "src/App.tsx": "6322ec49e1e9f60d125e78d0052568c14b280640b80355ed2a4633a515ca02ad",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -595,16 +595,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "01e7b5306414bf5ed7c1fd3562e888aeac44f41504838702f90b276aac1e4ed5",
+    "GRAPH_REPORT.md": "2e40992b1b7c0da995b47aef38ee7c1a6873bd719e6480b2e2cecf1dcbcc6c5e",
     "communities.json": "55848d8cab9121469033d69c75b1e674131efdbaeb729ce9215311b2609258c2",
-    "graph.html": "de3c19c2e8f031309ea14f8fc1f44e9dfffa010b5a4a7a08edeb1fb936e4c7dd",
-    "graph.json": "e121d9463a11f47d6bc51676bcace778f500875338a26e41e9b754cd8fd3b8e4"
+    "graph.html": "7f7769d26a5ed418ec68dacd1b7c874a38b19bba585e0424b693f3da26ad7870",
+    "graph.json": "804b6a635623c56153837e3d129cc345c27011e5be8e256cef732e8812baf0c9"
   },
   "schema_version": 1,
-  "source_commit": "21a10a93af34d6574fbccfada9da6fc0e5f5fd38",
-  "source_fingerprint": "7427ce1cde431bd8e178142f01114e8e754681b7662bf848d78888f3156b3b63",
+  "source_commit": "e050e64d1acfc4645bef717b75de3631bdfdbbbc",
+  "source_fingerprint": "f5a47b854a08596dd8d1964c148b85e942fb72dd0e050af78ab83afb09cfad54",
   "working_tree_changes": [
-    "docs/app-spec.md",
     "src/App.test.tsx",
     "src/App.tsx"
   ]

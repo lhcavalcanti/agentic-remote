@@ -291,18 +291,43 @@ describe('AgentService side questions', () => {
     expect(stalledStart.factory).toHaveBeenCalledTimes(2)
   })
 
-  it('deletes a fork that lands after the deadline', async () => {
+  it('holds discovery until a fork that lands after the deadline is deleted', async () => {
     const { client, service } = await fixture()
-    ;(service as unknown as { sideQuestionTimeoutMs: number }).sideQuestionTimeoutMs = 20
+    const internals = service as unknown as {
+      sideQuestionTimeoutMs: number
+      sessionCreations: Set<Promise<void>>
+      deletedSessionIds: Set<string>
+    }
+    internals.sideQuestionTimeoutMs = 20
     let land: ((value: { sessionId: string }) => void) | undefined
     client.forkWith = () => new Promise((resolve) => { land = resolve })
     await expect(service.askSession('source', 'Late?')).rejects.toMatchObject({ statusCode: 504 })
+    expect(internals.sessionCreations.size).toBe(1)
     expect(client.deleted).toEqual([])
 
     land?.({ sessionId: 'late-fork' })
-    await vi.waitFor(() => expect(client.deleted).toEqual(['late-fork']))
-    expect((service as unknown as { deletedSessionIds: Set<string> }).deletedSessionIds.has('late-fork'))
-      .toBe(true)
+    await vi.waitFor(() => expect(internals.sessionCreations.size).toBe(0))
+    expect(client.deleted).toEqual(['late-fork'])
+    expect(internals.deletedSessionIds.has('late-fork')).toBe(true)
+  })
+
+  it('stops a runtime that never returns a fork', async () => {
+    const { client, service } = await fixture()
+    const internals = service as unknown as {
+      sideQuestionTimeoutMs: number
+      sideQuestionCleanupMs: number
+      sessionCreations: Set<Promise<void>>
+    }
+    internals.sideQuestionTimeoutMs = 20
+    internals.sideQuestionCleanupMs = 20
+    client.forkWith = () => new Promise(() => {})
+    await expect(service.askSession('source', 'Stuck?')).rejects.toMatchObject({ statusCode: 504 })
+    await vi.waitFor(() => expect(client.stop).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(internals.sessionCreations.size).toBe(0))
+
+    client.forkWith = undefined
+    internals.sideQuestionTimeoutMs = 5_000
+    await expect(service.askSession('source', 'Fresh?')).resolves.toBe('Answer to Fresh?')
   })
 
   it('retires a fork it could not delete so a restart never discovers it', async () => {

@@ -7667,13 +7667,17 @@ function App() {
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''
-  // The list is replaced only once the selected session's own arrives, so the
-  // previous session's side-question command is dropped here, not just there.
+  // The list is replaced only once the selected session's own arrives. Until
+  // then a session that does not answer side questions is offered no /ask at
+  // all, since the one on hand, the app's or the agent's, is another session's.
   const sessionCommands = useMemo(
     () => selectedSupportsSideQuestions
       ? commands
-      : commands.filter((command) => command !== sideQuestionWebCommand),
-    [commands, selectedSupportsSideQuestions],
+      : commands.filter((command) => command !== sideQuestionWebCommand &&
+        (commandsKey === selectedKey ||
+          ![command.name, ...(command.aliases || [])]
+            .some((name) => sideQuestionCommand(`/${name}`)))),
+    [commands, commandsKey, selectedKey, selectedSupportsSideQuestions],
   )
   const commandSuggestions = useMemo(
     () =>

@@ -1983,11 +1983,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         try {
           forkId = (await inTime(forking)).sessionId
         } catch (error) {
-          // A fork that lands after the deadline still has to go.
-          void forking.then(({ sessionId: lateId }) => {
-            this.deletedSessionIds.add(lateId)
-            return this.discardSideQuestionFork(client, lateId)
-          }, () => undefined)
+          // Registered before this question's own hold on discovery ends, so
+          // a fork that lands late is never listed before it is discarded.
+          void this.runSessionCreation(() => this.settleLateSideQuestionFork(client, forking))
+            .catch(() => undefined)
           throw error
         }
         this.deletedSessionIds.add(forkId)
@@ -2026,6 +2025,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         for (const forkId of forks) await this.discardSideQuestionFork(client, forkId)
       }
     }))
+  }
+
+  /**
+   * Discards a fork that landed after its question gave up. A runtime that
+   * still owes one after the cleanup bound is stopped, so it cannot land later.
+   */
+  private async settleLateSideQuestionFork(
+    client: CopilotClientLike,
+    forking: Promise<{ sessionId: string }>,
+  ): Promise<void> {
+    const landed = await withSideQuestionTimeout(forking, this.sideQuestionCleanupMs)
+      .catch(() => undefined)
+    if (landed) {
+      this.deletedSessionIds.add(landed.sessionId)
+      await this.discardSideQuestionFork(client, landed.sessionId)
+      return
+    }
+    const runtime = this.sideQuestionRuntime
+    if (runtime?.client !== client) return
+    this.sideQuestionRuntime = undefined
+    await this.closeSideQuestionRuntime(runtime)
   }
 
   /**

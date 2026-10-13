@@ -10882,7 +10882,10 @@ describe('App', () => {
       )
       vi.mocked(listCommands).mockImplementation((computerId) => computerId === secondComputer.id
         ? new Promise(() => {})
-        : Promise.resolve([{ name: 'usage', description: 'Show usage', allowDuringAgentExecution: true }]))
+        : Promise.resolve([
+          { name: 'usage', description: 'Show usage', allowDuringAgentExecution: true },
+          { name: 'ask', aliases: ['btw'], description: 'Ask a quick side question', allowDuringAgentExecution: true },
+        ]))
       render(<App />)
       const textarea = await screen.findByLabelText('Message')
       fireEvent.change(textarea, { target: { value: '/' } })
@@ -10897,6 +10900,12 @@ describe('App', () => {
       fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/' } })
       expect(await screen.findByRole('option', { name: /\/usage/ })).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/b' } })
+      await waitFor(() =>
+        expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument(),
+      )
+      expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument()
+      expect(askSession).not.toHaveBeenCalled()
     })
 
     it('forgets the answers of a session an older partial snapshot removed', async () => {

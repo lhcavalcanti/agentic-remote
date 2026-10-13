@@ -2852,6 +2852,18 @@ function isKnownTerminalFooterRow(
 const UNRECOGNIZED_FOOTER_ROWS = 3
 
 /**
+ * Whether a row gives a single letter key a job, written as a shortcut hint:
+ * `press y`, `y to keep`, `[y] keep`, or a cell that is only `y keep`. A
+ * capital or a longer sentence is prose, not a key.
+ */
+function hasPlainKeyHint(row: string): boolean {
+  if (/\b(?:press|hit|type)\s+\p{L}\b/iu.test(row)) return true
+  if (/(?:^|[\s·(])\p{L}\s+to\s+\p{L}/u.test(row)) return true
+  if (/[[(<‹`'"]\p{L}[\])>›`'"]/u.test(row)) return true
+  return row.split('·').some((cell) => /^\p{Ll}(?:\s+\p{Ll}[\p{L}-]*){1,2}$/u.test(cell.trim()))
+}
+
+/**
  * Whether a row the footer grammar does not know could only be footer text.
  *
  * This app gives a composer pasted text, Enter, Ctrl+Q and Ctrl+U. A row is
@@ -2878,7 +2890,7 @@ function isUnrecognizedFooterRow(line: string): boolean {
   if (/[↑↓]\s*\/?\s*[↑↓]|[←→]\s*\/?\s*[←→]/u.test(trimmed)) return false
   // A job for a key this app sends, for Escape, or for a plain key.
   if (/(?:^|[\s·(])(?:enter|return|⏎|↵|space|esc|escape|backspace|ctrl\+[qucdjm])(?=[\s·),]|$)/iu.test(trimmed)) return false
-  if (/(?:^|[\s·(])\p{L}(?=\s+\p{L})/u.test(trimmed)) return false
+  if (hasPlainKeyHint(trimmed)) return false
   // An action that answers, commits or destroys something.
   return !/\b(?:abort|accept|approve|cancel|clear|confirm|continue|decline|delete|deny|deploy|destroy|discard|erase|exit|force|install|kill|merge|no|overwrite|proceed|publish|purge|push|quit|reject|remove|reset|retry|revert|submit|trust|undo|uninstall|wipe|yes)\b/iu
     .test(trimmed)

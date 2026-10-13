@@ -239,9 +239,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 155,
+  "communities": 144,
   "community_algorithm": "louvain-seed-42",
-  "edges": 10192,
+  "edges": 10194,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -416,8 +416,8 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "5990a0a43c70eee3428c819dab2b1e8aa1d028fc9dd444c415510ec951cacab6",
-    "server/terminal-session.ts": "a362aee0402b31f795802a1cc3e14df83b08e96d8f4243147b56a12281c54e8f",
+    "server/terminal-session.test.ts": "a938919a852be7503ebea88ef3b8ebe80696fa532f33ccf8dc27a3d3f055043f",
+    "server/terminal-session.ts": "502c5b0ee116ea9bcec92d378eaa0151da9ff328260e20f92fcc9692e041c650",
     "server/terminal-startup-queue.test.ts": "34d67d9887bfcc8506a2b99c44eba34d3f3e839fc8a053c33f4c236930eaaf01",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -538,7 +538,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3603,
+  "nodes": 3604,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -595,16 +595,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "56214f83f6f000892d020040fb5ed79b4d2f3fd29608c3c9ccb0a2e7c26a41fb",
-    "communities.json": "a8d2144aeb011e51d193d108624e33876636aef591fc75a7ea5022e9cfd4e680",
-    "graph.html": "07f7ca0214884eab025b81dd7052c193fddc66750f409c523d2aa09968612717",
-    "graph.json": "b39f0214ae629702ae1a0754e3ec134cd31342288eb0fa5188ed08646c97d2c1"
+    "GRAPH_REPORT.md": "f366354474c347b38d4afecf40fbb9e34a01345d86469e796833ea0acd86e0f8",
+    "communities.json": "c9ed629ab7509bca0f079601f0df6b9aa1d63d29670ee248610de081449c7be1",
+    "graph.html": "cc3717704319d020d0255752b0331e01d920056fa9017f61fdd0240c63da19bc",
+    "graph.json": "dfab6e1ee451c6133b8b00c1eb1cc4fff36ec11b6da6a48000920e0e294bd159"
   },
   "schema_version": 1,
-  "source_commit": "4adaa5ece846f9cb1481b1b5f46c3bfaca0fa9aa",
-  "source_fingerprint": "33c732dfa6a6411ed631c3dc3c97016f17c04bf89d1bb15d81d5b299bb663a20",
+  "source_commit": "0e59598dd100d3eab00deeca1b69e13d26c7a7ad",
+  "source_fingerprint": "cc20912a69bbb2773696fbc367a95002526e22a069dd46d0fd272a9d4592bd1e",
   "working_tree_changes": [
-    "docs/app-spec.md",
     "server/terminal-session.test.ts",
     "server/terminal-session.ts"
   ]

@@ -157,6 +157,20 @@ describe('AgentService side questions', () => {
     expect(service.listSessions().map((session) => session.id)).toEqual(['source'])
   })
 
+  it('asks a follow-up with the earlier side answers', async () => {
+    const { client, service } = await fixture()
+
+    await service.askSession('source', 'And the second?', [
+      { question: 'Which options?', answer: 'SQLite and Postgres.' },
+    ])
+
+    expect(client.asked).toEqual([[
+      'Earlier side questions about this conversation, with your answers:',
+      'Question: Which options?\nAnswer: SQLite and Postgres.',
+      'Follow-up question: And the second?',
+    ].join('\n\n')])
+  })
+
   it('leaves a turn that is still running out of the fork', async () => {
     const { client, service } = await fixture([
       { id: 'u1', type: 'user.message' },

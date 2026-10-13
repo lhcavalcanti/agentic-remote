@@ -9,7 +9,13 @@
  * one that has the source session loaded records the fork in its history.
  */
 
-export { SIDE_QUESTION_MAX_LENGTH } from '../shared/side-question.js'
+import type { SideQuestionExchange } from '../shared/contracts.js'
+
+export {
+  SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
+  SIDE_QUESTION_EARLIER_LIMIT,
+  SIDE_QUESTION_MAX_LENGTH,
+} from '../shared/side-question.js'
 
 /** How long an answer may take before the question is abandoned. */
 export const SIDE_QUESTION_TIMEOUT_MS = 120_000
@@ -39,6 +45,26 @@ export function sideQuestionBoundary(
   return events
     .slice(lastTurnEnd + 1)
     .find((event) => event.type === 'user.message' && event.id)?.id
+}
+
+/**
+ * What is asked of the fork. Each question is answered by a fresh fork that
+ * knows nothing of the side thread, so a follow-up carries the earlier side
+ * answers with it.
+ */
+export function sideQuestionPrompt(
+  question: string,
+  earlier: readonly SideQuestionExchange[] = [],
+): string {
+  if (!earlier.length) return question
+  const thread = earlier
+    .map((exchange) => `Question: ${exchange.question}\nAnswer: ${exchange.answer}`)
+    .join('\n\n')
+  return [
+    'Earlier side questions about this conversation, with your answers:',
+    thread,
+    `Follow-up question: ${question}`,
+  ].join('\n\n')
 }
 
 export class SideQuestionError extends Error {

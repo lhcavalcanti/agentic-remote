@@ -60,6 +60,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
+  SideQuestionExchange,
 } from '../shared/contracts.js'
 import { isAppOnlyQueuedCommand } from '../shared/queued-commands.js'
 import {
@@ -111,6 +112,7 @@ import {
   SIDE_QUESTION_TIMEOUT_MS,
   SideQuestionError,
   sideQuestionBoundary,
+  sideQuestionPrompt,
   withSideQuestionTimeout,
 } from './side-question.js'
 import { listHomeDirectories,
@@ -1952,7 +1954,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * of the fork, since a question asked over it is answered as that turn.
    * Discovery waits while the fork exists, and the fork is always deleted.
    */
-  async askSession(id: string, question: string): Promise<string> {
+  async askSession(
+    id: string,
+    question: string,
+    earlier: readonly SideQuestionExchange[] = [],
+  ): Promise<string> {
     const text = question.trim()
     if (!text) throw new SideQuestionError('Ask a question first.', 400)
     if (text.length > SIDE_QUESTION_MAX_LENGTH) {
@@ -2021,7 +2027,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             501,
           )
         }
-        return (await inTime(ask({ question: text }))).answer
+        return (await inTime(ask({ question: sideQuestionPrompt(text, earlier) }))).answer
       } finally {
         if (forked) {
           await withSideQuestionTimeout(forked.disconnect(), this.sideQuestionCleanupMs)

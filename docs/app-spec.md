@@ -352,8 +352,26 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   separately, so neither the request nor shutdown can hang on it. A failure
   MUST be shown beside its question with a retry and MUST NOT affect the
   session.
+- Side questions MUST dock above the message bar, not open over the
+  conversation. While the thread is open the message bar asks aside: it is
+  labelled as a side question, shares the thread's dashed outline, offers
+  **Ask** in place of Send, attachments, recording, and Queue, and MUST NOT
+  send, queue, or run a command. **Stop** remains. Escape, **Back to
+  message**, or **Ask** again returns the bar to the session's own draft,
+  which MUST be left exactly as it was: message-history recall and dropped
+  files MUST NOT reach it while the bar asks aside. Escape puts the dock away
+  before a knowledge panel beside it, unless focus is in that panel or the
+  panel covers the conversation.
+- The thread belongs to its session. It MUST keep answering while another
+  session is selected, and the answer, the open thread, and any follow-up
+  being typed MUST be there on return.
+- Follow-ups MUST carry up to six earlier answered questions from the thread,
+  oldest first, as context. **Clear** empties the thread.
+- One question per session is answered at a time. A follow-up can be typed
+  while one is being answered, and **Ask** is available again once the answer
+  arrives.
 - A `/ask` question that cannot be asked yet, because the computer is offline
-  or another question is pending, MUST open in the dialog rather than be lost.
+  or another question is pending, MUST wait in the bar rather than be lost.
 - Answers belong to the page: kept per session until reload, discarded when the
   session is closed or removed, or its computer is removed, and never
   persisted or sent elsewhere.
@@ -506,14 +524,35 @@ Questions and permissions are the highest-priority UI state.
   composer appear unavailable. A wrapped reasoning/model line after the
   command/sidebar hints MUST remain recognizable without a context counter.
   Unrelated output below the frame MUST still prevent it from being treated as
-  a live composer.
+  a live composer, except as the focused-prompt rule below allows.
 - A footer row that fits the hint cells and the reasoning/model hint on one
   line MUST remain recognizable when Copilot drops hint cells or cuts the last
   hint or the model short to fit. Any footer row that names a hint cell or
   carries that hint after other text MUST be judged by this grammar alone:
   every hint a known cell in Copilot's order, each slot at most once, and only
   the last cut short. Unknown, repeated, reordered or cut-short earlier cells,
-  and an unknown model, MUST refuse input.
+  and an unknown model, MUST refuse input unless the focused-prompt rule below
+  applies.
+- While a turn runs, a footer row that carries the agent's status and the
+  interrupt hint followed by the reasoning/model hint MUST remain a live
+  composer for queued messages, wherever the model or its context is cut.
+  Anything else after the interrupt hint MUST refuse input.
+- A footer that a newer Copilot draws differently MUST NOT stop tmux sessions
+  from starting or taking input. Copilot shows the terminal cursor on its
+  prompt row only while the prompt has the keyboard, and hides it while a form
+  or picker does. When the cursor is shown inside the composer frame, read in
+  the same tmux command as the capture, up to three footer rows the grammar
+  does not recognise MUST be accepted, unless one of them:
+  - is a list, picker or form entry;
+  - asks anything, offers answers to choose between, or prompts for one;
+  - moves through a list;
+  - gives a job to a key this app sends to a composer (pasted text, Enter,
+    Ctrl+Q, Ctrl+U), to Escape or Space, or to a plain key;
+  - names an action that answers, commits or destroys something.
+
+  With the cursor hidden or elsewhere, the grammar alone decides. Each
+  unrecognised footer accepted this way MUST be logged once while it is among
+  the most recent such footers, so the grammar can catch up.
 - An exact downloaded-update notice and its wrapped continuation rows MUST
   NOT hide a readable composer or block terminal startup at any terminal width.
   The notice and the sidebar, mode, permission, help, and tab hint cells wrap
@@ -1224,6 +1263,7 @@ Every material release SHOULD preserve:
 - Markdown, PDF, search, reading mode, and Knowledge folders
 - Numeric context and Interactive/Plan/Autopilot runtime controls
 - Side questions answered without prompting or changing the session
+- Side questions docked above the message bar, kept per session, with follow-ups
 - Dynamic Island and home-indicator safe areas
 - Bundle-only PWA update detection
 

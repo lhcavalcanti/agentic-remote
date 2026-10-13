@@ -31,6 +31,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
+  SideQuestionExchange,
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
@@ -543,12 +544,19 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
-  async askSession(sessionId: string, question: string): Promise<string> {
+  async askSession(
+    sessionId: string,
+    question: string,
+    earlier?: readonly SideQuestionExchange[],
+  ): Promise<string> {
     const response = await this.request<SideQuestionAnswer>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/ask`,
       {
         method: 'POST',
-        body: JSON.stringify({ question } satisfies SideQuestionInput),
+        body: JSON.stringify({
+          question,
+          ...(earlier?.length ? { earlier: [...earlier] } : {}),
+        } satisfies SideQuestionInput),
       },
     )
     return response.answer

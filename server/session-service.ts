@@ -22,6 +22,7 @@ import type {
   SessionSkillsSnapshot,
   SessionMcpServersSnapshot,
   SlashCommand,
+  SideQuestionExchange,
 } from '../shared/contracts.js'
 
 export interface SessionService {
@@ -105,7 +106,11 @@ export interface SessionService {
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
   /** Answers a side question from the conversation without prompting it. */
-  askSession?(sessionId: string, question: string): Promise<string>
+  askSession?(
+    sessionId: string,
+    question: string,
+    earlier?: readonly SideQuestionExchange[],
+  ): Promise<string>
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>
   cancelBackgroundTask(
     sessionId: string,

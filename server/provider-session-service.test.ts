@@ -89,7 +89,10 @@ describe('provider queued dispatch aggregation', () => {
     )
 
     await expect(aggregate.askSession('copilot-session', 'Why?')).resolves.toBe('Answer: Why?')
-    expect(copilot.askSession).toHaveBeenCalledExactlyOnceWith('copilot-session', 'Why?')
+    expect(copilot.askSession).toHaveBeenCalledExactlyOnceWith('copilot-session', 'Why?', undefined)
+    const earlier = [{ question: 'What?', answer: 'This.' }]
+    await aggregate.askSession('copilot-session', 'Why that?', earlier)
+    expect(copilot.askSession).toHaveBeenLastCalledWith('copilot-session', 'Why that?', earlier)
     await expect(aggregate.askSession('claude-session', 'Why?')).rejects.toMatchObject({
       statusCode: 400,
       message: 'Side questions are available for GitHub Copilot sessions only.',

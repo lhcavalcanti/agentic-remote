@@ -23,6 +23,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
+  SideQuestionExchange,
 } from '../shared/contracts.js'
 import type { SessionService } from './session-service.js'
 import {
@@ -326,7 +327,11 @@ export class ProviderSessionService
     return this.serviceFor(sessionId).cancel(sessionId)
   }
 
-  askSession(sessionId: string, question: string): Promise<string> {
+  askSession(
+    sessionId: string,
+    question: string,
+    earlier?: readonly SideQuestionExchange[],
+  ): Promise<string> {
     const service = this.serviceFor(sessionId)
     const provider = service.getSession(sessionId)?.provider || 'copilot'
     if (!service.askSession || !service.providers().some((capability) =>
@@ -336,7 +341,7 @@ export class ProviderSessionService
         { statusCode: 400 },
       ))
     }
-    return service.askSession(sessionId, question)
+    return service.askSession(sessionId, question, earlier)
   }
 
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot> {

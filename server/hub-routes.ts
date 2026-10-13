@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { SIDE_QUESTION_MAX_LENGTH } from './side-question.js'
+import {
+  SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
+  SIDE_QUESTION_EARLIER_LIMIT,
+  SIDE_QUESTION_MAX_LENGTH,
+} from './side-question.js'
 import type {
   HubEvent,
   SessionOrderSnapshot,
@@ -39,6 +43,10 @@ const addComputerSchema = z.object({
 
 const sideQuestionSchema = z.object({
   question: z.string().trim().min(1).max(SIDE_QUESTION_MAX_LENGTH),
+  earlier: z.array(z.object({
+    question: z.string().trim().min(1).max(SIDE_QUESTION_MAX_LENGTH),
+    answer: z.string().trim().min(1).max(SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH),
+  })).max(SIDE_QUESTION_EARLIER_LIMIT).optional(),
 })
 
 const createSessionSchema = z.object({
@@ -1003,6 +1011,7 @@ export async function registerHubRoutes(
           request.params.computerId,
           request.params.sessionId,
           input.question,
+          input.earlier,
         ),
       }
     },

@@ -36,6 +36,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
+  SideQuestionExchange,
 } from '../shared/contracts'
 import {
   httpDeliveryUncertain,
@@ -940,12 +941,16 @@ export async function askSession(
   computerId: string,
   sessionId: string,
   question: string,
+  earlier: readonly SideQuestionExchange[] = [],
 ): Promise<string> {
   const response = await request<SideQuestionAnswer>(
     `${sessionPath(computerId, sessionId)}/ask`,
     {
       method: 'POST',
-      body: JSON.stringify({ question } satisfies SideQuestionInput),
+      body: JSON.stringify({
+        question,
+        ...(earlier.length ? { earlier: [...earlier] } : {}),
+      } satisfies SideQuestionInput),
     },
   )
   return response.answer

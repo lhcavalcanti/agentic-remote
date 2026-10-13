@@ -13,6 +13,7 @@ import {
   isTerminalSessionInUsePrompt,
   composerHoldsOtherText,
   composerHoldsText,
+  composerHasFocus,
   composerTookPaste,
   paneEvidenceCount,
   paneShowsText,
@@ -104,6 +105,21 @@ function flatReadyComposer(
   ].join('\n')
 }
 
+// A flat composer with no footer of its own, for footers drawn by the test.
+function bareFlatComposer(
+  text = '',
+  working = false,
+  cwd = '/work/project',
+): string {
+  return [
+    ` ${cwd}                                      Session: 0 AIC used`,
+    '────────────────────────────────────────────────────────────',
+    `❯${text ? ` ${text}` : ''}`,
+    '────────────────────────────────────────────────────────────',
+    ...(working ? [' ◉ Working · esc interrupt'] : []),
+  ].join('\n')
+}
+
 const downloadedUpdateFooter = [
   ' v1.0.92 downloaded · next     · ← open    · Autopilot ·    · / commands · tab',
   ' launch or /restart              sidebar     Allow All        next tab',
@@ -142,6 +158,11 @@ async function deliveryFixture(
   transientRepaintMs = 0,
   injectedText = '',
   transientPane = 'Loading terminal frame',
+  composerStyleOrBare: 'bare' | undefined = undefined,
+  // Where the CLI leaves the cursor: after the footer it drew, or on its
+  // prompt row as Copilot does while the prompt has the keyboard, shown or
+  // hidden.
+  cursor: 'end' | 'prompt' | 'hidden' = 'end',
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -155,8 +176,15 @@ let input = ''
 let pasted = ${JSON.stringify(initialText || undefined)}
 const received = { pastes: [], submits: [] }
 let replacementStable = true
-const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
-const makeComposer = ${(composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
+const cursor = ${JSON.stringify(cursor)}
+const draw = (pane) => {
+  process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+  if (cursor === 'end') return
+  const row = pane.split('\\n').findIndex((line) => /^(?:❯|┃)/u.test(line))
+  if (row >= 0) process.stdout.write('\\x1b[' + (row + 1) + ';3H')
+  process.stdout.write(cursor === 'hidden' ? '\\x1b[?25l' : '\\x1b[?25h')
+}
+const makeComposer = ${(composerStyleOrBare === 'bare' ? bareFlatComposer : composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
 const composer = (text = '', working = false) => ${JSON.stringify(transcript ? `${transcript}\n` : '')} + makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
@@ -228,7 +256,9 @@ draw(composer(${JSON.stringify(initialText)}, ${working}))
   await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
   vi.stubEnv('COPILOT_HOME', copilotHome)
   const controller = new TmuxTerminalSessionController()
-  const readyMarker = composerStyle === 'flat' ? 'open sidebar' : '╹'
+  const readyMarker = composerStyleOrBare === 'bare'
+    ? '❯'
+    : composerStyle === 'flat' ? 'open sidebar' : '╹'
   await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes(readyMarker)))
   return { controller, sessionId, output, directory, tmuxSession, panePid }
 }
@@ -685,6 +715,160 @@ describe('TmuxTerminalSessionController', () => {
     expect(await controller.inputReady(sessionId)).toBe(false)
     expect(await readFile(output, 'utf8')).toBe('')
   })
+
+  describe('composerHasFocus', () => {
+    const edge = '─'.repeat(60)
+    const flat = (footer: string[], text = '') => [
+      ' /work/project                                      Session: 0 AIC used',
+      edge,
+      `❯${text ? ` ${text}` : ''}`,
+      edge,
+      ...footer,
+    ]
+    const newFooter = [' ← sidebar · Autopilot · /help        ctrl+r reasoning · Claude Opus 6']
+
+    it('needs the cursor shown on a row inside the composer', () => {
+      expect(composerHasFocus(flat(newFooter), true, 2)).toBe(true)
+      expect(composerHasFocus(flat(newFooter, 'a draft'), true, 2)).toBe(true)
+      expect(composerHasFocus(flat(newFooter), false, 2)).toBe(false)
+      for (const row of [0, 1, 3, 4, -1, 99]) {
+        expect(composerHasFocus(flat(newFooter), true, row)).toBe(false)
+      }
+    })
+
+    it('finds a boxed composer as well', () => {
+      const boxed = ['╻▄▄▄▄▄▄▄▄▄▄', '┃ ', '╹▀▀▀▀▀▀▀▀▀▀', ...newFooter]
+      expect(composerHasFocus(boxed, true, 1)).toBe(true)
+      expect(composerHasFocus(boxed, true, 3)).toBe(false)
+    })
+
+    it.each([
+      [' ↑/↓ select · enter accept · esc cancel'],
+      [' ❯ Confirm write', '   Cancel'],
+      [' /model   Select a model'],
+      [' Allow this tool to run?'],
+      [' a', ' b', ' c', ' d'],
+    ])('refuses rows that could own the keyboard: %s', (...footer) => {
+      expect(composerHasFocus(flat(footer), true, 2)).toBe(false)
+    })
+  })
+
+  // Copilot 1.0.96 at 80 columns, captured from live sessions mid-turn.
+  it.each([
+    ' ◉ Working · 52.1 KiB esc interrupt      ctrl+t show reasoning · GPT-5.6 Sol Fa',
+    ' ○ Resolving current       esc interrupt ctrl+t show reasoning · GPT-6.1 Sol ·',
+    ' ● Working · 47.6 KiB esc interrupt      ctrl+t show reasoning · GPT-6 Sol · 87',
+    ' ◉ Working - autopilot · 3 esc interrupt ctrl+t show reasoning · GPT-6.1 Sol ·',
+    ' ◉ Working · esc interrupt',
+  ])('queues beneath the one-row working footer of Copilot 1.0.96: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+      undefined, undefined, undefined, undefined, 'bare',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await controller.send(sessionId, 'Queued mid-turn', true)).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({ pastes: ['Queued mid-turn'], submits: ['queue'] })
+  }, 20_000)
+
+  it.each([
+    ' ◉ Working · esc interrupt      ctrl+t delete everything',
+    ' ◉ Working · esc interrupt      Deploy now',
+    ' ◉ Working · esc interrupt      ctrl+t show reasoning · Unknown footer',
+  ])('refuses a working footer lookalike: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+      undefined, undefined, undefined, undefined, 'bare',
+    )
+    await expect(controller.send(sessionId, 'Not queued', true)).rejects.toThrow()
+    expect(await readFile(output, 'utf8')).toBe('')
+  }, 120_000)
+
+  // Copilot shows the cursor on its prompt row while the prompt has the
+  // keyboard, so a footer from a newer CLI does not stop input there.
+  it.each([
+    ' ← sidebar · Autopilot · Allow All · /help        ctrl+r reasoning · Claude Opus 6',
+    ' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
+    ' Interactive · Allow All · / commands   ctrl+t show reasoning · Unknown footer',
+    ' v1.1.0 downloaded · restart to update\n Autopilot · Allow All · ? help\n Fixture Model · 2M context (3%)',
+  ])('accepts an unrecognised footer while the cursor is in the prompt: %s', async (footer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, undefined, undefined, footer, '', 'flat',
+        undefined, undefined, undefined, undefined, 'bare', 'prompt',
+      )
+      expect(await controller.inputReady(sessionId)).toBe(true)
+      expect(await controller.send(sessionId, 'Unknown footer proof', false)).toBe(true)
+      const received = await eventually(
+        () => readFile(output, 'utf8'),
+        (value) => Boolean(value && JSON.parse(value).submits.length),
+      )
+      expect(JSON.parse(received)).toEqual({
+        pastes: ['Unknown footer proof'], submits: ['enter'],
+      })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('does not recognise'))
+    } finally {
+      warn.mockRestore()
+    }
+  }, 20_000)
+
+  it('queues under an unrecognised footer while the agent works', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      true, undefined, undefined, ' ⏵ autopilot on · ctrl+r reasoning · Claude Opus 6', '', 'flat',
+      undefined, undefined, undefined, undefined, 'bare', 'prompt',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await controller.send(sessionId, 'Queued under a new footer', true)).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Queued under a new footer'], submits: ['queue'],
+    })
+  }, 20_000)
+
+  it.each([
+    [' ❯ Confirm write\n   Cancel', 'a list'],
+    [' 1. Yes, proceed', 'a numbered choice'],
+    [' /model   Select a model', 'a command picker'],
+    [' @src/App.tsx', 'a file picker'],
+    [' Do you want to keep going?', 'a question'],
+    [' Choose a model:', 'a prompt for an answer'],
+    [' choose with ↑/↓ · ⏎ run', 'list navigation'],
+    [' esc to close · tab to switch', 'keys for another view'],
+    [' enter to confirm', 'a confirmation'],
+    [' one hint\n two hint\n three hint\n four hint', 'too many unknown rows'],
+  ])('refuses an unrecognised footer that could own the keyboard: %s (%s)', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+      undefined, undefined, undefined, undefined, 'bare', 'prompt',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+  })
+
+  // The same footers are accepted above only because the cursor was there.
+  it.each([
+    ['end', ' ← sidebar · Autopilot · /help        Claude Opus 6'],
+    ['hidden', ' ← sidebar · Autopilot · /help        Claude Opus 6'],
+    ['end', ' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol'],
+    ['hidden', ' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol'],
+  ] as const)(
+    'refuses an unrecognised footer when the cursor is not shown in the prompt: %s, %s',
+    async (cursor, footer) => {
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, undefined, undefined, footer, '', 'flat',
+        undefined, undefined, undefined, undefined, 'bare', cursor,
+      )
+      expect(await controller.inputReady(sessionId)).toBe(false)
+      expect(await readFile(output, 'utf8')).toBe('')
+    },
+  )
 
   it.each([
     'ctrl+t show reasoning · Unknown footer',

@@ -524,14 +524,32 @@ Questions and permissions are the highest-priority UI state.
   composer appear unavailable. A wrapped reasoning/model line after the
   command/sidebar hints MUST remain recognizable without a context counter.
   Unrelated output below the frame MUST still prevent it from being treated as
-  a live composer.
+  a live composer, except as the focused-prompt rule below allows.
 - A footer row that fits the hint cells and the reasoning/model hint on one
   line MUST remain recognizable when Copilot drops hint cells or cuts the last
   hint or the model short to fit. Any footer row that names a hint cell or
   carries that hint after other text MUST be judged by this grammar alone:
   every hint a known cell in Copilot's order, each slot at most once, and only
   the last cut short. Unknown, repeated, reordered or cut-short earlier cells,
-  and an unknown model, MUST refuse input.
+  and an unknown model, MUST refuse input unless the focused-prompt rule below
+  applies.
+- While a turn runs, a footer row that carries the agent's status and the
+  interrupt hint followed by the reasoning/model hint MUST remain a live
+  composer for queued messages, wherever the model or its context is cut.
+  Anything else after the interrupt hint MUST refuse input.
+- A footer that a newer Copilot draws differently MUST NOT stop tmux sessions
+  from starting or taking input. Copilot shows the terminal cursor on its
+  prompt row only while the prompt has the keyboard, and hides it while a form
+  or picker does. When the cursor is shown inside the composer frame, read in
+  the same tmux command as the capture, up to three footer rows the grammar
+  does not recognise MUST be accepted, unless one of them is:
+  - a list, picker or form entry;
+  - a question or a prompt for an answer;
+  - list navigation or keys offered to another view.
+
+  With the cursor hidden or elsewhere, the grammar alone decides. Each
+  unrecognised footer accepted this way MUST be logged once, so the grammar
+  can catch up.
 - An exact downloaded-update notice and its wrapped continuation rows MUST
   NOT hide a readable composer or block terminal startup at any terminal width.
   The notice and the sidebar, mode, permission, help, and tab hint cells wrap

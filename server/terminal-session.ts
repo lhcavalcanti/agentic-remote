@@ -798,17 +798,7 @@ export class TmuxTerminalSessionController
       return undefined
     }
     try {
-      return (
-        await execFileAsync('tmux', [
-          'capture-pane',
-          '-J',
-          '-p',
-          '-t',
-          target,
-          '-S',
-          '-200',
-        ])
-      ).stdout
+      return await captureTerminal(target, 200)
     } catch {
       return undefined
     }
@@ -2797,36 +2787,90 @@ function downloadedUpdateFooterBlock(lines: string[]): { start: number; end: num
   return undefined
 }
 
-function isTerminalComposerFooter(lines: string[]): boolean {
+/**
+ * Whether the rows below a composer are its footer.
+ *
+ * Known footers are matched exactly. When Copilot itself shows the prompt has
+ * the keyboard (see `composerHasFocus`), up to three rows the grammar does not
+ * know yet are accepted as long as none could be anything but a footer: a
+ * list or picker entry, a question, or keys offered to something else.
+ */
+function isTerminalComposerFooter(lines: string[], tolerateUnknown = false): boolean {
   const update = downloadedUpdateFooterBlock(lines)
+  let unknownRows = 0
   return lines.every((line, index) => {
     if (update && index >= update.start && index <= update.end) return true
-    const availableUpdate =
-      /\/update\b/u.test(line) && /\bv?\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)
-    // A version-led row that is not an exact update footer is never chrome,
-    // even when it also carries familiar command hints.
-    if (/^\s*v\d/u.test(line) && !availableUpdate) return false
-    // Hint rows are judged by the hint grammar alone rather than by the looser
-    // patterns below, so reordered or unknown cells refuse input.
-    if (isTerminalHintRow(line)) {
-      return isTerminalCompactHintFooter(line) ||
-        isTerminalWorkspaceFooter(line) ||
-        /^\s*\/\s*commands\s*$/u.test(line)
-    }
-    // Nothing the update footer draws continues below it, so an arrow-led
-    // line there is not footer chrome.
-    const chrome = isTerminalChrome(line) &&
-      !(update && index > update.end && /^\s*[←↑↓→]/u.test(line))
-    return chrome ||
-      isTerminalContextFooter(line) ||
-      isTerminalModelFooter(line, lines[index - 1]) ||
-      isTerminalCompactHintFooter(line) ||
-      isTerminalWorkspaceFooter(line) ||
-      /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
-      /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
-      /\besc\s+interrupt\b/i.test(line) ||
-      availableUpdate
+    const known = isKnownTerminalFooterRow(lines, index, update)
+    if (known || !tolerateUnknown || !isUnrecognizedFooterRow(line)) return known
+    unknownRows += 1
+    return unknownRows <= UNRECOGNIZED_FOOTER_ROWS
   })
+}
+
+function isKnownTerminalFooterRow(
+  lines: string[],
+  index: number,
+  update: { start: number; end: number } | undefined,
+): boolean {
+  const line = lines[index]
+  const availableUpdate =
+    /\/update\b/u.test(line) && /\bv?\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)
+  // A version-led row that is not an exact update footer is never chrome,
+  // even when it also carries familiar command hints.
+  if (/^\s*v\d/u.test(line) && !availableUpdate) return false
+  // While a turn runs, Copilot 1.0.96 puts its status and the interrupt key
+  // ahead of the reasoning/model hint on one row, and cuts the model or its
+  // context to fit. Anything after the interrupt key must be that hint.
+  const working = /^(.*\besc\s+interrupt)\b(.*)$/iu.exec(line)
+  if (working) {
+    const rest = working[2].trim().replace(/\s+/gu, ' ')
+    return !rest || isFooterReasoningModel(rest)
+  }
+  // Hint rows are judged by the hint grammar alone rather than by the looser
+  // patterns below, so reordered or unknown cells refuse input.
+  if (isTerminalHintRow(line)) {
+    return isTerminalCompactHintFooter(line) ||
+      isTerminalWorkspaceFooter(line) ||
+      /^\s*\/\s*commands\s*$/u.test(line)
+  }
+  // Nothing the update footer draws continues below it, so an arrow-led
+  // line there is not footer chrome.
+  const chrome = isTerminalChrome(line) &&
+    !(update && index > update.end && /^\s*[←↑↓→]/u.test(line))
+  return chrome ||
+    isTerminalContextFooter(line) ||
+    isTerminalModelFooter(line, lines[index - 1]) ||
+    isTerminalCompactHintFooter(line) ||
+    isTerminalWorkspaceFooter(line) ||
+    /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
+    /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
+    /\besc\s+interrupt\b/i.test(line) ||
+    availableUpdate
+}
+
+/** The most footer rows that may go unrecognised below a focused composer. */
+const UNRECOGNIZED_FOOTER_ROWS = 3
+
+/**
+ * Whether a row the footer grammar does not know could only be footer text:
+ * hints, labels, a model or a notice. Anything that offers a choice, asks for
+ * an answer or hands keys to something other than the prompt is refused.
+ */
+function isUnrecognizedFooterRow(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return true
+  if (trimmed.length > 240) return false
+  // An entry in a list, picker or form.
+  if (/^(?:[❯›>▸▶►●○◉◎◯☐☑☒✓✔✗✘•*+-]|\[.?\]|\(.?\)|\d+[.)])(?:\s|$)/u.test(trimmed)) return false
+  // An entry in the command, file or issue picker.
+  if (/^[/@#][\p{L}\p{N}_-]/u.test(trimmed)) return false
+  // A question, or a prompt for an answer.
+  if (/[?:]$/u.test(trimmed)) return false
+  // Keys handed to something other than the prompt: moving through a list,
+  // or choosing, confirming or leaving something.
+  if (/[↑↓]\s*\/?\s*[↑↓]|[←→]\s*\/?\s*[←→]/u.test(trimmed)) return false
+  return !/\b(?:esc|enter|return|space|tab|shift\+tab|ctrl\+\S+|y\/n)\s+(?:to\s+)?(?:select|accept|confirm|cancel|close|back|exit|dismiss|navigate|toggle|decline|choose|submit|approve|deny|allow|reject|edit|save|apply|continue|retry|answer|pick)\b/iu
+    .test(trimmed)
 }
 
 function composerFrameText(
@@ -2846,6 +2890,7 @@ function composerFrameText(
 function flatComposerFrame(
   lines: string[],
   requireLive = true,
+  tolerateUnknownFooter = false,
 ): TerminalComposerFrame | undefined {
   // Free-text form fields share the flat frame and prompt marker, but their
   // accept/cancel controls still own the keyboard.
@@ -2855,7 +2900,8 @@ function flatComposerFrame(
   for (let bottom = lines.length - 1; bottom >= 0; bottom -= 1) {
     if (
       !FLAT_COMPOSER_EDGE.test(lines[bottom]) ||
-      (requireLive && !isTerminalComposerFooter(lines.slice(bottom + 1)))
+      (requireLive &&
+        !isTerminalComposerFooter(lines.slice(bottom + 1), tolerateUnknownFooter))
     ) {
       continue
     }
@@ -2875,6 +2921,7 @@ function flatComposerFrame(
 function boxedComposerFrame(
   lines: string[],
   requireLive = true,
+  tolerateUnknownFooter = false,
 ): TerminalComposerFrame | undefined {
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
   if (top < 0) {
@@ -2888,7 +2935,8 @@ function boxedComposerFrame(
     bottom < 0 ||
     !lines[bottom].trimStart().startsWith(heavy ? '╹' : '╰') ||
     !lines.slice(top + 1, bottom).some((line) => /^\s*[│┃╽╿]/u.test(line)) ||
-    (requireLive && !isTerminalComposerFooter(lines.slice(bottom + 1)))
+    (requireLive &&
+      !isTerminalComposerFooter(lines.slice(bottom + 1), tolerateUnknownFooter))
   ) {
     return undefined
   }
@@ -2910,9 +2958,10 @@ function boxedComposerFrame(
 function terminalComposerFrame(
   lines: string[],
   requireLive = true,
+  tolerateUnknownFooter = false,
 ): TerminalComposerFrame | undefined {
-  const flat = flatComposerFrame(lines, requireLive)
-  const boxed = boxedComposerFrame(lines, requireLive)
+  const flat = flatComposerFrame(lines, requireLive, tolerateUnknownFooter)
+  const boxed = boxedComposerFrame(lines, requireLive, tolerateUnknownFooter)
   if (!flat) {
     return boxed
   }
@@ -2923,7 +2972,61 @@ function terminalComposerFrame(
 }
 
 function hasLiveTerminalComposer(pane: string): boolean {
-  return terminalComposerFrame(pane.split('\n')) !== undefined
+  return terminalComposerFrame(pane.split('\n'), true, composerFocusWitnessed(pane)) !== undefined
+}
+
+// Copilot shows the terminal cursor on its prompt row only while the prompt
+// has the keyboard; its forms and pickers hide the cursor. That is the CLI's
+// own word on who owns input, and it does not change when the footer does.
+//
+// Captures taken through `capturePane` read the cursor in the same tmux
+// command, and a pane whose cursor sat in a composer with a footer the grammar
+// does not know is remembered here, by its exact text. The same text with the
+// prompt not focused would have to look different, since whatever took the
+// keyboard draws itself. Panes that never came from such a capture are judged
+// by the grammar alone.
+const composerFocusedPanes = new Set<string>()
+const COMPOSER_FOCUS_MEMORY = 64
+
+function composerFocusWitnessed(pane: string): boolean {
+  return composerFocusedPanes.has(pane)
+}
+
+function rememberComposerFocus(pane: string): void {
+  composerFocusedPanes.delete(pane)
+  composerFocusedPanes.add(pane)
+  while (composerFocusedPanes.size > COMPOSER_FOCUS_MEMORY) {
+    composerFocusedPanes.delete(composerFocusedPanes.values().next().value!)
+  }
+}
+
+const reportedUnknownFooters = new Set<string>()
+
+/**
+ * Whether the cursor sits inside a composer whose footer, however unfamiliar,
+ * holds nothing that could own the keyboard.
+ *
+ * `rows` is the visible screen, one row per line, so `cursorY` indexes it.
+ */
+export function composerHasFocus(
+  rows: readonly string[],
+  cursorVisible: boolean,
+  cursorY: number,
+): boolean {
+  if (!cursorVisible || cursorY < 0 || cursorY >= rows.length) return false
+  const lines = [...rows]
+  if (hasTerminalFormFooter(lines)) return false
+  const frame = terminalComposerFrame(lines, true, true)
+  return Boolean(frame && cursorY > frame.top && cursorY < frame.bottom)
+}
+
+function footerBelowComposer(rows: readonly string[]): string {
+  const lines = [...rows]
+  const frame = terminalComposerFrame(lines, true, true)
+  return (frame ? lines.slice(frame.bottom + 1) : [])
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' | ')
 }
 
 function terminalInputReady(pane: string, allowWorking = false): boolean {
@@ -2941,7 +3044,7 @@ function terminalInputReady(pane: string, allowWorking = false): boolean {
 
 function stripTerminalStatus(pane: string): string[] {
   const lines = pane.split('\n').map((line) => line.trimEnd())
-  const composer = terminalComposerFrame(lines)
+  const composer = terminalComposerFrame(lines, true, composerFocusWitnessed(pane))
   if (!composer) {
     return lines
   }
@@ -2957,7 +3060,7 @@ function terminalControlLines(pane: string): string[] {
   while (lines.length > 0 && !lines[lines.length - 1].trim()) {
     lines.pop()
   }
-  const liveComposer = terminalComposerFrame(lines)
+  const liveComposer = terminalComposerFrame(lines, true, composerFocusWitnessed(pane))
   if (liveComposer) {
     return lines.slice(liveComposer.bottom + 1)
   }
@@ -4155,17 +4258,47 @@ export function composerHoldsText(pane: string): boolean {
 }
 
 async function capturePane(target: string, timeout?: number): Promise<string> {
-  return (
-    await execFileAsync('tmux', [
-      'capture-pane',
-      '-J',
-      '-p',
-      '-t',
-      target,
-      '-S',
-      '-30',
-    ], { timeout })
-  ).stdout
+  return captureTerminal(target, 30, timeout)
+}
+
+/**
+ * Captures a pane with `history` lines of scrollback, and in the same tmux
+ * command reads the cursor and the visible screen, so whether the prompt had
+ * the keyboard is known for exactly this frame (see `composerFocusedPanes`).
+ */
+async function captureTerminal(
+  target: string,
+  history: number,
+  timeout?: number,
+): Promise<string> {
+  const marker = `agentic-remote-cursor-${randomUUID()}`
+  const { stdout } = await execFileAsync('tmux', [
+    'capture-pane', '-J', '-p', '-t', target, '-S', `-${history}`,
+    ';', 'display-message', '-p', '-t', target, `${marker} #{cursor_flag} #{cursor_y}`,
+    ';', 'capture-pane', '-p', '-t', target,
+  ], { timeout })
+  const at = stdout.lastIndexOf(`${marker} `)
+  if (at < 0) return stdout
+  const pane = stdout.slice(0, at)
+  const rest = stdout.slice(at)
+  const end = rest.indexOf('\n')
+  const [, flag, row] = (end < 0 ? rest : rest.slice(0, end)).split(' ')
+  const visible = end < 0 ? [] : rest.slice(end + 1).replace(/\n$/u, '').split('\n')
+  if (terminalComposerFrame(pane.split('\n')) !== undefined) return pane
+  if (composerHasFocus(visible, flag === '1', Number(row))) {
+    rememberComposerFocus(pane)
+    const footer = footerBelowComposer(visible)
+    const shape = footer.replace(/\d+/gu, '#')
+    if (footer && !reportedUnknownFooters.has(shape) && reportedUnknownFooters.size < 32) {
+      reportedUnknownFooters.add(shape)
+      console.warn(
+        `Copilot drew a footer this version does not recognise; input was allowed because the cursor was in its prompt: ${footer}`,
+      )
+    }
+  } else {
+    composerFocusedPanes.delete(pane)
+  }
+  return pane
 }
 
 /**

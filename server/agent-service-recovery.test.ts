@@ -884,6 +884,80 @@ describe('Deferred terminal ownership recovery', () => {
     expect(f.terminal.create).toHaveBeenCalledOnce()
   })
 
+  it('proves persistence before recovering a terminal whose discovery was deferred at startup', async () => {
+    const f = await fixture()
+    await expect(f.service.start()).resolves.toBeUndefined()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    f.ownership.aggregateError = undefined
+    await f.blockWrites()
+    const seen = f.events.length
+
+    await f.service.refreshDiscovery()
+    expect(f.terminal.has).not.toHaveBeenCalled()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
+    expect(f.events.slice(seen)).toContainEqual({
+      type: 'error', sessionId: '', message: expect.stringContaining('EISDIR'),
+    })
+
+    await f.unblockWrites()
+    await f.service.refreshDiscovery()
+    expect(f.terminal.create).toHaveBeenCalledOnce()
+    await expect(f.service.activateSession('pending')).resolves.toMatchObject({ isOpen: true })
+  })
+
+  it('runs an unchanged periodic discovery cycle without copying histories or writing state', async () => {
+    const f = await fixture([])
+    f.ownership.aggregateError = undefined
+    const history = Array.from({ length: 50 }, (_unused, index) => ({
+      id: `message-${index}`, role: 'user' as const, content: `Retained history ${index}`,
+      createdAt: timestamp,
+    }))
+    const ids = Array.from({ length: 128 }, (_unused, index) => `listed-${index}`)
+    for (const id of ids) {
+      await f.store.create({
+        id, cwd: f.directory, title: id, updatedAt: timestamp,
+        status: 'idle', isOpen: false, messages: history,
+      }, { backend: 'sdk' })
+    }
+    // A live terminal too, so the per-terminal title lookup runs every cycle.
+    await f.store.create({
+      id: 'live-terminal', cwd: f.directory, title: 'live-terminal', updatedAt: timestamp,
+      status: 'idle', isOpen: true, messages: history,
+    }, { backend: 'terminal', managedOpen: true })
+    f.ownership.owners.add('live-terminal')
+    const rename = vi.fn(async () => {})
+    Object.assign(f.terminal, { rename })
+    vi.mocked(f.client.listSessions).mockResolvedValue(ids.map((id) => ({
+      sessionId: id,
+      summary: id,
+      startTime: new Date(timestamp),
+      modifiedTime: new Date(timestamp),
+      isRemote: false,
+      context: { cwd: f.directory, workingDirectory: f.directory },
+    })) as unknown as Awaited<ReturnType<CopilotClientLike['listSessions']>>)
+    await f.service.start()
+    await f.service.refreshDiscovery()
+    const statePath = path.join(f.stateDirectory, 'state.json')
+    const before = await readFile(statePath, 'utf8')
+    const revisions = Object.fromEntries(ids.map((id) => [id, f.store.get(id)!.revision]))
+    const list = vi.spyOn(f.store, 'list')
+    const get = vi.spyOn(f.store, 'get')
+    const recoverable = vi.spyOn(f.store, 'terminalRecoverySessions')
+
+    for (let cycle = 0; cycle < 3; cycle += 1) await f.service.refreshDiscovery()
+
+    expect(f.client.listSessions).toHaveBeenCalled()
+    expect(rename).toHaveBeenCalledWith('live-terminal', 'live-terminal')
+    expect(list).not.toHaveBeenCalled()
+    expect(get).not.toHaveBeenCalled()
+    expect(recoverable).not.toHaveBeenCalled()
+    expect(await readFile(statePath, 'utf8')).toBe(before)
+    list.mockRestore()
+    get.mockRestore()
+    expect(Object.fromEntries(ids.map((id) => [id, f.store.get(id)!.revision]))).toEqual(revisions)
+  })
+
   it('does not reclassify a refused post-launch state write as a launch failure', async () => {
     const f = await fixture()
     f.ownership.aggregateError = undefined

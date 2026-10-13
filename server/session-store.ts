@@ -407,6 +407,25 @@ export class SessionStore {
       .map(cloneSession)
   }
 
+  /**
+   * Each listed session's identity and open state, in `list()` order, without
+   * copying its history, for work that runs on every discovery cycle.
+   */
+  discoveryIndex(): { id: string; isOpen: boolean }[] {
+    return Object.values(this.state.sessions)
+      .filter((session) => !this.isRetiredSession(session.id))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map((session) => ({ id: session.id, isOpen: session.isOpen === true }))
+  }
+
+  /** A listed session's title, without copying its history. */
+  title(id: string): string | undefined {
+    if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
+      return undefined
+    }
+    return this.state.sessions[id]?.title
+  }
+
   get(id: string): SessionDetail | undefined {
     if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
       return undefined

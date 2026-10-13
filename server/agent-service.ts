@@ -2178,15 +2178,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     try {
-      if (await this.discoverSessions()) {
-        try {
-          await this.store.verifyPersistence()
-        } catch (error) {
-          this.nativeStartupDiscoveryReady = false
-          throw error
-        }
-        await this.finishStartupRecovery()
-      }
+      if (await this.discoverSessions()) await this.finishStartupRecovery()
     } catch (error) {
       if (this.stopped) return
       if (!(error instanceof TerminalDiscoveryError)) throw error
@@ -2212,6 +2204,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       (!this.startupRecoveryPending && !this.terminalRecoveryStates?.size) ||
       this.stopped || this.lifecycleLocks.size || this.sessionCreations.size
     ) return
+    // Discovery that changes nothing no longer writes the state file, so it
+    // says nothing about whether the file can still be replaced. Recovery takes
+    // terminal ownership, so it proves that first -- on every route here,
+    // including discovery that was deferred at startup and retried later. Only
+    // while recovery is pending; once it settles, this returns above.
+    try {
+      await this.store.verifyPersistence()
+    } catch (error) {
+      this.nativeStartupDiscoveryReady = false
+      throw error
+    }
     this.terminalRecoveryStates ??= new Map(
       (this.terminalController.create ? this.store.terminalRecoverySessions() : [])
         .map(({ id }) => [id, 'pending']),
@@ -2252,7 +2255,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private dispatchReadyRecoverySeeds(): void {
     if (this.stopped) return
-    for (const session of this.store.list()) {
+    // Runs after every discovery cycle, so it reads identities rather than
+    // copying every session's history.
+    for (const session of this.store.discoveryIndex()) {
       const seed = this.store.recoverySeed(session.id)
       if (seed?.state !== 'pending') continue
       const terminal = this.store.backend(session.id) === 'terminal'
@@ -7431,7 +7436,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.sessionCreations.size === 0 &&
       this.lifecycleLocks.size === 0
     if (!isCurrent()) return false
-    const storedBeforeDiscovery = this.store.list()
+    // Identities and open state only: copying every session's history on each
+    // discovery cycle cost more than the discovery itself.
+    const storedBeforeDiscovery = this.store.discoveryIndex()
     const excluded = (id: string) =>
       this.deletedSessionIds.has(id) || this.store.isRetiredSession(id)
     activeSessions = activeSessions.filter((session) => !excluded(session.id))
@@ -7496,7 +7503,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await Promise.all(
         activeSessions.map(async (session) => {
           if (!isCurrent()) return
-          const currentTitle = this.store.get(session.id)?.title
+          const currentTitle = this.store.title(session.id)
           if (currentTitle) {
             await renameTerminal(session.id, currentTitle)
               .catch((error: unknown) => this.publishError(session.id, error))

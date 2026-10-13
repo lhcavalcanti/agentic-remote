@@ -358,7 +358,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   **Ask** in place of Send, attachments, recording, and Queue, and MUST NOT
   send, queue, or run a command. **Stop** remains. Escape, **Back to
   message**, or **Ask** again returns the bar to the session's own draft,
-  which MUST be left exactly as it was.
+  which MUST be left exactly as it was: message-history recall and dropped
+  files MUST NOT reach it while the bar asks aside. Escape puts the dock away
+  before a knowledge panel beside it, unless focus is in that panel or the
+  panel covers the conversation.
 - The thread belongs to its session. It MUST keep answering while another
   session is selected, and the answer, the open thread, and any follow-up
   being typed MUST be there on return.

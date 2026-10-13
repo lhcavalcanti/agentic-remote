@@ -8102,7 +8102,7 @@ function App() {
         !event.defaultPrevented &&
         !event.isComposing
       ) {
-        if (closeTopmostLayer()) {
+        if (closeTopmostLayer(event.target)) {
           event.preventDefault()
         }
         return
@@ -10892,7 +10892,7 @@ function App() {
   // A permission request and a question from the agent are deliberately not
   // here. Both are waiting on an answer, and dismissing one leaves the session
   // stopped with nothing on screen to say why.
-  function closeTopmostLayer(): boolean {
+  function closeTopmostLayer(target?: EventTarget | null): boolean {
     if (addRootOpen) {
       rootCreationOwner.current = undefined
       setAddRootOpen(false)
@@ -10934,8 +10934,20 @@ function App() {
       setSidebarOpen(false)
       return true
     }
+    // The side-question dock belongs to the conversation, so it goes before
+    // a knowledge panel beside it -- unless the panel is over the
+    // conversation or is where the reader is.
+    const inKnowledge = target instanceof Element && Boolean(target.closest('.knowledge-panel'))
+    if (askingAside && knowledgeMode !== 'expanded' && !inKnowledge) {
+      closeSideQuestion()
+      return true
+    }
     if (knowledgeMode !== 'hidden') {
       setKnowledgeMode('hidden')
+      return true
+    }
+    if (askingAside) {
+      closeSideQuestion()
       return true
     }
     return false
@@ -13646,6 +13658,9 @@ function App() {
       event.metaKey ||
       event.shiftKey ||
       hasBlockingUi ||
+      // The bar is asking aside; recalling a message would write into the
+      // session draft it is keeping out of sight.
+      askingAside ||
       isEditableTarget(event.target) ||
       sortableDragActiveRef.current
     ) {
@@ -14913,12 +14928,14 @@ function App() {
               className={`composer ${
                 selectedQueueAvailable && !askingAside ? 'composer--running' : ''
               } ${askingAside ? 'composer--aside' : ''}`}
+              // A file is for the session; while the bar asks aside it would
+              // land in the draft it is keeping out of sight.
               onDragOver={(event) => {
-                if (event.dataTransfer.types.includes('Files')) {
+                if (!askingAside && event.dataTransfer.types.includes('Files')) {
                   event.preventDefault()
                 }
               }}
-              onDrop={audioDropped}
+              onDrop={askingAside ? undefined : audioDropped}
             >
               {showCommandMenu ? (
                 <div className="command-menu" role="listbox" aria-label="Commands">

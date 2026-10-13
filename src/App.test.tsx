@@ -10726,6 +10726,65 @@ describe('App', () => {
       expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft')
     })
 
+    it('keeps history recall and dropped files away from the draft it is holding', async () => {
+      const historySession: ManagedSession = {
+        ...session,
+        messages: [{
+          id: 'history-user-1', role: 'user', content: 'Earlier prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        }],
+      }
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(listSessions).mockResolvedValue([historySession])
+      vi.mocked(getSession).mockResolvedValue(historySession)
+      render(<App />)
+      fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep this draft' } })
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+
+      fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+      const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
+      fireEvent.drop(screen.getByLabelText('Side question').closest('.composer')!, {
+        dataTransfer: { files: [file], types: ['Files'] },
+      })
+      await act(async () => {})
+      expect(transcribeAudio).not.toHaveBeenCalled()
+      expect(uploadSessionFile).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Side question')).toHaveValue('')
+
+      fireEvent.keyDown(screen.getByLabelText('Side question'), { key: 'Escape' })
+      expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft')
+    })
+
+    it('puts the dock away on Escape before a knowledge panel beside it', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      render(<App />)
+      await screen.findByText('Hello agent')
+      fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+      const knowledge = document.getElementById('knowledge-panel')!
+      await waitFor(() => expect(knowledge).not.toHaveAttribute('hidden'))
+      // With no roots yet, Knowledge opens on adding one; that dialog is on top.
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(screen.queryByRole('dialog', { name: 'Add knowledge root' })).not.toBeInTheDocument()
+      expect(thread()).toBeInTheDocument()
+      const ask = screen.getByRole('button', { name: 'Ask side question' })
+      ask.focus()
+
+      fireEvent.keyDown(ask, { key: 'Escape' })
+      expect(thread()).not.toBeInTheDocument()
+      expect(knowledge).not.toHaveAttribute('hidden')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(thread()).not.toBeInTheDocument()
+      expect(knowledge).not.toHaveAttribute('hidden')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      fireEvent.keyDown(knowledge, { key: 'Escape' })
+      await waitFor(() => expect(knowledge).toHaveAttribute('hidden'))
+      expect(thread()).toBeInTheDocument()
+    })
+
     it('carries earlier answers with a follow-up', async () => {
       vi.mocked(listComputers).mockResolvedValue([sideComputer])
       const long = `Two options: SQLite and Postgres.${' More.'.repeat(4_000)}`

@@ -407,6 +407,25 @@ export class SessionStore {
       .map(cloneSession)
   }
 
+  /**
+   * Each listed session's identity and open state, in `list()` order, without
+   * copying its history, for work that runs on every discovery cycle.
+   */
+  discoveryIndex(): { id: string; isOpen: boolean }[] {
+    return Object.values(this.state.sessions)
+      .filter((session) => !this.isRetiredSession(session.id))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map((session) => ({ id: session.id, isOpen: session.isOpen === true }))
+  }
+
+  /** A listed session's title, without copying its history. */
+  title(id: string): string | undefined {
+    if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
+      return undefined
+    }
+    return this.state.sessions[id]?.title
+  }
+
   get(id: string): SessionDetail | undefined {
     if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
       return undefined
@@ -510,21 +529,33 @@ export class SessionStore {
         if (this.retiredIds(state).has(discovered.id)) continue
         const previous = state.sessions[discovered.id]
         if (previous) {
+          const cwd = previous.contextCwd ? previous.cwd : discovered.cwd
+          const title =
+            previous.customTitle || previous.workspaceTitle || !discovered.title
+              ? previous.title
+              : discovered.title
+          const updatedAt =
+            discovered.updatedAt > previous.updatedAt
+              ? discovered.updatedAt
+              : previous.updatedAt
+          const isOpen = previous.isOpen ?? false
+          if (
+            cwd === previous.cwd &&
+            title === previous.title &&
+            updatedAt === previous.updatedAt &&
+            isOpen === previous.isOpen
+          ) {
+            continue
+          }
           const existing = {
             ...previous,
             revision: (previous.revision ?? 0) + 1,
+            cwd,
+            title,
+            updatedAt,
+            isOpen,
           }
-          if (!existing.contextCwd) {
-            if (existing.cwd !== discovered.cwd) changedOwners.push(discovered.id)
-            existing.cwd = discovered.cwd
-          }
-          if (!existing.customTitle && !existing.workspaceTitle) {
-            existing.title = discovered.title || existing.title
-          }
-          if (discovered.updatedAt > existing.updatedAt) {
-            existing.updatedAt = discovered.updatedAt
-          }
-          existing.isOpen ??= false
+          if (cwd !== previous.cwd) changedOwners.push(discovered.id)
           state.sessions[discovered.id] = existing
           continue
         }
@@ -648,16 +679,18 @@ export class SessionStore {
       if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
+        const isOpen =
+          active.has(session.id) ||
+          // A suspended session has nothing running by design. Reading that as
+          // closed would hide it from the list, and the only way back to it is
+          // the button on the session itself.
+          session.suspended === true ||
+          (session.managedOpen === true && session.backend !== 'terminal')
+        if (session.isOpen === isOpen) continue
         state.sessions[session.id] = {
           ...session,
           revision: (session.revision ?? 0) + 1,
-          isOpen:
-            active.has(session.id) ||
-            // A suspended session has nothing running by design. Reading that as
-            // closed would hide it from the list, and the only way back to it is
-            // the button on the session itself.
-            session.suspended === true ||
-            (session.managedOpen === true && session.backend !== 'terminal'),
+          isOpen,
         }
       }
       return () => undefined
@@ -676,6 +709,13 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
+          if (
+            session.backend === 'terminal' &&
+            session.managedOpen === true &&
+            session.isOpen === true
+          ) {
+            continue
+          }
           state.sessions[session.id] = {
             ...session,
             revision: (session.revision ?? 0) + 1,
@@ -2282,6 +2322,18 @@ export class SessionStore {
     if (failed) {
       throw failure
     }
+  }
+
+  /**
+   * Proves the state file can still be replaced before startup recovery acts.
+   *
+   * Periodic discovery skips unchanged state, but cold startup must fail
+   * before touching terminal ownership when persistence is unavailable.
+   */
+  async verifyPersistence(): Promise<void> {
+    if (this.closed) throw new Error('Session store is closed')
+    await this.flush()
+    await this.persist(true)
   }
 
   close(): Promise<void> {

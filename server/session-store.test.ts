@@ -1121,6 +1121,95 @@ describe('SessionStore', () => {
     })
   })
 
+  it('does not revise or persist unchanged discovery metadata at scale', async () => {
+    const { directory, store } = await createStore()
+    const discovered = Array.from({ length: 128 }, (_unused, index) => ({
+      id: `session-${index}`,
+      cwd: `/tmp/project-${index}`,
+      title: `Project ${index}`,
+      updatedAt: '2026-07-22T00:00:00.000Z',
+    }))
+    await Promise.all(discovered.map((session) =>
+      store.create({
+        ...session,
+        status: 'idle',
+        isOpen: false,
+        messages: [],
+      }, { backend: 'sdk' }),
+    ))
+    const statePath = path.join(directory, 'state.json')
+    const before = await readFile(statePath, 'utf8')
+    const revisions = new Map(
+      store.list().map((session) => [session.id, session.revision]),
+    )
+
+    await store.syncDiscovered(discovered)
+    await store.syncBackends([], discovered.map((session) => session.id))
+    await store.syncOpen([])
+
+    expect(await readFile(statePath, 'utf8')).toBe(before)
+    expect(
+      store.list().map((session) => [session.id, session.revision]),
+    ).toEqual([...revisions])
+  })
+
+  it('revises only sessions whose discovered ownership metadata changes', async () => {
+    const { store } = await createStore()
+    for (const id of ['unchanged', 'changed']) {
+      await store.create({
+        id,
+        cwd: '/tmp/project',
+        title: 'Project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: false,
+        messages: [],
+      }, { backend: 'sdk' })
+    }
+    const unchangedRevision = store.get('unchanged')!.revision!
+    const changedRevision = store.get('changed')!.revision!
+
+    await store.syncDiscovered([
+      {
+        id: 'unchanged',
+        cwd: '/tmp/project',
+        title: 'Project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+      },
+      {
+        id: 'changed',
+        cwd: '/tmp/next-project',
+        title: 'Next project',
+        updatedAt: '2026-07-23T00:00:00.000Z',
+      },
+    ])
+
+    expect(store.get('unchanged')?.revision).toBe(unchangedRevision)
+    expect(store.get('changed')).toMatchObject({
+      cwd: '/tmp/next-project',
+      title: 'Next project',
+      updatedAt: '2026-07-23T00:00:00.000Z',
+      revision: changedRevision + 1,
+    })
+
+    await store.syncBackends(['changed'], [])
+    const terminalRevision = store.get('changed')!.revision!
+    expect(store.get('changed')).toMatchObject({
+      isOpen: true,
+    })
+    expect(store.backend('changed')).toBe('terminal')
+    expect(store.isManagedOpen('changed')).toBe(true)
+    expect(store.get('unchanged')?.revision).toBe(unchangedRevision)
+
+    await store.syncOpen(['changed'])
+    expect(store.get('changed')?.revision).toBe(terminalRevision)
+    await store.syncOpen([])
+    expect(store.get('changed')).toMatchObject({
+      isOpen: false,
+      revision: terminalRevision + 1,
+    })
+  })
+
   it('preserves a custom title across discovery and reloads', async () => {
     const { directory, store } = await createStore()
     await store.create({

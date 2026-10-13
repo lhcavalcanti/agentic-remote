@@ -239,9 +239,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 144,
+  "communities": 129,
   "community_algorithm": "louvain-seed-42",
-  "edges": 10194,
+  "edges": 10204,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -315,10 +315,10 @@
     "server/active-sessions.test.ts": "09c8b6313c008c59795966b23e9461b22a8fb07404d19dfe1477544c3f26696f",
     "server/active-sessions.ts": "a83d2687d265453d74a4ca0a1861e12d519cce85f38feccd6cafea61ebbd8c5e",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
-    "server/agent-service-recovery.test.ts": "3c4f6b79c70a9f2f012aa0d3797539dfdca25780edaed9e577cb1c2d3871fd9d",
+    "server/agent-service-recovery.test.ts": "9b3f7afab458b249792968b5843d1ef2aea7ca75383adc76628a47b6a2abede8",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "add7aeefdf5e8d33125de3c9304d86ddd2ffcba8f71226c138ec1c3173c2b34b",
-    "server/agent-service.ts": "c54512cd7b488480ca8d412b069c80fa35d563ea0c04026faee3b4d39c2dd3dd",
+    "server/agent-service.ts": "38d33f7e5ad2de6cdc259c29f6ea4d218b84cb31b00dbfa4ac2be95f1989e1b6",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -407,8 +407,8 @@
     "server/session-service.ts": "50a6bf7154b66772dad49364bf9ddf5521b7556519d34524baad87e82e962a1d",
     "server/session-store-durability.test.ts": "0ff26c96ab3b0962cd7e177493bca5c69dd9027ec3a082d37d86255959cfb90e",
     "server/session-store-providers.test.ts": "25d079342a45d28bb95d8af8fe5a8999934fd7a7ce36bfa632a46e399fd1dad8",
-    "server/session-store.test.ts": "8c81b325118c790700cbf4b9b40e949f193ab87e347ef2188d7cfd230360f27f",
-    "server/session-store.ts": "59e76d8c726d8085e77bcbefb11338406ae922fc18df3f6a16351077e1f1da41",
+    "server/session-store.test.ts": "74a14e5c8c4fe212ee501397ec94f597b8f9b0cf2385eb17c3fe9dc62d1fb243",
+    "server/session-store.ts": "5ac6f992ccda3ddf3ad6eb689fb7a1a6010a1136674ebb725ab1a62316e023e0",
     "server/side-question.test.ts": "bb7fe56de6bf5ed357ca35929523244836eecd39fa6abceffeeb1f5a36548ac8",
     "server/side-question.ts": "ff75273c172f073bc9cc7a7cd40d2697ad26041068714e543a84dfbcaa760b8e",
     "server/submission-error-http.test.ts": "4e575bc36df1c861a90b30fced64147af534723abcc00f1985f36e1104e27162",
@@ -538,7 +538,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3604,
+  "nodes": 3607,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -595,16 +595,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "62753ef9fc3727597ac84d1e6a1f3d93508d93f56ad2837f75807e7d1ae1152e",
-    "communities.json": "c9ed629ab7509bca0f079601f0df6b9aa1d63d29670ee248610de081449c7be1",
-    "graph.html": "68850f8d35b207969b33f6d3beb7dde23fb74381c8e358a15c992f8968cc55c8",
-    "graph.json": "e66cef0d5d829d78c3631edb54ea67aaf03d1d1aeae7fc4b4e5644631d3cc7c6"
+    "GRAPH_REPORT.md": "82b0ad91ba09af237765817389922bd1a1694cf59c81c2464230d87edfbce069",
+    "communities.json": "ad92b515dc436f1c04f5115427f0be43e41f87f118fde347033d7253bd18e165",
+    "graph.html": "7518900d733090b6e31f20ea8d41e36e6b26954b94640caafcbd645520446841",
+    "graph.json": "b31c56f721bf94cc588e8873edca66876162b5a716349de2e8575fa6f0cecc29"
   },
   "schema_version": 1,
-  "source_commit": "f96c0ec57854970212f2324e4f8dbc8911b9d152",
-  "source_fingerprint": "49c00649c28ed6e7ff47eea434be34aa9feb60c304508fbd3fdf0d3af4d40a43",
+  "source_commit": "6a12318ff4b34f3c0663be5743d4fd3e9a387a2b",
+  "source_fingerprint": "e92b15a5d74f03192f255340a52644851e0a9f78a86a1464094e6abacc4790d4",
   "working_tree_changes": [
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts"
+    "server/agent-service-recovery.test.ts",
+    "server/agent-service.ts",
+    "server/session-store.ts"
   ]
 }

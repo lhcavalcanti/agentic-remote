@@ -335,19 +335,28 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - A Copilot session MUST offer **Ask** in its header, and `/ask` or `/btw` in
   the composer, when its owning computer advertises side questions. Other
-  providers and computers that do not advertise them MUST NOT offer it.
+  providers and computers that do not advertise them MUST NOT offer it, and
+  there `/ask` goes to the agent like any other command.
 - The owning computer MUST answer from the session's saved conversation
   through its Copilot SDK, without tools. A side question MUST NOT send or
   queue a prompt, type into a tmux pane, add to the session's history, or
   change its status, whether the session is SDK- or tmux-backed.
 - The saved history is forked into a temporary session that is deleted
-  afterwards. The fork MUST NOT appear in session lists or history. While a
-  turn is unfinished, the fork MUST stop before that turn's first prompt, so the
-  question is not answered as that prompt.
-- Questions are limited to 4,000 characters and two minutes. A failure MUST be
-  shown beside its question with a retry and MUST NOT affect the session.
+  afterwards. The fork MUST NOT appear in session lists or history, even
+  after a restart, so one that cannot be deleted is retired. While a turn is
+  unfinished, the fork MUST stop before that turn's first prompt, so the
+  question is not answered as that prompt. A prompt that started while forking
+  is caught from the fork's own history and the fork is forked again before it.
+- Questions are limited to 4,000 characters. One deadline of two minutes covers
+  starting the runtime, forking, and answering, and cleanup is bounded
+  separately, so neither the request nor shutdown can hang on it. A failure
+  MUST be shown beside its question with a retry and MUST NOT affect the
+  session.
+- A `/ask` question that cannot be asked yet, because the computer is offline
+  or another question is pending, MUST open in the dialog rather than be lost.
 - Answers belong to the page: kept per session until reload, discarded when the
-  session is closed, and never persisted or sent elsewhere.
+  session is closed or removed, or its computer is removed, and never
+  persisted or sent elsewhere.
 - Return MUST follow the composer: it asks on a desktop and inserts a newline
   on a phone, where **Ask** sends; Ctrl/Cmd+Enter asks on either.
 

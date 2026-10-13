@@ -105,6 +105,7 @@ import {
   sessionWorkspaceVersion,
 } from './event-log.js'
 import {
+  SIDE_QUESTION_CLEANUP_MS,
   SIDE_QUESTION_MAX_LENGTH,
   SIDE_QUESTION_RUNTIME_IDLE_MS,
   SIDE_QUESTION_TIMEOUT_MS,
@@ -1689,6 +1690,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly deletedSessionIds = new Set<string>()
   private sideQuestionTimeoutMs = SIDE_QUESTION_TIMEOUT_MS
   private sideQuestionIdleMs = SIDE_QUESTION_RUNTIME_IDLE_MS
+  private sideQuestionCleanupMs = SIDE_QUESTION_CLEANUP_MS
   private sideQuestionRuntime?: {
     client: CopilotClientLike
     started: Promise<void>
@@ -1960,8 +1962,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.stopped) throw new SideQuestionError('The session service is stopping', 503)
     if (!this.store.get(id)) throw new SideQuestionError('Session not found', 404)
-    const boundary = sideQuestionBoundary(await this.sessionEventReader(id))
-    return this.runSessionCreation(() => this.withSideQuestionClient(async (client) => {
+    // One deadline covers every step, so neither the request nor shutdown,
+    // which waits for it, can outlast it.
+    const deadline = Date.now() + this.sideQuestionTimeoutMs
+    const inTime = <T>(work: Promise<T>) =>
+      withSideQuestionTimeout(work, Math.max(0, deadline - Date.now()))
+    const boundary = sideQuestionBoundary(await inTime(this.sessionEventReader(id)))
+    return this.runSessionCreation(() => this.withSideQuestionClient(inTime, async (client) => {
       const fork = client.rpc.sessions?.fork
       if (!fork) {
         throw new SideQuestionError(
@@ -1969,18 +1976,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           501,
         )
       }
-      let forkId: string | undefined
+      const forks: string[] = []
+      const forkFrom = async (sessionId: string, toEventId?: string) => {
+        const forkId = (await inTime(fork({ sessionId, ...(toEventId ? { toEventId } : {}) }))).sessionId
+        this.deletedSessionIds.add(forkId)
+        forks.push(forkId)
+        return forkId
+      }
       let forked: CopilotSessionLike | undefined
       try {
-        forkId = (await fork({
-          sessionId: id,
-          ...(boundary ? { toEventId: boundary } : {}),
-        })).sessionId
-        this.deletedSessionIds.add(forkId)
-        forked = await client.resumeSession(forkId, {
+        let forkId = await forkFrom(id, boundary)
+        // A prompt can start between reading the history and forking it. The
+        // fork's own copy says what it holds, and one that ends in an
+        // unfinished turn is forked again before it.
+        const late = sideQuestionBoundary(await inTime(this.sessionEventReader(forkId)))
+        if (late) forkId = await forkFrom(forkId, late)
+        forked = await inTime(client.resumeSession(forkId, {
           streaming: false,
           onPermissionRequest: () => ({ kind: 'user-not-available' }),
-        })
+        }))
         const ask = forked.rpc.ui?.ephemeralQuery
         if (!ask) {
           throw new SideQuestionError(
@@ -1988,24 +2002,36 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             501,
           )
         }
-        const { answer } = await withSideQuestionTimeout(
-          ask({ question: text }),
-          this.sideQuestionTimeoutMs,
-        )
-        return answer
+        return (await inTime(ask({ question: text }))).answer
       } finally {
-        await forked?.disconnect().catch(() => undefined)
-        if (forkId) {
-          await client.deleteSession(forkId).catch((error: unknown) => {
-            console.error(`Could not delete side-question fork ${forkId}`, error)
-          })
+        if (forked) {
+          await withSideQuestionTimeout(forked.disconnect(), this.sideQuestionCleanupMs)
+            .catch(() => undefined)
         }
+        for (const forkId of forks) await this.discardSideQuestionFork(client, forkId)
       }
     }))
   }
 
+  /**
+   * Deletes a fork. One that cannot be deleted is retired durably, so it is
+   * never discovered as a session after a restart.
+   */
+  private async discardSideQuestionFork(client: CopilotClientLike, forkId: string): Promise<void> {
+    forgetSessionEvents(forkId)
+    try {
+      await withSideQuestionTimeout(client.deleteSession(forkId), this.sideQuestionCleanupMs)
+    } catch (error) {
+      console.error(`Could not delete side-question fork ${forkId}`, error)
+      await this.store.retireSessionIds([forkId]).catch((retireError: unknown) => {
+        console.error(`Could not retire side-question fork ${forkId}`, retireError)
+      })
+    }
+  }
+
   /** Runs with the side-question runtime, starting it if it is not running. */
   private async withSideQuestionClient<T>(
+    inTime: <W>(work: Promise<W>) => Promise<W>,
     run: (client: CopilotClientLike) => Promise<T>,
   ): Promise<T> {
     let runtime = this.sideQuestionRuntime
@@ -2023,11 +2049,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     runtime.idleTimer = undefined
     runtime.active += 1
     try {
-      await runtime.started
+      try {
+        await inTime(runtime.started)
+      } catch (error) {
+        // A runtime that did not start in time is replaced on the next question
+        // rather than waited on again.
+        if (this.sideQuestionRuntime === runtime) this.sideQuestionRuntime = undefined
+        throw error
+      }
       return await run(runtime.client)
     } finally {
       runtime.active -= 1
-      if (!runtime.active && this.sideQuestionRuntime === runtime && !this.stopped) {
+      if (!runtime.active && this.sideQuestionRuntime !== runtime) {
+        void this.closeSideQuestionRuntime(runtime)
+      } else if (!runtime.active && !this.stopped) {
         const idle = runtime
         idle.idleTimer = setTimeout(() => void this.closeSideQuestionRuntime(idle), this.sideQuestionIdleMs)
         idle.idleTimer.unref?.()
@@ -2041,11 +2076,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!runtime || runtime.active) return
     if (this.sideQuestionRuntime === runtime) this.sideQuestionRuntime = undefined
     if (runtime.idleTimer) clearTimeout(runtime.idleTimer)
-    const started = await runtime.started.then(() => true, () => false)
-    if (started) {
-      const errors = await runtime.client.stop().catch((error: unknown) => [error])
-      if (errors.length) console.error('Could not stop the side-question runtime', errors)
-    }
+    const started = await withSideQuestionTimeout(runtime.started, this.sideQuestionCleanupMs)
+      .then(() => true, () => false)
+    const errors = await withSideQuestionTimeout(
+      runtime.client.stop(),
+      started ? this.sideQuestionCleanupMs : Math.min(1_000, this.sideQuestionCleanupMs),
+    ).catch((error: unknown) => [error])
+    if (errors.length && started) console.error('Could not stop the side-question runtime', errors)
   }
 
   start(): Promise<void> {

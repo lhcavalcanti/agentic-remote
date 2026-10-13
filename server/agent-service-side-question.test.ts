@@ -33,6 +33,10 @@ function fakeClient(options: { fork?: boolean } = {}) {
     async (question) => ({ answer: `Answer to ${question}` })
   const resumed: ReturnType<typeof forkSession>[] = []
   const client = {
+    forkWith: undefined as undefined | ((request: ForkRequest) => Promise<{ sessionId: string }>),
+    deleteWith: undefined as undefined | ((sessionId: string) => Promise<void>),
+    disconnectWith: undefined as undefined | (() => Promise<void>),
+    startWith: undefined as undefined | (() => Promise<void>),
     forkRequests: [] as ForkRequest[],
     deleted: [] as string[],
     listed: [] as SessionMetadata[],
@@ -41,7 +45,7 @@ function fakeClient(options: { fork?: boolean } = {}) {
     answerWith(next: typeof answer) {
       answer = next
     },
-    start: vi.fn(async () => undefined),
+    start: vi.fn(() => client.startWith ? client.startWith() : Promise.resolve()),
     stop: vi.fn(async () => []),
     createSession: vi.fn(async () => { throw new Error('No SDK sessions in this fixture') }),
     resumeSession: vi.fn(async (sessionId: string) => {
@@ -49,11 +53,13 @@ function fakeClient(options: { fork?: boolean } = {}) {
         asked.push(question)
         return answer(question)
       })
+      if (client.disconnectWith) session.disconnect.mockImplementation(client.disconnectWith)
       resumed.push(session)
       return session
     }),
     listSessions: async () => client.listed,
     deleteSession: vi.fn(async (sessionId: string) => {
+      if (client.deleteWith) return client.deleteWith(sessionId)
       client.deleted.push(sessionId)
     }),
     rpc: {
@@ -65,6 +71,7 @@ function fakeClient(options: { fork?: boolean } = {}) {
             sessions: {
               fork: vi.fn(async (request: ForkRequest) => {
                 client.forkRequests.push(request)
+                if (client.forkWith) return client.forkWith(request)
                 return { sessionId: `fork-${++forks}` }
               }),
             },
@@ -87,6 +94,7 @@ afterEach(async () => {
 async function fixture(
   events: { id?: string; type: string }[] = [],
   clientOptions: { fork?: boolean } = {},
+  forkEvents = new Map<string, { id?: string; type: string }[]>(),
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'side-question-'))
   directories.push(directory)
@@ -113,7 +121,8 @@ async function fixture(
     main as unknown as CopilotClientLike,
     async () => [],
     async () => undefined,
-    async () => events as never,
+    async (sessionId: string) =>
+      (sessionId === 'source' ? events : forkEvents.get(sessionId) || []) as never,
     undefined,
     undefined,
     undefined,
@@ -241,6 +250,73 @@ describe('AgentService side questions', () => {
     expect(client.deleted).toEqual(['fork-1'])
     expect(client.stop).toHaveBeenCalledOnce()
     await expect(service.askSession('source', 'After?')).rejects.toMatchObject({ statusCode: 503 })
+  })
+
+  it('forks again before a turn that started after the history was read', async () => {
+    const { client, service } = await fixture(
+      [{ id: 'u1', type: 'user.message' }, { id: 'e1', type: 'assistant.turn_end' }],
+      {},
+      new Map([['fork-1', [
+        { id: 'f-u1', type: 'user.message' },
+        { id: 'f-e1', type: 'assistant.turn_end' },
+        { id: 'f-u2', type: 'user.message' },
+      ]]]),
+    )
+
+    await expect(service.askSession('source', 'Still right?')).resolves.toBe('Answer to Still right?')
+
+    expect(client.forkRequests).toEqual([
+      { sessionId: 'source' },
+      { sessionId: 'fork-1', toEventId: 'f-u2' },
+    ])
+    expect(client.resumeSession).toHaveBeenCalledExactlyOnceWith('fork-2', expect.anything())
+    expect(client.deleted).toEqual(['fork-1', 'fork-2'])
+  })
+
+  it('holds every step to one deadline', async () => {
+    const stalledFork = await fixture()
+    ;(stalledFork.service as unknown as { sideQuestionTimeoutMs: number }).sideQuestionTimeoutMs = 30
+    stalledFork.client.forkWith = () => new Promise(() => {})
+    await expect(stalledFork.service.askSession('source', 'Hello?')).rejects.toMatchObject({ statusCode: 504 })
+    expect(stalledFork.client.resumeSession).not.toHaveBeenCalled()
+
+    const stalledStart = await fixture()
+    ;(stalledStart.service as unknown as { sideQuestionTimeoutMs: number }).sideQuestionTimeoutMs = 30
+    stalledStart.client.startWith = () => new Promise(() => {})
+    await expect(stalledStart.service.askSession('source', 'Hello?')).rejects.toMatchObject({ statusCode: 504 })
+    expect(stalledStart.client.forkRequests).toEqual([])
+    stalledStart.client.startWith = undefined
+    ;(stalledStart.service as unknown as { sideQuestionTimeoutMs: number }).sideQuestionTimeoutMs = 5_000
+    await expect(stalledStart.service.askSession('source', 'Again?')).resolves.toBe('Answer to Again?')
+    expect(stalledStart.factory).toHaveBeenCalledTimes(2)
+  })
+
+  it('retires a fork it could not delete so a restart never discovers it', async () => {
+    const { client, service, store } = await fixture()
+    ;(service as unknown as { sideQuestionCleanupMs: number }).sideQuestionCleanupMs = 20
+    client.deleteWith = async () => { throw new Error('Provider unavailable') }
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await expect(service.askSession('source', 'Kept?')).resolves.toBe('Answer to Kept?')
+      expect(store.isRetiredSession('fork-1')).toBe(true)
+
+      client.deleteWith = () => new Promise(() => {})
+      await expect(service.askSession('source', 'Hung?')).resolves.toBe('Answer to Hung?')
+      expect(store.isRetiredSession('fork-2')).toBe(true)
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('stops promptly when cleanup of a question hangs', async () => {
+    const { client, service } = await fixture()
+    ;(service as unknown as { sideQuestionCleanupMs: number }).sideQuestionCleanupMs = 20
+    client.disconnectWith = () => new Promise(() => {})
+    await expect(service.askSession('source', 'Then?')).resolves.toBe('Answer to Then?')
+    client.stop.mockImplementation(() => new Promise(() => {}))
+    const started = performance.now()
+    await service.stop()
+    expect(performance.now() - started).toBeLessThan(2_000)
   })
 
   it('refuses empty, oversized, unknown and unsupported questions', async () => {

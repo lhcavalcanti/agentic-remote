@@ -20,6 +20,7 @@ export interface SideQuestionEntry {
 export function SideQuestionDialog({
   sessionTitle,
   entries,
+  initialQuestion = '',
   unavailableReason,
   markdownComponents,
   onAsk,
@@ -28,13 +29,14 @@ export function SideQuestionDialog({
 }: {
   sessionTitle: string
   entries: SideQuestionEntry[]
+  initialQuestion?: string
   unavailableReason?: string
   markdownComponents?: Components
   onAsk: (question: string) => void
   onRetry: (entry: SideQuestionEntry) => void
   onClose: () => void
 }) {
-  const [question, setQuestion] = useState('')
+  const [question, setQuestion] = useState(initialQuestion)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLOListElement>(null)
   const pending = entries.some((entry) => entry.status === 'pending')

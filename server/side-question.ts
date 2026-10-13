@@ -17,6 +17,9 @@ export const SIDE_QUESTION_TIMEOUT_MS = 120_000
 /** How long the side-question runtime stays up after its last question. */
 export const SIDE_QUESTION_RUNTIME_IDLE_MS = 120_000
 
+/** How long disconnecting, deleting a fork, or stopping the runtime may take. */
+export const SIDE_QUESTION_CLEANUP_MS = 10_000
+
 /**
  * The event a fork has to stop before, if a turn is still unfinished.
  *

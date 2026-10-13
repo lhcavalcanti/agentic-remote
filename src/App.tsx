@@ -1825,6 +1825,14 @@ const statuslineOptions: Array<{
   { key: 'update', label: 'Agent update available' },
 ]
 
+/** Drops the side questions of the sessions `gone` names. */
+function withoutSideQuestions(gone: (key: string) => boolean) {
+  return (current: Record<string, SideQuestionEntry[]>) => {
+    const kept = Object.entries(current).filter(([key]) => !gone(key))
+    return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept)
+  }
+}
+
 const webCommands: SlashCommand[] = [
   {
     name: 'cwd',
@@ -6433,6 +6441,7 @@ function App() {
   // Side questions belong to the session they were asked about and live only
   // as long as this page: they are never part of the conversation.
   const [sideQuestionKey, setSideQuestionKey] = useState<string>()
+  const [sideQuestionDraft, setSideQuestionDraft] = useState('')
   const [sideQuestions, setSideQuestions] = useState<Record<string, SideQuestionEntry[]>>({})
   const sideQuestionIdRef = useRef(0)
   const [resourcesView, setResourcesView] = useState<SessionResourcesView>()
@@ -9190,8 +9199,8 @@ function App() {
             ...nativeCommands,
             ...webCommands.filter(
               (webCommand) =>
-                (selected?.provider !== 'claude' ||
-                  (webCommand.name !== 'cwd' && webCommand.name !== 'ask')) &&
+                (selected?.provider !== 'claude' || webCommand.name !== 'cwd') &&
+                (webCommand.name !== 'ask' || selectedSupportsSideQuestions) &&
                 !nativeCommands.some(
                   (command) => command.name === webCommand.name,
                 ),
@@ -9213,6 +9222,7 @@ function App() {
     selected?.suspended,
     selectedComputerId,
     selectedSessionId,
+    selectedSupportsSideQuestions,
   ])
 
   useEffect(() => {
@@ -9376,6 +9386,8 @@ function App() {
       // still missing has genuinely gone, and waiting for it forever leaves
       // selection treating it as on its way.
       const present = new Set(reconciledForClaim.map((s) => sessionKey(s)))
+      setSideQuestions(withoutSideQuestions((key) =>
+        !present.has(key) && answeredFor.has(key.slice(0, key.indexOf(':')))))
       // A hub answers for a paired computer out of its own cache when the node
       // does not reply, and says so alongside the list. Such an answer has not
       // looked at the node at all, so a replacement missing from it has not
@@ -9543,6 +9555,9 @@ function App() {
           sessionKnowledgeRootRef.current.forgetSession(event.computerId, event.sessionId)
           setResourcesView((view) => view?.ownerKey === `${event.computerId}:${event.sessionId}` ? undefined : view)
           const removedKey = `${event.computerId}:${event.sessionId}`
+          // Answers were about the conversation that is gone, and a cleared
+          // session's replacement starts without it.
+          setSideQuestions(withoutSideQuestions((key) => key === removedKey))
           // Said outright, so a later answer that simply does not mention it
           // is not what settles it, and a delayed clear response must not put
           // it back.
@@ -9669,6 +9684,7 @@ function App() {
           // computer that has been unpaired, so a tab still listing one would
           // offer a document it can no longer fetch.
           forgetComputerKnowledge(event.computerId)
+          setSideQuestions(withoutSideQuestions((key) => key.startsWith(`${event.computerId}:`)))
           // Nothing on a computer that has gone is still on its way.
           for (const key of [...pendingReplacements.current]) {
             if (key.slice(0, key.indexOf(':')) === event.computerId) {
@@ -11674,7 +11690,7 @@ function App() {
         : current)
     setSideQuestions((current) => ({
       ...current,
-      [key]: [...(current[key] || []), { id, question, status: 'pending' as const }].slice(-20),
+      [key]: [...(current[key] || []), { id, question, status: 'pending' as const }],
     }))
     try {
       settle({ status: 'answered', answer: await askSession(session.computerId, session.id, question) })
@@ -11689,10 +11705,12 @@ function App() {
   function openSideQuestion(question = '') {
     if (!selected || !selectedSupportsSideQuestions) return
     setSideQuestionKey(sessionKey(selected))
-    if (question && selectedComputerOnline &&
-      !sideQuestions[sessionKey(selected)]?.some((entry) => entry.status === 'pending')) {
-      void askSideQuestion(selected, question)
-    }
+    const canAsk = selectedComputerOnline &&
+      !sideQuestions[sessionKey(selected)]?.some((entry) => entry.status === 'pending')
+    // A question that cannot be asked yet waits in the dialog rather than
+    // being dropped with the composer text it came from.
+    setSideQuestionDraft(question && !canAsk ? question : '')
+    if (question && canAsk) void askSideQuestion(selected, question)
   }
 
   function openSessionResources(tab: SessionResourceTab, filter = '') {
@@ -12726,8 +12744,9 @@ function App() {
     const name = text.slice(1).split(/\s+/, 1)[0].toLowerCase()
     return webCommands.some(
       (candidate) =>
-        candidate.name.toLowerCase() === name ||
-        candidate.aliases?.some((alias) => alias.toLowerCase() === name),
+        (candidate.name !== 'ask' || selectedSupportsSideQuestions) &&
+        (candidate.name.toLowerCase() === name ||
+          candidate.aliases?.some((alias) => alias.toLowerCase() === name)),
     )
   }
 
@@ -13646,10 +13665,7 @@ function App() {
       // Drafts are cleared for a closed session, and so is everything the
       // knowledge panel remembered about it.
       forgetKnowledgeSession(closedKey)
-      setSideQuestions((current) => {
-        const { [closedKey]: _closed, ...remaining } = current
-        return remaining
-      })
+      setSideQuestions(withoutSideQuestions((key) => key === closedKey))
       // The list and the selection may both have moved on while the delete was
       // in flight, so the removal applies to what is current now.
       const withoutClosed = (current: ManagedSession[]) =>
@@ -15401,6 +15417,8 @@ function App() {
       {sideQuestionOpen && selected ? (
         <SideQuestionDialog
           entries={sideQuestions[sessionKey(selected)] || []}
+          initialQuestion={sideQuestionDraft}
+          key={sessionKey(selected)}
           markdownComponents={mermaidComponents}
           onAsk={(question) => void askSideQuestion(selected, question)}
           onClose={() => setSideQuestionKey(undefined)}

@@ -10768,6 +10768,104 @@ describe('App', () => {
       }
     })
 
+    it('offers /ask only where the computer answers it and otherwise sends it on', async () => {
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await waitFor(() => expect(listCommands).toHaveBeenCalled())
+      fireEvent.change(textarea, { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/usage/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument()
+
+      fireEvent.change(textarea, { target: { value: '/ask Which file?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      await waitFor(() =>
+        expect(vi.mocked(sendMessage).mock.calls.length + vi.mocked(executeCommand).mock.calls.length)
+          .toBe(1),
+      )
+      expect(askSession).not.toHaveBeenCalled()
+      expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument()
+    })
+
+    it('lists /ask where the computer answers side questions', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await waitFor(() => expect(listCommands).toHaveBeenCalled())
+      fireEvent.change(textarea, { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/ask/ })).toBeInTheDocument()
+    })
+
+    it('keeps a /ask question that cannot be asked yet in the dialog', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(askSession).mockReturnValueOnce(new Promise(() => {}))
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/ask First?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      await waitFor(() => expect(askSession).toHaveBeenCalledTimes(1))
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
+      )
+
+      fireEvent.change(textarea, { target: { value: '/ask Second?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      const busy = await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(within(busy).getByLabelText('Side question')).toHaveValue('Second?')
+      expect(askSession).toHaveBeenCalledTimes(1)
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
+      )
+
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'computer.updated', computer: { ...sideComputer, online: false } }),
+        } as MessageEvent)
+      })
+      fireEvent.change(textarea, { target: { value: '/ask Offline?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      const offline = await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(within(offline).getByLabelText('Side question')).toHaveValue('Offline?')
+      expect(askSession).toHaveBeenCalledTimes(1)
+    })
+
+    it('forgets the answers of a session another client removed', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === secondSession.id ? secondSession : session,
+      )
+      vi.mocked(askSession).mockResolvedValueOnce('Remembered answer.')
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/ask Remember?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      expect(await screen.findByText('Remembered answer.')).toBeInTheDocument()
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.removed', computerId: 'computer-1', sessionId: 'session-1' }),
+        } as MessageEvent)
+      })
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+      )
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session }),
+        } as MessageEvent)
+      })
+      fireEvent.click(await screen.findByRole('button', { name: /^Project chat,/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page'),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(screen.queryByText('Remembered answer.')).not.toBeInTheDocument()
+    })
+
     it('shows a failed side question and asks it again', async () => {
       vi.mocked(listComputers).mockResolvedValue([sideComputer])
       vi.mocked(askSession)

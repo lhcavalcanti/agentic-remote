@@ -2172,7 +2172,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     try {
-      if (await this.discoverSessions()) await this.finishStartupRecovery()
+      if (await this.discoverSessions()) {
+        try {
+          await this.store.verifyPersistence()
+        } catch (error) {
+          this.nativeStartupDiscoveryReady = false
+          throw error
+        }
+        await this.finishStartupRecovery()
+      }
     } catch (error) {
       if (this.stopped) return
       if (!(error instanceof TerminalDiscoveryError)) throw error

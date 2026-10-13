@@ -30,6 +30,7 @@ import App from './App'
 import {
   activateSession,
   cancelBackgroundTask,
+  askSession,
   cancelSession,
   clearConversation,
   recoverConversation,
@@ -187,6 +188,7 @@ vi.mock('./api', async (importOriginal) => ({
   executeCommand: vi.fn(),
   getPushSettings: vi.fn(),
   cancelSession: vi.fn(),
+  askSession: vi.fn(),
   cancelBackgroundTask: vi.fn(),
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
@@ -10659,6 +10661,318 @@ describe('App', () => {
       screen.queryByRole('option', { name: 'project' }),
     ).not.toBeInTheDocument()
     expect(screen.getByText(/The session will start in/)).toHaveTextContent('~')
+  })
+
+  describe('side questions', () => {
+    const sideComputer: ComputerSummary = {
+      ...computer,
+      providers: computer.providers?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+
+    it('hides side questions where the computer has not advertised them', async () => {
+      render(<App />)
+      await screen.findByText('Hello agent')
+      expect(screen.queryByRole('button', { name: 'Ask a side question' })).not.toBeInTheDocument()
+    })
+
+    it('answers a side question without prompting the session', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      let answer: ((value: string) => void) | undefined
+      vi.mocked(askSession).mockReturnValueOnce(new Promise((resolve) => { answer = resolve }))
+      render(<App />)
+      await screen.findByText('Hello agent')
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+      const dialog = screen.getByRole('dialog', { name: 'Ask about this session' })
+      const input = within(dialog).getByLabelText('Side question')
+      expect(input).toHaveFocus()
+      fireEvent.change(input, { target: { value: '  What did we decide?  ' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      await waitFor(() =>
+        expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'What did we decide?'),
+      )
+      expect(input).toHaveValue('')
+      expect(within(dialog).getByRole('status')).toHaveTextContent('Thinking…')
+      expect(within(dialog).getByRole('button', { name: 'Waiting…' })).toBeDisabled()
+      await act(async () => answer?.('**Use SQLite.**'))
+      expect(within(dialog).getByText('Use SQLite.').tagName).toBe('STRONG')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      expect(await screen.findByText('Use SQLite.')).toBeInTheDocument()
+      expect(screen.getByText('What did we decide?')).toBeInTheDocument()
+    })
+
+    it.each(['/ask Which file changed?', '/btw Which file changed?'])(
+      'opens %s from the composer instead of sending it',
+      async (command) => {
+        vi.mocked(listComputers).mockResolvedValue([sideComputer])
+        vi.mocked(askSession).mockResolvedValueOnce('`src/App.tsx`')
+        render(<App />)
+        const textarea = await screen.findByLabelText('Message')
+        fireEvent.change(textarea, { target: { value: command } })
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+        await waitFor(() =>
+          expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'Which file changed?'),
+        )
+        expect(await screen.findByRole('dialog', { name: 'Ask about this session' })).toBeInTheDocument()
+        expect(await screen.findByText('src/App.tsx')).toBeInTheDocument()
+        expect(textarea).toHaveValue('')
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(executeCommand).not.toHaveBeenCalled()
+      },
+    )
+
+    it('opens an empty side question for a bare /ask', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/ask' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+      expect(await screen.findByRole('dialog', { name: 'Ask about this session' })).toBeInTheDocument()
+      expect(askSession).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+    })
+
+    it('adds a line on Return on a phone and asks with Ctrl+Enter', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(askSession).mockResolvedValueOnce('Done.')
+      const previousWidth = window.innerWidth
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 420 })
+      try {
+        render(<App />)
+        await screen.findByText('Hello agent')
+        fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+        const dialog = screen.getByRole('dialog', { name: 'Ask about this session' })
+        expect(within(dialog).getByText('Return adds a new line. Tap Ask to send.')).toBeInTheDocument()
+        const input = within(dialog).getByLabelText('Side question')
+        fireEvent.change(input, { target: { value: 'Two lines?' } })
+        expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(true)
+        expect(askSession).not.toHaveBeenCalled()
+        fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+        await waitFor(() =>
+          expect(askSession).toHaveBeenCalledWith('computer-1', 'session-1', 'Two lines?'),
+        )
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
+      }
+    })
+
+    it('offers /ask only where the computer answers it and otherwise sends it on', async () => {
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await waitFor(() => expect(listCommands).toHaveBeenCalled())
+      fireEvent.change(textarea, { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/usage/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument()
+
+      fireEvent.change(textarea, { target: { value: '/ask Which file?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      await waitFor(() =>
+        expect(vi.mocked(sendMessage).mock.calls.length + vi.mocked(executeCommand).mock.calls.length)
+          .toBe(1),
+      )
+      expect(askSession).not.toHaveBeenCalled()
+      expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument()
+    })
+
+    it('lists /ask where the computer answers side questions', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await waitFor(() => expect(listCommands).toHaveBeenCalled())
+      fireEvent.change(textarea, { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/ask/ })).toBeInTheDocument()
+    })
+
+    it('keeps a /ask question that cannot be asked yet in the dialog', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(askSession).mockReturnValueOnce(new Promise(() => {}))
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/ask First?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      await waitFor(() => expect(askSession).toHaveBeenCalledTimes(1))
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
+      )
+
+      fireEvent.change(textarea, { target: { value: '/ask Second?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      const busy = await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(within(busy).getByLabelText('Side question')).toHaveValue('Second?')
+      expect(askSession).toHaveBeenCalledTimes(1)
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument(),
+      )
+
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'computer.updated', computer: { ...sideComputer, online: false } }),
+        } as MessageEvent)
+      })
+      fireEvent.change(textarea, { target: { value: '/ask Offline?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      const offline = await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(within(offline).getByLabelText('Side question')).toHaveValue('Offline?')
+      expect(askSession).toHaveBeenCalledTimes(1)
+    })
+
+    it('forgets the answers of a session another client removed', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === secondSession.id ? secondSession : session,
+      )
+      vi.mocked(askSession).mockResolvedValueOnce('Remembered answer.')
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/ask Remember?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      expect(await screen.findByText('Remembered answer.')).toBeInTheDocument()
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.removed', computerId: 'computer-1', sessionId: 'session-1' }),
+        } as MessageEvent)
+      })
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+      )
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session }),
+        } as MessageEvent)
+      })
+      fireEvent.click(await screen.findByRole('button', { name: /^Project chat,/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page'),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(screen.queryByText('Remembered answer.')).not.toBeInTheDocument()
+    })
+
+    it('drops /ask from the previous session while the next one lists its commands', async () => {
+      const remoteSession: ManagedSession = {
+        ...session,
+        id: 'remote-session',
+        computerId: secondComputer.id,
+        computerName: secondComputer.name,
+        title: 'Remote chat',
+        messages: [],
+      }
+      vi.mocked(listComputers).mockResolvedValue([sideComputer, secondComputer])
+      vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === remoteSession.id ? remoteSession : session,
+      )
+      vi.mocked(listCommands).mockImplementation((computerId) => computerId === secondComputer.id
+        ? new Promise(() => {})
+        : Promise.resolve([
+          { name: 'usage', description: 'Show usage', allowDuringAgentExecution: true },
+          { name: 'ask', aliases: ['btw'], description: 'Ask a quick side question', allowDuringAgentExecution: true },
+        ]))
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/ask/ })).toBeInTheDocument()
+      fireEvent.change(textarea, { target: { value: '' } })
+
+      fireEvent.click(screen.getByRole('button', { name: /^Remote chat,/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Remote chat,/ })).toHaveAttribute('aria-current', 'page'),
+      )
+      await waitFor(() => expect(listCommands).toHaveBeenCalledWith(secondComputer.id, remoteSession.id))
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/usage/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/b' } })
+      await waitFor(() =>
+        expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument(),
+      )
+      expect(screen.queryByRole('dialog', { name: 'Ask about this session' })).not.toBeInTheDocument()
+      expect(askSession).not.toHaveBeenCalled()
+    })
+
+    it('forgets the answers of a session an older partial snapshot removed', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === secondSession.id ? secondSession : session,
+      )
+      vi.mocked(askSession).mockResolvedValueOnce('Snapshot answer.')
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/ask Snapshot?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      expect(await screen.findByText('Snapshot answer.')).toBeInTheDocument()
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      let finishOlder!: (value: Awaited<ReturnType<typeof listSessionListing>>) => void
+      const calls = vi.mocked(listSessionListing).mock.calls.length
+      vi.mocked(listSessionListing)
+        .mockReturnValueOnce(new Promise((resolve) => { finishOlder = resolve }))
+        .mockResolvedValueOnce({ sessions: [], answeredComputerIds: [] })
+      act(() => { MockWebSocket.instances[0]?.onopen?.() })
+      await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(calls + 1))
+      await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+      await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(calls + 2))
+      await act(async () => { finishOlder({ sessions: [secondSession], answeredComputerIds: [computer.id] }) })
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+      )
+
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session }),
+        } as MessageEvent)
+      })
+      fireEvent.click(await screen.findByRole('button', { name: /^Project chat,/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page'),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(screen.queryByText('Snapshot answer.')).not.toBeInTheDocument()
+    })
+
+    it('shows a failed side question and asks it again', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(askSession)
+        .mockRejectedValueOnce(new Error('Model unavailable'))
+        .mockResolvedValueOnce('Fine now.')
+      render(<App />)
+      await screen.findByText('Hello agent')
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+      const dialog = screen.getByRole('dialog', { name: 'Ask about this session' })
+      fireEvent.change(within(dialog).getByLabelText('Side question'), {
+        target: { value: 'Are tests passing?' },
+      })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Ask' }))
+
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent('Model unavailable')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+
+      expect(await within(dialog).findByText('Fine now.')).toBeInTheDocument()
+      expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+      expect(askSession).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(askSession).mock.calls.map((call) => call[2]))
+        .toEqual(['Are tests passing?', 'Are tests passing?'])
+    })
   })
 
   it('closes the owning Copilot session after confirmation', async () => {

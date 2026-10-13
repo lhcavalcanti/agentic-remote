@@ -24,6 +24,8 @@ import type {
   SessionFileUpload,
   SessionSkillsSnapshot,
   SessionMcpServersSnapshot,
+  SideQuestionAnswer,
+  SideQuestionInput,
   SlashCommand,
   UserInputReplyInput,
   WorkspaceFile,
@@ -105,6 +107,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
           available: true,
           terminalBacked: true,
           supportsTmuxMigration: false,
+          supportsSideQuestions: false,
         },
       ]
     )
@@ -538,6 +541,17 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         body: '{}',
       },
     )
+  }
+
+  async askSession(sessionId: string, question: string): Promise<string> {
+    const response = await this.request<SideQuestionAnswer>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/ask`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ question } satisfies SideQuestionInput),
+      },
+    )
+    return response.answer
   }
 
   async listBackgroundTasks(

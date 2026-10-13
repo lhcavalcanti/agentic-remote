@@ -1814,6 +1814,18 @@ export class SessionStore {
     })
   }
 
+  /**
+   * Retires identities that never became sessions here, such as a temporary
+   * fork that could not be deleted, so discovery never adopts them.
+   */
+  async retireSessionIds(ids: readonly string[]): Promise<void> {
+    if (!ids.length) return
+    await this.change((state) => {
+      this.retire(state, ids)
+      return () => undefined
+    }, true)
+  }
+
   async remove(sessionId: string): Promise<void> {
     let uploadOwnerIds: string[] = []
     await this.change((state) => {

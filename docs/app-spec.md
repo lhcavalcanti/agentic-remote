@@ -542,14 +542,17 @@ Questions and permissions are the highest-priority UI state.
   prompt row only while the prompt has the keyboard, and hides it while a form
   or picker does. When the cursor is shown inside the composer frame, read in
   the same tmux command as the capture, up to three footer rows the grammar
-  does not recognise MUST be accepted, unless one of them is:
-  - a list, picker or form entry;
-  - a question or a prompt for an answer;
-  - list navigation or keys offered to another view.
+  does not recognise MUST be accepted, unless one of them:
+  - is a list, picker or form entry;
+  - asks anything, offers answers to choose between, or prompts for one;
+  - moves through a list;
+  - gives a job to a key this app sends to a composer (pasted text, Enter,
+    Ctrl+Q, Ctrl+U), to Escape or Space, or to a plain key;
+  - names an action that answers, commits or destroys something.
 
   With the cursor hidden or elsewhere, the grammar alone decides. Each
-  unrecognised footer accepted this way MUST be logged once, so the grammar
-  can catch up.
+  unrecognised footer accepted this way MUST be logged once while it is among
+  the most recent such footers, so the grammar can catch up.
 - An exact downloaded-update notice and its wrapped continuation rows MUST
   NOT hide a readable composer or block terminal startup at any terminal width.
   The notice and the sidebar, mode, permission, help, and tab hint cells wrap

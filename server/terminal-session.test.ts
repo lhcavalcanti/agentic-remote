@@ -14,6 +14,7 @@ import {
   composerHoldsOtherText,
   composerHoldsText,
   composerHasFocus,
+  reportUnrecognisedFooter,
   composerTookPaste,
   paneEvidenceCount,
   paneShowsText,
@@ -716,6 +717,25 @@ describe('TmuxTerminalSessionController', () => {
     expect(await readFile(output, 'utf8')).toBe('')
   })
 
+  it('logs each unrecognised footer once while it is among the recent ones', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const footer = (index: number) => `Fixture hint ${'x'.repeat(index % 7)}${String.fromCharCode(97 + (index % 26))}${index}`
+      const shapes = Array.from({ length: 300 }, (_, index) => `${footer(index)} · ${'·'.repeat(index)}`)
+      expect(reportUnrecognisedFooter(shapes[0])).toBe(true)
+      expect(reportUnrecognisedFooter(shapes[0].replace(/\d+/u, '99'))).toBe(false)
+      for (const shape of shapes.slice(1, 40)) expect(reportUnrecognisedFooter(shape)).toBe(true)
+      expect(reportUnrecognisedFooter(shapes[39])).toBe(false)
+      for (const shape of shapes.slice(40)) expect(reportUnrecognisedFooter(shape)).toBe(true)
+      // Evicted after 256 newer shapes, so it is logged again rather than
+      // never logging anything new.
+      expect(reportUnrecognisedFooter(shapes[0])).toBe(true)
+      expect(warn).toHaveBeenCalledTimes(301)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   describe('composerHasFocus', () => {
     const edge = '─'.repeat(60)
     const flat = (footer: string[], text = '') => [
@@ -747,6 +767,8 @@ describe('TmuxTerminalSessionController', () => {
       [' ❯ Confirm write', '   Cancel'],
       [' /model   Select a model'],
       [' Allow this tool to run?'],
+      [' Continue? (y/n)'],
+      [' ctrl+t delete everything'],
       [' a', ' b', ' c', ' d'],
     ])('refuses rows that could own the keyboard: %s', (...footer) => {
       expect(composerHasFocus(flat(footer), true, 2)).toBe(false)
@@ -791,7 +813,6 @@ describe('TmuxTerminalSessionController', () => {
   // keyboard, so a footer from a newer CLI does not stop input there.
   it.each([
     ' ← sidebar · Autopilot · Allow All · /help        ctrl+r reasoning · Claude Opus 6',
-    ' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
     ' Interactive · Allow All · / commands   ctrl+t show reasoning · Unknown footer',
     ' v1.1.0 downloaded · restart to update\n Autopilot · Allow All · ? help\n Fixture Model · 2M context (3%)',
   ])('accepts an unrecognised footer while the cursor is in the prompt: %s', async (footer) => {
@@ -843,6 +864,14 @@ describe('TmuxTerminalSessionController', () => {
     [' esc to close · tab to switch', 'keys for another view'],
     [' enter to confirm', 'a confirmation'],
     [' one hint\n two hint\n three hint\n four hint', 'too many unknown rows'],
+    [' Interactive · Allow All · / commands   ctrl+t delete everything', 'a destructive shortcut'],
+    [' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol', 'an action'],
+    [' Continue? (y/n)', 'a question mid-row'],
+    [' Overwrite notes.md [Y/n]', 'answers to choose between'],
+    [' ⏎ run · ctrl+r reasoning', 'a job for Enter'],
+    [' ctrl+q stop queue · ctrl+r reasoning', 'a job for a key this app sends'],
+    [' space mark · ctrl+r reasoning', 'a job for Space'],
+    [' y keep · ctrl+r reasoning', 'a job for a plain key'],
   ])('refuses an unrecognised footer that could own the keyboard: %s (%s)', async (footer) => {
     const { controller, sessionId, output } = await deliveryFixture(
       false, undefined, undefined, footer, '', 'flat',
@@ -856,8 +885,8 @@ describe('TmuxTerminalSessionController', () => {
   it.each([
     ['end', ' ← sidebar · Autopilot · /help        Claude Opus 6'],
     ['hidden', ' ← sidebar · Autopilot · /help        Claude Opus 6'],
-    ['end', ' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol'],
-    ['hidden', ' Interactive · Deploy now · / commands       ctrl+t show reasoning · GPT-6.1 Sol'],
+    ['end', ' Interactive · Allow All · / commands   ctrl+t show reasoning · Unknown footer'],
+    ['hidden', ' Interactive · Allow All · / commands   ctrl+t show reasoning · Unknown footer'],
   ] as const)(
     'refuses an unrecognised footer when the cursor is not shown in the prompt: %s, %s',
     async (cursor, footer) => {

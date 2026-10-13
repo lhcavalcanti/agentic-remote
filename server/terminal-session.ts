@@ -2852,24 +2852,35 @@ function isKnownTerminalFooterRow(
 const UNRECOGNIZED_FOOTER_ROWS = 3
 
 /**
- * Whether a row the footer grammar does not know could only be footer text:
- * hints, labels, a model or a notice. Anything that offers a choice, asks for
- * an answer or hands keys to something other than the prompt is refused.
+ * Whether a row the footer grammar does not know could only be footer text.
+ *
+ * This app gives a composer pasted text, Enter, Ctrl+Q and Ctrl+U. A row is
+ * refused if it gives any of those, or any plain key, a job; asks anything;
+ * names an action that answers, commits or destroys something; or is an entry
+ * in a list, picker or form. What is left is labels, the model, notices and
+ * hints for shortcuts this app never sends.
  */
 function isUnrecognizedFooterRow(line: string): boolean {
-  const trimmed = line.trim()
+  const trimmed = line.trim().replace(/\s+/gu, ' ')
   if (!trimmed) return true
   if (trimmed.length > 240) return false
   // An entry in a list, picker or form.
   if (/^(?:[❯›>▸▶►●○◉◎◯☐☑☒✓✔✗✘•*+-]|\[.?\]|\(.?\)|\d+[.)])(?:\s|$)/u.test(trimmed)) return false
   // An entry in the command, file or issue picker.
   if (/^[/@#][\p{L}\p{N}_-]/u.test(trimmed)) return false
-  // A question, or a prompt for an answer.
-  if (/[?:]$/u.test(trimmed)) return false
-  // Keys handed to something other than the prompt: moving through a list,
-  // or choosing, confirming or leaving something.
+  // A question anywhere, or a prompt for an answer. A `? help` cell names the
+  // key rather than asking.
+  if (/:$/u.test(trimmed)) return false
+  if (/\?/u.test(trimmed.replace(/(?:^|·)\s*\?\s+\p{L}/gu, ''))) return false
+  // Answers to choose between.
+  if (/\[[^\]]*\/[^\]]*\]|\([^)]*\/[^)]*\)|\b(?:y|yes)\s*\/\s*(?:n|no)\b/iu.test(trimmed)) return false
+  // Moving through a list.
   if (/[↑↓]\s*\/?\s*[↑↓]|[←→]\s*\/?\s*[←→]/u.test(trimmed)) return false
-  return !/\b(?:esc|enter|return|space|tab|shift\+tab|ctrl\+\S+|y\/n)\s+(?:to\s+)?(?:select|accept|confirm|cancel|close|back|exit|dismiss|navigate|toggle|decline|choose|submit|approve|deny|allow|reject|edit|save|apply|continue|retry|answer|pick)\b/iu
+  // A job for a key this app sends, for Escape, or for a plain key.
+  if (/(?:^|[\s·(])(?:enter|return|⏎|↵|space|esc|escape|backspace|ctrl\+[qucdjm])(?=[\s·),]|$)/iu.test(trimmed)) return false
+  if (/(?:^|[\s·(])\p{L}(?=\s+\p{L})/u.test(trimmed)) return false
+  // An action that answers, commits or destroys something.
+  return !/\b(?:abort|accept|approve|cancel|clear|confirm|continue|decline|delete|deny|deploy|destroy|discard|erase|exit|force|install|kill|merge|no|overwrite|proceed|publish|purge|push|quit|reject|remove|reset|retry|revert|submit|trust|undo|uninstall|wipe|yes)\b/iu
     .test(trimmed)
 }
 
@@ -3001,6 +3012,26 @@ function rememberComposerFocus(pane: string): void {
 }
 
 const reportedUnknownFooters = new Set<string>()
+const REPORTED_FOOTER_MEMORY = 256
+
+/**
+ * Logs a footer that was accepted without being recognised, once per shape
+ * (digits aside) for as long as the shape is among the most recent ones.
+ * Returns whether it was logged.
+ */
+export function reportUnrecognisedFooter(footer: string): boolean {
+  if (!footer) return false
+  const shape = footer.replace(/\d+/gu, '#')
+  if (reportedUnknownFooters.has(shape)) return false
+  reportedUnknownFooters.add(shape)
+  while (reportedUnknownFooters.size > REPORTED_FOOTER_MEMORY) {
+    reportedUnknownFooters.delete(reportedUnknownFooters.values().next().value!)
+  }
+  console.warn(
+    `Copilot drew a footer this version does not recognise; input was allowed because the cursor was in its prompt: ${footer}`,
+  )
+  return true
+}
 
 /**
  * Whether the cursor sits inside a composer whose footer, however unfamiliar,
@@ -4287,14 +4318,7 @@ async function captureTerminal(
   if (terminalComposerFrame(pane.split('\n')) !== undefined) return pane
   if (composerHasFocus(visible, flag === '1', Number(row))) {
     rememberComposerFocus(pane)
-    const footer = footerBelowComposer(visible)
-    const shape = footer.replace(/\d+/gu, '#')
-    if (footer && !reportedUnknownFooters.has(shape) && reportedUnknownFooters.size < 32) {
-      reportedUnknownFooters.add(shape)
-      console.warn(
-        `Copilot drew a footer this version does not recognise; input was allowed because the cursor was in its prompt: ${footer}`,
-      )
-    }
+    reportUnrecognisedFooter(footerBelowComposer(visible))
   } else {
     composerFocusedPanes.delete(pane)
   }

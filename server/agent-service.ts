@@ -1691,6 +1691,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private sideQuestionTimeoutMs = SIDE_QUESTION_TIMEOUT_MS
   private sideQuestionIdleMs = SIDE_QUESTION_RUNTIME_IDLE_MS
   private sideQuestionCleanupMs = SIDE_QUESTION_CLEANUP_MS
+  private readonly sideQuestionCleanups = new Set<Promise<void>>()
   private sideQuestionRuntime?: {
     client: CopilotClientLike
     started: Promise<void>
@@ -1985,8 +1986,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         } catch (error) {
           // Registered before this question's own hold on discovery ends, so
           // a fork that lands late is never listed before it is discarded.
-          void this.runSessionCreation(() => this.settleLateSideQuestionFork(client, forking))
+          // Shutdown has no discovery left to hold, but still waits for it.
+          const settle = () => this.settleLateSideQuestionFork(client, forking)
+          const cleanup = (this.stopped ? settle() : this.runSessionCreation(settle))
             .catch(() => undefined)
+          this.sideQuestionCleanups.add(cleanup)
+          void cleanup.finally(() => this.sideQuestionCleanups.delete(cleanup))
           throw error
         }
         this.deletedSessionIds.add(forkId)
@@ -2448,6 +2453,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.backgroundTaskResyncNeeded.clear()
     this.backgroundTaskGenerations.clear()
     await Promise.all([...this.sessionCreations])
+    while (this.sideQuestionCleanups.size) await Promise.all([...this.sideQuestionCleanups])
     await this.closeSideQuestionRuntime()
     await Promise.all([...this.lifecycleLocks.values()])
     await Promise.allSettled([...this.queueOperations.values()])

@@ -316,9 +316,9 @@
     "server/active-sessions.ts": "a83d2687d265453d74a4ca0a1861e12d519cce85f38feccd6cafea61ebbd8c5e",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "3c4f6b79c70a9f2f012aa0d3797539dfdca25780edaed9e577cb1c2d3871fd9d",
-    "server/agent-service-side-question.test.ts": "1a44ea4989e812bba1e3889fd9713261fc0534b985b0325db9aeff2ee98d6dd3",
+    "server/agent-service-side-question.test.ts": "116cf5293072dde0072889f989965f03c8efc8c30ab3d332d1e782cc1d812810",
     "server/agent-service.test.ts": "add7aeefdf5e8d33125de3c9304d86ddd2ffcba8f71226c138ec1c3173c2b34b",
-    "server/agent-service.ts": "1a4ca51555ca3c7abe3d9dbea38d8337d5ddd135147e1295d4eda944bfdbd5f8",
+    "server/agent-service.ts": "81f96a2383907428dc98d1c0a1138a9ecee04a0d7703f223f65957c27d1a0166",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -595,18 +595,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "81ca6bfc95baa6438e04cf3d354b0988df387db65964634c60afe94fe3e94c1f",
+    "GRAPH_REPORT.md": "ec1e4e76fc82f83aae39235773cfbd88a992c656fc7348c8be14b9ac0cbef435",
     "communities.json": "1cbb3c91f44511bc6fc1d65f506c13a140af3c2b8459dd96ae9b593cbbd53387",
-    "graph.html": "c8c863136570c6df18a21e8ddd4779621ef0e7344c99cf31f1b1cbe4b8cd647b",
-    "graph.json": "d54a1795466de71d57152c67ce6e97bf5d3d30ed8bc20285dc04dffb7bec6adf"
+    "graph.html": "f1f45bfd18b7f80ea5c662604033681f646f510f481bc76255c0d78d5c18266e",
+    "graph.json": "2e4c4c93017b1c7123ae26c7345beec6b63b2126b4ace738021eb4c22e8d8257"
   },
   "schema_version": 1,
-  "source_commit": "7b274568b74011b7c34af5031debec365c8b4ef3",
-  "source_fingerprint": "2864c399edaeb63dbcb4b56e6876afd65230bba08ce172aaf7ee22f32334a353",
+  "source_commit": "3d88848564571a97934dcf4cc6d6c7eca2f3ce20",
+  "source_fingerprint": "6657506b5565095889ed77262f964d9e87d53b4c53020e390f332f5a322ae0df",
   "working_tree_changes": [
     "server/agent-service-side-question.test.ts",
-    "server/agent-service.ts",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/agent-service.ts"
   ]
 }

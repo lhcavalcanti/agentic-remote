@@ -311,6 +311,24 @@ describe('AgentService side questions', () => {
     expect(internals.deletedSessionIds.has('late-fork')).toBe(true)
   })
 
+  it('deletes a fork that lands late while the service is stopping', async () => {
+    const { client, service } = await fixture()
+    const internals = service as unknown as { sideQuestionTimeoutMs: number }
+    internals.sideQuestionTimeoutMs = 30
+    let land: ((value: { sessionId: string }) => void) | undefined
+    let stopping: Promise<void> | undefined
+    client.forkWith = () => {
+      stopping = service.stop()
+      return new Promise((resolve) => { land = resolve })
+    }
+    const asked = service.askSession('source', 'During shutdown?').catch((error: unknown) => error)
+    expect(await asked).toMatchObject({ statusCode: 504 })
+    expect(stopping).toBeDefined()
+    land?.({ sessionId: 'late-fork' })
+    await stopping
+    expect(client.deleted).toEqual(['late-fork'])
+  })
+
   it('stops a runtime that never returns a fork', async () => {
     const { client, service } = await fixture()
     const internals = service as unknown as {

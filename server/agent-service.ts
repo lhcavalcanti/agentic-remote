@@ -1978,7 +1978,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const forks: string[] = []
       const forkFrom = async (sessionId: string, toEventId?: string) => {
-        const forkId = (await inTime(fork({ sessionId, ...(toEventId ? { toEventId } : {}) }))).sessionId
+        const forking = fork({ sessionId, ...(toEventId ? { toEventId } : {}) })
+        let forkId: string
+        try {
+          forkId = (await inTime(forking)).sessionId
+        } catch (error) {
+          // A fork that lands after the deadline still has to go.
+          void forking.then(({ sessionId: lateId }) => {
+            this.deletedSessionIds.add(lateId)
+            return this.discardSideQuestionFork(client, lateId)
+          }, () => undefined)
+          throw error
+        }
         this.deletedSessionIds.add(forkId)
         forks.push(forkId)
         return forkId
@@ -1991,10 +2002,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // unfinished turn is forked again before it.
         const late = sideQuestionBoundary(await inTime(this.sessionEventReader(forkId)))
         if (late) forkId = await forkFrom(forkId, late)
-        forked = await inTime(client.resumeSession(forkId, {
+        const resuming = client.resumeSession(forkId, {
           streaming: false,
           onPermissionRequest: () => ({ kind: 'user-not-available' }),
-        }))
+        })
+        forked = await inTime(resuming).catch((error: unknown) => {
+          void resuming.then((late) => late.disconnect(), () => undefined).catch(() => undefined)
+          throw error
+        })
         const ask = forked.rpc.ui?.ephemeralQuery
         if (!ask) {
           throw new SideQuestionError(

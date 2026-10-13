@@ -239,9 +239,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 158,
+  "communities": 146,
   "community_algorithm": "louvain-seed-42",
-  "edges": 10118,
+  "edges": 10119,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -316,9 +316,9 @@
     "server/active-sessions.ts": "a83d2687d265453d74a4ca0a1861e12d519cce85f38feccd6cafea61ebbd8c5e",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "3c4f6b79c70a9f2f012aa0d3797539dfdca25780edaed9e577cb1c2d3871fd9d",
-    "server/agent-service-side-question.test.ts": "0635cf61ee24c9d70544e823078a352fc3ab92f500dfbfb59a294cc4ef00ad53",
+    "server/agent-service-side-question.test.ts": "823e298d3991d97472da30bf0a821e03b77f2dcc20f50fbdca566299a1546f12",
     "server/agent-service.test.ts": "add7aeefdf5e8d33125de3c9304d86ddd2ffcba8f71226c138ec1c3173c2b34b",
-    "server/agent-service.ts": "824b80121a9abf42e9b260616d4263d7801cb607906eb0099dfe079740ea27ae",
+    "server/agent-service.ts": "28d501e36fbe3f7669a789fced886aea0665222a031fb8da872856ab41b080f1",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -459,8 +459,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "262606bdbf08193e65a404a872eb309ed4116b8a981a430889b444950d660a4d",
-    "src/App.tsx": "bd3e4798018f18d22c352f788d1f9efc38df3919ce0fc3620ab3126da5cacaab",
+    "src/App.test.tsx": "da15e22064fe548536b34937a1b6665e4107ecb6f986ef19c181544977340841",
+    "src/App.tsx": "f7a540139aa6f70931142a4ccae8001bdfb34af78b8813dce6a3f9e7636957b6",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -538,7 +538,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3582,
+  "nodes": 3583,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -595,22 +595,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e568940983ea897103dbe7b67d42bcb5e5e5903528703a9d53ad37e0f240d7cc",
-    "communities.json": "07d0b37087fa8e39be606a166254e6ed6c38e56c7038223af145cc1693c97e07",
-    "graph.html": "6f7013f28613c484c8454595bbc24a594168b2135196036be16b6a2819ce3cf0",
-    "graph.json": "4b89ac43a964be94bb710a1be534832510fc3b4da18cc3580c69d3cd5d809e2b"
+    "GRAPH_REPORT.md": "24e731915696fafacb7d26ae1dd56b03e3ffccee0d0370c64226654475063dc8",
+    "communities.json": "251e555d7c9d26ef71c9b3b826aaa0834866df2dc541c4cb41d6e09ad9269728",
+    "graph.html": "b364eb2e83f25e5335259ca898b2e3eef866a8f4de6a6e540e1ae0ff9d355c29",
+    "graph.json": "95b7f7576c7efb6040a804f9f1c681b15dcda447ee93931a15390ee93b0358b8"
   },
   "schema_version": 1,
-  "source_commit": "c94be87c571ae5e5e0e6bdcfa5e36f0474ac077e",
-  "source_fingerprint": "6ce4f976baa79d60800751aee8f6ad1f8b49c26dfd15f1106e9cb6a861935c2c",
+  "source_commit": "9a0470198c0e79bcf364dcd7074519b1eb499b02",
+  "source_fingerprint": "407b50ba92dd7349a1824ce7bb04560812862e095695ed3ec3da9698ba9f6609",
   "working_tree_changes": [
-    "docs/app-spec.md",
     "server/agent-service-side-question.test.ts",
     "server/agent-service.ts",
-    "server/session-store.ts",
-    "server/side-question.ts",
     "src/App.test.tsx",
-    "src/App.tsx",
-    "src/SideQuestions.tsx"
+    "src/App.tsx"
   ]
 }

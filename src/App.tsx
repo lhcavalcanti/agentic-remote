@@ -1833,6 +1833,14 @@ function withoutSideQuestions(gone: (key: string) => boolean) {
   }
 }
 
+const sideQuestionWebCommand: SlashCommand = {
+  name: 'ask',
+  aliases: ['btw'],
+  description: 'Ask a side question without sending it to the session',
+  inputHint: '<question>',
+  allowDuringAgentExecution: true,
+}
+
 const webCommands: SlashCommand[] = [
   {
     name: 'cwd',
@@ -1857,13 +1865,7 @@ const webCommands: SlashCommand[] = [
     description: 'Restart Copilot while preserving this conversation',
     allowDuringAgentExecution: false,
   },
-  {
-    name: 'ask',
-    aliases: ['btw'],
-    description: 'Ask a side question without sending it to the session',
-    inputHint: '<question>',
-    allowDuringAgentExecution: true,
-  },
+  sideQuestionWebCommand,
   ...sessionResourceCommands,
 ]
 
@@ -7665,10 +7667,18 @@ function App() {
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''
+  // The list is replaced only once the selected session's own arrives, so the
+  // previous session's side-question command is dropped here, not just there.
+  const sessionCommands = useMemo(
+    () => selectedSupportsSideQuestions
+      ? commands
+      : commands.filter((command) => command !== sideQuestionWebCommand),
+    [commands, selectedSupportsSideQuestions],
+  )
   const commandSuggestions = useMemo(
     () =>
       composer.startsWith('/')
-        ? commands
+        ? sessionCommands
             .filter(
               (command) =>
                 command.name.toLowerCase().startsWith(commandQuery) ||
@@ -7679,7 +7689,7 @@ function App() {
             )
             .slice(0, 8)
         : [],
-    [commandQuery, commands, composer],
+    [commandQuery, composer, sessionCommands],
   )
   const showCommandMenu =
     commandSuggestions.length > 0 &&
@@ -9334,6 +9344,9 @@ function App() {
         const merged = merge(sessionsRef.current)
         sessionsRef.current = merged
         setSessions(merge)
+        const kept = new Set(merged.map((session) => sessionKey(session)))
+        setSideQuestions(withoutSideQuestions((key) =>
+          !kept.has(key) && claim.speaksFor.has(key.slice(0, key.indexOf(':')))))
         // What these sessions say they replaced is true whoever else answered.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(merged)
@@ -12006,7 +12019,7 @@ function App() {
       return
     }
     const command = isCommand
-      ? commands.find(
+      ? sessionCommands.find(
           (candidate) =>
             candidate.name.toLowerCase() === commandName ||
             slashShortcut(candidate.name) === commandName ||
@@ -12753,7 +12766,7 @@ function App() {
   /** The command this session knows by that name, shortcut or alias. */
   function knownCommand(name: string): SlashCommand | undefined {
     const wanted = name.toLowerCase()
-    return commands.find(
+    return sessionCommands.find(
       (candidate) =>
         candidate.name.toLowerCase() === wanted ||
         slashShortcut(candidate.name) === wanted ||

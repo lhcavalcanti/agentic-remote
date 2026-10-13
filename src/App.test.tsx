@@ -10866,6 +10866,81 @@ describe('App', () => {
       expect(screen.queryByText('Remembered answer.')).not.toBeInTheDocument()
     })
 
+    it('drops /ask from the previous session while the next one lists its commands', async () => {
+      const remoteSession: ManagedSession = {
+        ...session,
+        id: 'remote-session',
+        computerId: secondComputer.id,
+        computerName: secondComputer.name,
+        title: 'Remote chat',
+        messages: [],
+      }
+      vi.mocked(listComputers).mockResolvedValue([sideComputer, secondComputer])
+      vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === remoteSession.id ? remoteSession : session,
+      )
+      vi.mocked(listCommands).mockImplementation((computerId) => computerId === secondComputer.id
+        ? new Promise(() => {})
+        : Promise.resolve([{ name: 'usage', description: 'Show usage', allowDuringAgentExecution: true }]))
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/ask/ })).toBeInTheDocument()
+      fireEvent.change(textarea, { target: { value: '' } })
+
+      fireEvent.click(screen.getByRole('button', { name: /^Remote chat,/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Remote chat,/ })).toHaveAttribute('aria-current', 'page'),
+      )
+      await waitFor(() => expect(listCommands).toHaveBeenCalledWith(secondComputer.id, remoteSession.id))
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/' } })
+      expect(await screen.findByRole('option', { name: /\/usage/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /\/ask/ })).not.toBeInTheDocument()
+    })
+
+    it('forgets the answers of a session an older partial snapshot removed', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === secondSession.id ? secondSession : session,
+      )
+      vi.mocked(askSession).mockResolvedValueOnce('Snapshot answer.')
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: '/ask Snapshot?' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      expect(await screen.findByText('Snapshot answer.')).toBeInTheDocument()
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      let finishOlder!: (value: Awaited<ReturnType<typeof listSessionListing>>) => void
+      const calls = vi.mocked(listSessionListing).mock.calls.length
+      vi.mocked(listSessionListing)
+        .mockReturnValueOnce(new Promise((resolve) => { finishOlder = resolve }))
+        .mockResolvedValueOnce({ sessions: [], answeredComputerIds: [] })
+      act(() => { MockWebSocket.instances[0]?.onopen?.() })
+      await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(calls + 1))
+      await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+      await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(calls + 2))
+      await act(async () => { finishOlder({ sessions: [secondSession], answeredComputerIds: [computer.id] }) })
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+      )
+
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session }),
+        } as MessageEvent)
+      })
+      fireEvent.click(await screen.findByRole('button', { name: /^Project chat,/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page'),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Ask a side question' }))
+      await screen.findByRole('dialog', { name: 'Ask about this session' })
+      expect(screen.queryByText('Snapshot answer.')).not.toBeInTheDocument()
+    })
+
     it('shows a failed side question and asks it again', async () => {
       vi.mocked(listComputers).mockResolvedValue([sideComputer])
       vi.mocked(askSession)

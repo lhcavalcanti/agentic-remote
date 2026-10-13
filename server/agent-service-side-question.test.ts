@@ -291,6 +291,20 @@ describe('AgentService side questions', () => {
     expect(stalledStart.factory).toHaveBeenCalledTimes(2)
   })
 
+  it('deletes a fork that lands after the deadline', async () => {
+    const { client, service } = await fixture()
+    ;(service as unknown as { sideQuestionTimeoutMs: number }).sideQuestionTimeoutMs = 20
+    let land: ((value: { sessionId: string }) => void) | undefined
+    client.forkWith = () => new Promise((resolve) => { land = resolve })
+    await expect(service.askSession('source', 'Late?')).rejects.toMatchObject({ statusCode: 504 })
+    expect(client.deleted).toEqual([])
+
+    land?.({ sessionId: 'late-fork' })
+    await vi.waitFor(() => expect(client.deleted).toEqual(['late-fork']))
+    expect((service as unknown as { deletedSessionIds: Set<string> }).deletedSessionIds.has('late-fork'))
+      .toBe(true)
+  })
+
   it('retires a fork it could not delete so a restart never discovers it', async () => {
     const { client, service, store } = await fixture()
     ;(service as unknown as { sideQuestionCleanupMs: number }).sideQuestionCleanupMs = 20

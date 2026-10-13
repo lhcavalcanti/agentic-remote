@@ -815,6 +815,7 @@ describe('TmuxTerminalSessionController', () => {
     ' ← sidebar · Autopilot · Allow All · /help        ctrl+r reasoning · Claude Opus 6',
     ' Interactive · Allow All · / commands   ctrl+t show reasoning · Unknown footer',
     ' A new version available · Autopilot · ctrl+r reasoning',
+    ' Downloading a new version · Autopilot · ctrl+r reasoning',
     ' v1.1.0 downloaded · restart to update\n Autopilot · Allow All · ? help\n Fixture Model · 2M context (3%)',
   ])('accepts an unrecognised footer while the cursor is in the prompt: %s', async (footer) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -876,6 +877,8 @@ describe('TmuxTerminalSessionController', () => {
     [' press y to keep the file', 'a pressed plain key'],
     [' [y] keep · [n] skip', 'a bracketed plain key'],
     [' q to leave · ctrl+r reasoning', 'a plain key given a job'],
+    [' y keep the file · ctrl+r reasoning', 'a plain key with a longer job'],
+    [' Autopilot · then y keep the file', 'a plain key inside a cell'],
   ])('refuses an unrecognised footer that could own the keyboard: %s (%s)', async (footer) => {
     const { controller, sessionId, output } = await deliveryFixture(
       false, undefined, undefined, footer, '', 'flat',

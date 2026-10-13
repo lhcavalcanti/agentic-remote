@@ -2853,14 +2853,19 @@ const UNRECOGNIZED_FOOTER_ROWS = 3
 
 /**
  * Whether a row gives a single letter key a job, written as a shortcut hint:
- * `press y`, `y to keep`, `[y] keep`, or a cell that is only `y keep`. A
- * capital or a longer sentence is prose, not a key.
+ * `press y`, `y to keep`, `[y] keep`, or a lone lower-case letter before a
+ * word, such as `y keep the file`. Capitalised prose (`A new version`) and the
+ * article inside a sentence (`open a file`) are words, not keys.
  */
 function hasPlainKeyHint(row: string): boolean {
   if (/\b(?:press|hit|type)\s+\p{L}\b/iu.test(row)) return true
   if (/(?:^|[\s·(])\p{L}\s+to\s+\p{L}/u.test(row)) return true
   if (/[[(<‹`'"]\p{L}[\])>›`'"]/u.test(row)) return true
-  return row.split('·').some((cell) => /^\p{Ll}(?:\s+\p{Ll}[\p{L}-]*){1,2}$/u.test(cell.trim()))
+  return row.split('·').some((cell) => {
+    const text = cell.trim()
+    return /^\p{Ll}\s+\p{Ll}/u.test(text) ||
+      /\s(?!a\s)\p{Ll}\s+\p{Ll}/u.test(text)
+  })
 }
 
 /**

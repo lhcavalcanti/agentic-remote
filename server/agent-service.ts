@@ -9481,7 +9481,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * Starts Copilot in a disposable tmux session to see whether this version
    * still starts in a way the app can drive, then removes it and its files.
    */
-  async probeTerminalStartup(cwd: string): Promise<void> {
+  async probeTerminalStartup(cwd: string, signal?: AbortSignal): Promise<void> {
     if (!this.terminalController.probeStartup) {
       throw new Error('This computer cannot start terminal sessions')
     }
@@ -9498,7 +9498,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.deletedSessionIds.add(id)
     await this.store.retireSessionIds([id])
     try {
-      await this.terminalController.probeStartup(id, cwd)
+      await this.terminalController.probeStartup(id, cwd, signal)
     } finally {
       forgetSessionEvents(id)
       await removeCopilotSessionFiles(id)

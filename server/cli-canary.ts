@@ -18,8 +18,12 @@ export interface CliCanaryDependencies {
   /** Whether this computer can start terminal sessions at all. */
   available?(): Promise<boolean>
   readVersion(): Promise<string | undefined>
-  /** Rejects, saying what went wrong, when a new session cannot be driven. */
-  probe(): Promise<void>
+  /**
+   * Rejects, saying what went wrong, when a new session cannot be driven.
+   * Aborting `signal` means the canary is stopping; a probe not yet started
+   * must not start, and one starting must end itself.
+   */
+  probe(signal: AbortSignal): Promise<void>
   readState(): Promise<CliCanaryState>
   writeState(state: CliCanaryState): Promise<void>
   alert(message: string): void
@@ -47,6 +51,7 @@ export class CliCanary {
   private running?: Promise<CliCanaryResult>
   private timers: NodeJS.Timeout[] = []
   private stopped = false
+  private stopping = new AbortController()
 
   constructor(private readonly dependencies: CliCanaryDependencies) {}
 
@@ -60,6 +65,7 @@ export class CliCanary {
   start(firstDelayMs = 2 * 60_000, intervalMs = 30 * 60_000): void {
     this.clearTimers()
     this.stopped = false
+    this.stopping = new AbortController()
     const tick = () => {
       void this.check().catch((error: unknown) => {
         console.warn('Unable to check the Copilot CLI version:', error)
@@ -79,6 +85,8 @@ export class CliCanary {
   async stop(): Promise<void> {
     this.clearTimers()
     this.stopped = true
+    // Before anything is ended, so a probe launched meanwhile ends itself.
+    this.stopping.abort()
     const running = this.running
     if (!running) return
     await this.dependencies.cancel?.().catch((error: unknown) => {
@@ -120,7 +128,7 @@ export class CliCanary {
     for (let attempt = 0; attempt < PROBE_ATTEMPTS; attempt += 1) {
       if (this.stopped) return 'unknown'
       try {
-        await this.dependencies.probe()
+        await this.dependencies.probe(this.stopping.signal)
         if (this.stopped) return 'unknown'
         await this.dependencies.writeState({ verifiedVersion: version })
         return 'passed'
@@ -184,7 +192,7 @@ export function cliCanaryStateFile(file: string): {
 export function createCliCanary(options: {
   dataDirectory: string
   copilotBin: string
-  probe(cwd: string): Promise<void>
+  probe(cwd: string, signal: AbortSignal): Promise<void>
   alert(message: string): void
   cancel?(): Promise<void>
 }): CliCanary {
@@ -196,11 +204,11 @@ export function createCliCanary(options: {
     readVersion: () => readCopilotVersion(options.copilotBin),
     // Made afresh for every attempt, so nothing one leaves behind reaches the
     // next, and removed afterwards.
-    probe: async () => {
+    probe: async (signal) => {
       await rm(workspace, { recursive: true, force: true })
       await mkdir(workspace, { recursive: true })
       try {
-        await options.probe(workspace)
+        await options.probe(workspace, signal)
       } finally {
         await rm(workspace, { recursive: true, force: true })
       }

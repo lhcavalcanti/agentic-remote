@@ -265,7 +265,7 @@ export async function buildApp(
     ? createCliCanary({
         dataDirectory,
         copilotBin: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
-        probe: (cwd) => agent.probeTerminalStartup(cwd),
+        probe: (cwd, signal) => agent.probeTerminalStartup(cwd, signal),
         alert: (message) => agent.publishAlert(message),
         cancel: () => agent.endTerminalProbes(),
       })

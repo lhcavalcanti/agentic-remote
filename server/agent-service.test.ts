@@ -5922,7 +5922,7 @@ describe('AgentService deletion', () => {
       if (failure) await expect(probing).rejects.toBe(failure)
       else await expect(probing).resolves.toBeUndefined()
 
-      expect(terminal.probeStartup).toHaveBeenCalledWith(probed, '/canary/workspace')
+      expect(terminal.probeStartup).toHaveBeenCalledWith(probed, '/canary/workspace', undefined)
       expect(retiredDuringProbe).toBe(true)
       expect(service.store.isRetiredSession(probed!)).toBe(true)
       await expect(stat(sessionFiles(directory, probed!))).rejects.toMatchObject({ code: 'ENOENT' })

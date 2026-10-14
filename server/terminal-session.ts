@@ -153,7 +153,7 @@ export interface TerminalSessionController {
    * columns, and resolves once the app can tell its prompt is ready. Rejects,
    * saying what the terminal showed, when it cannot.
    */
-  probeStartup?(sessionId: string, cwd: string): Promise<void>
+  probeStartup?(sessionId: string, cwd: string, signal?: AbortSignal): Promise<void>
   /**
    * Ends probes a stopped service left running, once their Copilot has
    * exited, and says which sessions they were.
@@ -352,20 +352,28 @@ export class TmuxTerminalSessionController
     })
   }
 
-  async probeStartup(sessionId: string, cwd: string): Promise<void> {
+  async probeStartup(
+    sessionId: string,
+    cwd: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     // A session of its own, so nothing appears among the windows people use,
     // and at the narrowest width Copilot's footer has broken at before.
     const name = `${PROBE_SESSION_PREFIX}${sessionId.slice(0, 8)}`
+    if (signal?.aborted) throw new Error('The probe was cancelled before it started')
     const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
-    const target = (await execFileAsync('tmux', [
-      'new-session', '-d', '-P', '-F', '#{pane_id}', '-s', name,
+    const [target, panePid] = (await execFileAsync('tmux', [
+      'new-session', '-d', '-P', '-F', '#{pane_id}\t#{pane_pid}', '-s', name,
       '-x', String(PROBE_COLUMNS), '-y', String(PROBE_ROWS), '-c', cwd,
       '-e', 'COLORTERM=truecolor',
       copilot, '--yolo', '--session-id', sessionId,
-    ])).stdout.trim()
+    ])).stdout.trim().split('\t')
     let owner: TerminalOwner | undefined
     let failure: Error | undefined
     try {
+      // Cancelling ends the probes it can see, and one launched while it was
+      // looking is not among them; this one ends itself instead.
+      if (signal?.aborted) throw new Error('The probe was cancelled as it started')
       for (let attempt = 0; attempt < 100 && !owner; attempt += 1) {
         owner = await this.owner(sessionId, target)
         if (!owner) await new Promise((resolve) => setTimeout(resolve, 100))
@@ -412,7 +420,9 @@ export class TmuxTerminalSessionController
     this.knownOwners.delete(sessionId)
     // Copilot writes its session files as it shuts down, so they are only the
     // caller's to remove once it has gone.
-    const leftBehind = await endProbeSession(name, owner ? [owner.pid, owner.rootPid] : [])
+    const pids = [Number(panePid), ...(owner ? [owner.pid, owner.rootPid] : [])]
+      .filter((pid) => Number.isInteger(pid) && pid > 0)
+    const leftBehind = await endProbeSession(name, pids)
     if (leftBehind) {
       throw new Error(failure ? `${leftBehind}. ${failure.message}` : leftBehind, { cause: failure })
     }

@@ -598,7 +598,9 @@ Questions and permissions are the highest-priority UI state.
   - a probe a stopped service left running MUST be ended before the next one
     starts, and its files removed only if its session was retired;
   - stopping the service MUST cancel a check under way, recording and
-    reporting nothing, so the version is checked again on the next start.
+    reporting nothing, so the version is checked again on the next start. No
+    probe MAY start once stopping has begun, and one launched while the
+    running ones were being ended MUST end itself.
 
   A version is recorded as passed or failed in `cli-canary.json` in the data
   directory. A failure gets one more attempt before it counts. A failed

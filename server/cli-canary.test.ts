@@ -144,8 +144,17 @@ describe('CliCanary', () => {
 
   it('cancels a check under way when stopped, recording and reporting nothing', async () => {
     let end!: (error: Error) => void
-    const probe = vi.fn(() => new Promise<void>((_resolve, reject) => { end = reject }))
-    const cancel = vi.fn(async () => end(new Error('The probe was ended')))
+    let signal: AbortSignal | undefined
+    let abortedBeforeCancel = false
+    const probe = vi.fn((received: AbortSignal) => {
+      signal = received
+      return new Promise<void>((_resolve, reject) => { end = reject })
+    })
+    // Aborted first, so a probe launched while cancelling ends itself.
+    const cancel = vi.fn(async () => {
+      abortedBeforeCancel = signal?.aborted === true
+      end(new Error('The probe was ended'))
+    })
     const alert = vi.fn()
     const writeState = vi.fn(async () => undefined)
     const subject = new CliCanary({
@@ -162,6 +171,7 @@ describe('CliCanary', () => {
     await subject.stop()
 
     await expect(running).resolves.toBe('unknown')
+    expect(abortedBeforeCancel).toBe(true)
     expect(cancel).toHaveBeenCalledOnce()
     expect(probe).toHaveBeenCalledTimes(1)
     expect(writeState).not.toHaveBeenCalled()
@@ -267,7 +277,7 @@ describe('createCliCanary', () => {
 
     await expect(subject.check()).resolves.toBe('passed')
 
-    expect(probe).toHaveBeenCalledWith(path.join(directory, 'cli-canary'))
+    expect(probe).toHaveBeenCalledWith(path.join(directory, 'cli-canary'), expect.any(AbortSignal))
     await expect(stat(path.join(directory, 'cli-canary'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(JSON.parse(await readFile(path.join(directory, 'cli-canary.json'), 'utf8')))
       .toEqual({ verifiedVersion: '1.0.99' })

@@ -706,6 +706,39 @@ process.on('SIGHUP', () => undefined)
     expect(await probeSessions()).toEqual([])
   }, 45_000)
 
+  it('does not start a probe once the canary is stopping', async () => {
+    const { controller, receipt, workspace } = await probeFixture('')
+    const stopping = new AbortController()
+    stopping.abort()
+
+    await expect(controller.probeStartup(randomUUID(), workspace, stopping.signal))
+      .rejects.toThrow('The probe was cancelled before it started')
+
+    await expect(readFile(receipt, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await probeSessions()).toEqual([])
+  })
+
+  it('ends a probe that launched while the canary was stopping', async () => {
+    const { controller, receipt, workspace } = await probeFixture(`
+process.stdin.on('error', () => undefined)
+setInterval(() => undefined, 1000)
+process.on('SIGHUP', () => setTimeout(() => {
+  state.shutDown = true
+  writeReceipt(state)
+  process.exit(0)
+}, 300))
+`)
+    const stopping = new AbortController()
+    const probing = controller.probeStartup(randomUUID(), workspace, stopping.signal)
+    stopping.abort()
+
+    await expect(probing).rejects.toThrow(/^The probe was cancelled as it started/u)
+
+    expect(await probeSessions()).toEqual([])
+    const seen = await readFile(receipt, 'utf8').catch(() => undefined)
+    if (seen) expect(JSON.parse(seen).shutDown).toBe(true)
+  }, 30_000)
+
   it('ends probes a stopped service left running, and only those', async () => {
     const { controller, receipt } = await probeFixture(`
 process.stdin.on('error', () => undefined)

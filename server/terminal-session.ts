@@ -1388,8 +1388,9 @@ export class TmuxTerminalSessionController
       ) {
         await execFileAsync('tmux', ['send-keys', '-t', target, 'Escape'])
       } else if (
-        isTerminalAgentWorking(pane) ||
-        (await this.workingByEventLog(sessionId, pane, options))
+        !this.interruptedRecently(sessionId) &&
+        (isTerminalAgentWorking(pane) ||
+          (await this.workingByEventLog(pane, options)))
       ) {
         await execFileAsync('tmux', ['send-keys', '-t', target, '-H', '03'])
         this.interruptedAt.set(sessionId, Date.now())
@@ -1398,26 +1399,29 @@ export class TmuxTerminalSessionController
     })
   }
 
+  // The footer can still offer the interrupt key for a moment after the
+  // first Ctrl+C has ended the turn.
+  private interruptedRecently(sessionId: string): boolean {
+    const last = this.interruptedAt.get(sessionId)
+    return last !== undefined && Date.now() - last < INTERRUPT_REPEAT_MS
+  }
+
   // Copilot can stop offering its interrupt key, or word it differently, in
   // any release. Its event log still says whether a turn is open, so Stop
-  // asks it -- but never over a prompt the pane shows idle, and never soon
-  // after the last interrupt.
+  // asks it -- but never over a prompt the pane shows idle.
   private async workingByEventLog(
-    sessionId: string,
     pane: string,
     options: TerminalCancelOptions,
   ): Promise<boolean> {
-    const last = this.interruptedAt.get(sessionId)
     if (
       !options.turnOpen ||
       isTerminalVisiblyIdle(pane) ||
-      (last !== undefined && Date.now() - last < INTERRUPT_REPEAT_MS) ||
       !(await options.turnOpen().catch(() => false))
     ) {
       return false
     }
     console.warn(
-      `Copilot did not offer its interrupt key while its event log had a turn open; interrupting session ${sessionId} anyway`,
+      'Copilot did not offer its interrupt key while its event log had a turn open; interrupting anyway',
     )
     return true
   }
@@ -3063,12 +3067,17 @@ function cursorComposerFrame(lines: string[]): TerminalComposerFrame | undefined
     if (top < 0) return undefined
     const inner = lines.slice(top + 1, bottom).filter((line) => line.trim())
     if (!inner.length) continue
-    const flat = !inner.every((line) => COMPOSER_SIDE_BAR.test(line.trim()))
-    const text = composerFrameText(lines, { top, bottom, flat, marker: '' })
-    const marker = /^([^\p{L}\p{N}\s])(?:\s|$)/u.exec(text)?.[1]
-    if (marker) return { top, bottom, flat, marker }
-    if (COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))) {
-      return { top, bottom, flat, marker: '' }
+    // Sides and a prompt marker can be drawn with the same characters, so a
+    // frame whose rows all open with one is read with sides first, then as a
+    // flat frame whose marker that character is.
+    const sided = inner.every((line) => COMPOSER_SIDE_BAR.test(line.trim()))
+    for (const flat of sided ? [false, true] : [true]) {
+      const text = composerFrameText(lines, { top, bottom, flat, marker: '' })
+      const marker = /^([^\p{L}\p{N}\s])(?:\s|$)/u.exec(text)?.[1]
+      if (marker) return { top, bottom, flat, marker }
+      if (COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))) {
+        return { top, bottom, flat, marker: '' }
+      }
     }
   }
   return undefined
@@ -3179,10 +3188,12 @@ export function composerHasFocus(
   if (!frame || cursorY <= frame.top || cursorY >= frame.bottom) return false
   // A frame found by the cursor alone could be a dialog's text field, which
   // names its keys below the field. A composer holds nothing after the
-  // cursor, so anything there must be as benign as the footer.
+  // cursor, so anything there is judged as footer, within the same limit.
   return frame.marker === undefined ||
-    lines.slice(cursorY + 1, frame.bottom).every((line) =>
-      isUnrecognizedFooterRow(composerRowText(line, frame)))
+    isTerminalComposerFooter([
+      ...lines.slice(cursorY + 1, frame.bottom).map((line) => composerRowText(line, frame)),
+      ...lines.slice(frame.bottom + 1),
+    ], true)
 }
 
 // Logs what about a focused composer the grammar did not know: its frame

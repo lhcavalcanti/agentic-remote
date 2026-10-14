@@ -526,9 +526,10 @@ Questions and permissions are the highest-priority UI state.
   decides. A foreground turn is open when its last foreground lifecycle event
   is a turn start or an answered permission, and no process has started or
   resumed the session since. Background agents do not count. Stop MUST then
-  send the same interrupt, at most once per session within five seconds,
-  because a second Ctrl+C at a prompt that has just gone idle starts quitting.
-  Send routing MUST treat such a session as working.
+  send the same interrupt, and send routing MUST treat the session as working.
+  Whichever way it was decided, Stop MUST NOT interrupt a session again within
+  five seconds of its last interrupt: the footer can still offer the key just
+  after the turn ended, and a second Ctrl+C at an idle prompt starts quitting.
 - A complete model, effort, and context footer MUST NOT make an otherwise live
   composer appear unavailable. A wrapped reasoning/model line after the
   command/sidebar hints MUST remain recognizable without a context counter.
@@ -566,12 +567,14 @@ Questions and permissions are the highest-priority UI state.
   different rules, sides or prompt marker MUST also be found. When no known
   frame exists, the lowest region bounded by two rows of at least eight line
   or block characters (U+2500–U+259F) is the composer if all of these hold:
-  - the cursor is inside it, and any row after the cursor inside it is one
-    the footer rule above would accept;
-  - every row below it is footer the rule above accepts;
+  - the cursor is inside it;
+  - the rows after the cursor inside it, and every row below it, are footer
+    the rule above accepts, within its limit of three unrecognised rows;
   - no form footer is shown;
   - its first row opens with a single non-alphanumeric marker followed by a
-    space, or shows a known empty-composer placeholder.
+    space, or shows a known empty-composer placeholder. When every row opens
+    with a line or block character, it is read first as a side and then as
+    the marker.
 
   That marker MUST read as the prompt marker, so an empty composer is not
   mistaken for a draft. Each such frame shape MUST be logged once, like an

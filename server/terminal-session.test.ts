@@ -617,6 +617,22 @@ describe('TmuxTerminalSessionController', () => {
     }
   }, 15_000)
 
+  it('does not repeat an advertised interrupt within five seconds', async () => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture()
+    // The footer can still offer the key for a moment after the first Ctrl+C.
+    await showPane(controller, sessionId, replacementPath, rewordedWorkingPane.replace('52.1 KiB · esc to stop', 'esc interrupt'))
+
+    await expect(controller.cancel(sessionId)).resolves.toBe(true)
+    await eventually(
+      () => readFile(output, 'utf8'),
+      (receipt) => JSON.parse(receipt).keys === '\u0003',
+    )
+    await expect(controller.cancel(sessionId)).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('\u0003')
+  }, 15_000)
+
   it.each([
     ['the log has no turn open', rewordedWorkingPane, false],
     ['the pane shows an idle prompt it knows', readyComposer(), true],
@@ -885,6 +901,7 @@ describe('TmuxTerminalSessionController', () => {
     it.each([
       ['rules and a marker', ['════════════', '› ', '════════════']],
       ['blocks with sides', ['▛▀▀▀▀▀▀▀▀▀▀▀▜', '▌ » a draft ▐', '▙▄▄▄▄▄▄▄▄▄▄▄▟']],
+      ['a marker drawn with a block character', ['════════════', '▌ a draft', '════════════']],
       ['a placeholder and no marker', [
         '╔══════════════╗',
         '║ Type @ to mention files, # for issues/PRs, / for commands ║',
@@ -910,6 +927,15 @@ describe('TmuxTerminalSessionController', () => {
         '│ enter save · esc cancel  │',
         '╰──────────────────────────╯',
         ...newFooter,
+      ]],
+      ['more quiet rows after a field than an unknown footer may have', [
+        '╭──────────────────────────╮',
+        '│ › new name               │',
+        '│ Your branch              │',
+        '│ will be                  │',
+        '│ created                  │',
+        '│ shortly                  │',
+        '╰──────────────────────────╯',
       ]],
     ])('refuses a region with the cursor in it that is not a prompt: %s', (_, frame) => {
       expect(composerHasFocus([' transcript', ...frame], true, 2)).toBe(false)

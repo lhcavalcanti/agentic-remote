@@ -901,7 +901,6 @@ describe('TmuxTerminalSessionController', () => {
     it.each([
       ['rules and a marker', ['════════════', '› ', '════════════']],
       ['blocks with sides', ['▛▀▀▀▀▀▀▀▀▀▀▀▜', '▌ » a draft ▐', '▙▄▄▄▄▄▄▄▄▄▄▄▟']],
-      ['a marker drawn with a block character', ['════════════', '▌ a draft', '════════════']],
       ['a placeholder and no marker', [
         '╔══════════════╗',
         '║ Type @ to mention files, # for issues/PRs, / for commands ║',
@@ -921,6 +920,12 @@ describe('TmuxTerminalSessionController', () => {
       ['a question below', ['════════════', '› ', '════════════', ' Allow this tool to run?']],
       ['one rule', [' more transcript', '› ', '════════════', ...newFooter]],
       ['short rules', ['═══════', '› ', '═══════', ...newFooter]],
+      // Line and block characters draw frames; a side is never the marker.
+      ['a box with no marker', ['╭──────────────╮', '│ Name         │', '╰──────────────╯', ...newFooter]],
+      ['an open box with no marker', ['════════════', '║ Name', '════════════', ...newFooter]],
+      ['a block character in place of a marker', ['════════════', '▌ a draft', '════════════', ...newFooter]],
+      ['a line character in place of a marker', ['════════════', '│ ', '════════════', ...newFooter]],
+      ['a side on the first row only', ['════════════', '│ Name', '  more', '════════════', ...newFooter]],
       ['a dialog field', [
         '╭──────────────────────────╮',
         '│ › new name               │',

@@ -2626,9 +2626,13 @@ interface TerminalComposerFrame {
   marker?: string
 }
 
-// Any row of line or block characters, for the frames found by the cursor.
+// For the frames found by the cursor. Line and block characters only ever
+// draw a frame: a row of them is a rule, one opening every row is a side, and
+// a prompt marker is any other single character that is not a letter or digit.
+// Read as a marker, a side would make any box with the cursor in it a prompt.
 const COMPOSER_RULE = /^\s*[\u2500-\u259f]{8,}\s*$/u
 const COMPOSER_SIDE_BAR = /^[\u2500-\u259f]/u
+const COMPOSER_MARKER = /^([^\p{L}\p{N}\s\u2500-\u259f])(?:\s|$)/u
 
 function isTerminalContextFooter(line: string): boolean {
   const parts = line.trim().split('·').map((part) => part.trim())
@@ -3067,17 +3071,12 @@ function cursorComposerFrame(lines: string[]): TerminalComposerFrame | undefined
     if (top < 0) return undefined
     const inner = lines.slice(top + 1, bottom).filter((line) => line.trim())
     if (!inner.length) continue
-    // Sides and a prompt marker can be drawn with the same characters, so a
-    // frame whose rows all open with one is read with sides first, then as a
-    // flat frame whose marker that character is.
-    const sided = inner.every((line) => COMPOSER_SIDE_BAR.test(line.trim()))
-    for (const flat of sided ? [false, true] : [true]) {
-      const text = composerFrameText(lines, { top, bottom, flat, marker: '' })
-      const marker = /^([^\p{L}\p{N}\s])(?:\s|$)/u.exec(text)?.[1]
-      if (marker) return { top, bottom, flat, marker }
-      if (COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))) {
-        return { top, bottom, flat, marker: '' }
-      }
+    const flat = !inner.every((line) => COMPOSER_SIDE_BAR.test(line.trim()))
+    const text = composerFrameText(lines, { top, bottom, flat, marker: '' })
+    const marker = COMPOSER_MARKER.exec(text)?.[1]
+    if (marker) return { top, bottom, flat, marker }
+    if (COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))) {
+      return { top, bottom, flat, marker: '' }
     }
   }
   return undefined

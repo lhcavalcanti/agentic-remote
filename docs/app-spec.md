@@ -571,10 +571,13 @@ Questions and permissions are the highest-priority UI state.
   - the rows after the cursor inside it, and every row below it, are footer
     the rule above accepts, within its limit of three unrecognised rows;
   - no form footer is shown;
-  - its first row opens with a single non-alphanumeric marker followed by a
-    space, or shows a known empty-composer placeholder. When every row opens
-    with a line or block character, it is read first as a side and then as
-    the marker.
+  - its first row opens, after any side, with a single marker character
+    followed by a space, or shows a known empty-composer placeholder.
+
+  Line and block characters only ever draw the frame. A row of them is a
+  rule, one opening every row inside is a side, and a marker is any other
+  single character that is not a letter or digit. A side MUST never be read
+  as a marker, or any box with the cursor in it would count as a prompt.
 
   That marker MUST read as the prompt marker, so an empty composer is not
   mistaken for a draft. Each such frame shape MUST be logged once, like an

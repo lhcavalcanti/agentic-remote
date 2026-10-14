@@ -273,7 +273,7 @@
     "bin/agentic-remote-promotion-setup": "26eada3ab215d1d359ebcbb2d12f373db87d2a18529bc505c7efa76d4d6f5ed6",
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "42aff9b10ea0c58a085c447c34c20299e0d29a7dbffd38305ee8b1d699f372ee",
+    "docs/app-spec.md": "b497f8bd2df87c7ef8817d2d09653e98181690db1d4f9cd1b07cf0c5849df1b9",
     "docs/architecture.md": "e7953f78d5f3cb83c4b1366ae981da0e1c57711f2110eb5f5bba6071a14ed2e6",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -416,8 +416,8 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "d4c80c19bb20b04f0d00d789c1a986d06a9447288318ab6f87c577b2bfd33998",
-    "server/terminal-session.ts": "3eb1e1de64d01f7a7e69c66f39a3939714fa319cdc77c0b1bbf09273be61b555",
+    "server/terminal-session.test.ts": "099d09cb7149e09da5135724ad5f77d60a238ee7f45c76ed4105596ec8d5671b",
+    "server/terminal-session.ts": "290633c07656d6ac48b4c801152dbc059b9af259c1a4d542f294030b3683afda",
     "server/terminal-startup-queue.test.ts": "34d67d9887bfcc8506a2b99c44eba34d3f3e839fc8a053c33f4c236930eaaf01",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -595,14 +595,14 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "9ec4f3155c9e91866eba3089426d982bae41504b77c28941bf3a4a70cff89445",
+    "GRAPH_REPORT.md": "45ea5171381d92c00a895a3f1568aa21992fabb619e2ec8f55a9596e13036296",
     "communities.json": "6a99f475d166ffc55bb0ccd16da5b16d48911144a9c70a36a6fd4d63547aa104",
-    "graph.html": "9b37bd990a69e9962ff054f1764147eeb92b2e46826b2347a3c2ac2582d9e374",
-    "graph.json": "7ff9ae20e1f657ef878ecc3f1bf2bef495873f0890908b63573dc8eb190c2440"
+    "graph.html": "a493abab53331b6f0d068b8eedc1131d5886d0b24ac4a38fd4cbf5da07bf65c6",
+    "graph.json": "e3a018489cd32a07944134d81d0fe79ef7f781ae44b0d6a6003664e822029f53"
   },
   "schema_version": 1,
-  "source_commit": "5148317151ac238d115ab6f5b0fd326e8bdcd58f",
-  "source_fingerprint": "f1179a98789097692bee4bfee14abdb874ff1f74b19d11d8b74f5833cb04492d",
+  "source_commit": "0e567c3d80fd14636c2b7eaefa3281e58430fb26",
+  "source_fingerprint": "3f539f4bf4e0052e988fe5dec02af8baabe42bff6601cecdc37a78960afce974",
   "working_tree_changes": [
     "docs/app-spec.md",
     "server/terminal-session.test.ts",

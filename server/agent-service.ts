@@ -146,6 +146,7 @@ import {
   isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  isTerminalVisiblyIdle,
   terminalCommandOutput,
   TmuxTerminalSessionController,
   TerminalFormReplyError,
@@ -1338,6 +1339,28 @@ export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   // finished it. Reporting the session as idle offers it for the next prompt
   // and calls the work done while it is still going on.
   return status === 'idle' && workingAgents.size > 0 ? 'running' : status
+}
+
+/**
+ * Whether the CLI is in a turn of its own, by its event log rather than by
+ * anything it draws. Background agents do not count: the prompt is back with
+ * the person while they run. A process that started or resumed since closes
+ * whatever the previous one left open.
+ */
+export function foregroundTurnOpen(events: SessionEvent[]): boolean {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event.type === 'session.start' || event.type === 'session.resume') {
+      return false
+    }
+    if (isForegroundLifecycleEvent(event)) {
+      return (
+        event.type === 'assistant.turn_start' ||
+        event.type === 'permission.completed'
+      )
+    }
+  }
+  return false
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -4556,7 +4579,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // it, and nothing says the prompt was never delivered. Refusing is
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
-      terminalWorking = Boolean(pane && isTerminalAgentWorking(pane))
+      terminalWorking = Boolean(
+        pane &&
+          (isTerminalAgentWorking(pane) ||
+            (!isTerminalVisiblyIdle(pane) &&
+              (await this.terminalTurnOpen(sessionId)))),
+      )
       if (
         !startupLocked &&
         this.terminalAdmissionOperations.has(sessionId)
@@ -4631,7 +4659,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (await this.terminalController.inputReady?.(sessionId)) ??
           !isTerminalAgentWorking(currentPane)
       } else if (startupLocked && pane) {
-        terminalWorking = isTerminalAgentWorking(pane)
         startupIdle =
           ((await this.terminalController.inputReady?.(sessionId)) ??
             !terminalWorking) &&
@@ -5261,6 +5288,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     await this.drainTerminalQueue(sessionId, true)
     return this.store.get(sessionId) || queued
+  }
+
+  // Asked when the pane neither offers the interrupt key nor shows an idle
+  // prompt the grammar knows, which is how a CLI update that rewords its
+  // footer would look.
+  private async terminalTurnOpen(sessionId: string): Promise<boolean> {
+    try {
+      return foregroundTurnOpen(await this.sessionEventReader(sessionId))
+    } catch {
+      return false
+    }
   }
 
   private async shouldEnqueueTerminalPrompt(
@@ -6360,7 +6398,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async cancel(sessionId: string): Promise<void> {
-    if (await this.terminalController.cancel(sessionId)) {
+    if (
+      await this.terminalController.cancel(sessionId, {
+        turnOpen: () => this.terminalTurnOpen(sessionId),
+      })
+    ) {
       return
     }
     const session = this.sessions.get(sessionId)

@@ -520,6 +520,15 @@ Questions and permissions are the highest-priority UI state.
   it MUST send nothing, and on a keyboard-owning dialog it MUST dismiss rather
   than terminate the CLI. Restarting a managed session whose terminal owner has
   vanished MUST persist its SDK fallback before reporting success.
+- A Copilot that stops advertising its interrupt key, or words it differently,
+  MUST still be interruptible. When the pane neither offers the key nor shows
+  an idle composer and footer the grammar recognises, Copilot's event log
+  decides. A foreground turn is open when its last foreground lifecycle event
+  is a turn start or an answered permission, and no process has started or
+  resumed the session since. Background agents do not count. Stop MUST then
+  send the same interrupt, at most once per session within five seconds,
+  because a second Ctrl+C at a prompt that has just gone idle starts quitting.
+  Send routing MUST treat such a session as working.
 - A complete model, effort, and context footer MUST NOT make an otherwise live
   composer appear unavailable. A wrapped reasoning/model line after the
   command/sidebar hints MUST remain recognizable without a context counter.
@@ -553,6 +562,20 @@ Questions and permissions are the highest-priority UI state.
   With the cursor hidden or elsewhere, the grammar alone decides. Each
   unrecognised footer accepted this way MUST be logged once while it is among
   the most recent such footers, so the grammar can catch up.
+- Under the same cursor rule, a composer that a newer Copilot draws with
+  different rules, sides or prompt marker MUST also be found. When no known
+  frame exists, the lowest region bounded by two rows of at least eight line
+  or block characters (U+2500–U+259F) is the composer if all of these hold:
+  - the cursor is inside it, and any row after the cursor inside it is one
+    the footer rule above would accept;
+  - every row below it is footer the rule above accepts;
+  - no form footer is shown;
+  - its first row opens with a single non-alphanumeric marker followed by a
+    space, or shows a known empty-composer placeholder.
+
+  That marker MUST read as the prompt marker, so an empty composer is not
+  mistaken for a draft. Each such frame shape MUST be logged once, like an
+  unrecognised footer.
 - An exact downloaded-update notice and its wrapped continuation rows MUST
   NOT hide a readable composer or block terminal startup at any terminal width.
   The notice and the sidebar, mode, permission, help, and tab hint cells wrap

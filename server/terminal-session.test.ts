@@ -14,6 +14,7 @@ import {
   composerHoldsOtherText,
   composerHoldsText,
   composerHasFocus,
+  reportUnrecognisedComposer,
   reportUnrecognisedFooter,
   composerTookPaste,
   paneEvidenceCount,
@@ -121,6 +122,29 @@ function bareFlatComposer(
   ].join('\n')
 }
 
+// Copilot as a later version might draw its prompt: rules, sides and a marker
+// the grammar does not know.
+function unfamiliarComposer(text = '', working = false): string {
+  return [
+    ' /work/project                                      Session: 0 AIC used',
+    '════════════════════════════════════════════════════════════',
+    `›${text ? ` ${text}` : ''}`,
+    '════════════════════════════════════════════════════════════',
+    working
+      ? ' ◉ Working · esc interrupt'
+      : ' ← open sidebar · / commands · ? help · tab next tab        ctrl+t show reasoning · GPT-6 Astra · 1M context',
+  ].join('\n')
+}
+
+function unfamiliarBoxedComposer(text = '', working = false): string {
+  return [
+    '╔══════════════════════════════════════════════════════════╗',
+    `║ »${text ? ` ${text}` : ''}`.padEnd(59) + '║',
+    '╚══════════════════════════════════════════════════════════╝',
+    working ? ' ◉ Working · esc interrupt' : ' / commands',
+  ].join('\n')
+}
+
 const downloadedUpdateFooter = [
   ' v1.0.92 downloaded · next     · ← open    · Autopilot ·    · / commands · tab',
   ' launch or /restart              sidebar     Allow All        next tab',
@@ -159,7 +183,7 @@ async function deliveryFixture(
   transientRepaintMs = 0,
   injectedText = '',
   transientPane = 'Loading terminal frame',
-  composerStyleOrBare: 'bare' | undefined = undefined,
+  composerStyleOrBare: 'bare' | 'unfamiliar' | 'unfamiliar-boxed' | undefined = undefined,
   // Where the CLI leaves the cursor: after the footer it drew, or on its
   // prompt row as Copilot does while the prompt has the keyboard, shown or
   // hidden.
@@ -181,11 +205,11 @@ const cursor = ${JSON.stringify(cursor)}
 const draw = (pane) => {
   process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
   if (cursor === 'end') return
-  const row = pane.split('\\n').findIndex((line) => /^(?:❯|┃)/u.test(line))
+  const row = pane.split('\\n').findIndex((line) => /^(?:❯|┃|›|║)/u.test(line))
   if (row >= 0) process.stdout.write('\\x1b[' + (row + 1) + ';3H')
   process.stdout.write(cursor === 'hidden' ? '\\x1b[?25l' : '\\x1b[?25h')
 }
-const makeComposer = ${(composerStyleOrBare === 'bare' ? bareFlatComposer : composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
+const makeComposer = ${(composerStyleOrBare === 'bare' ? bareFlatComposer : composerStyleOrBare === 'unfamiliar' ? unfamiliarComposer : composerStyleOrBare === 'unfamiliar-boxed' ? unfamiliarBoxedComposer : composerStyle === 'flat' ? flatReadyComposer : readyComposer).toString()}
 const composer = (text = '', working = false) => ${JSON.stringify(transcript ? `${transcript}\n` : '')} + makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
@@ -259,7 +283,9 @@ draw(composer(${JSON.stringify(initialText)}, ${working}))
   const controller = new TmuxTerminalSessionController()
   const readyMarker = composerStyleOrBare === 'bare'
     ? '❯'
-    : composerStyle === 'flat' ? 'open sidebar' : '╹'
+    : composerStyleOrBare === 'unfamiliar' ? '›'
+      : composerStyleOrBare === 'unfamiliar-boxed' ? '»'
+        : composerStyle === 'flat' ? 'open sidebar' : '╹'
   await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes(readyMarker)))
   return { controller, sessionId, output, directory, tmuxSession, panePid }
 }
@@ -539,6 +565,90 @@ describe('TmuxTerminalSessionController', () => {
     expect(await controller.has(sessionId)).toBe(true)
   }, 15_000)
 
+  // A later Copilot may word its interrupt key differently, or drop it. Not
+  // boxed, so the fixture leaves it on screen after a key arrives.
+  const rewordedWorkingPane = [
+    ' /work/project                                      Session: 0 AIC used',
+    '────────────────────────────────────────────────────────────',
+    '❯',
+    '────────────────────────────────────────────────────────────',
+    ' ◉ Working · 52.1 KiB · esc to stop',
+  ].join('\n')
+
+  async function showPane(
+    controller: TmuxTerminalSessionController,
+    sessionId: string,
+    replacementPath: string,
+    pane: string,
+  ): Promise<void> {
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{ pid: number } | undefined>
+    }
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    expect(owner).toBeDefined()
+    await writeFile(replacementPath, pane)
+    process.kill(owner!.pid, 'SIGUSR2')
+    const last = pane.split('\n').at(-1)!.trim()
+    await eventually(() => controller.capture(sessionId), (current) => Boolean(current?.includes(last)))
+  }
+
+  it('interrupts from the event log when the footer no longer offers the key', async () => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture()
+    await showPane(controller, sessionId, replacementPath, rewordedWorkingPane)
+    const turnOpen = vi.fn(async () => true)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await expect(controller.cancel(sessionId, { turnOpen })).resolves.toBe(true)
+      const interrupted = await eventually(
+        () => readFile(output, 'utf8'),
+        (receipt) => JSON.parse(receipt).keys === '\u0003',
+      )
+      expect(JSON.parse(interrupted).keys).toBe('\u0003')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('event log had a turn open'))
+      // A second press straight after could reach a prompt that has just
+      // gone idle, where Ctrl+C is the first half of quitting.
+      await expect(controller.cancel(sessionId, { turnOpen })).resolves.toBe(true)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('\u0003')
+      expect(turnOpen).toHaveBeenCalledTimes(1)
+      expect(await controller.has(sessionId)).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  }, 15_000)
+
+  it('does not repeat an advertised interrupt within five seconds', async () => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture()
+    // The footer can still offer the key for a moment after the first Ctrl+C.
+    await showPane(controller, sessionId, replacementPath, rewordedWorkingPane.replace('52.1 KiB · esc to stop', 'esc interrupt'))
+
+    await expect(controller.cancel(sessionId)).resolves.toBe(true)
+    await eventually(
+      () => readFile(output, 'utf8'),
+      (receipt) => JSON.parse(receipt).keys === '\u0003',
+    )
+    await expect(controller.cancel(sessionId)).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('\u0003')
+  }, 15_000)
+
+  it.each([
+    ['the log has no turn open', rewordedWorkingPane, false],
+    ['the pane shows an idle prompt it knows', readyComposer(), true],
+    ['the pane shows a draft in an idle prompt it knows', readyComposer('Keep this native draft'), true],
+  ])('does not interrupt from the event log when %s', async (_name, pane, open) => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture()
+    await showPane(controller, sessionId, replacementPath, pane)
+    const turnOpen = vi.fn(async () => open)
+
+    await expect(controller.cancel(sessionId, { turnOpen })).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
+    expect(turnOpen).toHaveBeenCalledTimes(open ? 0 : 1)
+  }, 15_000)
+
   it.each([
     ['an empty composer', readyComposer()],
     ['an existing draft', readyComposer('Keep this native draft')],
@@ -736,6 +846,20 @@ describe('TmuxTerminalSessionController', () => {
     }
   })
 
+  it('logs each unrecognised prompt shape once, apart from footers', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const shape = 'rules ═/═ marker ‡ fixture 1'
+      expect(reportUnrecognisedComposer(shape)).toBe(true)
+      expect(reportUnrecognisedComposer(shape.replace('1', '2'))).toBe(false)
+      expect(reportUnrecognisedFooter(shape)).toBe(true)
+      expect(warn).toHaveBeenNthCalledWith(1, expect.stringContaining('prompt this version does not recognise'))
+      expect(warn).toHaveBeenNthCalledWith(2, expect.stringContaining('footer this version does not recognise'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   describe('composerHasFocus', () => {
     const edge = '─'.repeat(60)
     const flat = (footer: string[], text = '') => [
@@ -772,6 +896,68 @@ describe('TmuxTerminalSessionController', () => {
       [' a', ' b', ' c', ' d'],
     ])('refuses rows that could own the keyboard: %s', (...footer) => {
       expect(composerHasFocus(flat(footer), true, 2)).toBe(false)
+    })
+
+    it.each([
+      ['rules and a marker', ['════════════', '› ', '════════════']],
+      ['blocks with sides', ['▛▀▀▀▀▀▀▀▀▀▀▀▜', '▌ » a draft ▐', '▙▄▄▄▄▄▄▄▄▄▄▄▟']],
+      ['a placeholder and no marker', [
+        '╔══════════════╗',
+        '║ Type @ to mention files, # for issues/PRs, / for commands ║',
+        '╚══════════════╝',
+      ]],
+    ])('finds a prompt drawn with characters the grammar does not know: %s', (_, frame) => {
+      const rows = [' transcript', ...frame, ...newFooter]
+      expect(composerHasFocus(rows, true, 2)).toBe(true)
+      expect(composerHasFocus(rows, false, 2)).toBe(false)
+      for (const row of [0, 1, 3, 4]) expect(composerHasFocus(rows, true, row)).toBe(false)
+    })
+
+    it.each([
+      ['no marker', ['════════════', 'Name your branch', '════════════', ...newFooter]],
+      ['a marker joined to text', ['════════════', '›draft', '════════════', ...newFooter]],
+      ['a form below', ['════════════', '› ', '════════════', ' ↑/↓ select · enter accept · esc cancel']],
+      ['a question below', ['════════════', '› ', '════════════', ' Allow this tool to run?']],
+      ['one rule', [' more transcript', '› ', '════════════', ...newFooter]],
+      ['short rules', ['═══════', '› ', '═══════', ...newFooter]],
+      // Line and block characters draw frames; a side is never the marker.
+      ['a box with no marker', ['╭──────────────╮', '│ Name         │', '╰──────────────╯', ...newFooter]],
+      ['an open box with no marker', ['════════════', '║ Name', '════════════', ...newFooter]],
+      ['a block character in place of a marker', ['════════════', '▌ a draft', '════════════', ...newFooter]],
+      ['a line character in place of a marker', ['════════════', '│ ', '════════════', ...newFooter]],
+      ['a side on the first row only', ['════════════', '│ Name', '  more', '════════════', ...newFooter]],
+      ['a dialog field', [
+        '╭──────────────────────────╮',
+        '│ › new name               │',
+        '│ enter save · esc cancel  │',
+        '╰──────────────────────────╯',
+        ...newFooter,
+      ]],
+      ['more quiet rows after a field than an unknown footer may have', [
+        '╭──────────────────────────╮',
+        '│ › new name               │',
+        '│ Your branch              │',
+        '│ will be                  │',
+        '│ created                  │',
+        '│ shortly                  │',
+        '╰──────────────────────────╯',
+      ]],
+    ])('refuses a region with the cursor in it that is not a prompt: %s', (_, frame) => {
+      expect(composerHasFocus([' transcript', ...frame], true, 2)).toBe(false)
+    })
+
+    it('finds a draft over several rows with the cursor at its end', () => {
+      const rows = [
+        ' transcript',
+        '════════════',
+        '› a draft that asks',
+        '  whether to deploy?',
+        '════════════',
+        ...newFooter,
+      ]
+      expect(composerHasFocus(rows, true, 3)).toBe(true)
+      // Moved back into it, what follows the cursor is judged like footer.
+      expect(composerHasFocus(rows, true, 2)).toBe(false)
     })
   })
 
@@ -854,6 +1040,72 @@ describe('TmuxTerminalSessionController', () => {
       pastes: ['Queued under a new footer'], submits: ['queue'],
     })
   }, 20_000)
+
+  // A later Copilot may draw its prompt with characters the grammar does not
+  // know. The cursor in it still says the prompt has the keyboard.
+  it.each([
+    ['unfamiliar', ''],
+    ['unfamiliar', ' ⏵ autopilot on · ctrl+r reasoning · Claude Opus 6'],
+    ['unfamiliar-boxed', ''],
+  ] as const)('accepts a prompt drawn with unfamiliar glyphs while the cursor is in it: %s %s', async (style, footer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, undefined, undefined, footer, '', 'flat',
+        undefined, undefined, undefined, undefined, style, 'prompt',
+      )
+      expect(await controller.inputReady(sessionId)).toBe(true)
+      expect(await controller.send(sessionId, 'Unfamiliar prompt proof', false)).toBe(true)
+      const received = await eventually(
+        () => readFile(output, 'utf8'),
+        (value) => Boolean(value && JSON.parse(value).submits.length),
+      )
+      expect(JSON.parse(received)).toEqual({
+        pastes: ['Unfamiliar prompt proof'], submits: ['enter'],
+      })
+    } finally {
+      warn.mockRestore()
+    }
+  }, 20_000)
+
+  it('queues beneath a prompt drawn with unfamiliar glyphs while the agent works', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      true, undefined, undefined, '', '', 'flat',
+      undefined, undefined, undefined, undefined, 'unfamiliar', 'prompt',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await controller.send(sessionId, 'Queued under a new prompt', true)).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Queued under a new prompt'], submits: ['queue'],
+    })
+  }, 20_000)
+
+  it('keeps a draft in a prompt drawn with unfamiliar glyphs', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, '', 'Keep this native draft', 'flat',
+      undefined, undefined, undefined, undefined, 'unfamiliar', 'prompt',
+    )
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    await expect(controller.send(sessionId, 'Do not append', false))
+      .rejects.toMatchObject({ statusCode: 409, terminalDraftConflict: true, uncertainDelivery: false })
+    expect(await readFile(output, 'utf8')).toBe('')
+  }, 15_000)
+
+  it.each(['end', 'hidden'] as const)(
+    'refuses a prompt drawn with unfamiliar glyphs when the cursor is not shown in it: %s',
+    async (cursor) => {
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, undefined, undefined, '', '', 'flat',
+        undefined, undefined, undefined, undefined, 'unfamiliar', cursor,
+      )
+      expect(await controller.inputReady(sessionId)).toBe(false)
+      expect(await readFile(output, 'utf8')).toBe('')
+    },
+  )
 
   it.each([
     [' ❯ Confirm write\n   Cancel', 'a list'],

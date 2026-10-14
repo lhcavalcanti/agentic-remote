@@ -20,6 +20,7 @@ import {
   messagesFromHistory,
   pendingUserInputFromEvents,
   runtimeInfoFromEvents,
+  foregroundTurnOpen,
   statusFromEvents,
   terminalFormSteps,
 } from './agent-service.js'
@@ -28,7 +29,7 @@ import type {
   CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
-import { parseTerminalPermission, TmuxTerminalSessionController } from './terminal-session.js'
+import { parseTerminalPermission, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId: string
@@ -5878,6 +5879,98 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  describe('a terminal whose footer stopped offering the interrupt key', () => {
+    const turn = (...types: string[]) =>
+      types.map((type) => ({
+        id: randomUUID(), type, data: {}, parentId: null,
+        timestamp: new Date().toISOString(),
+      })) as unknown as SessionEvent[]
+    const prompt = (footer: string) => [
+      ' /work/project                                      Session: 0 AIC used',
+      '────────────────────────────────────────────────────────────',
+      '❯',
+      '────────────────────────────────────────────────────────────',
+      footer,
+    ].join('\n')
+    const reworded = prompt(' ◉ Working · 52.1 KiB · esc to stop')
+    const idle = prompt(' ← open sidebar · / commands · ? help · tab next tab        ctrl+t show reasoning · GPT-6 Astra · 1M context')
+
+    async function terminalService(pane: string, events: () => SessionEvent[]) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-turn-log-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async (_id: string, _options?: TerminalCancelOptions) => true),
+        capture: vi.fn(async () => pane),
+        inputReady: vi.fn(async () => true),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [{
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => events(),
+        async () => undefined,
+        terminal,
+      )
+      await service.start()
+      return { service, terminal, id: client.session.sessionId }
+    }
+
+    it('lets Stop ask the event log whether a turn is open', async () => {
+      let events = turn('assistant.turn_start')
+      const { service, terminal, id } = await terminalService(reworded, () => events)
+
+      await service.cancel(id)
+
+      expect(terminal.cancel).toHaveBeenCalledWith(id, { turnOpen: expect.any(Function) })
+      const { turnOpen } = terminal.cancel.mock.calls[0][1]!
+      expect(await turnOpen!()).toBe(true)
+      events = turn('assistant.turn_start', 'assistant.turn_end')
+      expect(await turnOpen!()).toBe(false)
+      events = turn('assistant.turn_start', 'tool.execution_start')
+      expect(await turnOpen!()).toBe(true)
+      await service.stop()
+    })
+
+    it('reads an unreadable event log as no turn open', async () => {
+      const { service, terminal, id } = await terminalService(reworded, () => {
+        throw new Error('EACCES')
+      })
+
+      await service.cancel(id)
+
+      const { turnOpen } = terminal.cancel.mock.calls[0][1]!
+      expect(await turnOpen!()).toBe(false)
+      await service.stop()
+    })
+
+    it.each([
+      ['a pane it cannot read, with a turn open', reworded, turn('assistant.turn_start'), true],
+      ['a pane it cannot read, with no turn open', reworded, turn('assistant.turn_start', 'assistant.turn_end'), false],
+      ['an idle pane it knows, whatever the log says', idle, turn('assistant.turn_start'), false],
+    ])('sends into %s as working accordingly', async (_name, pane, events, working) => {
+      const { service, terminal, id } = await terminalService(pane, () => events)
+
+      await service.sendMessage(id, 'hello terminal')
+
+      expect(terminal.send).toHaveBeenCalledWith(
+        id,
+        'hello terminal',
+        false,
+        ...(working ? [{ allowDuringAgentExecution: true }] : []),
+      )
+      await service.stop()
+    })
+  })
+
   it('steers a running tmux turn through the live composer', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -9561,6 +9654,37 @@ function messagesAsEvents(
     ),
   ) as SessionEvent[]
 }
+
+describe('foregroundTurnOpen', () => {
+  const event = (type: string, agentId?: string): SessionEvent =>
+    ({ type, ...(agentId ? { agentId } : {}), data: {} }) as unknown as SessionEvent
+
+  it.each([
+    ['a turn has started', ['assistant.turn_start'], true],
+    ['a permission was answered mid-turn', ['assistant.turn_start', 'permission.requested', 'permission.completed'], true],
+    ['tools run inside the turn', ['assistant.turn_start', 'tool.execution_start', 'tool.execution_complete'], true],
+    ['nothing has happened', [], false],
+    ['the turn ended', ['assistant.turn_start', 'assistant.turn_end'], false],
+    ['the turn was interrupted', ['assistant.turn_start', 'abort'], false],
+    ['a permission is waiting', ['assistant.turn_start', 'permission.requested'], false],
+    ['the session shut down', ['assistant.turn_start', 'session.shutdown'], false],
+    ['a new process resumed it', ['assistant.turn_start', 'session.resume', 'user.message'], false],
+    ['a new process started it', ['assistant.turn_start', 'session.start'], false],
+  ])('answers whether a foreground turn is open when %s', (_name, types, open) => {
+    expect(foregroundTurnOpen(types.map((type) => event(type)))).toBe(open)
+  })
+
+  it('does not count background agents as the foreground turn', () => {
+    expect(
+      foregroundTurnOpen([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('assistant.turn_start', 'agent-1'),
+      ]),
+    ).toBe(false)
+  })
+})
 
 describe('statusFromEvents', () => {
   const event = (

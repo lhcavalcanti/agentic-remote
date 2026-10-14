@@ -44,6 +44,14 @@ export interface TerminalSendOptions {
   replaceExistingInput?: boolean
 }
 
+export interface TerminalCancelOptions {
+  /**
+   * Whether Copilot's event log has a turn open. Asked only when the pane
+   * neither offers the interrupt key nor shows an idle prompt it knows.
+   */
+  turnOpen?: () => Promise<boolean>
+}
+
 export interface TerminalSessionController {
   create?(
     sessionId: string,
@@ -123,7 +131,7 @@ export interface TerminalSessionController {
     options?: TerminalSendOptions,
   ): Promise<boolean>
   sendWhenIdle?(sessionId: string, content: string): Promise<boolean>
-  cancel(sessionId: string): Promise<boolean>
+  cancel(sessionId: string, options?: TerminalCancelOptions): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
   canHandleStartupPrompt?(
     sessionId: string,
@@ -196,6 +204,9 @@ const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
 const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
 const REPLACEMENT_READY_FRAMES = 30
+// A second Ctrl+C soon after the first can reach a prompt that has just gone
+// idle, where it is the first half of quitting.
+const INTERRUPT_REPEAT_MS = 5_000
 
 function formViewportTimeout(fieldCount: number): number {
   return Math.min(
@@ -227,6 +238,8 @@ export class TmuxTerminalSessionController
   }
   private readonly replacementComposerTimeoutMs =
     REPLACEMENT_COMPOSER_TIMEOUT_MS
+  /** When Stop last sent each session Ctrl+C. */
+  private readonly interruptedAt = new Map<string, number>()
 
   async create(
     sessionId: string,
@@ -1356,7 +1369,10 @@ export class TmuxTerminalSessionController
     return result
   }
 
-  async cancel(sessionId: string): Promise<boolean> {
+  async cancel(
+    sessionId: string,
+    options: TerminalCancelOptions = {},
+  ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const target = await this.boundTarget(sessionId)
       if (!target) {
@@ -1371,11 +1387,43 @@ export class TmuxTerminalSessionController
         parseTerminalFormPrompt(pane)
       ) {
         await execFileAsync('tmux', ['send-keys', '-t', target, 'Escape'])
-      } else if (isTerminalAgentWorking(pane)) {
+      } else if (
+        !this.interruptedRecently(sessionId) &&
+        (isTerminalAgentWorking(pane) ||
+          (await this.workingByEventLog(pane, options)))
+      ) {
         await execFileAsync('tmux', ['send-keys', '-t', target, '-H', '03'])
+        this.interruptedAt.set(sessionId, Date.now())
       }
       return true
     })
+  }
+
+  // The footer can still offer the interrupt key for a moment after the
+  // first Ctrl+C has ended the turn.
+  private interruptedRecently(sessionId: string): boolean {
+    const last = this.interruptedAt.get(sessionId)
+    return last !== undefined && Date.now() - last < INTERRUPT_REPEAT_MS
+  }
+
+  // Copilot can stop offering its interrupt key, or word it differently, in
+  // any release. Its event log still says whether a turn is open, so Stop
+  // asks it -- but never over a prompt the pane shows idle.
+  private async workingByEventLog(
+    pane: string,
+    options: TerminalCancelOptions,
+  ): Promise<boolean> {
+    if (
+      !options.turnOpen ||
+      isTerminalVisiblyIdle(pane) ||
+      !(await options.turnOpen().catch(() => false))
+    ) {
+      return false
+    }
+    console.warn(
+      'Copilot did not offer its interrupt key while its event log had a turn open; interrupting anyway',
+    )
+    return true
   }
 
   async send(
@@ -2573,7 +2621,18 @@ interface TerminalComposerFrame {
   top: number
   bottom: number
   flat: boolean
+  // Set only on a frame found by where the cursor was rather than by its
+  // glyphs: the character drawn in front of the prompt, or '' for none.
+  marker?: string
 }
+
+// For the frames found by the cursor. Line and block characters only ever
+// draw a frame: a row of them is a rule, one opening every row is a side, and
+// a prompt marker is any other single character that is not a letter or digit.
+// Read as a marker, a side would make any box with the cursor in it a prompt.
+const COMPOSER_RULE = /^\s*[\u2500-\u259f]{8,}\s*$/u
+const COMPOSER_SIDE_BAR = /^[\u2500-\u259f]/u
+const COMPOSER_MARKER = /^([^\p{L}\p{N}\s\u2500-\u259f])(?:\s|$)/u
 
 function isTerminalContextFooter(line: string): boolean {
   const parts = line.trim().split('·').map((part) => part.trim())
@@ -2901,18 +2960,23 @@ function isUnrecognizedFooterRow(line: string): boolean {
     .test(trimmed)
 }
 
+function composerRowText(line: string, frame: TerminalComposerFrame): string {
+  if (frame.flat) return line.trim()
+  // A frame found by the cursor may draw its sides with any line character.
+  const [leading, trailing] = frame.marker === undefined
+    ? [/^\s*[\u2502\u2503\u257d\u257f]\s?/u, /[\u2502\u2503\u257d\u257f]\s*$/u]
+    : [/^\s*[\u2500-\u259f]\s?/u, /[\u2500-\u259f]\s*$/u]
+  return line.replace(leading, '').replace(trailing, '').trim()
+}
+
 function composerFrameText(
   lines: string[],
   frame: TerminalComposerFrame,
 ): string {
-  return lines.slice(frame.top + 1, frame.bottom).map((line) =>
-    frame.flat
-      ? line.trim()
-      : line
-          .replace(/^\s*[\u2502\u2503\u257d\u257f]\s?/u, '')
-          .replace(/[\u2502\u2503\u257d\u257f]\s*$/u, '')
-          .trim(),
-  ).join(' ').trim()
+  return lines.slice(frame.top + 1, frame.bottom)
+    .map((line) => composerRowText(line, frame))
+    .join(' ')
+    .trim()
 }
 
 function flatComposerFrame(
@@ -2983,20 +3047,59 @@ function boxedComposerFrame(
   return frame
 }
 
+/**
+ * The composer, however Copilot draws it: the lowest region between two rows
+ * of line characters with only benign footer below it, whose first row opens
+ * with a prompt marker or shows the empty-composer placeholder.
+ *
+ * Consulted only for lines the cursor was seen in a prompt for (see
+ * `composerFocusedPanes`), so a new rule or marker character does not stop
+ * input the way a new footer once did.
+ */
+function cursorComposerFrame(lines: string[]): TerminalComposerFrame | undefined {
+  if (hasTerminalFormFooter(lines)) return undefined
+  for (let bottom = lines.length - 1; bottom > 1; bottom -= 1) {
+    if (
+      !COMPOSER_RULE.test(lines[bottom]) ||
+      !isTerminalComposerFooter(lines.slice(bottom + 1), true)
+    ) {
+      continue
+    }
+    const top = lines.findLastIndex(
+      (line, index) => index < bottom && COMPOSER_RULE.test(line),
+    )
+    if (top < 0) return undefined
+    const inner = lines.slice(top + 1, bottom).filter((line) => line.trim())
+    if (!inner.length) continue
+    const flat = !inner.every((line) => COMPOSER_SIDE_BAR.test(line.trim()))
+    const text = composerFrameText(lines, { top, bottom, flat, marker: '' })
+    const marker = COMPOSER_MARKER.exec(text)?.[1]
+    if (marker) return { top, bottom, flat, marker }
+    if (COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))) {
+      return { top, bottom, flat, marker: '' }
+    }
+  }
+  return undefined
+}
+
+/**
+ * The composer frame. `focused` says the cursor was seen in the prompt for
+ * exactly these lines, which admits footers and frame glyphs the grammar does
+ * not know.
+ */
 function terminalComposerFrame(
   lines: string[],
   requireLive = true,
-  tolerateUnknownFooter = false,
+  focused = false,
 ): TerminalComposerFrame | undefined {
-  const flat = flatComposerFrame(lines, requireLive, tolerateUnknownFooter)
-  const boxed = boxedComposerFrame(lines, requireLive, tolerateUnknownFooter)
-  if (!flat) {
-    return boxed
-  }
-  if (!boxed) {
-    return flat
-  }
-  return flat.bottom > boxed.bottom ? flat : boxed
+  const flat = flatComposerFrame(lines, requireLive, focused)
+  const boxed = boxedComposerFrame(lines, requireLive, focused)
+  const known = !flat
+    ? boxed
+    : !boxed || flat.bottom > boxed.bottom
+      ? flat
+      : boxed
+  return known || !focused ? known : cursorComposerFrame(lines)
 }
 
 function hasLiveTerminalComposer(pane: string): boolean {
@@ -3008,11 +3111,11 @@ function hasLiveTerminalComposer(pane: string): boolean {
 // own word on who owns input, and it does not change when the footer does.
 //
 // Captures taken through `capturePane` read the cursor in the same tmux
-// command, and a pane whose cursor sat in a composer with a footer the grammar
-// does not know is remembered here, by its exact text. The same text with the
-// prompt not focused would have to look different, since whatever took the
-// keyboard draws itself. Panes that never came from such a capture are judged
-// by the grammar alone.
+// command, and a pane whose cursor sat in a composer with a footer or frame
+// glyphs the grammar does not know is remembered here, by its exact text. The
+// same text with the prompt not focused would have to look different, since
+// whatever took the keyboard draws itself. Panes that never came from such a
+// capture are judged by the grammar alone.
 const composerFocusedPanes = new Set<string>()
 const COMPOSER_FOCUS_MEMORY = 64
 
@@ -3028,8 +3131,21 @@ function rememberComposerFocus(pane: string): void {
   }
 }
 
-const reportedUnknownFooters = new Set<string>()
-const REPORTED_FOOTER_MEMORY = 256
+const reportedUnknownShapes = new Set<string>()
+const REPORTED_SHAPE_MEMORY = 256
+
+// Once per shape (digits aside) for as long as the shape is among the most
+// recent ones. Returns whether it was logged.
+function reportOnce(shape: string, message: string): boolean {
+  const key = shape.replace(/\d+/gu, '#')
+  if (reportedUnknownShapes.has(key)) return false
+  reportedUnknownShapes.add(key)
+  while (reportedUnknownShapes.size > REPORTED_SHAPE_MEMORY) {
+    reportedUnknownShapes.delete(reportedUnknownShapes.values().next().value!)
+  }
+  console.warn(message)
+  return true
+}
 
 /**
  * Logs a footer that was accepted without being recognised, once per shape
@@ -3038,21 +3154,24 @@ const REPORTED_FOOTER_MEMORY = 256
  */
 export function reportUnrecognisedFooter(footer: string): boolean {
   if (!footer) return false
-  const shape = footer.replace(/\d+/gu, '#')
-  if (reportedUnknownFooters.has(shape)) return false
-  reportedUnknownFooters.add(shape)
-  while (reportedUnknownFooters.size > REPORTED_FOOTER_MEMORY) {
-    reportedUnknownFooters.delete(reportedUnknownFooters.values().next().value!)
-  }
-  console.warn(
+  return reportOnce(
+    `footer ${footer}`,
     `Copilot drew a footer this version does not recognise; input was allowed because the cursor was in its prompt: ${footer}`,
   )
-  return true
+}
+
+/** Logs a composer frame found only by the cursor, once per shape. */
+export function reportUnrecognisedComposer(shape: string): boolean {
+  return reportOnce(
+    `composer ${shape}`,
+    `Copilot drew a prompt this version does not recognise; input was allowed because the cursor was in it: ${shape}`,
+  )
 }
 
 /**
  * Whether the cursor sits inside a composer whose footer, however unfamiliar,
- * holds nothing that could own the keyboard.
+ * holds nothing that could own the keyboard. The composer may be drawn with
+ * rule and marker characters the grammar does not know.
  *
  * `rows` is the visible screen, one row per line, so `cursorY` indexes it.
  */
@@ -3065,16 +3184,38 @@ export function composerHasFocus(
   const lines = [...rows]
   if (hasTerminalFormFooter(lines)) return false
   const frame = terminalComposerFrame(lines, true, true)
-  return Boolean(frame && cursorY > frame.top && cursorY < frame.bottom)
+  if (!frame || cursorY <= frame.top || cursorY >= frame.bottom) return false
+  // A frame found by the cursor alone could be a dialog's text field, which
+  // names its keys below the field. A composer holds nothing after the
+  // cursor, so anything there is judged as footer, within the same limit.
+  return frame.marker === undefined ||
+    isTerminalComposerFooter([
+      ...lines.slice(cursorY + 1, frame.bottom).map((line) => composerRowText(line, frame)),
+      ...lines.slice(frame.bottom + 1),
+    ], true)
 }
 
-function footerBelowComposer(rows: readonly string[]): string {
+// Logs what about a focused composer the grammar did not know: its frame
+// glyphs, its footer, or both.
+function reportUnrecognisedComposerParts(rows: readonly string[]): void {
   const lines = [...rows]
   const frame = terminalComposerFrame(lines, true, true)
-  return (frame ? lines.slice(frame.bottom + 1) : [])
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(' | ')
+  if (!frame) return
+  if (frame.marker !== undefined) {
+    const edge = (line: string) => line.trim()[0] ?? ''
+    const sides = frame.flat
+      ? ''
+      : ` sides ${edge(lines.slice(frame.top + 1, frame.bottom).find((line) => line.trim()) ?? '')}`
+    reportUnrecognisedComposer(
+      `rules ${edge(lines[frame.top])}/${edge(lines[frame.bottom])}${sides} marker ${frame.marker || '(none)'}`,
+    )
+  }
+  const footer = lines.slice(frame.bottom + 1)
+  if (!isTerminalComposerFooter(footer)) {
+    reportUnrecognisedFooter(
+      footer.map((line) => line.trim()).filter(Boolean).join(' | '),
+    )
+  }
 }
 
 function terminalInputReady(pane: string, allowWorking = false): boolean {
@@ -3175,6 +3316,16 @@ export function isTerminalOverlay(pane: string): boolean {
 // the frames whose new lines belong to a turn rather than to a command.
 export function isTerminalAgentWorking(pane: string): boolean {
   return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
+}
+
+/**
+ * Whether the pane itself says the agent is idle: a live prompt and footer
+ * exactly as the grammar knows them, with no interrupt key offered. Anything
+ * else leaves the question to Copilot's event log.
+ */
+export function isTerminalVisiblyIdle(pane: string): boolean {
+  return terminalComposerFrame(pane.split('\n')) !== undefined &&
+    !isTerminalAgentWorking(pane)
 }
 
 function isTerminalLoading(pane: string): boolean {
@@ -4282,8 +4433,14 @@ function pastedPlaceholderCount(text: string): number {
 /** The composer's contents, or nothing when the pane cannot be read. */
 function composerText(pane: string): string | undefined {
   const lines = pane.split('\n').map((line) => line.trimEnd())
-  const frame = terminalComposerFrame(lines, false)
-  return frame ? composerFrameText(lines, frame) : undefined
+  const frame = terminalComposerFrame(lines, false, composerFocusWitnessed(pane))
+  if (!frame) return undefined
+  const text = composerFrameText(lines, frame)
+  // An unfamiliar marker is read as the familiar one, so the checks below
+  // still tell the prompt's own marker from somebody's writing.
+  return frame.marker && text.startsWith(frame.marker)
+    ? `\u276f${text.slice(frame.marker.length)}`
+    : text
 }
 
 export function composerHoldsText(pane: string): boolean {
@@ -4335,7 +4492,7 @@ async function captureTerminal(
   if (terminalComposerFrame(pane.split('\n')) !== undefined) return pane
   if (composerHasFocus(visible, flag === '1', Number(row))) {
     rememberComposerFocus(pane)
-    reportUnrecognisedFooter(footerBelowComposer(visible))
+    reportUnrecognisedComposerParts(visible)
   } else {
     composerFocusedPanes.delete(pane)
   }

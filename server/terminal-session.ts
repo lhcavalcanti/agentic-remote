@@ -148,6 +148,17 @@ export interface TerminalSessionController {
    * true at the moment more keystrokes would be added to the same pane.
    */
   sending?(sessionId: string): boolean
+  /**
+   * Starts Copilot the way `create` does, in a tmux session of its own at 80
+   * columns, and resolves once the app can tell its prompt is ready. Rejects,
+   * saying what the terminal showed, when it cannot.
+   */
+  probeStartup?(sessionId: string, cwd: string, signal?: AbortSignal): Promise<void>
+  /**
+   * Ends probes a stopped service left running, once their Copilot has
+   * exited, and says which sessions they were.
+   */
+  endLeftoverProbes?(): Promise<string[]>
 }
 
 interface TerminalOwner {
@@ -204,6 +215,43 @@ const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
 const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
 const REPLACEMENT_READY_FRAMES = 30
+const PROBE_COLUMNS = 80
+const PROBE_ROWS = 24
+const PROBE_ANSWER_TIMEOUT_MS = 10_000
+const PROBE_EXIT_TIMEOUT_MS = 10_000
+const PROBE_SESSION_PREFIX = 'agentic-remote-canary-'
+
+/** Whether every process has exited within the probe's exit timeout. */
+async function waitForExit(pids: number[]): Promise<boolean> {
+  const deadline = Date.now() + PROBE_EXIT_TIMEOUT_MS
+  while (pids.some(processAlive)) {
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return true
+}
+
+async function tmuxSessionExists(name: string): Promise<boolean> {
+  return execFileAsync('tmux', ['has-session', '-t', `=${name}`]).then(() => true, () => false)
+}
+
+// Ends a probe's tmux session and waits for its Copilot to go. A probe still
+// running afterwards is a failure in its own right, whatever it found.
+async function endProbeSession(name: string, pids: number[]): Promise<string | undefined> {
+  await execFileAsync('tmux', ['kill-session', '-t', `=${name}`]).catch(() => undefined)
+  if (await tmuxSessionExists(name)) return `The probe's tmux session ${name} could not be ended`
+  if (!(await waitForExit(pids))) return `The probe's Copilot was still running ${PROBE_EXIT_TIMEOUT_MS / 1000} s after its tmux session ended`
+  return undefined
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
 // A second Ctrl+C soon after the first can reach a prompt that has just gone
 // idle, where it is the first half of quitting.
 const INTERRUPT_REPEAT_MS = 5_000
@@ -302,6 +350,109 @@ export class TmuxTerminalSessionController
       this.knownOwners.delete(sessionId)
       return true
     })
+  }
+
+  async probeStartup(
+    sessionId: string,
+    cwd: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    // A session of its own, so nothing appears among the windows people use,
+    // and at the narrowest width Copilot's footer has broken at before.
+    const name = `${PROBE_SESSION_PREFIX}${sessionId.slice(0, 8)}`
+    if (signal?.aborted) throw new Error('The probe was cancelled before it started')
+    const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
+    const [target, panePid] = (await execFileAsync('tmux', [
+      'new-session', '-d', '-P', '-F', '#{pane_id}\t#{pane_pid}', '-s', name,
+      '-x', String(PROBE_COLUMNS), '-y', String(PROBE_ROWS), '-c', cwd,
+      '-e', 'COLORTERM=truecolor',
+      copilot, '--yolo', '--session-id', sessionId,
+    ])).stdout.trim().split('\t')
+    let owner: TerminalOwner | undefined
+    let failure: Error | undefined
+    try {
+      // Cancelling ends the probes it can see, and one launched while it was
+      // looking is not among them; this one ends itself instead.
+      if (signal?.aborted) throw new Error('The probe was cancelled as it started')
+      for (let attempt = 0; attempt < 100 && !owner; attempt += 1) {
+        owner = await this.owner(sessionId, target)
+        if (!owner) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      if (!owner) throw new Error('Copilot did not start in its tmux session')
+      this.automaticStartupSessions.set(sessionId, owner)
+      let startup = await waitForTerminalStartup(owner.target, true)
+      if (startup === 'action-required') {
+        // The probe runs in a folder of its own, which Copilot asks to trust.
+        // Answered the way a person would be offered it: for this session.
+        const permission = await this.pendingPermission(sessionId)
+        if (!permission?.title.startsWith('Trust folder for this session:')) {
+          throw new Error(
+            permission
+              ? `Copilot asked something the probe does not answer: ${permission.title}`
+              : 'Copilot is showing a prompt the app does not recognise',
+          )
+        }
+        if (!(await this.replyPermission(sessionId, permission, 'terminal:allow'))) {
+          throw new Error('The folder-trust prompt could not be answered')
+        }
+        // Copilot takes a moment to act on the answer, and until it does the
+        // prompt it answered is still on screen.
+        const answered = Date.now() + PROBE_ANSWER_TIMEOUT_MS
+        while ((await this.pendingPermission(sessionId))?.requestId === permission.requestId) {
+          if (Date.now() > answered) throw new Error('The folder-trust prompt stayed open after it was answered')
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        startup = await waitForTerminalStartup(owner.target, true)
+      }
+      if (startup !== 'ready') {
+        throw new Error('Copilot is showing a prompt after folder trust was answered')
+      }
+    } catch (error) {
+      const pane = await capturePane(target).catch(() => '')
+      const shown = pane.split('\n').map((line) => line.trimEnd()).filter(Boolean).slice(-8).join('\n')
+      failure = new Error(
+        `${error instanceof Error ? error.message : String(error)}${shown ? `\n${shown}` : ''}`,
+        { cause: error },
+      )
+    }
+    this.inputReadySessions.delete(sessionId)
+    this.automaticStartupSessions.delete(sessionId)
+    this.knownOwners.delete(sessionId)
+    // Copilot writes its session files as it shuts down, so they are only the
+    // caller's to remove once it has gone.
+    const pids = [Number(panePid), ...(owner ? [owner.pid, owner.rootPid] : [])]
+      .filter((pid) => Number.isInteger(pid) && pid > 0)
+    const leftBehind = await endProbeSession(name, pids)
+    if (leftBehind) {
+      throw new Error(failure ? `${leftBehind}. ${failure.message}` : leftBehind, { cause: failure })
+    }
+    if (failure) throw failure
+  }
+
+  async endLeftoverProbes(): Promise<string[]> {
+    let listed = ''
+    try {
+      listed = (await execFileAsync('tmux', [
+        'list-panes', '-a', '-F', '#{session_name}\t#{pane_pid}\t#{pane_start_command}',
+      ])).stdout
+    } catch (error) {
+      if (tmuxNotInstalled(error) || (await noTmuxServer(error))) return []
+      throw error
+    }
+    const probes = new Map<string, { pids: number[]; sessionId?: string }>()
+    for (const line of listed.split('\n')) {
+      const [name, pid, command = ''] = line.split('\t')
+      if (!name?.startsWith(PROBE_SESSION_PREFIX)) continue
+      const probe = probes.get(name) ?? { pids: [] }
+      probe.pids.push(Number(pid))
+      probe.sessionId ??= /--session-id\s+([0-9a-f-]{36})/iu.exec(command)?.[1]
+      probes.set(name, probe)
+    }
+    for (const [name, probe] of probes) {
+      const leftBehind = await endProbeSession(name, probe.pids)
+      if (leftBehind) throw new Error(leftBehind)
+    }
+    return [...probes.values()].flatMap((probe) => probe.sessionId ? [probe.sessionId] : [])
   }
 
   async rename(sessionId: string, title: string): Promise<boolean> {

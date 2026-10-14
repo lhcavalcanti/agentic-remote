@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -11,7 +11,7 @@ import type {
   SessionEvent,
   SessionMetadata,
 } from '@github/copilot-sdk'
-import type { UserInputForm } from '../shared/contracts.js'
+import type { ServerEvent, UserInputForm } from '../shared/contracts.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentService,
@@ -5877,6 +5877,86 @@ describe('AgentService deletion', () => {
     ).toBe(0)
     expect(client.session.sentPrompts).toEqual([])
     await service.stop()
+  })
+
+  describe('the Copilot CLI startup probe', () => {
+    async function probeService(probeStartup: (id: string, cwd: string) => Promise<void>) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-probe-'))
+      directories.push(directory)
+      vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+      const terminal = {
+        has: vi.fn(async () => false),
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async () => false),
+        probeStartup: vi.fn(probeStartup),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        new FakeCopilotClient(),
+        async () => [],
+        async () => undefined,
+        async () => [],
+        async () => undefined,
+        terminal,
+      )
+      await service.start()
+      return { service, terminal, directory }
+    }
+    const sessionFiles = (directory: string, id: string) =>
+      path.join(directory, 'copilot-home', 'session-state', id)
+
+    it.each([
+      ['passes', undefined],
+      ['fails', new Error('Copilot did not become ready for terminal input')],
+    ])('never offers the probe as a session and removes its files when it %s', async (_name, failure) => {
+      let probed: string | undefined
+      let retiredDuringProbe = false
+      const { service, terminal, directory } = await probeService(async (id) => {
+        probed = id
+        retiredDuringProbe = service.store.isRetiredSession(id)
+        await mkdir(sessionFiles(directory, id), { recursive: true })
+        if (failure) throw failure
+      })
+
+      const probing = service.probeTerminalStartup('/canary/workspace')
+      if (failure) await expect(probing).rejects.toBe(failure)
+      else await expect(probing).resolves.toBeUndefined()
+
+      expect(terminal.probeStartup).toHaveBeenCalledWith(probed, '/canary/workspace', undefined)
+      expect(retiredDuringProbe).toBe(true)
+      expect(service.store.isRetiredSession(probed!)).toBe(true)
+      await expect(stat(sessionFiles(directory, probed!))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(service.store.get(probed!)).toBeUndefined()
+      await service.stop()
+    })
+
+    it('removes a leftover probe\'s files only when it was retired as a probe', async () => {
+      const leftover = randomUUID()
+      const unrelated = randomUUID()
+      const { service, terminal, directory } = await probeService(async () => undefined)
+      Object.assign(terminal, { endLeftoverProbes: vi.fn(async () => [leftover, unrelated]) })
+      await service.store.retireSessionIds([leftover])
+      for (const id of [leftover, unrelated]) await mkdir(sessionFiles(directory, id), { recursive: true })
+
+      await service.probeTerminalStartup('/canary/workspace')
+
+      await expect(stat(sessionFiles(directory, leftover))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(sessionFiles(directory, unrelated))).resolves.toBeDefined()
+      await service.stop()
+    })
+
+    it('publishes an alert that asks to be notified', async () => {
+      const { service } = await probeService(async () => undefined)
+      const events: ServerEvent[] = []
+      service.on('event', (event) => events.push(event))
+
+      service.publishAlert('Copilot CLI 1.0.98 needs attention')
+
+      expect(events).toEqual([
+        { type: 'error', message: 'Copilot CLI 1.0.98 needs attention', notify: true },
+      ])
+      await service.stop()
+    })
   })
 
   describe('a terminal whose footer stopped offering the interrupt key', () => {

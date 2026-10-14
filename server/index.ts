@@ -15,6 +15,7 @@ const { app, service } = await buildApp({
   logger: true,
   role,
   serveStatic: role === 'hub' && process.env.NODE_ENV === 'production',
+  cliCanary: true,
 })
 
 await service.start()

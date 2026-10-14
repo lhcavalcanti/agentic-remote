@@ -9477,6 +9477,45 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
+  /**
+   * Starts Copilot in a disposable tmux session to see whether this version
+   * still starts in a way the app can drive, then removes it and its files.
+   */
+  async probeTerminalStartup(cwd: string, signal?: AbortSignal): Promise<void> {
+    if (!this.terminalController.probeStartup) {
+      throw new Error('This computer cannot start terminal sessions')
+    }
+    // A probe a stopped service left running is ended first. Its files are
+    // removed only for a session retired as a probe would have been.
+    for (const leftover of (await this.terminalController.endLeftoverProbes?.()) ?? []) {
+      if (!this.store.isRetiredSession(leftover)) continue
+      forgetSessionEvents(leftover)
+      await removeCopilotSessionFiles(leftover)
+    }
+    const id = randomUUID()
+    // Never offered as a session: discovery ignores it from the start, and it
+    // stays retired should the service stop before it is removed.
+    this.deletedSessionIds.add(id)
+    await this.store.retireSessionIds([id])
+    try {
+      await this.terminalController.probeStartup(id, cwd, signal)
+    } finally {
+      forgetSessionEvents(id)
+      await removeCopilotSessionFiles(id)
+    }
+  }
+
+  /** Ends any probe still running; its own call then removes its files. */
+  async endTerminalProbes(): Promise<void> {
+    await this.terminalController.endLeftoverProbes?.()
+  }
+
+  /** A problem that needs someone's attention: shown and sent as a notification. */
+  publishAlert(message: string): void {
+    if (this.stopped) return
+    this.emit('event', { type: 'error', message, notify: true })
+  }
+
   private async validateDirectory(inputPath: string): Promise<string> {
     return validateSessionDirectory(inputPath)
   }

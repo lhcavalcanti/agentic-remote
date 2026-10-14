@@ -221,11 +221,27 @@ const PROBE_ANSWER_TIMEOUT_MS = 10_000
 const PROBE_EXIT_TIMEOUT_MS = 10_000
 const PROBE_SESSION_PREFIX = 'agentic-remote-canary-'
 
-async function waitForExit(pids: number[]): Promise<void> {
+/** Whether every process has exited within the probe's exit timeout. */
+async function waitForExit(pids: number[]): Promise<boolean> {
   const deadline = Date.now() + PROBE_EXIT_TIMEOUT_MS
-  while (pids.some(processAlive) && Date.now() < deadline) {
+  while (pids.some(processAlive)) {
+    if (Date.now() >= deadline) return false
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
+  return true
+}
+
+async function tmuxSessionExists(name: string): Promise<boolean> {
+  return execFileAsync('tmux', ['has-session', '-t', `=${name}`]).then(() => true, () => false)
+}
+
+// Ends a probe's tmux session and waits for its Copilot to go. A probe still
+// running afterwards is a failure in its own right, whatever it found.
+async function endProbeSession(name: string, pids: number[]): Promise<string | undefined> {
+  await execFileAsync('tmux', ['kill-session', '-t', `=${name}`]).catch(() => undefined)
+  if (await tmuxSessionExists(name)) return `The probe's tmux session ${name} could not be ended`
+  if (!(await waitForExit(pids))) return `The probe's Copilot was still running ${PROBE_EXIT_TIMEOUT_MS / 1000} s after its tmux session ended`
+  return undefined
 }
 
 function processAlive(pid: number): boolean {
@@ -348,6 +364,7 @@ export class TmuxTerminalSessionController
       copilot, '--yolo', '--session-id', sessionId,
     ])).stdout.trim()
     let owner: TerminalOwner | undefined
+    let failure: Error | undefined
     try {
       for (let attempt = 0; attempt < 100 && !owner; attempt += 1) {
         owner = await this.owner(sessionId, target)
@@ -385,19 +402,21 @@ export class TmuxTerminalSessionController
     } catch (error) {
       const pane = await capturePane(target).catch(() => '')
       const shown = pane.split('\n').map((line) => line.trimEnd()).filter(Boolean).slice(-8).join('\n')
-      throw new Error(
+      failure = new Error(
         `${error instanceof Error ? error.message : String(error)}${shown ? `\n${shown}` : ''}`,
         { cause: error },
       )
-    } finally {
-      this.inputReadySessions.delete(sessionId)
-      this.automaticStartupSessions.delete(sessionId)
-      this.knownOwners.delete(sessionId)
-      await execFileAsync('tmux', ['kill-session', '-t', `=${name}`]).catch(() => undefined)
-      // Copilot writes its session files as it shuts down, so they are only
-      // the caller's to remove once it has gone.
-      await waitForExit(owner ? [owner.pid, owner.rootPid] : [])
     }
+    this.inputReadySessions.delete(sessionId)
+    this.automaticStartupSessions.delete(sessionId)
+    this.knownOwners.delete(sessionId)
+    // Copilot writes its session files as it shuts down, so they are only the
+    // caller's to remove once it has gone.
+    const leftBehind = await endProbeSession(name, owner ? [owner.pid, owner.rootPid] : [])
+    if (leftBehind) {
+      throw new Error(failure ? `${leftBehind}. ${failure.message}` : leftBehind, { cause: failure })
+    }
+    if (failure) throw failure
   }
 
   async endLeftoverProbes(): Promise<string[]> {
@@ -419,10 +438,10 @@ export class TmuxTerminalSessionController
       probe.sessionId ??= /--session-id\s+([0-9a-f-]{36})/iu.exec(command)?.[1]
       probes.set(name, probe)
     }
-    for (const name of probes.keys()) {
-      await execFileAsync('tmux', ['kill-session', '-t', `=${name}`]).catch(() => undefined)
+    for (const [name, probe] of probes) {
+      const leftBehind = await endProbeSession(name, probe.pids)
+      if (leftBehind) throw new Error(leftBehind)
     }
-    await waitForExit([...probes.values()].flatMap((probe) => probe.pids))
     return [...probes.values()].flatMap((probe) => probe.sessionId ? [probe.sessionId] : [])
   }
 

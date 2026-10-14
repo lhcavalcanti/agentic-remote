@@ -267,6 +267,7 @@ export async function buildApp(
         copilotBin: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
         probe: (cwd) => agent.probeTerminalStartup(cwd),
         alert: (message) => agent.publishAlert(message),
+        cancel: () => agent.endTerminalProbes(),
       })
     : undefined
   // Ready only once the service has started, so the probe never races the
@@ -276,7 +277,7 @@ export async function buildApp(
   })
 
   app.addHook('onClose', async () => {
-    cliCanary?.stop()
+    await cliCanary?.stop()
     manager?.stop()
     pushService?.stop()
     await (transcriptionService ?? localTranscription).stop()

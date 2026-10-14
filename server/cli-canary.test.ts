@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -142,6 +142,32 @@ describe('CliCanary', () => {
     expect(probe).toHaveBeenCalledTimes(1)
   })
 
+  it('cancels a check under way when stopped, recording and reporting nothing', async () => {
+    let end!: (error: Error) => void
+    const probe = vi.fn(() => new Promise<void>((_resolve, reject) => { end = reject }))
+    const cancel = vi.fn(async () => end(new Error('The probe was ended')))
+    const alert = vi.fn()
+    const writeState = vi.fn(async () => undefined)
+    const subject = new CliCanary({
+      readVersion: async () => '1.0.98',
+      probe,
+      readState: async () => ({}),
+      writeState,
+      alert,
+      cancel,
+    })
+    const running = subject.check()
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1))
+
+    await subject.stop()
+
+    await expect(running).resolves.toBe('unknown')
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(writeState).not.toHaveBeenCalled()
+    expect(alert).not.toHaveBeenCalled()
+  })
+
   it('checks after the first delay and then on its interval until stopped', async () => {
     vi.useFakeTimers()
     try {
@@ -205,6 +231,31 @@ describe('cliCanaryStateFile', () => {
 })
 
 describe('createCliCanary', () => {
+  it('gives every attempt a fresh empty folder and removes it afterwards', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const directory = await temporaryDirectory()
+    const bin = path.join(directory, 'copilot')
+    await writeFile(bin, "#!/bin/sh\necho 'GitHub Copilot CLI 1.0.99.'\n")
+    await chmod(bin, 0o755)
+    const seen: string[][] = []
+    const probe = vi.fn(async (cwd: string) => {
+      seen.push(await readdir(cwd))
+      await writeFile(path.join(cwd, 'left-by-a-hook.txt'), 'x')
+      throw new Error('Copilot did not become ready for terminal input')
+    })
+    const subject = createCliCanary({ dataDirectory: directory, copilotBin: bin, probe, alert: vi.fn() })
+    // Left by a service that stopped in the middle of a probe.
+    await mkdir(path.join(directory, 'cli-canary'))
+    await writeFile(path.join(directory, 'cli-canary', 'stale.txt'), 'x')
+
+    await expect(subject.check()).resolves.toBe('failed')
+
+    expect(seen).toEqual([[], []])
+    await expect(stat(path.join(directory, 'cli-canary'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(error).toHaveBeenCalled()
+  })
+
+
   it('probes from an empty folder of its own and keeps its state in the data directory', async () => {
     const directory = await temporaryDirectory()
     const bin = path.join(directory, 'copilot')
@@ -217,6 +268,7 @@ describe('createCliCanary', () => {
     await expect(subject.check()).resolves.toBe('passed')
 
     expect(probe).toHaveBeenCalledWith(path.join(directory, 'cli-canary'))
+    await expect(stat(path.join(directory, 'cli-canary'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(JSON.parse(await readFile(path.join(directory, 'cli-canary.json'), 'utf8')))
       .toEqual({ verifiedVersion: '1.0.99' })
     await expect(subject.check()).resolves.toBe('unchanged')

@@ -9505,6 +9505,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  /** Ends any probe still running; its own call then removes its files. */
+  async endTerminalProbes(): Promise<void> {
+    await this.terminalController.endLeftoverProbes?.()
+  }
+
   /** A problem that needs someone's attention: shown and sent as a notification. */
   publishAlert(message: string): void {
     if (this.stopped) return

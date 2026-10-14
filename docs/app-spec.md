@@ -588,14 +588,17 @@ Questions and permissions are the highest-priority UI state.
   that can run tmux reads `copilot --version`. For a version not yet checked:
   - it MUST start Copilot as tmux sessions are created, in a detached tmux
     session of its own at 80 columns, in an empty folder in the data
-    directory;
+    directory, made afresh for each attempt and removed afterwards;
   - it MUST answer the folder-trust prompt for that session only, then wait
     for the composer to be ready;
   - the probe MUST be retired before it starts, so it is never offered as a
     session, and its tmux session and Copilot files MUST be removed whatever
-    the outcome, once Copilot has exited;
+    the outcome, once Copilot has exited. A probe whose tmux session cannot
+    be ended, or whose Copilot outlives it, MUST fail;
   - a probe a stopped service left running MUST be ended before the next one
-    starts, and its files removed only if its session was retired.
+    starts, and its files removed only if its session was retired;
+  - stopping the service MUST cancel a check under way, recording and
+    reporting nothing, so the version is checked again on the next start.
 
   A version is recorded as passed or failed in `cli-canary.json` in the data
   directory. A failure gets one more attempt before it counts. A failed

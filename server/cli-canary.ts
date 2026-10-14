@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -23,6 +23,8 @@ export interface CliCanaryDependencies {
   readState(): Promise<CliCanaryState>
   writeState(state: CliCanaryState): Promise<void>
   alert(message: string): void
+  /** Ends a probe that is still running, so stopping does not wait for it. */
+  cancel?(): Promise<void>
   now?(): number
 }
 
@@ -32,6 +34,8 @@ export type CliCanaryResult = 'unknown' | 'unchanged' | 'passed' | 'failed'
 // than the CLI, and reported again if it still fails.
 const RETRY_FAILED_MS = 24 * 60 * 60_000
 const PROBE_ATTEMPTS = 2
+// Shutdown waits this long at most for a cancelled check to settle.
+const STOP_SETTLE_MS = 15_000
 
 /**
  * Notices when Copilot CLI updates itself and, once per version, starts a
@@ -42,6 +46,7 @@ const PROBE_ATTEMPTS = 2
 export class CliCanary {
   private running?: Promise<CliCanaryResult>
   private timers: NodeJS.Timeout[] = []
+  private stopped = false
 
   constructor(private readonly dependencies: CliCanaryDependencies) {}
 
@@ -53,7 +58,8 @@ export class CliCanary {
   }
 
   start(firstDelayMs = 2 * 60_000, intervalMs = 30 * 60_000): void {
-    this.stop()
+    this.clearTimers()
+    this.stopped = false
     const tick = () => {
       void this.check().catch((error: unknown) => {
         console.warn('Unable to check the Copilot CLI version:', error)
@@ -66,7 +72,29 @@ export class CliCanary {
     this.timers = [first, repeat]
   }
 
-  stop(): void {
+  /**
+   * Stops checking. A check under way is cancelled rather than waited for,
+   * and records and reports nothing: the version is checked again next time.
+   */
+  async stop(): Promise<void> {
+    this.clearTimers()
+    this.stopped = true
+    const running = this.running
+    if (!running) return
+    await this.dependencies.cancel?.().catch((error: unknown) => {
+      console.warn('Unable to end the Copilot CLI probe:', error)
+    })
+    let settle: NodeJS.Timeout | undefined
+    await Promise.race([
+      running.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        settle = setTimeout(resolve, STOP_SETTLE_MS)
+      }),
+    ])
+    clearTimeout(settle)
+  }
+
+  private clearTimers(): void {
     for (const timer of this.timers) clearTimeout(timer)
     this.timers = []
   }
@@ -90,14 +118,17 @@ export class CliCanary {
     // A machine too busy to start Copilot in time once is not a broken
     // update, so the probe gets a second chance before anyone is told.
     for (let attempt = 0; attempt < PROBE_ATTEMPTS; attempt += 1) {
+      if (this.stopped) return 'unknown'
       try {
         await this.dependencies.probe()
+        if (this.stopped) return 'unknown'
         await this.dependencies.writeState({ verifiedVersion: version })
         return 'passed'
       } catch (error) {
         failure = error
       }
     }
+    if (this.stopped) return 'unknown'
     const reason = failure instanceof Error ? failure.message : String(failure)
     console.error(`Copilot CLI ${version} failed the terminal startup check:`, failure)
     await this.dependencies.writeState({
@@ -155,6 +186,7 @@ export function createCliCanary(options: {
   copilotBin: string
   probe(cwd: string): Promise<void>
   alert(message: string): void
+  cancel?(): Promise<void>
 }): CliCanary {
   // An empty folder of its own, so the probe reads no project's instructions.
   const workspace = path.join(options.dataDirectory, 'cli-canary')
@@ -162,12 +194,20 @@ export function createCliCanary(options: {
   return new CliCanary({
     available: () => execFileAsync('tmux', ['-V'], { timeout: 15_000 }).then(() => true, () => false),
     readVersion: () => readCopilotVersion(options.copilotBin),
+    // Made afresh for every attempt, so nothing one leaves behind reaches the
+    // next, and removed afterwards.
     probe: async () => {
+      await rm(workspace, { recursive: true, force: true })
       await mkdir(workspace, { recursive: true })
-      await options.probe(workspace)
+      try {
+        await options.probe(workspace)
+      } finally {
+        await rm(workspace, { recursive: true, force: true })
+      }
     },
     readState: state.read,
     writeState: state.write,
     alert: options.alert,
+    ...(options.cancel ? { cancel: options.cancel } : {}),
   })
 }

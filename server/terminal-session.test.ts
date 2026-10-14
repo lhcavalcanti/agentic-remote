@@ -678,6 +678,34 @@ process.on('SIGHUP', () => {
     expect(await controller.has(sessionId)).toBe(false)
   }, 30_000)
 
+  it('fails a probe whose Copilot outlives its tmux session, even after reaching the prompt', async () => {
+    const { controller, receipt, workspace } = await probeFixture(`
+const makeComposer = ${readyComposer.toString()}
+draw(${JSON.stringify(folderTrustPane)})
+state.pid = process.pid
+writeReceipt(state)
+process.stdin.on('data', (data) => {
+  if (data.includes(13)) setTimeout(() => draw(makeComposer()), 100)
+})
+process.stdin.on('error', () => undefined)
+process.stdout.on('error', () => undefined)
+setInterval(() => undefined, 1000)
+process.on('SIGHUP', () => undefined)
+`)
+    let pid: number | undefined
+    try {
+      await expect(controller.probeStartup(randomUUID(), workspace)).rejects.toThrow(
+        /^The probe's Copilot was still running 10 s after its tmux session ended$/u,
+      )
+      pid = JSON.parse(await readFile(receipt, 'utf8')).pid
+      expect(() => process.kill(pid!, 0)).not.toThrow()
+    } finally {
+      pid ??= JSON.parse(await readFile(receipt, 'utf8')).pid
+      if (pid) process.kill(pid, 'SIGKILL')
+    }
+    expect(await probeSessions()).toEqual([])
+  }, 45_000)
+
   it('ends probes a stopped service left running, and only those', async () => {
     const { controller, receipt } = await probeFixture(`
 process.stdin.on('error', () => undefined)

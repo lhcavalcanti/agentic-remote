@@ -18,6 +18,46 @@ afterEach(async () => {
 })
 
 describe('PushNotificationService', () => {
+  it('notifies alerts that ask for it, and only those errors', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'push-service-alert-test-'))
+    directories.push(directory)
+    const sender = vi.fn(
+      async (
+        _subscription: PushSubscription,
+        _payload?: string | Buffer | null,
+        _options?: RequestOptions,
+      ) => ({ statusCode: 201, headers: {}, body: '' }),
+    )
+    const service = new PushNotificationService(directory, sender)
+    await service.initialize()
+    await service.subscribe({
+      endpoint: 'https://push.example.test/subscription',
+      expirationTime: null,
+      keys: { p256dh: 'public-key', auth: 'auth-key' },
+    })
+    const events = new EventEmitter<{ event: [HubEvent] }>()
+    await service.attach(events)
+
+    events.emit('event', { type: 'error', computerId: 'computer', message: 'A send failed' })
+    events.emit('event', {
+      type: 'error',
+      computerId: 'computer',
+      message: 'Copilot CLI 1.0.98 did not start in a way Agentic Remote can use, so new terminal sessions may fail: Copilot did not become ready for terminal input',
+      notify: true,
+    })
+
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+    expect(JSON.parse(sender.mock.calls[0]?.[1] as string)).toEqual({
+      title: 'Agentic Remote needs attention',
+      body: 'Copilot CLI 1.0.98 did not start in a way Agentic Remote can use, so new terminal sessions may fail: Copilot did not become ready for termi…',
+      tag: 'agentic-alert-computer',
+      priority: 'high',
+      data: { url: '/' },
+    })
+    expect(sender.mock.calls[0]?.[2]).toMatchObject({ urgency: 'high' })
+    service.stop()
+  })
+
   it('prioritizes action notifications and deduplicates requests', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'push-service-test-'))
     directories.push(directory)

@@ -203,6 +203,14 @@ export class PushNotificationService {
       }
       return
     }
+    if (event.type === 'error') {
+      if (event.notify) {
+        void this.notifyAlert(event.computerId, event.message).catch((error: unknown) => {
+          console.warn('Unable to send alert push notification:', error)
+        })
+      }
+      return
+    }
     if (event.type !== 'session.upserted') {
       return
     }
@@ -303,6 +311,20 @@ export class PushNotificationService {
       data: {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
+    })
+  }
+
+  private async notifyAlert(
+    computerId: string | undefined,
+    message: string,
+  ): Promise<void> {
+    await this.sendPayload({
+      title: 'Agentic Remote needs attention',
+      body: brief(message),
+      // One per computer, so a repeated alert replaces rather than piles up.
+      tag: `agentic-alert-${computerId || 'local'}`,
+      priority: 'high',
+      data: { url: '/' },
     })
   }
 

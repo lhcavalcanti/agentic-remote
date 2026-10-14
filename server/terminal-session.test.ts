@@ -617,6 +617,105 @@ describe('TmuxTerminalSessionController', () => {
     }
   }, 15_000)
 
+  async function probeFixture(script: string) {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-probe-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-probe.mjs')
+    const receipt = path.join(directory, 'receipt.json')
+    const workspace = path.join(directory, 'workspace')
+    await mkdir(workspace)
+    await writeFile(executable, `#!/usr/bin/env node
+${fixtureReceiptWriter(receipt)}
+const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+const state = { columns: process.stdout.columns, cwd: process.cwd(), keys: '' }
+writeReceipt(state)
+process.stdin.setRawMode(true)
+${script}
+`)
+    await chmod(executable, 0o755)
+    vi.stubEnv('COPILOT_BIN', executable)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+    await execFileAsync('tmux', ['new-session', '-d', '-s', `agentic-probe-${process.pid}`, 'sleep', '60'])
+    tmuxSessions.push(`agentic-probe-${process.pid}`)
+    return { controller: new TmuxTerminalSessionController(), receipt, workspace }
+  }
+  const probeSessions = async () =>
+    (await execFileAsync('tmux', ['list-sessions', '-F', '#{session_name}'])).stdout
+      .split('\n').filter((name) => name.startsWith('agentic-remote-canary-'))
+
+  it('probes startup at 80 columns through folder trust, then removes its tmux session', async () => {
+    const { controller, receipt, workspace } = await probeFixture(`
+const makeComposer = ${readyComposer.toString()}
+draw(${JSON.stringify(folderTrustPane)})
+process.stdin.on('data', (data) => {
+  state.keys += data.toString()
+  writeReceipt(state)
+  // Like Copilot, acts on the answer a moment later, and writes its session
+  // files as it shuts down.
+  if (data.includes(13)) setTimeout(() => draw(makeComposer()), 500)
+})
+process.stdin.on('error', () => undefined)
+process.stdout.on('error', () => undefined)
+// Work of its own keeps it running after its terminal closes.
+setInterval(() => undefined, 1000)
+process.on('SIGHUP', () => {
+  setTimeout(() => {
+    state.shutDown = true
+    writeReceipt(state)
+    process.exit(0)
+  }, 1000)
+})
+`)
+    const sessionId = randomUUID()
+
+    await expect(controller.probeStartup(sessionId, workspace)).resolves.toBeUndefined()
+
+    // Returned only once Copilot had finished shutting down.
+    const seen = JSON.parse(await readFile(receipt, 'utf8'))
+    expect(seen).toMatchObject({ columns: 80, cwd: workspace, shutDown: true })
+    expect(seen.keys.endsWith('\r')).toBe(true)
+    expect(await probeSessions()).toEqual([])
+    expect(await controller.has(sessionId)).toBe(false)
+  }, 30_000)
+
+  it('ends probes a stopped service left running, and only those', async () => {
+    const { controller, receipt } = await probeFixture(`
+process.stdin.on('error', () => undefined)
+setInterval(() => undefined, 1000)
+process.on('SIGHUP', () => setTimeout(() => {
+  state.shutDown = true
+  writeReceipt(state)
+  process.exit(0)
+}, 500))
+`)
+    const leftover = randomUUID()
+    await execFileAsync('tmux', [
+      'new-session', '-d', '-s', `agentic-remote-canary-${leftover.slice(0, 8)}`,
+      process.env.COPILOT_BIN!, '--yolo', '--session-id', leftover,
+    ])
+    await eventually(() => readFile(receipt, 'utf8').catch(() => ''), Boolean)
+
+    await expect(controller.endLeftoverProbes()).resolves.toEqual([leftover])
+
+    expect(JSON.parse(await readFile(receipt, 'utf8')).shutDown).toBe(true)
+    expect(await probeSessions()).toEqual([])
+    const remaining = (await execFileAsync('tmux', ['list-sessions', '-F', '#{session_name}'])).stdout
+    expect(remaining).toContain(`agentic-probe-${process.pid}`)
+    await expect(controller.endLeftoverProbes()).resolves.toEqual([])
+  }, 30_000)
+
+  it('says what the terminal showed when a probe cannot reach the prompt', async () => {
+    const { controller, workspace } = await probeFixture(`
+draw(['Settings', '❯ allowedUrls (default)', '/ search · ↑/↓ navigate · tab switch scope · enter edit', 'esc close'].join('\\n'))
+process.stdin.on('data', () => undefined)
+`)
+
+    await expect(controller.probeStartup(randomUUID(), workspace)).rejects.toThrow(
+      /^Copilot is showing a prompt the app does not recognise\n[\s\S]*allowedUrls/u,
+    )
+    expect(await probeSessions()).toEqual([])
+  }, 30_000)
+
   it('does not repeat an advertised interrupt within five seconds', async () => {
     const { controller, sessionId, output, replacementPath } = await ownedStartupFixture()
     // The footer can still offer the key for a moment after the first Ctrl+C.

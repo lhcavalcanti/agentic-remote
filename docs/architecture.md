@@ -112,6 +112,12 @@ observations are not written to stored session or pairing state.
 - A service restart reuses existing tmux processes. A full host reboot
   recreates missing previously open tmux windows with the same Copilot session
   IDs, allowing Copilot to resume from its local session database.
+- Each node checks every Copilot CLI version it updates to by starting a
+  retired, disposable session in a detached tmux session of its own
+  (`server/cli-canary.ts`). It records the result in
+  `~/.agentic-remote/cli-canary.json`. A failure is relayed to the hub as an
+  `error` event with `notify` set, which the hub shows and sends as a
+  high-priority notification.
 - Repositories, credentials, and provider session databases remain on the
   owning computer's persistent local filesystem; recovery does not use NFS.
 

@@ -425,6 +425,8 @@ export type ServerEvent =
       type: 'error'
       sessionId?: string
       message: string
+      /** Needs attention even with the app closed, so it is also notified. */
+      notify?: boolean
       /**
        * A prompt the reader had already handed over and can no longer see. The
        * browser cleared its draft when the queue accepted it, so a send that
@@ -470,6 +472,8 @@ export type HubEvent =
       computerId?: string
       sessionId?: string
       message: string
+      /** See the node event above. */
+      notify?: boolean
       /** See the node event above. */
       failedPrompt?: string
       /** See the node event above. */

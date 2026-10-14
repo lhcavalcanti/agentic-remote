@@ -582,6 +582,25 @@ Questions and permissions are the highest-priority UI state.
   That marker MUST read as the prompt marker, so an empty composer is not
   mistaken for a draft. Each such frame shape MUST be logged once, like an
   unrecognised footer.
+- Copilot CLI updates itself in the background, so each computer MUST check
+  every version it updates to before anyone's new session meets it. Every
+  30 minutes, starting two minutes after the service is ready, a computer
+  that can run tmux reads `copilot --version`. For a version not yet checked:
+  - it MUST start Copilot as tmux sessions are created, in a detached tmux
+    session of its own at 80 columns, in an empty folder in the data
+    directory;
+  - it MUST answer the folder-trust prompt for that session only, then wait
+    for the composer to be ready;
+  - the probe MUST be retired before it starts, so it is never offered as a
+    session, and its tmux session and Copilot files MUST be removed whatever
+    the outcome, once Copilot has exited;
+  - a probe a stopped service left running MUST be ended before the next one
+    starts, and its files removed only if its session was retired.
+
+  A version is recorded as passed or failed in `cli-canary.json` in the data
+  directory. A failure gets one more attempt before it counts. A failed
+  version MUST raise an alert, shown in the app and sent as a notification,
+  and is checked again after a day.
 - An exact downloaded-update notice and its wrapped continuation rows MUST
   NOT hide a readable composer or block terminal startup at any terminal width.
   The notice and the sidebar, mode, permission, help, and tab hint cells wrap
@@ -1132,6 +1151,9 @@ clear replacement IDs without losing, duplicating, or reordering content.
   `very-low`, but FCM rejects it, so `low` is the lowest portable value.
 - Every notification MUST include computer, session name, and a concise brief.
 - Completion notifications MUST say that no action is needed.
+- An alert that asks to be notified, such as a Copilot CLI version that failed
+  its startup check, MUST use high urgency and replace the previous alert
+  from the same computer.
 - Opening the related chat MUST clear question, permission, and completion
   notifications from the device notification center.
 
@@ -1310,6 +1332,7 @@ Every material release SHOULD preserve:
 | Provider aggregation and Claude Agent lifecycle | `server/provider-session-service.ts`, `server/claude-agent-service.ts` |
 | Persistent session/uploads | `server/session-store.ts` |
 | tmux behavior | `server/terminal-session.ts` |
+| Copilot CLI update check | `server/cli-canary.ts`, `AgentService.probeTerminalStartup` |
 | Active-session discovery | `server/active-sessions.ts` |
 | Hub/node routing | `server/hub-routes.ts`, `server/node-routes.ts`, `server/computer-manager.ts` |
 | Workspace security/search | `server/workspace-browser.ts` |

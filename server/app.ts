@@ -14,6 +14,7 @@ import {
 } from '../shared/submission-error.js'
 import { AgentService } from './agent-service.js'
 import { ClaudeAgentService } from './claude-agent-service.js'
+import { createCliCanary } from './cli-canary.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
@@ -62,6 +63,11 @@ export interface BuildAppOptions {
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  /**
+   * Checks each Copilot CLI version this computer updates to by starting a
+   * disposable terminal session. Only for the built-in session service.
+   */
+  cliCanary?: boolean
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -109,10 +115,13 @@ export async function buildApp(
   }
   const app = Fastify({ logger: options.logger ?? true })
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
+  const agent = options.service
+    ? undefined
+    : new AgentService(new SessionStore(dataDirectory))
   const service =
     options.service ??
     new ProviderSessionService(
-      new AgentService(new SessionStore(dataDirectory)),
+      agent!,
       new ClaudeAgentService(
         new SessionStore(path.join(dataDirectory, 'claude')),
       ),
@@ -252,7 +261,22 @@ export async function buildApp(
     })
   }
 
+  const cliCanary = agent && options.cliCanary
+    ? createCliCanary({
+        dataDirectory,
+        copilotBin: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
+        probe: (cwd) => agent.probeTerminalStartup(cwd),
+        alert: (message) => agent.publishAlert(message),
+      })
+    : undefined
+  // Ready only once the service has started, so the probe never races the
+  // recovery of sessions that were open before a restart.
+  app.addHook('onReady', async () => {
+    cliCanary?.start()
+  })
+
   app.addHook('onClose', async () => {
+    cliCanary?.stop()
     manager?.stop()
     pushService?.stop()
     await (transcriptionService ?? localTranscription).stop()

@@ -9,7 +9,10 @@ import {
   useState,
 } from 'react'
 import ReaderWorkspace from './ReaderWorkspace'
-import { ManagerAssistant } from './ManagerAssistant'
+import { ManagerAssistant, OracleButton } from './ManagerAssistant'
+import type { OracleControl, OracleIndicator } from './ManagerAssistant'
+import { oracleCommand } from './oracle-command'
+import { OracleSettings } from './OracleSettings'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
 import type {
@@ -1874,6 +1877,12 @@ const webCommands: SlashCommand[] = [
     allowDuringAgentExecution: false,
   },
   sideQuestionWebCommand,
+  {
+    name: 'oracle',
+    description: 'Ask Oracle only; nothing is sent to this session',
+    inputHint: '<question>',
+    allowDuringAgentExecution: true,
+  },
   ...sessionResourceCommands,
 ]
 
@@ -3947,6 +3956,8 @@ function AppSettingsDialog({
           />
         ))}
       </section>
+
+      <OracleSettings computerId={computers.find((computer) => computer.isLocal)?.id} />
 
       <section className="app-settings-section">
         <h3>Default session folders</h3>
@@ -6413,6 +6424,15 @@ function App() {
       managerListenersRef.current.delete(listener)
     }
   }, [])
+  const [oracleOpen, setOracleOpen] = useState(false)
+  const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
+    available: false,
+    status: 'idle',
+    unread: false,
+    queued: 0,
+  })
+  const oracleControlRef = useRef<OracleControl | undefined>(undefined)
+  const toggleOracle = useCallback(() => setOracleOpen((current) => !current), [])
   const changeManagedSessions = useCallback((keys: string[]) => {
     setManagedSessionKeys(new Set(keys))
   }, [])
@@ -12158,6 +12178,25 @@ function App() {
       openSideQuestion(sideQuestion.question)
       return
     }
+    // Goes to Oracle alone: never to this session, and Oracle answers it
+    // without starting or steering any session.
+    const oraclePrompt = oracleIndicator.available ? oracleCommand(content) : undefined
+    if (oraclePrompt) {
+      consumeLocalCommand()
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
+      const control = oracleControlRef.current
+      if (!control) {
+        setOracleOpen(true)
+        return
+      }
+      try {
+        await control.ask(oraclePrompt.prompt, { answerOnly: true })
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+      return
+    }
     const command = isCommand
       ? sessionCommands.find(
           (candidate) =>
@@ -14452,6 +14491,7 @@ function App() {
               <span>Ready when you are</span>
             )}
           </div>
+          <OracleButton indicator={oracleIndicator} onToggle={toggleOracle} open={oracleOpen} />
           <button
             aria-label="Session knowledge"
             aria-pressed={knowledgeMode !== 'hidden'}
@@ -15392,6 +15432,11 @@ function App() {
               <Maximize2 size={16} />
             )}
           </button>
+          {knowledgeMode === 'expanded' ? (
+            // The conversation header, and its Oracle button, are hidden
+            // while Knowledge covers the conversation.
+            <OracleButton compact indicator={oracleIndicator} onToggle={toggleOracle} open={oracleOpen} />
+          ) : null}
           <button
             aria-label="Close knowledge panel"
             className="icon-button"
@@ -15750,12 +15795,15 @@ function App() {
         />
       ) : null}
       <ManagerAssistant
-        composerVisible={Boolean(selected)}
         connectionEpoch={managerEpoch}
+        controlRef={oracleControlRef}
         defaults={managerDefaults}
-        keyboardOpen={keyboardOpen}
+        onIndicatorChange={setOracleIndicator}
         onManagedSessionsChange={changeManagedSessions}
+        onOpenChange={setOracleOpen}
         onOpenSession={openManagedSession}
+        onOpenSettings={() => setSettingsOpen(true)}
+        open={oracleOpen}
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}
       />

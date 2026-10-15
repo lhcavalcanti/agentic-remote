@@ -2143,7 +2143,8 @@ button {
 }
 
 .knowledge-toggle,
-.side-question-toggle {
+.side-question-toggle,
+.oracle-toggle {
   display: inline-flex;
   width: auto;
   flex: 0 0 auto;
@@ -6692,7 +6693,8 @@ button {
   }
 
   .knowledge-toggle,
-  .side-question-toggle {
+  .side-question-toggle,
+  .oracle-toggle {
     padding: 0;
   }
 
@@ -7091,42 +7093,9 @@ button {
   opacity: 0.6;
 }
 
-/* Session manager agent: a bubble on every page and the panel it opens. */
-.manager-bubble {
-  position: fixed;
-  right: max(16px, env(safe-area-inset-right));
-  z-index: 19;
-  display: grid;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--panel-raised);
-  box-shadow: var(--shadow-popover);
-  color: var(--accent);
-  cursor: pointer;
-  transition: border-color 160ms ease, transform 160ms ease;
-}
-
-.manager-bubble:hover {
-  border-color: var(--accent);
-}
-
-.manager-bubble:active {
-  transform: scale(0.96);
-}
-
-.manager-bubble:focus-visible,
-.manager-composer__send:focus-visible,
-.manager-activity__open:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* An arc that circles the mark while the manager is answering. */
-.manager-bubble--working::after,
-.manager-panel__mark--working::after {
+/* Oracle, the session manager agent: a header button and the panel it opens. */
+.manager-panel__mark--working::after,
+.oracle-toggle--working .oracle-toggle__mark::after {
   position: absolute;
   inset: -4px;
   border: 2px solid transparent;
@@ -7136,20 +7105,33 @@ button {
   animation: activity-spin 1.6s linear infinite;
 }
 
-.manager-bubble--offline {
-  border-color: var(--warning);
+.oracle-toggle__mark {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.oracle-toggle--offline .oracle-toggle__mark {
   color: var(--warning);
 }
 
-.manager-bubble__unread {
+.oracle-toggle__unread {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--panel-raised);
+  top: -3px;
+  right: -4px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--bg);
   border-radius: 50%;
   background: var(--accent);
+}
+
+.manager-composer__send:focus-visible,
+.manager-activity__open:focus-visible,
+.oracle-runtime:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .manager-panel {
@@ -7532,6 +7514,142 @@ button {
 
 .manager-composer__stop {
   color: var(--danger);
+}
+
+.oracle-queue {
+  padding: 8px 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.oracle-queue__title {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oracle-queue__list {
+  display: flex;
+  max-height: 168px;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.oracle-queue__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.oracle-queue__position {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel-soft);
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.oracle-queue__text {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.oracle-queue__tag {
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.oracle-queue__remove {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+
+.manager-composer__row--only {
+  border-style: dashed;
+}
+
+.manager-composer__options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+
+.oracle-only {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-strong);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.oracle-only input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.oracle-only__hint {
+  color: var(--muted);
+}
+
+.oracle-runtime {
+  display: inline-flex;
+  min-height: 32px;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.oracle-runtime span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oracle-runtime:hover {
+  color: var(--text);
+}
+
+.oracle-runtime__warning {
+  margin: 4px 0 0;
+  color: var(--warning);
+  font-size: 12px;
 }
 
 .manager-badge {

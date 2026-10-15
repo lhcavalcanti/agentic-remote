@@ -1,6 +1,8 @@
 /**
- * The session manager agent: one hub-owned conversation that knows every
- * session and delegates work to new ones. See docs/design/session-manager.md.
+ * Oracle, the session manager agent: one hub-owned conversation that knows
+ * every session and delegates work to new ones. Shown to you as "Oracle";
+ * the protocol, routes, settings, and data folder keep the "manager" name.
+ * See docs/design/session-manager.md.
  */
 
 import type { AgentMode, AgentProvider, RuntimeReasoningEffort } from './contracts.js'
@@ -52,6 +54,11 @@ export interface ManagerMessage {
   updatedAt?: string
   /** Set on the messages you send. */
   state?: ManagerMessageState
+  /**
+   * Answered by Oracle alone: it may read sessions but must not start,
+   * message, rename, stop, close, or question one.
+   */
+  answerOnly?: boolean
   /** Why a message failed, shown beside its Retry. */
   error?: string
   /** The message of yours a reply or activity belongs to. */
@@ -78,6 +85,21 @@ export interface ManagerClientDefaults {
   folders?: Record<string, string>
 }
 
+/** Oracle's own runtime settings, kept on the hub. */
+export interface ManagerSettings {
+  /** Unset uses the hub's default: AGENTIC_REMOTE_MANAGER_MODEL, else Copilot's. */
+  model?: string
+  reasoningEffort?: RuntimeReasoningEffort
+}
+
+export interface ManagerSettingsSnapshot extends ManagerSettings {
+  /** The hub's default model, from AGENTIC_REMOTE_MANAGER_MODEL, if any. */
+  defaultModel?: string
+  defaultReasoningEffort?: RuntimeReasoningEffort
+  /** The chosen model could not start, so Copilot's default is answering. */
+  modelUnavailable?: boolean
+}
+
 export interface ManagerSnapshot {
   available: boolean
   /** Why the manager is not available on this hub. */
@@ -90,6 +112,7 @@ export interface ManagerSnapshot {
   lastError?: string
   /** The reply being written, if any. */
   streaming?: { messageId: string; content: string }
+  settings?: ManagerSettingsSnapshot
 }
 
 export interface ResolveManagerConfirmationInput {
@@ -99,6 +122,14 @@ export interface ResolveManagerConfirmationInput {
 export interface SendManagerMessageInput {
   content: string
   defaults?: ManagerClientDefaults
+  /** Answer it without starting or steering any session. */
+  answerOnly?: boolean
+}
+
+export interface UpdateManagerSettingsInput {
+  /** Null or absent returns to the hub's default. */
+  model?: string | null
+  reasoningEffort?: RuntimeReasoningEffort | null
 }
 
 export type ManagerEvent =
@@ -112,6 +143,7 @@ export type ManagerEvent =
   | { type: 'manager.delta'; messageId: string; content: string }
   | { type: 'manager.sessions'; managedSessions: string[] }
   | { type: 'manager.reset'; snapshot: ManagerSnapshot }
+  | { type: 'manager.settings'; settings: ManagerSettingsSnapshot }
 
 export function isManagerEvent(event: { type: string }): event is ManagerEvent {
   return event.type.startsWith('manager.')

@@ -14,8 +14,10 @@ import {
   type ManagerClientDefaults,
   type ManagerEvent,
   type ManagerMessage,
+  type ManagerSettingsSnapshot,
   type ManagerSnapshot,
   type ManagerStatus,
+  type UpdateManagerSettingsInput,
 } from '../shared/manager.js'
 import {
   buildTurnContext,
@@ -71,6 +73,11 @@ export interface ManagerSdkSession {
   send(options: { prompt: string }): Promise<string>
   abort(): Promise<void>
   disconnect(): Promise<void>
+  rpc?: {
+    model?: {
+      switchTo(params: { modelId: string; reasoningEffort?: RuntimeReasoningEffort }): Promise<unknown>
+    }
+  }
 }
 
 export interface ManagerSdkSessionConfig {
@@ -219,6 +226,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private needsBrief = false
   private skillCache?: { at: number; key: string; skills: ManagerSkillSummary[] }
   private omitModel = false
+  /** Your model choice changed since the conversation's runtime was set up. */
+  private runtimeChanged = false
+  /** The message being answered asked for an answer only. */
+  private currentAnswerOnly = false
   private pendingAcknowledgement?: { journalSeq: number; memoryHash?: string; notesShown: number }
   /** The turn being answered, settled once its outcome is stored. */
   private processing?: Promise<void>
@@ -331,10 +342,54 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       managedSessions: this.recorder.managedSessions(),
       ...(this.lastError ? { lastError: this.lastError } : {}),
       ...(this.streaming ? { streaming: { ...this.streaming } } : {}),
+      settings: this.settingsSnapshot(),
     }
   }
 
-  async send(content: string, defaults?: ManagerClientDefaults): Promise<ManagerMessage> {
+  settingsSnapshot(): ManagerSettingsSnapshot {
+    const settings = this.store.state().settings ?? {}
+    return {
+      ...(settings.model ? { model: settings.model } : {}),
+      ...(settings.model && settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {}),
+      ...(this.model ? { defaultModel: this.model } : {}),
+      ...(this.reasoningEffort ? { defaultReasoningEffort: this.reasoningEffort } : {}),
+      ...(this.omitModel && this.runtime().model ? { modelUnavailable: true } : {}),
+    }
+  }
+
+  /** Chooses Oracle's model and effort; it applies from the next answer. */
+  async updateSettings(input: UpdateManagerSettingsInput): Promise<ManagerSettingsSnapshot> {
+    const model = input.model?.trim() || undefined
+    const reasoningEffort = model ? input.reasoningEffort ?? undefined : undefined
+    const before = this.runtime()
+    await this.store.updateState((state) => {
+      state.settings = {
+        ...(model ? { model } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      }
+    })
+    const after = this.runtime()
+    if (before.model !== after.model || before.reasoningEffort !== after.reasoningEffort) {
+      this.omitModel = false
+      this.runtimeChanged = true
+    }
+    const settings = this.settingsSnapshot()
+    this.emit('event', { type: 'manager.settings', settings })
+    return settings
+  }
+
+  /** The model and effort in effect: your choice, else the hub default. */
+  private runtime(): { model?: string; reasoningEffort?: RuntimeReasoningEffort } {
+    const settings = this.store.state().settings
+    if (settings?.model) return { model: settings.model, reasoningEffort: settings.reasoningEffort }
+    return { model: this.model, reasoningEffort: this.reasoningEffort }
+  }
+
+  async send(
+    content: string,
+    defaults?: ManagerClientDefaults,
+    options: { answerOnly?: boolean } = {},
+  ): Promise<ManagerMessage> {
     if (!content.trim()) {
       throw Object.assign(new Error('Type a message first.'), { statusCode: 400 })
     }
@@ -357,11 +412,32 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       createdAt: timestamp,
       updatedAt: timestamp,
       state: 'queued',
+      ...(options.answerOnly ? { answerOnly: true } : {}),
     }
     await this.updateMessage(message)
     this.publishStatus()
     void this.pump()
     return message
+  }
+
+  /** Takes a message out of the queue before Oracle starts on it. */
+  async removeQueued(messageId: string): Promise<ManagerMessage> {
+    const message = this.store.message(messageId)
+    if (!message || message.role !== 'user') {
+      throw Object.assign(new Error('Message not found'), { statusCode: 404 })
+    }
+    if (message.state !== 'queued') {
+      throw Object.assign(
+        new Error(message.state === 'running'
+          ? 'Oracle is already answering this; use Stop instead.'
+          : 'This message is no longer waiting.'),
+        { statusCode: 409 },
+      )
+    }
+    const next: ManagerMessage = { ...message, state: 'cancelled', updatedAt: this.now().toISOString() }
+    await this.updateMessage(next)
+    this.publishStatus()
+    return next
   }
 
   async retry(messageId: string): Promise<ManagerMessage> {
@@ -524,6 +600,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         this.emit('event', { type: 'manager.sessions', managedSessions: this.recorder.managedSessions() })
       },
       registry: () => this.store.registry(),
+      answerOnly: () => this.currentAnswerOnly,
       memory: this.store.memory,
       defaults: () => this.store.state().defaults ?? {},
       now: () => this.now(),
@@ -594,7 +671,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     await this.updateMessage({
       ...(this.store.message(message.id) ?? message),
       state: 'failed',
-      error: `The manager could not answer: ${this.lastError}. Your message is kept; press Retry.`,
+      error: `Oracle could not answer: ${this.lastError}. Your message is kept; press Retry.`,
       updatedAt: this.now().toISOString(),
     }).catch(() => undefined)
     this.setStatus('offline')
@@ -605,6 +682,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const current = () => !this.stopped && this.epoch === epoch
     const cancelled = () => this.cancelledMessageId === message.id
     this.currentReplyTo = message.id
+    this.currentAnswerOnly = message.answerOnly === true
     this.cancelledMessageId = undefined
     this.streaming = undefined
     const interrupted = (this.store.state().interruptions ?? {})[message.id] !== undefined
@@ -666,11 +744,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const finished = this.store.message(message.id) ?? message
     if (!turn) {
       this.streaming = undefined
-      this.lastError = failures.at(-1) ?? 'The manager could not answer.'
+      this.lastError = failures.at(-1) ?? 'Oracle could not answer.'
       await this.updateMessage({
         ...finished,
         state: 'failed',
-        error: `The manager could not answer: ${this.lastError}. Your message is kept; press Retry.`,
+        error: `Oracle could not answer: ${this.lastError}. Your message is kept; press Retry.`,
         updatedAt: this.now().toISOString(),
       })
       await this.clearInterruption(message.id)
@@ -765,6 +843,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }
     const pendingNotes = state.pendingNotes ?? []
     notes.push(...pendingNotes)
+    if (message.answerOnly) {
+      notes.push('The user chose Oracle only for this message: answer it yourself. You may read sessions, but do not start, message, rename, stop, close, or question any session, and do not offer to.')
+    }
     let context = buildTurnContext({
       now: this.now(),
       computers: this.hub.listComputers(),
@@ -942,19 +1023,42 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     } else if (rung === 'fresh') {
       await this.retireSession()
     }
-    if (this.session) return
     const client = await this.ensureClient()
-    const state = this.store.state()
-    if (state.sdkSessionId && rung !== 'fresh') {
-      // A failure here leaves the next rung to restart the runtime, and the
-      // last one to start a new conversation.
-      this.session = await withTimeout(
-        client.resumeSession(state.sdkSessionId, this.sessionConfig()),
+    if (!this.session) {
+      const state = this.store.state()
+      if (state.sdkSessionId && rung !== 'fresh') {
+        // A failure here leaves the next rung to restart the runtime, and the
+        // last one to start a new conversation.
+        this.session = await withTimeout(
+          client.resumeSession(state.sdkSessionId, this.sessionConfig()),
+          this.operationTimeoutMs,
+          'resuming the manager conversation took too long',
+        )
+      } else {
+        await this.createSession(client)
+      }
+    }
+    if (this.runtimeChanged) await this.applyRuntime(client)
+  }
+
+  /**
+   * Puts your model choice into effect on the conversation. A chosen model is
+   * switched to in place; returning to the default starts a new conversation,
+   * briefed on this one, since the runtime offers no way back to its default.
+   */
+  private async applyRuntime(client: ManagerSdkClient): Promise<void> {
+    const { model, reasoningEffort } = this.runtime()
+    const switchTo = this.session?.rpc?.model?.switchTo
+    if (model && switchTo) {
+      await withTimeout(
+        switchTo.call(this.session!.rpc!.model, { modelId: model, ...(reasoningEffort ? { reasoningEffort } : {}) }),
         this.operationTimeoutMs,
-        'resuming the manager conversation took too long',
+        'switching the model took too long',
       )
+      this.runtimeChanged = false
       return
     }
+    await this.retireSession()
     await this.createSession(client)
   }
 
@@ -972,16 +1076,19 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       'starting the manager conversation took too long',
     )
     let session: ManagerSdkSession
+    const chosen = this.runtime().model
     try {
       session = await create(!this.omitModel)
     } catch (error) {
-      if (!this.model || this.omitModel) throw error
-      // A configured model that is unavailable must not keep the manager down.
-      console.warn(`Manager model ${this.model} failed; using the default model:`, errorMessage(error))
+      if (!chosen || this.omitModel) throw error
+      // A chosen model that is unavailable must not keep Oracle down.
+      console.warn(`Oracle model ${chosen} failed; using Copilot's default model:`, errorMessage(error))
       this.omitModel = true
       session = await create(false)
+      this.emit('event', { type: 'manager.settings', settings: this.settingsSnapshot() })
     }
     this.session = session
+    this.runtimeChanged = false
     const hadConversation = this.store.messages().some((message) => message.role === 'assistant')
     // A new conversation that takes over from an earlier one is briefed on it.
     this.needsBrief = hadConversation
@@ -1036,10 +1143,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   }
 
   private sessionConfig(withModel = !this.omitModel): Omit<ManagerSdkSessionConfig, 'sessionId'> {
+    const { model, reasoningEffort } = this.runtime()
     return {
       clientName: 'agentic-remote-manager',
-      ...(withModel && this.model ? { model: this.model } : {}),
-      ...(withModel && this.reasoningEffort ? { reasoningEffort: this.reasoningEffort } : {}),
+      ...(withModel && model ? { model } : {}),
+      ...(withModel && model && reasoningEffort ? { reasoningEffort } : {}),
       streaming: true,
       workingDirectory: `${this.store.directory}/workspace`,
       systemMessage: { mode: 'append', content: MANAGER_SYSTEM_PROMPT },

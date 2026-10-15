@@ -35,6 +35,8 @@ export interface ManagerToolHost {
   discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]>
   markManaged(session: ManagedSession, task: string): Promise<void>
   registry(): ManagerRegistry
+  /** The message being answered asked for an answer only, so no session may be acted on. */
+  answerOnly(): boolean
   memory: ManagerMemory
   defaults(): ManagerClientDefaults
   now(): Date
@@ -163,6 +165,7 @@ export function createManagerTools(
     description: string,
     schema: T,
     run: (args: z.infer<T>) => Promise<string>,
+    options: { actsOnSessions?: boolean } = {},
   ): ManagerTool {
     const parameters = z.toJSONSchema(schema) as Record<string, unknown>
     delete parameters.$schema
@@ -173,6 +176,11 @@ export function createManagerTools(
       skipPermission: true,
       defer: 'never',
       handler: async (args) => {
+        // Enforced here rather than only asked of the model, so an "Oracle
+        // only" message can never start or steer a session.
+        if (options.actsOnSessions && host.answerOnly()) {
+          return failure('The user chose Oracle only for this message, so no session may be started, messaged, renamed, stopped, closed, or questioned. Answer from what you can read instead.')
+        }
         const parsed = schema.safeParse(args ?? {})
         if (!parsed.success) {
           return failure(parsed.error.issues
@@ -285,6 +293,7 @@ export function createManagerTools(
         }
         return host.askSession(found.computerId, found.id, question)
       },
+      { actsOnSessions: true }
     ),
     define(
       'create_session',
@@ -345,6 +354,7 @@ export function createManagerTools(
         }
         return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}. Its task was sent.`
       },
+      { actsOnSessions: true }
     ),
     define(
       'send_to_session',
@@ -360,6 +370,7 @@ export function createManagerTools(
         onActivity({ tool: 'send_to_session', content: `Sent a message to "${session.title}"`, sessionRefs: [ref(session)] })
         return `Sent to ${link(session)}${session.status === 'running' ? ' (it was busy, so the message is queued)' : ''}.`
       },
+      { actsOnSessions: true }
     ),
     define(
       'rename_session',
@@ -371,6 +382,7 @@ export function createManagerTools(
         onActivity({ tool: 'rename_session', content: `Renamed "${session.title}" to "${renamed.title}"`, sessionRefs: [ref(renamed)] })
         return `Renamed to ${link(renamed)}.`
       },
+      { actsOnSessions: true }
     ),
     define(
       'cancel_session',
@@ -382,6 +394,7 @@ export function createManagerTools(
         onActivity({ tool: 'cancel_session', content: `Stopped "${session.title}"`, sessionRefs: [ref(session)] })
         return `Stopped the current turn of ${link(session)}.`
       },
+      { actsOnSessions: true }
     ),
     define(
       'close_session',
@@ -396,6 +409,7 @@ export function createManagerTools(
         await host.requestCloseConfirmation(session, reason)
         return `Asked the user to confirm closing ${link(session)} in the app. It stays open until they confirm; the outcome appears in your next turn.`
       },
+      { actsOnSessions: true }
     ),
     define(
       'list_skills',

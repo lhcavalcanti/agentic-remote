@@ -1,4 +1,8 @@
-# Session manager agent
+# Oracle: the session manager agent
+
+Oracle is the user-facing name. Routes (`/api/manager`), events (`manager.*`),
+environment variables (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the
+"manager" name, so existing installs need no migration.
 
 A hub-owned agent you can ask about all your sessions from any page. It knows
 every session's name, ID, owner computer, and recent activity; it starts and
@@ -132,14 +136,29 @@ end the turn.
   `POST /api/manager/reset` (new conversation; memory is kept).
 - `POST /api/manager/messages/:id/confirmation` with `{ accept }`: your answer to
   a close request. The outcome reaches the agent as a note on its next turn.
+- `POST /api/manager/messages` also takes `answerOnly`;
+  `POST /api/manager/messages/:id/remove` takes a waiting message out of the
+  queue; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
+  the hub default) chooses Oracle's model, which the snapshot reports as
+  `settings` and the socket as `manager.settings`.
 - WebSocket: `manager.status`, `manager.message` (upsert), and
   `manager.delta` (streamed text, throttled).
 
 ## UI
 
-- A floating bubble on every page that opens the manager panel. It sits above
-  the composer and never covers Send. While the manager works it shows an
-  activity ring, and a dot for replies you have not read.
+- An **Oracle** button in the conversation header, beside Knowledge, opens the
+  panel; while Knowledge covers the conversation the Knowledge header carries
+  it. Nothing floats over the conversation, so **Scroll to latest** and Send
+  stay clear. The button shows an activity ring while Oracle works and a dot
+  for replies you have not read.
+- Waiting messages sit above the message bar, numbered in answer order, each
+  removable until Oracle starts on it.
+- **Oracle only** (a box under the message bar, remembered per browser, or
+  `/oracle` from a session's message bar) asks Oracle alone: the hub refuses
+  every tool that would start, message, rename, stop, close, or question a
+  session for that message.
+- The model under the message bar opens **App settings → Oracle**, where the
+  model and effort are chosen and kept on the hub.
 - The panel is a right-hand drawer on desktop and a full-height sheet on a
   phone. It shows the transcript (Markdown), tool activity chips, and a
   composer whose Return behaviour follows the session composer.

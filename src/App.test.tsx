@@ -29,6 +29,7 @@ import type {
 import App from './App'
 import {
   getManager,
+  sendManagerMessage,
   activateSession,
   cancelBackgroundTask,
   askSession,
@@ -146,6 +147,8 @@ vi.mock('./api', async (importOriginal) => ({
   sendManagerMessage: vi.fn(),
   retryManagerMessage: vi.fn(),
   resolveManagerConfirmation: vi.fn(),
+  removeQueuedManagerMessage: vi.fn(),
+  updateManagerSettings: vi.fn(),
   cancelManager: vi.fn(),
   resetManager: vi.fn(),
   listSessions: vi.fn(),
@@ -1834,7 +1837,7 @@ describe('App', () => {
     return target
   }
 
-  it('badges sessions the manager started and keeps manager events out of errors', async () => {
+  it('badges sessions Oracle started, opens Oracle from the header, and keeps its events out of errors', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true,
       status: 'idle',
@@ -1843,9 +1846,15 @@ describe('App', () => {
       managedSessions: [`${computer.id}:${session.id}`],
     })
     render(<App />)
-    const row = await screen.findByRole('button', { name: /Project chat, started by the manager/ })
-    expect(within(row).getByText('Manager')).toBeInTheDocument()
-    expect(await screen.findByRole('button', { name: 'Open the manager' })).toBeInTheDocument()
+    const row = await screen.findByRole('button', { name: /Project chat, started by Oracle/ })
+    expect(within(row).getByText('Oracle')).toBeInTheDocument()
+    const oracle = await screen.findByRole('button', { name: 'Oracle' })
+    // Beside Knowledge in the conversation header, never floating over the
+    // conversation where the Scroll to latest button sits.
+    expect(oracle.closest('.conversation-header')).not.toBeNull()
+    expect(document.querySelector('.manager-bubble')).toBeNull()
+    fireEvent.click(oracle)
+    expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
 
     await act(async () => {
       MockWebSocket.instances.at(-1)?.onmessage?.({
@@ -1856,8 +1865,29 @@ describe('App', () => {
       } as MessageEvent)
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /Project chat, started by the manager/ })).not.toBeInTheDocument())
+      expect(screen.queryByRole('button', { name: /Project chat, started by Oracle/ })).not.toBeInTheDocument())
+  })
+
+  it('sends /oracle to Oracle only, never to the session', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.mocked(sendManagerMessage).mockResolvedValue({
+      id: 'o1', role: 'user', content: 'Which sessions finished?', createdAt: 't', state: 'queued', answerOnly: true,
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: 'Oracle' })
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: '/oracle Which sessions finished?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(
+      'Which sessions finished?', expect.anything(), { answerOnly: true },
+    ))
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Message')).toHaveValue('')
   })
 
   it('shows an actionable session-load failure and retries the snapshot', async () => {

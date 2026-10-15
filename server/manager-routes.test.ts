@@ -62,7 +62,12 @@ describe('manager routes', () => {
     })
     expect(response.statusCode).toBe(202)
     expect(response.json()).toEqual({ message: queued })
-    expect(send).toHaveBeenCalledWith('What is running?', { computerId: 'hub', mode: 'autopilot', folders: { hub: '~/src' } })
+    expect(send).toHaveBeenCalledWith('What is running?', { computerId: 'hub', mode: 'autopilot', folders: { hub: '~/src' } }, {})
+    await app.inject({
+      method: 'POST', url: '/api/manager/messages', headers: trusted,
+      payload: { content: 'Just tell me', answerOnly: true },
+    })
+    expect(send).toHaveBeenLastCalledWith('Just tell me', undefined, { answerOnly: true })
   })
 
   it('refuses a blank message and malformed defaults without queueing', async () => {
@@ -102,6 +107,32 @@ describe('manager routes', () => {
     expect(resetResponse.statusCode).toBe(200)
     expect(resetResponse.json()).toMatchObject({ available: true })
     expect(reset).toHaveBeenCalled()
+  })
+
+  it('saves Oracle settings and takes a message out of the queue', async () => {
+    const { app, managerAgent } = await build()
+    await app.ready()
+    const saved = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted,
+      payload: { model: 'gpt-6-sol', reasoningEffort: 'high' },
+    })
+    expect(saved.statusCode).toBe(200)
+    expect(saved.json().settings).toMatchObject({ model: 'gpt-6-sol', reasoningEffort: 'high' })
+    expect((await app.inject({ url: '/api/manager', headers: trusted })).json().settings)
+      .toMatchObject({ model: 'gpt-6-sol', reasoningEffort: 'high' })
+    const invalid = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { reasoningEffort: 'extreme' },
+    })
+    expect(invalid.statusCode).toBe(400)
+    const reset = await app.inject({ method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { model: null } })
+    expect(reset.json().settings.model).toBeUndefined()
+
+    const remove = vi.spyOn(managerAgent!, 'removeQueued').mockResolvedValue({
+      id: 'm1', role: 'user', content: 'x', createdAt: 't', state: 'cancelled',
+    })
+    const removed = await app.inject({ method: 'POST', url: '/api/manager/messages/m1/remove', headers: trusted })
+    expect(removed.statusCode).toBe(200)
+    expect(remove).toHaveBeenCalledWith('m1')
   })
 
   it('takes your answer to a confirmation', async () => {

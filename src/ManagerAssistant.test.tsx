@@ -341,6 +341,48 @@ describe('ManagerAssistant', () => {
     expect(screen.getByText(/env-model could not start/)).toBeInTheDocument()
   })
 
+  it('never returns focus to a trigger that has slid out of view', async () => {
+    vi.mocked(getManager).mockResolvedValue(empty)
+    function Drawer() {
+      const [open, setOpen] = useState(false)
+      const [drawerOpen, setDrawerOpen] = useState(true)
+      const [indicator, setIndicator] = useState<OracleIndicator>({ available: false, status: 'idle', unread: false, queued: 0 })
+      return (
+        <>
+          <div data-testid="drawer">
+            <OracleButton indicator={indicator} offscreen={!drawerOpen} onToggle={() => setOpen((current) => !current)} open={open} />
+          </div>
+          <div data-testid="header">
+            <OracleButton indicator={indicator} onToggle={() => setOpen((current) => !current)} open={open} />
+          </div>
+          {/* Following a session link closes the drawer and Oracle together. */}
+          <button onClick={() => { setDrawerOpen(false); setOpen(false) }} type="button">Follow link</button>
+          <ManagerAssistant
+            connectionEpoch={1}
+            defaults={{}}
+            onIndicatorChange={setIndicator}
+            onManagedSessionsChange={vi.fn()}
+            onOpenChange={setOpen}
+            onOpenSession={vi.fn(() => true)}
+            onOpenSettings={vi.fn()}
+            open={open}
+            openSessions={0}
+            subscribe={() => () => undefined}
+          />
+        </>
+      )
+    }
+    render(<Drawer />)
+    const fromDrawer = await within(screen.getByTestId('drawer')).findByRole('button', { name: 'Oracle' })
+    // Chrome focuses a button it clicks.
+    fromDrawer.focus()
+    fireEvent.click(fromDrawer)
+    await screen.findByRole('dialog', { name: 'Oracle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Follow link' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument())
+    expect(within(screen.getByTestId('header')).getByRole('button', { name: 'Oracle' })).toHaveFocus()
+  })
+
   it('offers Retry on a failed message', async () => {
     vi.mocked(retryManagerMessage).mockResolvedValue({ id: 'u1', role: 'user', content: 'hi', createdAt: 't', updatedAt: '2026-10-15T00:00:02.000Z', state: 'queued' })
     setup({

@@ -229,18 +229,21 @@ function unavailableModelLabel(settings: ManagerSnapshot['settings']): string {
 }
 
 /**
- * The trigger that can take focus back. One in a hidden layer cannot, nor one
- * in a drawer slid off screen, like the phone's closed session list.
+ * Whether focus can go back to an element. One in a hidden layer cannot, nor
+ * one in a layer out of view, like the phone's closed session list. That
+ * layer may still be sliding away, so it is marked rather than measured.
  */
+function canTakeFocus(element: HTMLElement): boolean {
+  if (!element.isConnected || element.closest('[hidden], [inert], [data-oracle-offscreen]')) return false
+  if (typeof element.checkVisibility === 'function' && !element.checkVisibility()) return false
+  const box = element.getBoundingClientRect()
+  // Without layout, as in tests, every box is empty; only a laid-out one is placed.
+  if (box.width === 0 && box.height === 0) return true
+  return box.right > 0 && box.left < window.innerWidth && box.bottom > 0 && box.top < window.innerHeight
+}
+
 function visibleTrigger(): HTMLElement | undefined {
-  return [...document.querySelectorAll<HTMLElement>('[aria-controls="oracle-panel"]')].find((candidate) => {
-    if (!candidate.isConnected || candidate.closest('[hidden], [inert]')) return false
-    if (typeof candidate.checkVisibility === 'function' && !candidate.checkVisibility()) return false
-    const box = candidate.getBoundingClientRect()
-    // Without layout, as in tests, every box is empty; only a laid-out one is placed.
-    if (box.width === 0 && box.height === 0) return true
-    return box.right > 0 && box.left < window.innerWidth && box.bottom > 0 && box.top < window.innerHeight
-  })
+  return [...document.querySelectorAll<HTMLElement>('[aria-controls="oracle-panel"]')].find(canTakeFocus)
 }
 
 /** Lets the rest of the app hand Oracle a prompt, as `/oracle` does. */
@@ -255,12 +258,15 @@ export function OracleButton({
   onToggle,
   compact = false,
   className = '',
+  offscreen = false,
 }: {
   indicator: OracleIndicator
   open: boolean
   onToggle: () => void
   compact?: boolean
   className?: string
+  /** In a layer that is out of view, such as a closed drawer; focus never returns here. */
+  offscreen?: boolean
 }) {
   if (!indicator.available) return null
   const working = indicator.status === 'working' || indicator.status === 'recovering'
@@ -274,6 +280,7 @@ export function OracleButton({
       aria-controls="oracle-panel"
       aria-expanded={open}
       aria-label={['Oracle', ...states].join(', ')}
+      data-oracle-offscreen={offscreen ? '' : undefined}
       className={`icon-button oracle-toggle${open ? ' icon-button--active' : ''}${
         working ? ' oracle-toggle--working' : ''
       }${indicator.status === 'offline' ? ' oracle-toggle--offline' : ''}${className ? ` ${className}` : ''}`}
@@ -417,7 +424,7 @@ export function ManagerAssistant({
     returnFocusRef.current = null
     // Safari does not focus a button on click, so the trigger is the fallback.
     const trigger = visibleTrigger()
-    const destination = target?.isConnected ? target : trigger
+    const destination = target && canTakeFocus(target) ? target : trigger
     if (destination && document.activeElement !== destination && !document.querySelector('[role="dialog"]:focus-within')) {
       destination.focus()
     }

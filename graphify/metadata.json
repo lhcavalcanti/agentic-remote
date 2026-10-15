@@ -267,9 +267,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 154,
+  "communities": 152,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11550,
+  "edges": 11554,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -509,8 +509,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "2d794d525f431b4237ce663938c2a269baa04806e284c9db0250301ab8ba0b14",
-    "src/App.tsx": "4fb47f364b4381ec8e897f75de403e52cacf88a0ea0219dca89dac44eb77fa87",
+    "src/App.test.tsx": "b530867722f0f695f318020aedf8ddadfc25aead2de009bcea2c51c2a171ee8b",
+    "src/App.tsx": "13d186819b9eab44ec159c1c21781b4b0863322f6614c332e19cd6cca16178ec",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -519,8 +519,8 @@
     "src/KnowledgeRootChoices.tsx": "0eab2c54bd6a3187487a50e323204cae90c235469ae25e5bf7c61686c8a20852",
     "src/KnowledgeRootSelector.test.tsx": "817e7fdf9002ea5ed7c4869ef82a78627385729528699707daa79b0adf748f05",
     "src/KnowledgeRootSelector.tsx": "bf822308bd25c81dbfbc3de2ca99a95753c7bd8d360199bf9e00ad30225c76fc",
-    "src/ManagerAssistant.test.tsx": "2c96562281ec0837576efc5fade83b4bda8d27ca0794ebbb6463968f2ec0c2fa",
-    "src/ManagerAssistant.tsx": "de1222f88e3bc979545824fea302e4f6a6d8b0f9e36769034803479b1fbe8625",
+    "src/ManagerAssistant.test.tsx": "c051b26a5a0700c10c4f31d4987f301f48914b42434ab1cc4ca4c5f1ec7ac62c",
+    "src/ManagerAssistant.tsx": "121ff14942d19d0f67170c935c63829cd53f478074ef663db5be5be852b3f6b4",
     "src/MarkdownCodeBlock.test.tsx": "d1f77ecdfb929df6e3970eaa06a065c8ef63a25ab3f030fff405cd0a46fefc69",
     "src/MarkdownCodeBlock.tsx": "46ffdce3491901abf4a9648f22c20dacf42972641346e444230dc72fa6e00f9a",
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
@@ -595,7 +595,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 4069,
+  "nodes": 4071,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -653,37 +653,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ed0fe6dce3c7a99e9556451f5a6ddad1cc786e94cb4a05c0b015319602307dd0",
-    "communities.json": "d5cd39d29a68e101212ec696aba69c4dda4879edc60b894b10f141fbba0144cb",
-    "graph.html": "3b4f27b171536f7dbede06c40c17247332a6445d6b78545e7360aa5e16f024bf",
-    "graph.json": "f68f3187f597a246dab9612dee80b3cb0562fd997c9aacad4915be7945473cef"
+    "GRAPH_REPORT.md": "4a44adf9eb2dad1d3992053e5ec011c5bd3933c37b3dd5c4cc5fb5271467e586",
+    "communities.json": "7608fe00aec9fe47d319e30b54d078093223d5a88a42b2ab6c670c7313b6ed81",
+    "graph.html": "839a3e2335ab86b4e6215908246a540809b047a3dd598fad90f49449a3ccfa1d",
+    "graph.json": "41b8e63801d237c9874e23b71bb04da09e243c50e3848dd584d7a11d7fc3fcf7"
   },
   "schema_version": 1,
-  "source_commit": "b1d9ae97b054a9fc494a97d32795292276af21a2",
-  "source_fingerprint": "57b4348d1b5dccfd4935f6dce867c76cac9982c7e84de95df06ac539b598c14d",
+  "source_commit": "acd74287859226070c97f69d556953969958573d",
+  "source_fingerprint": "6a4d7a3c6ce31033de1c9ea3f83991b48b0403e5e50b987127ac2b77dc7be183",
   "working_tree_changes": [
-    "README.md",
-    "docs/app-spec.md",
-    "docs/design/session-manager.md",
-    "package.json",
-    "server/computer-manager.ts",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-context.ts",
-    "server/manager-tools.test.ts",
-    "server/manager-tools.ts",
-    "server/multi-node.test.ts",
-    "server/node-routes.ts",
-    "server/remote-node-client.ts",
-    "shared/manager.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/App.test.tsx",
     "src/App.tsx",
     "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/index.css"
+    "src/ManagerAssistant.tsx"
   ]
 }

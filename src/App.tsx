@@ -14475,6 +14475,7 @@ function App() {
             className="sidebar-settings__oracle"
             compact
             indicator={oracleIndicator}
+            offscreen={!sidebarOpen}
             onToggle={toggleOracle}
             open={oracleOpen}
           />

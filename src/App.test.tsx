@@ -1859,6 +1859,12 @@ describe('App', () => {
       .getByRole('button', { name: 'Oracle' })
     expect(sidebarOracle).toHaveClass('sidebar-settings__oracle')
     expect(sidebarOracle).toHaveAttribute('aria-controls', 'oracle-panel')
+    // Focus never returns to it while the session list is closed.
+    expect(sidebarOracle).toHaveAttribute('data-oracle-offscreen')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    expect(sidebarOracle).not.toHaveAttribute('data-oracle-offscreen')
+    fireEvent.click(document.querySelector<HTMLElement>('.sidebar__close')!)
+    expect(sidebarOracle).toHaveAttribute('data-oracle-offscreen')
     fireEvent.click(oracle)
     expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
 

@@ -128,7 +128,8 @@ end the turn.
 
 ## API (hub only, under the existing Host and Origin policy)
 
-- `GET /api/manager`: snapshot of status, messages (newest 200), queue length,
+- `GET /api/manager`: snapshot of status, messages (newest 200, plus every
+  older waiting or running one), queue length,
   manager-created session keys, and the last error.
 - `POST /api/manager/messages` with `{ content, defaults? }`: `202`. `defaults`
   carries your default mode, model, and per-computer folders.
@@ -140,15 +141,19 @@ end the turn.
   `POST /api/manager/messages/:id/remove` takes a waiting message out of the
   queue; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
   the hub default) chooses Oracle's model, which the snapshot reports as
-  `settings` and the socket as `manager.settings`.
+  `settings` and the socket as `manager.settings`. `state.json` records the
+  model the SDK conversation runs on (`sessionRuntime`) and a chosen model that
+  could not start (`unavailableModel`); each answer compares the choice with
+  `sessionRuntime`, so a change survives a restart or a switch in progress.
 - WebSocket: `manager.status`, `manager.message` (upsert), and
   `manager.delta` (streamed text, throttled).
 
 ## UI
 
 - An **Oracle** button in the conversation header, beside Knowledge, opens the
-  panel; while Knowledge covers the conversation the Knowledge header carries
-  it. Nothing floats over the conversation, so **Scroll to latest** and Send
+  panel; while Knowledge covers the conversation (expanded, or open on a
+  phone) the Knowledge header carries it, and an open document's header does
+  on a phone. Nothing floats over the conversation, so **Scroll to latest** and Send
   stay clear. The button shows an activity ring while Oracle works and a dot
   for replies you have not read.
 - Waiting messages sit above the message bar, numbered in answer order, each
@@ -164,7 +169,7 @@ end the turn.
   composer whose Return behaviour follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
-- Manager-created sessions get a small **Manager** badge in the session list.
+- Sessions Oracle started get a small **Oracle** badge in the session list.
 
 ## Testing
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
-import type { ManagerEvent } from '../shared/manager.js'
+import { MANAGER_SNAPSHOT_MESSAGES, type ManagerEvent } from '../shared/manager.js'
 import {
   ManagerAgent,
   type ManagerAgentOptions,
@@ -746,6 +746,93 @@ describe('ManagerAgent', () => {
     await settled()
     expect(agent!.snapshot().settings).toMatchObject({ model: 'missing-model', modelUnavailable: true })
     expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it("returns to Copilot's default even when the hub restarts before the next answer", async () => {
+    await start()
+    await agent!.updateSettings({ model: 'gpt-6-sol' })
+    await agent!.send('first')
+    await settled()
+    expect(store.state().sessionRuntime).toEqual({ model: 'gpt-6-sol' })
+    await agent!.updateSettings({ model: null })
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    await agent!.send('second')
+    await settled()
+    expect(store.state().sdkSessionId).toBe('sdk-2')
+    expect(sdk.clients.at(-1)!.createSession.mock.calls.at(-1)![0].model).toBeUndefined()
+    expect(store.state().sessionRuntime).toEqual({})
+    expect(sdk.sessions.get('sdk-2')!.prompts[0]).toContain('Your previous conversation runtime was lost')
+  })
+
+  it('keeps a choice made while the model is switching for the next answer', async () => {
+    await start()
+    await agent!.send('first')
+    await settled()
+    const session = sdk.sessions.get('sdk-1')!
+    let release: () => void = () => undefined
+    session.rpc.model.switchTo.mockImplementationOnce(() => new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined)
+    }))
+    await agent!.updateSettings({ model: 'model-a' })
+    await agent!.send('second')
+    await vi.waitFor(() => expect(session.rpc.model.switchTo).toHaveBeenCalledTimes(1))
+    await agent!.updateSettings({ model: 'model-b' })
+    release()
+    await settled()
+    expect(store.state().sessionRuntime).toEqual({ model: 'model-a' })
+    await agent!.send('third')
+    await settled()
+    expect(session.rpc.model.switchTo).toHaveBeenLastCalledWith({ modelId: 'model-b' })
+    expect(store.state().sessionRuntime).toEqual({ model: 'model-b' })
+  })
+
+  it('keeps a reasoning effort set without a model', async () => {
+    await start({ reasoningEffort: 'high' })
+    await agent!.send('hello')
+    await settled()
+    const config = sdk.clients[0].createSession.mock.calls[0][0]
+    expect(config.model).toBeUndefined()
+    expect(config.reasoningEffort).toBe('high')
+  })
+
+  it('remembers a model that could not start across a restart, and tries it again after Start over', async () => {
+    sdk.createFailures.push((config) => config.model === 'missing-model' ? new Error('model not available') : undefined)
+    await start()
+    await agent!.updateSettings({ model: 'missing-model' })
+    await agent!.send('hello')
+    await settled()
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    expect(agent!.snapshot().settings).toMatchObject({ model: 'missing-model', modelUnavailable: true })
+    await agent!.send('again')
+    await settled()
+    expect(store.state().sdkSessionId).toBe('sdk-1')
+    expect(sdk.sessions.get('sdk-1')!.rpc.model.switchTo).not.toHaveBeenCalled()
+    await agent!.reset()
+    expect(agent!.snapshot().settings?.modelUnavailable).toBeUndefined()
+  })
+
+  it('lists every waiting message however long the conversation', async () => {
+    for (let index = 0; index < 3; index += 1) {
+      await store.upsertMessage({ id: `waiting-${index}`, role: 'user', content: `waiting ${index}`, createdAt: 't', state: 'queued' })
+    }
+    for (let index = 0; index < MANAGER_SNAPSHOT_MESSAGES; index += 1) {
+      await store.upsertMessage({ id: `reply-${index}`, role: 'assistant', content: `reply ${index}`, createdAt: 't' })
+    }
+    sdk.behaviors.push(() => undefined)
+    await start()
+    await vi.waitFor(() => expect(sdk.prompts).toHaveLength(1))
+    const snapshot = agent!.snapshot()
+    expect(snapshot.messages.slice(0, 3).map((message) => [message.id, message.state])).toEqual([
+      ['waiting-0', 'running'], ['waiting-1', 'queued'], ['waiting-2', 'queued'],
+    ])
+    expect(snapshot.messages).toHaveLength(MANAGER_SNAPSHOT_MESSAGES + 3)
+    expect(snapshot.queued).toBe(2)
   })
 
   it('keeps queued messages in order and lets you take one out before it starts', async () => {

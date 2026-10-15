@@ -392,11 +392,12 @@ user-facing name is Oracle; routes (`/api/manager`), events (`manager.*`),
 settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 
 - A hub MUST offer Oracle from an **Oracle** button in the conversation header,
-  beside Knowledge, and from the Knowledge panel header while Knowledge covers
-  the conversation. It MUST NOT float over the conversation, where it would
+  beside Knowledge, and wherever that header is covered: from the Knowledge
+  header while Knowledge covers the conversation (expanded, or open at all on
+  a phone), and from an open document's header on a phone. It MUST NOT float over the conversation, where it would
   cover **Scroll to latest** or Send. On a phone the button is a 40px icon like
-  Knowledge. It shows a working ring, an unread dot, and its state in its
-  accessible name. It opens a non-modal drawer on a desktop and a full-height
+  Knowledge. It shows a working ring, an unread dot, and every current state
+  in its accessible name, such as "Oracle, working, new reply". It opens a non-modal drawer on a desktop and a full-height
   sheet on a phone. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process
   of its own. Its tools only manage sessions and its own memory, so it MUST NOT
@@ -408,15 +409,21 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   alone. It MUST NOT be sent to the session, and Oracle MUST NOT start, message,
   rename, stop, close, or question any session while answering it; the hub
   refuses those tools for that message. Reading sessions and memory is allowed.
-  The box is remembered per browser.
+  The box is remembered per browser. While Oracle is unavailable or still
+  loading, `/oracle` stays in the message bar with the reason; a question that
+  cannot be sent waits in Oracle's message bar with the error.
 - Oracle's model and reasoning effort are chosen in **App settings → Oracle**
   (also reached from the model shown under Oracle's message bar). The choice is
   kept on the hub for every browser and applies from Oracle's next answer: a
   chosen model is switched to in place; returning to Copilot's own default
-  starts a new conversation briefed on the old one. Unset, the hub uses
-  `AGENTIC_REMOTE_MANAGER_MODEL` and `AGENTIC_REMOTE_MANAGER_REASONING_EFFORT`,
-  else Copilot's default. A chosen model that cannot start falls back to the
-  default, and Oracle says so.
+  starts a new conversation briefed on the old one. The hub records what the
+  conversation runs on, so a change takes effect even across a restart or
+  while a switch is in progress. Unset, the hub uses
+  `AGENTIC_REMOTE_MANAGER_MODEL` and `AGENTIC_REMOTE_MANAGER_REASONING_EFFORT`
+  (either alone), else Copilot's default. The list shows the hub's own Copilot
+  models, with **Retry** if they cannot be read. A model that cannot start
+  falls back to the default and Oracle says so until the choice changes or you
+  **Start over**.
 - Every turn MUST start with a context block the hub generates: computers, open
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.
@@ -426,7 +433,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   a time. Waiting messages are shown above the message bar, numbered in the
   order they will be answered and marked **Oracle only** where chosen; each can
   be removed before Oracle starts on it. The queue is kept on the hub, so it
-  survives a reload, a reconnect, and a hub restart. Only a blank message or
+  survives a reload, a reconnect, and a hub restart, and a snapshot lists every
+  waiting message however long the transcript. Only a blank message or
   one over 100,000 characters is refused.
 - A failed turn MUST recover by itself: retry on the same conversation, then
   restart the runtime and resume it, then start a new conversation briefed from

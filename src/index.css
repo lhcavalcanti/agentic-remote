@@ -1149,7 +1149,14 @@ button {
 
 .knowledge-reader .knowledge-reader__back,
 .knowledge-reader .knowledge-reader__close,
-.knowledge-reader .knowledge-reader__session {
+.knowledge-reader .knowledge-reader__session,
+.knowledge-reader .knowledge-reader__oracle {
+  display: none;
+}
+
+/* Beside a docked Knowledge panel the conversation header, and its Oracle
+   button, stay in view. */
+.workspace--docked .knowledge-panel__oracle {
   display: none;
 }
 
@@ -6627,6 +6634,16 @@ button {
     flex: 0 0 auto;
   }
 
+  /* On a phone Knowledge covers the conversation whenever it is open, and an
+     open document replaces Knowledge's header with its own. */
+  .workspace--docked .knowledge-panel__oracle,
+  .knowledge-reader .knowledge-reader__oracle {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+  }
+
   .knowledge-reader .knowledge-reader__session {
     display: block;
     overflow: hidden;
@@ -7644,6 +7661,13 @@ button {
 
 .oracle-runtime:hover {
   color: var(--text);
+}
+
+.oracle-settings__catalog-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
 }
 
 .oracle-runtime__warning {

@@ -1890,6 +1890,55 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('')
   })
 
+  it('keeps /oracle in the message bar when Oracle is off, never sending it to the session', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: false,
+      unavailableReason: 'Oracle is turned off on this hub (AGENTIC_REMOTE_MANAGER=off).',
+      status: 'offline', messages: [], queued: 0, managedSessions: [],
+    })
+    render(<App />)
+    const input = await screen.findByLabelText('Message')
+    await waitFor(() => expect(getManager).toHaveBeenCalled())
+    await act(async () => undefined)
+    fireEvent.change(input, { target: { value: '/oracle Which sessions finished?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect((await screen.findAllByText(/Oracle is turned off on this hub/)).length).toBeGreaterThan(0)
+    expect(sendManagerMessage).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Message')).toHaveValue('/oracle Which sessions finished?')
+  })
+
+  it('offers Oracle where Knowledge covers the conversation header', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{ name: 'guide.md', path: 'guide.md', kind: 'markdown', size: 20 }],
+    })
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'guide.md', path: 'guide.md', kind: 'markdown', mimeType: 'text/markdown', size: 20, content: '# Guide',
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Guide' })
+    // CSS shows each copy only where the conversation header is out of view:
+    // Knowledge's header when it covers the conversation, and the document's
+    // header on a phone, where it replaces Knowledge's.
+    const header = document.querySelector<HTMLElement>('.knowledge-panel__header .knowledge-panel__oracle')
+    const reader = document.querySelector<HTMLElement>('.knowledge-reader .knowledge-reader__oracle')
+    expect(header).toHaveAccessibleName('Oracle')
+    expect(reader).toHaveAccessibleName('Oracle')
+    fireEvent.click(reader!)
+    expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+    expect(reader).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('shows an actionable session-load failure and retries the snapshot', async () => {
     vi.mocked(listSessionListing)
       .mockRejectedValueOnce(

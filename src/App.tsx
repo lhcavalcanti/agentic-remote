@@ -3616,6 +3616,7 @@ function AppSettingsDialog({
   >({})
   const [runtimeLoading, setRuntimeLoading] = useState(false)
   const [hubCopilotModels, setHubCopilotModels] = useState<RuntimeModelOption[]>()
+  const [hubCopilotError, setHubCopilotError] = useState<string>()
   const [runtimeErrors, setRuntimeErrors] = useState<
     Partial<Record<AgentProvider, string>>
   >({})
@@ -3677,6 +3678,7 @@ function AppSettingsDialog({
     setRuntimeLoading(true)
     setRuntimeModels({})
     setHubCopilotModels(undefined)
+    setHubCopilotError(undefined)
     setRuntimeCatalogsComplete({})
     setRuntimeErrors(
       Object.fromEntries(
@@ -3756,6 +3758,13 @@ function AppSettingsDialog({
       setHubCopilotModels(
         hubCatalog?.status === 'fulfilled' ? hubCatalog.value.options.models : [],
       )
+      setHubCopilotError(
+        hubCatalog?.status === 'rejected'
+          ? hubCatalog.reason instanceof Error
+            ? hubCatalog.reason.message
+            : String(hubCatalog.reason)
+          : undefined,
+      )
       setRuntimeModels(models)
       setRuntimeCatalogsComplete(complete)
       setRuntimeErrors(errors)
@@ -3798,6 +3807,21 @@ function AppSettingsDialog({
 
   if (!open) {
     return null
+  }
+
+  async function retryHubCopilotModels() {
+    const hub = computers.find((computer) => computer.isLocal)
+    if (!hub) {
+      return
+    }
+    setHubCopilotModels(undefined)
+    setHubCopilotError(undefined)
+    try {
+      setHubCopilotModels((await getProviderRuntimeOptions(hub.id, 'copilot')).models)
+    } catch (caught) {
+      setHubCopilotModels([])
+      setHubCopilotError(caught instanceof Error ? caught.message : String(caught))
+    }
   }
 
   async function toggle() {
@@ -3967,7 +3991,11 @@ function AppSettingsDialog({
         ))}
       </section>
 
-      <OracleSettings models={hubCopilotModels} />
+      <OracleSettings
+        models={hubCopilotModels}
+        modelsError={hubCopilotError}
+        onRetryModels={retryHubCopilotModels}
+      />
 
       <section className="app-settings-section">
         <h3>Default session folders</h3>
@@ -5577,6 +5605,7 @@ function KnowledgeReader({
   askUnavailableReason,
   onShowFiles,
   onClose,
+  oracle,
   sessionTitle,
 }: {
   file?: WorkspaceFile
@@ -5592,6 +5621,8 @@ function KnowledgeReader({
   askUnavailableReason?: string
   onShowFiles: () => void
   onClose: () => void
+  /** Oracle's button, for the phone header that replaces Knowledge's own. */
+  oracle?: ReactNode
   sessionTitle?: string
 }) {
   const [raw, setRaw] = useState(false)
@@ -5693,6 +5724,7 @@ function KnowledgeReader({
           outline={outline}
           raw={raw}
         />
+        {oracle}
         <button
           aria-label="Return to conversation"
           className="icon-button knowledge-reader__close"
@@ -12190,21 +12222,24 @@ function App() {
     }
     // Goes to Oracle alone: never to this session, and Oracle answers it
     // without starting or steering any session.
-    const oraclePrompt = oracleIndicator.available ? oracleCommand(content) : undefined
+    const oraclePrompt = oracleCommand(content)
     if (oraclePrompt) {
+      const control = oracleControlRef.current
+      if (!oracleIndicator.available || !control) {
+        // Never handed to the session instead, which would take it as a
+        // prompt. The words stay in the message bar for when Oracle is back.
+        settleSubmission()
+        setError(
+          oracleIndicator.unavailableReason ??
+            'Oracle is still connecting. Try again in a moment.',
+        )
+        return
+      }
       consumeLocalCommand()
       settleSubmission()
       reofferFailedPrompt(targetKey)
-      const control = oracleControlRef.current
-      if (!control) {
-        setOracleOpen(true)
-        return
-      }
-      try {
-        await control.ask(oraclePrompt.prompt, { answerOnly: true })
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      }
+      // A failure keeps the question in Oracle's own message bar.
+      await control.ask(oraclePrompt.prompt, { answerOnly: true })
       return
     }
     const command = isCommand
@@ -15442,11 +15477,16 @@ function App() {
               <Maximize2 size={16} />
             )}
           </button>
-          {knowledgeMode === 'expanded' ? (
-            // The conversation header, and its Oracle button, are hidden
-            // while Knowledge covers the conversation.
-            <OracleButton compact indicator={oracleIndicator} onToggle={toggleOracle} open={oracleOpen} />
-          ) : null}
+          {/* Knowledge covers the conversation header whenever it is expanded,
+              and on a phone whenever it is open; CSS hides this copy where
+              that header is still in view. */}
+          <OracleButton
+            className="knowledge-panel__oracle"
+            compact
+            indicator={oracleIndicator}
+            onToggle={toggleOracle}
+            open={oracleOpen}
+          />
           <button
             aria-label="Close knowledge panel"
             className="icon-button"
@@ -15510,6 +15550,15 @@ function App() {
                 onAsk={askAboutKnowledgeFile}
                 onShowFiles={() => openSidebar('knowledge')}
                 onClose={() => setKnowledgeMode('hidden')}
+                oracle={
+                  <OracleButton
+                    className="knowledge-reader__oracle"
+                    compact
+                    indicator={oracleIndicator}
+                    onToggle={toggleOracle}
+                    open={oracleOpen}
+                  />
+                }
                 sessionTitle={selected?.title}
                 onOpenFolder={(path) => void openKnowledgeFolder(path)}
                 onOpenFile={(path, fragment) =>

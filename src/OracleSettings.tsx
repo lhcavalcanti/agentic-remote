@@ -15,7 +15,16 @@ function effortFrom(value: string): RuntimeReasoningEffort | undefined {
  * next answer. `models` is the hub's own Copilot catalog, which App settings
  * already loads; it is undefined while that catalog is still loading.
  */
-export function OracleSettings({ models = [] }: { models?: RuntimeModelOption[] }) {
+export function OracleSettings({
+  models,
+  modelsError,
+  onRetryModels,
+}: {
+  models?: RuntimeModelOption[]
+  /** Why the hub's catalog could not be read; Retry asks for it again. */
+  modelsError?: string
+  onRetryModels?: () => void
+}) {
   const [settings, setSettings] = useState<ManagerSettingsSnapshot>()
   const [unavailable, setUnavailable] = useState<string>()
   const [loading, setLoading] = useState(true)
@@ -65,7 +74,8 @@ export function OracleSettings({ models = [] }: { models?: RuntimeModelOption[] 
   }
 
   const chosen = settings?.model ?? ''
-  const selectedModel = models.find((model) => model.id === chosen)
+  const choices = models ?? []
+  const selectedModel = choices.find((model) => model.id === chosen)
   const defaultLabel = settings?.defaultModel
     ? `Hub default (${settings.defaultModel})`
     : 'Copilot default'
@@ -94,7 +104,7 @@ export function OracleSettings({ models = [] }: { models?: RuntimeModelOption[] 
             >
               <option value="">{defaultLabel}</option>
               {chosen && !selectedModel ? <option value={chosen}>{chosen}</option> : null}
-              {models.map((model) => (
+              {choices.map((model) => (
                 <option key={model.id} value={model.id}>{model.name}</option>
               ))}
             </select>
@@ -116,9 +126,22 @@ export function OracleSettings({ models = [] }: { models?: RuntimeModelOption[] 
               </select>
             </label>
           ) : null}
+          {models === undefined && !modelsError ? (
+            <p className="dialog-message">Loading the hub&apos;s models…</p>
+          ) : null}
+          {modelsError ? (
+            <div className="form-error oracle-settings__catalog-error" role="alert">
+              <span>Could not load the hub&apos;s models: {modelsError}</span>
+              {onRetryModels ? (
+                <button className="secondary-button" onClick={onRetryModels} type="button">
+                  Retry
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {settings.modelUnavailable ? (
             <p className="form-error" role="status">
-              {settings.model} could not start, so Copilot&apos;s default model is answering.
+              {settings.model ?? settings.defaultModel ?? 'The chosen model'} could not start, so Copilot&apos;s default model is answering.
             </p>
           ) : null}
           {saved && !saving ? (

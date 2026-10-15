@@ -72,4 +72,24 @@ describe('OracleSettings', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Oracle model' }), { target: { value: 'gpt-6-sol' } })
     expect(await screen.findByRole('alert')).toHaveTextContent('Origin is not allowed')
   })
+
+  it("says when the hub's models cannot be read and retries them", async () => {
+    const onRetryModels = vi.fn()
+    const view = render(<OracleSettings modelsError="Copilot runtime is restarting" onRetryModels={onRetryModels} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent("Could not load the hub's models: Copilot runtime is restarting")
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetryModels).toHaveBeenCalledTimes(1)
+    view.rerender(<OracleSettings models={models} onRetryModels={onRetryModels} />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'GPT-6 Sol' })).toBeInTheDocument()
+  })
+
+  it("names the hub's default model when it is the one that could not start", async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { defaultModel: 'env-model', modelUnavailable: true },
+    })
+    render(<OracleSettings models={models} />)
+    expect(await screen.findByText(/env-model could not start/)).toBeInTheDocument()
+  })
 })

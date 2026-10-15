@@ -216,9 +216,25 @@ function readAnswerOnly(): boolean {
 /** What the header button shows about Oracle without opening it. */
 export interface OracleIndicator {
   available: boolean
+  /** Why Oracle cannot take a message; unset while it is still loading. */
+  unavailableReason?: string
   status: ManagerStatus
   unread: boolean
   queued: number
+}
+
+/** The model named in a warning that it could not start. */
+function unavailableModelLabel(settings: ManagerSnapshot['settings']): string {
+  return settings?.model ?? settings?.defaultModel ?? 'The chosen model'
+}
+
+/** The trigger that can take focus back: one in a hidden layer cannot. */
+function visibleTrigger(): HTMLElement | undefined {
+  return [...document.querySelectorAll<HTMLElement>('[aria-controls="oracle-panel"]')].find(
+    (candidate) => candidate.isConnected
+      && !candidate.closest('[hidden]')
+      && (typeof candidate.checkVisibility !== 'function' || candidate.checkVisibility()),
+  )
 }
 
 /** Lets the rest of the app hand Oracle a prompt, as `/oracle` does. */
@@ -232,29 +248,29 @@ export function OracleButton({
   open,
   onToggle,
   compact = false,
+  className = '',
 }: {
   indicator: OracleIndicator
   open: boolean
   onToggle: () => void
   compact?: boolean
+  className?: string
 }) {
   if (!indicator.available) return null
   const working = indicator.status === 'working' || indicator.status === 'recovering'
-  const state = indicator.unread
-    ? ', new reply'
-    : working
-      ? ', working'
-      : indicator.status === 'offline'
-        ? ", couldn't answer"
-        : ''
+  // Every state that holds at once is announced, not just the first.
+  const states = [
+    working ? 'working' : indicator.status === 'offline' ? "couldn't answer" : undefined,
+    indicator.unread ? 'new reply' : undefined,
+  ].filter(Boolean)
   return (
     <button
       aria-controls="oracle-panel"
       aria-expanded={open}
-      aria-label={`Oracle${state}`}
+      aria-label={['Oracle', ...states].join(', ')}
       className={`icon-button oracle-toggle${open ? ' icon-button--active' : ''}${
         working ? ' oracle-toggle--working' : ''
-      }${indicator.status === 'offline' ? ' oracle-toggle--offline' : ''}`}
+      }${indicator.status === 'offline' ? ' oracle-toggle--offline' : ''}${className ? ` ${className}` : ''}`}
       onClick={onToggle}
       title="Oracle: ask about your sessions or hand off work"
       type="button"
@@ -302,6 +318,7 @@ export function ManagerAssistant({
   const [confirmReset, setConfirmReset] = useState(false)
   const [busyMessage, setBusyMessage] = useState<string>()
   const [unread, setUnread] = useState(false)
+  const [loadError, setLoadError] = useState<string>()
   const [announcement, setAnnouncement] = useState('')
   const listRef = useRef<HTMLOListElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -324,9 +341,17 @@ export function ManagerAssistant({
     void Promise.resolve()
       .then(() => getManager())
       .then((next) => {
-        if (!cancelled && next && typeof next === 'object' && Array.isArray(next.messages)) setSnapshot(next)
+        if (cancelled) return
+        if (next && typeof next === 'object' && Array.isArray(next.messages)) {
+          setSnapshot(next)
+          setLoadError(undefined)
+        } else {
+          setLoadError('Oracle sent an answer this app cannot read.')
+        }
       })
-      .catch(() => undefined)
+      .catch((caught: unknown) => {
+        if (!cancelled) setLoadError(`Oracle could not be reached: ${caught instanceof Error ? caught.message : String(caught)}`)
+      })
     return () => {
       cancelled = true
     }
@@ -348,9 +373,20 @@ export function ManagerAssistant({
   const available = Boolean(snapshot?.available)
   const status = snapshot?.status ?? 'offline'
   const queuedCount = snapshot?.queued ?? 0
+  const unavailableReason = available
+    ? undefined
+    : snapshot
+      ? snapshot.unavailableReason || 'Oracle is not available on this hub.'
+      : loadError
   useEffect(() => {
-    indicatorRef.current({ available, status, unread, queued: queuedCount })
-  }, [available, status, unread, queuedCount])
+    indicatorRef.current({
+      available,
+      status,
+      unread,
+      queued: queuedCount,
+      ...(unavailableReason ? { unavailableReason } : {}),
+    })
+  }, [available, status, unread, queuedCount, unavailableReason])
 
   const messageCount = snapshot?.messages.length ?? 0
   const streamLength = snapshot?.streaming?.content.length ?? 0
@@ -374,8 +410,7 @@ export function ManagerAssistant({
     const target = returnFocusRef.current
     returnFocusRef.current = null
     // Safari does not focus a button on click, so the trigger is the fallback.
-    const trigger = [...document.querySelectorAll<HTMLElement>('[aria-controls="oracle-panel"]')]
-      .find((candidate) => candidate.isConnected && !candidate.closest('[hidden]'))
+    const trigger = visibleTrigger()
     const destination = target?.isConnected ? target : trigger
     if (destination && document.activeElement !== destination && !document.querySelector('[role="dialog"]:focus-within')) {
       destination.focus()
@@ -422,7 +457,18 @@ export function ManagerAssistant({
     controlRef.current = {
       ask: async (text, options) => {
         onOpenChange(true)
-        if (text.trim()) await sendText(text, options.answerOnly)
+        if (!text.trim()) return
+        setSendError(undefined)
+        try {
+          await sendText(text, options.answerOnly)
+        } catch (caught) {
+          // The question was already taken from the session's message bar, so
+          // it waits here, as it was asked, to be sent again.
+          setDraft((current) => current.trim() ? `${current.trimEnd()}\n\n${text}` : text)
+          if (options.answerOnly) setAnswerOnly(true)
+          const reason = (caught instanceof Error ? caught.message : String(caught)).replace(/[.\s]+$/, '')
+          setSendError(`Could not send to Oracle: ${reason}. Your question is in the message bar to send again.`)
+        }
       },
     }
     return () => {
@@ -714,7 +760,7 @@ export function ManagerAssistant({
         </div>
         {settings?.modelUnavailable ? (
           <p className="oracle-runtime__warning" role="status">
-            {settings.model} could not start, so Copilot’s default model is answering.
+            {unavailableModelLabel(settings)} could not start, so Copilot’s default model is answering.
           </p>
         ) : null}
       </form>

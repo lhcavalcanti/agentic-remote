@@ -10,7 +10,7 @@ import type { AgentMode, AgentProvider, RuntimeReasoningEffort } from './contrac
 /** The longest message the manager accepts. Anything shorter is queued. */
 export const MANAGER_MESSAGE_MAX_LENGTH = 100_000
 
-/** How many transcript messages a snapshot carries. */
+/** How many recent transcript messages a snapshot carries; every waiting one is added. */
 export const MANAGER_SNAPSHOT_MESSAGES = 200
 
 export type ManagerStatus = 'idle' | 'working' | 'recovering' | 'offline'

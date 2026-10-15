@@ -271,9 +271,50 @@ describe('ManagerAssistant', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
     emit({ type: 'manager.message', message: { id: 'r2', role: 'assistant', content: 'Another', createdAt: 't' } })
-    expect(screen.getByRole('button', { name: 'Oracle, new reply' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Oracle, new reply' }))
+    // Both states hold at once, so both are announced.
+    expect(screen.getByRole('button', { name: 'Oracle, working, new reply' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Oracle, working, new reply' }))
     expect(screen.getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
+  })
+
+  it('keeps a /oracle question in Oracle when it cannot be sent', async () => {
+    vi.mocked(sendManagerMessage).mockRejectedValue(new Error('Origin is not allowed.'))
+    let control: OracleControl | undefined
+    setup(empty, { onControl: (value) => { control = value } })
+    await screen.findByRole('button', { name: 'Oracle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Expose control' }))
+    await act(async () => control!.ask('What is riskiest?', { answerOnly: true }))
+    expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Could not send to Oracle: Origin is not allowed. Your question is in the message bar to send again.',
+    )
+    expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('What is riskiest?')
+    expect(screen.getByRole('checkbox', { name: /Oracle only/ })).toBeChecked()
+  })
+
+  it('tells the app why Oracle cannot take a message', async () => {
+    const onIndicatorChange = vi.fn()
+    vi.mocked(getManager).mockRejectedValueOnce(new Error('offline'))
+    const props = {
+      connectionEpoch: 1, subscribe: () => () => undefined, defaults: {}, openSessions: 0,
+      open: false, onOpenChange: vi.fn(), onIndicatorChange, onOpenSession: vi.fn(() => true),
+      onManagedSessionsChange: vi.fn(), onOpenSettings: vi.fn(),
+    }
+    const view = render(<ManagerAssistant {...props} />)
+    await waitFor(() => expect(onIndicatorChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ available: false, unavailableReason: 'Oracle could not be reached: offline' }),
+    ))
+    vi.mocked(getManager).mockResolvedValueOnce({ ...empty, available: false, unavailableReason: 'Oracle is turned off.' })
+    view.rerender(<ManagerAssistant {...props} connectionEpoch={2} />)
+    await waitFor(() => expect(onIndicatorChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ available: false, unavailableReason: 'Oracle is turned off.' }),
+    ))
+  })
+
+  it("names the hub's default model when it is the one that could not start", async () => {
+    setup({ ...empty, settings: { defaultModel: 'env-model', modelUnavailable: true } })
+    await openPanel()
+    expect(screen.getByText(/env-model could not start/)).toBeInTheDocument()
   })
 
   it('offers Retry on a failed message', async () => {

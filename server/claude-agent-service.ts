@@ -83,6 +83,7 @@ import {
   unavailableSkills,
 } from './session-resources.js'
 import { readClaudeMcp } from './session-resource-transport.js'
+import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -338,19 +339,19 @@ export class ClaudeAgentService
     ]
   }
 
-  start(): Promise<void> {
+  start(phases: StartupPhases = silentStartupPhases): Promise<void> {
     this.resourceReads.start()
     this.resourceEpoch += 1
     this.resourceObservations.clear()
-    return this.admissions.run('@startup', () => this.startAdmitted())
+    return this.admissions.run('@startup', () => this.startAdmitted(phases))
   }
 
-  private async startAdmitted(): Promise<void> {
-    await this.store.initialize()
+  private async startAdmitted(phases: StartupPhases): Promise<void> {
+    await phases.run('claude.store', () => this.store.initialize())
     if (this.stopped) return
-    await this.detectAvailability()
+    await phases.run('claude.availability', () => this.detectAvailability())
     if (!this.stopped && this.available) {
-      await Promise.all(
+      await phases.run('claude.queue', () => Promise.all(
         this.store
           .list()
           .filter(
@@ -363,7 +364,7 @@ export class ClaudeAgentService
               session.queuedPrompts?.length,
           )
           .map((session) => this.drainQueue(session.id)),
-      )
+      ))
     }
   }
 

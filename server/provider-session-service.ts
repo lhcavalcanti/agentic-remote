@@ -33,6 +33,7 @@ import {
   SessionResourceError,
   ResourceReads,
 } from './session-resources.js'
+import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 
 interface ProviderSessionServiceEvents {
   event: [event: ServerEvent]
@@ -59,13 +60,13 @@ export class ProviderSessionService
     return [...this.copilot.providers(), ...this.claude.providers()]
   }
 
-  async start(): Promise<void> {
+  async start(phases: StartupPhases = silentStartupPhases): Promise<void> {
     this.resourceReads.start()
     this.resourcesStopped = false
     this.resourceEpoch += 1
-    await this.copilot.start()
+    await phases.run('copilot.start', () => this.copilot.start(phases))
     try {
-      await this.claude.start()
+      await phases.run('claude.start', () => this.claude.start(phases))
     } catch (error) {
       await this.copilot.stop()
       throw error

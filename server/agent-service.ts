@@ -156,6 +156,7 @@ import {
   type TerminalSessionController,
 } from './terminal-session.js'
 import { buildRecoveryBrief } from './recovery-context.js'
+import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 
 interface ActivePrompt {
   assistantMessageId: string
@@ -2157,14 +2158,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (errors.length && started) console.error('Could not stop the side-question runtime', errors)
   }
 
-  start(): Promise<void> {
+  start(phases: StartupPhases = silentStartupPhases): Promise<void> {
     if (this.stopped) {
       return Promise.reject(Object.assign(new Error('The session service is stopping'), { statusCode: 503 }))
     }
     if (this.startTask) return this.startTask
     this.resourceReads.start()
     this.resourceEpoch += 1
-    const starting = this.admissions.run('@startup', () => this.startAdmitted())
+    const starting = this.admissions.run('@startup', () => this.startAdmitted(phases))
     this.startTask = starting
     void starting.then(
       () => {
@@ -2179,8 +2180,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return starting
   }
 
-  private async startAdmitted(): Promise<void> {
-    await this.store.initialize()
+  private async startAdmitted(phases: StartupPhases): Promise<void> {
+    await phases.run('copilot.store', () => this.store.initialize())
     if (this.stopped) return
     this.startupRecoveryPending = true
     this.terminalRecoveryStates = undefined
@@ -2191,9 +2192,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const session of this.store.terminalRecoverySessions()) {
       if (session.isOpen && session.queuedPrompts?.length) this.startupTerminalQueues.add(session.id)
     }
-    await this.client.start()
+    await phases.run('copilot.sdk', () => this.client.start())
     if (this.stopped) return
-    await this.ensureRuntimeModels().catch((error: unknown) => {
+    await phases.run('copilot.models', () => this.ensureRuntimeModels()).catch((error: unknown) => {
       console.warn('Unable to load runtime models:', error)
     })
     if (this.stopped) return
@@ -2204,7 +2205,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     try {
-      if (await this.discoverSessions()) await this.finishStartupRecovery()
+      if (await phases.run('copilot.discovery', () => this.discoverSessions())) {
+        await phases.run('copilot.recovery', () => this.finishStartupRecovery(phases))
+      }
     } catch (error) {
       if (this.stopped) return
       if (!(error instanceof TerminalDiscoveryError)) throw error
@@ -2213,7 +2216,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publishError('', error)
     }
     if (this.stopped) return
-    await Promise.all([...this.startupTerminalQueues].map((id) => this.drainTerminalQueue(id)))
+    await phases.run('copilot.queue.terminal', () =>
+      Promise.all([...this.startupTerminalQueues].map((id) => this.drainTerminalQueue(id))))
     if (this.stopped) return
     this.discoveryTimer = setInterval(() => {
       void this.refreshDiscovery()
@@ -2225,7 +2229,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.transcriptTimer.unref()
   }
 
-  private async finishStartupRecovery(): Promise<void> {
+  private async finishStartupRecovery(phases: StartupPhases = silentStartupPhases): Promise<void> {
     if (
       (!this.startupRecoveryPending && !this.terminalRecoveryStates?.size) ||
       this.stopped || this.lifecycleLocks.size || this.sessionCreations.size
@@ -2236,7 +2240,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // including discovery that was deferred at startup and retried later. Only
     // while recovery is pending; once it settles, this returns above.
     try {
-      await this.store.verifyPersistence()
+      await phases.run('copilot.recovery.persistence', () => this.store.verifyPersistence())
     } catch (error) {
       this.nativeStartupDiscoveryReady = false
       throw error
@@ -2245,21 +2249,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       (this.terminalController.create ? this.store.terminalRecoverySessions() : [])
         .map(({ id }) => [id, 'pending']),
     )
-    const recovered = await this.recoverTerminalSessions()
-    if (recovered > 0 && !(await this.discoverSessions())) return
+    const recovered = await phases.run('copilot.recovery.terminal', () => this.recoverTerminalSessions())
+    if (
+      recovered > 0 &&
+      !(await phases.run('copilot.recovery.discovery', () => this.discoverSessions()))
+    ) return
     if (this.stopped) return
     if (this.startupRecoveryPending) {
       // Terminal recovery reconciles each confirmed owner before admitting it.
       // Do not revisit those owners, or touch an indeterminate one's state.
-      await this.reconcileUntrackedTerminalDispatches(
+      await phases.run('copilot.recovery.dispatches', () => this.reconcileUntrackedTerminalDispatches(
         this.store.list()
           .filter((session) => !this.terminalRecoveryStates!.has(session.id))
           .map((session) => session.id),
-      )
+      ))
     }
-    await this.refreshTranscripts()
+    await phases.run('copilot.recovery.transcripts', () => this.refreshTranscripts())
     if (this.startupRecoveryPending) {
-      await Promise.all(
+      await phases.run('copilot.queue.sdk', () => Promise.all(
         this.store.list()
           .filter((session) =>
             session.isOpen &&
@@ -2271,7 +2278,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             !this.externalSessionIds.has(session.id),
           )
           .map((session) => this.drainSdkQueue(session.id)),
-      )
+      ))
     }
     this.startupRecoveryPending = false
     if (![...this.terminalRecoveryStates.values()].includes('pending')) {

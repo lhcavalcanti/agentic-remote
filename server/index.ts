@@ -1,4 +1,5 @@
 import { buildApp } from './app.js'
+import { createStartupPhases, startManagedServer } from './startup-phases.js'
 
 const host = process.env.HOST?.trim() || '127.0.0.1'
 const port = Number.parseInt(process.env.PORT || '4318', 10)
@@ -11,15 +12,15 @@ if (role !== 'hub' && role !== 'node') {
   throw new Error(`Invalid AGENTIC_REMOTE_ROLE: ${role}`)
 }
 
-const { app, service } = await buildApp({
+const phases = createStartupPhases()
+const { app, service } = await phases.run('app.build', () => buildApp({
   logger: true,
   role,
   serveStatic: role === 'hub' && process.env.NODE_ENV === 'production',
   cliCanary: true,
-})
+}))
 
-await service.start()
-await app.listen({ host, port })
+await startManagedServer(app, service, { host, port }, phases)
 
 let shuttingDown = false
 async function shutdown(signal: string) {

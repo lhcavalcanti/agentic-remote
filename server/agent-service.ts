@@ -148,6 +148,7 @@ import {
   isTerminalSessionInUsePrompt,
   isTerminalVisiblyIdle,
   terminalCommandOutput,
+  terminalFormReplyBudget,
   TmuxTerminalSessionController,
   TerminalFormReplyError,
   type TerminalFormStep,
@@ -6909,7 +6910,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async dismissTerminalFormForContinuation(
-    sessionId: string, request: PendingUserInput, input: UserInputReplyInput,
+    sessionId: string, request: PendingUserInput, input: UserInputReplyInput, deadline: number,
   ): Promise<SessionDetail> {
     const requestId = request.requestId
     const key = JSON.stringify([sessionId, requestId])
@@ -6929,7 +6930,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       dismissed = await this.terminalController.dismissUserInput?.(sessionId, {
         question: receipt.request.question,
         fields: receipt.request.form!.fields.map((field) => field.title),
-      }) ?? false
+      }, undefined, { deadline }) ?? false
     } catch (error) {
       this.publishError(sessionId, error)
       if (error instanceof TerminalFormReplyError && error.outcome === 'not-submitted') {
@@ -6956,7 +6957,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ), { statusCode: 409 })
     }
     receipt.dismissed = await this.waitForToolCompletion(
-      sessionId, requestId.slice('persisted-user-input:'.length),
+      sessionId, requestId.slice('persisted-user-input:'.length), deadline,
     )
     return this.continueTerminalFormReply(sessionId, requestId, input)
   }
@@ -6966,6 +6967,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     requestId: string,
     input: UserInputReplyInput,
   ): Promise<SessionDetail> {
+    const started = Date.now()
     if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
       throw new Error('Session is no longer available')
     }
@@ -7007,6 +7009,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     const action = input.action || 'accept'
+    // One budget covers every terminal step of a persisted form reply,
+    // including waiting behind other terminal work, so it always settles.
+    const formDeadline = request.form
+      ? started + terminalFormReplyBudget(request.form.fields.length)
+      : Infinity
     const sdkElicitation = this.elicitations.get(requestId)
     if (sdkElicitation) {
       if (sdkElicitation.sessionId !== sessionId) {
@@ -7042,10 +7049,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                 fields: request.form.fields.map((field) => field.title),
               },
               action,
+              { deadline: formDeadline },
             ).catch((error: unknown) => this.handleTerminalFormReplyError(sessionId, requestId, input, error)))
           // Hiding the card cannot release the terminal's keyboard. Keep the
           // question actionable unless the owning CLI confirms it has ended.
-          if (dismissed && !(await this.waitForToolCompletion(sessionId, toolCallId))) {
+          if (dismissed && !(await this.waitForToolCompletion(sessionId, toolCallId, formDeadline))) {
             const uncertain = new TerminalFormReplyError(
               'The terminal dismissal was sent, but completion was not confirmed. Do not resend it.',
               'uncertain',
@@ -7137,7 +7145,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const filled =
           steps &&
           (await this.terminalController
-            .fillUserInputForm?.(sessionId, steps, identity)
+            .fillUserInputForm?.(sessionId, steps, identity, { deadline: formDeadline })
             .catch((error: unknown) => this.handleTerminalFormReplyError(sessionId, requestId, input, error)))
         // Filling reports failure for a capture that timed out as well as for
         // keys never sent, and the last Enter may already have submitted the
@@ -7155,7 +7163,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.queuedDispatches.assertAvailable(sessionId)
       if (terminalBacked && request.form) {
-        return this.dismissTerminalFormForContinuation(sessionId, request, input)
+        return this.dismissTerminalFormForContinuation(sessionId, request, input, formDeadline)
       }
       if (terminalBacked) {
         const dismissed =
@@ -7937,18 +7945,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   /**
    * Waits for the agent to record the prompt as finished, so the answer that
-   * follows is typed at the prompt instead of into the closing form.
+   * follows is typed at the prompt instead of into the closing form. A reply
+   * deadline ends the wait early, after one last look.
    */
   private async waitForToolCompletion(
     sessionId: string,
     toolCallId: string,
-    attempts = 20,
+    deadline = Infinity,
   ): Promise<boolean> {
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 150))
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const wait = Math.min(150, deadline - Date.now())
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
       if (await this.isToolCallComplete(sessionId, toolCallId)) {
         return true
       }
+      if (Date.now() >= deadline) return false
     }
     return false
   }

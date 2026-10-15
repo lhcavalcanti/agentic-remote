@@ -460,9 +460,18 @@ Questions and permissions are the highest-priority UI state.
   Inspection MAY try a bounded sequence of wider layouts when the maximum
   width remains ambiguous, without shrinking below the original width or
   extending the operation deadline.
-- The temporary viewport operation budget MUST scale with the number of form
-  fields while retaining a hard upper bound, so verified multi-field forms can
-  complete without leaving an enlarged window indefinitely.
+- The form reply budget MUST scale with the number of form fields while
+  retaining a hard upper bound, so verified multi-field forms can complete
+  without leaving an enlarged window indefinitely. Each persisted form accept,
+  decline, or cancel MUST settle within one such budget that starts before it
+  waits behind other terminal work and also covers captures, keystrokes,
+  closure confirmation, and cleanup. Queued work whose budget expired MUST NOT
+  begin, and keys MUST NOT be sent after expiry. Expiry before a commit key
+  MUST return HTTP 409 with `uncertainDelivery: false`, keep the card pending,
+  and ask the user to try again; expiry after a commit key may have been sent
+  MUST return HTTP 409 with `uncertainDelivery: true` and warn against
+  resending. Viewport restoration still runs to completion after expiry, but
+  MUST NOT delay the reply.
 - Bound leaf CLIs with explicit session arguments SHOULD revalidate their live
   process identity and pane directly rather than repeat host-wide discovery
   for every form key. Session-state ownership, process-start identity, and the

@@ -8958,6 +8958,7 @@ describe('AgentService deletion', () => {
         { kind: 'select', optionCount: 3, index: 0 },
       ],
       { question: 'Choose the deployment', fields: ['Name', 'Scope', 'Confirm'] },
+      { deadline: expect.any(Number) },
     )
     expect(terminal.send).not.toHaveBeenCalled()
     expect(terminal.dismissUserInput).not.toHaveBeenCalled()
@@ -9044,7 +9045,7 @@ describe('AgentService deletion', () => {
     expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
       question: 'Confirm the transfer',
       fields: ['Confirm'],
-    })
+    }, undefined, { deadline: expect.any(Number) })
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')
@@ -9227,7 +9228,7 @@ describe('AgentService deletion', () => {
         expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
           question: 'Confirm the repository setup.',
           fields: ['Confirmed'],
-        }, action)
+        }, action, { deadline: expect.any(Number) })
       }
       expect(terminal.send).not.toHaveBeenCalled()
     } finally {

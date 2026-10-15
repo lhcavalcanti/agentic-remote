@@ -668,28 +668,147 @@ describe('SessionStore', () => {
     })
   })
 
-  it('migrates active terminal sessions into boot recovery', async () => {
+  it('shows discovered terminal sessions without granting boot recovery', async () => {
     const { directory, store } = await createStore()
     await store.create({
-      id: 'legacy-terminal',
-      cwd: '/tmp/legacy-project',
-      title: 'Legacy terminal',
+      id: 'history-session',
+      cwd: '/tmp/history-project',
+      title: 'History session',
       updatedAt: '2026-07-22T00:00:00.000Z',
       status: 'idle',
       isOpen: false,
       messages: [],
     })
+    await store.syncDiscovered([{
+      id: 'external-run',
+      cwd: '/tmp/external-project',
+      title: 'External run',
+      updatedAt: '2026-07-22T00:00:01.000Z',
+    }])
 
-    await store.syncBackends(['legacy-terminal'], [])
+    await store.syncBackends(['history-session', 'external-run'], [])
+
+    for (const id of ['history-session', 'external-run']) {
+      expect(store.get(id)).toMatchObject({ isOpen: true, executionMode: 'tmux' })
+      expect(store.isManagedOpen(id)).toBe(false)
+      expect(store.shouldRecoverTerminalSession(id)).toBe(false)
+    }
+    expect(store.terminalRecoverySessions()).toEqual([])
+
+    await store.syncOpen([])
     const restored = new SessionStore(directory)
     await restored.initialize()
 
-    expect(restored.terminalRecoverySessions()).toEqual([
-      expect.objectContaining({
-        id: 'legacy-terminal',
+    expect(restored.terminalRecoverySessions()).toEqual([])
+    for (const id of ['history-session', 'external-run']) {
+      expect(restored.get(id)).toMatchObject({ isOpen: false, executionMode: 'tmux' })
+    }
+  })
+
+  it('keeps boot recovery for app-managed terminals rediscovered after a restart', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'managed-terminal',
+        cwd: '/tmp/managed-project',
+        title: 'Managed terminal',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
         isOpen: true,
-      }),
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+
+    const restarted = new SessionStore(directory)
+    await restarted.initialize()
+    await restarted.syncBackends(['managed-terminal'], [])
+    expect(restarted.isManagedOpen('managed-terminal')).toBe(true)
+    await restarted.syncOpen([])
+
+    const rebooted = new SessionStore(directory)
+    await rebooted.initialize()
+    expect(rebooted.terminalRecoverySessions()).toEqual([
+      expect.objectContaining({ id: 'managed-terminal', isOpen: true }),
     ])
+  })
+
+  it('grants boot recovery once the app sends or queues work for a discovered terminal', async () => {
+    const { directory, store } = await createStore()
+    const ids = ['sent', 'queued', 'answered', 'native-queued', 'observed']
+    await store.syncDiscovered(ids.map((id) => ({
+      id,
+      cwd: `/tmp/${id}`,
+      title: id,
+      updatedAt: '2026-07-22T00:00:00.000Z',
+    })))
+    await store.syncBackends(ids, [])
+    const queued = {
+      content: 'Queued from the app',
+      createdAt: '2026-07-22T00:00:01.000Z',
+    }
+
+    await store.markTerminalPromptDispatched('sent', '2026-07-22T00:00:01.000Z', 'Sent to terminal')
+    await store.enqueuePrompt('queued', { ...queued, id: 'queued-prompt' })
+    await store.enqueueAnsweringPrompt('answered', { ...queued, id: 'answer-prompt' }, undefined)
+    await store.markTerminalPromptQueued('native-queued')
+
+    expect(store.get('native-queued')?.activity).toBe('Queued in terminal')
+    for (const id of ['sent', 'queued', 'answered', 'native-queued']) {
+      expect(store.isManagedOpen(id)).toBe(true)
+    }
+    expect(store.isManagedOpen('observed')).toBe(false)
+
+    await store.syncOpen([])
+    const restored = new SessionStore(directory)
+    await restored.initialize()
+    expect(restored.terminalRecoverySessions().map(({ id }) => id).sort()).toEqual(
+      ['answered', 'native-queued', 'queued', 'sent'],
+    )
+  })
+
+  it('grants boot recovery when the app suspends and resumes a discovered terminal', async () => {
+    const { directory, store } = await createStore()
+    await store.syncDiscovered([{
+      id: 'resting',
+      cwd: '/tmp/resting',
+      title: 'Resting',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+    }])
+    await store.syncBackends(['resting'], [])
+
+    await store.setSuspended('resting', true)
+    expect(store.isManagedOpen('resting')).toBe(true)
+    expect(store.shouldRecoverTerminalSession('resting')).toBe(false)
+    await store.setSuspended('resting', false)
+    await store.syncOpen([])
+
+    const restored = new SessionStore(directory)
+    await restored.initialize()
+    expect(restored.terminalRecoverySessions()).toEqual([
+      expect.objectContaining({ id: 'resting', isOpen: true }),
+    ])
+  })
+
+  it('does not grant boot recovery for work queued on a closed or SDK session', async () => {
+    const { store } = await createStore()
+    await store.syncDiscovered(['closed-terminal', 'history-sdk'].map((id) => ({
+      id,
+      cwd: `/tmp/${id}`,
+      title: id,
+      updatedAt: '2026-07-22T00:00:00.000Z',
+    })))
+    await store.syncBackends(['closed-terminal'], ['history-sdk'])
+    await store.syncOpen([])
+
+    for (const id of ['closed-terminal', 'history-sdk']) {
+      await store.enqueuePrompt(id, {
+        id: `${id}-prompt`,
+        content: 'Queued while closed',
+        createdAt: '2026-07-22T00:00:01.000Z',
+      })
+      expect(store.isManagedOpen(id)).toBe(false)
+    }
   })
 
   it('streams and finishes an assistant message', async () => {
@@ -1198,7 +1317,7 @@ describe('SessionStore', () => {
       isOpen: true,
     })
     expect(store.backend('changed')).toBe('terminal')
-    expect(store.isManagedOpen('changed')).toBe(true)
+    expect(store.isManagedOpen('changed')).toBe(false)
     expect(store.get('unchanged')?.revision).toBe(unchangedRevision)
 
     await store.syncOpen(['changed'])

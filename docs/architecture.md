@@ -125,8 +125,12 @@ observations are not written to stored session or pairing state.
 - Each node persists open-session backend ownership in
   `~/.agentic-remote/state.json`.
 - A service restart reuses existing tmux processes. A full host reboot
-  recreates missing previously open tmux windows with the same Copilot session
-  IDs, allowing Copilot to resume from its local session database.
+  recreates missing tmux windows, with the same Copilot session IDs, for the
+  sessions Agentic Remote manages: those it created or moved to tmux,
+  reopened, suspended or resumed, or delivered or queued work to. A Copilot
+  process merely discovered in some other tmux pane is listed while it runs
+  but is not recreated after it exits. Recovery intent recorded by earlier
+  releases' discovery is kept until that session is closed.
 - Each node checks every Copilot CLI version it updates to by starting a
   retired, disposable session in a detached tmux session of its own
   (`server/cli-canary.ts`). It records the result in
@@ -219,7 +223,7 @@ Deferred native demand uses the existing coalesced queue wakeup, which cannot
 enter an exclusive Clear lease from an unrelated admission.
 
 Native startup queue intent is captured from managed-open persisted sessions
-before discovery can promote other live terminals. Startup seeds the existing
+before discovery can mark other live terminals open. Startup seeds the existing
 guarded drain rather than waiting for a completion newer than the queued text.
 Its stricter readiness checks require completed discovery, the existing owner,
 and a readable empty composer; managed/open/native state is rechecked in the
@@ -238,7 +242,7 @@ deletion, stop, or a backend change cancels its automatic queue wake rather than
 turning it into an ordinary unguarded drain.
 Native receipts restored at startup keep that origin even when a closed or
 unmanaged session never qualified for startup queue intent.
-Eligibility comes from the original persisted intent, not discovery-promoted
+Eligibility comes from the original persisted intent, not discovery-observed
 metadata; an acknowledgement cannot revive an intent already retired.
 
 An SDK object's registration is not admission of its persisted identity.

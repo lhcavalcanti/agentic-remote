@@ -1017,3 +1017,68 @@ describe('Deferred terminal ownership recovery', () => {
     },
   )
 })
+
+describe('External terminal recovery intent', () => {
+  async function restart(f: Awaited<ReturnType<typeof fixture>>) {
+    await f.service.stop()
+    const store = new SessionStore(f.stateDirectory)
+    await store.initialize()
+    const service = new AgentService(
+      store, f.client, f.active, f.stopper,
+      async () => [], async () => undefined,
+      f.terminal, async () => undefined, async () => undefined,
+    )
+    fixtures.find((entry) => entry.service === f.service)!.service = service
+    await service.start()
+    return { store, service }
+  }
+
+  it('does not relaunch finished external runs after a restart', async () => {
+    const f = await fixture([])
+    f.ownership.aggregateError = undefined
+    const runs = Array.from({ length: 10 }, (_, index) => `external-run-${index}`)
+    for (const id of runs) f.ownership.owners.add(id)
+
+    await f.service.start()
+    for (const id of runs) {
+      expect(f.store.get(id)).toMatchObject({ isOpen: true, executionMode: 'tmux' })
+      expect(f.store.shouldRecoverTerminalSession(id)).toBe(false)
+    }
+
+    f.ownership.owners.clear()
+    await f.service.refreshDiscovery()
+    for (const id of runs) {
+      expect(f.store.get(id)?.isOpen).toBe(false)
+      expect((await f.persisted()).sessions[id].managedOpen).not.toBe(true)
+    }
+
+    const restarted = await restart(f)
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(restarted.store.terminalRecoverySessions()).toEqual([])
+    for (const id of runs) {
+      expect(restarted.store.get(id)).toMatchObject({ isOpen: false, executionMode: 'tmux' })
+    }
+  })
+
+  it('keeps managed recovery for app-owned and app-driven terminals only', async () => {
+    const f = await fixture(['managed'])
+    f.ownership.aggregateError = undefined
+    for (const id of ['managed', 'driven', 'observed']) f.ownership.owners.add(id)
+
+    await f.service.start()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.store.shouldRecoverTerminalSession('managed')).toBe(true)
+    expect(f.store.shouldRecoverTerminalSession('driven')).toBe(false)
+    await expect(f.service.sendMessage('driven', 'Continue from the app')).resolves.toMatchObject({
+      isOpen: true,
+    })
+    expect(f.terminal.send).toHaveBeenCalledOnce()
+    expect(f.store.shouldRecoverTerminalSession('driven')).toBe(true)
+    expect(f.store.shouldRecoverTerminalSession('observed')).toBe(false)
+
+    f.ownership.owners.clear()
+    await f.service.refreshDiscovery()
+    await restart(f)
+    expect(f.terminal.create.mock.calls.map(([id]) => id).sort()).toEqual(['driven', 'managed'])
+  })
+})

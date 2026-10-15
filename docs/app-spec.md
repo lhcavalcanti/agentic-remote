@@ -281,11 +281,16 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - Each owning computer MUST persist whether an open session is SDK- or
   tmux-backed.
-- Actively discovered tmux Copilot sessions MUST be migrated into the persisted
-  terminal recovery set.
-- After host boot, missing previously open terminal sessions MUST be recreated
-  in tmux with the same Copilot session ID, cwd, title, allow-all setting, model,
-  effort, context tier, and agent mode.
+- Actively discovered tmux Copilot sessions MUST be persisted as tmux-backed
+  and listed as open while their process runs. Discovery alone MUST NOT add
+  them to the persisted terminal recovery set; once such a process exits it
+  MUST be listed as closed and MUST NOT be recreated.
+- A tmux session MUST join the persisted terminal recovery set when Agentic
+  Remote creates it, moves it to tmux, reopens it, suspends or resumes it, or
+  delivers or queues work to it.
+- After host boot, missing terminal sessions in the recovery set MUST be
+  recreated in tmux with the same Copilot session ID, cwd, title, allow-all
+  setting, model, effort, context tier, and agent mode.
 - Existing live tmux sessions MUST be detected and MUST NOT be duplicated.
 - SDK sessions MUST remain visible and MAY resume lazily when opened.
 - Claude Agent sessions MUST resume by their persisted provider session ID

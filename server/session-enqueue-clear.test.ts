@@ -563,10 +563,10 @@ describe('Clear joins committed enqueue admissions', () => {
       }
       return disk.writeFile(...args)
     })
-    const update = runtime.store.update.bind(runtime.store)
-    vi.spyOn(runtime.store, 'update').mockImplementationOnce(async (...args) => {
+    const markQueued = runtime.store.markTerminalPromptQueued.bind(runtime.store)
+    vi.spyOn(runtime.store, 'markTerminalPromptQueued').mockImplementationOnce(async (...args) => {
       try {
-        const result = await update(...args)
+        const result = await markQueued(...args)
         settled.finish()
         await releaseResult.promise
         return result

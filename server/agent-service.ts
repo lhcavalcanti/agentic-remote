@@ -4773,9 +4773,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (nativeEnqueue) {
         await this.recordDelivery(sessionId, answers, delivery)
-        const queued = await this.store.update(sessionId, (session) => {
-          session.activity = 'Queued in terminal'
-        })
+        const queued = await this.store.markTerminalPromptQueued(sessionId)
         this.publish(queued)
         return queued
       }

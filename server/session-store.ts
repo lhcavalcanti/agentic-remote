@@ -172,6 +172,17 @@ function clearRecoverySeedFailure(session: StoredSession): void {
   }
 }
 
+/**
+ * Sending work to a tmux session, or suspending and resuming it, through the
+ * app makes the app responsible for it, so the session joins boot recovery
+ * like one the app created there. Discovery alone never calls this.
+ */
+function grantTerminalRecovery(session: StoredSession): void {
+  if (session.backend === 'terminal' && session.isOpen === true) {
+    session.managedOpen = true
+  }
+}
+
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     archivedMessages,
@@ -709,18 +720,17 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          if (
-            session.backend === 'terminal' &&
-            session.managedOpen === true &&
-            session.isOpen === true
-          ) {
+          if (session.backend === 'terminal' && session.isOpen === true) {
             continue
           }
+          // Observed presence only. Any Copilot process in a tmux pane is
+          // listed here, including one-shot runs another tool started, and
+          // those must not come back as windows after a restart. Recovery
+          // intent is granted by the app paths that create or drive a session.
           state.sessions[session.id] = {
             ...session,
             revision: (session.revision ?? 0) + 1,
             backend: 'terminal',
-            managedOpen: true,
             isOpen: true,
           }
         } else if (
@@ -780,6 +790,7 @@ export class SessionStore {
       // without it a pass that saw the pane go marked the session closed, and
       // this call left that in place -- a session both suspended and gone.
       session.isOpen = true
+      grantTerminalRecovery(session)
       session.status = 'idle'
       session.activity = undefined
       session.pendingPermission = undefined
@@ -1099,6 +1110,7 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
+      grantTerminalRecovery(session)
     })
   }
 
@@ -1680,6 +1692,7 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
+      grantTerminalRecovery(session)
       if (
         !session.recoverySeed &&
         session.failedPrompt &&
@@ -1827,6 +1840,15 @@ export class SessionStore {
       session.queueDispatchAt = dispatchedAt
       session.status = 'running'
       session.activity = activity
+      grantTerminalRecovery(session)
+    })
+  }
+
+  /** Records a prompt handed to the terminal's own queue while it works. */
+  async markTerminalPromptQueued(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.activity = 'Queued in terminal'
+      grantTerminalRecovery(session)
     })
   }
 

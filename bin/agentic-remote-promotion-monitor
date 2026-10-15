@@ -30,6 +30,7 @@ readonly STATE_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_STATE_DIR "$USER_HOME
 readonly STATE_FILE="$STATE_DIR/last-graduated-commit"
 readonly STATE_RECORD="$STATE_DIR/promotion-state"
 readonly PENDING_RECORD="$STATE_DIR/pending-promotion"
+readonly PAUSE_FILE="$STATE_DIR/promotion-paused"
 readonly LOCK_FILE="$STATE_DIR/lock"
 readonly SERVICE_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_SERVICE agentic-remote.service)"
 readonly DATA_DIR="$(profile_value AGENTIC_REMOTE_DATA_DIR '')"
@@ -96,6 +97,55 @@ assert_clean() {
     die "worktree could not be read: $root"
   [[ -z "$changes" ]] ||
     die "worktree is not clean: $root"
+}
+
+# Prints the pause time and reason and exits 0 when promotion is paused, exits
+# 10 when no pause is recorded, and exits otherwise when the pause state cannot
+# be read. Keep in step with the setup command, which owns writing it.
+read_pause_marker() {
+  python3 - "$PAUSE_FILE" <<'PY'
+import os
+import stat
+import sys
+
+marker = sys.argv[1]
+try:
+    try:
+        info = os.lstat(marker)
+    except FileNotFoundError:
+        sys.exit(10)
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError("the pause marker is not a regular file")
+    fields = {}
+    with open(marker, encoding="utf-8") as stream:
+        for line in stream:
+            key, separator, value = line.rstrip("\n").partition("=")
+            if separator:
+                fields[key] = value
+    print(fields.get("paused_at", ""))
+    print(fields.get("reason", ""))
+except Exception as error:
+    print(getattr(error, "strerror", None) or error)
+    sys.exit(2)
+PY
+}
+
+# Succeeds, after saying why, when an operator paused promotion. The timer can
+# be rearmed or the service started by hand, so the pause is enforced here
+# rather than by the timer's state. Pause state that cannot be read stops the
+# run as a failure: an unconfirmed pause must not be overridden.
+promotion_paused() {
+  local action="$1" state status=0
+  local -a fields
+  require_command python3
+  state="$(read_pause_marker)" || status=$?
+  case "$status" in
+    0) ;;
+    10) return 1 ;;
+    *) die "could not read the promotion pause state at $PAUSE_FILE${state:+ ($state)}; refusing to promote" ;;
+  esac
+  mapfile -t fields <<<"$state"
+  log "promotion is paused since ${fields[0]:-an unknown time}${fields[1]:+: ${fields[1]}}; $action"
 }
 
 sync_promotion_state() {
@@ -881,6 +931,16 @@ run_pnpm() {
 }
 
 run() {
+  # Before anything else, including reconciling an interrupted promotion: a
+  # paused monitor fetches, validates, and changes nothing, and leaves any
+  # pending journal for the first run after promotion resumes.
+  if promotion_paused "skipping this run"; then
+    if [[ -e "$PENDING_RECORD" || -L "$PENDING_RECORD" ]]; then
+      log "the pending promotion journal was retained; it is reconciled after enable resumes promotion"
+    fi
+    return
+  fi
+
   require_value AGENTIC_REMOTE_MONITOR_DEV_ROOT "$DEV_ROOT"
   require_value AGENTIC_REMOTE_MONITOR_PROD_ROOT "$PROD_ROOT"
   require_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME"
@@ -1048,6 +1108,14 @@ run() {
     die "production runtime checkout changed to a branch during validation"
   [[ "$(git -C "$PROD_ROOT" rev-parse HEAD)" == "$prod_commit" ]] ||
     die "production runtime source changed during validation"
+
+  # Validation can take many minutes. A pause recorded meanwhile stops the run
+  # here, the last point before the runtime or any promotion record changes.
+  # Past this point the transaction runs to completion or rollback, because
+  # cutting it short is what would strand recovery.
+  if promotion_paused "stopping after validation and before graduation"; then
+    return
+  fi
 
   log "graduating $candidate_commit to the production runtime source"
   local previous_release="" existing_releases="" publication_id

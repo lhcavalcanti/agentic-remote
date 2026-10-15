@@ -261,18 +261,61 @@ the `refresh` command:
 ```
 
 `refresh` atomically replaces the installed monitor and unit definitions,
-preserves the profile, and keeps the timer's enabled and running state.
+preserves the profile, and keeps the timer's enabled and running state unless
+promotion is paused (see below).
 Successful promotions also refresh those lifecycle assets from the exact
 validated candidate before restarting the managed service. A refresh failure
 therefore leaves the previous service process running while the promotion
 monitor restores the previous release, rather than silently installing an
 older timeout or monitor.
 
+### Pausing promotion
+
+Disabling the timer alone is not a pause: anything that runs
+`systemctl --user enable --now` on it, or starts the service by hand, would
+resume promotion. An operator pause is therefore a durable marker that the
+monitor itself enforces:
+
+```bash
+./bin/agentic-remote-promotion-setup disable --reason "holding the current release"
+./bin/agentic-remote-promotion-setup status
+./bin/agentic-remote-promotion-setup enable
+```
+
+- `disable` atomically writes a `0600` `promotion-paused` marker (UTC time
+  and optional one-line reason) to the profile's `state_dir` *before* it
+  disables and stops the timer, and succeeds only once the timer is neither
+  active nor enabled.
+- While the marker exists, every monitor run, whether started by the timer,
+  a rearmed timer, or `systemctl --user start` of the service, logs
+  `promotion is paused since …; skipping this run` and exits 0 before any
+  fetch, validation, recovery, or promotion. A pending promotion journal is
+  retained and reconciled after resuming. A run already validating when the
+  pause lands stops after validation and before graduation; one that already
+  recorded a pending promotion completes or rolls back that transaction, since
+  cutting it short would strand recovery.
+- `refresh`, `install`, and therefore `agentic-remote setup`/`update` keep the
+  marker and leave the timer disabled, disarming a timer that was rearmed in
+  the meantime. `install --enable` does not resume a pause.
+- Only `enable` resumes: it clears the marker after the health preflight
+  passes, then arms the timer. A failed preflight leaves the pause in place.
+- `status` reports `Promotion: paused since …` (with the reason), `enabled`, or
+  `disabled`. It exits 0 when paused, and warns if the timer was rearmed.
+- A marker that exists but cannot be read fails closed: the monitor refuses to
+  run, `status` exits non-zero, and `refresh` treats promotion as paused.
+- `uninstall` preserves the marker along with the rest of the state.
+
+Any external watchdog that repairs a disabled timer must treat a paused
+monitor (the marker, or `status` reporting `paused`) as healthy rather than
+rearm it. A rearm is harmless to promotion, but it is not a repair.
+
 ## Pull, validate, and graduate
 
 A local-only monitor may run this sequence on an opt-in machine:
 
-1. Acquire a lock so only one run can change the runtime.
+1. Exit without changes while an operator pause is recorded (see
+   [Pausing promotion](#pausing-promotion)), then acquire a lock so only one
+   run can change the runtime.
 2. Reconcile any pending promotion before treating the current release as a
    baseline. Finish recovery or completion and return; do not start a different
    promotion in the same run.
@@ -294,7 +337,8 @@ A local-only monitor may run this sequence on an opt-in machine:
 6. Remove the validation worktree afterwards, refusing to delete anything that
    turns out to be a checkout this repository cannot account for.
 7. Verify the production runtime worktree is clean, intentionally detached, and
-   has not changed during validation.
+   has not changed during validation, and stop here if promotion was paused
+   meanwhile.
 8. Durably record the pending promotion and known-good baseline, then promote
    the exact validated commit, publish an immutable release, and
    restart the managed service.

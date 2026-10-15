@@ -136,6 +136,7 @@
     "server/side-question.ts",
     "server/submission-error-http.test.ts",
     "server/terminal-form-controls.test.ts",
+    "server/terminal-form-deadline.test.ts",
     "server/terminal-form-viewport.test.ts",
     "server/terminal-queue-delivery.test.ts",
     "server/terminal-send-uncertainty.test.ts",
@@ -260,9 +261,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 155,
+  "communities": 154,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11210,
+  "edges": 11249,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -294,7 +295,7 @@
     "bin/agentic-remote-promotion-setup": "26eada3ab215d1d359ebcbb2d12f373db87d2a18529bc505c7efa76d4d6f5ed6",
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "fa7bd993598736ff6865d21bac45336aad59dcb1360c50715ab50a5fca74fcdd",
+    "docs/app-spec.md": "43d0046bb191569975ed346ec359cf638d107cc85c735cc056fee6f5f58b08dc",
     "docs/architecture.md": "0f43c5bb60294323221e66606688052b071d07e54c7db2881d1ed43c5941a38b",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -339,8 +340,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "9b3f7afab458b249792968b5843d1ef2aea7ca75383adc76628a47b6a2abede8",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "50e459fe672d324bd8853c18ba47a877b756f412d9677e37971419590b0d15d6",
-    "server/agent-service.ts": "a2de37355c365c1adbfb8beab4cfcf9ed35df30f0507f60bd01bf2594f496e97",
+    "server/agent-service.test.ts": "8f2e5556944d07f790f25b0f405581fd1877d1d24a262e640c73dd53035d54ef",
+    "server/agent-service.ts": "45a36fbbfb59e82bdce8e61b7ce2e770588147f9d7effb7f25cf15ad8766b7bf",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -434,7 +435,7 @@
     "server/session-order-routes.test.ts": "e81742958b18b375f320770ce55d471b200fc3f3abe2ab8c07f105760de63d0a",
     "server/session-order-store.test.ts": "90e82ede715eed05b4deee9a93aa20f44704d9e966b41db806ee75604bc869f9",
     "server/session-order-store.ts": "f748aeda955081e970814e8e121155334ddb75f7202927ac12c82b5591d3461c",
-    "server/session-reply-durability.test.ts": "a206129ecfa9b08000f34781e2c16009ca7bf80fece937c3927f4d8fe27a38c8",
+    "server/session-reply-durability.test.ts": "c5975219481da934076c01ac12cb523547c0252ea1c306d6ed3baa3a982a6e48",
     "server/session-resource-cancellation.test.ts": "cda2bdb53d746f5062c123d18289a61b745fb1b9da5ee642c3142d01310b06a8",
     "server/session-resource-clear.test.ts": "05e065bd0be49e7496eb77585908bb5f63dfe0a4eecf41b282372e160122ece1",
     "server/session-resource-providers.test.ts": "b1c046acf437c917c42efac5f34de9ec9383757f4d90af8a5e4c996f111d45fb",
@@ -452,11 +453,12 @@
     "server/side-question.ts": "ff75273c172f073bc9cc7a7cd40d2697ad26041068714e543a84dfbcaa760b8e",
     "server/submission-error-http.test.ts": "4e575bc36df1c861a90b30fced64147af534723abcc00f1985f36e1104e27162",
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
+    "server/terminal-form-deadline.test.ts": "4abe7cd75cba5123c99150dad748baeb8b8ed29e3a3f5ecff9eea094799695a9",
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
     "server/terminal-session.test.ts": "275fa21757f37b910cf2313ce695258c200bdb428995779f1073a19ab4af622a",
-    "server/terminal-session.ts": "b1083df579e049c3ecaf13e4afe86190111d84b387186392b9cb879b4cc19803",
+    "server/terminal-session.ts": "4a26c4fa37d06dc78d2f5a7f549eb28370045e5d104f46f0f252b6f3c1392a33",
     "server/terminal-startup-queue.test.ts": "34d67d9887bfcc8506a2b99c44eba34d3f3e839fc8a053c33f4c236930eaaf01",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -581,7 +583,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3963,
+  "nodes": 3982,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -639,16 +641,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "82a1c574b8a8830b4f5c90c537aadf9dc70ebab0ecaca00ae5d41f3276359642",
-    "communities.json": "8dc8716209020b99b7bc4daaad72429dfbddb33a5eb1dcfa41ceaa7c277d4fa7",
-    "graph.html": "1d75b8fb51b11c86f246700b94c9736225befd172028dbc6433ff6b8bbc8072d",
-    "graph.json": "e508da1ebec3f883edbb883cb7e5cb9b7e5f7e71327d72b2e60db68a55ef04c1"
+    "GRAPH_REPORT.md": "cf171079c61d23d428077c3d7821aa7863036079aae8e2ca6583a2818eb49338",
+    "communities.json": "110f24ee699b8f7c61da4603abeb0e66a56e89f1c68840ab5d4eb8692ce97d90",
+    "graph.html": "aa25cb8edab745876aa77bb305c310e2f7df506ef1b914c9e0367a75fe5445aa",
+    "graph.json": "3f05cb5048e7cce69e5855919b461ff335462cc56147bab2982a9efbc386b2a8"
   },
   "schema_version": 1,
-  "source_commit": "a3c7e14fb083d3307feb8e88bee44e32bf723eaf",
-  "source_fingerprint": "e8f45f347389c7eaf2c95495c5426bb3caea93ce9a927311658de25d14b86f54",
-  "working_tree_changes": [
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts"
-  ]
+  "source_commit": "5a6050680167126ef506b9dbb13e7fd1a266c3e8",
+  "source_fingerprint": "1b2dc8f0744fb61ca72dfda86d428df492ebec9f0625223eb29cc8bcc1a3e5b4",
+  "working_tree_changes": []
 }

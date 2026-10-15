@@ -4136,6 +4136,44 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('does not take recovery ownership when clearing an observed terminal that already exited', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => false),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      reset: vi.fn(async () => true),
+    }
+    let active = [{
+      id: 'exited',
+      cwd: directory,
+      title: 'exited',
+      updatedAt: new Date().toISOString(),
+    }]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => active,
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    expect(service.store.backend('exited')).toBe('terminal')
+    active = []
+    await service.refreshDiscovery()
+
+    const cleared = await service.clearConversation('exited')
+
+    expect(terminal.reset).not.toHaveBeenCalled()
+    expect(service.store.isManagedOpen(cleared.id)).toBe(false)
+    expect(service.store.shouldRecoverTerminalSession(cleared.id)).toBe(false)
+    await service.stop()
+  })
+
   it('moves an idle Copilot SDK session into tmux', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -9274,6 +9312,85 @@ describe('AgentService deletion', () => {
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')
+    await service.stop()
+  })
+
+  it('keeps recovery ownership of a confirmed form dismissal when its answer cannot follow', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async (): Promise<boolean> => {
+        throw new Error('Pane went away before the answer')
+      }),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => {
+        events.push(
+          JSON.parse(`{
+            "type":"tool.execution_complete",
+            "id":"ask-end",
+            "parentId":null,
+            "timestamp":"2026-09-01T04:30:24.000Z",
+            "data":{"toolCallId":"ask-call"}
+          }`) as SessionEvent,
+        )
+        return true
+      }),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the service',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-fallback-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
+    const values = { confirmTransfer: true }
+    await expect(service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )).rejects.toThrow()
+
+    expect(terminal.dismissUserInput).toHaveBeenCalledOnce()
+    expect(service.store.shouldRecoverTerminalSession(sessionId)).toBe(true)
     await service.stop()
   })
 

@@ -3809,11 +3809,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               recoveryBrief.truncated,
               recoveryBrief.prompt,
               replacementObservation,
+              terminalBacked,
             )
           : await this.store.replaceWithClearedSession(
               id,
               replacementId,
               replacementObservation,
+              terminalBacked,
             )
       } catch (error) {
         if (!(error instanceof SessionReplacementCleanupError)) throw error
@@ -6984,6 +6986,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         'The agent is still showing its prompt, so the answer was not sent. Try again.',
       ), { statusCode: 409 })
     }
+    await this.store.claimTerminalRecovery(sessionId)
     receipt.dismissed = await this.waitForToolCompletion(
       sessionId, requestId.slice('persisted-user-input:'.length), deadline,
     )
@@ -7200,7 +7203,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (await this.terminalController
             .dismissUserInput?.(sessionId)
             .catch((error: unknown) => this.handleTerminalFormReplyError(sessionId, requestId, input, error))) ?? false
-        if (dismissed) await this.waitForToolCompletion(sessionId, toolCallId)
+        if (dismissed) {
+          await this.store.claimTerminalRecovery(sessionId)
+          await this.waitForToolCompletion(sessionId, toolCallId)
+        }
       }
       const cleared = await this.store.clearPendingRequest(
         sessionId, 'pendingUserInput', requestId, { status: 'idle' },

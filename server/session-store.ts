@@ -915,6 +915,8 @@ export class SessionStore {
     sessionId: string,
     replacementId: string,
     observation = this.observeTranscript(sessionId),
+    // The app relaunched the session's own tmux pane for the replacement.
+    terminalReset = false,
   ): Promise<SessionDetail> {
     let uploadOwnerIds: string[] = []
     const replacement = await this.change((state) => {
@@ -980,8 +982,7 @@ export class SessionStore {
             }
           : undefined,
       }
-      // The app made this replacement, so it owns its recovery.
-      grantTerminalRecovery(state.sessions[replacementId])
+      if (terminalReset) grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
       return () => {
@@ -1006,6 +1007,8 @@ export class SessionStore {
     contextTruncated: boolean,
     recoveryPrompt: string,
     observation = this.observeTranscript(sessionId),
+    // The app relaunched the session's own tmux pane for the replacement.
+    terminalReset = false,
   ): Promise<SessionDetail> {
     const replacement = await this.change((state) => {
       const existing = state.sessions[sessionId]
@@ -1105,8 +1108,7 @@ export class SessionStore {
             }
           : undefined,
       }
-      // The app made this replacement, so it owns its recovery.
-      grantTerminalRecovery(state.sessions[replacementId])
+      if (terminalReset) grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
       return () => {

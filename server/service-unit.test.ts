@@ -53,6 +53,22 @@ describe('managed service unit', () => {
     )
   })
 
+  it('keeps the manager agent settings across a re-run of setup', async () => {
+    const script = await readFile(
+      new URL('../bin/agentic-remote', import.meta.url),
+      'utf8',
+    )
+
+    for (const [variable, local] of [
+      ['AGENTIC_REMOTE_MANAGER', 'manager_switch'],
+      ['AGENTIC_REMOTE_MANAGER_MODEL', 'manager_model'],
+      ['AGENTIC_REMOTE_MANAGER_REASONING_EFFORT', 'manager_effort'],
+    ]) {
+      expect(script).toContain(`${local}="\${${variable}:-$(config_value ${variable})}"`)
+      expect(script).toContain(`printf '${variable}=%s\\n' "$${local}" >>"$environment_tmp"`)
+    }
+  })
+
   it('installs dependencies without requiring an interactive prompt', async () => {
     const script = await readFile(
       new URL('../bin/agentic-remote', import.meta.url),

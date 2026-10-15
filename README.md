@@ -409,6 +409,18 @@ Knowledge are unaffected, and naming the hub's own computer matches the default.
 - An unpaired or offline computer fails the recording with a `503`; one on a
   release without the endpoint reports a `409`.
 
+### Session manager
+
+The hub's manager bubble opens an agent that knows every session and hands work
+to new sessions, which it names and badges **Manager**. It keeps its notes in
+`~/.agentic-remote/manager/memory/`. `setup` keeps these settings across updates:
+
+| Variable | Effect |
+|---|---|
+| `AGENTIC_REMOTE_MANAGER=off` | Turns the manager off on this hub |
+| `AGENTIC_REMOTE_MANAGER_MODEL` | Model for the manager; the runtime default when unset or unavailable |
+| `AGENTIC_REMOTE_MANAGER_REASONING_EFFORT` | `low`, `medium`, `high`, `xhigh`, or `max` |
+
 ## Documentation
 
 - [Application specification](docs/app-spec.md) — normative product behavior

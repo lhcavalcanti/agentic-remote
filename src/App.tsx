@@ -9,6 +9,9 @@ import {
   useState,
 } from 'react'
 import ReaderWorkspace from './ReaderWorkspace'
+import { ManagerAssistant } from './ManagerAssistant'
+import { isManagerEvent } from '../shared/manager'
+import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
 import type {
   CSSProperties,
   ChangeEvent,
@@ -6401,6 +6404,18 @@ function App() {
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
+  const managerListenersRef = useRef(new Set<(event: ManagerEvent) => void>())
+  const [managerEpoch, setManagerEpoch] = useState(0)
+  const [managedSessionKeys, setManagedSessionKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const subscribeManager = useCallback((listener: (event: ManagerEvent) => void) => {
+    managerListenersRef.current.add(listener)
+    return () => {
+      managerListenersRef.current.delete(listener)
+    }
+  }, [])
+  const changeManagedSessions = useCallback((keys: string[]) => {
+    setManagedSessionKeys(new Set(keys))
+  }, [])
   const [backgroundTaskSnapshots, setBackgroundTaskSnapshots] = useState<
     Record<string, BackgroundTaskSnapshot>
   >({})
@@ -6833,6 +6848,23 @@ function App() {
   )
   const [defaultSessionFolders, setDefaultSessionFolders] =
     useState<DefaultSessionFolders>(readDefaultSessionFolders)
+  // Your new-session defaults live in this browser, so each message to the
+  // manager carries them for the sessions it starts for you.
+  const managerDefaults = useMemo<ManagerClientDefaults>(() => {
+    const copilot = defaultRuntimes.copilot
+    const folders = Object.fromEntries(
+      Object.entries(defaultSessionFolders).filter(([, folder]) => folder.trim()),
+    )
+    const local = computers.find((computer) => computer.isLocal)
+    return {
+      provider: 'copilot',
+      ...(local ? { computerId: local.id } : {}),
+      ...(copilot.mode ? { mode: copilot.mode } : {}),
+      ...(copilot.model ? { model: copilot.model } : {}),
+      ...(copilot.model && copilot.reasoningEffort ? { reasoningEffort: copilot.reasoningEffort } : {}),
+      ...(Object.keys(folders).length ? { folders } : {}),
+    }
+  }, [computers, defaultRuntimes, defaultSessionFolders])
   const [accentTheme, setAccentTheme] =
     useState<AccentTheme>(readAccentTheme)
   const [appearance, setAppearance] = useState<Appearance>(() =>
@@ -9537,6 +9569,7 @@ function App() {
       socket = new WebSocket(`${protocol}//${window.location.host}/api/events`)
       socket.onopen = () => {
         reconnectDelay = 1_000
+        setManagerEpoch((epoch) => epoch + 1)
         sessionKnowledgeRootRef.current.refresh()
         // Order events are not replayed, so a reorder committed while this
         // socket was down would otherwise stay invisible until the next one.
@@ -9549,7 +9582,11 @@ function App() {
       }
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as HubEvent
-        if (event.type === 'session.knowledge.updated') {
+        if (isManagerEvent(event)) {
+          // The manager's conversation, not session lifecycle: it must not
+          // move the transcript sequence either.
+          for (const listener of managerListenersRef.current) listener(event)
+        } else if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
         } else if (event.type === 'session.order.updated') {
           // Preference state, not session lifecycle: it must not advance the
@@ -11704,6 +11741,22 @@ function App() {
       setKnowledgePath(knowledgeRootPath)
       setKnowledgeFile(undefined)
     }
+  }
+
+  /** Opens a session the manager linked to; false when it is not listed. */
+  function openManagedSession(target: ManagerSessionRef): boolean {
+    // A computer's name is accepted too, as a reply may name it instead.
+    const wanted = target.computerId.toLowerCase()
+    const session = sessionsRef.current.find(
+      (candidate) => candidate.id === target.sessionId &&
+        (candidate.computerId === target.computerId || candidate.computerName.toLowerCase() === wanted),
+    )
+    if (!session) {
+      setError('That session is no longer open.')
+      return false
+    }
+    selectSession(session)
+    return true
   }
 
   function selectSession(session: ManagedSession) {
@@ -14066,6 +14119,7 @@ function App() {
               sensors={sensors}
             >
               <SessionNavigation
+                managedSessions={managedSessionKeys}
                 backgroundTasks={backgroundTaskSnapshots}
                 view={navigationView}
                 query={sessionQuery}
@@ -15695,7 +15749,16 @@ function App() {
           onCreate={createRoot}
         />
       ) : null}
-
+      <ManagerAssistant
+        composerVisible={Boolean(selected)}
+        connectionEpoch={managerEpoch}
+        defaults={managerDefaults}
+        keyboardOpen={keyboardOpen}
+        onManagedSessionsChange={changeManagedSessions}
+        onOpenSession={openManagedSession}
+        openSessions={sessions.filter((session) => session.isOpen !== false).length}
+        subscribe={subscribeManager}
+      />
     </div>
   )
 }

@@ -92,3 +92,7 @@ export type ManagerEvent =
   | { type: 'manager.delta'; messageId: string; content: string }
   | { type: 'manager.sessions'; managedSessions: string[] }
   | { type: 'manager.reset'; snapshot: ManagerSnapshot }
+
+export function isManagerEvent(event: { type: string }): event is ManagerEvent {
+  return event.type.startsWith('manager.')
+}

@@ -390,6 +390,9 @@ setup_service() {
   data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
   allowed_roots="${AGENTIC_REMOTE_ALLOWED_ROOTS:-$(config_value AGENTIC_REMOTE_ALLOWED_ROOTS)}"
   transcription_computer="${AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER:-$(config_value AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER)}"
+  manager_switch="${AGENTIC_REMOTE_MANAGER:-$(config_value AGENTIC_REMOTE_MANAGER)}"
+  manager_model="${AGENTIC_REMOTE_MANAGER_MODEL:-$(config_value AGENTIC_REMOTE_MANAGER_MODEL)}"
+  manager_effort="${AGENTIC_REMOTE_MANAGER_REASONING_EFFORT:-$(config_value AGENTIC_REMOTE_MANAGER_REASONING_EFFORT)}"
   local previous_host previous_port previous_origins
   previous_host="$(config_value HOST)"
   previous_port="$(config_value PORT)"
@@ -443,6 +446,16 @@ setup_service() {
   if [[ -n "$transcription_computer" ]]; then
     printf 'AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=%s\n' \
       "$transcription_computer" >>"$environment_tmp"
+  fi
+  # The manager agent's settings survive setup the same way.
+  if [[ -n "$manager_switch" ]]; then
+    printf 'AGENTIC_REMOTE_MANAGER=%s\n' "$manager_switch" >>"$environment_tmp"
+  fi
+  if [[ -n "$manager_model" ]]; then
+    printf 'AGENTIC_REMOTE_MANAGER_MODEL=%s\n' "$manager_model" >>"$environment_tmp"
+  fi
+  if [[ -n "$manager_effort" ]]; then
+    printf 'AGENTIC_REMOTE_MANAGER_REASONING_EFFORT=%s\n' "$manager_effort" >>"$environment_tmp"
   fi
   printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
   install -m 0600 "$environment_tmp" "$ENV_FILE"

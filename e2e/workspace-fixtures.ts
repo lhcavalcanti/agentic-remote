@@ -1,4 +1,5 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
+import type { ManagerSnapshot } from '../shared/manager'
 import type { KnowledgePosition } from '../src/knowledge-position'
 import type {
   BackgroundTaskSnapshot,
@@ -466,6 +467,8 @@ export interface WorkspaceFixtureOptions {
   extraKnowledgeFiles?: number
   /** Optional absolute directory listings for folder-picker browser tests. */
   directoryListings?: Record<string, string[]>
+  /** The manager agent's snapshot; absent keeps the manager hidden. */
+  manager?: ManagerSnapshot
 }
 
 export interface WorkspaceFixtureState {
@@ -682,6 +685,17 @@ export async function setupWorkspaceFixture(
 
     if (method === 'GET' && path === '/api/computers') {
       await respond({ computers: fixtureComputers })
+      return
+    }
+    if (method === 'GET' && path === '/api/manager') {
+      await respond(options.manager ?? {
+        available: false,
+        unavailableReason: 'Not part of this fixture',
+        status: 'offline',
+        messages: [],
+        queued: 0,
+        managedSessions: [],
+      })
       return
     }
     if (method === 'GET' && path === '/api/sessions') {

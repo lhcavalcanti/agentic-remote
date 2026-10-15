@@ -38,6 +38,12 @@ import type {
   WorkspaceSearchResponse,
   SideQuestionExchange,
 } from '../shared/contracts'
+import type {
+  ManagerClientDefaults,
+  ManagerMessage,
+  ManagerSnapshot,
+  SendManagerMessageInput,
+} from '../shared/manager'
 import {
   httpDeliveryUncertain,
   parseSubmissionReceipt,
@@ -1062,4 +1068,35 @@ export async function sendTestPushNotification(): Promise<{ sent: number }> {
     method: 'POST',
     body: JSON.stringify({ confirm: true }),
   })
+}
+
+export function getManager(): Promise<ManagerSnapshot> {
+  return request<ManagerSnapshot>('/api/manager')
+}
+
+export async function sendManagerMessage(
+  content: string,
+  defaults?: ManagerClientDefaults,
+): Promise<ManagerMessage> {
+  const response = await request<{ message: ManagerMessage }>('/api/manager/messages', {
+    method: 'POST',
+    body: JSON.stringify({ content, ...(defaults ? { defaults } : {}) } satisfies SendManagerMessageInput),
+  })
+  return response.message
+}
+
+export async function retryManagerMessage(messageId: string): Promise<ManagerMessage> {
+  const response = await request<{ message: ManagerMessage }>(
+    `/api/manager/messages/${encodeURIComponent(messageId)}/retry`,
+    { method: 'POST' },
+  )
+  return response.message
+}
+
+export function cancelManager(): Promise<void> {
+  return requestVoid('/api/manager/cancel', { method: 'POST' })
+}
+
+export function resetManager(): Promise<ManagerSnapshot> {
+  return request<ManagerSnapshot>('/api/manager/reset', { method: 'POST' })
 }

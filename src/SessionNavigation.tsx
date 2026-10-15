@@ -35,6 +35,8 @@ export type PendingSessionCreation = Pick<
 }
 
 type SessionActions = {
+  /** `computerId:sessionId` of the sessions the manager agent started. */
+  managedSessions?: ReadonlySet<string>
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
   onToggleSessionSuspended: (session: ManagedSession) => void
@@ -122,6 +124,7 @@ function SortableSessionItem({
   onOpenSessionTasks,
   onToggleSessionSuspended,
   suspending,
+  managedSessions,
 }: SessionActions & {
   session: ManagedSession
   selected: boolean
@@ -178,6 +181,7 @@ function SortableSessionItem({
           aria-current={selected ? 'page' : undefined}
           aria-label={[
             session.title,
+            managedSessions?.has(sessionKey(session)) ? 'started by the manager' : undefined,
             providerName(session.provider),
             executionModeName(session.executionMode),
             presentation.description,
@@ -197,6 +201,11 @@ function SortableSessionItem({
               {executionModeName(session.executionMode) ? (
                 <em className="provider-badge session-mode-badge">
                   {executionModeName(session.executionMode)}
+                </em>
+              ) : null}
+              {managedSessions?.has(sessionKey(session)) ? (
+                <em className="provider-badge manager-badge" title="Started by the manager">
+                  Manager
                 </em>
               ) : null}
               <SessionState presentation={presentation} />

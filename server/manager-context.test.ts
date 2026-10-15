@@ -49,7 +49,7 @@ describe('manager turn context', () => {
       now,
     )
     expect(line).toBe(
-      '- abc · development · "Fix login" · running · copilot/autopilot · /home/me/src/app · updated 5m ago · started by you (manager) · task: Fix the login bug · doing: Running tests',
+      '- abc · development (hub) · "Fix login" · running · copilot/autopilot · /home/me/src/app · updated 5m ago · started by you (manager) · task: Fix the login bug · doing: Running tests',
     )
   })
 

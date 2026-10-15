@@ -208,7 +208,7 @@ describe('ManagerAgent', () => {
     ])
     expect(snapshot.status).toBe('idle')
     expect(sdk.prompts[0]).toContain('<agentic_remote_context')
-    expect(sdk.prompts[0]).toContain('- existing · development · "Session existing"')
+    expect(sdk.prompts[0]).toContain('- existing · development (hub) · "Session existing"')
     expect(sdk.prompts[0]).toContain('<user_message>\nWhat is running?\n</user_message>')
     expect(events.some((event) => event.type === 'manager.delta')).toBe(true)
     expect(events.filter((event) => event.type === 'manager.status').map((event) => event.type === 'manager.status' && event.status))

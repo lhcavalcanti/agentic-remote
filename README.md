@@ -419,9 +419,10 @@ Knowledge are unaffected, and naming the hub's own computer matches the default.
 
 The **Oracle** button in the conversation header opens an agent that knows
 every session and hands work to new sessions, which it names and badges
-**Oracle**. Tick **Oracle only**, or type `/oracle <question>` in a session, to
-have Oracle answer without starting or steering any session. Messages sent
-while it is busy wait in a queue where you can see and remove them. Choose its model in
+**Oracle**. Tick **Ask only** to ask about your sessions while they keep
+working: Oracle reads them and asks side questions but never starts, messages,
+or stops one (`/oracle <question>` in a session asks the same way). Messages
+sent while it is busy wait in a queue where you can see and remove them. Choose its model in
 **App settings → Oracle**; the choice is kept on the hub. Its notes are in
 `~/.agentic-remote/manager/memory/`.
 

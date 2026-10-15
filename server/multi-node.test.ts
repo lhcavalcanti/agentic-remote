@@ -715,6 +715,59 @@ describe('multi-node hub', () => {
     }
   })
 
+  it('reads sessions for Oracle without opening them, on the hub and on a node', async () => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    const localOpen = vi.spyOn(localService, 'openSession')
+    const remoteOpen = vi.spyOn(remoteService, 'openSession')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-read-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-read-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'worker-node',
+        },
+      })).statusCode).toBe(201)
+      const manager = hub.manager
+      if (!manager) throw new Error('Reading requires a hub manager')
+
+      expect(await manager.readSession(hub.identity.info.id, 'local-session')).toMatchObject({
+        id: 'local-session',
+        computerId: hub.identity.info.id,
+      })
+      expect(await manager.readSession(remote.identity.info.id, 'remote-session')).toMatchObject({
+        id: 'remote-session',
+        computerId: remote.identity.info.id,
+        computerName: 'worker-node',
+      })
+      // Opening loads or reconciles a session; a read for Oracle must not.
+      expect(localOpen).not.toHaveBeenCalled()
+      expect(remoteOpen).not.toHaveBeenCalled()
+      await expect(manager.readSession(hub.identity.info.id, 'missing')).rejects.toMatchObject({ statusCode: 404 })
+      await expect(manager.readSession(remote.identity.info.id, 'missing')).rejects.toMatchObject({ statusCode: 404 })
+      expect(remoteOpen).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
   it('routes context recovery through the authenticated node replacement chain', async () => {
     const localService = new FakeSessionService(session('local-session', 'Local'))
     const remoteService = new FakeSessionService({

@@ -394,7 +394,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - A hub MUST offer Oracle from an **Oracle** button in the conversation header,
   beside Knowledge, and wherever that header is covered: from the Knowledge
   header while Knowledge covers the conversation (expanded, or open at all on
-  a phone), and from an open document's header on a phone. It MUST NOT float over the conversation, where it would
+  a phone), from an open document's header on a phone, and from the phone's
+  session list beside **Manage computers**. It MUST NOT float over the conversation, where it would
   cover **Scroll to latest** or Send. On a phone the button is a 40px icon like
   Knowledge. It shows a working ring, an unread dot, and every current state
   in its accessible name, such as "Oracle, working, new reply". It opens a non-modal drawer on a desktop and a full-height
@@ -404,14 +405,19 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   run commands or edit files; work it accepts becomes a normal session on a
   chosen computer, named, given its task, and badged **Oracle** in the session
   list.
-- **Oracle only**: a message sent with the **Oracle only** box ticked, or with
-  `/oracle <question>` from a session's message bar, is answered by Oracle
-  alone. It MUST NOT be sent to the session, and Oracle MUST NOT start, message,
-  rename, stop, close, or question any session while answering it; the hub
-  refuses those tools for that message. Reading sessions and memory is allowed.
-  The box is remembered per browser. While Oracle is unavailable or still
-  loading, `/oracle` stays in the message bar with the reason; a question that
-  cannot be sent waits in Oracle's message bar with the error.
+- **Ask only** is the panel's conversational mode: you ask Oracle about your
+  sessions while their work carries on. Oracle answers from the current state,
+  reading sessions as they are recorded and asking side questions that fork a
+  session's finished history, and MUST NOT interrupt, cancel, redirect, prompt,
+  or otherwise change any session or its work. The hub refuses every tool that
+  would start, message, rename, stop, or close a session for that message, and
+  Oracle's reads never open, resume, or reconcile a session. Oracle's memory is
+  its own and stays writable. The box under Oracle's message bar is remembered
+  per browser; `/oracle <question>` in a session's message bar is a shortcut
+  that asks the same way and never reaches that session. While Oracle is
+  unavailable or still loading, `/oracle` stays in the message bar with the
+  reason; a question that cannot be sent waits in Oracle's message bar with
+  the error.
 - Oracle's model and reasoning effort are chosen in **App settings → Oracle**
   (also reached from the model shown under Oracle's message bar). The choice is
   kept on the hub for every browser and applies from Oracle's next answer: a
@@ -431,11 +437,13 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Sending MUST NOT be refused because Oracle is busy, recovering, or offline.
   Messages wait in a durable first-in, first-out queue and are answered one at
   a time. Waiting messages are shown above the message bar, numbered in the
-  order they will be answered and marked **Oracle only** where chosen; each can
+  order they will be answered and marked **Ask only** where chosen; each can
   be removed before Oracle starts on it. The queue is kept on the hub, so it
   survives a reload, a reconnect, and a hub restart, and a snapshot lists every
   waiting message however long the transcript. Only a blank message or
-  one over 100,000 characters is refused.
+  one over 100,000 characters is refused. Oracle being busy is the only thing
+  a question waits for: sessions working in the background never hold it up,
+  and it never holds them up.
 - A failed turn MUST recover by itself: retry on the same conversation, then
   restart the runtime and resume it, then start a new conversation briefed from
   memory and the latest exchanges. Only when all of these fail is the message

@@ -43,7 +43,8 @@ export interface ManagerHub {
   listSessionsWithAuthority(): Promise<{ sessions: ManagedSession[]; answeredComputerIds: string[] }>
   listSessions(): Promise<ManagedSession[]>
   listHistory(): Promise<ManagedSession[]>
-  getSession(computerId: string, sessionId: string): Promise<ManagedSession>
+  /** A session as recorded, never opened or resumed, so reading cannot change it. */
+  readSession(computerId: string, sessionId: string): Promise<ManagedSession>
   askSession(computerId: string, sessionId: string, question: string): Promise<string>
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, input: RenameSessionInput): Promise<ManagedSession>
@@ -617,7 +618,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       findComputer: (nameOrId) => hub.findComputer(nameOrId),
       listSessions: () => hub.listSessions(),
       listHistory: () => hub.listHistory(),
-      getSession: (computerId, sessionId) => hub.getSession(computerId, sessionId),
+      readSession: (computerId, sessionId) => hub.readSession(computerId, sessionId),
       askSession: (computerId, sessionId, question) => hub.askSession(computerId, sessionId, question),
       createSession: (computerId, input) => hub.createSession(computerId, input),
       renameSession: (computerId, sessionId, title) => hub.renameSession(computerId, sessionId, { title }),
@@ -875,7 +876,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const pendingNotes = state.pendingNotes ?? []
     notes.push(...pendingNotes)
     if (message.answerOnly) {
-      notes.push('The user chose Oracle only for this message: answer it yourself. You may read sessions, but do not start, message, rename, stop, close, or question any session, and do not offer to.')
+      notes.push('The user chose Ask only for this message: answer it yourself from the current state, while their sessions keep working undisturbed. Read sessions and use ask_session as needed, but do not start, message, rename, stop, or close any session. If they ask for one of those, say what you would do and that they can untick Ask only to have it done.')
     }
     let context = buildTurnContext({
       now: this.now(),

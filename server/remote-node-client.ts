@@ -207,9 +207,13 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
-  async getSession(sessionId: string): Promise<SessionDetail> {
+  /**
+   * `passive` reads the session as recorded, without opening it. A node from
+   * before passive reads ignores it and opens the session, as it always did.
+   */
+  async getSession(sessionId: string, options: { passive?: boolean } = {}): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
-      `/node-api/sessions/${encodeURIComponent(sessionId)}`,
+      `/node-api/sessions/${encodeURIComponent(sessionId)}${options.passive ? '?passive=1' : ''}`,
     )
     return response.session
   }

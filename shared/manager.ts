@@ -55,8 +55,9 @@ export interface ManagerMessage {
   /** Set on the messages you send. */
   state?: ManagerMessageState
   /**
-   * Answered by Oracle alone: it may read sessions but must not start,
-   * message, rename, stop, close, or question one.
+   * Ask only: Oracle answers from the current state, reading sessions and
+   * asking them side questions, but must not start, message, rename, stop,
+   * or close one, so their work carries on undisturbed.
    */
   answerOnly?: boolean
   /** Why a message failed, shown beside its Retry. */

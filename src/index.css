@@ -1531,6 +1531,10 @@ button {
   }
 }
 
+.sidebar-settings .sidebar-settings__oracle {
+  display: none;
+}
+
 .sidebar-settings {
   display: flex;
   flex: 0 0 auto;
@@ -6632,6 +6636,18 @@ button {
     width: 44px;
     height: 44px;
     flex: 0 0 auto;
+  }
+
+  /* The session list covers the conversation header too. */
+  .sidebar-settings .sidebar-settings__oracle {
+    display: inline-flex;
+    width: 42px;
+    height: 42px;
+    flex: 0 0 auto;
+    color: var(--muted-strong);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--panel-raised);
   }
 
   /* On a phone Knowledge covers the conversation whenever it is open, and an

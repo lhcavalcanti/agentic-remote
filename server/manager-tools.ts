@@ -24,7 +24,8 @@ export interface ManagerToolHost {
   findComputer(nameOrId: string): ComputerSummary | undefined
   listSessions(): Promise<ManagedSession[]>
   listHistory(): Promise<ManagedSession[]>
-  getSession(computerId: string, sessionId: string): Promise<ManagedSession>
+  /** A session as recorded, never opened or resumed, so reading cannot change it. */
+  readSession(computerId: string, sessionId: string): Promise<ManagedSession>
   askSession(computerId: string, sessionId: string, question: string): Promise<string>
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, title: string): Promise<ManagedSession>
@@ -35,7 +36,7 @@ export interface ManagerToolHost {
   discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]>
   markManaged(session: ManagedSession, task: string): Promise<void>
   registry(): ManagerRegistry
-  /** The message being answered asked for an answer only, so no session may be acted on. */
+  /** The message being answered is Ask only, so no session may be acted on. */
   answerOnly(): boolean
   memory: ManagerMemory
   defaults(): ManagerClientDefaults
@@ -176,10 +177,10 @@ export function createManagerTools(
       skipPermission: true,
       defer: 'never',
       handler: async (args) => {
-        // Enforced here rather than only asked of the model, so an "Oracle
-        // only" message can never start or steer a session.
+        // Enforced here rather than only asked of the model, so an Ask only
+        // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {
-          return failure('The user chose Oracle only for this message, so no session may be started, messaged, renamed, stopped, closed, or questioned. Answer from what you can read instead.')
+          return failure('The user chose Ask only for this message, so no session may be started, messaged, renamed, stopped, or closed. Answer from what you can read and ask instead; they can untick Ask only to have it done.')
         }
         const parsed = schema.safeParse(args ?? {})
         if (!parsed.success) {
@@ -263,7 +264,7 @@ export function createManagerTools(
       }),
       async ({ sessionId, computer, messages }) => {
         const found = await resolveSession(sessionId, computer, { history: true })
-        const detail = await host.getSession(found.computerId, found.id)
+        const detail = await host.readSession(found.computerId, found.id)
         const lines = [describeSession({ ...detail, isOpen: found.isOpen })]
         if (detail.pendingPermission) lines.push(`Waiting for the user to approve: ${detail.pendingPermission.title}`)
         if (detail.pendingUserInput) lines.push(`Waiting for the user to answer: ${detail.pendingUserInput.question}`)
@@ -271,7 +272,11 @@ export function createManagerTools(
           lines.push(`Queued prompts: ${detail.queuedPrompts.map((prompt) => truncate(prompt.content, 200)).join(' | ')}`)
         }
         const recent = (detail.messages ?? []).slice(-(messages ?? 6))
-        lines.push(recent.length ? 'Recent messages, oldest first:' : 'No messages yet.')
+        lines.push(recent.length
+          ? 'Recent messages, oldest first:'
+          : (found.provider ?? 'copilot') === 'copilot'
+            ? 'No messages recorded here; ask_session can answer from its full history.'
+            : 'No messages recorded here.')
         for (const message of recent) {
           lines.push(`[${message.role}] ${truncate(message.content.trim(), MESSAGE_LIMIT)}`)
         }
@@ -293,7 +298,6 @@ export function createManagerTools(
         }
         return host.askSession(found.computerId, found.id, question)
       },
-      { actsOnSessions: true }
     ),
     define(
       'create_session',

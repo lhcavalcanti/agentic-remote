@@ -430,6 +430,25 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return managedSession(session, computer)
   }
 
+  /**
+   * A session as it is recorded, without loading, resuming, or reconciling
+   * it, so that reading it, as Oracle does, can never change it.
+   */
+  async readSession(computerId: string, sessionId: string): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    if (computerId !== this.identity.info.id) {
+      return managedSession(
+        await this.requireClient(computerId).getSession(sessionId, { passive: true }),
+        computer,
+      )
+    }
+    const session = this.localService.getSession(sessionId)
+    if (!session) {
+      throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+    }
+    return managedSession(session, computer)
+  }
+
   async listCommands(
     computerId: string,
     sessionId: string,

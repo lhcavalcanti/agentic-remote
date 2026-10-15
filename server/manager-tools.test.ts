@@ -53,7 +53,7 @@ describe('manager tools', () => {
       findComputer: (nameOrId) => computers.find((computer) => computer.id === nameOrId || computer.name === nameOrId),
       listSessions: vi.fn(async () => [session('abc12345-aaaa'), session('def67890-bbbb', { status: 'running' })]),
       listHistory: vi.fn(async () => [session('old99999-cccc', { isOpen: false })]),
-      getSession: vi.fn(async (_computerId: string, id: string) => session(id, {
+      readSession: vi.fn(async (_computerId: string, id: string) => session(id, {
         messages: Array.from({ length: 12 }, (_, index) => ({
           id: `${index}`, role: index % 2 ? 'assistant' : 'user', content: `message ${index} ${'x'.repeat(index === 11 ? 3000 : 1)}`, createdAt: 't',
         })),
@@ -153,7 +153,7 @@ describe('manager tools', () => {
 
   it('reads a closed session from history', async () => {
     const result = String(await call('get_session', { sessionId: 'old99999-cccc' }))
-    expect(host.getSession).toHaveBeenCalledWith('hub', 'old99999-cccc')
+    expect(host.readSession).toHaveBeenCalledWith('hub', 'old99999-cccc')
     expect(result).toContain('closed')
   })
 
@@ -187,7 +187,7 @@ describe('manager tools', () => {
     expect(JSON.stringify(result)).toContain('message')
   })
 
-  it('refuses to act on any session while answering an Oracle-only message', async () => {
+  it('never acts on a session while answering an Ask only message, but still reads and asks', async () => {
     answerOnly = true
     for (const [name, args] of [
       ['create_session', { title: 'X', prompt: 'Y' }],
@@ -195,21 +195,23 @@ describe('manager tools', () => {
       ['rename_session', { sessionId: 'abc12345', title: 'New' }],
       ['cancel_session', { sessionId: 'abc12345' }],
       ['close_session', { sessionId: 'abc12345' }],
-      ['ask_session', { sessionId: 'abc12345', question: 'What?' }],
     ] as const) {
       const result = await call(name, args)
       expect(result, name).toMatchObject({ resultType: 'failure' })
-      expect(JSON.stringify(result)).toContain('Oracle only')
+      expect(JSON.stringify(result)).toContain('Ask only')
     }
     expect(host.createSession).not.toHaveBeenCalled()
     expect(host.sendMessage).not.toHaveBeenCalled()
     expect(host.renameSession).not.toHaveBeenCalled()
     expect(host.cancel).not.toHaveBeenCalled()
     expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
-    expect(host.askSession).not.toHaveBeenCalled()
-    // Reading is still allowed.
+    expect(activities).toEqual([])
+    // Reading, side questions, which fork the session's history rather than
+    // prompt it, and Oracle's own memory leave running work alone.
     expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
     expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
+    expect(await call('ask_session', { sessionId: 'abc12345', question: 'What did you find?' }))
+      .toBe('It fixed the bug and opened PR #12.')
     await call('memory_write', { path: 'MEMORY.md', content: '# Index' })
     expect(await call('memory_read', { path: 'MEMORY.md' })).toBe('# Index')
   })

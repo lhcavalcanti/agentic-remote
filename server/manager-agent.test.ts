@@ -149,7 +149,7 @@ describe('ManagerAgent', () => {
       listSessionsWithAuthority: vi.fn(async () => ({ sessions, answeredComputerIds: ['hub'] })),
       listSessions: vi.fn(async () => sessions),
       listHistory: vi.fn(async () => []),
-      getSession: vi.fn(async (_computerId: string, id: string) => session(id)),
+      readSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       askSession: vi.fn(async () => 'answer'),
       createSession: vi.fn(async () => {
         const created = session('worker-1', { cwd: '/home/me/src/web' })
@@ -670,7 +670,7 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().streaming).toBeUndefined()
   })
 
-  it('answers an Oracle-only message without acting on sessions', async () => {
+  it('answers an Ask only message without acting on sessions', async () => {
     let refused: unknown
     sdk.behaviors.push(async (fakeSession) => {
       refused = await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
@@ -680,7 +680,7 @@ describe('ManagerAgent', () => {
     const message = await agent!.send('Just tell me what you think', undefined, { answerOnly: true })
     expect(message.answerOnly).toBe(true)
     await settled()
-    expect(sdk.prompts[0]).toContain('The user chose Oracle only for this message')
+    expect(sdk.prompts[0]).toContain('The user chose Ask only for this message')
     expect(refused).toMatchObject({ resultType: 'failure' })
     expect(hub.createSession).not.toHaveBeenCalled()
     // The next ordinary message may act again.
@@ -691,7 +691,7 @@ describe('ManagerAgent', () => {
     await agent!.send('Now start it')
     await settled()
     expect(hub.createSession).toHaveBeenCalledTimes(1)
-    expect(sdk.prompts[1]).not.toContain('Oracle only')
+    expect(sdk.prompts[1]).not.toContain('Ask only')
   })
 
   it('applies a chosen model in place from the next answer, and starts afresh for the default', async () => {

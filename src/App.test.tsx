@@ -28,6 +28,7 @@ import type {
 } from '../shared/contracts'
 import App from './App'
 import {
+  getManager,
   activateSession,
   cancelBackgroundTask,
   askSession,
@@ -141,6 +142,12 @@ function finishQueueReorder(from: string, to: string) {
 
 vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
+  getManager: vi.fn(),
+  sendManagerMessage: vi.fn(),
+  retryManagerMessage: vi.fn(),
+  resolveManagerConfirmation: vi.fn(),
+  cancelManager: vi.fn(),
+  resetManager: vi.fn(),
   listSessions: vi.fn(),
   listSessionListing: vi.fn(),
   fetchSessionOrder: vi.fn(),
@@ -1822,6 +1829,32 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, id) => id === secondSession.id ? secondSession : target)
     return target
   }
+
+  it('badges sessions the manager started and keeps manager events out of errors', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [`${computer.id}:${session.id}`],
+    })
+    render(<App />)
+    const row = await screen.findByRole('button', { name: /Project chat, started by the manager/ })
+    expect(within(row).getByText('Manager')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Open the manager' })).toBeInTheDocument()
+
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'manager.status', status: 'working', queued: 0 }),
+      } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'manager.sessions', managedSessions: [] }),
+      } as MessageEvent)
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /Project chat, started by the manager/ })).not.toBeInTheDocument())
+  })
 
   it('shows an actionable session-load failure and retries the snapshot', async () => {
     vi.mocked(listSessionListing)

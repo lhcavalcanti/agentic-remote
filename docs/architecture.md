@@ -29,6 +29,21 @@ Closing a session routes deletion to its owning node. That node disconnects any
 active SDK session, deletes the session from provider storage, removes its local
 rendered-history cache, and emits a removal event.
 
+## Session manager agent
+
+The hub runs a manager agent: one Copilot SDK conversation in a runtime process
+separate from the session service (`server/manager-agent.ts`). Its tools call
+`ComputerManager`, so it starts, reads, and messages sessions on any paired
+computer through the same routing as the browser, and sessions it starts are
+ordinary sessions owned by their computer. A node never runs a manager.
+
+`JournalRecorder` turns hub session events into an append-only journal, and each
+turn begins with a roster and the journal entries since the last completed turn.
+State, transcript, journal, registry, and the agent's Markdown memory live in
+`<data>/manager/`. The manager's SDK session IDs are excluded from the session
+service's discovery before they exist. See
+[docs/design/session-manager.md](design/session-manager.md).
+
 ## Transport and authentication
 
 The browser communicates only with the hub. The hub is a single trusted-admin

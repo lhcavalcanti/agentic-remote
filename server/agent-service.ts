@@ -1714,6 +1714,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingTerminalPromptDispatches = new Map<string, string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
+  /** SDK sessions owned by something else on this computer, such as the manager agent. */
+  private readonly hiddenSessionIds = new Set<string>()
   private sideQuestionTimeoutMs = SIDE_QUESTION_TIMEOUT_MS
   private sideQuestionIdleMs = SIDE_QUESTION_RUNTIME_IDLE_MS
   private sideQuestionCleanupMs = SIDE_QUESTION_CLEANUP_MS
@@ -2566,7 +2568,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   listSessions(): SessionDetail[] {
     return this.store
       .list()
-      .filter((session) => session.isOpen)
+      .filter((session) => session.isOpen && !this.hiddenSessionIds.has(session.id))
       .map((session) => ({
         ...this.publicSession(session),
         messages: [],
@@ -2574,10 +2576,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listHistory(): SessionDetail[] {
-    return this.store.list().map((session) => ({
-      ...this.publicSession(session),
-      messages: [],
-    }))
+    return this.store.list()
+      .filter((session) => !this.hiddenSessionIds.has(session.id))
+      .map((session) => ({
+        ...this.publicSession(session),
+        messages: [],
+      }))
+  }
+
+  /**
+   * Keeps SDK sessions that belong to something else on this computer, such
+   * as the manager agent's conversation, out of discovery and every list.
+   * Called before they are created, so no discovery cycle can see them.
+   */
+  excludeFromDiscovery(ids: Iterable<string>): void {
+    for (const id of ids) this.hiddenSessionIds.add(id)
   }
 
   listDirectories(path?: string, scope?: DirectoryScope) {
@@ -7490,7 +7503,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // discovery cycle cost more than the discovery itself.
     const storedBeforeDiscovery = this.store.discoveryIndex()
     const excluded = (id: string) =>
-      this.deletedSessionIds.has(id) || this.store.isRetiredSession(id)
+      this.deletedSessionIds.has(id) || this.hiddenSessionIds.has(id) ||
+      this.store.isRetiredSession(id)
     activeSessions = activeSessions.filter((session) => !excluded(session.id))
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
     const previouslyExternal = this.externalSessionIds

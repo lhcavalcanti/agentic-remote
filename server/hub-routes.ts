@@ -11,6 +11,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts.js'
+import type { ManagerEvent } from '../shared/manager.js'
 import {
   joinKnowledgeRelativePath,
   normalizeKnowledgeRelativePath,
@@ -22,6 +23,12 @@ import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
+
+/** The manager agent's events, carried on the same socket as session events. */
+export interface ManagerEventSource {
+  on(event: 'event', listener: (event: ManagerEvent) => void): unknown
+  off(event: 'event', listener: (event: ManagerEvent) => void): unknown
+}
 
 const sessionOrderKeys = z.array(z.string().trim().min(1).max(300)).max(2000)
 
@@ -367,6 +374,7 @@ export async function registerHubRoutes(
   mutes?: SessionMuteCarrier,
   sessionKnowledge?: SessionKnowledgeStore,
   sessionOrder?: SessionOrderStore,
+  managerEvents?: ManagerEventSource,
 ): Promise<void> {
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
@@ -1102,6 +1110,7 @@ export async function registerHubRoutes(
     }
   }
   manager.on('event', broadcast)
+  managerEvents?.on('event', broadcast)
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
   /**
@@ -1208,6 +1217,7 @@ export async function registerHubRoutes(
   app.addHook('onClose', async () => {
     closed = true
     manager.off('event', broadcast)
+    managerEvents?.off('event', broadcast)
     manager.off('event', trackOrder)
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding

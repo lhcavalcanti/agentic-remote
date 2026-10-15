@@ -1,0 +1,683 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
+import type { ManagerEvent } from '../shared/manager.js'
+import {
+  ManagerAgent,
+  type ManagerAgentOptions,
+  type ManagerHub,
+  type ManagerSdkClient,
+  type ManagerSdkEvent,
+  type ManagerSdkSession,
+  type ManagerSdkSessionConfig,
+} from './manager-agent.js'
+import { JournalRecorder } from './manager-journal.js'
+import { ManagerStore } from './manager-store.js'
+
+type Behavior = (session: FakeSession, prompt: string) => void | Promise<void>
+
+const reply = (text: string): Behavior => (session) => {
+  session.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: text.slice(0, 3) } })
+  session.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: text.slice(3) } })
+  session.emit({ type: 'assistant.message', data: { messageId: 'r', content: text } })
+  session.emit({ type: 'session.idle' })
+}
+
+const fail = (message: string): Behavior => (session) => {
+  session.emit({ type: 'session.error', data: { errorType: 'runtime', message } })
+}
+
+class FakeSession implements ManagerSdkSession {
+  readonly prompts: string[] = []
+  private readonly handlers = new Set<(event: ManagerSdkEvent) => void>()
+  // Aborting ends the turn, which the runtime reports as idle.
+  abort = vi.fn(async () => {
+    setTimeout(() => this.emit({ type: 'session.idle' }), 0)
+  })
+  disconnect = vi.fn(async () => undefined)
+  disconnected = false
+
+  constructor(
+    readonly sessionId: string,
+    readonly config: Omit<ManagerSdkSessionConfig, 'sessionId'>,
+    private readonly fake: FakeSdk,
+  ) {}
+
+  on(handler: (event: ManagerSdkEvent) => void) {
+    this.handlers.add(handler)
+    return () => this.handlers.delete(handler)
+  }
+
+  emit(event: ManagerSdkEvent) {
+    for (const handler of [...this.handlers]) handler(event)
+  }
+
+  async send({ prompt }: { prompt: string }) {
+    this.prompts.push(prompt)
+    this.fake.prompts.push(prompt)
+    const behavior = this.fake.behaviors.shift() ?? reply('Okay.')
+    setTimeout(() => void behavior(this, prompt), 0)
+    return 'message-id'
+  }
+
+  tool(name: string) {
+    const tool = this.config.tools.find((candidate) => candidate.name === name)
+    if (!tool) throw new Error(`no tool ${name}`)
+    return (args: unknown) => tool.handler(args, { sessionId: this.sessionId, toolCallId: 't', toolName: name, arguments: args })
+  }
+}
+
+class FakeSdk {
+  behaviors: Behavior[] = []
+  prompts: string[] = []
+  clients: FakeClient[] = []
+  sessions = new Map<string, FakeSession>()
+  createFailures: Array<(config: ManagerSdkSessionConfig) => Error | undefined> = []
+  resumeFailures: Error[] = []
+
+  factory = () => {
+    const client = new FakeClient(this)
+    this.clients.push(client)
+    return client
+  }
+}
+
+class FakeClient implements ManagerSdkClient {
+  start = vi.fn(async (): Promise<void> => undefined)
+  stop = vi.fn(async () => [])
+  deleteSession = vi.fn(async (_id: string) => undefined)
+  createSession = vi.fn(async (config: ManagerSdkSessionConfig) => {
+    const failure = this.fake.createFailures.shift()?.(config)
+    if (failure) throw failure
+    const session = new FakeSession(config.sessionId!, config, this.fake)
+    this.fake.sessions.set(session.sessionId, session)
+    return session
+  })
+  resumeSession = vi.fn(async (id: string, config: Omit<ManagerSdkSessionConfig, 'sessionId'>) => {
+    const failure = this.fake.resumeFailures.shift()
+    if (failure) throw failure
+    const session = new FakeSession(id, config, this.fake)
+    this.fake.sessions.set(id, session)
+    return session
+  })
+  rpc = {
+    skills: {
+      discover: vi.fn(async () => ({ skills: [{ name: 'brainstorming', description: 'Explore first', source: 'personal' }] })),
+    },
+  }
+
+  constructor(private readonly fake: FakeSdk) {}
+}
+
+const computers: ComputerSummary[] = [{
+  id: 'hub', name: 'development', isLocal: true, online: true,
+  providers: [{ id: 'copilot', name: 'GitHub Copilot', available: true, terminalBacked: true }],
+}]
+
+function session(id: string, change: Partial<ManagedSession> = {}): ManagedSession {
+  return {
+    id, computerId: 'hub', computerName: 'development', cwd: '/home/me/src/app',
+    title: `Session ${id}`, status: 'idle', updatedAt: '2026-10-15T11:55:00.000Z',
+    isOpen: true, provider: 'copilot', messages: [], ...change,
+  }
+}
+
+describe('ManagerAgent', () => {
+  let root: string
+  let sdk: FakeSdk
+  let store: ManagerStore
+  let sessions: ManagedSession[]
+  let hub: ManagerHub
+  let agent: ManagerAgent | undefined
+  let events: ManagerEvent[]
+  let excluded: string[]
+  let ids: number
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'manager-agent-'))
+    sdk = new FakeSdk()
+    sessions = [session('existing')]
+    events = []
+    excluded = []
+    ids = 0
+    hub = {
+      listComputers: () => computers,
+      findComputer: (nameOrId) => computers.find((computer) => computer.id === nameOrId || computer.name === nameOrId),
+      listSessionsWithAuthority: vi.fn(async () => ({ sessions, answeredComputerIds: ['hub'] })),
+      listSessions: vi.fn(async () => sessions),
+      listHistory: vi.fn(async () => []),
+      getSession: vi.fn(async (_computerId: string, id: string) => session(id)),
+      askSession: vi.fn(async () => 'answer'),
+      createSession: vi.fn(async () => {
+        const created = session('worker-1', { cwd: '/home/me/src/web' })
+        sessions = [...sessions, created]
+        return created
+      }),
+      renameSession: vi.fn(async (_computerId: string, id: string, input: { title: string }) => session(id, { title: input.title })),
+      sendMessage: vi.fn(async (_computerId: string, id: string) => session(id)),
+      cancel: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    }
+    store = await openStore()
+  })
+
+  afterEach(async () => {
+    await agent?.stop()
+    agent = undefined
+    await rm(root, { recursive: true, force: true })
+  })
+
+  async function openStore() {
+    const opened = new ManagerStore(path.join(root, 'manager'))
+    await opened.initialize()
+    return opened
+  }
+
+  async function start(options: Partial<ManagerAgentOptions> = {}) {
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      excludeFromDiscovery: (list) => excluded.push(...list),
+      retryDelaysMs: [0, 0],
+      idleStopMs: 60_000,
+      sessionIdFactory: () => `sdk-${++ids}`,
+      ...options,
+    })
+    agent.on('event', (event) => events.push(event))
+    await agent.start()
+    return agent
+  }
+
+  async function settled() {
+    await vi.waitFor(() => {
+      const snapshot = agent!.snapshot()
+      expect(snapshot.messages.some((message) => message.role === 'user' && ['queued', 'running'].includes(message.state!))).toBe(false)
+    }, { timeout: 4000 })
+  }
+
+  it('answers a queued message with the generated context and streams the reply', async () => {
+    await start()
+    const sent = await agent!.send('What is running?')
+    expect(sent.state).toBe('queued')
+    await settled()
+
+    const snapshot = agent!.snapshot()
+    expect(snapshot.messages.map(({ role, content, state }) => ({ role, content, state }))).toEqual([
+      { role: 'user', content: 'What is running?', state: 'done' },
+      { role: 'assistant', content: 'Okay.', state: undefined },
+    ])
+    expect(snapshot.status).toBe('idle')
+    expect(sdk.prompts[0]).toContain('<agentic_remote_context')
+    expect(sdk.prompts[0]).toContain('- existing · development (hub) · "Session existing"')
+    expect(sdk.prompts[0]).toContain('<user_message>\nWhat is running?\n</user_message>')
+    expect(events.some((event) => event.type === 'manager.delta')).toBe(true)
+    expect(events.filter((event) => event.type === 'manager.status').map((event) => event.type === 'manager.status' && event.status))
+      .toEqual(expect.arrayContaining(['working', 'idle']))
+  })
+
+  it('creates its SDK session with a pre-registered id and only management tools, then reuses it', async () => {
+    await start()
+    await agent!.send('one')
+    await settled()
+    await agent!.send('two')
+    await settled()
+
+    const client = sdk.clients[0]
+    expect(client.createSession).toHaveBeenCalledTimes(1)
+    const config = client.createSession.mock.calls[0][0]
+    expect(config.sessionId).toBe('sdk-1')
+    expect(config.availableTools).toContain('create_session')
+    expect(config.availableTools).not.toContain('bash')
+    expect(config.systemMessage.content).toContain('Session Manager')
+    expect(excluded).toContain('sdk-1')
+    expect(store.state()).toMatchObject({ sdkSessionId: 'sdk-1', knownSdkSessionIds: ['sdk-1'], generation: 1 })
+    expect(agent!.hiddenSessionIds()).toEqual(['sdk-1'])
+  })
+
+  it('refuses only blank and oversized messages', async () => {
+    await start()
+    await expect(agent!.send('   ')).rejects.toMatchObject({ statusCode: 400 })
+    await expect(agent!.send('x'.repeat(100_001))).rejects.toMatchObject({ statusCode: 413 })
+  })
+
+  it('accepts messages while busy and answers them in order, one at a time', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      reply('first')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('a')
+    await agent!.send('b')
+    await agent!.send('c')
+    await settled()
+    expect(sdk.prompts.map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0])).toEqual(['a', 'b', 'c'])
+    expect(agent!.snapshot().messages.filter((message) => message.role === 'assistant').map((message) => message.content))
+      .toEqual(['first', 'Okay.', 'Okay.'])
+  })
+
+  it('reports only changes since the last completed turn, and the memory index only when it changed', async () => {
+    await store.memory.write('MEMORY.md', '# Prefs')
+    await start()
+    await agent!.send('first')
+    await settled()
+    expect(sdk.prompts[0]).toContain('Your memory index (MEMORY.md):\n# Prefs')
+
+    sessions = [...sessions, session('added', { title: 'Added later' })]
+    await agent!.send('second')
+    await settled()
+    expect(sdk.prompts[1]).toContain('created "Added later"')
+    expect(sdk.prompts[1]).not.toContain('MEMORY.md):')
+
+    await agent!.send('third')
+    await settled()
+    expect(sdk.prompts[2]).toContain('Changes since your last turn: none')
+
+    await store.memory.write('MEMORY.md', '# Prefs\n- new fact')
+    await agent!.send('fourth')
+    await settled()
+    expect(sdk.prompts[3]).toContain('- new fact')
+  })
+
+  it('retries a failed turn on the same session', async () => {
+    sdk.behaviors.push(fail('rate limited'))
+    await start()
+    await agent!.send('hello')
+    await settled()
+    expect(sdk.clients).toHaveLength(1)
+    expect(sdk.sessions.get('sdk-1')!.prompts).toHaveLength(2)
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+    expect(sdk.prompts[1]).toContain('A previous attempt at this message failed before finishing')
+  })
+
+  it('restarts the runtime and resumes the same conversation when retries fail', async () => {
+    sdk.behaviors.push(fail('broken pipe'), fail('broken pipe'))
+    await start()
+    await agent!.send('hello')
+    await settled()
+    expect(sdk.clients).toHaveLength(2)
+    expect(sdk.clients[0].stop).toHaveBeenCalled()
+    expect(sdk.clients[1].resumeSession).toHaveBeenCalledWith('sdk-1', expect.objectContaining({ streaming: true }))
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+    expect(events.some((event) => event.type === 'manager.status' && event.status === 'recovering')).toBe(true)
+  })
+
+  it('restarts the runtime at once when the message cannot reach it', async () => {
+    await start()
+    await agent!.send('first')
+    await settled()
+    const first = sdk.sessions.get('sdk-1')!
+    vi.spyOn(first, 'send').mockRejectedValue(new Error('Session is disconnected'))
+    await agent!.send('second')
+    await settled()
+    expect(first.send).toHaveBeenCalledTimes(1)
+    expect(sdk.clients).toHaveLength(2)
+    expect(sdk.clients[1].resumeSession).toHaveBeenCalledWith('sdk-1', expect.anything())
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it('moves to a new conversation briefed from the transcript when the old one cannot come back', async () => {
+    await start()
+    await agent!.send('remember the docs work')
+    await settled()
+    sdk.behaviors.push(fail('corrupt'), fail('corrupt'))
+    sdk.resumeFailures.push(new Error('session not found'))
+    await agent!.send('and now?')
+    await settled()
+
+    expect(store.state()).toMatchObject({ sdkSessionId: 'sdk-2', generation: 2, knownSdkSessionIds: ['sdk-1', 'sdk-2'] })
+    expect(excluded).toEqual(expect.arrayContaining(['sdk-1', 'sdk-2']))
+    expect(sdk.clients.at(-1)!.deleteSession).toHaveBeenCalledWith('sdk-1')
+    const prompt = sdk.sessions.get('sdk-2')!.prompts[0]
+    expect(prompt).toContain('Your previous conversation runtime was lost')
+    expect(prompt).toContain('User: remember the docs work')
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it('falls back to the default model when the configured one cannot start', async () => {
+    sdk.createFailures.push((config) => config.model ? new Error('model not available') : undefined)
+    await start({ model: 'imaginary-model' })
+    await agent!.send('hello')
+    await settled()
+    const calls = sdk.clients[0].createSession.mock.calls.map(([config]) => config.model)
+    expect(calls).toEqual(['imaginary-model', undefined])
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant' })
+  })
+
+  it('marks a message failed with Retry when every rung fails, and recovers on the next one', async () => {
+    sdk.behaviors.push(fail('down'), fail('down'), fail('down'), fail('down'))
+    await start()
+    const message = await agent!.send('hello')
+    await settled()
+    const failed = agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!
+    expect(failed.state).toBe('failed')
+    expect(failed.error).toContain('down')
+    expect(agent!.snapshot().status).toBe('offline')
+
+    await agent!.retry(message.id)
+    await settled()
+    expect(agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!.state).toBe('done')
+    expect(agent!.snapshot().status).toBe('idle')
+  })
+
+  it('aborts a turn that never finishes and recovers through a restart', async () => {
+    sdk.behaviors.push(() => undefined)
+    await start({ turnTimeoutMs: 40 })
+    await agent!.send('hello')
+    await settled()
+    const stuck = await sdk.clients[0].createSession.mock.results[0].value as FakeSession
+    expect(stuck.abort).toHaveBeenCalled()
+    expect(sdk.clients.length).toBeGreaterThanOrEqual(2)
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it('resumes a message interrupted by a restart, once', async () => {
+    await store.upsertMessage({ id: 'm1', role: 'user', content: 'start the docs work', createdAt: 't', state: 'running' })
+    await start()
+    await settled()
+    expect(sdk.prompts[0]).toContain('interrupted by a restart')
+    expect(agent!.snapshot().messages.find((message) => message.id === 'm1')!.state).toBe('done')
+    expect(store.state().interruptions).toEqual({})
+  })
+
+  it('hands a message back after a second interruption', async () => {
+    await store.upsertMessage({ id: 'm1', role: 'user', content: 'loop', createdAt: 't', state: 'running' })
+    await store.updateState((state) => { state.interruptions = { m1: 1 } })
+    await start()
+    const message = agent!.snapshot().messages.find((candidate) => candidate.id === 'm1')!
+    expect(message.state).toBe('failed')
+    expect(sdk.prompts).toEqual([])
+  })
+
+  it('records tool actions as activity and announces sessions it started', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Started it.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('start docs work')
+    await settled()
+    const activity = agent!.snapshot().messages.find((message) => message.role === 'activity')!
+    expect(activity).toMatchObject({
+      tool: 'create_session',
+      content: 'Started "Docs" on development',
+      sessionRefs: [{ computerId: 'hub', sessionId: 'worker-1', title: 'Docs' }],
+    })
+    expect(agent!.snapshot().managedSessions).toEqual(['hub:worker-1'])
+    expect(events.some((event) => event.type === 'manager.sessions')).toBe(true)
+    expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'worker-1', { content: 'Write the docs', enqueue: true })
+  })
+
+  it('closes a session only once you confirm it in the app, and tells the agent', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('close_session')({ sessionId: 'existing', userConfirmed: true })
+      reply('Asked you to confirm.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('close the existing session')
+    await settled()
+    const request = agent!.snapshot().messages.find((message) => message.confirmation)!
+    expect(request.confirmation).toMatchObject({ kind: 'close-session', sessionId: 'existing', state: 'pending' })
+    expect(hub.deleteSession).not.toHaveBeenCalled()
+
+    const answered = await agent!.resolveConfirmation(request.id, true)
+    expect(answered.confirmation!.state).toBe('confirmed')
+    expect(hub.deleteSession).toHaveBeenCalledTimes(1)
+    expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'existing')
+    await expect(agent!.resolveConfirmation(request.id, true)).rejects.toMatchObject({ statusCode: 409 })
+    expect(hub.deleteSession).toHaveBeenCalledTimes(1)
+
+    await agent!.send('anything else?')
+    await settled()
+    expect(sdk.prompts.at(-1)).toContain('The user confirmed closing "Session existing" (existing); it is deleted.')
+    await agent!.send('and now?')
+    await settled()
+    expect(sdk.prompts.at(-1)).not.toContain('The user confirmed closing')
+  })
+
+  it('keeps a session open when you decline, and reports a close that failed', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('close_session')({ sessionId: 'existing' })
+      await fakeSession.tool('close_session')({ sessionId: 'existing', reason: 'Done' })
+      reply('Asked.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('close it')
+    await settled()
+    const [first, second] = agent!.snapshot().messages.filter((message) => message.confirmation)
+    expect((await agent!.resolveConfirmation(first.id, false)).confirmation!.state).toBe('declined')
+    vi.mocked(hub.deleteSession).mockRejectedValueOnce(new Error('node offline'))
+    const failed = await agent!.resolveConfirmation(second.id, true)
+    expect(failed.confirmation).toMatchObject({ state: 'failed', error: 'node offline' })
+    expect(store.state().pendingNotes).toEqual([
+      'The user declined closing "Session existing" (existing); it stays open.',
+      'Closing "Session existing" (existing) failed: node offline.',
+    ])
+    await expect(agent!.resolveConfirmation('missing', true)).rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it('finishes a close you confirmed when a restart interrupted it', async () => {
+    const closing = (id: string, sessionId: string) => ({
+      id, role: 'activity' as const, content: 'Close?', createdAt: 't', tool: 'close_session',
+      confirmation: { kind: 'close-session' as const, computerId: 'hub', sessionId, title: sessionId, state: 'closing' as const },
+    })
+    await store.upsertMessage(closing('c1', 'gone-now'))
+    await store.upsertMessage(closing('c2', 'unreachable'))
+    await store.upsertMessage(closing('c3', 'deleted-before-restart'))
+    vi.mocked(hub.deleteSession).mockImplementation(async (_computerId, sessionId) => {
+      if (sessionId === 'unreachable') throw new Error('node offline')
+      if (sessionId === 'deleted-before-restart') {
+        throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+      }
+    })
+    await start()
+    await vi.waitFor(() => {
+      const states = agent!.snapshot().messages.map((message) => message.confirmation?.state)
+      expect(states).toEqual(['confirmed', 'failed', 'confirmed'])
+    })
+    expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'gone-now')
+    await expect(agent!.resolveConfirmation('c1', true)).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('does not repeat actions from a failed attempt', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      fail('lost')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('start docs work')
+    await settled()
+    expect(sdk.prompts[1]).toContain('A previous attempt at this message failed after: Started "Docs" on development. Do not repeat these')
+  })
+
+  it('stops the current turn on cancel and keeps going with the queue', async () => {
+    sdk.behaviors.push((fakeSession) => {
+      fakeSession.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: 'Partial' } })
+    })
+    await start()
+    const first = await agent!.send('long one')
+    await vi.waitFor(() => expect(agent!.snapshot().streaming?.content).toBe('Partial'))
+    await agent!.send('next')
+    await agent!.cancel()
+    await settled()
+    const messages = agent!.snapshot().messages
+    expect(messages.find((message) => message.id === first.id)!.state).toBe('cancelled')
+    expect(messages.some((message) => message.content === 'Partial\n\n_(stopped)_')).toBe(true)
+    expect(messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it('stops recovering a message when Stop arrives between attempts', async () => {
+    sdk.behaviors.push(fail('down'))
+    await start({ retryDelaysMs: [200, 200] })
+    const message = await agent!.send('hello')
+    await vi.waitFor(() => expect(agent!.snapshot().status).toBe('recovering'))
+    await agent!.cancel()
+    await settled()
+    expect(agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!.state).toBe('cancelled')
+    expect(sdk.prompts).toHaveLength(1)
+  })
+
+  it('starts a new conversation on reset and keeps memory', async () => {
+    await store.memory.write('MEMORY.md', '# Kept')
+    await start()
+    await agent!.send('hello')
+    await settled()
+    await agent!.reset()
+    expect(agent!.snapshot().messages).toEqual([])
+    expect(events.at(-1)).toMatchObject({ type: 'manager.reset' })
+    await agent!.send('again')
+    await settled()
+    expect(store.state().sdkSessionId).toBe('sdk-2')
+    expect(sdk.sessions.get('sdk-2')!.prompts[0]).toContain('# Kept')
+    expect(sdk.sessions.get('sdk-2')!.prompts[0]).not.toContain('runtime was lost')
+  })
+
+  it('leaves nothing of a turn it interrupted in the new conversation after a reset', async () => {
+    sdk.behaviors.push((fakeSession) => {
+      fakeSession.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: 'Partial' } })
+    })
+    await start()
+    await agent!.send('long one')
+    await vi.waitFor(() => expect(agent!.snapshot().streaming?.content).toBe('Partial'))
+    await agent!.reset()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(agent!.snapshot().messages).toEqual([])
+    expect(agent!.snapshot().status).toBe('idle')
+  })
+
+  it('stops an idle runtime and resumes the same conversation later', async () => {
+    await start({ idleStopMs: 20 })
+    await agent!.send('hello')
+    await settled()
+    await vi.waitFor(() => expect(sdk.clients[0].stop).toHaveBeenCalled())
+    await agent!.send('again')
+    await settled()
+    expect(sdk.clients[1].resumeSession).toHaveBeenCalledWith('sdk-1', expect.anything())
+  })
+
+  it('restarts at once when the runtime dies in the middle of a turn', async () => {
+    sdk.behaviors.push((fakeSession) => {
+      fakeSession.disconnected = true
+    })
+    await start({ livenessIntervalMs: 10 })
+    const started = Date.now()
+    await agent!.send('hello')
+    await settled()
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(sdk.clients).toHaveLength(2)
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it('honours Stop while the runtime is still starting', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const factory = sdk.factory
+    sdk.factory = () => {
+      const client = factory()
+      client.start.mockImplementationOnce(() => gate)
+      return client
+    }
+    await start()
+    const message = await agent!.send('hello')
+    await vi.waitFor(() => expect(sdk.clients).toHaveLength(1))
+    await agent!.cancel()
+    release()
+    await settled()
+    expect(agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!.state).toBe('cancelled')
+    expect(sdk.prompts).toEqual([])
+  })
+
+  it('answers nothing from before a reset that came while the runtime was starting', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const factory = sdk.factory
+    sdk.factory = () => {
+      const client = factory()
+      client.start.mockImplementationOnce(() => gate)
+      return client
+    }
+    await start()
+    await agent!.send('before the reset')
+    await vi.waitFor(() => expect(sdk.clients).toHaveLength(1))
+    const resetting = agent!.reset()
+    release()
+    await resetting
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(agent!.snapshot().messages).toEqual([])
+    expect(sdk.prompts).toEqual([])
+  })
+
+  it('ignores a stray idle from a stopped turn that arrives before its own reply', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      fakeSession.emit({ type: 'session.idle' })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      reply('The real answer.')(fakeSession, '')
+    })
+    await start({ earlyIdleMs: 500 })
+    await agent!.send('hello')
+    await settled()
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'The real answer.' })
+  })
+
+  it('reports a failed write instead of taking the hub down', async () => {
+    await start()
+    const original = store.upsertMessage.bind(store)
+    let failed = false
+    vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
+      if (message.state === 'running' && !failed) {
+        failed = true
+        throw new Error('disk full')
+      }
+      return original(message)
+    })
+    const message = await agent!.send('hello')
+    await vi.waitFor(() => expect(agent!.snapshot().status).toBe('offline'))
+    expect(agent!.snapshot().lastError).toBe('disk full')
+    expect(agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!.state).toBe('failed')
+  })
+
+  it('does not mark changes as seen by a turn a stop cut short', async () => {
+    await start()
+    await agent!.send('first')
+    await settled()
+    sessions = [...sessions, session('added')]
+    sdk.behaviors.push((fakeSession) => {
+      fakeSession.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: 'Partial' } })
+    })
+    await agent!.send('second')
+    await vi.waitFor(() => expect(agent!.snapshot().streaming?.content).toBe('Partial'))
+    const acknowledged = store.state().acknowledgedJournalSeq
+    await agent!.stop()
+    expect(store.state().acknowledgedJournalSeq).toBe(acknowledged)
+    expect(store.messages().find((message) => message.content === 'second')!.state).toBe('running')
+    agent = undefined
+  })
+
+  it('leaves no partial reply behind when a turn fails', async () => {
+    const partialThenFail: Behavior = (fakeSession) => {
+      fakeSession.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: 'Half' } })
+      fail('down')(fakeSession, '')
+    }
+    sdk.behaviors.push(partialThenFail, partialThenFail, partialThenFail, partialThenFail)
+    await start()
+    await agent!.send('hello')
+    await settled()
+    expect(agent!.snapshot().status).toBe('offline')
+    expect(agent!.snapshot().streaming).toBeUndefined()
+  })
+
+  it('lists skills through the runtime for delegated prompts', async () => {
+    let listing: unknown
+    sdk.behaviors.push(async (fakeSession) => {
+      listing = await fakeSession.tool('list_skills')({})
+      reply('ok')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('which skills?')
+    await settled()
+    expect(String(listing)).toContain('brainstorming — Explore first (personal)')
+  })
+})

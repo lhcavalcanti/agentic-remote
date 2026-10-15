@@ -378,6 +378,45 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Return MUST follow the composer: it asks on a desktop and inserts a newline
   on a phone, where **Ask** sends; Ctrl/Cmd+Enter asks on either.
 
+### 3.7 Session manager
+
+The design is in [docs/design/session-manager.md](design/session-manager.md).
+
+- A hub MUST offer the manager from a bubble on every page. The bubble sits
+  above the composer, MUST NOT cover Send, and hides while a phone keyboard is
+  open. It opens a non-modal drawer on a desktop and a full-height sheet on a
+  phone. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no bubble.
+- The manager is one Copilot SDK conversation on the hub, run by a runtime
+  process of its own. Its tools only manage sessions and its own memory, so it
+  MUST NOT run commands or edit files; work it accepts becomes a normal session
+  on a chosen computer, named, given its task, and badged **Manager** in the
+  session list.
+- Every turn MUST start with a context block the hub generates: computers, open
+  sessions (ID, computer, title, status, folder, origin, task, and activity),
+  changes since the last completed turn, and `MEMORY.md` when it changed.
+  Background changes MUST NOT be streamed to the model between turns.
+- Sending MUST NOT be refused because the manager is busy, recovering, or
+  offline. Messages queue and are answered one at a time. Only a blank message
+  or one over 100,000 characters is refused.
+- A failed turn MUST recover by itself: retry on the same conversation, then
+  restart the runtime and resume it, then start a new conversation briefed from
+  memory and the latest exchanges. Only when all of these fail is the message
+  marked failed, with **Retry**. A turn interrupted by a restart is retried once
+  and told to check what already happened. A turn has a 15-minute watchdog.
+- The manager's SDK conversations MUST NOT appear in session lists or history.
+  Their IDs are recorded and excluded before they are created.
+- The manager MUST NOT close a session itself. It can only ask, as a card with
+  **Close session** and **Keep it**, and the session stays open until you
+  confirm there. Your answer, and any deletion, reach the agent on its next
+  turn so it can update its memory.
+- The manager's data lives in `<data>/manager/`: app-owned state, transcript,
+  journal, and registry, plus the agent's Markdown memory under `memory/`. A
+  file that cannot be read is set aside rather than stopping the hub. **Start
+  over** begins a new conversation and keeps memory.
+- Session links in replies use `?computer=<id>&session=<id>` and open that
+  session. Your default folder, mode, and model for new sessions are sent with
+  each message and apply to the sessions the manager starts.
+
 ## 4. Conversation timeline
 
 - User messages, assistant messages, notices, and tool activity MUST remain in
@@ -1340,6 +1379,7 @@ Every material release SHOULD preserve:
 | Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
 | Session-actions disclosure | `src/SessionActions.tsx` |
 | Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
+| Session manager agent | `src/ManagerAssistant.tsx`, `server/manager-*.ts`, `shared/manager.ts` |
 | Browser API client | `src/api.ts` |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |

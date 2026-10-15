@@ -7090,3 +7090,468 @@ button {
   cursor: not-allowed;
   opacity: 0.6;
 }
+
+/* Session manager agent: a bubble on every page and the panel it opens. */
+.manager-bubble {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  z-index: 19;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-popover);
+  color: var(--accent);
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.manager-bubble:hover {
+  border-color: var(--accent);
+}
+
+.manager-bubble:active {
+  transform: scale(0.96);
+}
+
+.manager-bubble:focus-visible,
+.manager-composer__send:focus-visible,
+.manager-activity__open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* An arc that circles the mark while the manager is answering. */
+.manager-bubble--working::after,
+.manager-panel__mark--working::after {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  content: '';
+  animation: activity-spin 1.6s linear infinite;
+}
+
+.manager-bubble--offline {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.manager-bubble__unread {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--panel-raised);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.manager-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  display: flex;
+  width: min(440px, 100vw);
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  box-shadow: var(--shadow-popover);
+}
+
+.manager-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) 12px 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.manager-panel__mark {
+  position: relative;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel-raised);
+  color: var(--accent);
+}
+
+.manager-panel__title {
+  min-width: 0;
+  flex: 1;
+}
+
+.manager-panel__title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.manager-panel__status {
+  overflow: hidden;
+  margin: 1px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-panel__status--recovering {
+  color: var(--warning);
+}
+
+.manager-panel__status--offline {
+  color: var(--danger);
+}
+
+.manager-panel__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.manager-panel__confirm p {
+  margin: 0;
+  flex: 1 1 100%;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.manager-transcript {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.manager-message {
+  max-width: 100%;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.manager-message--user {
+  display: flex;
+  align-self: flex-end;
+  max-width: 88%;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.manager-message__text {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--panel-raised);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.manager-message__text--clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+}
+
+.manager-message__expand {
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.manager-message--failed .manager-message__text {
+  border: 1px solid var(--danger);
+}
+
+.manager-message__state {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.manager-message__error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  text-align: right;
+}
+
+.manager-message__retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.manager-message--assistant {
+  align-self: stretch;
+}
+
+.manager-message__markdown > :first-child {
+  margin-top: 0;
+}
+
+.manager-message__markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.manager-session-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.manager-message--thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.manager-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-strong);
+  font-size: 12.5px;
+}
+
+.manager-activity__mark {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.manager-activity__text {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.manager-activity__open {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.manager-activity__open:hover {
+  border-color: var(--accent);
+}
+
+.manager-confirmation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--warning);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.manager-confirmation--confirmed,
+.manager-confirmation--declined {
+  border-color: var(--border);
+}
+
+.manager-confirmation--failed {
+  border-color: var(--danger);
+}
+
+.manager-confirmation__question,
+.manager-confirmation__outcome {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.manager-confirmation__outcome {
+  color: var(--muted);
+}
+
+.manager-confirmation--failed .manager-confirmation__outcome {
+  color: var(--danger);
+}
+
+.manager-confirmation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.manager-confirmation__close {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  background: none;
+  color: var(--danger);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.manager-confirmation__close:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.manager-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+}
+
+.manager-empty h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.manager-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.manager-empty__suggestions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.manager-composer {
+  padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+.manager-composer__error {
+  margin: 0 0 8px;
+}
+
+.manager-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.manager-composer__row:focus-within {
+  border-color: var(--accent);
+}
+
+.manager-composer textarea {
+  min-height: 40px;
+  max-height: 200px;
+  flex: 1;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  resize: none;
+  field-sizing: content;
+}
+
+.manager-composer textarea:focus {
+  outline: none;
+}
+
+.manager-composer__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.manager-composer__send {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+}
+
+.manager-composer__send:disabled {
+  background: var(--panel-soft);
+  color: var(--muted);
+  cursor: default;
+}
+
+.manager-composer__stop {
+  color: var(--danger);
+}
+
+.manager-badge {
+  padding-left: 5px;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0;
+  color: var(--accent);
+}
+
+@media (max-width: 960px) {
+  .manager-panel {
+    top: var(--visual-viewport-top, 0px);
+    bottom: auto;
+    width: 100vw;
+    height: var(--visual-viewport-height, 100dvh);
+    border-left: 0;
+  }
+
+  /* 16px keeps a phone from zooming into the field. */
+  .manager-composer textarea {
+    font-size: 16px;
+  }
+}

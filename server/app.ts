@@ -7,6 +7,7 @@ import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
+import type { HubEvent } from '../shared/contracts.js'
 import {
   deliveryUncertaintyFromError,
   SubmissionError,
@@ -18,6 +19,11 @@ import { createCliCanary } from './cli-canary.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
+import { ManagerAgent } from './manager-agent.js'
+import { JournalRecorder } from './manager-journal.js'
+import { registerManagerRoutes } from './manager-routes.js'
+import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
+import { ManagerStore } from './manager-store.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
@@ -64,6 +70,11 @@ export interface BuildAppOptions {
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
   /**
+   * The session manager agent. Built on a hub with the built-in session
+   * service unless false or turned off with AGENTIC_REMOTE_MANAGER=off.
+   */
+  managerAgent?: ManagerAgent | false
+  /**
    * Checks each Copilot CLI version this computer updates to by starting a
    * disposable terminal session. Only for the built-in session service.
    */
@@ -96,6 +107,7 @@ export async function buildApp(
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  managerAgent?: ManagerAgent
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -190,6 +202,9 @@ export async function buildApp(
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
   let sessionOrderStore: SessionOrderStore | undefined
+  let managerAgent: ManagerAgent | undefined
+  let managerUnavailable: string | undefined
+  let forwardToJournal: ((event: HubEvent) => void) | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -211,6 +226,40 @@ export async function buildApp(
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
+    const managerSettings = managerRuntimeSettings()
+    if (options.managerAgent) {
+      managerAgent = options.managerAgent
+    } else if (options.managerAgent === false || !managerSettings.enabled) {
+      managerUnavailable = 'The manager agent is turned off on this hub (AGENTIC_REMOTE_MANAGER=off).'
+    } else if (!agent) {
+      managerUnavailable = 'The manager agent needs the built-in Copilot session service.'
+    } else {
+      const managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      // The manager is an addition to the hub; a hub whose manager cannot
+      // start still serves everything else.
+      const initialized = await managerStore.initialize().then(() => true, (error: unknown) => {
+        app.log.error({ err: error }, 'The manager agent could not start')
+        managerUnavailable = `The manager agent could not start: ${error instanceof Error ? error.message : String(error)}`
+        return false
+      })
+      const recorder = initialized ? new JournalRecorder(managerStore) : undefined
+      if (recorder) {
+        forwardToJournal = (event) => recorder.handle(event)
+        manager.on('event', forwardToJournal)
+      }
+      managerAgent = recorder && new ManagerAgent({
+        store: managerStore,
+        recorder,
+        hub: manager,
+        clientFactory: createManagerSdkClient,
+        excludeFromDiscovery: (ids) => agent.excludeFromDiscovery(ids),
+        model: managerSettings.model,
+        reasoningEffort: managerSettings.reasoningEffort,
+      })
+      // Before the session service starts, so its first discovery already
+      // leaves the manager's own conversations out.
+      if (managerAgent) agent.excludeFromDiscovery(managerAgent.hiddenSessionIds())
+    }
     await registerHubRoutes(
       app,
       manager,
@@ -218,7 +267,9 @@ export async function buildApp(
       pushService,
       sessionKnowledgeStore,
       sessionOrderStore,
+      managerAgent,
     )
+    await registerManagerRoutes(app, managerAgent, managerUnavailable)
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
@@ -274,10 +325,16 @@ export async function buildApp(
   // recovery of sessions that were open before a restart.
   app.addHook('onReady', async () => {
     cliCanary?.start()
+    // The manager never keeps the hub from becoming ready.
+    await managerAgent?.start().catch((error: unknown) => {
+      app.log.error({ err: error }, 'The manager agent could not start')
+    })
   })
 
   app.addHook('onClose', async () => {
     await cliCanary?.stop()
+    if (forwardToJournal) manager?.off('event', forwardToJournal)
+    await managerAgent?.stop()
     manager?.stop()
     pushService?.stop()
     await (transcriptionService ?? localTranscription).stop()
@@ -294,5 +351,6 @@ export async function buildApp(
     knowledgeStore,
     sessionKnowledgeStore,
     sessionOrderStore,
+    managerAgent,
   }
 }

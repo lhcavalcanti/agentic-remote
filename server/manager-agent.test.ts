@@ -434,6 +434,17 @@ describe('ManagerAgent', () => {
     expect(messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
   })
 
+  it('stops recovering a message when Stop arrives between attempts', async () => {
+    sdk.behaviors.push(fail('down'))
+    await start({ retryDelaysMs: [200, 200] })
+    const message = await agent!.send('hello')
+    await vi.waitFor(() => expect(agent!.snapshot().status).toBe('recovering'))
+    await agent!.cancel()
+    await settled()
+    expect(agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!.state).toBe('cancelled')
+    expect(sdk.prompts).toHaveLength(1)
+  })
+
   it('starts a new conversation on reset and keeps memory', async () => {
     await store.memory.write('MEMORY.md', '# Kept')
     await start()
@@ -447,6 +458,19 @@ describe('ManagerAgent', () => {
     expect(store.state().sdkSessionId).toBe('sdk-2')
     expect(sdk.sessions.get('sdk-2')!.prompts[0]).toContain('# Kept')
     expect(sdk.sessions.get('sdk-2')!.prompts[0]).not.toContain('runtime was lost')
+  })
+
+  it('leaves nothing of a turn it interrupted in the new conversation after a reset', async () => {
+    sdk.behaviors.push((fakeSession) => {
+      fakeSession.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: 'Partial' } })
+    })
+    await start()
+    await agent!.send('long one')
+    await vi.waitFor(() => expect(agent!.snapshot().streaming?.content).toBe('Partial'))
+    await agent!.reset()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(agent!.snapshot().messages).toEqual([])
+    expect(agent!.snapshot().status).toBe('idle')
   })
 
   it('stops an idle runtime and resumes the same conversation later', async () => {

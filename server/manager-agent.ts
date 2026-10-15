@@ -194,6 +194,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private skillCache?: { at: number; key: string; skills: ManagerSkillSummary[] }
   private omitModel = false
   private pendingAcknowledgement?: { journalSeq: number; memoryHash?: string }
+  /** The turn being answered, settled once its outcome is stored. */
+  private processing?: Promise<void>
+  /** Set when Stop arrives between recovery attempts, when no turn is running. */
+  private cancelledMessageId?: string
 
   constructor(options: ManagerAgentOptions) {
     super()
@@ -334,6 +338,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   /** Stops the turn being answered. Queued messages still go after it. */
   async cancel(): Promise<void> {
+    if (this.processing) this.cancelledMessageId = this.currentReplyTo
     const running = this.running
     if (!running) return
     running.cancelled = true
@@ -349,6 +354,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       }
     }
     await this.cancel()
+    // Its outcome is stored by then, so none of it lands in the new conversation.
+    await this.processing?.catch(() => undefined)
     await this.retireSession()
     await this.store.resetConversation()
     await this.store.updateState((state) => {
@@ -428,7 +435,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         const next = this.store.messages().find((message) => message.role === 'user' && message.state === 'queued')
         if (!next) break
         this.clearIdleTimer()
-        await this.process(next)
+        this.processing = this.process(next)
+        await this.processing
+        this.processing = undefined
       }
       if (this.status !== 'offline') this.setStatus('idle')
       this.scheduleIdleStop()
@@ -439,6 +448,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   private async process(message: ManagerMessage): Promise<void> {
     this.currentReplyTo = message.id
+    this.cancelledMessageId = undefined
     this.streaming = undefined
     const interrupted = (this.store.state().interruptions ?? {})[message.id] !== undefined
     await this.updateMessage({ ...message, state: 'running', updatedAt: this.now().toISOString() })
@@ -459,6 +469,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         this.setStatus('recovering')
         if (wait) await delay(wait)
         if (this.stopped) return
+        if (this.cancelledMessageId === message.id) {
+          await this.finishCancelled(message)
+          return
+        }
       }
       this.attemptActivities = []
       try {

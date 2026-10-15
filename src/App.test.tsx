@@ -145,6 +145,7 @@ vi.mock('./api', async (importOriginal) => ({
   getManager: vi.fn(),
   sendManagerMessage: vi.fn(),
   retryManagerMessage: vi.fn(),
+  resolveManagerConfirmation: vi.fn(),
   cancelManager: vi.fn(),
   resetManager: vi.fn(),
   listSessions: vi.fn(),

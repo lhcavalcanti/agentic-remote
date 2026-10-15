@@ -30,7 +30,8 @@ export interface ManagerToolHost {
   renameSession(computerId: string, sessionId: string, title: string): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, content: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
-  deleteSession(computerId: string, sessionId: string): Promise<void>
+  /** Asks you, in the app, to confirm closing a session. Nothing is deleted until you do. */
+  requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void>
   discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]>
   markManaged(session: ManagedSession, task: string): Promise<void>
   registry(): ManagerRegistry
@@ -384,20 +385,16 @@ export function createManagerTools(
     ),
     define(
       'close_session',
-      'Permanently delete a session and its history. Only when the user explicitly asked to close or delete this specific session in this conversation; pass userConfirmed: true.',
+      "Ask the user to close a session, which permanently deletes it and its history. This does not close anything itself: the user confirms or declines in the app, and the session stays open until they confirm. Only ask when the user wants that specific session closed.",
       z.object({
         sessionId: sessionIdField,
         computer: computerField.optional(),
-        userConfirmed: z.boolean().describe('True only if the user explicitly asked to close this session.'),
+        reason: z.string().trim().max(300).optional().describe('One short line on why, shown to the user beside the request.'),
       }),
-      async ({ sessionId, computer, userConfirmed }) => {
+      async ({ sessionId, computer, reason }) => {
         const session = await resolveSession(sessionId, computer)
-        if (!userConfirmed) {
-          throw new ToolFailure(`Not closed. Ask the user to confirm closing "${session.title}" (${session.id}) first.`)
-        }
-        await host.deleteSession(session.computerId, session.id)
-        onActivity({ tool: 'close_session', content: `Closed "${session.title}"` })
-        return `Closed "${session.title}" (${session.id}). It is permanently deleted.`
+        await host.requestCloseConfirmation(session, reason)
+        return `Asked the user to confirm closing ${link(session)} in the app. It stays open until they confirm; the outcome appears in your next turn.`
       },
     ),
     define(

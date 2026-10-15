@@ -20,6 +20,8 @@ export interface ManagerState {
   knownSdkSessionIds: string[]
   /** How often each queued message has been interrupted by a restart. */
   interruptions?: Record<string, number>
+  /** Things the agent learns on its next turn, such as your answer to a confirmation. */
+  pendingNotes?: string[]
   /** The newest journal entry a completed turn has shown the agent. */
   acknowledgedJournalSeq: number
   /** Hash of the MEMORY.md the agent last saw in a prompt. */
@@ -258,7 +260,9 @@ export class ManagerStore {
       text = await readFile(path.join(this.directory, name), 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-      throw error
+      // Unreadable is treated like corrupt: started fresh, never fatal.
+      console.warn(`Manager ${name} could not be read; starting without it:`, error)
+      return undefined
     }
     try {
       const value = JSON.parse(text) as unknown
@@ -267,8 +271,10 @@ export class ManagerStore {
       // Set aside below.
     }
     const aside = `${name}.corrupt-${this.now().toISOString().replaceAll(':', '-')}`
-    console.warn(`Manager ${name} could not be read; moved it to ${aside} and started fresh`)
-    await rename(path.join(this.directory, name), path.join(this.directory, aside))
+    console.warn(`Manager ${name} could not be parsed; moving it to ${aside} and starting fresh`)
+    await rename(path.join(this.directory, name), path.join(this.directory, aside)).catch((error: unknown) => {
+      console.warn(`Could not move ${name} aside:`, error)
+    })
     return undefined
   }
 
@@ -278,7 +284,8 @@ export class ManagerStore {
       text = await readFile(path.join(this.directory, name), 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
+      console.warn(`Manager ${name} could not be read; starting without it:`, error)
+      return []
     }
     const values: T[] = []
     for (const line of text.split('\n')) {

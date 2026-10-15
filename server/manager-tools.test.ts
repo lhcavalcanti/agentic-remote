@@ -61,7 +61,7 @@ describe('manager tools', () => {
       renameSession: vi.fn(async (_computerId: string, id: string, title: string) => session(id, { title })),
       sendMessage: vi.fn(async (_computerId: string, id: string) => session(id)),
       cancel: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined),
+      requestCloseConfirmation: vi.fn(async () => undefined),
       discoverSkills: vi.fn(async () => [{ name: 'brainstorming', description: 'Explore intent before building', source: 'personal' }]),
       markManaged: vi.fn(async () => undefined),
       registry: () => ({}),
@@ -160,14 +160,11 @@ describe('manager tools', () => {
     expect(host.askSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa', 'What did you find?')
   })
 
-  it('closes a session only when the user confirmed it', async () => {
-    const refused = await call('close_session', { sessionId: 'abc12345', userConfirmed: false })
-    expect(refused).toMatchObject({ resultType: 'failure' })
-    expect(host.deleteSession).not.toHaveBeenCalled()
-
-    await call('close_session', { sessionId: 'abc12345', userConfirmed: true })
-    expect(host.deleteSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
-    expect(activities.at(-1)).toMatchObject({ tool: 'close_session', content: 'Closed "Session abc12345-aaaa"' })
+  it('only asks the user to close a session and never closes one itself', async () => {
+    const result = await call('close_session', { sessionId: 'abc12345', userConfirmed: true, reason: 'It finished.' })
+    expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'It finished.')
+    expect(String(result)).toContain('stays open until they confirm')
+    expect(Object.keys(host)).not.toContain('deleteSession')
   })
 
   it('keeps notes in memory and reports a refused path as a failure', async () => {

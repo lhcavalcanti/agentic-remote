@@ -213,7 +213,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private needsBrief = false
   private skillCache?: { at: number; key: string; skills: ManagerSkillSummary[] }
   private omitModel = false
-  private pendingAcknowledgement?: { journalSeq: number; memoryHash?: string }
+  private pendingAcknowledgement?: { journalSeq: number; memoryHash?: string; notesShown: number }
   /** The turn being answered, settled once its outcome is stored. */
   private processing?: Promise<void>
   /** Set when Stop arrives between recovery attempts, when no turn is running. */
@@ -255,7 +255,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       if (message.role !== 'user' || message.state !== 'running') continue
       const count = (interruptions[message.id] ?? 0) + 1
       interruptions[message.id] = count
-      if (count > 2) {
+      // Retried once; a second interruption hands it back to you.
+      if (count > 1) {
         delete interruptions[message.id]
         await this.updateMessage({
           ...message,
@@ -390,6 +391,66 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.emit('event', { type: 'manager.reset', snapshot: this.snapshot() })
   }
 
+  /** Answers a decision the manager asked of you, such as closing a session. */
+  async resolveConfirmation(messageId: string, accept: boolean): Promise<ManagerMessage> {
+    const message = this.store.message(messageId)
+    const confirmation = message?.confirmation
+    if (!message || !confirmation) {
+      throw Object.assign(new Error('Confirmation not found'), { statusCode: 404 })
+    }
+    if (confirmation.state !== 'pending') {
+      throw Object.assign(new Error('This was already answered'), { statusCode: 409 })
+    }
+    const name = `"${confirmation.title}" (${confirmation.sessionId})`
+    let next: ManagerMessage
+    let note: string
+    if (!accept) {
+      next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'declined' } }
+      note = `The user declined closing ${name}; it stays open.`
+    } else {
+      // Marked before the deletion, so a second answer cannot delete twice.
+      await this.updateMessage({ ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } })
+      try {
+        await this.hub.deleteSession(confirmation.computerId, confirmation.sessionId)
+        next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } }
+        note = `The user confirmed closing ${name}; it is deleted.`
+      } catch (error) {
+        next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'failed', error: errorMessage(error) } }
+        note = `Closing ${name} failed: ${errorMessage(error)}.`
+      }
+    }
+    await this.updateMessage(next)
+    await this.store.updateState((state) => {
+      state.pendingNotes = [...(state.pendingNotes ?? []), note].slice(-20)
+    })
+    if (next.confirmation?.state === 'confirmed') {
+      this.emit('event', { type: 'manager.sessions', managedSessions: this.recorder.managedSessions() })
+    }
+    return next
+  }
+
+  private async requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void> {
+    this.attemptActivities.push(`Asked to close "${session.title}"`)
+    await this.updateMessage({
+      id: randomUUID(),
+      role: 'activity',
+      content: reason?.trim()
+        ? `Close "${session.title}"? ${reason.trim()}`
+        : `Close "${session.title}"? This permanently deletes it and its history.`,
+      createdAt: this.now().toISOString(),
+      tool: 'close_session',
+      ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
+      sessionRefs: [{ computerId: session.computerId, sessionId: session.id, title: session.title }],
+      confirmation: {
+        kind: 'close-session',
+        computerId: session.computerId,
+        sessionId: session.id,
+        title: session.title,
+        state: 'pending',
+      },
+    })
+  }
+
   private toolHost(): ManagerToolHost {
     const hub = this.hub
     return {
@@ -404,7 +465,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       sendMessage: (computerId, sessionId, content) =>
         hub.sendMessage(computerId, sessionId, { content, enqueue: true }),
       cancel: (computerId, sessionId) => hub.cancel(computerId, sessionId),
-      deleteSession: (computerId, sessionId) => hub.deleteSession(computerId, sessionId),
+      requestCloseConfirmation: (session, reason) => this.requestCloseConfirmation(session, reason),
       discoverSkills: (projectPaths) => this.discoverSkills(projectPaths),
       markManaged: async (session, task) => {
         await this.recorder.markManaged(session, task)
@@ -445,9 +506,6 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
       ...(activity.sessionRefs?.length ? { sessionRefs: activity.sessionRefs } : {}),
     }).catch((error: unknown) => console.warn('Could not record manager activity:', error))
-    if (activity.tool === 'close_session') {
-      this.emit('event', { type: 'manager.sessions', managedSessions: this.recorder.managedSessions() })
-    }
   }
 
   private async pump(): Promise<void> {
@@ -508,7 +566,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     ]
     const failures: string[] = []
     const performed: string[] = []
-    let turn: { text: string; acknowledgement?: { journalSeq: number; memoryHash?: string } } | undefined
+    let turn: { text: string; acknowledgement?: { journalSeq: number; memoryHash?: string; notesShown: number } } | undefined
     for (let index = 0; index < rungs.length; index += 1) {
       const { rung, wait } = rungs[index]
       if (index > 0) {
@@ -575,6 +633,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       await this.store.updateState((state) => {
         state.acknowledgedJournalSeq = Math.max(state.acknowledgedJournalSeq, acknowledgement.journalSeq)
         if (acknowledgement.memoryHash) state.memoryHashShown = acknowledgement.memoryHash
+        // Notes added while the turn ran are still unseen.
+        if (state.pendingNotes?.length) state.pendingNotes = state.pendingNotes.slice(acknowledgement.notesShown)
       })
     }
     if (turn.text.trim()) {
@@ -651,6 +711,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     if (attempt.failure && !attempt.performed.length) {
       notes.push('A previous attempt at this message failed before finishing; answer it now.')
     }
+    const pendingNotes = state.pendingNotes ?? []
+    notes.push(...pendingNotes)
     let context = buildTurnContext({
       now: this.now(),
       computers: this.hub.listComputers(),
@@ -669,6 +731,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.pendingAcknowledgement = {
       journalSeq: changes.at(-1)?.seq ?? state.acknowledgedJournalSeq,
       memoryHash: showIndex || this.needsBrief ? indexHash : state.memoryHashShown,
+      notesShown: pendingNotes.length,
     }
     return managerPrompt(context, message.content)
   }

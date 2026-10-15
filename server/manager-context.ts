@@ -35,7 +35,7 @@ export const MANAGER_SYSTEM_PROMPT = `You are the Session Manager inside Agentic
 - Never store secrets, tokens, passwords, keys, or personal data in memory.
 
 # Safety
-- close_session permanently deletes a session and its history. Use it only when the user explicitly asked, in this conversation, to close or delete that specific session, and then pass userConfirmed: true. Never close sessions to tidy up on your own.
+- close_session only asks: the user confirms or declines closing the session in the app, and it stays open until they confirm. Ask only when the user wants that specific session closed, and never to tidy up on your own. The outcome reaches you on your next turn.
 - If a tool fails, read the error, adjust, and carry on; mention it only when it blocks the request.`
 
 const ACTIVITY_LIMIT = 120

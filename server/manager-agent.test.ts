@@ -85,7 +85,7 @@ class FakeSdk {
 }
 
 class FakeClient implements ManagerSdkClient {
-  start = vi.fn(async () => undefined)
+  start = vi.fn(async (): Promise<void> => undefined)
   stop = vi.fn(async () => [])
   deleteSession = vi.fn(async (_id: string) => undefined)
   createSession = vi.fn(async (config: ManagerSdkSessionConfig) => {
@@ -383,9 +383,9 @@ describe('ManagerAgent', () => {
     expect(store.state().interruptions).toEqual({})
   })
 
-  it('gives up on a message that keeps being interrupted', async () => {
+  it('hands a message back after a second interruption', async () => {
     await store.upsertMessage({ id: 'm1', role: 'user', content: 'loop', createdAt: 't', state: 'running' })
-    await store.updateState((state) => { state.interruptions = { m1: 2 } })
+    await store.updateState((state) => { state.interruptions = { m1: 1 } })
     await start()
     const message = agent!.snapshot().messages.find((candidate) => candidate.id === 'm1')!
     expect(message.state).toBe('failed')
@@ -409,6 +409,54 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().managedSessions).toEqual(['hub:worker-1'])
     expect(events.some((event) => event.type === 'manager.sessions')).toBe(true)
     expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'worker-1', { content: 'Write the docs', enqueue: true })
+  })
+
+  it('closes a session only once you confirm it in the app, and tells the agent', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('close_session')({ sessionId: 'existing', userConfirmed: true })
+      reply('Asked you to confirm.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('close the existing session')
+    await settled()
+    const request = agent!.snapshot().messages.find((message) => message.confirmation)!
+    expect(request.confirmation).toMatchObject({ kind: 'close-session', sessionId: 'existing', state: 'pending' })
+    expect(hub.deleteSession).not.toHaveBeenCalled()
+
+    const answered = await agent!.resolveConfirmation(request.id, true)
+    expect(answered.confirmation!.state).toBe('confirmed')
+    expect(hub.deleteSession).toHaveBeenCalledTimes(1)
+    expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'existing')
+    await expect(agent!.resolveConfirmation(request.id, true)).rejects.toMatchObject({ statusCode: 409 })
+    expect(hub.deleteSession).toHaveBeenCalledTimes(1)
+
+    await agent!.send('anything else?')
+    await settled()
+    expect(sdk.prompts.at(-1)).toContain('The user confirmed closing "Session existing" (existing); it is deleted.')
+    await agent!.send('and now?')
+    await settled()
+    expect(sdk.prompts.at(-1)).not.toContain('The user confirmed closing')
+  })
+
+  it('keeps a session open when you decline, and reports a close that failed', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('close_session')({ sessionId: 'existing' })
+      await fakeSession.tool('close_session')({ sessionId: 'existing', reason: 'Done' })
+      reply('Asked.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('close it')
+    await settled()
+    const [first, second] = agent!.snapshot().messages.filter((message) => message.confirmation)
+    expect((await agent!.resolveConfirmation(first.id, false)).confirmation!.state).toBe('declined')
+    vi.mocked(hub.deleteSession).mockRejectedValueOnce(new Error('node offline'))
+    const failed = await agent!.resolveConfirmation(second.id, true)
+    expect(failed.confirmation).toMatchObject({ state: 'failed', error: 'node offline' })
+    expect(store.state().pendingNotes).toEqual([
+      'The user declined closing "Session existing" (existing); it stays open.',
+      'Closing "Session existing" (existing) failed: node offline.',
+    ])
+    await expect(agent!.resolveConfirmation('missing', true)).rejects.toMatchObject({ statusCode: 404 })
   })
 
   it('does not repeat actions from a failed attempt', async () => {

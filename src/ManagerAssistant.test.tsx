@@ -7,6 +7,7 @@ import {
   cancelManager,
   getManager,
   resetManager,
+  resolveManagerConfirmation,
   retryManagerMessage,
   sendManagerMessage,
 } from './api'
@@ -17,6 +18,7 @@ vi.mock('./api', () => ({
   getManager: vi.fn(),
   sendManagerMessage: vi.fn(),
   retryManagerMessage: vi.fn(),
+  resolveManagerConfirmation: vi.fn(),
   cancelManager: vi.fn(),
   resetManager: vi.fn(),
 }))
@@ -194,6 +196,24 @@ describe('ManagerAssistant', () => {
     expect(onOpenSession).toHaveBeenLastCalledWith({ computerId: 'hub', sessionId: 's1', title: 'Docs' })
     fireEvent.click(screen.getByRole('link', { name: 'Docs' }))
     expect(onOpenSession).toHaveBeenLastCalledWith({ computerId: 'hub', sessionId: 's1' })
+  })
+
+  it('closes a session only when you confirm the request', async () => {
+    const request = {
+      id: 'c1', role: 'activity' as const, content: 'Close "Docs"? It finished.', createdAt: 't', updatedAt: '2026-10-15T00:00:01.000Z',
+      tool: 'close_session', sessionRefs: [{ computerId: 'hub', sessionId: 's1', title: 'Docs' }],
+      confirmation: { kind: 'close-session' as const, computerId: 'hub', sessionId: 's1', title: 'Docs', state: 'pending' as const },
+    }
+    vi.mocked(resolveManagerConfirmation).mockResolvedValue({
+      ...request, updatedAt: '2026-10-15T00:00:02.000Z', confirmation: { ...request.confirmation, state: 'confirmed' },
+    })
+    setup({ ...empty, messages: [request] })
+    await openPanel()
+    expect(screen.getByText('Close "Docs"? It finished.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+    await waitFor(() => expect(resolveManagerConfirmation).toHaveBeenCalledWith('c1', true))
+    expect(await screen.findByText('Closed. It is permanently deleted.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
   })
 
   it('stops the current reply', async () => {

@@ -42,6 +42,7 @@ import type {
   ManagerClientDefaults,
   ManagerMessage,
   ManagerSnapshot,
+  ResolveManagerConfirmationInput,
   SendManagerMessageInput,
 } from '../shared/manager'
 import {
@@ -1089,6 +1090,17 @@ export async function retryManagerMessage(messageId: string): Promise<ManagerMes
   const response = await request<{ message: ManagerMessage }>(
     `/api/manager/messages/${encodeURIComponent(messageId)}/retry`,
     { method: 'POST' },
+  )
+  return response.message
+}
+
+export async function resolveManagerConfirmation(
+  messageId: string,
+  accept: boolean,
+): Promise<ManagerMessage> {
+  const response = await request<{ message: ManagerMessage }>(
+    `/api/manager/messages/${encodeURIComponent(messageId)}/confirmation`,
+    { method: 'POST', body: JSON.stringify({ accept } satisfies ResolveManagerConfirmationInput) },
   )
   return response.message
 }

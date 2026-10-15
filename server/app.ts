@@ -235,11 +235,19 @@ export async function buildApp(
       managerUnavailable = 'The manager agent needs the built-in Copilot session service.'
     } else {
       const managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
-      await managerStore.initialize()
-      const recorder = new JournalRecorder(managerStore)
-      forwardToJournal = (event) => recorder.handle(event)
-      manager.on('event', forwardToJournal)
-      managerAgent = new ManagerAgent({
+      // The manager is an addition to the hub; a hub whose manager cannot
+      // start still serves everything else.
+      const initialized = await managerStore.initialize().then(() => true, (error: unknown) => {
+        app.log.error({ err: error }, 'The manager agent could not start')
+        managerUnavailable = `The manager agent could not start: ${error instanceof Error ? error.message : String(error)}`
+        return false
+      })
+      const recorder = initialized ? new JournalRecorder(managerStore) : undefined
+      if (recorder) {
+        forwardToJournal = (event) => recorder.handle(event)
+        manager.on('event', forwardToJournal)
+      }
+      managerAgent = recorder && new ManagerAgent({
         store: managerStore,
         recorder,
         hub: manager,
@@ -250,7 +258,7 @@ export async function buildApp(
       })
       // Before the session service starts, so its first discovery already
       // leaves the manager's own conversations out.
-      agent.excludeFromDiscovery(managerAgent.hiddenSessionIds())
+      if (managerAgent) agent.excludeFromDiscovery(managerAgent.hiddenSessionIds())
     }
     await registerHubRoutes(
       app,

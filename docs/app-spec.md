@@ -405,9 +405,10 @@ The design is in [docs/design/session-manager.md](design/session-manager.md).
   and told to check what already happened. A turn has a 15-minute watchdog.
 - The manager's SDK conversations MUST NOT appear in session lists or history.
   Their IDs are recorded and excluded before they are created.
-- Closing a session through the manager requires that you asked for it in the
-  conversation. Deletions are journaled, so the next turn learns of them and
-  updates its memory.
+- The manager MUST NOT close a session itself. It can only ask, as a card with
+  **Close session** and **Keep it**, and the session stays open until you
+  confirm there. Your answer, and any deletion, reach the agent on its next
+  turn so it can update its memory.
 - The manager's data lives in `<data>/manager/`: app-owned state, transcript,
   journal, and registry, plus the agent's Markdown memory under `memory/`. A
   file that cannot be read is set aside rather than stopping the hub. **Start

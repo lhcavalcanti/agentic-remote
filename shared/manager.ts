@@ -30,6 +30,19 @@ export interface ManagerSessionRef {
   title?: string
 }
 
+/**
+ * Something only you can decide, asked by the manager and answered in the app.
+ * The manager cannot answer it for you.
+ */
+export interface ManagerConfirmation {
+  kind: 'close-session'
+  computerId: string
+  sessionId: string
+  title: string
+  state: 'pending' | 'confirmed' | 'declined' | 'failed'
+  error?: string
+}
+
 export interface ManagerMessage {
   id: string
   role: ManagerMessageRole
@@ -46,6 +59,8 @@ export interface ManagerMessage {
   tool?: string
   /** Sessions an activity or reply refers to; each opens that session. */
   sessionRefs?: ManagerSessionRef[]
+  /** A decision waiting for you, such as closing a session. */
+  confirmation?: ManagerConfirmation
 }
 
 /**
@@ -74,6 +89,10 @@ export interface ManagerSnapshot {
   lastError?: string
   /** The reply being written, if any. */
   streaming?: { messageId: string; content: string }
+}
+
+export interface ResolveManagerConfirmationInput {
+  accept: boolean
 }
 
 export interface SendManagerMessageInput {

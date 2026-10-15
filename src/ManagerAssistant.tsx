@@ -24,6 +24,7 @@ import {
   cancelManager,
   getManager,
   resetManager,
+  resolveManagerConfirmation,
   retryManagerMessage,
   sendManagerMessage,
 } from './api'
@@ -117,6 +118,55 @@ function useBubbleOffset(active: boolean): number {
     }
   }, [active])
   return offset
+}
+
+function ConfirmationCard({
+  message,
+  answering,
+  onAnswer,
+  onOpenSession,
+}: {
+  message: ManagerMessage
+  answering: boolean
+  onAnswer: (message: ManagerMessage, accept: boolean) => void
+  onOpenSession: (ref: ManagerSessionRef) => void
+}) {
+  const confirmation = message.confirmation!
+  const ref = message.sessionRefs?.[0]
+  const outcome = {
+    pending: undefined,
+    confirmed: 'Closed. It is permanently deleted.',
+    declined: 'Kept open.',
+    failed: `Could not close it: ${confirmation.error ?? 'unknown error'}`,
+  }[confirmation.state]
+  return (
+    <li className={`manager-confirmation manager-confirmation--${confirmation.state}`}>
+      <p className="manager-confirmation__question">{message.content}</p>
+      {confirmation.state === 'pending' ? (
+        <div className="manager-confirmation__actions">
+          <button
+            className="manager-confirmation__close"
+            disabled={answering}
+            onClick={() => onAnswer(message, true)}
+            type="button"
+          >
+            Close session
+          </button>
+          <button className="secondary-button" disabled={answering} onClick={() => onAnswer(message, false)} type="button">
+            Keep it
+          </button>
+          {ref ? (
+            <button className="manager-activity__open" onClick={() => onOpenSession(ref)} type="button">
+              Open
+              <ExternalLink aria-hidden="true" size={12} />
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <p className="manager-confirmation__outcome" role="status">{outcome}</p>
+      )}
+    </li>
+  )
 }
 
 function ActivityRow({
@@ -327,6 +377,19 @@ export function ManagerAssistant({
     }
   }
 
+  async function answer(message: ManagerMessage, accept: boolean) {
+    setRetrying(message.id)
+    setSendError(undefined)
+    try {
+      const next = await resolveManagerConfirmation(message.id, accept)
+      setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
+    } catch (caught) {
+      setSendError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setRetrying(undefined)
+    }
+  }
+
   async function startOver() {
     setConfirmReset(false)
     try {
@@ -423,6 +486,17 @@ export function ManagerAssistant({
               {snapshot.messages.map((message) => {
                 if (message.role === 'user') {
                   return <UserMessage key={message.id} message={message} onRetry={(next) => void retry(next)} retrying={retrying === message.id} />
+                }
+                if (message.role === 'activity' && message.confirmation) {
+                  return (
+                    <ConfirmationCard
+                      answering={retrying === message.id}
+                      key={message.id}
+                      message={message}
+                      onAnswer={(next, accept) => void answer(next, accept)}
+                      onOpenSession={openSession}
+                    />
+                  )
                 }
                 if (message.role === 'activity') {
                   return <ActivityRow key={message.id} message={message} onOpenSession={openSession} />

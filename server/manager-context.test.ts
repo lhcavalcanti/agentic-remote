@@ -147,7 +147,7 @@ describe('manager turn context', () => {
 
   it('states the management-only role and the deletion rule in the system prompt', () => {
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/never do .*work yourself/i)
-    expect(MANAGER_SYSTEM_PROMPT).toContain('userConfirmed')
+    expect(MANAGER_SYSTEM_PROMPT).toContain('close_session only asks')
     expect(MANAGER_SYSTEM_PROMPT).toContain('?computer=<computerId>&session=<sessionId>')
   })
 })

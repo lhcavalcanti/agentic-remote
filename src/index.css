@@ -7376,6 +7376,65 @@ button {
   border-color: var(--accent);
 }
 
+.manager-confirmation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--warning);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.manager-confirmation--confirmed,
+.manager-confirmation--declined {
+  border-color: var(--border);
+}
+
+.manager-confirmation--failed {
+  border-color: var(--danger);
+}
+
+.manager-confirmation__question,
+.manager-confirmation__outcome {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.manager-confirmation__outcome {
+  color: var(--muted);
+}
+
+.manager-confirmation--failed .manager-confirmation__outcome {
+  color: var(--danger);
+}
+
+.manager-confirmation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.manager-confirmation__close {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  background: none;
+  color: var(--danger);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.manager-confirmation__close:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .manager-empty {
   display: flex;
   flex: 1;

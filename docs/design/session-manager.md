@@ -91,7 +91,7 @@ The roster is capped at 80 open sessions, and each activity at 120 characters.
 | `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task |
 | `send_to_session` | Send or queue a follow-up; always queued, so a busy session does not refuse it |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
-| `close_session` | Permanently delete it. Requires `userConfirmed: true`; the prompt allows it only when you asked in this conversation |
+| `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
 | `memory_list`, `memory_read`, `memory_write`, `memory_append`, `memory_delete` | The agent's memory |
 
@@ -130,6 +130,8 @@ end the turn.
   carries your default mode, model, and per-computer folders.
 - `POST /api/manager/messages/:id/retry`, `POST /api/manager/cancel`,
   `POST /api/manager/reset` (new conversation; memory is kept).
+- `POST /api/manager/messages/:id/confirmation` with `{ accept }`: your answer to
+  a close request. The outcome reaches the agent as a note on its next turn.
 - WebSocket: `manager.status`, `manager.message` (upsert), and
   `manager.delta` (streamed text, throttled).
 

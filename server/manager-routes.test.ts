@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -102,6 +102,32 @@ describe('manager routes', () => {
     expect(resetResponse.statusCode).toBe(200)
     expect(resetResponse.json()).toMatchObject({ available: true })
     expect(reset).toHaveBeenCalled()
+  })
+
+  it('takes your answer to a confirmation', async () => {
+    const { app, managerAgent } = await build()
+    const resolve = vi.spyOn(managerAgent!, 'resolveConfirmation').mockResolvedValue({
+      id: 'a1', role: 'activity', content: 'Close?', createdAt: 't',
+      confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 's1', title: 'S', state: 'declined' },
+    })
+    const response = await app.inject({
+      method: 'POST', url: '/api/manager/messages/a1/confirmation', headers: trusted, payload: { accept: false },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(resolve).toHaveBeenCalledWith('a1', false)
+    const invalid = await app.inject({
+      method: 'POST', url: '/api/manager/messages/a1/confirmation', headers: trusted, payload: { accept: 'yes' },
+    })
+    expect(invalid.statusCode).toBe(400)
+  })
+
+  it('keeps the hub running when the manager cannot start', async () => {
+    await writeFile(path.join(directory, 'manager'), 'not a folder')
+    const { app, managerAgent } = await build()
+    expect(managerAgent).toBeUndefined()
+    const snapshot = await app.inject({ url: '/api/manager', headers: trusted })
+    expect(snapshot.json()).toMatchObject({ available: false, unavailableReason: expect.stringContaining('could not start') })
+    expect((await app.inject({ url: '/api/computers', headers: trusted })).statusCode).toBe(200)
   })
 
   it('reports a missing message to retry as not found', async () => {

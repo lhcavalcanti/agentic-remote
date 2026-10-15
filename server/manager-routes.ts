@@ -8,6 +8,7 @@ export interface ManagerRouteAgent {
   snapshot(): ManagerSnapshot
   send(content: string, defaults?: ManagerClientDefaults): Promise<ManagerMessage>
   retry(messageId: string): Promise<ManagerMessage>
+  resolveConfirmation(messageId: string, accept: boolean): Promise<ManagerMessage>
   cancel(): Promise<void>
   reset(): Promise<void>
 }
@@ -30,6 +31,8 @@ const sendSchema = z.object({
 })
 
 const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })
+
+const confirmationSchema = z.object({ accept: z.boolean() })
 
 export function unavailableSnapshot(reason: string): ManagerSnapshot {
   return {
@@ -67,6 +70,13 @@ export async function registerManagerRoutes(
   app.post('/api/manager/messages/:messageId/retry', async (request) => {
     const { messageId } = messageParams.parse(request.params)
     return { message: await requireAgent().retry(messageId) }
+  })
+
+  // Your answer to something only you can decide, such as closing a session.
+  app.post('/api/manager/messages/:messageId/confirmation', async (request) => {
+    const { messageId } = messageParams.parse(request.params)
+    const { accept } = confirmationSchema.parse(request.body ?? {})
+    return { message: await requireAgent().resolveConfirmation(messageId, accept) }
   })
 
   app.post('/api/manager/cancel', async (_request, reply) => {

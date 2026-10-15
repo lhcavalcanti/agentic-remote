@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -106,6 +106,15 @@ describe('ManagerStore', () => {
     expect(store.state().generation).toBe(0)
     expect(store.messages().map((message) => message.id)).toEqual(['ok'])
     expect((await readdir(directory)).some((name) => name.startsWith('state.json.corrupt-'))).toBe(true)
+  })
+
+  it('starts without a file it cannot read at all', async () => {
+    const directory = path.join(root, 'manager')
+    await mkdir(path.join(directory, 'state.json'), { recursive: true })
+    await mkdir(path.join(directory, 'journal.jsonl'), { recursive: true })
+    const store = await open()
+    expect(store.state().generation).toBe(0)
+    expect(store.latestJournalSeq()).toBe(0)
   })
 
   it('starts a new conversation and keeps the previous one as an archive', async () => {

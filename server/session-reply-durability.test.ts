@@ -7,7 +7,7 @@ import type { UserInputReplyInput } from '../shared/contracts.js'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
 import { SessionStore } from './session-store.js'
-import { TerminalFormReplyError } from './terminal-session.js'
+import { terminalFormReplyBudget, TerminalFormReplyError } from './terminal-session.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
@@ -344,6 +344,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.useRealTimers()
   releases.splice(0).forEach((release) => release())
   for (const { directory, service } of fixtures.splice(0)) {
     await Promise.allSettled([service.stop()])
@@ -426,7 +427,7 @@ describe('Reply durability regressions', () => {
       )
       expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, {
         question: 'Confirm the full synthetic question?', fields: ['Confirm'],
-      })
+      }, undefined, { deadline: expect.any(Number) })
       expect(f.fill).toHaveBeenCalledOnce()
       await expect(f.reply()).rejects.toThrow('no longer pending')
       expect(f.send).toHaveBeenCalledOnce()
@@ -658,8 +659,8 @@ describe('Reply durability regressions', () => {
     await expect(secondReply()).resolves.toMatchObject({ pendingUserInput: undefined })
     expect(f.complete).toHaveBeenLastCalledWith(sessionId, 'second-form-call')
     expect(f.fill).toHaveBeenCalledTimes(2)
-    expect(f.fill).toHaveBeenNthCalledWith(1, sessionId, expect.any(Array), { question: question(1), fields: ['Confirm'] })
-    expect(f.fill).toHaveBeenNthCalledWith(2, sessionId, expect.any(Array), { question: question(2), fields: ['Confirm'] })
+    expect(f.fill).toHaveBeenNthCalledWith(1, sessionId, expect.any(Array), { question: question(1), fields: ['Confirm'] }, { deadline: expect.any(Number) })
+    expect(f.fill).toHaveBeenNthCalledWith(2, sessionId, expect.any(Array), { question: question(2), fields: ['Confirm'] }, { deadline: expect.any(Number) })
     expect(f.dismiss).not.toHaveBeenCalled()
     expect(f.terminal.send).not.toHaveBeenCalled()
     expect(f.input.values).toEqual({ confirm: true })
@@ -676,6 +677,73 @@ describe('Reply durability regressions', () => {
     expect(f.dismiss).not.toHaveBeenCalled()
     expect(f.terminal.send).not.toHaveBeenCalled()
   })
+
+  it('keeps the card pending after a timeout before commit and lets the same answer run again', async () => {
+    const f = await terminalFormFixture()
+    f.fill.mockRejectedValueOnce(new TerminalFormReplyError(
+      'The terminal form reply timed out before it could be submitted. Nothing was submitted; try again.',
+      'not-submitted',
+    ))
+    await expect(f.reply()).rejects.toMatchObject({
+      statusCode: 409, uncertainDelivery: false, message: expect.stringMatching(/try again/i),
+    })
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.service['terminalFormUncertainty'].size).toBe(0)
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.fill).toHaveBeenCalledTimes(2)
+    expect(f.dismiss).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it.each(['accept', 'cancel', 'decline'] as const)(
+    'gives every terminal step of one %s the deadline that started with the reply', async (action) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-10-15T00:00:00.000Z'))
+      const deadline = Date.now() + terminalFormReplyBudget(1)
+      const f = await fallbackFormFixture()
+      f.wait.mockResolvedValue(true)
+      f.fill.mockImplementation(async () => {
+        vi.setSystemTime(Date.now() + 1_000)
+        return false
+      })
+      const identity = { question: 'Confirm the full synthetic question?', fields: ['Confirm'] }
+
+      await f.reply(action === 'accept' ? f.input : { ...f.input, action })
+
+      if (action === 'accept') {
+        expect(f.fill).toHaveBeenCalledExactlyOnceWith(sessionId, expect.any(Array), identity, { deadline })
+        expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, undefined, { deadline })
+      } else {
+        expect(f.fill).not.toHaveBeenCalled()
+        expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, action, { deadline })
+      }
+      expect(f.wait).toHaveBeenCalledExactlyOnceWith(sessionId, 'form-call', deadline)
+    },
+  )
+
+  it.each(['cancel', 'decline'] as const)(
+    'stops waiting for %s completion at the reply deadline and keeps the card pending', async (action) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-10-15T00:00:00.000Z'))
+      const deadline = Date.now() + terminalFormReplyBudget(1)
+      const f = await terminalFormFixture()
+      f.dismiss.mockImplementation(async () => {
+        vi.setSystemTime(deadline)
+        return true
+      })
+      const input = { ...f.input, action }
+
+      await expect(f.reply(input)).rejects.toMatchObject({
+        statusCode: 409, uncertainDelivery: true, message: expect.stringMatching(/do not resend/i),
+      })
+      expect(f.complete).toHaveBeenCalledTimes(2)
+      expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+
+      await expect(f.reply(input)).rejects.toMatchObject({ uncertainDelivery: true })
+      expect(f.dismiss).toHaveBeenCalledOnce()
+    },
+  )
 
   it('keeps the original Claude question answerable when advancing its card is refused', async () => {
     const { service, store, contents } = await claudeFixture()

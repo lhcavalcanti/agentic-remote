@@ -39,6 +39,15 @@ export interface TerminalFormIdentity {
   fields: string[]
 }
 
+export interface TerminalFormReplyOptions {
+  /**
+   * When the reply must have settled, in epoch milliseconds. It covers waiting
+   * behind other terminal work as well as the reply itself, so every step of
+   * one answer can share it. Defaults to the form's field-scaled budget.
+   */
+  deadline?: number
+}
+
 export interface TerminalSendOptions {
   allowDuringAgentExecution?: boolean
   replaceExistingInput?: boolean
@@ -112,6 +121,7 @@ export interface TerminalSessionController {
     sessionId: string,
     form?: TerminalFormIdentity,
     action?: 'cancel' | 'decline',
+    options?: TerminalFormReplyOptions,
   ): Promise<boolean>
   /**
    * Fills the structured form the agent is showing and submits it, so the
@@ -122,6 +132,7 @@ export interface TerminalSessionController {
     sessionId: string,
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
+    options?: TerminalFormReplyOptions,
   ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(
@@ -195,6 +206,48 @@ export class TerminalFormReplyError extends Error {
   }
 }
 
+interface FormReplyProgress {
+  readonly deadline: number
+  started: boolean
+  expired: boolean
+  /** A key that can submit or dismiss the form may have reached the pane. */
+  committed: boolean
+  /** The form was seen to close, so only cleanup can still be running. */
+  closed: boolean
+}
+
+class FormReplyDeadlineError extends Error {
+  constructor() {
+    super('The terminal form reply timed out')
+    this.name = 'FormReplyDeadlineError'
+  }
+}
+
+const FORM_REPLY_NOT_SUBMITTED_TIMEOUT =
+  'The terminal form reply timed out before it could be submitted. Nothing was submitted; try again.'
+
+/** What a caller is told when a form reply's deadline passes first. */
+function formReplyExpired(progress: FormReplyProgress): TerminalFormReplyError {
+  if (progress.closed) {
+    return new TerminalFormReplyError(
+      'The terminal reply was submitted, but its cleanup did not finish within the time limit',
+      'submitted',
+    )
+  }
+  if (progress.committed) {
+    return new TerminalFormReplyError(
+      'The terminal reply timed out after it may have been submitted; do not resend it',
+      'uncertain',
+    )
+  }
+  return new TerminalFormReplyError(
+    progress.started
+      ? FORM_REPLY_NOT_SUBMITTED_TIMEOUT
+      : 'The terminal was busy with other work, so this reply timed out before it started. Nothing was submitted; try again.',
+    'not-submitted',
+  )
+}
+
 export class TerminalDraftConflictError extends Error {
   readonly statusCode = 409
   readonly uncertainDelivery = false
@@ -256,7 +309,7 @@ function processAlive(pid: number): boolean {
 // idle, where it is the first half of quitting.
 const INTERRUPT_REPEAT_MS = 5_000
 
-function formViewportTimeout(fieldCount: number): number {
+export function terminalFormReplyBudget(fieldCount: number): number {
   return Math.min(
     MAX_FORM_VIEWPORT_TIMEOUT_MS,
     FORM_VIEWPORT_BASE_TIMEOUT_MS +
@@ -1077,8 +1130,9 @@ export class TmuxTerminalSessionController
     sessionId: string,
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
+    options?: TerminalFormReplyOptions,
   ): Promise<boolean> {
-    return this.serialize(sessionId, async () => {
+    return this.boundedFormReply(sessionId, form.fields.length, options, async (progress) => {
       const owner = await this.boundOwner(sessionId)
       if (
         !owner ||
@@ -1091,7 +1145,7 @@ export class TmuxTerminalSessionController
       ) {
         return false
       }
-      return this.withFormViewport(sessionId, owner, form, async ({ capture, press, paste }) => {
+      return this.withFormViewport(sessionId, owner, form, progress, async ({ capture, press, paste }) => {
         let pane = await capture()
         // A form being open says nothing about which request it belongs to. The
         // request that was answered may have closed and another opened in its
@@ -1205,19 +1259,26 @@ export class TmuxTerminalSessionController
     sessionId: string,
     form?: TerminalFormIdentity,
     action: 'cancel' | 'decline' = 'cancel',
+    options?: TerminalFormReplyOptions,
   ): Promise<boolean> {
-    return this.serialize(sessionId, async () => {
-      const owner = await this.boundOwner(sessionId)
-      if (!owner) {
-        return false
-      }
-      if (form && form.fields.length > 0) {
-        return this.withFormViewport(sessionId, owner, form, async ({ capture, press }) => {
+    if (form && form.fields.length > 0) {
+      return this.boundedFormReply(sessionId, form.fields.length, options, async (progress) => {
+        const owner = await this.boundOwner(sessionId)
+        if (!owner) {
+          return false
+        }
+        return this.withFormViewport(sessionId, owner, form, progress, async ({ capture, press }) => {
           await press(action === 'decline' ? 'C-d' : 'Escape')
           return submitTerminalForm(capture, (ms) =>
             new Promise((resolve) => setTimeout(resolve, ms)),
           )
         })
+      })
+    }
+    return this.serialize(sessionId, async () => {
+      const owner = await this.boundOwner(sessionId)
+      if (!owner) {
+        return false
       }
       await execFileAsync('tmux', [
         'send-keys',
@@ -1226,6 +1287,48 @@ export class TmuxTerminalSessionController
         action === 'decline' ? 'C-d' : 'Escape',
       ])
       return true
+    })
+  }
+
+  /**
+   * Runs one form reply against a single deadline that starts before it waits
+   * behind other terminal work. The caller is answered by that deadline at the
+   * latest, with an outcome taken from how far the reply got. The reply stops
+   * sending keys once the deadline passes, and a viewport restoration it has
+   * started keeps the session serialized until it finishes.
+   */
+  private boundedFormReply(
+    sessionId: string,
+    fieldCount: number,
+    options: TerminalFormReplyOptions | undefined,
+    operation: (progress: FormReplyProgress) => Promise<boolean>,
+  ): Promise<boolean> {
+    const progress: FormReplyProgress = {
+      // A caller's deadline may shorten this reply's budget, never extend it.
+      deadline: Math.min(
+        options?.deadline ?? Infinity,
+        Date.now() + terminalFormReplyBudget(fieldCount),
+      ),
+      started: false,
+      expired: false,
+      committed: false,
+      closed: false,
+    }
+    const reply = this.serialize(sessionId, async () => {
+      // A reply whose deadline passed while it was queued must never begin.
+      if (progress.expired || Date.now() >= progress.deadline) {
+        progress.expired = true
+        throw formReplyExpired(progress)
+      }
+      progress.started = true
+      return operation(progress)
+    })
+    return new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        progress.expired = true
+        reject(formReplyExpired(progress))
+      }, Math.max(0, progress.deadline - Date.now()))
+      reply.then(resolve, reject).finally(() => clearTimeout(timer))
     })
   }
 
@@ -1289,6 +1392,7 @@ export class TmuxTerminalSessionController
     sessionId: string,
     owner: TerminalOwner,
     form: TerminalFormIdentity,
+    progress: FormReplyProgress,
     operation: (controls: {
       capture: () => Promise<string>
       press: (key: string, field?: number) => Promise<void>
@@ -1297,7 +1401,6 @@ export class TmuxTerminalSessionController
   ): Promise<boolean> {
     let original: FormViewport | undefined
     let expanded: FormViewport | undefined
-    let deadline = Infinity
     let attempted = false
     let result = false
     let failure: unknown
@@ -1306,6 +1409,11 @@ export class TmuxTerminalSessionController
       return data.slice(data.lastIndexOf(')') + 2).split(' ')[19]
     }
     const started = await processStart()
+    // Checked immediately before every capture, resize, and keystroke, so a
+    // reply whose deadline has passed can no longer change the terminal.
+    const live = () => {
+      if (progress.expired || Date.now() >= progress.deadline) throw new FormReplyDeadlineError()
+    }
     const validateOwner = async () => {
       const current = await this.formOwner(sessionId, owner)
       if (!current || current.pid !== owner.pid || current.rootPid !== owner.rootPid ||
@@ -1314,7 +1422,7 @@ export class TmuxTerminalSessionController
       }
     }
     const capture = async () => {
-      if (Date.now() > deadline) throw new Error('The temporary terminal form viewport timed out')
+      live()
       await validateOwner()
       if (expanded && !sameViewport(await this.readFormViewport(owner), expanded)) {
         throw new Error('The terminal viewport changed while its form was being inspected')
@@ -1365,14 +1473,15 @@ export class TmuxTerminalSessionController
           '#{==:#{window-size},manual}',
         ] : []),
       ]
-      if (committing) attempted = true
+      live()
+      if (committing) attempted = progress.committed = true
       const sent = await execFileAsync('tmux', [
         'if-shell', '-F', '-t', owner.target,
         conditions.reduce((left, right) => `#{&&:${left},${right}}`),
         `${command} ; display-message -p sent`, 'display-message -p changed',
       ], { timeout: 2_000 })
       if (sent.stdout.trim() !== 'sent') {
-        if (committing) attempted = false
+        if (committing) attempted = progress.committed = false
         throw new Error('The terminal owner or viewport changed immediately before keyboard input')
       }
     }
@@ -1408,6 +1517,7 @@ export class TmuxTerminalSessionController
         await validateOwner()
         if (!sameViewport(await this.readFormViewport(owner), original)) return false
         await validateOwner()
+        live()
         expanded = {
           ...original,
           width,
@@ -1415,7 +1525,6 @@ export class TmuxTerminalSessionController
           policy: 'manual',
           localPolicy: 'manual',
         }
-        deadline = Date.now() + formViewportTimeout(form.fields.length)
         await this.changeFormViewport(original, expanded)
         for (let attempt = 0; attempt < 30; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 100))
@@ -1455,6 +1564,7 @@ export class TmuxTerminalSessionController
             )
           }
           await validateOwner()
+          live()
           const next: FormViewport = { ...previous, width }
           expanded = next
           await this.changeFormViewport(previous, next)
@@ -1481,6 +1591,7 @@ export class TmuxTerminalSessionController
             )
           },
           paste: async (value, field) => {
+            live()
             const buffer = `agentic-remote-form-${randomUUID()}`
             await execFileAsync('tmux', ['set-buffer', '-b', buffer, '--', value], { timeout: 2_000 })
             try {
@@ -1491,6 +1602,7 @@ export class TmuxTerminalSessionController
             }
           },
         })
+        progress.closed = result
       }
     } catch (error) {
       failure = error
@@ -1508,11 +1620,13 @@ export class TmuxTerminalSessionController
     if (failure || (attempted && !result)) {
       const outcome = result ? 'submitted' : attempted ? 'uncertain' : 'not-submitted'
       throw new TerminalFormReplyError(
-        `${result ? 'The terminal reply was submitted, but cleanup failed'
-          : attempted ? 'The terminal reply may have been submitted; do not resend it'
-            : 'The terminal form could not be safely answered'}: ${
-          failure instanceof Error ? failure.message : 'completion was not confirmed'
-        }`,
+        outcome === 'not-submitted' && failure instanceof FormReplyDeadlineError
+          ? FORM_REPLY_NOT_SUBMITTED_TIMEOUT
+          : `${result ? 'The terminal reply was submitted, but cleanup failed'
+            : attempted ? 'The terminal reply may have been submitted; do not resend it'
+              : 'The terminal form could not be safely answered'}: ${
+            failure instanceof Error ? failure.message : 'completion was not confirmed'
+          }`,
         outcome,
         failure ? { cause: failure } : undefined,
       )

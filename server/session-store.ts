@@ -1769,6 +1769,8 @@ export class SessionStore {
     if (this.recoveryResend(sessionId)?.accepted) return this.requireSession(sessionId)
     return this.mutate(sessionId, (stored) => {
       stored.recoveryResend!.accepted = true
+      // The receipt is of a resend the app delivered, so intent rides with it.
+      grantTerminalRecovery(stored)
     }, (stored) => stored.failedPrompt?.failedAt === expected && stored.recoveryResend?.failedAt === expected)
   }
 

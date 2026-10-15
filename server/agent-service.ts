@@ -6866,7 +6866,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     throw error
   }
 
-  private async acceptTerminalFormReply(
+  private acceptTerminalFormReply(
     sessionId: string, requestId: string, input: UserInputReplyInput,
   ): Promise<SessionDetail> {
     this.terminalFormUncertainty.delete(JSON.stringify([sessionId, requestId]))
@@ -6875,7 +6875,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.acceptedSdkReplies.set(requestId, {
       sessionId, choice: structuredClone(choice), terminal: true,
     })
-    await this.store.claimTerminalRecovery(sessionId)
     return this.settleSdkReply(sessionId, requestId, choice)
   }
 
@@ -7100,6 +7099,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               { statusCode: 409 },
             )
           }
+          await this.store.claimTerminalRecovery(sessionId)
         }
         this.answeredPersistedInputs.set(sessionId, {
           requestId,
@@ -7187,6 +7187,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return this.acceptTerminalFormReply(sessionId, requestId, input)
         }
         if (filled) {
+          await this.store.claimTerminalRecovery(sessionId)
           return this.acceptTerminalFormReply(sessionId, requestId, input)
         }
       }

@@ -772,6 +772,25 @@ describe('SessionStore', () => {
     )
   })
 
+  it('grants boot recovery with the receipt of a recovery resend to a discovered terminal', async () => {
+    const { store } = await createStore()
+    await store.syncDiscovered([{
+      id: 'resent',
+      cwd: '/tmp/resent',
+      title: 'Resent',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+    }])
+    await store.syncBackends(['resent'], [])
+    const failed = (await store.setFailedPrompt('resent', 'missing', 'Deploy it')).failedPrompt!
+    await store.claimFailedPrompt('resent', failed, 'Deploy it', 'resend:receipt')
+    expect(store.isManagedOpen('resent')).toBe(false)
+
+    await store.acceptRecoveryResend('resent', 'resend:receipt')
+
+    expect(store.recoveryResend('resent')?.accepted).toBe(true)
+    expect(store.shouldRecoverTerminalSession('resent')).toBe(true)
+  })
+
   it('grants boot recovery when the app suspends and resumes a discovered terminal', async () => {
     const { directory, store } = await createStore()
     await store.syncDiscovered([{

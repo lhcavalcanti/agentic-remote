@@ -9114,6 +9114,83 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('does not take recovery ownership when a form finished without a confirmed fill', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Choose the deployment",
+            "requestedSchema":{
+              "properties":{
+                "deploymentName":{"type":"string","title":"Name","default":"keepme"}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      // The form closed on its own while the app's fill could not confirm it.
+      fillUserInputForm: vi.fn(async () => {
+        events.push({
+          type: 'tool.execution_complete',
+          id: 'ask-complete',
+          parentId: 'ask-start',
+          timestamp: '2026-09-01T04:30:25.000Z',
+          data: { toolCallId: 'ask-call', success: true },
+        } as unknown as SessionEvent)
+        return false
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the service',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answer-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+
+    const values = { deploymentName: 'staging' }
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    expect(terminal.fillUserInputForm).toHaveBeenCalledOnce()
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
+    await service.stop()
+  })
+
   it('cancels the form and answers in a message when it cannot be filled', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

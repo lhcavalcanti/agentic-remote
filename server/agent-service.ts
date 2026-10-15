@@ -6897,6 +6897,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       receipt.dismissed = true
     }
+    // The app's dismissal is confirmed, however late; record it before the
+    // writes and send that follow can fail.
+    await this.store.claimTerminalRecovery(sessionId)
     const current = await this.store.readAfterWrites(sessionId)
     if (current.pendingPermission || (current.pendingUserInput &&
         !isDeepStrictEqual(current.pendingUserInput, receipt.request))) {
@@ -7026,6 +7029,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!(await this.isToolCallComplete(sessionId, requestId.slice('persisted-user-input:'.length)))) {
         throw uncertain.error
       }
+      // The app's uncertain fill or dismissal is now confirmed.
+      await this.store.claimTerminalRecovery(sessionId)
       return this.acceptTerminalFormReply(sessionId, requestId, input)
     }
     const stored = this.store.get(sessionId)
@@ -7082,6 +7087,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               action,
               { deadline: formDeadline },
             ).catch((error: unknown) => this.handleTerminalFormReplyError(sessionId, requestId, input, error)))
+          if (dismissed) await this.store.claimTerminalRecovery(sessionId)
           // Hiding the card cannot release the terminal's keyboard. Keep the
           // question actionable unless the owning CLI confirms it has ended.
           if (dismissed && !(await this.waitForToolCompletion(sessionId, toolCallId, formDeadline))) {
@@ -7102,7 +7108,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               { statusCode: 409 },
             )
           }
-          await this.store.claimTerminalRecovery(sessionId)
         }
         this.answeredPersistedInputs.set(sessionId, {
           requestId,

@@ -29,7 +29,7 @@ import type {
   CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
-import { parseTerminalPermission, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
+import { parseTerminalPermission, TerminalFormReplyError, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId: string
@@ -9229,6 +9229,84 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('takes recovery ownership when an uncertain form fill is confirmed on retry', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Choose the deployment",
+            "requestedSchema":{
+              "properties":{
+                "deploymentName":{"type":"string","title":"Name","default":"keepme"}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async (): Promise<boolean> => {
+        throw new TerminalFormReplyError('Fill not confirmed', 'uncertain')
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the service',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-uncertain-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { deploymentName: 'staging' }
+    const reply = () => service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+    await expect(reply()).rejects.toThrow('Fill not confirmed')
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
+    events.push({
+      type: 'tool.execution_complete',
+      id: 'ask-complete',
+      parentId: 'ask-start',
+      timestamp: '2026-09-01T04:30:25.000Z',
+      data: { toolCallId: 'ask-call', success: true },
+    } as unknown as SessionEvent)
+
+    await expect(reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(terminal.fillUserInputForm).toHaveBeenCalledOnce()
+    expect(service.store.shouldRecoverTerminalSession(sessionId)).toBe(true)
+    await service.stop()
+  })
+
   it('cancels the form and answers in a message when it cannot be filled', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -9315,7 +9393,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('keeps recovery ownership of a confirmed form dismissal when its answer cannot follow', async () => {
+  it.each([false, true])('keeps recovery ownership of a confirmed form dismissal when its answer cannot follow (confirmed late: %s)', async (late) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -9358,6 +9436,8 @@ describe('AgentService deletion', () => {
             "data":{"toolCallId":"ask-call"}
           }`) as SessionEvent,
         )
+        // Late: the controller could not confirm it, but the agent's own log does.
+        if (late) throw new TerminalFormReplyError('Dismissal not confirmed', 'uncertain')
         return true
       }),
       fillUserInputForm: vi.fn(async () => false),

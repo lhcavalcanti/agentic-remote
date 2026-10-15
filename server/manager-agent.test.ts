@@ -466,13 +466,17 @@ describe('ManagerAgent', () => {
     })
     await store.upsertMessage(closing('c1', 'gone-now'))
     await store.upsertMessage(closing('c2', 'unreachable'))
+    await store.upsertMessage(closing('c3', 'deleted-before-restart'))
     vi.mocked(hub.deleteSession).mockImplementation(async (_computerId, sessionId) => {
       if (sessionId === 'unreachable') throw new Error('node offline')
+      if (sessionId === 'deleted-before-restart') {
+        throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+      }
     })
     await start()
     await vi.waitFor(() => {
       const states = agent!.snapshot().messages.map((message) => message.confirmation?.state)
-      expect(states).toEqual(['confirmed', 'failed'])
+      expect(states).toEqual(['confirmed', 'failed', 'confirmed'])
     })
     expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'gone-now')
     await expect(agent!.resolveConfirmation('c1', true)).rejects.toMatchObject({ statusCode: 409 })

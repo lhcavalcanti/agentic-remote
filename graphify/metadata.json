@@ -260,9 +260,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 150,
+  "communities": 155,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11207,
+  "edges": 11210,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -374,8 +374,8 @@
     "server/index.ts": "35560d11187a9505e2a33df08ee8c58efb4d19038bfb144f0a043fe547d5eb99",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "265fd36a8856a361812508e284cfb6cab8654a415c35c0efb7d87ff994a1de2d",
-    "server/manager-agent.ts": "b938833785fad9688742ef837f69db69105790dafd6f7117761b4d348ac33641",
+    "server/manager-agent.test.ts": "05dc82e1b9d0af08aea739547c382cb912fc6114ded9f80f7c945f8c08d7f9c3",
+    "server/manager-agent.ts": "0b482774bc571d8e06795f45e75766b461ac4f4a4521e9da34cf7920317618f7",
     "server/manager-context.test.ts": "9e2a326936e12db537eb1c945623e6c73e793a31cb83a05710302cadbc9f3dc6",
     "server/manager-context.ts": "750b59a8935557bf965e1940b5431ff2699074449bbdc8a768baa93d3f08fb79",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -581,7 +581,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 3962,
+  "nodes": 3963,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -639,22 +639,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "aaafdaf5401189bfa323dfcacfc4c8f7c279c98c0cb9231bd666582ba1f2d6f2",
-    "communities.json": "85fb57ce43e751fe99652112a90a1a88d22d826352763dd086909fd29c1729dc",
-    "graph.html": "2a207960bae1690dfb0e862cbe78b982cb4eb1a215eebb45e08431c57250e75c",
-    "graph.json": "d225f6d6be06e103ea90143d618e32a849be656df423d690d0aae7767fcd1883"
+    "GRAPH_REPORT.md": "82a1c574b8a8830b4f5c90c537aadf9dc70ebab0ecaca00ae5d41f3276359642",
+    "communities.json": "8dc8716209020b99b7bc4daaad72429dfbddb33a5eb1dcfa41ceaa7c277d4fa7",
+    "graph.html": "1d75b8fb51b11c86f246700b94c9736225befd172028dbc6433ff6b8bbc8072d",
+    "graph.json": "e508da1ebec3f883edbb883cb7e5cb9b7e5f7e71327d72b2e60db68a55ef04c1"
   },
   "schema_version": 1,
-  "source_commit": "b6f1a547da0ff2ede6ee7009e8a49dcf19505b6b",
-  "source_fingerprint": "19b65aa8f56535336e12747b93195641d3a89ede99d80b71d0c147d122e8e4b4",
+  "source_commit": "a3c7e14fb083d3307feb8e88bee44e32bf723eaf",
+  "source_fingerprint": "e8f45f347389c7eaf2c95495c5426bb3caea93ce9a927311658de25d14b86f54",
   "working_tree_changes": [
-    "server/app.ts",
     "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-routes.test.ts",
-    "server/manager-store.test.ts",
-    "server/manager-store.ts",
-    "shared/manager.ts",
-    "src/ManagerAssistant.tsx"
+    "server/manager-agent.ts"
   ]
 }

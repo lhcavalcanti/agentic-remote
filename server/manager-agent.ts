@@ -147,6 +147,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** A session that is already gone, which is what closing it was for. */
+function isNotFound(error: unknown): boolean {
+  const statusCode = typeof error === 'object' && error !== null ? Reflect.get(error, 'statusCode') : undefined
+  return statusCode === 404 || /not found/i.test(errorMessage(error))
+}
+
 function hash(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 16)
 }
@@ -442,7 +448,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     let next: ManagerMessage
     let note: string
     try {
-      await this.hub.deleteSession(confirmation.computerId, confirmation.sessionId)
+      await this.hub.deleteSession(confirmation.computerId, confirmation.sessionId).catch((error: unknown) => {
+        // Deleted already, as when a restart came between the deletion and
+        // recording it, or the session was closed elsewhere meanwhile.
+        if (!isNotFound(error)) throw error
+      })
       next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } }
       note = `The user confirmed closing ${name}; it is deleted.`
     } catch (error) {

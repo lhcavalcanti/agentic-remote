@@ -290,7 +290,7 @@
     ".gitignore": "b4880167586d0b59633db90e9c656e8cfdfce739b6d4f234bcecb7317257b76b",
     ".oxlintrc.json": "07c58c79b4cf22b23a6f2b8179b11b19c52ac01e0045111dec7a66522e6428b5",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
-    "README.md": "bc729c754d687b310e5cac5858e828db0d42e9654709383c4790147c02152535",
+    "README.md": "6b2baa6935f4f1d9adc1653dfae72adb93d4110b2908c12bfaaa5750263db7b5",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "6c2708fa0a48f07282d57fc9248396f682eab36a4ffcad238d98166fdee31a0d",
     "bin/agentic-remote-promotion-monitor": "f6e11a8ba43a0ea6489f1abddba32a5f9ab809aa576fb926e4cfc24b9d28f064",
@@ -645,18 +645,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "2e561d47c09afb808c18398c48a2cc84e05af3e1deae8273cb59e05adde52bed",
+    "GRAPH_REPORT.md": "f9676c1c7f38606b9fa0c2d3a66537722a47f5a2e23fa87b5160c26786eef1f5",
     "communities.json": "cb9d1ea1cdc04c4fd160ed91d99f97c0fe3908019bfbdadd18291695b4b03e95",
-    "graph.html": "a1b7bdb8ba74faa7e0fa0af032fb5e035ceb7ad3cc268598ad4fc3adc4b0af3c",
-    "graph.json": "0ae9c55d75d5be5190181deb59aca6c47163988f9ce76ef1438cad6ef94bd7f3"
+    "graph.html": "1025d5bbb7d4bf81e7a2baae008f88d74e574b97c1cf01aef968ceeb6658a171",
+    "graph.json": "4daed0a4dd1f03eba19b61e497db085e314e620588780c0dec853c697724a5e4"
   },
   "schema_version": 1,
-  "source_commit": "9b58fe6ac1670c6ec1967bebff10952f7e8fa0ba",
-  "source_fingerprint": "f27e84cb112512d72ad24afeb7d128634004c210c6938b3074e1fbf04de69d4a",
+  "source_commit": "a7bd1546f739de9c14cc15fd5f5fced1aaa96db9",
+  "source_fingerprint": "060958e0079b219bce8bec2ce04d0b07de07bbe449da9366ab84e6b23c03a78e",
   "working_tree_changes": [
-    "README.md",
-    "server/app.ts",
-    "server/index.ts",
-    "server/startup-phases.test.ts"
+    "README.md"
   ]
 }

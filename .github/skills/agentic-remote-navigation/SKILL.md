@@ -417,6 +417,7 @@ locates the code but does not report the live state.
 Issue #260 tracks timing-sensitive tmux fixtures. Serialize real-tmux runs,
 scope discovery to fixture-owned processes, and investigate failures rather
 than repeatedly rerunning the promotion gate until it passes.
-`createIsolatedTmuxRoot()` starts a fixture-owned server that stays up with no
-sessions, so teardown retires that exact process instead of proving absence
-host-wide, which any tmux in another mount namespace leaves indeterminate.
+`createIsolatedTmuxRoot()` (tmux 3.4+) starts a fixture-owned server that stays
+up with no sessions, so teardown retires that exact process instead of proving
+absence host-wide, which any tmux in another mount namespace leaves
+indeterminate.

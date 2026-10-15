@@ -263,15 +263,15 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 153,
+  "communities": 148,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11325,
+  "edges": 11358,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
     ".github/copilot-instructions.md": "15a3fe1c5de27c9cc24a3b26697b794876c6b7dda4fbe08ab1cc4523eaa1a2fe",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "b53f300ae151fb52b4ab4b8387519ad6b3b5ead1d0964c424d627570fe489f02",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "053d2e821720a5121afc79802bb9c62102a490d2fd4747705288a52559270f74",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -337,7 +337,7 @@
     "public/sw.js": "9c9a28180df2933820ac15dd5b3467cc0022f92f91113b13b5f03c8ee2e0f920",
     "scripts/generate-pwa-icons.ts": "06c72f85520e5703fac8998ad7f3ea1bc67ab2989d2db8c9957504209a9b9d51",
     "server/accent-theme.test.ts": "2703744170f93735fb97c52bfb333f78b96cbe43dc0cedd8e1954528d16c91e0",
-    "server/active-sessions.test.ts": "09c8b6313c008c59795966b23e9461b22a8fb07404d19dfe1477544c3f26696f",
+    "server/active-sessions.test.ts": "6b3ee402ae6524b20d483ccc2cf9e75c3ccd8dba7ffb4eb4f666f87bfa300c97",
     "server/active-sessions.ts": "a83d2687d265453d74a4ca0a1861e12d519cce85f38feccd6cafea61ebbd8c5e",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "9b3f7afab458b249792968b5843d1ef2aea7ca75383adc76628a47b6a2abede8",
@@ -467,9 +467,9 @@
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
     "server/tmux-errors.ts": "c81388a0558de865caf123ae67302e6581c978dec3f2f6e2ea5a215ec6637d2b",
-    "server/tmux-test-helpers.integration.test.ts": "b1fcaded8d71693e7747b2b5f63c7b0ccdb7933046e36178db60467ddf1e3db3",
-    "server/tmux-test-helpers.test.ts": "d2b1f944d00ad31cba71fefe2af596c10064a87e0285bcf55002ac8fa2a028f0",
-    "server/tmux-test-helpers.ts": "a2b29fc5dc99447a1c45f17c638b2e7c4862671bef3ae706f72a8bdea136a78f",
+    "server/tmux-test-helpers.integration.test.ts": "9f79adfe1bc6761c6426157b3089398ccc451899837443e93cedb09d947b299a",
+    "server/tmux-test-helpers.test.ts": "8394f53526a72ff6a3c82375144fce493da1e7cd1c9d7b3bfc87943d0c0dcb21",
+    "server/tmux-test-helpers.ts": "af6b802f0d77646dcf7dde4e7395c59f81cf6bf7d92088a509f5fe1c71c364d3",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
     "server/transcription-routes.test.ts": "60c7b050221db2d94015c288f29d422fb2aab628ce6e7e43a60f4f8073d16b09",
     "server/transcription-routes.ts": "ec42a48a512934c3dd4c613ea112886a1bf59d07aa277661ec3fddd40de29a56",
@@ -587,7 +587,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 4004,
+  "nodes": 4012,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -645,15 +645,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f9676c1c7f38606b9fa0c2d3a66537722a47f5a2e23fa87b5160c26786eef1f5",
-    "communities.json": "cb9d1ea1cdc04c4fd160ed91d99f97c0fe3908019bfbdadd18291695b4b03e95",
-    "graph.html": "1025d5bbb7d4bf81e7a2baae008f88d74e574b97c1cf01aef968ceeb6658a171",
-    "graph.json": "4daed0a4dd1f03eba19b61e497db085e314e620588780c0dec853c697724a5e4"
+    "GRAPH_REPORT.md": "c9f1b4321f19647f42fb8dfbf6e41e26c2af4b64405fb391e696c37901365b6f",
+    "communities.json": "75a4b37b33d2ac81b20483005183173921160a355590a153ea214b169800f2e0",
+    "graph.html": "a700cd9fe0c47e039ff2eab1b0d1df165d82e161dcdb3dace7de454c3517cf8b",
+    "graph.json": "5a26656214a56f52bbed04a5d0c4ce05ca986089f1c65f94091f56f045c4341a"
   },
   "schema_version": 1,
-  "source_commit": "a7bd1546f739de9c14cc15fd5f5fced1aaa96db9",
-  "source_fingerprint": "060958e0079b219bce8bec2ce04d0b07de07bbe449da9366ab84e6b23c03a78e",
-  "working_tree_changes": [
-    "README.md"
-  ]
+  "source_commit": "655d8783062ccbe2052754965aab3843bd35d383",
+  "source_fingerprint": "2e28d84223cd60150f15d82aaf5dd6750376c925d43e8d4c70f112ae76dbb51e",
+  "working_tree_changes": []
 }

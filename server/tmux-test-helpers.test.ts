@@ -46,7 +46,7 @@ beforeEach(() => {
   state = 'S'
   start = '100'
   execute.mockImplementation(async (_command, args: string[]) => {
-    if (args.includes('start-server')) return { stdout: `${pid}\noff\n`, stderr: '' }
+    if (args.includes('start-server')) return { stdout: `${pid} 3.6\noff\n`, stderr: '' }
     if (args[0] === 'display-message') return { stdout: `${pid}\n`, stderr: '' }
     if (args[0] === 'kill-server') {
       killed = true
@@ -335,8 +335,16 @@ describe('initialized tmux fixture', () => {
   })
 
   it.each([
-    ['an empty server may exit', `${pid}\non\n`],
-    ['an invalid server PID', 'not-a-pid\noff\n'],
+    ['an empty server may exit', `${pid} 3.6\non\n`],
+    ['an invalid server PID', 'not-a-pid 3.6\noff\n'],
+    // tmux 3.2-3.3a copy only the first variable a pattern matches, and older
+    // releases match it literally, so sessions would keep the stale environment.
+    ['tmux 3.3a', `${pid} 3.3a\noff\n`],
+    ['tmux 3.2', `${pid} 3.2\noff\n`],
+    ['tmux 2.9a', `${pid} 2.9a\noff\n`],
+    ['an unversioned build', `${pid} master\noff\n`],
+    ['an OpenBSD base build', `${pid} openbsd-7.4\noff\n`],
+    ['no reported version', `${pid}\noff\n`],
   ])('retires a server it could not configure and rejects (%s)', async (_case, stdout) => {
     execute.mockImplementation(async (_command, args: string[]) => {
       if (args.includes('start-server')) return { stdout, stderr: '' }
@@ -351,5 +359,13 @@ describe('initialized tmux fixture', () => {
     await expect(createIsolatedTmuxRoot()).rejects.toThrow()
     expect(commands('kill-server')).toHaveLength(1)
     expect(rm).toHaveBeenCalledOnce()
+  })
+
+  it.each(['3.4', '3.6', 'next-3.7', '3.10', '4.0'])('accepts tmux %s', async (version) => {
+    execute.mockImplementation(async (_command, args: string[]) => {
+      if (args.includes('start-server')) return { stdout: `${pid} ${version}\noff\n`, stderr: '' }
+      throw new Error(`Unexpected tmux command: ${args.join(' ')}`)
+    })
+    await expect(createIsolatedTmuxRoot()).resolves.toMatch(/^\/owned\/initialized-/)
   })
 })

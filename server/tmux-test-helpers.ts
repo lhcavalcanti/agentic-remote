@@ -27,6 +27,9 @@ const ownedServers = new Map<string, ServerIdentity>()
  * mount namespace (a sandboxed suite run on the same host) leaves that scan
  * indeterminate for as long as it runs.
  *
+ * Requires tmux 3.4 or newer, the first release whose `update-environment`
+ * copies every variable a pattern matches.
+ *
  * Production's default `exit-empty` never leaves a server without sessions,
  * and such a server answers `list-panes -a` with "no current target". A test
  * whose code under test lists panes keeps a session of its own open.
@@ -55,11 +58,19 @@ async function startOwnedServer(root: string): Promise<ServerIdentity> {
     // stubs its own. Let each session take its creating client's instead, as
     // when that client was the one starting the server.
     ';', 'set-option', '-g', 'update-environment', '*',
-    ';', 'display-message', '-p', '#{pid}',
+    ';', 'display-message', '-p', '#{pid} #{version}',
     ';', 'show-options', '-gv', 'exit-empty',
   ], { env: isolatedTmuxEnv(root) })
   const [reported, exitEmpty] = stdout.trim().split('\n')
-  const pid = serverPid(reported)
+  const [reportedPid, version = ''] = (reported ?? '').trim().split(' ')
+  const pid = serverPid(reportedPid)
+  // Earlier releases copy only the first variable `*` matches, or none.
+  const [, major, minor] = /^(?:next-)?(\d+)\.(\d+)/.exec(version) ?? []
+  if (!major || Number(major) * 100 + Number(minor) < 304) {
+    throw new Error(
+      `Isolated tmux fixtures need tmux 3.4 or newer to give each session its creating client's environment; found ${version || 'no version'}`,
+    )
+  }
   if (exitEmpty?.trim() !== 'off') {
     throw new Error('Unable to keep the owned tmux server running while it has no sessions')
   }

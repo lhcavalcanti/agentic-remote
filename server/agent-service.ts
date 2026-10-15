@@ -2992,6 +2992,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const mode = input.mode || agentMode(stored.runtime?.mode) || 'interactive'
     const configuration: ConfigureRuntimeInput = { ...input, mode }
     const limits = this.modelPromptLimits.get(input.model)
+    // Reconfiguring a terminal relaunches its Copilot process from the app.
+    const relaunchesTerminal = this.externalSessionIds.has(id)
     const persistRuntime = async (appliedMode: AgentMode | undefined) => {
       const updated = await this.store.update(id, (session) => {
         session.runtime = {
@@ -3006,11 +3008,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               : limits?.default || limits?.maximum,
           contextEstimated: true,
         }
-      })
+      }, { appDriven: relaunchesTerminal })
       this.publish(updated)
       return this.publicSession(updated)
     }
-    if (this.externalSessionIds.has(id)) {
+    if (relaunchesTerminal) {
       if (!this.terminalController.configure) {
         throw new Error('Terminal runtime configuration is not available')
       }
@@ -3551,7 +3553,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session.activity = undefined
       session.pendingPermission = undefined
       session.updatedAt = new Date().toISOString()
-    })
+    }, { appDriven: terminalRestarted })
     this.publish(restarted)
     // Only an SDK session drains through this path. A tmux session keeps its
     // own runtime, and waking it here would start a second owner beside it.
@@ -4773,7 +4775,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (nativeEnqueue) {
         await this.recordDelivery(sessionId, answers, delivery)
-        const queued = await this.store.markTerminalPromptQueued(sessionId)
+        const queued = await this.store.update(sessionId, (session) => {
+          session.activity = 'Queued in terminal'
+        }, { appDriven: true })
         this.publish(queued)
         return queued
       }
@@ -6213,7 +6217,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         role: 'notice',
         content: feedback.notice,
         createdAt: new Date().toISOString(),
-      })
+      }, { appDriven: true })
       this.publish(notice)
       if (!feedback.startedTurn) {
         if (ownsStartupDispatch && feedback.responseObserved && !feedback.overlayOpen) {
@@ -6811,6 +6815,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : { status: 'running' as const, activity: 'Continuing' }
     const updated = await this.store.clearPendingRequest(
       sessionId, 'pendingPermission', requestId, continuation,
+      { appDriven: terminalReplied },
     )
     this.publish(updated)
     return this.publicSession(updated)
@@ -7238,6 +7243,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : { status: 'running' as const, activity: 'Continuing' }
     const updated = await this.store.clearPendingRequest(
       sessionId, 'pendingUserInput', requestId, continuation,
+      { appDriven: terminalReplied },
     )
     this.publish(updated)
     return this.publicSession(updated)

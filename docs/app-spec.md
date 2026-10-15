@@ -286,8 +286,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   them to the persisted terminal recovery set; once such a process exits it
   MUST be listed as closed and MUST NOT be recreated.
 - A tmux session MUST join the persisted terminal recovery set when Agentic
-  Remote creates it, moves it to tmux, reopens it, suspends or resumes it, or
-  delivers or queues work to it.
+  Remote creates, moves to tmux, reopens, suspends, resumes, reconfigures,
+  restarts, clears, or recovers it, or sends it a prompt, command, queued
+  item, or answer.
 - After host boot, missing terminal sessions in the recovery set MUST be
   recreated in tmux with the same Copilot session ID, cwd, title, allow-all
   setting, model, effort, context tier, and agent mode.

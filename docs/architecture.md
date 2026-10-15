@@ -126,11 +126,12 @@ observations are not written to stored session or pairing state.
   `~/.agentic-remote/state.json`.
 - A service restart reuses existing tmux processes. A full host reboot
   recreates missing tmux windows, with the same Copilot session IDs, for the
-  sessions Agentic Remote manages: those it created or moved to tmux,
-  reopened, suspended or resumed, or delivered or queued work to. A Copilot
-  process merely discovered in some other tmux pane is listed while it runs
-  but is not recreated after it exits. Recovery intent recorded by earlier
-  releases' discovery is kept until that session is closed.
+  sessions Agentic Remote manages: those it created, moved, reopened,
+  suspended, resumed, reconfigured, restarted, cleared, or recovered, or sent
+  a prompt, command, queued item, or answer. A Copilot process merely
+  discovered in some other tmux pane is listed while it runs but is not
+  recreated after it exits. Recovery intent recorded by earlier releases'
+  discovery is kept until that session is closed.
 - Each node checks every Copilot CLI version it updates to by starting a
   retired, disposable session in a detached tmux session of its own
   (`server/cli-canary.ts`). It records the result in

@@ -751,7 +751,12 @@ describe('SessionStore', () => {
     await store.markTerminalPromptDispatched('sent', '2026-07-22T00:00:01.000Z', 'Sent to terminal')
     await store.enqueuePrompt('queued', { ...queued, id: 'queued-prompt' })
     await store.enqueueAnsweringPrompt('answered', { ...queued, id: 'answer-prompt' }, undefined)
-    await store.markTerminalPromptQueued('native-queued')
+    await store.update('native-queued', (session) => {
+      session.activity = 'Queued in terminal'
+    }, { appDriven: true })
+    await store.update('observed', (session) => {
+      session.activity = 'Observed in the terminal'
+    })
 
     expect(store.get('native-queued')?.activity).toBe('Queued in terminal')
     for (const id of ['sent', 'queued', 'answered', 'native-queued']) {

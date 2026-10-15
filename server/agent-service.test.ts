@@ -4076,6 +4076,66 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('takes recovery ownership of a discovered terminal the app relaunches', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      configure: vi.fn(async () => true),
+      restart: vi.fn(async () => true),
+      reset: vi.fn(
+        async (
+          _sessionId: string,
+          _replacementId: string,
+          _cwd: string,
+          _runtime: unknown,
+          clearState: () => Promise<void>,
+        ) => {
+          await clearState()
+          return true
+        },
+      ),
+    }
+    const ids = ['observed', 'configured', 'restarted', 'cleared']
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => ids.map((id) => ({
+        id,
+        cwd: directory,
+        title: id,
+        updatedAt: new Date().toISOString(),
+      })),
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    for (const id of ids) expect(service.store.isManagedOpen(id)).toBe(false)
+
+    await service.configureRuntime('configured', {
+      model: 'fixture-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
+    await service.restartSession('restarted')
+    const cleared = await service.clearConversation('cleared')
+
+    expect(terminal.configure).toHaveBeenCalledOnce()
+    expect(terminal.restart).toHaveBeenCalledOnce()
+    expect(terminal.reset).toHaveBeenCalledOnce()
+    expect(service.store.isManagedOpen('observed')).toBe(false)
+    for (const id of ['configured', 'restarted', cleared.id]) {
+      expect(service.store.shouldRecoverTerminalSession(id)).toBe(true)
+    }
+    await service.stop()
+  })
+
   it('moves an idle Copilot SDK session into tmux', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -7389,6 +7449,7 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
+    expect(service.store.isManagedOpen(client.session.sessionId)).toBe(false)
 
     const result = await service.executeCommand(client.session.sessionId, '/cwd')
 
@@ -7398,6 +7459,8 @@ describe('AgentService deletion', () => {
     expect(notice?.content).toContain(
       'Current working directory: /home/user/project',
     )
+    // A command that starts no turn is still work sent from the app.
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
     await service.stop()
   })
 
@@ -8763,6 +8826,7 @@ describe('AgentService deletion', () => {
     expect(
       service.store.get(client.session.sessionId)?.pendingUserInput,
     ).toEqual(request)
+    expect(service.store.isManagedOpen(client.session.sessionId)).toBe(false)
     const updated = await service.replyUserInput(
       client.session.sessionId,
       request.requestId,
@@ -8775,6 +8839,7 @@ describe('AgentService deletion', () => {
       false,
     )
     expect(updated.pendingUserInput).toBeUndefined()
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
     expect(updated).toMatchObject({
       status: 'running',
       activity: 'Continuing',
@@ -9719,6 +9784,7 @@ describe('AgentService deletion', () => {
       service.store.get(client.session.sessionId)?.pendingPermission,
     ).toEqual(request)
     expect(service.store.get(client.session.sessionId)?.status).toBe('waiting')
+    expect(service.store.isManagedOpen(client.session.sessionId)).toBe(false)
     const updated = await service.replyPermission(
       client.session.sessionId,
       request.requestId,
@@ -9730,6 +9796,7 @@ describe('AgentService deletion', () => {
       'terminal:allow',
     )
     expect(updated.pendingPermission).toBeUndefined()
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
     const checksAfterReply = terminal.pendingPermission.mock.calls.length
     await new Promise((resolve) => setTimeout(resolve, 2_100))
     await service.refreshTranscripts()

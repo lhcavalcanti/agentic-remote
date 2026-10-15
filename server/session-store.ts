@@ -173,14 +173,19 @@ function clearRecoverySeedFailure(session: StoredSession): void {
 }
 
 /**
- * Sending work to a tmux session, or suspending and resuming it, through the
- * app makes the app responsible for it, so the session joins boot recovery
+ * A live tmux session the app sends work or answers to, relaunches, clears,
+ * suspends, or resumes is one the app now owns, so it joins boot recovery
  * like one the app created there. Discovery alone never calls this.
  */
 function grantTerminalRecovery(session: StoredSession): void {
   if (session.backend === 'terminal' && session.isOpen === true) {
     session.managedOpen = true
   }
+}
+
+/** Marks a write as recording something the app itself did to the session. */
+interface AppDrivenChange {
+  appDriven?: boolean
 }
 
 function cloneSession(session: StoredSession): SessionDetail {
@@ -967,6 +972,8 @@ export class SessionStore {
             }
           : undefined,
       }
+      // The app made this replacement, so it owns its recovery.
+      grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
       return () => {
@@ -1090,6 +1097,8 @@ export class SessionStore {
             }
           : undefined,
       }
+      // The app made this replacement, so it owns its recovery.
+      grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
       return () => {
@@ -1844,14 +1853,6 @@ export class SessionStore {
     })
   }
 
-  /** Records a prompt handed to the terminal's own queue while it works. */
-  async markTerminalPromptQueued(sessionId: string): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
-      session.activity = 'Queued in terminal'
-      grantTerminalRecovery(session)
-    })
-  }
-
   async clearQueueDispatch(
     sessionId: string,
     dispatchedAt: string,
@@ -1937,10 +1938,15 @@ export class SessionStore {
     }
   }
 
-  async addMessage(sessionId: string, message: ChatMessage): Promise<SessionDetail> {
+  async addMessage(
+    sessionId: string,
+    message: ChatMessage,
+    { appDriven = false }: AppDrivenChange = {},
+  ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages.push(message)
       session.updatedAt = message.createdAt
+      if (appDriven) grantTerminalRecovery(session)
     })
   }
 
@@ -2107,6 +2113,7 @@ export class SessionStore {
     continuation?:
       | { status: SessionStatus; activity?: string }
       | ((session: Readonly<SessionDetail>) => { status: SessionStatus; activity?: string }),
+    { appDriven = false }: AppDrivenChange = {},
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session[kind] = undefined
@@ -2119,14 +2126,19 @@ export class SessionStore {
           session.pendingUserInput?.question ||
           next.activity
       }
+      if (appDriven) grantTerminalRecovery(session)
     }, (session) => session[kind]?.requestId === requestId)
   }
 
   async update(
     sessionId: string,
     mutation: (session: SessionDetail) => void,
+    { appDriven = false }: AppDrivenChange = {},
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, mutation)
+    return this.mutate(sessionId, (session) => {
+      mutation(session)
+      if (appDriven) grantTerminalRecovery(session)
+    })
   }
 
   /** A false result is an explicit no-op; validation and write errors still reject. */

@@ -504,7 +504,7 @@ describe('SDK metadata during clear', () => {
     await store.flush()
     expect(replacing).toHaveBeenCalledExactlyOnceWith('session', cleared.id, {
       epoch: undefined, isCurrent: expect.any(Function),
-    })
+    }, false)
     expect(published.filter((value) => value.type === 'error')).toEqual([])
     expect(published.slice(0, 2)).toEqual([
       { type: 'session.removed', sessionId: 'session', replacedBy: cleared.id },
@@ -545,7 +545,7 @@ describe('SDK metadata during clear', () => {
     const cleared = await service.clearConversation('session')
     expect(replacing).toHaveBeenCalledExactlyOnceWith('session', cleared.id, {
       epoch: undefined, isCurrent: expect.any(Function),
-    })
+    }, false)
     expect(store.get('session')).toBeUndefined()
     expect(store.get(cleared.id)).toBeDefined()
     expect(published.filter((value) => value.type === 'error')).toEqual([

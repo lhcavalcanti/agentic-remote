@@ -172,6 +172,17 @@ function clearRecoverySeedFailure(session: StoredSession): void {
   }
 }
 
+/**
+ * A live tmux session the app sends work or answers to, relaunches, clears,
+ * suspends, or resumes is one the app now owns, so it joins boot recovery
+ * like one the app created there. Discovery alone never calls this.
+ */
+function grantTerminalRecovery(session: StoredSession): void {
+  if (session.backend === 'terminal' && session.isOpen === true) {
+    session.managedOpen = true
+  }
+}
+
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     archivedMessages,
@@ -709,18 +720,17 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          if (
-            session.backend === 'terminal' &&
-            session.managedOpen === true &&
-            session.isOpen === true
-          ) {
+          if (session.backend === 'terminal' && session.isOpen === true) {
             continue
           }
+          // Observed presence only. Any Copilot process in a tmux pane is
+          // listed here, including one-shot runs another tool started, and
+          // those must not come back as windows after a restart. Recovery
+          // intent is granted by the app paths that create or drive a session.
           state.sessions[session.id] = {
             ...session,
             revision: (session.revision ?? 0) + 1,
             backend: 'terminal',
-            managedOpen: true,
             isOpen: true,
           }
         } else if (
@@ -749,6 +759,19 @@ export class SessionStore {
     const session = this.state.sessions[id]
     return this.isManagedOpen(id) && session?.backend === 'terminal' &&
       session.suspended !== true
+  }
+
+  /**
+   * Records that the app has just acted on a live tmux session's process.
+   * Called before anything else that can fail afterwards, so the session it
+   * drove is never left out of boot recovery. Writes only when that changes.
+   */
+  async claimTerminalRecovery(sessionId: string): Promise<void> {
+    const claimable = (session: StoredSession | undefined) =>
+      session?.managedOpen !== true && session?.backend === 'terminal' &&
+      session.isOpen === true
+    if (this.isRetiredSession(sessionId) || !claimable(this.state.sessions[sessionId])) return
+    await this.mutate(sessionId, grantTerminalRecovery, claimable)
   }
 
   isManagedOpen(sessionId: string): boolean {
@@ -780,6 +803,7 @@ export class SessionStore {
       // without it a pass that saw the pane go marked the session closed, and
       // this call left that in place -- a session both suspended and gone.
       session.isOpen = true
+      grantTerminalRecovery(session)
       session.status = 'idle'
       session.activity = undefined
       session.pendingPermission = undefined
@@ -891,6 +915,8 @@ export class SessionStore {
     sessionId: string,
     replacementId: string,
     observation = this.observeTranscript(sessionId),
+    // The app relaunched the session's own tmux pane for the replacement.
+    terminalReset = false,
   ): Promise<SessionDetail> {
     let uploadOwnerIds: string[] = []
     const replacement = await this.change((state) => {
@@ -956,6 +982,7 @@ export class SessionStore {
             }
           : undefined,
       }
+      if (terminalReset) grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
       return () => {
@@ -980,6 +1007,8 @@ export class SessionStore {
     contextTruncated: boolean,
     recoveryPrompt: string,
     observation = this.observeTranscript(sessionId),
+    // The app relaunched the session's own tmux pane for the replacement.
+    terminalReset = false,
   ): Promise<SessionDetail> {
     const replacement = await this.change((state) => {
       const existing = state.sessions[sessionId]
@@ -1079,6 +1108,7 @@ export class SessionStore {
             }
           : undefined,
       }
+      if (terminalReset) grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
       return () => {
@@ -1099,6 +1129,7 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
+      grantTerminalRecovery(session)
     })
   }
 
@@ -1680,6 +1711,7 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
+      grantTerminalRecovery(session)
       if (
         !session.recoverySeed &&
         session.failedPrompt &&
@@ -1739,6 +1771,8 @@ export class SessionStore {
     if (this.recoveryResend(sessionId)?.accepted) return this.requireSession(sessionId)
     return this.mutate(sessionId, (stored) => {
       stored.recoveryResend!.accepted = true
+      // The receipt is of a resend the app delivered, so intent rides with it.
+      grantTerminalRecovery(stored)
     }, (stored) => stored.failedPrompt?.failedAt === expected && stored.recoveryResend?.failedAt === expected)
   }
 
@@ -1827,6 +1861,7 @@ export class SessionStore {
       session.queueDispatchAt = dispatchedAt
       session.status = 'running'
       session.activity = activity
+      grantTerminalRecovery(session)
     })
   }
 

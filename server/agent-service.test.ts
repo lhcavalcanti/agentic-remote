@@ -29,7 +29,7 @@ import type {
   CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
-import { parseTerminalPermission, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
+import { parseTerminalPermission, TerminalFormReplyError, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId: string
@@ -4076,6 +4076,104 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('takes recovery ownership of a discovered terminal the app relaunches', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      configure: vi.fn(async () => true),
+      restart: vi.fn(async () => true),
+      reset: vi.fn(
+        async (
+          _sessionId: string,
+          _replacementId: string,
+          _cwd: string,
+          _runtime: unknown,
+          clearState: () => Promise<void>,
+        ) => {
+          await clearState()
+          return true
+        },
+      ),
+    }
+    const ids = ['observed', 'configured', 'restarted', 'cleared']
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => ids.map((id) => ({
+        id,
+        cwd: directory,
+        title: id,
+        updatedAt: new Date().toISOString(),
+      })),
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    for (const id of ids) expect(service.store.isManagedOpen(id)).toBe(false)
+
+    await service.configureRuntime('configured', {
+      model: 'fixture-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
+    await service.restartSession('restarted')
+    const cleared = await service.clearConversation('cleared')
+
+    expect(terminal.configure).toHaveBeenCalledOnce()
+    expect(terminal.restart).toHaveBeenCalledOnce()
+    expect(terminal.reset).toHaveBeenCalledOnce()
+    expect(service.store.isManagedOpen('observed')).toBe(false)
+    for (const id of ['configured', 'restarted', cleared.id]) {
+      expect(service.store.shouldRecoverTerminalSession(id)).toBe(true)
+    }
+    await service.stop()
+  })
+
+  it('does not take recovery ownership when clearing an observed terminal that already exited', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => false),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      reset: vi.fn(async () => true),
+    }
+    let active = [{
+      id: 'exited',
+      cwd: directory,
+      title: 'exited',
+      updatedAt: new Date().toISOString(),
+    }]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => active,
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    expect(service.store.backend('exited')).toBe('terminal')
+    active = []
+    await service.refreshDiscovery()
+
+    const cleared = await service.clearConversation('exited')
+
+    expect(terminal.reset).not.toHaveBeenCalled()
+    expect(service.store.isManagedOpen(cleared.id)).toBe(false)
+    expect(service.store.shouldRecoverTerminalSession(cleared.id)).toBe(false)
+    await service.stop()
+  })
+
   it('moves an idle Copilot SDK session into tmux', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -7389,6 +7487,7 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
+    expect(service.store.isManagedOpen(client.session.sessionId)).toBe(false)
 
     const result = await service.executeCommand(client.session.sessionId, '/cwd')
 
@@ -7398,6 +7497,58 @@ describe('AgentService deletion', () => {
     expect(notice?.content).toContain(
       'Current working directory: /home/user/project',
     )
+    // A command that starts no turn is still work sent from the app.
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
+    await service.stop()
+  })
+
+  it('keeps recovery ownership of a sent command when its feedback cannot be read', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-slash-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    let sent = false
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        sent = true
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => {
+        if (sent) throw new Error('Pane capture failed')
+        return composer
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    await expect(
+      service.executeCommand(client.session.sessionId, '/cwd'),
+    ).rejects.toThrow(/accepted/)
+
+    expect(terminal.send).toHaveBeenCalledOnce()
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
     await service.stop()
   })
 
@@ -8763,6 +8914,7 @@ describe('AgentService deletion', () => {
     expect(
       service.store.get(client.session.sessionId)?.pendingUserInput,
     ).toEqual(request)
+    expect(service.store.isManagedOpen(client.session.sessionId)).toBe(false)
     const updated = await service.replyUserInput(
       client.session.sessionId,
       request.requestId,
@@ -8775,6 +8927,7 @@ describe('AgentService deletion', () => {
       false,
     )
     expect(updated.pendingUserInput).toBeUndefined()
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
     expect(updated).toMatchObject({
       status: 'running',
       activity: 'Continuing',
@@ -8965,6 +9118,7 @@ describe('AgentService deletion', () => {
     await service.start()
     const sessionId = client.session.sessionId
     expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
 
     const values = {
       deploymentName: 'staging-web-service-candidate',
@@ -8994,6 +9148,162 @@ describe('AgentService deletion', () => {
     expect(terminal.send).not.toHaveBeenCalled()
     expect(terminal.dismissUserInput).not.toHaveBeenCalled()
     expect(answered.pendingUserInput).toBeUndefined()
+    expect(service.store.shouldRecoverTerminalSession(sessionId)).toBe(true)
+    await service.stop()
+  })
+
+  it('does not take recovery ownership when a form finished without a confirmed fill', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Choose the deployment",
+            "requestedSchema":{
+              "properties":{
+                "deploymentName":{"type":"string","title":"Name","default":"keepme"}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      // The form closed on its own while the app's fill could not confirm it.
+      fillUserInputForm: vi.fn(async () => {
+        events.push({
+          type: 'tool.execution_complete',
+          id: 'ask-complete',
+          parentId: 'ask-start',
+          timestamp: '2026-09-01T04:30:25.000Z',
+          data: { toolCallId: 'ask-call', success: true },
+        } as unknown as SessionEvent)
+        return false
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the service',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answer-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+
+    const values = { deploymentName: 'staging' }
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    expect(terminal.fillUserInputForm).toHaveBeenCalledOnce()
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
+    await service.stop()
+  })
+
+  it('takes recovery ownership when an uncertain form fill is confirmed on retry', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Choose the deployment",
+            "requestedSchema":{
+              "properties":{
+                "deploymentName":{"type":"string","title":"Name","default":"keepme"}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async (): Promise<boolean> => {
+        throw new TerminalFormReplyError('Fill not confirmed', 'uncertain')
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the service',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-uncertain-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { deploymentName: 'staging' }
+    const reply = () => service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+    await expect(reply()).rejects.toThrow('Fill not confirmed')
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
+    events.push({
+      type: 'tool.execution_complete',
+      id: 'ask-complete',
+      parentId: 'ask-start',
+      timestamp: '2026-09-01T04:30:25.000Z',
+      data: { toolCallId: 'ask-call', success: true },
+    } as unknown as SessionEvent)
+
+    await expect(reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(terminal.fillUserInputForm).toHaveBeenCalledOnce()
+    expect(service.store.shouldRecoverTerminalSession(sessionId)).toBe(true)
     await service.stop()
   })
 
@@ -9080,6 +9390,87 @@ describe('AgentService deletion', () => {
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')
+    await service.stop()
+  })
+
+  it.each([false, true])('keeps recovery ownership of a confirmed form dismissal when its answer cannot follow (confirmed late: %s)', async (late) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async (): Promise<boolean> => {
+        throw new Error('Pane went away before the answer')
+      }),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => {
+        events.push(
+          JSON.parse(`{
+            "type":"tool.execution_complete",
+            "id":"ask-end",
+            "parentId":null,
+            "timestamp":"2026-09-01T04:30:24.000Z",
+            "data":{"toolCallId":"ask-call"}
+          }`) as SessionEvent,
+        )
+        // Late: the controller could not confirm it, but the agent's own log does.
+        if (late) throw new TerminalFormReplyError('Dismissal not confirmed', 'uncertain')
+        return true
+      }),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the service',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-fallback-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
+    const values = { confirmTransfer: true }
+    await expect(service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )).rejects.toThrow()
+
+    expect(terminal.dismissUserInput).toHaveBeenCalledOnce()
+    expect(service.store.shouldRecoverTerminalSession(sessionId)).toBe(true)
     await service.stop()
   })
 
@@ -9719,6 +10110,7 @@ describe('AgentService deletion', () => {
       service.store.get(client.session.sessionId)?.pendingPermission,
     ).toEqual(request)
     expect(service.store.get(client.session.sessionId)?.status).toBe('waiting')
+    expect(service.store.isManagedOpen(client.session.sessionId)).toBe(false)
     const updated = await service.replyPermission(
       client.session.sessionId,
       request.requestId,
@@ -9730,6 +10122,7 @@ describe('AgentService deletion', () => {
       'terminal:allow',
     )
     expect(updated.pendingPermission).toBeUndefined()
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
     const checksAfterReply = terminal.pendingPermission.mock.calls.length
     await new Promise((resolve) => setTimeout(resolve, 2_100))
     await service.refreshTranscripts()

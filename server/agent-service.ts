@@ -3017,6 +3017,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!(await this.terminalController.configure(id, stored.cwd, configuration))) {
         throw new Error('External terminal is no longer available')
       }
+      // Reconfiguring relaunched its Copilot process from the app.
+      await this.store.claimTerminalRecovery(id)
     } else {
       const session = await this.ensureLoaded(id)
       const previousRuntime = await session.rpc.model.getCurrent()
@@ -3508,6 +3510,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!terminalRestarted && !this.store.isManagedOpen(id)) {
         throw new Error('External terminal is no longer available')
       }
+      // Restarted in place: the app relaunched its Copilot process.
+      if (terminalRestarted) await this.store.claimTerminalRecovery(id)
     }
     if (!terminalRestarted) {
       // Retired before anything is torn down. A read that settles while the
@@ -3805,11 +3809,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               recoveryBrief.truncated,
               recoveryBrief.prompt,
               replacementObservation,
+              terminalBacked,
             )
           : await this.store.replaceWithClearedSession(
               id,
               replacementId,
               replacementObservation,
+              terminalBacked,
             )
       } catch (error) {
         if (!(error instanceof SessionReplacementCleanupError)) throw error
@@ -4773,6 +4779,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (nativeEnqueue) {
         await this.recordDelivery(sessionId, answers, delivery)
+        await this.store.claimTerminalRecovery(sessionId)
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'
         })
@@ -6205,6 +6212,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         !this.terminalAdmissionDispatched.has(sessionId)
       if (ownsStartupDispatch) this.terminalAdmissionDispatched.add(sessionId)
       if (!queuedDelivery) await this.recordDelivery(sessionId, answers, delivery)
+      // Before reading the feedback, which can fail after the command went in.
+      await this.store.claimTerminalRecovery(sessionId)
       const feedback = await this.terminalCommandFeedback(
         sessionId,
         canonicalCommand,
@@ -6803,6 +6812,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       terminalReplied = true
       this.liveTranscriptWatermarks.set(sessionId, repliedAt)
+      await this.store.claimTerminalRecovery(sessionId)
     }
 
     const continuation = terminalReplied
@@ -6887,6 +6897,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       receipt.dismissed = true
     }
+    // The app's dismissal is confirmed, however late; record it before the
+    // writes and send that follow can fail.
+    await this.store.claimTerminalRecovery(sessionId)
     const current = await this.store.readAfterWrites(sessionId)
     if (current.pendingPermission || (current.pendingUserInput &&
         !isDeepStrictEqual(current.pendingUserInput, receipt.request))) {
@@ -6976,6 +6989,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         'The agent is still showing its prompt, so the answer was not sent. Try again.',
       ), { statusCode: 409 })
     }
+    await this.store.claimTerminalRecovery(sessionId)
     receipt.dismissed = await this.waitForToolCompletion(
       sessionId, requestId.slice('persisted-user-input:'.length), deadline,
     )
@@ -7015,6 +7029,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!(await this.isToolCallComplete(sessionId, requestId.slice('persisted-user-input:'.length)))) {
         throw uncertain.error
       }
+      // The app's uncertain fill or dismissal is now confirmed.
+      await this.store.claimTerminalRecovery(sessionId)
       return this.acceptTerminalFormReply(sessionId, requestId, input)
     }
     const stored = this.store.get(sessionId)
@@ -7071,6 +7087,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               action,
               { deadline: formDeadline },
             ).catch((error: unknown) => this.handleTerminalFormReplyError(sessionId, requestId, input, error)))
+          if (dismissed) await this.store.claimTerminalRecovery(sessionId)
           // Hiding the card cannot release the terminal's keyboard. Keep the
           // question actionable unless the owning CLI confirms it has ended.
           if (dismissed && !(await this.waitForToolCompletion(sessionId, toolCallId, formDeadline))) {
@@ -7178,6 +7195,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return this.acceptTerminalFormReply(sessionId, requestId, input)
         }
         if (filled) {
+          await this.store.claimTerminalRecovery(sessionId)
           return this.acceptTerminalFormReply(sessionId, requestId, input)
         }
       }
@@ -7190,7 +7208,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (await this.terminalController
             .dismissUserInput?.(sessionId)
             .catch((error: unknown) => this.handleTerminalFormReplyError(sessionId, requestId, input, error))) ?? false
-        if (dismissed) await this.waitForToolCompletion(sessionId, toolCallId)
+        if (dismissed) {
+          await this.store.claimTerminalRecovery(sessionId)
+          await this.waitForToolCompletion(sessionId, toolCallId)
+        }
       }
       const cleared = await this.store.clearPendingRequest(
         sessionId, 'pendingUserInput', requestId, { status: 'idle' },
@@ -7231,6 +7252,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       terminalReplied = true
       this.liveTranscriptWatermarks.set(sessionId, repliedAt)
+      await this.store.claimTerminalRecovery(sessionId)
     }
     const continuation = terminalReplied
       ? await this.terminalContinuationState(

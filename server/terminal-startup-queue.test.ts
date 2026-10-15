@@ -896,6 +896,10 @@ describe('PR162 startup pump composition', () => {
     runtime.service['retryTerminalQueueClaim'](native.id, true)
     expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
     await runtime.service.refreshDiscovery()
+    expect(runtime.store.get(native.id)?.isOpen).toBe(true)
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    // Even regained intent cannot revive the wake that was already retired.
+    await runtime.store.update(native.id, (session) => { Object.assign(session, { managedOpen: true }) })
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     const acknowledgement = [...runtime.service['pendingAcknowledgements'].values()]
     context.releaseAcknowledgement.finish()

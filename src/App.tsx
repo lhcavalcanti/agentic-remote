@@ -3615,6 +3615,7 @@ function AppSettingsDialog({
     Partial<Record<AgentProvider, boolean>>
   >({})
   const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const [hubCopilotModels, setHubCopilotModels] = useState<RuntimeModelOption[]>()
   const [runtimeErrors, setRuntimeErrors] = useState<
     Partial<Record<AgentProvider, string>>
   >({})
@@ -3675,6 +3676,7 @@ function AppSettingsDialog({
     })
     setRuntimeLoading(true)
     setRuntimeModels({})
+    setHubCopilotModels(undefined)
     setRuntimeCatalogsComplete({})
     setRuntimeErrors(
       Object.fromEntries(
@@ -3746,6 +3748,14 @@ function AppSettingsDialog({
               : `Unable to load ${providerName(provider)} models.`
         }
       }
+      // Oracle runs on the hub, so its choices come from the hub's own catalog.
+      const hubCatalog = results.find(
+        (_result, index) =>
+          sources[index].provider === 'copilot' && sources[index].computer.isLocal,
+      )
+      setHubCopilotModels(
+        hubCatalog?.status === 'fulfilled' ? hubCatalog.value.options.models : [],
+      )
       setRuntimeModels(models)
       setRuntimeCatalogsComplete(complete)
       setRuntimeErrors(errors)
@@ -3957,7 +3967,7 @@ function AppSettingsDialog({
         ))}
       </section>
 
-      <OracleSettings computerId={computers.find((computer) => computer.isLocal)?.id} />
+      <OracleSettings models={hubCopilotModels} />
 
       <section className="app-settings-section">
         <h3>Default session folders</h3>

@@ -3168,10 +3168,15 @@ describe('App', () => {
       }),
     )
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const reopenedCopilot = await screen.findByLabelText('GitHub Copilot default model')
     expect(
-      await screen.findByRole('option', { name: 'New copilot model' }),
+      await within(reopenedCopilot).findByRole('option', { name: 'New copilot model' }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'New claude model' })).toBeInTheDocument()
+    expect(
+      within(screen.getByLabelText('Claude Agent default model')).getByRole('option', {
+        name: 'New claude model',
+      }),
+    ).toBeInTheDocument()
     expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(4)
     expect(screen.getByLabelText('GitHub Copilot default model')).toHaveValue('')
     expect(screen.getByLabelText('Claude Agent default model')).toHaveValue('')
@@ -3296,8 +3301,14 @@ describe('App', () => {
       'GitHub Copilot default model',
     )
     await waitFor(() => expect(model).toHaveValue('node-model'))
-    expect(screen.getByRole('option', { name: 'Hub Model' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Node Model' })).toBeInTheDocument()
+    expect(within(model).getByRole('option', { name: 'Hub Model' })).toBeInTheDocument()
+    expect(within(model).getByRole('option', { name: 'Node Model' })).toBeInTheDocument()
+    // Oracle runs on the hub, so it offers only the hub's own models.
+    const oracleModel = await screen.findByRole('combobox', { name: 'Oracle model' })
+    await waitFor(() =>
+      expect(within(oracleModel).getByRole('option', { name: 'Hub Model' })).toBeInTheDocument(),
+    )
+    expect(within(oracleModel).queryByRole('option', { name: 'Node Model' })).toBeNull()
     expect(getProviderRuntimeOptions).toHaveBeenCalledWith(
       secondComputer.id,
       'copilot',

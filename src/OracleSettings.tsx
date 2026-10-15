@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { RuntimeModelOption, RuntimeReasoningEffort } from '../shared/contracts'
 import type { ManagerSettingsSnapshot } from '../shared/manager'
-import { getManager, getProviderRuntimeOptions, updateManagerSettings } from './api'
+import { getManager, updateManagerSettings } from './api'
 
 const efforts: RuntimeReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
@@ -12,12 +12,12 @@ function effortFrom(value: string): RuntimeReasoningEffort | undefined {
 /**
  * Oracle's model and effort, in App settings. Kept on the hub, since Oracle
  * runs there, so every browser sees the same choice; it applies from Oracle's
- * next answer.
+ * next answer. `models` is the hub's own Copilot catalog, which App settings
+ * already loads; it is undefined while that catalog is still loading.
  */
-export function OracleSettings({ computerId }: { computerId?: string }) {
+export function OracleSettings({ models = [] }: { models?: RuntimeModelOption[] }) {
   const [settings, setSettings] = useState<ManagerSettingsSnapshot>()
   const [unavailable, setUnavailable] = useState<string>()
-  const [models, setModels] = useState<RuntimeModelOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
@@ -25,13 +25,9 @@ export function OracleSettings({ computerId }: { computerId?: string }) {
 
   useEffect(() => {
     let active = true
-    void Promise.all([
-      Promise.resolve().then(() => getManager()),
-      computerId
-        ? Promise.resolve().then(() => getProviderRuntimeOptions(computerId, 'copilot')).catch(() => undefined)
-        : Promise.resolve(undefined),
-    ])
-      .then(([snapshot, options]) => {
+    void Promise.resolve()
+      .then(() => getManager())
+      .then((snapshot) => {
         if (!active) return
         if (!snapshot?.available) {
           setUnavailable(snapshot?.unavailableReason || 'Oracle is not available on this hub.')
@@ -39,7 +35,6 @@ export function OracleSettings({ computerId }: { computerId?: string }) {
           setUnavailable(undefined)
           setSettings(snapshot.settings ?? {})
         }
-        setModels(options?.models ?? [])
       })
       .catch((caught: unknown) => {
         if (active) setError(caught instanceof Error ? caught.message : String(caught))
@@ -50,7 +45,7 @@ export function OracleSettings({ computerId }: { computerId?: string }) {
     return () => {
       active = false
     }
-  }, [computerId])
+  }, [])
 
   async function save(model: string, reasoningEffort?: RuntimeReasoningEffort) {
     setSaving(true)

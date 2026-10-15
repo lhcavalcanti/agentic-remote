@@ -153,6 +153,16 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       '    fi',
       '  done',
       'fi',
+      // An operator pausing while the suite is still running.
+      'if [[ "${*: -1}" == "build" && -n "${PAUSE_DURING_BUILD:-}" ]]; then',
+      '  printf "paused_at=2026-10-01T18:39:55Z\\nreason=paused mid-run\\n" >"$PAUSE_DURING_BUILD"',
+      'fi',
+      // `disable` still recording its pause, under the pause lock, as
+      // validation finishes.
+      'if [[ "${*: -1}" == "build" && -n "${PAUSE_RACE_DIR:-}" ]]; then',
+      '  flock "$PAUSE_RACE_DIR/pause.lock" bash -c \'touch "$1"; sleep 1; printf "paused_at=2026-10-01T18:39:55Z\\nreason=racing pause\\n" >"$2"\' _ "$PAUSE_RACE_DIR/.race-held" "$PAUSE_RACE_DIR/promotion-paused" </dev/null >/dev/null 2>&1 &',
+      '  while [[ ! -e "$PAUSE_RACE_DIR/.race-held" ]]; do sleep 0.02; done',
+      'fi',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -1700,4 +1710,144 @@ fs.fsyncSync = (fd) => {
     expect(result.output).toContain('DOWNSTREAM_ROOT is required')
     expect(await calls(context)).toEqual([])
   })
+})
+
+describe('promotion monitor pause', () => {
+  async function pause(context: Fixture): Promise<string> {
+    const marker = path.join(context.root, 'state', 'promotion-paused')
+    await mkdir(path.dirname(marker), { recursive: true })
+    await writeFile(
+      marker,
+      'paused_at=2026-10-01T18:39:55Z\nreason=holding release\n',
+      { mode: 0o600 },
+    )
+    return marker
+  }
+
+  it('skips a paused run before fetching, validating, or promoting', async () => {
+    const context = await fixture()
+    const previous = await git(context.runtime, 'rev-parse', 'HEAD')
+    // Advance origin behind the development checkout's back, so a fetch or
+    // pull would be visible.
+    await writeFile(path.join(context.remote, 'upstream.txt'), 'next')
+    await git(context.remote, 'add', '-A')
+    await git(context.remote, 'commit', '-m', 'upstream')
+    await git(context.remote, 'push', 'origin', 'main')
+    const devHead = await git(context.dev, 'rev-parse', 'HEAD')
+    const tracked = await git(context.dev, 'rev-parse', 'refs/remotes/origin/main')
+    const marker = await pause(context)
+
+    const result = await monitor(context)
+
+    expect(result.code).toBe(0)
+    expect(result.output).toContain(
+      'promotion is paused since 2026-10-01T18:39:55Z: holding release; skipping this run',
+    )
+    expect(await git(context.dev, 'rev-parse', 'HEAD')).toBe(devHead)
+    expect(await git(context.dev, 'rev-parse', 'refs/remotes/origin/main')).toBe(tracked)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
+    expect(await calls(context)).toEqual([])
+    for (const name of ['promotion-state', 'pending-promotion', 'validate', 'lock']) {
+      expect(existsSync(path.join(context.root, 'state', name))).toBe(false)
+    }
+
+    // The pause was the only thing in the way.
+    await rm(marker)
+    expect((await monitor(context)).code).toBe(0)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).not.toBe(previous)
+  })
+
+  it('stops after validation and before graduation when paused mid-run', async () => {
+    const context = await fixture()
+    const previous = await git(context.runtime, 'rev-parse', 'HEAD')
+    await advanceMain(context)
+
+    const result = await monitor(context, {
+      PAUSE_DURING_BUILD: path.join(context.root, 'state', 'promotion-paused'),
+    })
+
+    expect(result.code).toBe(0)
+    expect(result.output).toContain(
+      'promotion is paused since 2026-10-01T18:39:55Z: paused mid-run; stopping after validation and before graduation',
+    )
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
+    expect((await calls(context)).some((line) => line.startsWith('agentic-remote'))).toBe(false)
+    for (const name of ['promotion-state', 'pending-promotion', 'validate']) {
+      expect(existsSync(path.join(context.root, 'state', name))).toBe(false)
+    }
+  })
+
+  it('leaves an interrupted promotion untouched until promotion resumes', async () => {
+    const { context, previous, state, record } = await healthyReleaseFixture(true)
+    const current = path.join(context.releases, 'current')
+    const pendingPath = path.join(context.root, 'state', 'pending-promotion')
+    const interrupted = await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })
+    expect(interrupted.code).not.toBe(0)
+    const journal = await readFile(pendingPath, 'utf8')
+    const unverified = await realpath(current)
+    const source = await git(context.runtime, 'rev-parse', 'HEAD')
+    const marker = await pause(context)
+    const before = await calls(context)
+
+    const paused = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1' })
+
+    expect(paused.code).toBe(0)
+    expect(paused.output).toContain('skipping this run')
+    expect(paused.output).toContain('pending promotion journal was retained')
+    expect(await readFile(pendingPath, 'utf8')).toBe(journal)
+    expect(await realpath(current)).toBe(unverified)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(source)
+    expect(await calls(context)).toEqual(before)
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+
+    await rm(marker)
+    const recovery = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1' })
+    expect(recovery.code).not.toBe(0)
+    expect(await realpath(current)).toBe(previous)
+    expect(existsSync(pendingPath)).toBe(false)
+  })
+
+  it('waits for a pause being recorded at the graduation checkpoint', async () => {
+    const context = await fixture()
+    const previous = await git(context.runtime, 'rev-parse', 'HEAD')
+    await advanceMain(context)
+
+    const result = await monitor(context, {
+      PAUSE_RACE_DIR: path.join(context.root, 'state'),
+    })
+
+    expect(result.code).toBe(0)
+    expect(result.output).toContain(
+      'racing pause; stopping after validation and before graduation',
+    )
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
+    expect((await calls(context)).some((line) => line.startsWith('agentic-remote'))).toBe(false)
+    expect(existsSync(path.join(context.root, 'state', 'pending-promotion'))).toBe(false)
+  })
+
+  it.each(['marker is a directory', 'marker is a symlink', 'state path is a file'] as const)(
+    'fails closed when the pause state cannot be read (%s)',
+    async (shape) => {
+      const context = await fixture()
+      const previous = await git(context.runtime, 'rev-parse', 'HEAD')
+      await advanceMain(context)
+      const state = path.join(context.root, 'state')
+      if (shape === 'marker is a directory') {
+        await mkdir(path.join(state, 'promotion-paused'), { recursive: true })
+      } else if (shape === 'marker is a symlink') {
+        await mkdir(state, { recursive: true })
+        await symlink(path.join(context.root, 'missing'), path.join(state, 'promotion-paused'))
+      } else {
+        await writeFile(state, 'not a directory')
+      }
+
+      const result = await monitor(context)
+
+      expect(result.code).not.toBe(0)
+      expect(result.output).toContain('could not read the promotion pause state')
+      expect(await calls(context)).toEqual([])
+      expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
+    },
+  )
 })

@@ -139,6 +139,12 @@ changing their profile or timer state:
 After that one-time refresh, successful promotions refresh the installed
 monitor and units from the exact validated candidate before recording success.
 
+To hold the current release, pause promotion with
+`./bin/agentic-remote-promotion-setup disable --reason "…"`. The pause is a
+durable marker the monitor enforces, so refreshes, updates, and a timer
+rearmed by other tooling cannot resume it; only `enable` does. See
+[Pausing promotion](docs/deployment-promotion.md#pausing-promotion).
+
 ### Promoting to a second machine
 
 To keep the machine people use separate from the machine that rebuilds, add

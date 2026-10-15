@@ -195,6 +195,37 @@ describe('startup phase recorder', () => {
     expect(lines.join('\n')).not.toMatch(/secret|synthetic|Cannot bind/)
   })
 
+  it('never records error names or codes that could carry data', async () => {
+    const { phases, records, lines } = recorder()
+    class TerminalDiscoveryFailure extends Error {}
+    const named = Object.assign(new TerminalDiscoveryFailure('hidden'), {
+      name: 'ghp_SyntheticToken /home/synthetic', code: 'ghp_syntheticToken',
+    })
+    await expect(phases.run('copilot.discovery', async () => { throw named })).rejects.toBe(named)
+    expect(records.at(-1)).toEqual(expect.objectContaining({ event: 'fail', error: 'TerminalDiscoveryFailure' }))
+    expect(records.at(-1)).not.toHaveProperty('code')
+    await expect(phases.run('copilot.sdk', () => Promise.reject('/home/synthetic/token'))).rejects.toBe('/home/synthetic/token')
+    expect(records.at(-1)).toEqual(expect.objectContaining({ event: 'fail', error: 'string' }))
+    expect(lines.join('\n')).not.toMatch(/ghp_|synthetic|hidden/i)
+  })
+
+  it('keeps the original rejection when reading error metadata throws', async () => {
+    const { phases, records } = recorder()
+    const hostile = new Proxy(new Error('hidden'), {
+      get: () => { throw new Error('getter failed') },
+      getPrototypeOf: () => { throw new Error('prototype failed') },
+    })
+    await expect(phases.run('copilot.store', () => Promise.reject(hostile))).rejects.toBe(hostile)
+    expect(records.at(-1)).toMatchObject({ startupPhase: 'copilot.store', event: 'fail' })
+  })
+
+  it('keeps phase results when the clock fails', async () => {
+    const phases = createStartupPhases({ now: () => { throw new Error('clock failed') }, write: () => {} })
+    const failure = new Error('Synthetic failure')
+    await expect(phases.run('copilot.models', async () => 'loaded')).resolves.toBe('loaded')
+    await expect(phases.run('copilot.models', () => Promise.reject(failure))).rejects.toBe(failure)
+  })
+
   it('starts the phase work synchronously and survives a failing log sink', async () => {
     const phases = createStartupPhases({ now: () => 1, write: () => { throw new Error('sink closed') } })
     let started = false

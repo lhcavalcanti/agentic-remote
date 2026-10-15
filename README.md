@@ -451,7 +451,7 @@ The service finishes provider startup and session recovery before it listens,
 so a stalled startup refuses connections. Each startup phase logs a JSON line
 such as `{"startupPhase":"copilot.discovery","event":"begin","elapsedMs":812}`,
 then a `complete` or `fail` record with `durationMs`; failures name only the
-error type and code. `elapsedMs` is monotonic time since the process started.
+error class and any constant-style code, such as `EADDRINUSE`. `elapsedMs` is monotonic time since the process started.
 Phases run in order: `app.build`; `service.start`, containing `copilot.start`
 (`copilot.store`, `copilot.sdk`, `copilot.models`, `copilot.discovery`,
 `copilot.recovery` with its `copilot.recovery.*` steps, `copilot.queue.*`) and

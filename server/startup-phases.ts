@@ -26,14 +26,35 @@ export const silentStartupPhases: StartupPhases = {
   run: (_phase, work) => work(),
 }
 
-function errorType(error: unknown): string {
-  if (!(error instanceof Error)) return typeof error
-  return error.name !== 'Error' ? error.name : error.constructor?.name || error.name
+const errorTypePattern = /^[A-Za-z_$][\w$]{0,63}$/
+const errorCodePattern = /^[A-Z][A-Z0-9_]{1,63}$/
+
+/**
+ * Names a failure by its class and constant-style code only. `Error.name` and
+ * other fields are data that can carry paths or credentials, so they are never
+ * read for the record.
+ */
+function failure(error: unknown): Pick<StartupPhaseRecord, 'error' | 'code'> {
+  try {
+    if (typeof error !== 'object' || error === null) return { error: typeof error }
+    const type: unknown = Object.getPrototypeOf(error)?.constructor?.name
+    const code: unknown = Reflect.get(error, 'code')
+    return {
+      error: typeof type === 'string' && errorTypePattern.test(type) ? type : 'unknown',
+      ...(typeof code === 'string' && errorCodePattern.test(code) ? { code } : {}),
+    }
+  } catch {
+    return { error: 'unknown' }
+  }
 }
 
-function errorCode(error: unknown): string | undefined {
-  const code = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined
-  return typeof code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? code : undefined
+/** Diagnostics must never change startup, whatever the clock or sink does. */
+function quietly(record: () => void): void {
+  try {
+    record()
+  } catch {
+    // Ignored: the phase result is what startup depends on.
+  }
 }
 
 export function createStartupPhases({
@@ -43,29 +64,24 @@ export function createStartupPhases({
   now?: () => number
   write?: (line: string) => void
 } = {}): StartupPhases {
-  const emit = (record: StartupPhaseRecord) => {
-    try {
-      write(JSON.stringify(record))
-    } catch {
-      // Diagnostics must never change startup.
-    }
-  }
+  const emit = (record: StartupPhaseRecord) => write(JSON.stringify(record))
   return {
     run<T>(phase: string, work: () => Promise<T>): Promise<T> {
-      const began = now()
-      emit({ startupPhase: phase, event: 'begin', elapsedMs: Math.round(began) })
-      const finish = (event: 'complete' | 'fail', error?: unknown) => {
+      let began: number | undefined
+      quietly(() => {
+        began = now()
+        emit({ startupPhase: phase, event: 'begin', elapsedMs: Math.round(began) })
+      })
+      const finish = (event: 'complete' | 'fail', error?: unknown) => quietly(() => {
         const ended = now()
-        const code = event === 'fail' ? errorCode(error) : undefined
         emit({
           startupPhase: phase,
           event,
           elapsedMs: Math.round(ended),
-          durationMs: Math.round(ended - began),
-          ...(event === 'fail' ? { error: errorType(error) } : {}),
-          ...(code ? { code } : {}),
+          ...(began === undefined ? {} : { durationMs: Math.round(ended - began) }),
+          ...(event === 'fail' ? failure(error) : {}),
         })
-      }
+      })
       let running: Promise<T>
       try {
         running = work()

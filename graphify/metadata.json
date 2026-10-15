@@ -263,9 +263,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 157,
+  "communities": 153,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11317,
+  "edges": 11325,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -290,7 +290,7 @@
     ".gitignore": "b4880167586d0b59633db90e9c656e8cfdfce739b6d4f234bcecb7317257b76b",
     ".oxlintrc.json": "07c58c79b4cf22b23a6f2b8179b11b19c52ac01e0045111dec7a66522e6428b5",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
-    "README.md": "83df01088ccf3894c69bb771fb2edb57acce2116b59b15fc93634d9a57182ac5",
+    "README.md": "bc729c754d687b310e5cac5858e828db0d42e9654709383c4790147c02152535",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "6c2708fa0a48f07282d57fc9248396f682eab36a4ffcad238d98166fdee31a0d",
     "bin/agentic-remote-promotion-monitor": "f6e11a8ba43a0ea6489f1abddba32a5f9ab809aa576fb926e4cfc24b9d28f064",
@@ -347,7 +347,7 @@
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
-    "server/app.ts": "b008d5faf3ebbe2b3a70942779a60d61fd46dfe118ddeb742e3ffd0a12cdbae6",
+    "server/app.ts": "d96199f129333f851c6a4d3f630b6099dceae64c409a8e111d315a662d856e3e",
     "server/background-task-adapter.test.ts": "95a73c1c7a1f3ddb127816d8d52dd9af5a8e91d9fb89f4594c0085c1d08454e0",
     "server/background-task-adapter.ts": "f65bdc38394443acc940f4ad869894bc28893dfda30b976d2191f2b8f4b0fffa",
     "server/background-task-stop.test.ts": "737c6bba771904456ac14c34b3acc53daf76e34fc589713908ec6839c416ae2b",
@@ -374,7 +374,7 @@
     "server/file-upload-routes.ts": "29d040bb003be45805497d865cbb3814512c4a72d0423078dea1e48dd042bd57",
     "server/hub-routes.test.ts": "33e6cc0f5d05dd5b38974905ed9a468692ff8e04413525ca047e4062a277080a",
     "server/hub-routes.ts": "502b61a5e3cc580963575715a4a75e1a5faa766477d4777148740cfb41935c54",
-    "server/index.ts": "8671c7c9159859e141dd38b8aec6b43228b50dc48b601c23e4912800fb52c6d5",
+    "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
     "server/manager-agent.test.ts": "05dc82e1b9d0af08aea739547c382cb912fc6114ded9f80f7c945f8c08d7f9c3",
@@ -453,7 +453,7 @@
     "server/session-store.ts": "5ac6f992ccda3ddf3ad6eb689fb7a1a6010a1136674ebb725ab1a62316e023e0",
     "server/side-question.test.ts": "bb7fe56de6bf5ed357ca35929523244836eecd39fa6abceffeeb1f5a36548ac8",
     "server/side-question.ts": "ff75273c172f073bc9cc7a7cd40d2697ad26041068714e543a84dfbcaa760b8e",
-    "server/startup-phases.test.ts": "e236a0f34b88cc95c8e11893376d3222b51e3186791b29a26e7e00fa6752459a",
+    "server/startup-phases.test.ts": "1c3b5d3130173ec4781b483d24404004602051931ccdd5fc73c8e54ce2b71c5b",
     "server/startup-phases.ts": "c819e686ff91fed16463d5022f04685d659d9fd012d4631ff84d4d2b133e68ec",
     "server/submission-error-http.test.ts": "4e575bc36df1c861a90b30fced64147af534723abcc00f1985f36e1104e27162",
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
@@ -645,19 +645,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ded2bb89028b942998d1140869190895609a49cb250da47458f2fbdbfedf5375",
-    "communities.json": "402b321d4415c4f012ed8a1359a35139087c4d51c37998c665088987ef23ea7c",
-    "graph.html": "077cb46eeb98fb9266b3ae357d4e892958ca892c47756220001f4be5f2506067",
-    "graph.json": "bfb01926542c4d05f0a4778fd306cec3d7c7040ee4dd24c0345593da78f3f165"
+    "GRAPH_REPORT.md": "2e561d47c09afb808c18398c48a2cc84e05af3e1deae8273cb59e05adde52bed",
+    "communities.json": "cb9d1ea1cdc04c4fd160ed91d99f97c0fe3908019bfbdadd18291695b4b03e95",
+    "graph.html": "a1b7bdb8ba74faa7e0fa0af032fb5e035ceb7ad3cc268598ad4fc3adc4b0af3c",
+    "graph.json": "0ae9c55d75d5be5190181deb59aca6c47163988f9ce76ef1438cad6ef94bd7f3"
   },
   "schema_version": 1,
-  "source_commit": "224aeaca6c8ac1cf1196093396f8b0e4cd452013",
-  "source_fingerprint": "cff58a51294a389ce6b7d1e827ee4525d65bd2268b57dfc4d80e793cc739842d",
+  "source_commit": "9b58fe6ac1670c6ec1967bebff10952f7e8fa0ba",
+  "source_fingerprint": "f27e84cb112512d72ad24afeb7d128634004c210c6938b3074e1fbf04de69d4a",
   "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "README.md",
+    "server/app.ts",
+    "server/index.ts",
+    "server/startup-phases.test.ts"
   ]
 }

@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentService, type CopilotClientLike } from './agent-service.js'
+import { buildApp } from './app.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
+import type { ManagerAgent } from './manager-agent.js'
 import { ProviderSessionService } from './provider-session-service.js'
 import { SessionStore } from './session-store.js'
 import {
@@ -368,5 +371,37 @@ describe('managed startup diagnostics', () => {
     const log = vi.spyOn(console, 'log')
     await f.service.start()
     expect(log).not.toHaveBeenCalled()
+  })
+
+  it('labels the manager start that holds Fastify readiness', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
+    const f = await fixture()
+    const released = gate()
+    const managerAgent = Object.assign(new EventEmitter(), {
+      start: vi.fn(() => released.promise),
+      stop: vi.fn(async () => {}),
+    }) as unknown as ManagerAgent
+    const { phases, records } = recorder()
+    const { app } = await buildApp({
+      service: f.service,
+      managerAgent,
+      dataDirectory: f.directory,
+      logger: false,
+      startupPhases: phases,
+      transcriptionService: { initialize: async () => undefined, stop: async () => undefined, transcribe: vi.fn() },
+    })
+    try {
+      let ready = false
+      const readying = app.ready().then(() => { ready = true })
+      await vi.waitFor(() => expect(records.at(-1)).toMatchObject({ startupPhase: 'manager.start', event: 'begin' }))
+      await settle()
+      expect(ready).toBe(false)
+      released.release()
+      await readying
+      expect(records.at(-1)).toMatchObject({ startupPhase: 'manager.start', event: 'complete' })
+    } finally {
+      await app.close()
+      vi.unstubAllEnvs()
+    }
   })
 })

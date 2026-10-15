@@ -18,6 +18,7 @@ const { app, service } = await phases.run('app.build', () => buildApp({
   role,
   serveStatic: role === 'hub' && process.env.NODE_ENV === 'production',
   cliCanary: true,
+  startupPhases: phases,
 }))
 
 await startManagedServer(app, service, { host, port }, phases)

@@ -4667,6 +4667,37 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('never lists a session excluded from discovery, such as the manager agent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const listed = (sessionId: string, summary: string) => ({
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary,
+      isRemote: false,
+      context: { workingDirectory: directory },
+    })
+    client.nextSessionList = Promise.resolve([
+      listed('11111111-abcd-abcd-abcd-123456789abc', 'Manager conversation'),
+      listed('22222222-abcd-abcd-abcd-123456789abc', 'Real work'),
+    ])
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    service.excludeFromDiscovery(['11111111-abcd-abcd-abcd-123456789abc'])
+
+    await service.start()
+
+    expect(service.listHistory().map((session) => session.title)).toEqual(['Real work'])
+    expect(service.getSession('11111111-abcd-abcd-abcd-123456789abc')).toBeUndefined()
+    await service.stop()
+  })
+
   it('keeps discovered session titles concise', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

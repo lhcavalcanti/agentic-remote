@@ -1,3 +1,5 @@
+import type { ManagerEvent } from './manager.js'
+
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
 export type AgentProvider = 'copilot' | 'claude'
@@ -439,6 +441,7 @@ export type ServerEvent =
     }
 
 export type HubEvent =
+  | ManagerEvent
   | { type: 'session.upserted'; session: ManagedSession }
   | {
       type: 'session.order.updated'

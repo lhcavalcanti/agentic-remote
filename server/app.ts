@@ -53,6 +53,7 @@ import {
   registerTranscriptionRoutes,
   transcriptionMultipartOptions,
 } from './transcription-routes.js'
+import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -79,6 +80,8 @@ export interface BuildAppOptions {
    * disposable terminal session. Only for the built-in session service.
    */
   cliCanary?: boolean
+  /** Records the startup work that runs while the server becomes ready. */
+  startupPhases?: StartupPhases
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -323,10 +326,13 @@ export async function buildApp(
     : undefined
   // Ready only once the service has started, so the probe never races the
   // recovery of sessions that were open before a restart.
+  const startupPhases = options.startupPhases ?? silentStartupPhases
   app.addHook('onReady', async () => {
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
-    await managerAgent?.start().catch((error: unknown) => {
+    const starting = managerAgent
+    if (!starting) return
+    await startupPhases.run('manager.start', () => starting.start()).catch((error: unknown) => {
       app.log.error({ err: error }, 'The manager agent could not start')
     })
   })

@@ -24,10 +24,12 @@ import type {
   SlashCommand,
   SideQuestionExchange,
 } from '../shared/contracts.js'
+import type { StartupPhases } from './startup-phases.js'
 
 export interface SessionService {
   providers(): AgentProviderCapability[]
-  start(): Promise<void>
+  /** Starts the provider, labelling its awaited startup phases on `phases`. */
+  start(phases?: StartupPhases): Promise<void>
   stop(): Promise<void>
   listSessions(): SessionDetail[]
   listHistory(): SessionDetail[]

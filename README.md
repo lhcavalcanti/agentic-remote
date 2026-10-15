@@ -447,6 +447,22 @@ agentic-remote logs
 curl http://192.168.1.10:4317/api/health
 ```
 
+The service runs provider startup, including session recovery, before it
+listens, so a stalled startup refuses connections; only recovery deferred by
+indeterminate terminal discovery is retried after listening. Each phase logs
+one JSON line when it begins, such as
+`{"startupPhase":"copilot.discovery","event":"begin","elapsedMs":812}`, and one
+`complete` or `fail` line with `durationMs`. Failures name only the error class
+and any constant-style code, such as `EADDRINUSE`. `elapsedMs` is monotonic
+time since the process started. Phases run in order: `app.build`;
+`service.start`, containing `copilot.start` (`copilot.store`, `copilot.sdk`,
+`copilot.models`, `copilot.discovery`, `copilot.recovery` with its
+`copilot.recovery.*` steps, `copilot.queue.*`) and `claude.start`
+(`claude.store`, `claude.availability`, `claude.queue`); then `fastify.listen`,
+which includes a hub's `manager.start`. The last `begin` without its own
+`complete` or `fail` names the stalled phase:
+`journalctl --user --unit agentic-remote --grep startupPhase`.
+
 If the installed PWA looks outdated, use **App settings → Check for updates**,
 apply the update, and reopen the app.
 

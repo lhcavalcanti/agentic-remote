@@ -2992,8 +2992,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const mode = input.mode || agentMode(stored.runtime?.mode) || 'interactive'
     const configuration: ConfigureRuntimeInput = { ...input, mode }
     const limits = this.modelPromptLimits.get(input.model)
-    // Reconfiguring a terminal relaunches its Copilot process from the app.
-    const relaunchesTerminal = this.externalSessionIds.has(id)
     const persistRuntime = async (appliedMode: AgentMode | undefined) => {
       const updated = await this.store.update(id, (session) => {
         session.runtime = {
@@ -3008,17 +3006,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               : limits?.default || limits?.maximum,
           contextEstimated: true,
         }
-      }, { appDriven: relaunchesTerminal })
+      })
       this.publish(updated)
       return this.publicSession(updated)
     }
-    if (relaunchesTerminal) {
+    if (this.externalSessionIds.has(id)) {
       if (!this.terminalController.configure) {
         throw new Error('Terminal runtime configuration is not available')
       }
       if (!(await this.terminalController.configure(id, stored.cwd, configuration))) {
         throw new Error('External terminal is no longer available')
       }
+      // Reconfiguring relaunched its Copilot process from the app.
+      await this.store.claimTerminalRecovery(id)
     } else {
       const session = await this.ensureLoaded(id)
       const previousRuntime = await session.rpc.model.getCurrent()
@@ -3510,6 +3510,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!terminalRestarted && !this.store.isManagedOpen(id)) {
         throw new Error('External terminal is no longer available')
       }
+      // Restarted in place: the app relaunched its Copilot process.
+      if (terminalRestarted) await this.store.claimTerminalRecovery(id)
     }
     if (!terminalRestarted) {
       // Retired before anything is torn down. A read that settles while the
@@ -3553,7 +3555,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session.activity = undefined
       session.pendingPermission = undefined
       session.updatedAt = new Date().toISOString()
-    }, { appDriven: terminalRestarted })
+    })
     this.publish(restarted)
     // Only an SDK session drains through this path. A tmux session keeps its
     // own runtime, and waking it here would start a second owner beside it.
@@ -4775,9 +4777,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (nativeEnqueue) {
         await this.recordDelivery(sessionId, answers, delivery)
+        await this.store.claimTerminalRecovery(sessionId)
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'
-        }, { appDriven: true })
+        })
         this.publish(queued)
         return queued
       }
@@ -6207,6 +6210,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         !this.terminalAdmissionDispatched.has(sessionId)
       if (ownsStartupDispatch) this.terminalAdmissionDispatched.add(sessionId)
       if (!queuedDelivery) await this.recordDelivery(sessionId, answers, delivery)
+      // Before reading the feedback, which can fail after the command went in.
+      await this.store.claimTerminalRecovery(sessionId)
       const feedback = await this.terminalCommandFeedback(
         sessionId,
         canonicalCommand,
@@ -6217,7 +6222,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         role: 'notice',
         content: feedback.notice,
         createdAt: new Date().toISOString(),
-      }, { appDriven: true })
+      })
       this.publish(notice)
       if (!feedback.startedTurn) {
         if (ownsStartupDispatch && feedback.responseObserved && !feedback.overlayOpen) {
@@ -6805,6 +6810,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       terminalReplied = true
       this.liveTranscriptWatermarks.set(sessionId, repliedAt)
+      await this.store.claimTerminalRecovery(sessionId)
     }
 
     const continuation = terminalReplied
@@ -6815,7 +6821,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : { status: 'running' as const, activity: 'Continuing' }
     const updated = await this.store.clearPendingRequest(
       sessionId, 'pendingPermission', requestId, continuation,
-      { appDriven: terminalReplied },
     )
     this.publish(updated)
     return this.publicSession(updated)
@@ -7234,6 +7239,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       terminalReplied = true
       this.liveTranscriptWatermarks.set(sessionId, repliedAt)
+      await this.store.claimTerminalRecovery(sessionId)
     }
     const continuation = terminalReplied
       ? await this.terminalContinuationState(
@@ -7243,7 +7249,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : { status: 'running' as const, activity: 'Continuing' }
     const updated = await this.store.clearPendingRequest(
       sessionId, 'pendingUserInput', requestId, continuation,
-      { appDriven: terminalReplied },
     )
     this.publish(updated)
     return this.publicSession(updated)

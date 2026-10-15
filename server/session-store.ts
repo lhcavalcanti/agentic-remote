@@ -183,11 +183,6 @@ function grantTerminalRecovery(session: StoredSession): void {
   }
 }
 
-/** Marks a write as recording something the app itself did to the session. */
-interface AppDrivenChange {
-  appDriven?: boolean
-}
-
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     archivedMessages,
@@ -764,6 +759,19 @@ export class SessionStore {
     const session = this.state.sessions[id]
     return this.isManagedOpen(id) && session?.backend === 'terminal' &&
       session.suspended !== true
+  }
+
+  /**
+   * Records that the app has just acted on a live tmux session's process.
+   * Called before anything else that can fail afterwards, so the session it
+   * drove is never left out of boot recovery. Writes only when that changes.
+   */
+  async claimTerminalRecovery(sessionId: string): Promise<void> {
+    const claimable = (session: StoredSession | undefined) =>
+      session?.managedOpen !== true && session?.backend === 'terminal' &&
+      session.isOpen === true
+    if (this.isRetiredSession(sessionId) || !claimable(this.state.sessions[sessionId])) return
+    await this.mutate(sessionId, grantTerminalRecovery, claimable)
   }
 
   isManagedOpen(sessionId: string): boolean {
@@ -1938,15 +1946,10 @@ export class SessionStore {
     }
   }
 
-  async addMessage(
-    sessionId: string,
-    message: ChatMessage,
-    { appDriven = false }: AppDrivenChange = {},
-  ): Promise<SessionDetail> {
+  async addMessage(sessionId: string, message: ChatMessage): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages.push(message)
       session.updatedAt = message.createdAt
-      if (appDriven) grantTerminalRecovery(session)
     })
   }
 
@@ -2113,7 +2116,6 @@ export class SessionStore {
     continuation?:
       | { status: SessionStatus; activity?: string }
       | ((session: Readonly<SessionDetail>) => { status: SessionStatus; activity?: string }),
-    { appDriven = false }: AppDrivenChange = {},
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session[kind] = undefined
@@ -2126,19 +2128,14 @@ export class SessionStore {
           session.pendingUserInput?.question ||
           next.activity
       }
-      if (appDriven) grantTerminalRecovery(session)
     }, (session) => session[kind]?.requestId === requestId)
   }
 
   async update(
     sessionId: string,
     mutation: (session: SessionDetail) => void,
-    { appDriven = false }: AppDrivenChange = {},
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
-      mutation(session)
-      if (appDriven) grantTerminalRecovery(session)
-    })
+    return this.mutate(sessionId, mutation)
   }
 
   /** A false result is an explicit no-op; validation and write errors still reject. */

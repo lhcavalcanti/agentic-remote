@@ -724,6 +724,9 @@ describe('SessionStore', () => {
     await restarted.initialize()
     await restarted.syncBackends(['managed-terminal'], [])
     expect(restarted.isManagedOpen('managed-terminal')).toBe(true)
+    const revision = restarted.get('managed-terminal')!.revision
+    await restarted.claimTerminalRecovery('managed-terminal')
+    expect(restarted.get('managed-terminal')!.revision).toBe(revision)
     await restarted.syncOpen([])
 
     const rebooted = new SessionStore(directory)
@@ -735,7 +738,7 @@ describe('SessionStore', () => {
 
   it('grants boot recovery once the app sends or queues work for a discovered terminal', async () => {
     const { directory, store } = await createStore()
-    const ids = ['sent', 'queued', 'answered', 'native-queued', 'observed']
+    const ids = ['sent', 'queued', 'answered', 'claimed', 'observed']
     await store.syncDiscovered(ids.map((id) => ({
       id,
       cwd: `/tmp/${id}`,
@@ -751,15 +754,12 @@ describe('SessionStore', () => {
     await store.markTerminalPromptDispatched('sent', '2026-07-22T00:00:01.000Z', 'Sent to terminal')
     await store.enqueuePrompt('queued', { ...queued, id: 'queued-prompt' })
     await store.enqueueAnsweringPrompt('answered', { ...queued, id: 'answer-prompt' }, undefined)
-    await store.update('native-queued', (session) => {
-      session.activity = 'Queued in terminal'
-    }, { appDriven: true })
+    await store.claimTerminalRecovery('claimed')
     await store.update('observed', (session) => {
       session.activity = 'Observed in the terminal'
     })
 
-    expect(store.get('native-queued')?.activity).toBe('Queued in terminal')
-    for (const id of ['sent', 'queued', 'answered', 'native-queued']) {
+    for (const id of ['sent', 'queued', 'answered', 'claimed']) {
       expect(store.isManagedOpen(id)).toBe(true)
     }
     expect(store.isManagedOpen('observed')).toBe(false)
@@ -768,7 +768,7 @@ describe('SessionStore', () => {
     const restored = new SessionStore(directory)
     await restored.initialize()
     expect(restored.terminalRecoverySessions().map(({ id }) => id).sort()).toEqual(
-      ['answered', 'native-queued', 'queued', 'sent'],
+      ['answered', 'claimed', 'queued', 'sent'],
     )
   })
 
@@ -812,6 +812,7 @@ describe('SessionStore', () => {
         content: 'Queued while closed',
         createdAt: '2026-07-22T00:00:01.000Z',
       })
+      await store.claimTerminalRecovery(id)
       expect(store.isManagedOpen(id)).toBe(false)
     }
   })

@@ -7464,6 +7464,56 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('keeps recovery ownership of a sent command when its feedback cannot be read', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-slash-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    let sent = false
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        sent = true
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => {
+        if (sent) throw new Error('Pane capture failed')
+        return composer
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    await expect(
+      service.executeCommand(client.session.sessionId, '/cwd'),
+    ).rejects.toThrow(/accepted/)
+
+    expect(terminal.send).toHaveBeenCalledOnce()
+    expect(service.store.shouldRecoverTerminalSession(client.session.sessionId)).toBe(true)
+    await service.stop()
+  })
+
   it('waits for a terminal slash command response to finish painting', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-slash-paint-'),

@@ -31,6 +31,8 @@ readonly STATE_FILE="$STATE_DIR/last-graduated-commit"
 readonly STATE_RECORD="$STATE_DIR/promotion-state"
 readonly PENDING_RECORD="$STATE_DIR/pending-promotion"
 readonly PAUSE_FILE="$STATE_DIR/promotion-paused"
+# Shared with the setup command's `disable`; see the graduation checkpoint.
+readonly PAUSE_LOCK="$STATE_DIR/pause.lock"
 readonly LOCK_FILE="$STATE_DIR/lock"
 readonly SERVICE_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_SERVICE agentic-remote.service)"
 readonly DATA_DIR="$(profile_value AGENTIC_REMOTE_DATA_DIR '')"
@@ -1111,8 +1113,14 @@ run() {
 
   # Validation can take many minutes. A pause recorded meanwhile stops the run
   # here, the last point before the runtime or any promotion record changes.
-  # Past this point the transaction runs to completion or rollback, because
-  # cutting it short is what would strand recovery.
+  # `disable` records a pause under the same lock that is held from this check
+  # until the pending journal exists, so a pause either stops this run here or
+  # finds the transaction already started. Past this point the transaction
+  # runs to completion or rollback, because cutting it short is what would
+  # strand recovery.
+  exec 8>"$PAUSE_LOCK"
+  flock -w 60 8 ||
+    die "could not take the promotion pause lock; no candidate was activated"
   if promotion_paused "stopping after validation and before graduation"; then
     return
   fi
@@ -1141,6 +1149,8 @@ run() {
   write_pending_promotion prepared "$candidate_commit" "$prod_commit" \
     "$candidate_release" "$previous_release" ||
     die "could not durably record the pending promotion; no candidate was activated"
+  flock -u 8
+  exec 8>&-
   load_pending_promotion
   [[ "$(read_current_release)" == "$previous_release" ]] ||
     die "the current release changed while preparing promotion; the pending journal was retained"

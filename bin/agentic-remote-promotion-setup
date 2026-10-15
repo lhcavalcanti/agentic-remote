@@ -104,14 +104,18 @@ monitor_state_dir() {
 # Reads, records, or clears the operator pause in the monitor's state
 # directory. Exits 10 when no pause is recorded, and 2 after printing why when
 # the pause state cannot be read or changed. The monitor carries the same
-# reader.
+# reader. A pause is recorded under the lock the monitor holds from its last
+# pause check until its pending journal exists, and only a marker that reads
+# cleanly is cleared.
 pause_marker() {
   local action="$1" reason="${2:-}"
   python3 - "$action" "$(monitor_state_dir)/promotion-paused" "$reason" <<'PY'
 import datetime
+import fcntl
 import os
 import stat
 import sys
+import time
 
 action, marker, reason = sys.argv[1:]
 state_dir = os.path.dirname(marker)
@@ -125,24 +129,43 @@ def sync_directory():
         os.close(fd)
 
 
+def read_marker():
+    try:
+        info = os.lstat(marker)
+    except FileNotFoundError:
+        sys.exit(10)
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError("the pause marker is not a regular file")
+    fields = {}
+    with open(marker, encoding="utf-8") as stream:
+        for line in stream:
+            key, separator, value = line.rstrip("\n").partition("=")
+            if separator:
+                fields[key] = value
+    return fields
+
+
+def lock_checkpoint():
+    fd = os.open(os.path.join(state_dir, "pause.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                raise OSError("the monitor held the pause lock for over a minute")
+            time.sleep(0.1)
+
+
 try:
     if action == "read":
-        try:
-            info = os.lstat(marker)
-        except FileNotFoundError:
-            sys.exit(10)
-        if not stat.S_ISREG(info.st_mode):
-            raise OSError("the pause marker is not a regular file")
-        fields = {}
-        with open(marker, encoding="utf-8") as stream:
-            for line in stream:
-                key, separator, value = line.rstrip("\n").partition("=")
-                if separator:
-                    fields[key] = value
+        fields = read_marker()
         print(fields.get("paused_at", ""))
         print(fields.get("reason", ""))
     elif action == "write":
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
+        lock_checkpoint()
         paused_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         temporary = os.path.join(state_dir, ".promotion-paused-%d" % os.getpid())
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -162,11 +185,13 @@ try:
             raise
         sync_directory()
         print(paused_at)
+        # Still under the lock: a journal now means the transaction started
+        # before this pause and runs to completion or rollback.
+        started = os.path.lexists(os.path.join(state_dir, "pending-promotion"))
+        print("started" if started else "")
     elif action == "clear":
-        try:
-            os.unlink(marker)
-        except FileNotFoundError:
-            sys.exit(10)
+        read_marker()
+        os.unlink(marker)
         sync_directory()
     else:
         raise ValueError("unknown pause action: " + action)
@@ -216,14 +241,13 @@ disarm_timer() {
 }
 
 # Rewritten units must not carry forward a timer that something rearmed while
-# promotion was paused.
+# promotion was paused. Fails when the timer could not be disarmed.
 hold_pause() {
   if [[ -n "$PAUSE_ERROR" ]]; then
     printf 'agentic-remote-promotion-setup: pause state could not be read (%s); treating promotion as paused\n' \
       "$PAUSE_ERROR" >&2
   fi
-  disarm_timer ||
-    printf 'agentic-remote-promotion-setup: the promotion timer is still active or enabled; paused runs exit without changes\n' >&2
+  disarm_timer
 }
 
 write_units() {
@@ -385,7 +409,8 @@ install_monitor() {
   if [[ "$pause_status" != 1 ]]; then
     # Provisioning can be re-run by automation, so not even --enable resumes
     # an explicit pause. Only the enable command clears it.
-    hold_pause
+    hold_pause ||
+      die "monitor installed and promotion stays $(pause_description), but the timer could not be disarmed; paused runs exit without changes"
     printf 'Local promotion monitor installed; promotion stays %s; timer left disabled, run enable to resume.\n' \
       "$(pause_description)"
   elif [[ "$enable" == 1 ]]; then
@@ -419,7 +444,8 @@ refresh_monitor() {
   write_units
   systemctl --user daemon-reload
   if [[ "$pause_status" != 1 ]]; then
-    hold_pause
+    hold_pause ||
+      die "monitor refreshed and promotion stays $(pause_description), but the timer could not be disarmed; paused runs exit without changes"
     printf 'Local promotion monitor refreshed; profile preserved, promotion stays %s; timer left disabled, run enable to resume.\n' \
       "$(pause_description)"
     return
@@ -491,17 +517,22 @@ disable_monitor() {
 
   # Recorded before the timer is touched, so a run started in between, or by
   # anything that rearms the timer later, already sees the pause.
-  local paused_at
-  if ! paused_at="$(pause_marker write "$reason")"; then
-    systemctl --user disable --now "$TIMER_NAME" 2>/dev/null || true
-    die "could not record the promotion pause (${paused_at:-unknown error}); the timer was stopped, but nothing keeps it from being rearmed"
+  local recorded
+  local -a fields
+  if ! recorded="$(pause_marker write "$reason")"; then
+    disarm_timer ||
+      die "could not record the promotion pause (${recorded:-unknown error}), and the promotion timer is still active or enabled"
+    die "could not record the promotion pause (${recorded:-unknown error}); the timer was stopped, but nothing keeps it from being rearmed"
   fi
+  mapfile -t fields <<<"$recorded"
   disarm_timer ||
     die "the pause was recorded, but the promotion timer is still active or enabled; paused runs exit without changes"
   printf 'Local promotion monitor paused since %s%s; timer disabled.\n' \
-    "$paused_at" "${reason:+ ($reason)}"
-  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    printf 'A promotion run is in progress. It stops before graduation, or completes a promotion it already started.\n'
+    "${fields[0]}" "${reason:+ ($reason)}"
+  if [[ "${fields[1]:-}" == started ]]; then
+    printf 'A promotion transaction had already started; it completes or rolls back before the pause applies, or is reconciled after enable if it was interrupted.\n'
+  elif systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    printf 'A promotion run is in progress; it stops before graduation.\n'
   fi
 }
 

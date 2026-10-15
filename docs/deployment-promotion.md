@@ -285,7 +285,8 @@ monitor itself enforces:
 - `disable` atomically writes a `0600` `promotion-paused` marker (UTC time
   and optional one-line reason) to the profile's `state_dir` *before* it
   disables and stops the timer, and succeeds only once the timer is neither
-  active nor enabled.
+  active nor enabled. If the marker cannot be written it still stops the
+  timer, but fails.
 - While the marker exists, every monitor run, whether started by the timer,
   a rearmed timer, or `systemctl --user start` of the service, logs
   `promotion is paused since …; skipping this run` and exits 0 before any
@@ -293,16 +294,22 @@ monitor itself enforces:
   retained and reconciled after resuming. A run already validating when the
   pause lands stops after validation and before graduation; one that already
   recorded a pending promotion completes or rolls back that transaction, since
-  cutting it short would strand recovery.
+  cutting it short would strand recovery. The monitor holds a `pause.lock` in
+  `state_dir` from that last check until its journal exists, and `disable`
+  records the pause under the same lock, so it reports which of the two
+  happened.
 - `refresh`, `install`, and therefore `agentic-remote setup`/`update` keep the
   marker and leave the timer disabled, disarming a timer that was rearmed in
-  the meantime. `install --enable` does not resume a pause.
+  the meantime, and fail if it cannot be disarmed. `install --enable` does not
+  resume a pause.
 - Only `enable` resumes: it clears the marker after the health preflight
   passes, then arms the timer. A failed preflight leaves the pause in place.
 - `status` reports `Promotion: paused since …` (with the reason), `enabled`, or
   `disabled`. It exits 0 when paused, and warns if the timer was rearmed.
-- A marker that exists but cannot be read fails closed: the monitor refuses to
-  run, `status` exits non-zero, and `refresh` treats promotion as paused.
+- A marker that is not a readable regular file (a symlink, a directory, or
+  undecodable content) fails closed: the monitor refuses to run, `status` exits
+  non-zero, `refresh` treats promotion as paused, and `enable` refuses to clear
+  it. Inspect and remove it by hand.
 - `uninstall` preserves the marker along with the rest of the state.
 
 Any external watchdog that repairs a disabled timer must treat a paused

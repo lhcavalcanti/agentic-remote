@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -346,30 +346,105 @@ describe('durable promotion pause', () => {
     expect(rearmed.stdout).toContain('the timer was rearmed while paused')
   })
 
-  it('fails closed when the pause state cannot be read', async () => {
+  it.each(['a directory', 'a symlink', 'an undecodable file'] as const)(
+    'fails closed when the pause marker is %s',
+    async (shape) => {
+      const context = await fixture(true, true)
+      await mkdir(path.dirname(context.marker), { recursive: true })
+      if (shape === 'a directory') {
+        await mkdir(context.marker)
+      } else if (shape === 'a symlink') {
+        await writeFile(path.join(context.root, 'elsewhere'), 'paused_at=x\n')
+        await symlink(path.join(context.root, 'elsewhere'), context.marker)
+      } else {
+        await writeFile(context.marker, Buffer.from([0xff, 0xfe, 0x0a]))
+      }
+
+      const status = await setup(context, ['status'])
+      expect(status.code).not.toBe(0)
+      expect(status.stdout).toContain('Promotion: paused (pause state could not be read')
+
+      const refreshed = await setup(context, ['refresh'])
+      expect(refreshed.code).toBe(0)
+      expect(refreshed.stderr).toContain('pause state could not be read')
+      expect(timerArmed(context)).toBe(false)
+
+      // Removing what cannot be read would resume promotion on a guess.
+      const enabled = await setup(context, ['enable'])
+      expect(enabled.code).not.toBe(0)
+      expect(enabled.stderr).toContain('could not clear the promotion pause')
+      expect(timerArmed(context)).toBe(false)
+      expect(existsSync(context.marker) || shape === 'a symlink').toBe(true)
+      if (shape === 'a symlink') {
+        expect((await lstat(context.marker)).isSymbolicLink()).toBe(true)
+      }
+    },
+  )
+
+  it('stops the timer when the pause cannot be recorded, and says whether it did', async () => {
     const context = await fixture(true, true)
     await mkdir(context.marker, { recursive: true })
 
-    const status = await setup(context, ['status'])
-    expect(status.code).not.toBe(0)
-    expect(status.stdout).toContain('Promotion: paused (pause state could not be read')
-
-    const refreshed = await setup(context, ['refresh'])
-    expect(refreshed.code).toBe(0)
-    expect(refreshed.stderr).toContain('pause state could not be read')
-    expect(timerArmed(context)).toBe(false)
-
-    const enabled = await setup(context, ['enable'])
-    expect(enabled.code).not.toBe(0)
-    expect(enabled.stderr).toContain('could not clear the promotion pause')
+    const stopped = await setup(context, ['disable'])
+    expect(stopped.code).not.toBe(0)
+    expect(stopped.stderr).toContain('could not record the promotion pause')
+    expect(stopped.stderr).toContain('the timer was stopped')
+    // Still the safer of the two outcomes, even without a durable pause.
     expect(timerArmed(context)).toBe(false)
 
     await rearm(context)
-    const disabled = await setup(context, ['disable'])
-    expect(disabled.code).not.toBe(0)
-    expect(disabled.stderr).toContain('could not record the promotion pause')
-    // Still the safer of the two outcomes, even without a durable pause.
-    expect(timerArmed(context)).toBe(false)
+    const stuck = await setup(context, ['disable'], { TIMER_STUCK: '1' })
+    expect(stuck.code).not.toBe(0)
+    expect(stuck.stderr).toContain('could not record the promotion pause')
+    expect(stuck.stderr).toContain('timer is still active')
+    expect(stuck.stderr).not.toContain('the timer was stopped')
+  })
+
+  it('fails a paused refresh or install that cannot disarm a rearmed timer', async () => {
+    const context = await fixture(true, true)
+    expect((await setup(context, ['disable'])).code).toBe(0)
+    await rearm(context)
+
+    for (const command of [['refresh'], ['install']]) {
+      const result = await setup(context, command, { TIMER_STUCK: '1' })
+      expect(result.code).not.toBe(0)
+      expect(result.stderr).toContain('timer could not be disarmed')
+      expect(result.stdout).not.toContain('timer left disabled')
+      expect(existsSync(context.marker)).toBe(true)
+    }
+    expect(await readFile(context.installedMonitor, 'utf8')).toBe(
+      await readFile(MONITOR, 'utf8'),
+    )
+  })
+
+  it('reports a promotion that started before the pause was recorded', async () => {
+    const context = await fixture(true, true)
+    const state = path.dirname(context.marker)
+    await mkdir(state, { recursive: true })
+    const ready = path.join(context.root, 'checkpoint-held')
+    // The monitor's graduation checkpoint: it holds the pause lock from its
+    // last pause check until its pending journal exists.
+    const checkpoint = spawn(
+      'flock',
+      [
+        path.join(state, 'pause.lock'),
+        'bash',
+        '-c',
+        'touch "$1"; sleep 1; printf "{}\\n" >"$2"',
+        '_',
+        ready,
+        path.join(state, 'pending-promotion'),
+      ],
+      { stdio: 'ignore' },
+    )
+    const exited = new Promise((resolve) => checkpoint.once('exit', resolve))
+    while (!existsSync(ready)) await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const result = await setup(context, ['disable'])
+    await exited
+
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('A promotion transaction had already started')
   })
 
   it('makes a forced service start of the monitor exit without changes', async () => {

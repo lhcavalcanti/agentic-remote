@@ -157,6 +157,12 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       'if [[ "${*: -1}" == "build" && -n "${PAUSE_DURING_BUILD:-}" ]]; then',
       '  printf "paused_at=2026-10-01T18:39:55Z\\nreason=paused mid-run\\n" >"$PAUSE_DURING_BUILD"',
       'fi',
+      // `disable` still recording its pause, under the pause lock, as
+      // validation finishes.
+      'if [[ "${*: -1}" == "build" && -n "${PAUSE_RACE_DIR:-}" ]]; then',
+      '  flock "$PAUSE_RACE_DIR/pause.lock" bash -c \'touch "$1"; sleep 1; printf "paused_at=2026-10-01T18:39:55Z\\nreason=racing pause\\n" >"$2"\' _ "$PAUSE_RACE_DIR/.race-held" "$PAUSE_RACE_DIR/promotion-paused" </dev/null >/dev/null 2>&1 &',
+      '  while [[ ! -e "$PAUSE_RACE_DIR/.race-held" ]]; do sleep 0.02; done',
+      'fi',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -1802,7 +1808,25 @@ describe('promotion monitor pause', () => {
     expect(existsSync(pendingPath)).toBe(false)
   })
 
-  it.each(['marker is a directory', 'state path is a file'] as const)(
+  it('waits for a pause being recorded at the graduation checkpoint', async () => {
+    const context = await fixture()
+    const previous = await git(context.runtime, 'rev-parse', 'HEAD')
+    await advanceMain(context)
+
+    const result = await monitor(context, {
+      PAUSE_RACE_DIR: path.join(context.root, 'state'),
+    })
+
+    expect(result.code).toBe(0)
+    expect(result.output).toContain(
+      'racing pause; stopping after validation and before graduation',
+    )
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
+    expect((await calls(context)).some((line) => line.startsWith('agentic-remote'))).toBe(false)
+    expect(existsSync(path.join(context.root, 'state', 'pending-promotion'))).toBe(false)
+  })
+
+  it.each(['marker is a directory', 'marker is a symlink', 'state path is a file'] as const)(
     'fails closed when the pause state cannot be read (%s)',
     async (shape) => {
       const context = await fixture()
@@ -1811,6 +1835,9 @@ describe('promotion monitor pause', () => {
       const state = path.join(context.root, 'state')
       if (shape === 'marker is a directory') {
         await mkdir(path.join(state, 'promotion-paused'), { recursive: true })
+      } else if (shape === 'marker is a symlink') {
+        await mkdir(state, { recursive: true })
+        await symlink(path.join(context.root, 'missing'), path.join(state, 'promotion-paused'))
       } else {
         await writeFile(state, 'not a directory')
       }

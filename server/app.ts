@@ -325,7 +325,10 @@ export async function buildApp(
   // recovery of sessions that were open before a restart.
   app.addHook('onReady', async () => {
     cliCanary?.start()
-    await managerAgent?.start()
+    // The manager never keeps the hub from becoming ready.
+    await managerAgent?.start().catch((error: unknown) => {
+      app.log.error({ err: error }, 'The manager agent could not start')
+    })
   })
 
   app.addHook('onClose', async () => {

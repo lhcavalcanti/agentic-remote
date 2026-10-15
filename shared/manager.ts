@@ -39,7 +39,8 @@ export interface ManagerConfirmation {
   computerId: string
   sessionId: string
   title: string
-  state: 'pending' | 'confirmed' | 'declined' | 'failed'
+  /** `closing` is recorded before the deletion, so a restart can finish it. */
+  state: 'pending' | 'closing' | 'confirmed' | 'declined' | 'failed'
   error?: string
 }
 

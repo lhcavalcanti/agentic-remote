@@ -135,6 +135,7 @@ function ConfirmationCard({
   const ref = message.sessionRefs?.[0]
   const outcome = {
     pending: undefined,
+    closing: 'Closing…',
     confirmed: 'Closed. It is permanently deleted.',
     declined: 'Kept open.',
     failed: `Could not close it: ${confirmation.error ?? 'unknown error'}`,

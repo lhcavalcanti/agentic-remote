@@ -459,6 +459,25 @@ describe('ManagerAgent', () => {
     await expect(agent!.resolveConfirmation('missing', true)).rejects.toMatchObject({ statusCode: 404 })
   })
 
+  it('finishes a close you confirmed when a restart interrupted it', async () => {
+    const closing = (id: string, sessionId: string) => ({
+      id, role: 'activity' as const, content: 'Close?', createdAt: 't', tool: 'close_session',
+      confirmation: { kind: 'close-session' as const, computerId: 'hub', sessionId, title: sessionId, state: 'closing' as const },
+    })
+    await store.upsertMessage(closing('c1', 'gone-now'))
+    await store.upsertMessage(closing('c2', 'unreachable'))
+    vi.mocked(hub.deleteSession).mockImplementation(async (_computerId, sessionId) => {
+      if (sessionId === 'unreachable') throw new Error('node offline')
+    })
+    await start()
+    await vi.waitFor(() => {
+      const states = agent!.snapshot().messages.map((message) => message.confirmation?.state)
+      expect(states).toEqual(['confirmed', 'failed'])
+    })
+    expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'gone-now')
+    await expect(agent!.resolveConfirmation('c1', true)).rejects.toMatchObject({ statusCode: 409 })
+  })
+
   it('does not repeat actions from a failed attempt', async () => {
     sdk.behaviors.push(async (fakeSession) => {
       await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })

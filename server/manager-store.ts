@@ -260,8 +260,10 @@ export class ManagerStore {
       text = await readFile(path.join(this.directory, name), 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-      // Unreadable is treated like corrupt: started fresh, never fatal.
+      // Unreadable is treated like corrupt: set aside, so the next write can
+      // create it again, and started fresh, never fatal.
       console.warn(`Manager ${name} could not be read; starting without it:`, error)
+      await this.setAside(name)
       return undefined
     }
     try {
@@ -270,12 +272,17 @@ export class ManagerStore {
     } catch {
       // Set aside below.
     }
-    const aside = `${name}.corrupt-${this.now().toISOString().replaceAll(':', '-')}`
-    console.warn(`Manager ${name} could not be parsed; moving it to ${aside} and starting fresh`)
-    await rename(path.join(this.directory, name), path.join(this.directory, aside)).catch((error: unknown) => {
-      console.warn(`Could not move ${name} aside:`, error)
-    })
+    console.warn(`Manager ${name} could not be parsed; starting fresh`)
+    await this.setAside(name)
     return undefined
+  }
+
+  private async setAside(name: string): Promise<void> {
+    const aside = `${name}.corrupt-${this.now().toISOString().replaceAll(':', '-')}`
+    await rename(path.join(this.directory, name), path.join(this.directory, aside)).then(
+      () => console.warn(`Moved manager ${name} to ${aside}`),
+      (error: unknown) => console.warn(`Could not move manager ${name} aside:`, error),
+    )
   }
 
   private async readLines<T>(name: string): Promise<T[]> {
@@ -285,6 +292,7 @@ export class ManagerStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
       console.warn(`Manager ${name} could not be read; starting without it:`, error)
+      await this.setAside(name)
       return []
     }
     const values: T[] = []

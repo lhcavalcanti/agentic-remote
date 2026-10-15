@@ -115,6 +115,13 @@ describe('ManagerStore', () => {
     const store = await open()
     expect(store.state().generation).toBe(0)
     expect(store.latestJournalSeq()).toBe(0)
+    // Moved aside, so the files can be written again.
+    await store.updateState((state) => { state.generation = 2 })
+    await store.appendJournal([{ kind: 'created', computerId: 'c', sessionId: 's' }])
+    await store.flush()
+    expect((await open()).state().generation).toBe(2)
+    const names = await readdir(directory)
+    expect(names.filter((name) => name.includes('.corrupt-')).length).toBe(2)
   })
 
   it('starts a new conversation and keeps the previous one as an archive', async () => {

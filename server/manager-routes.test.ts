@@ -130,6 +130,16 @@ describe('manager routes', () => {
     expect((await app.inject({ url: '/api/computers', headers: trusted })).statusCode).toBe(200)
   })
 
+  it('becomes ready with an unreadable manager state file', async () => {
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(directory, 'manager', 'state.json'), { recursive: true })
+    const { app, managerAgent } = await build()
+    await app.ready()
+    expect(managerAgent).toBeDefined()
+    const snapshot = await app.inject({ url: '/api/manager', headers: trusted })
+    expect(snapshot.json()).toMatchObject({ available: true })
+  })
+
   it('reports a missing message to retry as not found', async () => {
     const { app } = await build()
     await app.ready()

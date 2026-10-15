@@ -249,6 +249,21 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     if (this.started) return
     this.started = true
     this.excludeFromDiscovery(this.hiddenSessionIds())
+    try {
+      await this.recoverQueue()
+    } catch (error) {
+      // A manager that cannot restore its queue still answers new messages,
+      // and never keeps the hub from starting.
+      console.error('Manager could not restore its queue:', error)
+    }
+    for (const message of this.store.messages()) {
+      if (message.confirmation?.state === 'closing') void this.finishClosing(message)
+    }
+    if (!this.store.state().baselineAt) void this.takeBaseline()
+    void this.pump()
+  }
+
+  private async recoverQueue(): Promise<void> {
     const state = this.store.state()
     const interruptions = { ...(state.interruptions ?? {}) }
     for (const message of this.store.messages()) {
@@ -270,8 +285,6 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     await this.store.updateState((next) => {
       next.interruptions = interruptions
     })
-    if (!this.store.state().baselineAt) void this.takeBaseline()
-    void this.pump()
   }
 
   /** Records the sessions that exist on a first start, so they are not reported as new. */
@@ -401,32 +414,61 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     if (confirmation.state !== 'pending') {
       throw Object.assign(new Error('This was already answered'), { statusCode: 409 })
     }
+    if (!accept) {
+      const next: ManagerMessage = {
+        ...message,
+        updatedAt: this.now().toISOString(),
+        confirmation: { ...confirmation, state: 'declined' },
+      }
+      await this.updateMessage(next)
+      await this.addNote(`The user declined closing "${confirmation.title}" (${confirmation.sessionId}); it stays open.`)
+      return next
+    }
+    // Recorded before the deletion: a second answer is refused, and a restart
+    // in between finishes the deletion instead of claiming it happened.
+    const closing: ManagerMessage = {
+      ...message,
+      updatedAt: this.now().toISOString(),
+      confirmation: { ...confirmation, state: 'closing' },
+    }
+    await this.updateMessage(closing)
+    return this.finishClosing(closing)
+  }
+
+  /** Deletes a session you confirmed closing, and records how it went. */
+  private async finishClosing(message: ManagerMessage): Promise<ManagerMessage> {
+    const confirmation = message.confirmation!
     const name = `"${confirmation.title}" (${confirmation.sessionId})`
     let next: ManagerMessage
     let note: string
-    if (!accept) {
-      next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'declined' } }
-      note = `The user declined closing ${name}; it stays open.`
-    } else {
-      // Marked before the deletion, so a second answer cannot delete twice.
-      await this.updateMessage({ ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } })
-      try {
-        await this.hub.deleteSession(confirmation.computerId, confirmation.sessionId)
-        next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } }
-        note = `The user confirmed closing ${name}; it is deleted.`
-      } catch (error) {
-        next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'failed', error: errorMessage(error) } }
-        note = `Closing ${name} failed: ${errorMessage(error)}.`
+    try {
+      await this.hub.deleteSession(confirmation.computerId, confirmation.sessionId)
+      next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } }
+      note = `The user confirmed closing ${name}; it is deleted.`
+    } catch (error) {
+      next = {
+        ...message,
+        updatedAt: this.now().toISOString(),
+        confirmation: { ...confirmation, state: 'failed', error: errorMessage(error) },
       }
+      note = `Closing ${name} failed: ${errorMessage(error)}.`
     }
-    await this.updateMessage(next)
-    await this.store.updateState((state) => {
-      state.pendingNotes = [...(state.pendingNotes ?? []), note].slice(-20)
-    })
+    try {
+      await this.updateMessage(next)
+      await this.addNote(note)
+    } catch (error) {
+      console.warn('Could not record the outcome of closing a session:', error)
+    }
     if (next.confirmation?.state === 'confirmed') {
       this.emit('event', { type: 'manager.sessions', managedSessions: this.recorder.managedSessions() })
     }
     return next
+  }
+
+  private async addNote(note: string): Promise<void> {
+    await this.store.updateState((state) => {
+      state.pendingNotes = [...(state.pendingNotes ?? []), note].slice(-20)
+    })
   }
 
   private async requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void> {

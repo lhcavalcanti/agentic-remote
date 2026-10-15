@@ -9080,6 +9080,7 @@ describe('AgentService deletion', () => {
     await service.start()
     const sessionId = client.session.sessionId
     expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+    expect(service.store.isManagedOpen(sessionId)).toBe(false)
 
     const values = {
       deploymentName: 'staging-web-service-candidate',
@@ -9109,6 +9110,7 @@ describe('AgentService deletion', () => {
     expect(terminal.send).not.toHaveBeenCalled()
     expect(terminal.dismissUserInput).not.toHaveBeenCalled()
     expect(answered.pendingUserInput).toBeUndefined()
+    expect(service.store.shouldRecoverTerminalSession(sessionId)).toBe(true)
     await service.stop()
   })
 

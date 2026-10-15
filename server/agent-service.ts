@@ -6866,7 +6866,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     throw error
   }
 
-  private acceptTerminalFormReply(
+  private async acceptTerminalFormReply(
     sessionId: string, requestId: string, input: UserInputReplyInput,
   ): Promise<SessionDetail> {
     this.terminalFormUncertainty.delete(JSON.stringify([sessionId, requestId]))
@@ -6875,6 +6875,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.acceptedSdkReplies.set(requestId, {
       sessionId, choice: structuredClone(choice), terminal: true,
     })
+    await this.store.claimTerminalRecovery(sessionId)
     return this.settleSdkReply(sessionId, requestId, choice)
   }
 

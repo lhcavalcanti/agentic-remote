@@ -188,7 +188,7 @@ function UserMessage({
           {expanded ? 'Show less' : 'Show all'}
         </button>
       ) : null}
-      {message.answerOnly ? <span className="manager-message__state">Oracle only</span> : null}
+      {message.answerOnly ? <span className="manager-message__state">Ask only</span> : null}
       {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
       {message.state === 'failed' && message.error ? (
         <p className="manager-message__error" role="alert">{message.error}</p>
@@ -228,13 +228,22 @@ function unavailableModelLabel(settings: ManagerSnapshot['settings']): string {
   return settings?.model ?? settings?.defaultModel ?? 'The chosen model'
 }
 
-/** The trigger that can take focus back: one in a hidden layer cannot. */
+/**
+ * Whether focus can go back to an element. One in a hidden layer cannot, nor
+ * one in a layer out of view, like the phone's closed session list. That
+ * layer may still be sliding away, so it is marked rather than measured.
+ */
+function canTakeFocus(element: HTMLElement): boolean {
+  if (!element.isConnected || element.closest('[hidden], [inert], [data-oracle-offscreen]')) return false
+  if (typeof element.checkVisibility === 'function' && !element.checkVisibility()) return false
+  const box = element.getBoundingClientRect()
+  // Without layout, as in tests, every box is empty; only a laid-out one is placed.
+  if (box.width === 0 && box.height === 0) return true
+  return box.right > 0 && box.left < window.innerWidth && box.bottom > 0 && box.top < window.innerHeight
+}
+
 function visibleTrigger(): HTMLElement | undefined {
-  return [...document.querySelectorAll<HTMLElement>('[aria-controls="oracle-panel"]')].find(
-    (candidate) => candidate.isConnected
-      && !candidate.closest('[hidden]')
-      && (typeof candidate.checkVisibility !== 'function' || candidate.checkVisibility()),
-  )
+  return [...document.querySelectorAll<HTMLElement>('[aria-controls="oracle-panel"]')].find(canTakeFocus)
 }
 
 /** Lets the rest of the app hand Oracle a prompt, as `/oracle` does. */
@@ -249,12 +258,15 @@ export function OracleButton({
   onToggle,
   compact = false,
   className = '',
+  offscreen = false,
 }: {
   indicator: OracleIndicator
   open: boolean
   onToggle: () => void
   compact?: boolean
   className?: string
+  /** In a layer that is out of view, such as a closed drawer; focus never returns here. */
+  offscreen?: boolean
 }) {
   if (!indicator.available) return null
   const working = indicator.status === 'working' || indicator.status === 'recovering'
@@ -268,6 +280,7 @@ export function OracleButton({
       aria-controls="oracle-panel"
       aria-expanded={open}
       aria-label={['Oracle', ...states].join(', ')}
+      data-oracle-offscreen={offscreen ? '' : undefined}
       className={`icon-button oracle-toggle${open ? ' icon-button--active' : ''}${
         working ? ' oracle-toggle--working' : ''
       }${indicator.status === 'offline' ? ' oracle-toggle--offline' : ''}${className ? ` ${className}` : ''}`}
@@ -411,7 +424,7 @@ export function ManagerAssistant({
     returnFocusRef.current = null
     // Safari does not focus a button on click, so the trigger is the fallback.
     const trigger = visibleTrigger()
-    const destination = target?.isConnected ? target : trigger
+    const destination = target && canTakeFocus(target) ? target : trigger
     if (destination && document.activeElement !== destination && !document.querySelector('[role="dialog"]:focus-within')) {
       destination.focus()
     }
@@ -678,7 +691,7 @@ export function ManagerAssistant({
                   <span className="visually-hidden">{`Number ${index + 1}: `}</span>
                   {message.content}
                 </p>
-                {message.answerOnly ? <span className="oracle-queue__tag">Oracle only</span> : null}
+                {message.answerOnly ? <span className="oracle-queue__tag">Ask only</span> : null}
                 <button
                   aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
                   className="icon-button oracle-queue__remove"
@@ -714,7 +727,9 @@ export function ManagerAssistant({
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
             placeholder={answerOnly
-              ? 'Ask Oracle only; it won’t start or steer sessions…'
+              ? working
+                ? 'Ask; answered after the current reply…'
+                : 'Ask about your sessions; running work is left alone…'
               : working ? 'Add to the queue…' : 'Ask about sessions or hand off work…'}
             ref={inputRef}
             rows={2}
@@ -738,14 +753,14 @@ export function ManagerAssistant({
           </div>
         </div>
         <div className="manager-composer__options">
-          <label className="oracle-only" title="Oracle answers itself and does not start, message, or steer any session">
+          <label className="oracle-only" title="Oracle answers from the current state of your sessions and never starts, messages, stops, or changes one, so their work carries on undisturbed">
             <input
               checked={answerOnly}
               onChange={(event) => changeAnswerOnly(event.target.checked)}
               type="checkbox"
             />
-            <span>Oracle only</span>
-            <span className="oracle-only__hint">won’t start or steer sessions</span>
+            <span>Ask only</span>
+            <span className="oracle-only__hint">running work is left alone</span>
           </label>
           <button
             aria-label={`Oracle model: ${runtimeLabel}. Change it in App settings`}

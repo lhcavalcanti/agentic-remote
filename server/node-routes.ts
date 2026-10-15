@@ -314,11 +314,20 @@ export async function registerNodeRoutes(
         )
       })
 
-      node.get<{ Params: { sessionId: string } }>(
+      node.get<{ Params: { sessionId: string }; Querystring: { passive?: string } }>(
         '/sessions/:sessionId',
-        async (request) => ({
-          session: await service.openSession(request.params.sessionId),
-        }),
+        async (request) => {
+          if (request.query.passive !== '1') {
+            return { session: await service.openSession(request.params.sessionId) }
+          }
+          // Read as recorded, never opened: the hub's Oracle reads sessions
+          // this way so that asking about one cannot change it.
+          const session = service.getSession(request.params.sessionId)
+          if (!session) {
+            throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+          }
+          return { session }
+        },
       )
 
       node.post('/sessions', async (request, reply) => {

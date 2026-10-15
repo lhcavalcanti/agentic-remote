@@ -1848,11 +1848,23 @@ describe('App', () => {
     render(<App />)
     const row = await screen.findByRole('button', { name: /Project chat, started by Oracle/ })
     expect(within(row).getByText('Oracle')).toBeInTheDocument()
-    const oracle = await screen.findByRole('button', { name: 'Oracle' })
+    const header = document.querySelector<HTMLElement>('.conversation-header')!
+    const oracle = await within(header).findByRole('button', { name: 'Oracle' })
     // Beside Knowledge in the conversation header, never floating over the
     // conversation where the Scroll to latest button sits.
-    expect(oracle.closest('.conversation-header')).not.toBeNull()
     expect(document.querySelector('.manager-bubble')).toBeNull()
+    // The phone session list covers that header, so it offers Oracle too;
+    // CSS shows that copy only on a phone.
+    const sidebarOracle = within(document.querySelector<HTMLElement>('.sidebar-settings')!)
+      .getByRole('button', { name: 'Oracle' })
+    expect(sidebarOracle).toHaveClass('sidebar-settings__oracle')
+    expect(sidebarOracle).toHaveAttribute('aria-controls', 'oracle-panel')
+    // Focus never returns to it while the session list is closed.
+    expect(sidebarOracle).toHaveAttribute('data-oracle-offscreen')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    expect(sidebarOracle).not.toHaveAttribute('data-oracle-offscreen')
+    fireEvent.click(document.querySelector<HTMLElement>('.sidebar__close')!)
+    expect(sidebarOracle).toHaveAttribute('data-oracle-offscreen')
     fireEvent.click(oracle)
     expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
 
@@ -1865,12 +1877,12 @@ describe('App', () => {
       } as MessageEvent)
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
+    expect(within(header).getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /Project chat, started by Oracle/ })).not.toBeInTheDocument())
   })
 
-  it('sends /oracle to Oracle only, never to the session', async () => {
+  it('sends /oracle to Oracle as Ask only, never to the session', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
     })
@@ -1878,7 +1890,7 @@ describe('App', () => {
       id: 'o1', role: 'user', content: 'Which sessions finished?', createdAt: 't', state: 'queued', answerOnly: true,
     })
     render(<App />)
-    await screen.findByRole('button', { name: 'Oracle' })
+    await within(document.querySelector<HTMLElement>('.conversation-header')!).findByRole('button', { name: 'Oracle' })
     fireEvent.change(await screen.findByLabelText('Message'), { target: { value: '/oracle Which sessions finished?' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(

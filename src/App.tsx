@@ -1879,7 +1879,7 @@ const webCommands: SlashCommand[] = [
   sideQuestionWebCommand,
   {
     name: 'oracle',
-    description: 'Ask Oracle only; nothing is sent to this session',
+    description: 'Ask Oracle (Ask only); this session and its work are left alone',
     inputHint: '<question>',
     allowDuringAgentExecution: true,
   },
@@ -14469,6 +14469,16 @@ function App() {
               <small>Notifications, updates, and display</small>
             </span>
           </button>
+          {/* On a phone the session list covers the conversation header, so
+              Oracle is offered here too; CSS shows this copy only there. */}
+          <OracleButton
+            className="sidebar-settings__oracle"
+            compact
+            indicator={oracleIndicator}
+            offscreen={!sidebarOpen}
+            onToggle={toggleOracle}
+            open={oracleOpen}
+          />
           <button
             aria-label="Manage computers"
             className="icon-button manage-computers-button"

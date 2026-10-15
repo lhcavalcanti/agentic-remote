@@ -505,7 +505,7 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "a8799d52848449405ed1dbee5c0ce53bc114e9a6d1f3247a1eb692a5e1b43ade",
+    "src/App.test.tsx": "79ffea06b4b39a73a6ee8043f318aa0f370bcc5e9d94eecbcd809b4453cb7e50",
     "src/App.tsx": "28b088e72ae713b2d1d6f4edfbec06536cb79f6778ccd6e2cc257a611aee204b",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
@@ -645,13 +645,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "c9f1b4321f19647f42fb8dfbf6e41e26c2af4b64405fb391e696c37901365b6f",
+    "GRAPH_REPORT.md": "6cc1e04a61ab3d557113e627eafd2525ff08e20df9ac67863b0096ac0bc0022f",
     "communities.json": "75a4b37b33d2ac81b20483005183173921160a355590a153ea214b169800f2e0",
-    "graph.html": "a700cd9fe0c47e039ff2eab1b0d1df165d82e161dcdb3dace7de454c3517cf8b",
-    "graph.json": "5a26656214a56f52bbed04a5d0c4ce05ca986089f1c65f94091f56f045c4341a"
+    "graph.html": "094fc6e6f425e52d9554014eeadc8acf37ff96306cdcc62ee732adfa9b879ac0",
+    "graph.json": "41f13c83abd325767c56f56d5b4c43dd790133aecc8249a9a34d6f2b0c18cea3"
   },
   "schema_version": 1,
-  "source_commit": "655d8783062ccbe2052754965aab3843bd35d383",
-  "source_fingerprint": "2e28d84223cd60150f15d82aaf5dd6750376c925d43e8d4c70f112ae76dbb51e",
-  "working_tree_changes": []
+  "source_commit": "c2cd48deb2fa364796c13af8b04254edd2a05ce6",
+  "source_fingerprint": "44d0600f6ec72e98c652d5e902ceb62dad606427c2e0c317bbf1ee24930654eb",
+  "working_tree_changes": [
+    "src/App.test.tsx"
+  ]
 }

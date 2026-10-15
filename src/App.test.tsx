@@ -836,6 +836,10 @@ describe('App', () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
     await screen.findByText('Saved for this session')
+    // The saved root's tree loads separately from its status. Let that first
+    // listing settle so only listings caused by the updates below are counted.
+    await within(await screen.findByRole('tree')).findByText('Empty folder')
+    expect(listKnowledgeEntries).toHaveBeenCalledWith(knowledgeRoot.id, '.')
     const previous = fixtureKnowledgeBinding(computer.id, session.id)
     const removed = { ...previous, revision: 2, available: false }
     fixtureKnowledgeRoots = []

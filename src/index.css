@@ -7268,6 +7268,24 @@ button {
   white-space: pre-wrap;
 }
 
+.manager-message__text--clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+}
+
+.manager-message__expand {
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .manager-message--failed .manager-message__text {
   border: 1px solid var(--danger);
 }

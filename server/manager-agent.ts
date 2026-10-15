@@ -116,7 +116,7 @@ export interface ManagerAgentOptions {
 }
 
 class TurnError extends Error {
-  constructor(message: string, readonly kind: 'timeout' | 'runtime' | 'cancelled') {
+  constructor(message: string, readonly kind: 'timeout' | 'runtime' | 'transport' | 'cancelled') {
     super(message)
     this.name = 'TurnError'
   }
@@ -480,8 +480,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         if (this.stopped) return
         failures.push(errorMessage(error))
         console.warn(`Manager turn attempt ${index + 1} (${rung}) failed:`, errorMessage(error))
-        // A stuck runtime is not helped by asking it again.
-        if (error instanceof TurnError && error.kind === 'timeout' && rungs[index + 1]?.rung === 'same') {
+        // A stuck or unreachable runtime is not helped by asking it again.
+        const runtimeGone = !(error instanceof TurnError) || error.kind === 'timeout' || error.kind === 'transport'
+        if (runtimeGone && rungs[index + 1]?.rung === 'same') {
           index = rungs.findIndex((candidate) => candidate.rung === 'restart') - 1
         }
         if (rung !== 'same') this.dropSession()
@@ -635,6 +636,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       await Promise.race([
         outcome,
         withTimeout(session.send({ prompt }), this.operationTimeoutMs, 'the runtime did not accept the message')
+          .catch((error: unknown) => {
+            if (error instanceof TurnError) throw error
+            // The message never reached the runtime: its connection is gone.
+            throw new TurnError(errorMessage(error), 'transport')
+          })
           .then(() => outcome),
       ])
     } finally {

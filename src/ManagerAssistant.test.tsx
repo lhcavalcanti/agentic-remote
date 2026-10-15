@@ -224,6 +224,16 @@ describe('ManagerAssistant', () => {
     expect(screen.queryByRole('button', { name: /Open the manager/ })).not.toBeInTheDocument()
   })
 
+  it('folds a long message of yours until you ask to see it all', async () => {
+    setup({ ...empty, messages: [{ id: 'u1', role: 'user', content: 'word '.repeat(300), createdAt: 't', state: 'done' }] })
+    await openPanel()
+    const toggle = screen.getByRole('button', { name: 'Show all' })
+    expect(document.querySelector('.manager-message__text--clamped')).not.toBeNull()
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
+    expect(document.querySelector('.manager-message__text--clamped')).toBeNull()
+  })
+
   it('recognises only same-origin session links', () => {
     expect(sessionLinkTarget('?computer=hub&session=s1')).toEqual({ computerId: 'hub', sessionId: 's1' })
     expect(sessionLinkTarget('https://elsewhere.example/?computer=hub&session=s1')).toBeUndefined()

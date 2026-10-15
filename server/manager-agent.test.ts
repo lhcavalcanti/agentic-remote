@@ -301,6 +301,20 @@ describe('ManagerAgent', () => {
     expect(events.some((event) => event.type === 'manager.status' && event.status === 'recovering')).toBe(true)
   })
 
+  it('restarts the runtime at once when the message cannot reach it', async () => {
+    await start()
+    await agent!.send('first')
+    await settled()
+    const first = sdk.sessions.get('sdk-1')!
+    vi.spyOn(first, 'send').mockRejectedValue(new Error('Session is disconnected'))
+    await agent!.send('second')
+    await settled()
+    expect(first.send).toHaveBeenCalledTimes(1)
+    expect(sdk.clients).toHaveLength(2)
+    expect(sdk.clients[1].resumeSession).toHaveBeenCalledWith('sdk-1', expect.anything())
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
   it('moves to a new conversation briefed from the transcript when the old one cannot come back', async () => {
     await start()
     await agent!.send('remember the docs work')

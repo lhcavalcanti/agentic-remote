@@ -145,9 +145,18 @@ function UserMessage({
   retrying: boolean
 }) {
   const retryable = message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled'
+  const long = message.content.length > 600 || message.content.split('\n').length > 12
+  const [expanded, setExpanded] = useState(false)
   return (
     <li className={`manager-message manager-message--user manager-message--${message.state ?? 'done'}`}>
-      <p className="manager-message__text">{message.content}</p>
+      <p className={`manager-message__text${long && !expanded ? ' manager-message__text--clamped' : ''}`}>
+        {message.content}
+      </p>
+      {long ? (
+        <button className="manager-message__expand" onClick={() => setExpanded((value) => !value)} type="button">
+          {expanded ? 'Show less' : 'Show all'}
+        </button>
+      ) : null}
       {message.state === 'queued' ? <span className="manager-message__state">Waiting its turn</span> : null}
       {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
       {message.state === 'failed' && message.error ? (

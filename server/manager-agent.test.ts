@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
-import type { ManagerEvent } from '../shared/manager.js'
+import { MANAGER_SNAPSHOT_MESSAGES, type ManagerEvent } from '../shared/manager.js'
 import {
   ManagerAgent,
   type ManagerAgentOptions,
@@ -32,6 +32,7 @@ const fail = (message: string): Behavior => (session) => {
 class FakeSession implements ManagerSdkSession {
   readonly prompts: string[] = []
   private readonly handlers = new Set<(event: ManagerSdkEvent) => void>()
+  rpc = { model: { switchTo: vi.fn(async (_params: { modelId: string; reasoningEffort?: string }) => undefined) } }
   // Aborting ends the turn, which the runtime reports as idle.
   abort = vi.fn(async () => {
     setTimeout(() => this.emit({ type: 'session.idle' }), 0)
@@ -232,7 +233,7 @@ describe('ManagerAgent', () => {
     expect(config.sessionId).toBe('sdk-1')
     expect(config.availableTools).toContain('create_session')
     expect(config.availableTools).not.toContain('bash')
-    expect(config.systemMessage.content).toContain('Session Manager')
+    expect(config.systemMessage.content).toContain('You are Oracle')
     expect(excluded).toContain('sdk-1')
     expect(store.state()).toMatchObject({ sdkSessionId: 'sdk-1', knownSdkSessionIds: ['sdk-1'], generation: 1 })
     expect(agent!.hiddenSessionIds()).toEqual(['sdk-1'])
@@ -667,6 +668,241 @@ describe('ManagerAgent', () => {
     await settled()
     expect(agent!.snapshot().status).toBe('offline')
     expect(agent!.snapshot().streaming).toBeUndefined()
+  })
+
+  it('answers an Oracle-only message without acting on sessions', async () => {
+    let refused: unknown
+    sdk.behaviors.push(async (fakeSession) => {
+      refused = await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Here is my answer.')(fakeSession, '')
+    })
+    await start()
+    const message = await agent!.send('Just tell me what you think', undefined, { answerOnly: true })
+    expect(message.answerOnly).toBe(true)
+    await settled()
+    expect(sdk.prompts[0]).toContain('The user chose Oracle only for this message')
+    expect(refused).toMatchObject({ resultType: 'failure' })
+    expect(hub.createSession).not.toHaveBeenCalled()
+    // The next ordinary message may act again.
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Started.')(fakeSession, '')
+    })
+    await agent!.send('Now start it')
+    await settled()
+    expect(hub.createSession).toHaveBeenCalledTimes(1)
+    expect(sdk.prompts[1]).not.toContain('Oracle only')
+  })
+
+  it('applies a chosen model in place from the next answer, and starts afresh for the default', async () => {
+    await start({ model: 'hub-default' })
+    await agent!.send('first')
+    await settled()
+    const session = sdk.sessions.get('sdk-1')!
+    expect(sdk.clients[0].createSession.mock.calls[0][0]).toMatchObject({ model: 'hub-default' })
+
+    const settings = await agent!.updateSettings({ model: 'gpt-6-sol', reasoningEffort: 'high' })
+    expect(settings).toMatchObject({ model: 'gpt-6-sol', reasoningEffort: 'high', defaultModel: 'hub-default' })
+    expect(events.at(-1)).toMatchObject({ type: 'manager.settings', settings: { model: 'gpt-6-sol' } })
+    expect(session.rpc.model.switchTo).not.toHaveBeenCalled()
+    await agent!.send('second')
+    await settled()
+    expect(session.rpc.model.switchTo).toHaveBeenCalledWith({ modelId: 'gpt-6-sol', reasoningEffort: 'high' })
+    expect(store.state().sdkSessionId).toBe('sdk-1')
+
+    await agent!.send('third')
+    await settled()
+    expect(session.rpc.model.switchTo).toHaveBeenCalledTimes(1)
+
+    // The hub's default is a model of its own, so it is switched to in place too.
+    await agent!.updateSettings({ model: null })
+    await agent!.send('fourth')
+    await settled()
+    expect(session.rpc.model.switchTo).toHaveBeenLastCalledWith({ modelId: 'hub-default' })
+    expect(store.state().sdkSessionId).toBe('sdk-1')
+  })
+
+  it("starts a briefed conversation to return to Copilot's own default model", async () => {
+    await start()
+    await agent!.send('first')
+    await settled()
+    await agent!.updateSettings({ model: 'gpt-6-sol' })
+    await agent!.send('second')
+    await settled()
+    expect(sdk.sessions.get('sdk-1')!.rpc.model.switchTo).toHaveBeenCalledWith({ modelId: 'gpt-6-sol' })
+    await agent!.updateSettings({ model: null })
+    await agent!.send('third')
+    await settled()
+    expect(store.state().sdkSessionId).toBe('sdk-2')
+    expect(sdk.clients[0].createSession.mock.calls[1][0].model).toBeUndefined()
+    expect(sdk.sessions.get('sdk-2')!.prompts[0]).toContain('Your previous conversation runtime was lost')
+  })
+
+  it('reports a chosen model that cannot start and answers with the default', async () => {
+    sdk.createFailures.push((config) => config.model === 'missing-model' ? new Error('model not available') : undefined)
+    await start()
+    await agent!.updateSettings({ model: 'missing-model' })
+    await agent!.send('hello')
+    await settled()
+    expect(agent!.snapshot().settings).toMatchObject({ model: 'missing-model', modelUnavailable: true })
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it("returns to Copilot's default even when the hub restarts before the next answer", async () => {
+    await start()
+    await agent!.updateSettings({ model: 'gpt-6-sol' })
+    await agent!.send('first')
+    await settled()
+    expect(store.state().sessionRuntime).toEqual({ model: 'gpt-6-sol' })
+    await agent!.updateSettings({ model: null })
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    await agent!.send('second')
+    await settled()
+    expect(store.state().sdkSessionId).toBe('sdk-2')
+    expect(sdk.clients.at(-1)!.createSession.mock.calls.at(-1)![0].model).toBeUndefined()
+    expect(store.state().sessionRuntime).toEqual({})
+    expect(sdk.sessions.get('sdk-2')!.prompts[0]).toContain('Your previous conversation runtime was lost')
+  })
+
+  it('keeps a choice made while the model is switching for the next answer', async () => {
+    await start()
+    await agent!.send('first')
+    await settled()
+    const session = sdk.sessions.get('sdk-1')!
+    let release: () => void = () => undefined
+    session.rpc.model.switchTo.mockImplementationOnce(() => new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined)
+    }))
+    await agent!.updateSettings({ model: 'model-a' })
+    await agent!.send('second')
+    await vi.waitFor(() => expect(session.rpc.model.switchTo).toHaveBeenCalledTimes(1))
+    await agent!.updateSettings({ model: 'model-b' })
+    release()
+    await settled()
+    expect(store.state().sessionRuntime).toEqual({ model: 'model-a' })
+    await agent!.send('third')
+    await settled()
+    expect(session.rpc.model.switchTo).toHaveBeenLastCalledWith({ modelId: 'model-b' })
+    expect(store.state().sessionRuntime).toEqual({ model: 'model-b' })
+  })
+
+  it('keeps a reasoning effort set without a model', async () => {
+    await start({ reasoningEffort: 'high' })
+    await agent!.send('hello')
+    await settled()
+    const config = sdk.clients[0].createSession.mock.calls[0][0]
+    expect(config.model).toBeUndefined()
+    expect(config.reasoningEffort).toBe('high')
+  })
+
+  it('remembers a model that could not start across a restart, and tries it again after Start over', async () => {
+    sdk.createFailures.push((config) => config.model === 'missing-model' ? new Error('model not available') : undefined)
+    await start()
+    await agent!.updateSettings({ model: 'missing-model' })
+    await agent!.send('hello')
+    await settled()
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    expect(agent!.snapshot().settings).toMatchObject({ model: 'missing-model', modelUnavailable: true })
+    await agent!.send('again')
+    await settled()
+    expect(store.state().sdkSessionId).toBe('sdk-1')
+    expect(sdk.sessions.get('sdk-1')!.rpc.model.switchTo).not.toHaveBeenCalled()
+    await agent!.reset()
+    expect(agent!.snapshot().settings?.modelUnavailable).toBeUndefined()
+  })
+
+  it('tries an effort chosen while the previous choice was failing to start', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const factory = sdk.factory
+    sdk.factory = () => {
+      const client = factory()
+      const create = client.createSession.getMockImplementation()!
+      client.createSession.mockImplementation(async (config) => {
+        if (config.model === 'model-a' && config.reasoningEffort === 'high') {
+          await gate
+          throw new Error('model not available')
+        }
+        return create(config)
+      })
+      return client
+    }
+    await start()
+    await agent!.updateSettings({ model: 'model-a', reasoningEffort: 'high' })
+    await agent!.send('first')
+    await vi.waitFor(() => expect(sdk.clients[0].createSession).toHaveBeenCalledTimes(1))
+    await agent!.updateSettings({ model: 'model-a', reasoningEffort: 'low' })
+    release()
+    await settled()
+    expect(agent!.snapshot().settings?.modelUnavailable).toBeUndefined()
+    expect(store.state().unavailableRuntime).toBeUndefined()
+    expect(sdk.sessions.get('sdk-1')!.rpc.model.switchTo).toHaveBeenCalledWith({ modelId: 'model-a', reasoningEffort: 'low' })
+    expect(store.state().sessionRuntime).toEqual({ model: 'model-a', reasoningEffort: 'low' })
+  })
+
+  it('lists every waiting message however long the conversation', async () => {
+    for (let index = 0; index < 3; index += 1) {
+      await store.upsertMessage({ id: `waiting-${index}`, role: 'user', content: `waiting ${index}`, createdAt: 't', state: 'queued' })
+    }
+    for (let index = 0; index < MANAGER_SNAPSHOT_MESSAGES; index += 1) {
+      await store.upsertMessage({ id: `reply-${index}`, role: 'assistant', content: `reply ${index}`, createdAt: 't' })
+    }
+    sdk.behaviors.push(() => undefined)
+    await start()
+    await vi.waitFor(() => expect(sdk.prompts).toHaveLength(1))
+    const snapshot = agent!.snapshot()
+    expect(snapshot.messages.slice(0, 3).map((message) => [message.id, message.state])).toEqual([
+      ['waiting-0', 'running'], ['waiting-1', 'queued'], ['waiting-2', 'queued'],
+    ])
+    expect(snapshot.messages).toHaveLength(MANAGER_SNAPSHOT_MESSAGES + 3)
+    expect(snapshot.queued).toBe(2)
+  })
+
+  it('keeps queued messages in order and lets you take one out before it starts', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      reply('first')(fakeSession, '')
+    })
+    await start()
+    const first = await agent!.send('one')
+    const second = await agent!.send('two')
+    const third = await agent!.send('three')
+    await vi.waitFor(() => expect(agent!.snapshot().messages.find((m) => m.id === first.id)!.state).toBe('running'))
+    expect(agent!.snapshot().queued).toBe(2)
+    await expect(agent!.removeQueued(first.id)).rejects.toMatchObject({ statusCode: 409 })
+    expect((await agent!.removeQueued(second.id)).state).toBe('cancelled')
+    await expect(agent!.removeQueued(second.id)).rejects.toMatchObject({ statusCode: 409 })
+    await expect(agent!.removeQueued('missing')).rejects.toMatchObject({ statusCode: 404 })
+    await settled()
+    expect(sdk.prompts.map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0])).toEqual(['one', 'three'])
+    expect(agent!.snapshot().messages.find((m) => m.id === third.id)!.state).toBe('done')
+  })
+
+  it('keeps the queue across a restart', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      reply('first')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('one')
+    await agent!.send('two')
+    await agent!.send('three')
+    await vi.waitFor(() => expect(sdk.prompts).toHaveLength(1))
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    expect(store.messages().map((message) => message.state)).toEqual(['running', 'queued', 'queued'])
+    await start()
+    await settled()
+    expect(sdk.prompts.slice(1).map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0])).toEqual(['one', 'two', 'three'])
   })
 
   it('lists skills through the runtime for delegated prompts', async () => {

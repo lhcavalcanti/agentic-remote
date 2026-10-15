@@ -384,44 +384,76 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Return MUST follow the composer: it asks on a desktop and inserts a newline
   on a phone, where **Ask** sends; Ctrl/Cmd+Enter asks on either.
 
-### 3.7 Session manager
+### 3.7 Oracle (session manager)
 
-The design is in [docs/design/session-manager.md](design/session-manager.md).
+Oracle is the session manager agent. Its design is in
+[docs/design/session-manager.md](design/session-manager.md). Only the
+user-facing name is Oracle; routes (`/api/manager`), events (`manager.*`),
+settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 
-- A hub MUST offer the manager from a bubble on every page. The bubble sits
-  above the composer, MUST NOT cover Send, and hides while a phone keyboard is
-  open. It opens a non-modal drawer on a desktop and a full-height sheet on a
-  phone. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no bubble.
-- The manager is one Copilot SDK conversation on the hub, run by a runtime
-  process of its own. Its tools only manage sessions and its own memory, so it
-  MUST NOT run commands or edit files; work it accepts becomes a normal session
-  on a chosen computer, named, given its task, and badged **Manager** in the
-  session list.
+- A hub MUST offer Oracle from an **Oracle** button in the conversation header,
+  beside Knowledge, and wherever that header is covered: from the Knowledge
+  header while Knowledge covers the conversation (expanded, or open at all on
+  a phone), and from an open document's header on a phone. It MUST NOT float over the conversation, where it would
+  cover **Scroll to latest** or Send. On a phone the button is a 40px icon like
+  Knowledge. It shows a working ring, an unread dot, and every current state
+  in its accessible name, such as "Oracle, working, new reply". It opens a non-modal drawer on a desktop and a full-height
+  sheet on a phone. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
+- Oracle is one Copilot SDK conversation on the hub, run by a runtime process
+  of its own. Its tools only manage sessions and its own memory, so it MUST NOT
+  run commands or edit files; work it accepts becomes a normal session on a
+  chosen computer, named, given its task, and badged **Oracle** in the session
+  list.
+- **Oracle only**: a message sent with the **Oracle only** box ticked, or with
+  `/oracle <question>` from a session's message bar, is answered by Oracle
+  alone. It MUST NOT be sent to the session, and Oracle MUST NOT start, message,
+  rename, stop, close, or question any session while answering it; the hub
+  refuses those tools for that message. Reading sessions and memory is allowed.
+  The box is remembered per browser. While Oracle is unavailable or still
+  loading, `/oracle` stays in the message bar with the reason; a question that
+  cannot be sent waits in Oracle's message bar with the error.
+- Oracle's model and reasoning effort are chosen in **App settings → Oracle**
+  (also reached from the model shown under Oracle's message bar). The choice is
+  kept on the hub for every browser and applies from Oracle's next answer: a
+  chosen model is switched to in place; returning to Copilot's own default
+  starts a new conversation briefed on the old one. The hub records what the
+  conversation runs on, so a change takes effect even across a restart or
+  while a switch is in progress. Unset, the hub uses
+  `AGENTIC_REMOTE_MANAGER_MODEL` and `AGENTIC_REMOTE_MANAGER_REASONING_EFFORT`
+  (either alone), else Copilot's default. The list shows the hub's own Copilot
+  models, with **Retry** if they cannot be read. A model that cannot start
+  falls back to the default and Oracle says so until the choice changes or you
+  **Start over**.
 - Every turn MUST start with a context block the hub generates: computers, open
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.
   Background changes MUST NOT be streamed to the model between turns.
-- Sending MUST NOT be refused because the manager is busy, recovering, or
-  offline. Messages queue and are answered one at a time. Only a blank message
-  or one over 100,000 characters is refused.
+- Sending MUST NOT be refused because Oracle is busy, recovering, or offline.
+  Messages wait in a durable first-in, first-out queue and are answered one at
+  a time. Waiting messages are shown above the message bar, numbered in the
+  order they will be answered and marked **Oracle only** where chosen; each can
+  be removed before Oracle starts on it. The queue is kept on the hub, so it
+  survives a reload, a reconnect, and a hub restart, and a snapshot lists every
+  waiting message however long the transcript. Only a blank message or
+  one over 100,000 characters is refused.
 - A failed turn MUST recover by itself: retry on the same conversation, then
   restart the runtime and resume it, then start a new conversation briefed from
   memory and the latest exchanges. Only when all of these fail is the message
   marked failed, with **Retry**. A turn interrupted by a restart is retried once
   and told to check what already happened. A turn has a 15-minute watchdog.
-- The manager's SDK conversations MUST NOT appear in session lists or history.
+- Oracle's SDK conversations MUST NOT appear in session lists or history.
   Their IDs are recorded and excluded before they are created.
-- The manager MUST NOT close a session itself. It can only ask, as a card with
+- Oracle MUST NOT close a session itself. It can only ask, as a card with
   **Close session** and **Keep it**, and the session stays open until you
   confirm there. Your answer, and any deletion, reach the agent on its next
   turn so it can update its memory.
-- The manager's data lives in `<data>/manager/`: app-owned state, transcript,
-  journal, and registry, plus the agent's Markdown memory under `memory/`. A
-  file that cannot be read is set aside rather than stopping the hub. **Start
-  over** begins a new conversation and keeps memory.
+- Oracle's data lives in `<data>/manager/`: app-owned state, transcript,
+  queue, journal, registry, and settings, plus the agent's Markdown memory under
+  `memory/`. A file that cannot be read is set aside rather than stopping the
+  hub. **Start over** begins a new conversation and keeps memory.
 - Session links in replies use `?computer=<id>&session=<id>` and open that
   session. Your default folder, mode, and model for new sessions are sent with
-  each message and apply to the sessions the manager starts.
+  each message and apply to the sessions Oracle starts.
 
 ## 4. Conversation timeline
 
@@ -1385,7 +1417,7 @@ Every material release SHOULD preserve:
 | Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
 | Session-actions disclosure | `src/SessionActions.tsx` |
 | Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
-| Session manager agent | `src/ManagerAssistant.tsx`, `server/manager-*.ts`, `shared/manager.ts` |
+| Oracle (session manager agent) | `src/ManagerAssistant.tsx`, `src/OracleSettings.tsx`, `server/manager-*.ts`, `shared/manager.ts` |
 | Browser API client | `src/api.ts` |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |

@@ -29,9 +29,9 @@ Closing a session routes deletion to its owning node. That node disconnects any
 active SDK session, deletes the session from provider storage, removes its local
 rendered-history cache, and emits a removal event.
 
-## Session manager agent
+## Oracle (session manager agent)
 
-The hub runs a manager agent: one Copilot SDK conversation in a runtime process
+The hub runs a manager agent, shown to you as Oracle: one Copilot SDK conversation in a runtime process
 separate from the session service (`server/manager-agent.ts`). Its tools call
 `ComputerManager`, so it starts, reads, and messages sessions on any paired
 computer through the same routing as the browser, and sessions it starts are

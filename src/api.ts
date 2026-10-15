@@ -41,9 +41,11 @@ import type {
 import type {
   ManagerClientDefaults,
   ManagerMessage,
+  ManagerSettingsSnapshot,
   ManagerSnapshot,
   ResolveManagerConfirmationInput,
   SendManagerMessageInput,
+  UpdateManagerSettingsInput,
 } from '../shared/manager'
 import {
   httpDeliveryUncertain,
@@ -1078,12 +1080,35 @@ export function getManager(): Promise<ManagerSnapshot> {
 export async function sendManagerMessage(
   content: string,
   defaults?: ManagerClientDefaults,
+  options: { answerOnly?: boolean } = {},
 ): Promise<ManagerMessage> {
   const response = await request<{ message: ManagerMessage }>('/api/manager/messages', {
     method: 'POST',
-    body: JSON.stringify({ content, ...(defaults ? { defaults } : {}) } satisfies SendManagerMessageInput),
+    body: JSON.stringify({
+      content,
+      ...(defaults ? { defaults } : {}),
+      ...(options.answerOnly ? { answerOnly: true } : {}),
+    } satisfies SendManagerMessageInput),
   })
   return response.message
+}
+
+export async function removeQueuedManagerMessage(messageId: string): Promise<ManagerMessage> {
+  const response = await request<{ message: ManagerMessage }>(
+    `/api/manager/messages/${encodeURIComponent(messageId)}/remove`,
+    { method: 'POST' },
+  )
+  return response.message
+}
+
+export async function updateManagerSettings(
+  input: UpdateManagerSettingsInput,
+): Promise<ManagerSettingsSnapshot> {
+  const response = await request<{ settings: ManagerSettingsSnapshot }>('/api/manager/settings', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+  return response.settings
 }
 
 export async function retryManagerMessage(messageId: string): Promise<ManagerMessage> {

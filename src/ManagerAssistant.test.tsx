@@ -1,17 +1,20 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useRef, useState } from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagerEvent, ManagerSnapshot } from '../shared/manager'
 import {
   cancelManager,
   getManager,
+  removeQueuedManagerMessage,
   resetManager,
   resolveManagerConfirmation,
   retryManagerMessage,
   sendManagerMessage,
 } from './api'
-import { ManagerAssistant } from './ManagerAssistant'
+import { ManagerAssistant, OracleButton } from './ManagerAssistant'
+import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { sessionLinkTarget } from './manager-links'
 
 vi.mock('./api', () => ({
@@ -19,9 +22,34 @@ vi.mock('./api', () => ({
   sendManagerMessage: vi.fn(),
   retryManagerMessage: vi.fn(),
   resolveManagerConfirmation: vi.fn(),
+  removeQueuedManagerMessage: vi.fn(),
   cancelManager: vi.fn(),
   resetManager: vi.fn(),
 }))
+
+type Props = Parameters<typeof ManagerAssistant>[0]
+
+/** The header button and the panel, wired the way App wires them. */
+function Harness(props: Omit<Props, 'open' | 'onOpenChange' | 'onIndicatorChange' | 'controlRef'> & {
+  onControl?: (control: OracleControl | undefined) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [indicator, setIndicator] = useState<OracleIndicator>({ available: false, status: 'idle', unread: false, queued: 0 })
+  const controlRef = useRef<OracleControl | undefined>(undefined)
+  return (
+    <>
+      <button onClick={() => props.onControl?.(controlRef.current)} type="button">Expose control</button>
+      <OracleButton indicator={indicator} onToggle={() => setOpen((current) => !current)} open={open} />
+      <ManagerAssistant
+        {...props}
+        controlRef={controlRef}
+        onIndicatorChange={setIndicator}
+        onOpenChange={setOpen}
+        open={open}
+      />
+    </>
+  )
+}
 
 const empty: ManagerSnapshot = {
   available: true,
@@ -31,11 +59,12 @@ const empty: ManagerSnapshot = {
   managedSessions: [],
 }
 
-function setup(snapshot: ManagerSnapshot = empty, overrides: Partial<Parameters<typeof ManagerAssistant>[0]> = {}) {
+function setup(snapshot: ManagerSnapshot = empty, overrides: Partial<Parameters<typeof Harness>[0]> = {}) {
   vi.mocked(getManager).mockResolvedValue(snapshot)
   const listeners = new Set<(event: ManagerEvent) => void>()
   const onOpenSession = vi.fn(() => true)
   const onManagedSessionsChange = vi.fn()
+  const onOpenSettings = vi.fn()
   const props = {
     connectionEpoch: 1,
     subscribe: (listener: (event: ManagerEvent) => void) => {
@@ -44,22 +73,21 @@ function setup(snapshot: ManagerSnapshot = empty, overrides: Partial<Parameters<
     },
     defaults: { computerId: 'hub', mode: 'autopilot' as const },
     openSessions: 3,
-    composerVisible: false,
-    keyboardOpen: false,
     onOpenSession,
     onManagedSessionsChange,
+    onOpenSettings,
     ...overrides,
   }
-  const view = render(<ManagerAssistant {...props} />)
+  const view = render(<Harness {...props} />)
   const emit = (event: ManagerEvent) => act(() => {
     for (const listener of listeners) listener(event)
   })
-  return { ...view, emit, onOpenSession, onManagedSessionsChange }
+  return { ...view, emit, onOpenSession, onManagedSessionsChange, onOpenSettings }
 }
 
 async function openPanel() {
-  fireEvent.click(await screen.findByRole('button', { name: /Open the manager/ }))
-  return screen.getByRole('dialog', { name: 'Manager' })
+  fireEvent.click(await screen.findByRole('button', { name: /^Oracle/ }))
+  return screen.getByRole('dialog', { name: 'Oracle' })
 }
 
 describe('ManagerAssistant', () => {
@@ -73,40 +101,119 @@ describe('ManagerAssistant', () => {
     vi.mocked(retryManagerMessage).mockReset()
     vi.mocked(cancelManager).mockReset()
     vi.mocked(resetManager).mockReset()
+    vi.mocked(removeQueuedManagerMessage).mockReset()
+    localStorage.clear()
   })
 
-  it('stays hidden when the hub has no manager', async () => {
+  it('does not take focus when the page loads', async () => {
+    setup()
+    await screen.findByRole('button', { name: 'Oracle' })
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Oracle' })).not.toHaveFocus()
+  })
+
+  it('offers no Oracle button when the hub has no Oracle', async () => {
     setup({ ...empty, available: false, unavailableReason: 'off' })
     await waitFor(() => expect(getManager).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /Open the manager/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Oracle/ })).not.toBeInTheDocument()
   })
 
-  it('stays hidden, without breaking the page, when the snapshot cannot be read', async () => {
+  it('offers no Oracle button, without breaking the page, when the snapshot cannot be read', async () => {
     vi.mocked(getManager).mockRejectedValueOnce(new Error('offline'))
-    const { container } = render(
-      <ManagerAssistant
-        composerVisible={false}
-        connectionEpoch={1}
-        defaults={{}}
-        keyboardOpen={false}
-        onManagedSessionsChange={vi.fn()}
-        onOpenSession={vi.fn(() => true)}
-        openSessions={0}
-        subscribe={() => () => undefined}
-      />,
-    )
+    setup()
     await waitFor(() => expect(getManager).toHaveBeenCalled())
-    expect(container).toBeEmptyDOMElement()
+    await act(async () => undefined)
+    expect(screen.queryByRole('button', { name: /^Oracle/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('opens from the bubble with suggestions and sends one with the browser defaults', async () => {
-    vi.mocked(sendManagerMessage).mockResolvedValue({ id: 'm1', role: 'user', content: 'What is running right now?', createdAt: 't', state: 'queued' })
+  it('opens from the header button and asks a suggestion of Oracle only', async () => {
+    vi.mocked(sendManagerMessage).mockResolvedValue({ id: 'm1', role: 'user', content: 'What is running right now?', createdAt: 't', state: 'queued', answerOnly: true })
     setup()
+    const button = await screen.findByRole('button', { name: 'Oracle' })
+    expect(button).toHaveAttribute('aria-expanded', 'false')
     await openPanel()
+    expect(screen.getByRole('button', { name: 'Oracle' })).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('Keeping track of 3 open sessions')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'What is running right now?' }))
-    await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith('What is running right now?', { computerId: 'hub', mode: 'autopilot' }))
-    expect(await screen.findByText('Waiting its turn')).toBeInTheDocument()
+    await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(
+      'What is running right now?', { computerId: 'hub', mode: 'autopilot' }, { answerOnly: true },
+    ))
+    const queue = await screen.findByRole('region', { name: 'Queued for Oracle' })
+    expect(queue).toHaveTextContent('What is running right now?')
+    expect(queue).toHaveTextContent('Oracle only')
+  })
+
+  it('shows waiting messages in order, outside the conversation, and removes one on request', async () => {
+    vi.mocked(removeQueuedManagerMessage).mockResolvedValue({
+      id: 'q1', role: 'user', content: 'first waiting', createdAt: 't', updatedAt: '2026-10-15T00:00:09.000Z', state: 'cancelled',
+    })
+    setup({
+      ...empty,
+      status: 'working',
+      queued: 2,
+      messages: [
+        { id: 'r0', role: 'user', content: 'being answered', createdAt: 't', state: 'running' },
+        { id: 'q1', role: 'user', content: 'first waiting', createdAt: 't', updatedAt: '2026-10-15T00:00:01.000Z', state: 'queued' },
+        { id: 'q2', role: 'user', content: 'second waiting', createdAt: 't', updatedAt: '2026-10-15T00:00:02.000Z', state: 'queued', answerOnly: true },
+      ],
+    })
+    await openPanel()
+    expect(screen.getByText('Working · 2 waiting')).toBeInTheDocument()
+    const queue = screen.getByRole('region', { name: 'Queued for Oracle' })
+    expect(queue).toHaveTextContent('2 waiting · answered in this order')
+    const items = within(queue).getAllByRole('listitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringMatching(/^1Number 1: first waiting/),
+      expect.stringMatching(/^2Number 2: second waitingOracle only/),
+    ])
+    expect(within(screen.getByRole('list', { name: 'Oracle conversation' })).queryByText('first waiting')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from the queue: first waiting' }))
+    await waitFor(() => expect(removeQueuedManagerMessage).toHaveBeenCalledWith('q1'))
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Queued for Oracle' })).getAllByRole('listitem')).toHaveLength(1))
+  })
+
+  it('remembers the Oracle only choice and sends with it', async () => {
+    vi.mocked(sendManagerMessage).mockResolvedValue({ id: 'm1', role: 'user', content: 'x', createdAt: 't', state: 'queued' })
+    setup()
+    await openPanel()
+    const toggle = screen.getByRole('checkbox', { name: /Oracle only/ })
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(toggle)
+    expect(localStorage.getItem('agentic-remote:oracle-answer-only')).toBe('true')
+    const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+    expect(input).toHaveAttribute('placeholder', expect.stringContaining('won’t start or steer sessions'))
+    fireEvent.change(input, { target: { value: 'Just tell me' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith('Just tell me', expect.anything(), { answerOnly: true }))
+    cleanup()
+    setup()
+    await openPanel()
+    expect(screen.getByRole('checkbox', { name: /Oracle only/ })).toBeChecked()
+  })
+
+  it('shows the model and opens App settings to change it', async () => {
+    const { onOpenSettings } = setup({ ...empty, settings: { model: 'gpt-6-sol', reasoningEffort: 'high', defaultModel: 'hub-default' } })
+    await openPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Oracle model: gpt-6-sol · high. Change it in App settings' }))
+    expect(onOpenSettings).toHaveBeenCalled()
+  })
+
+  it('says when the chosen model could not start', async () => {
+    setup({ ...empty, settings: { model: 'missing', modelUnavailable: true } })
+    await openPanel()
+    expect(screen.getByText(/missing could not start, so Copilot’s default model is answering/)).toBeInTheDocument()
+  })
+
+  it('takes a prompt from elsewhere in the app, opening the panel', async () => {
+    vi.mocked(sendManagerMessage).mockResolvedValue({ id: 'm1', role: 'user', content: 'From /oracle', createdAt: 't', state: 'queued', answerOnly: true })
+    let control: OracleControl | undefined
+    setup(empty, { onControl: (value) => { control = value } })
+    await screen.findByRole('button', { name: 'Oracle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Expose control' }))
+    await act(async () => control!.ask('From /oracle', { answerOnly: true }))
+    expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+    expect(sendManagerMessage).toHaveBeenCalledWith('From /oracle', expect.anything(), { answerOnly: true })
   })
 
   it('sends on Return at a desk, queues while working, and clears the draft only once accepted', async () => {
@@ -114,11 +221,11 @@ describe('ManagerAssistant', () => {
     vi.mocked(sendManagerMessage).mockReturnValue(new Promise((resolve) => { accept = resolve }))
     setup({ ...empty, status: 'working' })
     await openPanel()
-    const input = screen.getByRole('textbox', { name: 'Message the manager' })
+    const input = screen.getByRole('textbox', { name: 'Message Oracle' })
     expect(screen.getByRole('button', { name: 'Queue message' })).toBeDisabled()
     fireEvent.change(input, { target: { value: 'Also check the tests' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(sendManagerMessage).toHaveBeenCalledWith('Also check the tests', expect.anything())
+    expect(sendManagerMessage).toHaveBeenCalledWith('Also check the tests', expect.anything(), { answerOnly: false })
     expect(input).toHaveValue('Also check the tests')
     await act(async () => accept({ id: 'm2', role: 'user', content: 'Also check the tests', createdAt: 't', state: 'queued' }))
     expect(input).toHaveValue('')
@@ -133,11 +240,11 @@ describe('ManagerAssistant', () => {
     vi.mocked(sendManagerMessage).mockReturnValue(new Promise((resolve) => { accept = resolve }))
     const { emit } = setup()
     await openPanel()
-    fireEvent.change(screen.getByRole('textbox', { name: 'Message the manager' }), { target: { value: 'status?' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Oracle' }), { target: { value: 'status?' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     emit({ type: 'manager.message', message: { id: 'm1', role: 'user', content: 'status?', createdAt: '2026-10-15T00:00:00.000Z', updatedAt: '2026-10-15T00:00:00.050Z', state: 'running' } })
     await act(async () => accept({ id: 'm1', role: 'user', content: 'status?', createdAt: '2026-10-15T00:00:00.000Z', updatedAt: '2026-10-15T00:00:00.000Z', state: 'queued' }))
-    expect(screen.queryByText('Waiting its turn')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Queued for Oracle' })).not.toBeInTheDocument()
     expect(screen.getByText('status?')).toBeInTheDocument()
   })
 
@@ -145,7 +252,7 @@ describe('ManagerAssistant', () => {
     vi.mocked(sendManagerMessage).mockRejectedValue(new Error('Messages are limited to 100,000 characters.'))
     setup()
     await openPanel()
-    const input = screen.getByRole('textbox', { name: 'Message the manager' })
+    const input = screen.getByRole('textbox', { name: 'Message Oracle' })
     fireEvent.change(input, { target: { value: 'hello' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Messages are limited')
@@ -162,9 +269,52 @@ describe('ManagerAssistant', () => {
     expect(screen.getByText('Two sessions are running.')).toBeInTheDocument()
     expect(screen.queryByText('Two sessions are')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close the manager' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
     emit({ type: 'manager.message', message: { id: 'r2', role: 'assistant', content: 'Another', createdAt: 't' } })
-    expect(screen.getByRole('button', { name: 'Open the manager (new reply)' })).toBeInTheDocument()
+    // Both states hold at once, so both are announced.
+    expect(screen.getByRole('button', { name: 'Oracle, working, new reply' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Oracle, working, new reply' }))
+    expect(screen.getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
+  })
+
+  it('keeps a /oracle question in Oracle when it cannot be sent', async () => {
+    vi.mocked(sendManagerMessage).mockRejectedValue(new Error('Origin is not allowed.'))
+    let control: OracleControl | undefined
+    setup(empty, { onControl: (value) => { control = value } })
+    await screen.findByRole('button', { name: 'Oracle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Expose control' }))
+    await act(async () => control!.ask('What is riskiest?', { answerOnly: true }))
+    expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Could not send to Oracle: Origin is not allowed. Your question is in the message bar to send again.',
+    )
+    expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('What is riskiest?')
+    expect(screen.getByRole('checkbox', { name: /Oracle only/ })).toBeChecked()
+  })
+
+  it('tells the app why Oracle cannot take a message', async () => {
+    const onIndicatorChange = vi.fn()
+    vi.mocked(getManager).mockRejectedValueOnce(new Error('offline'))
+    const props = {
+      connectionEpoch: 1, subscribe: () => () => undefined, defaults: {}, openSessions: 0,
+      open: false, onOpenChange: vi.fn(), onIndicatorChange, onOpenSession: vi.fn(() => true),
+      onManagedSessionsChange: vi.fn(), onOpenSettings: vi.fn(),
+    }
+    const view = render(<ManagerAssistant {...props} />)
+    await waitFor(() => expect(onIndicatorChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ available: false, unavailableReason: 'Oracle could not be reached: offline' }),
+    ))
+    vi.mocked(getManager).mockResolvedValueOnce({ ...empty, available: false, unavailableReason: 'Oracle is turned off.' })
+    view.rerender(<ManagerAssistant {...props} connectionEpoch={2} />)
+    await waitFor(() => expect(onIndicatorChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ available: false, unavailableReason: 'Oracle is turned off.' }),
+    ))
+  })
+
+  it("names the hub's default model when it is the one that could not start", async () => {
+    setup({ ...empty, settings: { defaultModel: 'env-model', modelUnavailable: true } })
+    await openPanel()
+    expect(screen.getByText(/env-model could not start/)).toBeInTheDocument()
   })
 
   it('offers Retry on a failed message', async () => {
@@ -175,11 +325,11 @@ describe('ManagerAssistant', () => {
       messages: [{ id: 'u1', role: 'user', content: 'hi', createdAt: 't', updatedAt: '2026-10-15T00:00:01.000Z', state: 'failed', error: 'The manager could not answer: down.' }],
     })
     await openPanel()
-    expect(screen.getByText('Could not answer the last message')).toBeInTheDocument()
+    expect(screen.getByText("Couldn't answer the last message")).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('could not answer: down')
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(retryManagerMessage).toHaveBeenCalledWith('u1'))
-    expect(await screen.findByText('Waiting its turn')).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Queued for Oracle' })).toHaveTextContent('hi')
   })
 
   it('opens sessions from activity and from links in a reply', async () => {
@@ -220,7 +370,7 @@ describe('ManagerAssistant', () => {
     vi.mocked(cancelManager).mockResolvedValue()
     setup({ ...empty, status: 'working' })
     await openPanel()
-    fireEvent.click(screen.getByRole('button', { name: "Stop the manager's reply" }))
+    fireEvent.click(screen.getByRole('button', { name: "Stop Oracle's reply" }))
     expect(cancelManager).toHaveBeenCalled()
   })
 
@@ -245,16 +395,9 @@ describe('ManagerAssistant', () => {
   it('closes on Escape and returns focus to the bubble', async () => {
     setup()
     await openPanel()
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message the manager' }), { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'Manager' })).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Open the manager' })).toHaveFocus())
-  })
-
-  it('stays out of the way of an open phone keyboard', async () => {
-    setup(empty, { composerVisible: true, keyboardOpen: true })
-    await waitFor(() => expect(getManager).toHaveBeenCalled())
-    await act(async () => undefined)
-    expect(screen.queryByRole('button', { name: /Open the manager/ })).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message Oracle' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Oracle' })).toHaveFocus())
   })
 
   it('folds a long message of yours until you ask to see it all', async () => {

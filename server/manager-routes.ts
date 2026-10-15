@@ -1,13 +1,20 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type { ManagerMessage, ManagerSnapshot } from '../shared/manager.js'
-import type { ManagerClientDefaults } from '../shared/manager.js'
+import type {
+  ManagerClientDefaults,
+  ManagerMessage,
+  ManagerSettingsSnapshot,
+  ManagerSnapshot,
+  UpdateManagerSettingsInput,
+} from '../shared/manager.js'
 
 /** What the routes need from the manager agent. */
 export interface ManagerRouteAgent {
   snapshot(): ManagerSnapshot
-  send(content: string, defaults?: ManagerClientDefaults): Promise<ManagerMessage>
+  send(content: string, defaults?: ManagerClientDefaults, options?: { answerOnly?: boolean }): Promise<ManagerMessage>
   retry(messageId: string): Promise<ManagerMessage>
+  removeQueued(messageId: string): Promise<ManagerMessage>
+  updateSettings(input: UpdateManagerSettingsInput): Promise<ManagerSettingsSnapshot>
   resolveConfirmation(messageId: string, accept: boolean): Promise<ManagerMessage>
   cancel(): Promise<void>
   reset(): Promise<void>
@@ -28,6 +35,12 @@ const sendSchema = z.object({
   // The agent gives the precise limits; this only bounds the request.
   content: z.string().max(200_000),
   defaults: defaultsSchema.optional(),
+  answerOnly: z.boolean().optional(),
+})
+
+const settingsSchema = z.object({
+  model: z.string().trim().max(200).nullable().optional(),
+  reasoningEffort: effort.nullable().optional(),
 })
 
 const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })
@@ -49,7 +62,7 @@ export function unavailableSnapshot(reason: string): ManagerSnapshot {
 export async function registerManagerRoutes(
   app: FastifyInstance,
   agent: ManagerRouteAgent | undefined,
-  unavailableReason = 'The manager agent is not available on this hub.',
+  unavailableReason = 'Oracle is not available on this hub.',
 ): Promise<void> {
   const requireAgent = () => {
     if (!agent) throw Object.assign(new Error(unavailableReason), { statusCode: 503 })
@@ -63,8 +76,23 @@ export async function registerManagerRoutes(
 
   app.post('/api/manager/messages', async (request, reply) => {
     const input = sendSchema.parse(request.body ?? {})
-    const message = await requireAgent().send(input.content, input.defaults)
+    const message = await requireAgent().send(
+      input.content,
+      input.defaults,
+      input.answerOnly ? { answerOnly: true } : {},
+    )
     return reply.code(202).send({ message })
+  })
+
+  // Takes a message out of the queue before Oracle starts on it.
+  app.post('/api/manager/messages/:messageId/remove', async (request) => {
+    const { messageId } = messageParams.parse(request.params)
+    return { message: await requireAgent().removeQueued(messageId) }
+  })
+
+  app.put('/api/manager/settings', async (request) => {
+    const input = settingsSchema.parse(request.body ?? {})
+    return { settings: await requireAgent().updateSettings(input) }
   })
 
   app.post('/api/manager/messages/:messageId/retry', async (request) => {

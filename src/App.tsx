@@ -9,7 +9,10 @@ import {
   useState,
 } from 'react'
 import ReaderWorkspace from './ReaderWorkspace'
-import { ManagerAssistant } from './ManagerAssistant'
+import { ManagerAssistant, OracleButton } from './ManagerAssistant'
+import type { OracleControl, OracleIndicator } from './ManagerAssistant'
+import { oracleCommand } from './oracle-command'
+import { OracleSettings } from './OracleSettings'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
 import type {
@@ -1874,6 +1877,12 @@ const webCommands: SlashCommand[] = [
     allowDuringAgentExecution: false,
   },
   sideQuestionWebCommand,
+  {
+    name: 'oracle',
+    description: 'Ask Oracle only; nothing is sent to this session',
+    inputHint: '<question>',
+    allowDuringAgentExecution: true,
+  },
   ...sessionResourceCommands,
 ]
 
@@ -3606,6 +3615,8 @@ function AppSettingsDialog({
     Partial<Record<AgentProvider, boolean>>
   >({})
   const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const [hubCopilotModels, setHubCopilotModels] = useState<RuntimeModelOption[]>()
+  const [hubCopilotError, setHubCopilotError] = useState<string>()
   const [runtimeErrors, setRuntimeErrors] = useState<
     Partial<Record<AgentProvider, string>>
   >({})
@@ -3666,6 +3677,8 @@ function AppSettingsDialog({
     })
     setRuntimeLoading(true)
     setRuntimeModels({})
+    setHubCopilotModels(undefined)
+    setHubCopilotError(undefined)
     setRuntimeCatalogsComplete({})
     setRuntimeErrors(
       Object.fromEntries(
@@ -3737,6 +3750,21 @@ function AppSettingsDialog({
               : `Unable to load ${providerName(provider)} models.`
         }
       }
+      // Oracle runs on the hub, so its choices come from the hub's own catalog.
+      const hubCatalog = results.find(
+        (_result, index) =>
+          sources[index].provider === 'copilot' && sources[index].computer.isLocal,
+      )
+      setHubCopilotModels(
+        hubCatalog?.status === 'fulfilled' ? hubCatalog.value.options.models : [],
+      )
+      setHubCopilotError(
+        hubCatalog?.status === 'rejected'
+          ? hubCatalog.reason instanceof Error
+            ? hubCatalog.reason.message
+            : String(hubCatalog.reason)
+          : undefined,
+      )
       setRuntimeModels(models)
       setRuntimeCatalogsComplete(complete)
       setRuntimeErrors(errors)
@@ -3779,6 +3807,21 @@ function AppSettingsDialog({
 
   if (!open) {
     return null
+  }
+
+  async function retryHubCopilotModels() {
+    const hub = computers.find((computer) => computer.isLocal)
+    if (!hub) {
+      return
+    }
+    setHubCopilotModels(undefined)
+    setHubCopilotError(undefined)
+    try {
+      setHubCopilotModels((await getProviderRuntimeOptions(hub.id, 'copilot')).models)
+    } catch (caught) {
+      setHubCopilotModels([])
+      setHubCopilotError(caught instanceof Error ? caught.message : String(caught))
+    }
   }
 
   async function toggle() {
@@ -3947,6 +3990,12 @@ function AppSettingsDialog({
           />
         ))}
       </section>
+
+      <OracleSettings
+        models={hubCopilotModels}
+        modelsError={hubCopilotError}
+        onRetryModels={retryHubCopilotModels}
+      />
 
       <section className="app-settings-section">
         <h3>Default session folders</h3>
@@ -5556,6 +5605,7 @@ function KnowledgeReader({
   askUnavailableReason,
   onShowFiles,
   onClose,
+  oracle,
   sessionTitle,
 }: {
   file?: WorkspaceFile
@@ -5571,6 +5621,8 @@ function KnowledgeReader({
   askUnavailableReason?: string
   onShowFiles: () => void
   onClose: () => void
+  /** Oracle's button, for the phone header that replaces Knowledge's own. */
+  oracle?: ReactNode
   sessionTitle?: string
 }) {
   const [raw, setRaw] = useState(false)
@@ -5672,6 +5724,7 @@ function KnowledgeReader({
           outline={outline}
           raw={raw}
         />
+        {oracle}
         <button
           aria-label="Return to conversation"
           className="icon-button knowledge-reader__close"
@@ -6413,6 +6466,15 @@ function App() {
       managerListenersRef.current.delete(listener)
     }
   }, [])
+  const [oracleOpen, setOracleOpen] = useState(false)
+  const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
+    available: false,
+    status: 'idle',
+    unread: false,
+    queued: 0,
+  })
+  const oracleControlRef = useRef<OracleControl | undefined>(undefined)
+  const toggleOracle = useCallback(() => setOracleOpen((current) => !current), [])
   const changeManagedSessions = useCallback((keys: string[]) => {
     setManagedSessionKeys(new Set(keys))
   }, [])
@@ -12158,6 +12220,28 @@ function App() {
       openSideQuestion(sideQuestion.question)
       return
     }
+    // Goes to Oracle alone: never to this session, and Oracle answers it
+    // without starting or steering any session.
+    const oraclePrompt = oracleCommand(content)
+    if (oraclePrompt) {
+      const control = oracleControlRef.current
+      if (!oracleIndicator.available || !control) {
+        // Never handed to the session instead, which would take it as a
+        // prompt. The words stay in the message bar for when Oracle is back.
+        settleSubmission()
+        setError(
+          oracleIndicator.unavailableReason ??
+            'Oracle is still connecting. Try again in a moment.',
+        )
+        return
+      }
+      consumeLocalCommand()
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
+      // A failure keeps the question in Oracle's own message bar.
+      await control.ask(oraclePrompt.prompt, { answerOnly: true })
+      return
+    }
     const command = isCommand
       ? sessionCommands.find(
           (candidate) =>
@@ -14452,6 +14536,7 @@ function App() {
               <span>Ready when you are</span>
             )}
           </div>
+          <OracleButton indicator={oracleIndicator} onToggle={toggleOracle} open={oracleOpen} />
           <button
             aria-label="Session knowledge"
             aria-pressed={knowledgeMode !== 'hidden'}
@@ -15392,6 +15477,16 @@ function App() {
               <Maximize2 size={16} />
             )}
           </button>
+          {/* Knowledge covers the conversation header whenever it is expanded,
+              and on a phone whenever it is open; CSS hides this copy where
+              that header is still in view. */}
+          <OracleButton
+            className="knowledge-panel__oracle"
+            compact
+            indicator={oracleIndicator}
+            onToggle={toggleOracle}
+            open={oracleOpen}
+          />
           <button
             aria-label="Close knowledge panel"
             className="icon-button"
@@ -15455,6 +15550,15 @@ function App() {
                 onAsk={askAboutKnowledgeFile}
                 onShowFiles={() => openSidebar('knowledge')}
                 onClose={() => setKnowledgeMode('hidden')}
+                oracle={
+                  <OracleButton
+                    className="knowledge-reader__oracle"
+                    compact
+                    indicator={oracleIndicator}
+                    onToggle={toggleOracle}
+                    open={oracleOpen}
+                  />
+                }
                 sessionTitle={selected?.title}
                 onOpenFolder={(path) => void openKnowledgeFolder(path)}
                 onOpenFile={(path, fragment) =>
@@ -15750,12 +15854,15 @@ function App() {
         />
       ) : null}
       <ManagerAssistant
-        composerVisible={Boolean(selected)}
         connectionEpoch={managerEpoch}
+        controlRef={oracleControlRef}
         defaults={managerDefaults}
-        keyboardOpen={keyboardOpen}
+        onIndicatorChange={setOracleIndicator}
         onManagedSessionsChange={changeManagedSessions}
+        onOpenChange={setOracleOpen}
         onOpenSession={openManagedSession}
+        onOpenSettings={() => setSettingsOpen(true)}
+        open={oracleOpen}
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}
       />

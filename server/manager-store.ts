@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { AgentProvider, SessionStatus } from '../shared/contracts.js'
-import type { ManagerClientDefaults, ManagerMessage } from '../shared/manager.js'
+import type { ManagerClientDefaults, ManagerMessage, ManagerSettings } from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
 
 export type SessionOrigin = 'manager' | 'user' | 'discovered'
@@ -22,6 +22,16 @@ export interface ManagerState {
   interruptions?: Record<string, number>
   /** Things the agent learns on its next turn, such as your answer to a confirmation. */
   pendingNotes?: string[]
+  /** Your choice of model and effort for Oracle; unset uses the hub default. */
+  settings?: ManagerSettings
+  /**
+   * The model and effort the conversation in `sdkSessionId` runs on, so a
+   * change of choice is put into effect even across a restart. Unset for a
+   * conversation from before Oracle's settings, which ran on the hub default.
+   */
+  sessionRuntime?: ManagerSettings
+  /** A model and effort that could not start; Copilot's default answers until the choice changes. */
+  unavailableRuntime?: ManagerSettings
   /** The newest journal entry a completed turn has shown the agent. */
   acknowledgedJournalSeq: number
   /** Hash of the MEMORY.md the agent last saw in a prompt. */

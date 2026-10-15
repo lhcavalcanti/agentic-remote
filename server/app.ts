@@ -233,16 +233,16 @@ export async function buildApp(
     if (options.managerAgent) {
       managerAgent = options.managerAgent
     } else if (options.managerAgent === false || !managerSettings.enabled) {
-      managerUnavailable = 'The manager agent is turned off on this hub (AGENTIC_REMOTE_MANAGER=off).'
+      managerUnavailable = 'Oracle is turned off on this hub (AGENTIC_REMOTE_MANAGER=off).'
     } else if (!agent) {
-      managerUnavailable = 'The manager agent needs the built-in Copilot session service.'
+      managerUnavailable = 'Oracle needs the built-in Copilot session service.'
     } else {
       const managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
       // The manager is an addition to the hub; a hub whose manager cannot
       // start still serves everything else.
       const initialized = await managerStore.initialize().then(() => true, (error: unknown) => {
         app.log.error({ err: error }, 'The manager agent could not start')
-        managerUnavailable = `The manager agent could not start: ${error instanceof Error ? error.message : String(error)}`
+        managerUnavailable = `Oracle could not start: ${error instanceof Error ? error.message : String(error)}`
         return false
       })
       const recorder = initialized ? new JournalRecorder(managerStore) : undefined

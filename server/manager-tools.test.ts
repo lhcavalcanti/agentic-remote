@@ -35,6 +35,7 @@ describe('manager tools', () => {
   let host: ManagerToolHost & { [key: string]: unknown }
   let activities: ManagerToolActivity[]
   let tools: Map<string, ManagerTool>
+  let answerOnly: boolean
 
   const call = async (name: string, args: unknown) => {
     const tool = tools.get(name)
@@ -45,6 +46,7 @@ describe('manager tools', () => {
   beforeEach(async () => {
     root = await mkdtemp(path.join(tmpdir(), 'manager-tools-'))
     activities = []
+    answerOnly = false
     const created = session('new1', { cwd: '/home/me/src/web' })
     host = {
       computers: () => computers,
@@ -65,6 +67,7 @@ describe('manager tools', () => {
       discoverSkills: vi.fn(async () => [{ name: 'brainstorming', description: 'Explore intent before building', source: 'personal' }]),
       markManaged: vi.fn(async () => undefined),
       registry: () => ({}),
+      answerOnly: () => answerOnly,
       memory: new ManagerMemory(path.join(root, 'memory')),
       defaults: () => ({ computerId: 'hub', mode: 'autopilot', provider: 'copilot', model: 'gpt-6-sol', folders: { hub: '~/src/web' } }),
       now: () => new Date('2026-10-15T12:00:00.000Z'),
@@ -182,6 +185,33 @@ describe('manager tools', () => {
     const result = await call('send_to_session', { sessionId: 'abc12345' })
     expect(result).toMatchObject({ resultType: 'failure' })
     expect(JSON.stringify(result)).toContain('message')
+  })
+
+  it('refuses to act on any session while answering an Oracle-only message', async () => {
+    answerOnly = true
+    for (const [name, args] of [
+      ['create_session', { title: 'X', prompt: 'Y' }],
+      ['send_to_session', { sessionId: 'abc12345', message: 'hi' }],
+      ['rename_session', { sessionId: 'abc12345', title: 'New' }],
+      ['cancel_session', { sessionId: 'abc12345' }],
+      ['close_session', { sessionId: 'abc12345' }],
+      ['ask_session', { sessionId: 'abc12345', question: 'What?' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result)).toContain('Oracle only')
+    }
+    expect(host.createSession).not.toHaveBeenCalled()
+    expect(host.sendMessage).not.toHaveBeenCalled()
+    expect(host.renameSession).not.toHaveBeenCalled()
+    expect(host.cancel).not.toHaveBeenCalled()
+    expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
+    expect(host.askSession).not.toHaveBeenCalled()
+    // Reading is still allowed.
+    expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
+    await call('memory_write', { path: 'MEMORY.md', content: '# Index' })
+    expect(await call('memory_read', { path: 'MEMORY.md' })).toBe('# Index')
   })
 
   it('lists computers, sessions, and skills', async () => {

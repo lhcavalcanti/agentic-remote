@@ -817,6 +817,37 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().settings?.modelUnavailable).toBeUndefined()
   })
 
+  it('tries an effort chosen while the previous choice was failing to start', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const factory = sdk.factory
+    sdk.factory = () => {
+      const client = factory()
+      const create = client.createSession.getMockImplementation()!
+      client.createSession.mockImplementation(async (config) => {
+        if (config.model === 'model-a' && config.reasoningEffort === 'high') {
+          await gate
+          throw new Error('model not available')
+        }
+        return create(config)
+      })
+      return client
+    }
+    await start()
+    await agent!.updateSettings({ model: 'model-a', reasoningEffort: 'high' })
+    await agent!.send('first')
+    await vi.waitFor(() => expect(sdk.clients[0].createSession).toHaveBeenCalledTimes(1))
+    await agent!.updateSettings({ model: 'model-a', reasoningEffort: 'low' })
+    release()
+    await settled()
+    expect(agent!.snapshot().settings?.modelUnavailable).toBeUndefined()
+    expect(store.state().unavailableRuntime).toBeUndefined()
+    expect(sdk.sessions.get('sdk-1')!.rpc.model.switchTo).toHaveBeenCalledWith({ modelId: 'model-a', reasoningEffort: 'low' })
+    expect(store.state().sessionRuntime).toEqual({ model: 'model-a', reasoningEffort: 'low' })
+  })
+
   it('lists every waiting message however long the conversation', async () => {
     for (let index = 0; index < 3; index += 1) {
       await store.upsertMessage({ id: `waiting-${index}`, role: 'user', content: `waiting ${index}`, createdAt: 't', state: 'queued' })

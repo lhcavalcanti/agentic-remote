@@ -388,7 +388,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     // the conversation runs on, so nothing in flight can lose it.
     if (!sameRuntime(before, this.runtime())) {
       await this.store.updateState((state) => {
-        delete state.unavailableModel
+        delete state.unavailableRuntime
       })
     }
     const settings = this.settingsSnapshot()
@@ -405,8 +405,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   /** Whether the model in effect could not start, so Copilot's default answers. */
   private modelFallback(): boolean {
-    const unavailable = this.store.state().unavailableModel
-    return unavailable !== undefined && unavailable === this.runtime().model
+    const unavailable = this.store.state().unavailableRuntime
+    return unavailable !== undefined && sameRuntime(unavailable, this.runtime())
   }
 
   /** What the conversation should run on now. */
@@ -510,7 +510,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     await this.store.updateState((state) => {
       delete state.memoryHashShown
       // Starting over gives a model that could not start another try.
-      delete state.unavailableModel
+      delete state.unavailableRuntime
     })
     this.lastError = undefined
     this.needsBrief = false
@@ -1119,20 +1119,24 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       'starting the manager conversation took too long',
     )
     let session: ManagerSdkSession
-    let runtime = this.target()
-    const chosen = runtime.model
+    const attempted = this.target()
+    let runtime = attempted
     try {
       session = await create(runtime)
     } catch (error) {
-      if (!chosen) throw error
+      if (!attempted.model) throw error
       // A chosen model that is unavailable must not keep Oracle down.
-      console.warn(`Oracle model ${chosen} failed; using Copilot's default model:`, errorMessage(error))
+      console.warn(`Oracle model ${attempted.model} failed; using Copilot's default model:`, errorMessage(error))
       runtime = {}
       session = await create(runtime)
-      await this.store.updateState((state) => {
-        state.unavailableModel = chosen
-      })
-      this.emit('event', { type: 'manager.settings', settings: this.settingsSnapshot() })
+      // Only a choice still in effect is marked; one made while this was
+      // starting gets its own try on the next answer.
+      if (sameRuntime(attempted, this.runtime())) {
+        await this.store.updateState((state) => {
+          state.unavailableRuntime = { ...attempted }
+        })
+        this.emit('event', { type: 'manager.settings', settings: this.settingsSnapshot() })
+      }
     }
     this.session = session
     const hadConversation = this.store.messages().some((message) => message.role === 'assistant')

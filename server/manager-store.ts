@@ -30,8 +30,8 @@ export interface ManagerState {
    * conversation from before Oracle's settings, which ran on the hub default.
    */
   sessionRuntime?: ManagerSettings
-  /** A chosen model that could not start; Copilot's default answers until the choice changes. */
-  unavailableModel?: string
+  /** A model and effort that could not start; Copilot's default answers until the choice changes. */
+  unavailableRuntime?: ManagerSettings
   /** The newest journal entry a completed turn has shown the agent. */
   acknowledgedJournalSeq: number
   /** Hash of the MEMORY.md the agent last saw in a prompt. */

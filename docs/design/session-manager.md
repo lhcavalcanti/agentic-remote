@@ -143,7 +143,7 @@ end the turn.
   the hub default) chooses Oracle's model, which the snapshot reports as
   `settings` and the socket as `manager.settings`. `state.json` records the
   model the SDK conversation runs on (`sessionRuntime`) and a chosen model that
-  could not start (`unavailableModel`); each answer compares the choice with
+  and effort that could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.
 - WebSocket: `manager.status`, `manager.message` (upsert), and
   `manager.delta` (streamed text, throttled).

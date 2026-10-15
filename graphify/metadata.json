@@ -267,9 +267,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 153,
+  "communities": 156,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11540,
+  "edges": 11543,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -309,7 +309,7 @@
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
     "docs/deployment-promotion.md": "b61e47425636a6a4552966549c5c763cd8e9b9224dc9e01aceb00242ce4c79cf",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
-    "docs/design/session-manager.md": "1213dda9010362f78d118e60dfb9fdae14181deaded5fc7ecfe9247bbe7d9928",
+    "docs/design/session-manager.md": "6d03d568db922b64ff529b7a0de8cec346c0324c97d13ffab9baa66b5ad1705f",
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
     "docs/mockups/brand-logo.html": "1a1a3efd305260cfba6c2cf5d6eb0f5ec5a68472a010a0eaf9dfd426436766c1",
     "docs/native-shell.md": "bc434b4a881ec432c84c6744ab0ab0f73d8d023ceff73d0baffd60c6bccc7a9f",
@@ -381,8 +381,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "07b6b29ff79066a9d755e7bb385f038b3511c41c36fadf72030a596e00d99127",
-    "server/manager-agent.ts": "74d15588f50f619fddb10eab966ba29d97d603532ef08695c510e5d94508eea7",
+    "server/manager-agent.test.ts": "70bd5712a98e7b58641371407044767f59e21114e8fba4eb4007edb067a5dc16",
+    "server/manager-agent.ts": "7887799fa1d80b92ebfb8c60a744b4b9ae38fd496a7f88a76679e57e598fe4b3",
     "server/manager-context.test.ts": "b2edf7082b9a083eeaf6ec59c5edad0ac0607f6d1bd3cb66b63a69b0d0ec4b9c",
     "server/manager-context.ts": "89e796c7ebae3e708a340a738f05478b7e65d117d9016efa4bc6cb51bfe10b2d",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -393,7 +393,7 @@
     "server/manager-routes.ts": "20ef3f9564ad3c2f7e46805018d9498bb44493bf8325c2c87d770061cd667e0c",
     "server/manager-runtime.ts": "5e233cf9244fa6230ef34bdba2a27e577636bc37521237682c2197009fca41ef",
     "server/manager-store.test.ts": "3dbbab57418fc6353b4b73f078bc45e6cb077da30d7c9b1ea9043eb6f015301a",
-    "server/manager-store.ts": "3ef0af6e0aebbb72297092674a48c7c5a6c8d8ef1120194f6d861bcc56218aae",
+    "server/manager-store.ts": "b2dad7db8a01d286d2cbe06e5b1318c8a86cf4088a432b684fc8d0b2dc9bf2c3",
     "server/manager-tools.test.ts": "193e47ca06b4144e17b5d65c7effca68a633bb6e121cc48b3fdd0ebda44a5448",
     "server/manager-tools.ts": "883ec3a586ea6acf5f82c9c1eeee9ed09f854e0c5a01c293490909182b85995e",
     "server/multi-node.test.ts": "7902f181c2c672f69995329d2e5402bf05e20b011a8b117b2c5648eaa1ef9fa1",
@@ -653,27 +653,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "66b3158c135c133bc9fe8697b8714b2f15916aabb14d1515c907dc384ad8f3a0",
-    "communities.json": "90909cf7001930f7be33e6258e5af6c4a3c62274f82a2db45be86cded0c6c4b6",
-    "graph.html": "0e24340f7b0713d9be2bee446e39338644c4c6275c3a138a2e15f7ba66d38791",
-    "graph.json": "b87fae5ec7f04ab3f5ddfc57286fe0049be56f6aba68f6a8b10efefbbb036b4a"
+    "GRAPH_REPORT.md": "bf99780679ef0b198f15971e63a2b08dad1c9403ea35b2937357fbbe15b3d7b6",
+    "communities.json": "ac4cbbcd9206d895628353e5a48e2beaffbdcd214fce600de5dbfdc304484c6a",
+    "graph.html": "9714ea9819a2d2b9a7828fb3cb57d3d9d813b0943c0d02b39e52ffeafa689096",
+    "graph.json": "a4fce4094a42a44d6924698f2d2aca12503620a9a6332411543661898a00273b"
   },
   "schema_version": 1,
-  "source_commit": "bcf8f9d9888ae2228614afd2c9a61a40502f3b39",
-  "source_fingerprint": "ca58f7dae6cd6b5cc16f93c72ff2783878c1db8bf2b23bf4aa065a43e5ce8a7e",
+  "source_commit": "4376bb9c951a2e8d568b1c4f2199caa6237d6ed5",
+  "source_fingerprint": "4770b150fbb30bb8a90ce53f4753e2be0409d3f12cdfbe039b85b66ad33116dc",
   "working_tree_changes": [
-    "docs/app-spec.md",
     "docs/design/session-manager.md",
     "server/manager-agent.test.ts",
     "server/manager-agent.ts",
-    "server/manager-store.ts",
-    "shared/manager.ts",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/OracleSettings.test.tsx",
-    "src/OracleSettings.tsx",
-    "src/index.css"
+    "server/manager-store.ts"
   ]
 }

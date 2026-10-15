@@ -14,12 +14,71 @@ interface ServerIdentity {
   state: string
 }
 
+const ownedServers = new Map<string, ServerIdentity>()
+
 /**
  * Gives each test its own tmux socket namespace. Reusing tmux's default socket
  * lets one test race a 3.6 server that is still exiting after the prior test.
+ *
+ * The namespace is served by a server the fixture starts and keeps until
+ * teardown, even while it has no sessions. Left to exit with its last session
+ * -- or never started, as in parser-only tests -- teardown had to prove the
+ * server absent through a host-wide process scan, and any tmux in another
+ * mount namespace (a sandboxed suite run on the same host) leaves that scan
+ * indeterminate for as long as it runs.
+ *
+ * Requires tmux 3.4 or newer, the first release whose `update-environment`
+ * copies every variable a pattern matches.
+ *
+ * Production's default `exit-empty` never leaves a server without sessions,
+ * and such a server answers `list-panes -a` with "no current target". A test
+ * whose code under test lists panes keeps a session of its own open.
  */
 export async function createIsolatedTmuxRoot(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), 'agentic-remote-tmux-test-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'agentic-remote-tmux-test-'))
+  try {
+    ownedServers.set(root, await startOwnedServer(root))
+  } catch (error) {
+    try {
+      await stopIsolatedTmuxServer(root)
+    } catch (cleanup) {
+      throw new AggregateError([error, cleanup], `Unable to start or retire the tmux server owned by ${root}`)
+    }
+    throw error
+  }
+  return root
+}
+
+async function startOwnedServer(root: string): Promise<ServerIdentity> {
+  const { stdout } = await execFileAsync('tmux', [
+    // The fixture's settings alone, never the host's tmux configuration.
+    '-f', '/dev/null', 'start-server',
+    ';', 'set-option', '-g', 'exit-empty', 'off',
+    // Panes take the server's environment, captured here before the test
+    // stubs its own. Let each session take its creating client's instead, as
+    // when that client was the one starting the server.
+    ';', 'set-option', '-g', 'update-environment', '*',
+    ';', 'display-message', '-p', '#{pid} #{version}',
+    ';', 'show-options', '-gv', 'exit-empty',
+  ], { env: isolatedTmuxEnv(root) })
+  const [reported, exitEmpty] = stdout.trim().split('\n')
+  const [reportedPid, version = ''] = (reported ?? '').trim().split(' ')
+  const pid = serverPid(reportedPid)
+  // Earlier releases copy only the first variable `*` matches, or none.
+  const [, major, minor] = /^(?:next-)?(\d+)\.(\d+)/.exec(version) ?? []
+  if (!major || Number(major) * 100 + Number(minor) < 304) {
+    throw new Error(
+      `Isolated tmux fixtures need tmux 3.4 or newer to give each session its creating client's environment; found ${version || 'no version'}`,
+    )
+  }
+  if (exitEmpty?.trim() !== 'off') {
+    throw new Error('Unable to keep the owned tmux server running while it has no sessions')
+  }
+  const identity = await serverIdentity(pid)
+  if (!identity || retired(identity)) {
+    throw new Error(`Owned tmux server PID ${pid} did not stay running`)
+  }
+  return identity
 }
 
 /**
@@ -37,6 +96,48 @@ export function isolatedTmuxEnv(root: string): NodeJS.ProcessEnv {
 }
 
 export async function stopIsolatedTmuxServer(root: string): Promise<void> {
+  const owned = ownedServers.get(root)
+  if (owned) {
+    await retireOwnedServer(root, owned)
+    ownedServers.delete(root)
+  } else {
+    await retireDiscoveredServer(root)
+  }
+  await rm(root, { recursive: true, force: true })
+}
+
+/**
+ * The fixture recorded this server's identity when it started it, so the
+ * exact process is the evidence: an unreachable or replaced server fails
+ * teardown rather than being inferred absent from the rest of the host.
+ */
+async function retireOwnedServer(root: string, owned: ServerIdentity): Promise<void> {
+  const current = await serverIdentity(owned.pid)
+  assertSameIdentity(owned, current)
+  if (retired(current)) {
+    throw new Error(`Owned tmux server PID ${owned.pid} exited before teardown`)
+  }
+  const { stdout } = await execFileAsync('tmux', ['display-message', '-p', '#{pid}'], {
+    env: isolatedTmuxEnv(root),
+  })
+  if (serverPid(stdout) !== owned.pid) {
+    throw new Error('Owned tmux server identity changed before shutdown')
+  }
+  assertSameIdentity(owned, await serverIdentity(owned.pid))
+  let failure: unknown
+  try {
+    await execFileAsync('tmux', ['kill-server'], { env: isolatedTmuxEnv(root) })
+  } catch (error) {
+    // kill-server can fail once its server has begun exiting; the exact
+    // process is the evidence either way.
+    failure = error
+  }
+  if (!(await retirement(owned))) {
+    throw failure ?? new Error(`Timed out waiting for owned tmux server PID ${owned.pid} to retire`)
+  }
+}
+
+async function retireDiscoveredServer(root: string): Promise<void> {
   const pid = await ownedServerPid(root)
   if (pid !== undefined) {
     const identity = await serverIdentity(pid)
@@ -58,14 +159,18 @@ export async function stopIsolatedTmuxServer(root: string): Promise<void> {
 
     // The client can exit before its server. Keep the namespace intact until
     // the exact process has retired, so the next fixture cannot probe it mid-exit.
-    const stopped = await eventually(async () => {
-      const remaining = await serverIdentity(pid)
-      assertSameIdentity(identity, remaining)
-      return retired(remaining)
-    }, Boolean, retirementTimeoutMs)
-    if (!stopped) throw new Error(`Timed out waiting for owned tmux server PID ${pid} to retire`)
+    if (!(await retirement(identity))) {
+      throw new Error(`Timed out waiting for owned tmux server PID ${pid} to retire`)
+    }
   }
-  await rm(root, { recursive: true, force: true })
+}
+
+async function retirement(identity: ServerIdentity): Promise<boolean> {
+  return eventually(async () => {
+    const remaining = await serverIdentity(identity.pid)
+    assertSameIdentity(identity, remaining)
+    return retired(remaining)
+  }, Boolean, retirementTimeoutMs)
 }
 
 async function ownedServerPid(root: string): Promise<number | undefined> {
@@ -83,8 +188,13 @@ async function ownedServerPid(root: string): Promise<number | undefined> {
     }
     throw error
   }
-  const pid = Number(stdout.trim())
-  if (!/^\d+$/.test(stdout.trim()) || !Number.isSafeInteger(pid) || pid <= 0) {
+  return serverPid(stdout)
+}
+
+function serverPid(reported: string | undefined): number {
+  const value = reported?.trim() ?? ''
+  const pid = Number(value)
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(pid) || pid <= 0) {
     throw new Error('Unable to read the owned tmux server PID')
   }
   return pid

@@ -17,6 +17,7 @@ import {
   isDirectCopilotSessionProcess,
   stopActiveCopilotSession,
 } from './active-sessions.js'
+import * as tmuxErrors from './tmux-errors.js'
 import {
   createIsolatedTmuxRoot,
   eventually,
@@ -67,6 +68,11 @@ afterEach(async () => {
 describe('active Copilot processes', () => {
   it('ignores Copilot-shaped descendants owned by the server', async () => {
     const sessionId = 'aaaaaaaa-1234-1234-1234-123456789abc'
+    // An unrelated pane keeps the fixture's server answerable, as a live one
+    // always is, without proving tmux absent from the rest of the host.
+    const tmuxSession = `agentic-unrelated-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxSession, 'sleep', '60'])
     const child = spawn(
       process.execPath,
       ['-e', 'setTimeout(() => {}, 60_000)', '--', '--session-id', sessionId],
@@ -541,8 +547,17 @@ describe('active Copilot processes', () => {
       directory,
       `echo "no server running on ${path.join(directory, 'absent-socket')}" >&2\nexit 1\n`,
     )
-
-    await expect(findActiveCopilotProcesses()).resolves.toEqual([])
+    // The absence verdict reads the whole host, which any tmux in another
+    // mount namespace leaves indeterminate; tmux-errors tests own that proof.
+    const absence = vi.spyOn(tmuxErrors, 'noTmuxServer').mockResolvedValue(true)
+    try {
+      await expect(findActiveCopilotProcesses()).resolves.toEqual([])
+      expect(absence).toHaveBeenCalledWith(expect.objectContaining({
+        stderr: expect.stringContaining('absent-socket'),
+      }))
+    } finally {
+      absence.mockRestore()
+    }
   })
 
   it('leaves a session running when tmux cannot say whether it is', async () => {

@@ -64,6 +64,17 @@ function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnap
   }
 }
 
+/**
+ * A message as a request returned it. The event socket can have delivered a
+ * newer version first, which the response must not roll back.
+ */
+function withReturnedMessage(snapshot: ManagerSnapshot, message: ManagerMessage): ManagerSnapshot {
+  const existing = snapshot.messages.find((candidate) => candidate.id === message.id)
+  const stamp = (candidate: ManagerMessage) => candidate.updatedAt ?? candidate.createdAt
+  if (existing && stamp(existing) >= stamp(message)) return snapshot
+  return applyEvent(snapshot, { type: 'manager.message', message })
+}
+
 function statusLine(snapshot: ManagerSnapshot, openSessions: number): string {
   const queued = snapshot.queued > 0 ? ` · ${snapshot.queued} waiting` : ''
   if (snapshot.status === 'working') return `Working${queued}`
@@ -294,7 +305,7 @@ export function ManagerAssistant({
     setSendError(undefined)
     try {
       const message = await sendManagerMessage(content, defaults)
-      setSnapshot((current) => current ? applyEvent(current, { type: 'manager.message', message }) : current)
+      setSnapshot((current) => current ? withReturnedMessage(current, message) : current)
       if (content === draft) setDraft('')
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
@@ -308,7 +319,7 @@ export function ManagerAssistant({
     setSendError(undefined)
     try {
       const next = await retryManagerMessage(message.id)
-      setSnapshot((current) => current ? applyEvent(current, { type: 'manager.message', message: next }) : current)
+      setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     } finally {

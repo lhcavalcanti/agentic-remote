@@ -32,8 +32,12 @@ const fail = (message: string): Behavior => (session) => {
 class FakeSession implements ManagerSdkSession {
   readonly prompts: string[] = []
   private readonly handlers = new Set<(event: ManagerSdkEvent) => void>()
-  abort = vi.fn(async () => undefined)
+  // Aborting ends the turn, which the runtime reports as idle.
+  abort = vi.fn(async () => {
+    setTimeout(() => this.emit({ type: 'session.idle' }), 0)
+  })
   disconnect = vi.fn(async () => undefined)
+  disconnected = false
 
   constructor(
     readonly sessionId: string,
@@ -481,6 +485,117 @@ describe('ManagerAgent', () => {
     await agent!.send('again')
     await settled()
     expect(sdk.clients[1].resumeSession).toHaveBeenCalledWith('sdk-1', expect.anything())
+  })
+
+  it('restarts at once when the runtime dies in the middle of a turn', async () => {
+    sdk.behaviors.push((fakeSession) => {
+      fakeSession.disconnected = true
+    })
+    await start({ livenessIntervalMs: 10 })
+    const started = Date.now()
+    await agent!.send('hello')
+    await settled()
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(sdk.clients).toHaveLength(2)
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
+  it('honours Stop while the runtime is still starting', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const factory = sdk.factory
+    sdk.factory = () => {
+      const client = factory()
+      client.start.mockImplementationOnce(() => gate)
+      return client
+    }
+    await start()
+    const message = await agent!.send('hello')
+    await vi.waitFor(() => expect(sdk.clients).toHaveLength(1))
+    await agent!.cancel()
+    release()
+    await settled()
+    expect(agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!.state).toBe('cancelled')
+    expect(sdk.prompts).toEqual([])
+  })
+
+  it('answers nothing from before a reset that came while the runtime was starting', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const factory = sdk.factory
+    sdk.factory = () => {
+      const client = factory()
+      client.start.mockImplementationOnce(() => gate)
+      return client
+    }
+    await start()
+    await agent!.send('before the reset')
+    await vi.waitFor(() => expect(sdk.clients).toHaveLength(1))
+    const resetting = agent!.reset()
+    release()
+    await resetting
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(agent!.snapshot().messages).toEqual([])
+    expect(sdk.prompts).toEqual([])
+  })
+
+  it('ignores a stray idle from a stopped turn that arrives before its own reply', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      fakeSession.emit({ type: 'session.idle' })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      reply('The real answer.')(fakeSession, '')
+    })
+    await start({ earlyIdleMs: 500 })
+    await agent!.send('hello')
+    await settled()
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'The real answer.' })
+  })
+
+  it('reports a failed write instead of taking the hub down', async () => {
+    await start()
+    const original = store.upsertMessage.bind(store)
+    let failed = false
+    vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
+      if (message.state === 'running' && !failed) {
+        failed = true
+        throw new Error('disk full')
+      }
+      return original(message)
+    })
+    const message = await agent!.send('hello')
+    await vi.waitFor(() => expect(agent!.snapshot().status).toBe('offline'))
+    expect(agent!.snapshot().lastError).toBe('disk full')
+    expect(agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!.state).toBe('failed')
+  })
+
+  it('does not mark changes as seen by a turn a stop cut short', async () => {
+    await start()
+    await agent!.send('first')
+    await settled()
+    sessions = [...sessions, session('added')]
+    sdk.behaviors.push((fakeSession) => {
+      fakeSession.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: 'Partial' } })
+    })
+    await agent!.send('second')
+    await vi.waitFor(() => expect(agent!.snapshot().streaming?.content).toBe('Partial'))
+    const acknowledged = store.state().acknowledgedJournalSeq
+    await agent!.stop()
+    expect(store.state().acknowledgedJournalSeq).toBe(acknowledged)
+    expect(store.messages().find((message) => message.content === 'second')!.state).toBe('running')
+    agent = undefined
+  })
+
+  it('leaves no partial reply behind when a turn fails', async () => {
+    const partialThenFail: Behavior = (fakeSession) => {
+      fakeSession.emit({ type: 'assistant.message_delta', data: { messageId: 'r', deltaContent: 'Half' } })
+      fail('down')(fakeSession, '')
+    }
+    sdk.behaviors.push(partialThenFail, partialThenFail, partialThenFail, partialThenFail)
+    await start()
+    await agent!.send('hello')
+    await settled()
+    expect(agent!.snapshot().status).toBe('offline')
+    expect(agent!.snapshot().streaming).toBeUndefined()
   })
 
   it('lists skills through the runtime for delegated prompts', async () => {

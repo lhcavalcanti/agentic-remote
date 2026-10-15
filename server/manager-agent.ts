@@ -65,6 +65,8 @@ export interface ManagerSdkEvent {
 
 export interface ManagerSdkSession {
   sessionId: string
+  /** Set by the SDK once the runtime connection is gone. */
+  readonly disconnected?: boolean
   on(handler: (event: ManagerSdkEvent) => void): () => void
   send(options: { prompt: string }): Promise<string>
   abort(): Promise<void>
@@ -91,6 +93,7 @@ export interface ManagerSdkClient {
   createSession(config: ManagerSdkSessionConfig): Promise<ManagerSdkSession>
   resumeSession(sessionId: string, config: Omit<ManagerSdkSessionConfig, 'sessionId'>): Promise<ManagerSdkSession>
   deleteSession(sessionId: string): Promise<void>
+  ping?(message?: string): Promise<unknown>
   rpc?: {
     skills?: {
       discover(params: { projectPaths?: string[] }): Promise<{ skills: Array<{ name: string; description?: string; source?: string; enabled?: boolean }> }>
@@ -111,6 +114,10 @@ export interface ManagerAgentOptions {
   retryDelaysMs?: number[]
   idleStopMs?: number
   operationTimeoutMs?: number
+  /** How often a running turn checks that its runtime is still there. */
+  livenessIntervalMs?: number
+  /** How long an idle that arrives before any activity waits to be believed. */
+  earlyIdleMs?: number
   sessionIdFactory?: () => string
   now?: () => Date
 }
@@ -125,6 +132,15 @@ class TurnError extends Error {
 type Rung = 'same' | 'restart' | 'fresh'
 
 const KNOWN_SDK_SESSION_LIMIT = 200
+/** Events that show a turn is under way, as opposed to leftovers of the one before. */
+const TURN_ACTIVITY = new Set([
+  'user.message',
+  'assistant.turn_start',
+  'assistant.intent',
+  'assistant.message_delta',
+  'assistant.message',
+  'tool.execution_start',
+])
 const SKILL_CACHE_MS = 5 * 60 * 1000
 
 function errorMessage(error: unknown): string {
@@ -173,6 +189,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly retryDelaysMs: number[]
   private readonly idleStopMs: number
   private readonly operationTimeoutMs: number
+  private readonly livenessIntervalMs: number
+  private readonly earlyIdleMs: number
   private readonly sessionIdFactory: () => string
   private readonly now: () => Date
   private readonly tools: ManagerTool[]
@@ -180,7 +198,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private session?: ManagerSdkSession
   private status: ManagerStatus = 'idle'
   private lastError?: string
-  private running?: { messageId: string; cancel: () => void; cancelled: boolean }
+  private running?: { messageId: string; cancel: () => void }
+  /** Bumped by Start over; work for an earlier conversation stores nothing. */
+  private epoch = 0
   private pumping = false
   private started = false
   private stopped = false
@@ -212,6 +232,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.retryDelaysMs = options.retryDelaysMs ?? [1000, 4000]
     this.idleStopMs = options.idleStopMs ?? 10 * 60 * 1000
     this.operationTimeoutMs = options.operationTimeoutMs ?? 60_000
+    this.livenessIntervalMs = options.livenessIntervalMs ?? 2000
+    this.earlyIdleMs = options.earlyIdleMs ?? 10_000
     this.sessionIdFactory = options.sessionIdFactory ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
@@ -338,12 +360,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   /** Stops the turn being answered. Queued messages still go after it. */
   async cancel(): Promise<void> {
-    if (this.processing) this.cancelledMessageId = this.currentReplyTo
-    const running = this.running
-    if (!running) return
-    running.cancelled = true
-    running.cancel()
-    await withTimeout(this.session?.abort() ?? Promise.resolve(), 5000, 'abort').catch(() => undefined)
+    if (!this.processing) return
+    this.cancelledMessageId = this.currentReplyTo
+    // A running turn aborts and settles itself; otherwise the next checkpoint
+    // in the turn's attempt sees the request.
+    this.running?.cancel()
   }
 
   /** Starts a new conversation. Memory and the journal are kept. */
@@ -353,9 +374,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         await this.updateMessage({ ...message, state: 'cancelled' })
       }
     }
+    this.epoch += 1
     await this.cancel()
-    // Its outcome is stored by then, so none of it lands in the new conversation.
+    // Settled before the conversation is cleared; being from an earlier
+    // conversation, it stores nothing more.
     await this.processing?.catch(() => undefined)
+    this.streaming = undefined
     await this.retireSession()
     await this.store.resetConversation()
     await this.store.updateState((state) => {
@@ -420,7 +444,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       tool: activity.tool,
       ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
       ...(activity.sessionRefs?.length ? { sessionRefs: activity.sessionRefs } : {}),
-    })
+    }).catch((error: unknown) => console.warn('Could not record manager activity:', error))
     if (activity.tool === 'close_session') {
       this.emit('event', { type: 'manager.sessions', managedSessions: this.recorder.managedSessions() })
     }
@@ -435,18 +459,41 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         const next = this.store.messages().find((message) => message.role === 'user' && message.state === 'queued')
         if (!next) break
         this.clearIdleTimer()
-        this.processing = this.process(next)
+        this.processing = this.process(next).catch((error: unknown) => this.failUnexpectedly(next, error))
         await this.processing
         this.processing = undefined
       }
       if (this.status !== 'offline') this.setStatus('idle')
       this.scheduleIdleStop()
+    } catch (error) {
+      // Nothing the manager does may take the hub down with it.
+      console.error('Manager queue stopped unexpectedly:', error)
+      this.lastError = errorMessage(error)
+      this.setStatus('offline')
     } finally {
+      this.processing = undefined
       this.pumping = false
     }
   }
 
+  /** A turn that failed outside its recovery ladder, such as on a full disk. */
+  private async failUnexpectedly(message: ManagerMessage, error: unknown): Promise<void> {
+    console.error('Manager turn failed unexpectedly:', error)
+    this.streaming = undefined
+    this.lastError = errorMessage(error)
+    await this.updateMessage({
+      ...(this.store.message(message.id) ?? message),
+      state: 'failed',
+      error: `The manager could not answer: ${this.lastError}. Your message is kept; press Retry.`,
+      updatedAt: this.now().toISOString(),
+    }).catch(() => undefined)
+    this.setStatus('offline')
+  }
+
   private async process(message: ManagerMessage): Promise<void> {
+    const epoch = this.epoch
+    const current = () => !this.stopped && this.epoch === epoch
+    const cancelled = () => this.cancelledMessageId === message.id
     this.currentReplyTo = message.id
     this.cancelledMessageId = undefined
     this.streaming = undefined
@@ -461,37 +508,36 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     ]
     const failures: string[] = []
     const performed: string[] = []
-    let reply = ''
-    let succeeded = false
-    for (let index = 0; index < rungs.length && !this.stopped; index += 1) {
+    let turn: { text: string; acknowledgement?: { journalSeq: number; memoryHash?: string } } | undefined
+    for (let index = 0; index < rungs.length; index += 1) {
       const { rung, wait } = rungs[index]
       if (index > 0) {
         this.setStatus('recovering')
         if (wait) await delay(wait)
-        if (this.stopped) return
-        if (this.cancelledMessageId === message.id) {
-          await this.finishCancelled(message)
-          return
-        }
       }
+      if (!current()) return this.leave()
+      if (cancelled()) return this.finishCancelled(message, current)
       this.attemptActivities = []
       try {
         await this.prepare(rung)
+        if (!current()) return this.leave()
+        if (cancelled()) return this.finishCancelled(message, current)
         const prompt = await this.buildPrompt(message, {
           interrupted,
           performed,
           failure: failures.at(-1),
         })
-        reply = await this.runTurn(prompt)
-        succeeded = true
+        const acknowledgement = this.pendingAcknowledgement
+        if (!current()) return this.leave()
+        if (cancelled()) return this.finishCancelled(message, current)
+        turn = { text: await this.runTurn(prompt), acknowledgement }
         break
       } catch (error) {
         performed.push(...this.attemptActivities)
         if (error instanceof TurnError && error.kind === 'cancelled') {
-          await this.finishCancelled(message)
-          return
+          return this.finishCancelled(message, current)
         }
-        if (this.stopped) return
+        if (!current()) return this.leave()
         failures.push(errorMessage(error))
         console.warn(`Manager turn attempt ${index + 1} (${rung}) failed:`, errorMessage(error))
         // A stuck or unreachable runtime is not helped by asking it again.
@@ -499,14 +545,17 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         if (runtimeGone && rungs[index + 1]?.rung === 'same') {
           index = rungs.findIndex((candidate) => candidate.rung === 'restart') - 1
         }
-        if (rung !== 'same') this.dropSession()
+        if (rung !== 'same' || runtimeGone) this.dropSession()
       } finally {
         this.flushDelta()
       }
     }
-    if (this.stopped) return
+    // A stopped hub retries the message after its restart; an earlier
+    // conversation's turn has nowhere to go.
+    if (!current()) return this.leave()
     const finished = this.store.message(message.id) ?? message
-    if (!succeeded) {
+    if (!turn) {
+      this.streaming = undefined
       this.lastError = failures.at(-1) ?? 'The manager could not answer.'
       await this.updateMessage({
         ...finished,
@@ -519,13 +568,21 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       return
     }
     this.lastError = undefined
-    if (reply.trim()) {
-      const timestamp = this.now().toISOString()
+    this.needsMemoryIndex = false
+    this.needsBrief = false
+    const acknowledgement = turn.acknowledgement
+    if (acknowledgement) {
+      await this.store.updateState((state) => {
+        state.acknowledgedJournalSeq = Math.max(state.acknowledgedJournalSeq, acknowledgement.journalSeq)
+        if (acknowledgement.memoryHash) state.memoryHashShown = acknowledgement.memoryHash
+      })
+    }
+    if (turn.text.trim()) {
       await this.updateMessage({
         id: this.streamId() ?? randomUUID(),
         role: 'assistant',
-        content: reply.trim(),
-        createdAt: timestamp,
+        content: turn.text.trim(),
+        createdAt: this.now().toISOString(),
         replyTo: message.id,
       })
     }
@@ -535,20 +592,27 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.setStatus('working')
   }
 
-  private async finishCancelled(message: ManagerMessage): Promise<void> {
+  /** Leaves a turn without storing anything more, as on stop or Start over. */
+  private leave(): void {
+    this.streaming = undefined
+  }
+
+  private async finishCancelled(message: ManagerMessage, current: () => boolean): Promise<void> {
     const partial = this.streaming?.content.trim()
-    if (partial) {
+    const partialId = this.streaming?.messageId
+    this.streaming = undefined
+    if (!current()) return
+    if (partial && partialId) {
       await this.updateMessage({
-        id: this.streaming!.messageId,
+        id: partialId,
         role: 'assistant',
         content: `${partial}\n\n_(stopped)_`,
         createdAt: this.now().toISOString(),
         replyTo: message.id,
       })
     }
-    this.streaming = undefined
-    const current = this.store.message(message.id) ?? message
-    await this.updateMessage({ ...current, state: 'cancelled', updatedAt: this.now().toISOString() })
+    const stored = this.store.message(message.id) ?? message
+    await this.updateMessage({ ...stored, state: 'cancelled', updatedAt: this.now().toISOString() })
     await this.clearInterruption(message.id)
   }
 
@@ -611,22 +675,94 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   private async runTurn(prompt: string): Promise<string> {
     const session = this.session
+    const client = this.client
     if (!session) throw new TurnError('The manager runtime is not ready', 'runtime')
     const segments = new Map<string, string>()
     const order: string[] = []
     const text = () => order.map((id) => segments.get(id) ?? '').filter((part) => part.trim()).join('\n\n')
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+    const unref = <T extends ReturnType<typeof setTimeout>>(timer: T) => {
+      timer.unref?.()
+      timers.push(timer)
+      return timer
+    }
     let unsubscribe: (() => void) | undefined
-    let watchdog: ReturnType<typeof setTimeout> | undefined
+    let settled = false
     const outcome = new Promise<void>((resolve, reject) => {
-      const cancel = () => reject(new TurnError('Stopped', 'cancelled'))
-      this.running = { messageId: this.currentReplyTo ?? '', cancel, cancelled: false }
-      watchdog = setTimeout(() => {
+      const finish = (error?: TurnError) => {
+        if (settled) return
+        settled = true
+        if (error) reject(error)
+        else resolve()
+      }
+      // The idle that ends this turn follows its own activity. One that comes
+      // first belongs to a turn that was stopped just before, so it is only
+      // believed once nothing else has happened for a while.
+      let started = false
+      let stopping = false
+      let idleSeen: (() => void) | undefined
+      const idle = new Promise<void>((resolveIdle) => {
+        idleSeen = resolveIdle
+      })
+      this.running = {
+        messageId: this.currentReplyTo ?? '',
+        cancel: () => {
+          if (settled || stopping) return
+          stopping = true
+          void (async () => {
+            await withTimeout(session.abort(), 5000, 'abort').catch(() => undefined)
+            // Drained here, so the next turn never mistakes it for its own.
+            await Promise.race([idle, delay(5000)])
+            finish(new TurnError('Stopped', 'cancelled'))
+          })()
+        },
+      }
+      unref(setTimeout(() => {
         void withTimeout(session.abort(), 5000, 'abort').catch(() => undefined)
-        reject(new TurnError(`no answer within ${Math.round(this.turnTimeoutMs / 60_000) || 1} minutes`, 'timeout'))
-      }, this.turnTimeoutMs)
-      watchdog.unref?.()
+        finish(new TurnError(`no answer within ${Math.round(this.turnTimeoutMs / 60_000) || 1} minutes`, 'timeout'))
+      }, this.turnTimeoutMs))
+      // A runtime that dies mid-turn drops the session without a word.
+      let pinging = false
+      let lastPing = Date.now()
+      const liveness = setInterval(() => {
+        if (session.disconnected) {
+          finish(new TurnError('the manager runtime disconnected', 'transport'))
+          return
+        }
+        if (!client?.ping || pinging || Date.now() - lastPing < 60_000) return
+        pinging = true
+        lastPing = Date.now()
+        void withTimeout(client.ping(), 15_000, 'the manager runtime stopped responding')
+          .catch(() => finish(new TurnError('the manager runtime stopped responding', 'transport')))
+          .finally(() => {
+            pinging = false
+          })
+      }, this.livenessIntervalMs)
+      liveness.unref?.()
+      timers.push(liveness)
       unsubscribe = session.on((event) => {
         if (event.agentId || event.data?.parentToolCallId) return
+        if (event.type === 'session.idle') {
+          idleSeen?.()
+          if (stopping) return
+          if (started) {
+            finish()
+          } else {
+            unref(setTimeout(() => {
+              if (!started) finish()
+            }, this.earlyIdleMs))
+          }
+          return
+        }
+        if (event.type === 'session.error') {
+          finish(new TurnError(event.data?.message || event.data?.errorType || 'the runtime reported an error', 'runtime'))
+          return
+        }
+        if (event.type === 'session.compaction_complete') {
+          this.needsMemoryIndex = true
+          return
+        }
+        if (TURN_ACTIVITY.has(event.type)) started = true
         if (event.type === 'assistant.message_delta' && event.data?.deltaContent) {
           const id = event.data.messageId ?? 'reply'
           if (!segments.has(id)) order.push(id)
@@ -637,12 +773,6 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           if (!segments.has(id)) order.push(id)
           segments.set(id, event.data?.content ?? segments.get(id) ?? '')
           this.updateStream(text())
-        } else if (event.type === 'session.compaction_complete') {
-          this.needsMemoryIndex = true
-        } else if (event.type === 'session.error') {
-          reject(new TurnError(event.data?.message || event.data?.errorType || 'the runtime reported an error', 'runtime'))
-        } else if (event.type === 'session.idle') {
-          resolve()
         }
       })
     })
@@ -658,19 +788,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           .then(() => outcome),
       ])
     } finally {
+      settled = true
       unsubscribe?.()
-      if (watchdog) clearTimeout(watchdog)
+      for (const timer of timers) clearTimeout(timer)
       this.running = undefined
-    }
-    const acknowledgement = this.pendingAcknowledgement
-    this.pendingAcknowledgement = undefined
-    this.needsMemoryIndex = false
-    this.needsBrief = false
-    if (acknowledgement) {
-      await this.store.updateState((state) => {
-        state.acknowledgedJournalSeq = Math.max(state.acknowledgedJournalSeq, acknowledgement.journalSeq)
-        if (acknowledgement.memoryHash) state.memoryHashShown = acknowledgement.memoryHash
-      })
     }
     return text()
   }

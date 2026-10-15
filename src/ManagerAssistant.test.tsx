@@ -126,6 +126,19 @@ describe('ManagerAssistant', () => {
     expect(sendManagerMessage).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a newer update when the send response arrives after it', async () => {
+    let accept!: (value: Awaited<ReturnType<typeof sendManagerMessage>>) => void
+    vi.mocked(sendManagerMessage).mockReturnValue(new Promise((resolve) => { accept = resolve }))
+    const { emit } = setup()
+    await openPanel()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message the manager' }), { target: { value: 'status?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    emit({ type: 'manager.message', message: { id: 'm1', role: 'user', content: 'status?', createdAt: '2026-10-15T00:00:00.000Z', updatedAt: '2026-10-15T00:00:00.050Z', state: 'running' } })
+    await act(async () => accept({ id: 'm1', role: 'user', content: 'status?', createdAt: '2026-10-15T00:00:00.000Z', updatedAt: '2026-10-15T00:00:00.000Z', state: 'queued' }))
+    expect(screen.queryByText('Waiting its turn')).not.toBeInTheDocument()
+    expect(screen.getByText('status?')).toBeInTheDocument()
+  })
+
   it('keeps the draft and says why when sending fails', async () => {
     vi.mocked(sendManagerMessage).mockRejectedValue(new Error('Messages are limited to 100,000 characters.'))
     setup()
@@ -153,11 +166,11 @@ describe('ManagerAssistant', () => {
   })
 
   it('offers Retry on a failed message', async () => {
-    vi.mocked(retryManagerMessage).mockResolvedValue({ id: 'u1', role: 'user', content: 'hi', createdAt: 't', state: 'queued' })
+    vi.mocked(retryManagerMessage).mockResolvedValue({ id: 'u1', role: 'user', content: 'hi', createdAt: 't', updatedAt: '2026-10-15T00:00:02.000Z', state: 'queued' })
     setup({
       ...empty,
       status: 'offline',
-      messages: [{ id: 'u1', role: 'user', content: 'hi', createdAt: 't', state: 'failed', error: 'The manager could not answer: down.' }],
+      messages: [{ id: 'u1', role: 'user', content: 'hi', createdAt: 't', updatedAt: '2026-10-15T00:00:01.000Z', state: 'failed', error: 'The manager could not answer: down.' }],
     })
     await openPanel()
     expect(screen.getByText('Could not answer the last message')).toBeInTheDocument()

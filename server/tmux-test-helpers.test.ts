@@ -1,7 +1,7 @@
-import { readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { noTmuxServer } from './tmux-errors.js'
-import { stopIsolatedTmuxServer } from './tmux-test-helpers.js'
+import { createIsolatedTmuxRoot, stopIsolatedTmuxServer } from './tmux-test-helpers.js'
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }))
 
@@ -27,6 +27,7 @@ const missing = Object.assign(new Error('No server at the owned socket'), {
 let killed: boolean
 let state: string
 let start: string
+let fixtures = 0
 
 function processStat(processId = pid, processState = state, started = start): string {
   return `${processId} (tmux: server) ${[
@@ -45,6 +46,7 @@ beforeEach(() => {
   state = 'S'
   start = '100'
   execute.mockImplementation(async (_command, args: string[]) => {
+    if (args.includes('start-server')) return { stdout: `${pid}\noff\n`, stderr: '' }
     if (args[0] === 'display-message') return { stdout: `${pid}\n`, stderr: '' }
     if (args[0] === 'kill-server') {
       killed = true
@@ -57,6 +59,7 @@ beforeEach(() => {
     return processStat()
   })
   vi.mocked(rm).mockResolvedValue()
+  vi.mocked(mkdtemp).mockImplementation(async () => `/owned/initialized-${++fixtures}`)
   vi.mocked(noTmuxServer).mockResolvedValue(false)
 })
 
@@ -241,5 +244,112 @@ describe('owned tmux fixture retirement', () => {
     expect(String(await stopping)).toMatch(/retir|timed out/i)
     expect(commands('kill-server')).toHaveLength(1)
     expect(rm).not.toHaveBeenCalled()
+  })
+})
+
+describe('initialized tmux fixture', () => {
+  it('starts a server in the isolated namespace that outlives its last session', async () => {
+    vi.stubEnv('TMUX', '/unrelated/socket,99,0')
+    vi.stubEnv('TMUX_TMPDIR', '/unrelated')
+    const created = await createIsolatedTmuxRoot()
+
+    const [[command, args, options]] = execute.mock.calls
+    expect(command).toBe('tmux')
+    expect(args.slice(0, 3)).toEqual(['-f', '/dev/null', 'start-server'])
+    expect(args.join(' ')).toContain('; set-option -g exit-empty off ;')
+    expect(args.join(' ')).toContain('; set-option -g update-environment * ;')
+    expect(options.env).toMatchObject({ TMUX: '', TMUX_TMPDIR: created })
+    expect(commands('kill-server')).toHaveLength(0)
+    expect(rm).not.toHaveBeenCalled()
+  })
+
+  it('retires its own server without a host-wide absence verdict', async () => {
+    const created = await createIsolatedTmuxRoot()
+    vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
+    await stopIsolatedTmuxServer(created)
+
+    expect(commands('kill-server')).toHaveLength(1)
+    expect(noTmuxServer).not.toHaveBeenCalled()
+    expect(rm).toHaveBeenCalledExactlyOnceWith(created, { recursive: true, force: true })
+  })
+
+  it('accepts exact retirement when kill-server loses its connection to the dying server', async () => {
+    const created = await createIsolatedTmuxRoot()
+    execute.mockImplementation(async (_command, args: string[]) => {
+      if (args[0] === 'display-message') return { stdout: `${pid}\n`, stderr: '' }
+      killed = true
+      throw Object.assign(new Error('server exited unexpectedly'), { code: 1 })
+    })
+    vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
+    await stopIsolatedTmuxServer(created)
+    expect(rm).toHaveBeenCalledExactlyOnceWith(created, { recursive: true, force: true })
+  })
+
+  it('never infers absence when its own server cannot be reached at teardown', async () => {
+    const created = await createIsolatedTmuxRoot()
+    execute.mockRejectedValue(missing)
+    vi.mocked(noTmuxServer).mockResolvedValue(true)
+    await expect(stopIsolatedTmuxServer(created)).rejects.toThrow()
+    expect(noTmuxServer).not.toHaveBeenCalled()
+    expect(commands('kill-server')).toHaveLength(0)
+    expect(rm).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when its own server exited before teardown', async () => {
+    const created = await createIsolatedTmuxRoot()
+    state = 'Z'
+    await expect(stopIsolatedTmuxServer(created)).rejects.toThrow(/exited before teardown/)
+    expect(commands('kill-server')).toHaveLength(0)
+    expect(rm).not.toHaveBeenCalled()
+  })
+
+  it('refuses to kill when its socket now names a different server', async () => {
+    const created = await createIsolatedTmuxRoot()
+    execute.mockImplementation(async (_command, args: string[]) => {
+      if (args[0] === 'display-message') return { stdout: `${pid + 1}\n`, stderr: '' }
+      throw new Error('A replacement server must not be killed')
+    })
+    await expect(stopIsolatedTmuxServer(created)).rejects.toThrow(/identity/i)
+    expect(commands('kill-server')).toHaveLength(0)
+    expect(rm).not.toHaveBeenCalled()
+  })
+
+  it('refuses to kill a reused PID and preserves the root', async () => {
+    const created = await createIsolatedTmuxRoot()
+    start = '101'
+    await expect(stopIsolatedTmuxServer(created)).rejects.toThrow(/identity/i)
+    expect(commands('kill-server')).toHaveLength(0)
+    expect(rm).not.toHaveBeenCalled()
+  })
+
+  it('explicitly fails a bounded retirement timeout without deleting the root', async () => {
+    const created = await createIsolatedTmuxRoot()
+    const stopping = stopIsolatedTmuxServer(created).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await vi.advanceTimersByTimeAsync(2100)
+    expect(String(await stopping)).toMatch(/retir|timed out/i)
+    expect(commands('kill-server')).toHaveLength(1)
+    expect(rm).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['an empty server may exit', `${pid}\non\n`],
+    ['an invalid server PID', 'not-a-pid\noff\n'],
+  ])('retires a server it could not configure and rejects (%s)', async (_case, stdout) => {
+    execute.mockImplementation(async (_command, args: string[]) => {
+      if (args.includes('start-server')) return { stdout, stderr: '' }
+      if (args[0] === 'display-message') return { stdout: `${pid}\n`, stderr: '' }
+      if (args[0] === 'kill-server') {
+        killed = true
+        return { stdout: '', stderr: '' }
+      }
+      throw new Error(`Unexpected tmux command: ${args.join(' ')}`)
+    })
+    vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
+    await expect(createIsolatedTmuxRoot()).rejects.toThrow()
+    expect(commands('kill-server')).toHaveLength(1)
+    expect(rm).toHaveBeenCalledOnce()
   })
 })

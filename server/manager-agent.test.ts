@@ -684,7 +684,11 @@ describe('ManagerAgent', () => {
     const message = await agent!.send('Just tell me what you think', undefined, { answerOnly: true })
     expect(message.answerOnly).toBe(true)
     await settled()
-    expect(sdk.prompts[0]).toContain('The user chose Ask only for this message')
+    expect(sdk.prompts[0]).toContain('The user asked this in Ask mode')
+    // Its own memory and settings stay its own to change.
+    expect(sdk.prompts[0]).toContain('set_session_folder')
+    expect(sdk.prompts[0]).toContain('switching Oracle to Delegate')
+    expect(sdk.prompts[0]).not.toContain('untick')
     expect(refused).toMatchObject({ resultType: 'failure' })
     expect(hub.createSession).not.toHaveBeenCalled()
     // The next ordinary message may act again.
@@ -695,7 +699,7 @@ describe('ManagerAgent', () => {
     await agent!.send('Now start it')
     await settled()
     expect(hub.createSession).toHaveBeenCalledTimes(1)
-    expect(sdk.prompts[1]).not.toContain('Ask only')
+    expect(sdk.prompts[1]).not.toContain('Ask mode')
   })
 
   it('applies a chosen model in place from the next answer, and starts afresh for the default', async () => {

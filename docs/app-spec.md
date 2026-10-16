@@ -413,7 +413,7 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   run commands or edit files; work it accepts becomes a normal session on a
   chosen computer, named, given its task, and badged **Oracle** in the session
   list.
-- **Ask only** is the panel's conversational mode: you ask Oracle about your
+- **Ask** is the panel's conversational mode: you ask Oracle about your
   sessions while their work carries on. Oracle answers from the current state,
   reading sessions as they are recorded and asking side questions that fork a
   session's finished history, with the current state of a session still in a

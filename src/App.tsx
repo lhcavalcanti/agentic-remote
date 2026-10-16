@@ -1879,7 +1879,7 @@ const webCommands: SlashCommand[] = [
   sideQuestionWebCommand,
   {
     name: 'oracle',
-    description: 'Ask Oracle (Ask only); this session and its work are left alone',
+    description: 'Ask Oracle in Ask mode; this session and its work are left alone',
     inputHint: '<question>',
     allowDuringAgentExecution: true,
   },

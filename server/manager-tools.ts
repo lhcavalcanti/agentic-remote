@@ -36,7 +36,7 @@ export interface ManagerToolHost {
   discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]>
   markManaged(session: ManagedSession, task: string): Promise<void>
   registry(): ManagerRegistry
-  /** The message being answered is Ask only, so no session may be acted on. */
+  /** The message being answered was asked in Ask mode, so no session may be acted on. */
   answerOnly(): boolean
   /** Where Oracle starts new sessions, by computer ID. */
   sessionFolders(): Record<string, string>
@@ -181,10 +181,10 @@ export function createManagerTools(
       skipPermission: true,
       defer: 'never',
       handler: async (args) => {
-        // Enforced here rather than only asked of the model, so an Ask only
+        // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {
-          return failure('The user chose Ask only for this message, so no session may be started, messaged, renamed, stopped, or closed. Answer from what you can read and ask instead; they can untick Ask only to have it done.')
+          return failure('The user asked this in Ask mode, so no session may be started, messaged, renamed, stopped, or closed. Answer from what you can read and ask instead; switching Oracle to Delegate lets you do it.')
         }
         const parsed = schema.safeParse(args ?? {})
         if (!parsed.success) {

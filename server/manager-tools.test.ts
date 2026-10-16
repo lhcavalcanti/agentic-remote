@@ -251,7 +251,8 @@ describe('manager tools', () => {
     ] as const) {
       const result = await call(name, args)
       expect(result, name).toMatchObject({ resultType: 'failure' })
-      expect(JSON.stringify(result)).toContain('Ask only')
+      expect(JSON.stringify(result)).toContain('Ask mode')
+      expect(JSON.stringify(result)).toContain('switching Oracle to Delegate')
     }
     expect(host.createSession).not.toHaveBeenCalled()
     expect(host.sendMessage).not.toHaveBeenCalled()

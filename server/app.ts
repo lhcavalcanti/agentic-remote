@@ -62,6 +62,14 @@ import {
   registerFileUploadRoutes,
 } from './file-upload-routes.js'
 import {
+  readOracleVoiceConfig,
+  type OracleVoiceConfig,
+} from './oracle-voice-config.js'
+import type {
+  VoiceBackendCapability,
+  VoiceEngineFactory,
+} from './oracle-voice-engine.js'
+import {
   registerTranscriptionRoutes,
   transcriptionMultipartOptions,
 } from './transcription-routes.js'
@@ -83,6 +91,8 @@ export interface BuildAppOptions {
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
   settingsProfileStore?: SettingsProfileStore
+  /** Injected speech-engine construction seam; buildApp never starts it. */
+  voiceEngineFactory?: VoiceEngineFactory
   /**
    * The session manager agent. Built on a hub with the built-in session
    * service unless false or turned off with AGENTIC_REMOTE_MANAGER=off.
@@ -126,6 +136,9 @@ export async function buildApp(
   settingsProfileStore?: SettingsProfileStore
   managerAgent?: ManagerAgent
   managerStructuredMemory: ManagerStructuredMemoryRuntime
+  voiceConfig: OracleVoiceConfig
+  voiceEngineFactory?: VoiceEngineFactory
+  voiceCapability: VoiceBackendCapability
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -145,6 +158,28 @@ export async function buildApp(
   }
   const app = Fastify({ logger: options.logger ?? true })
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
+  let voiceConfig: OracleVoiceConfig = { enabled: false }
+  let voiceConfigurationError: string | undefined
+  try {
+    voiceConfig = await readOracleVoiceConfig(dataDirectory)
+  } catch (error) {
+    voiceConfigurationError = error instanceof Error ? error.message : String(error)
+  }
+  const voiceEngineFactory = options.voiceEngineFactory
+  const voiceCapability: VoiceBackendCapability = voiceConfigurationError
+    ? {
+        available: false,
+        reason: `Oracle voice configuration is invalid: ${voiceConfigurationError}`,
+      }
+    : !voiceConfig.enabled
+      ? {
+          available: false,
+          reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
+        }
+      : voiceEngineFactory?.capability() ?? {
+          available: false,
+          reason: 'Oracle voice engine is unavailable.',
+        }
   const agent = options.service
     ? undefined
     : new AgentService(new SessionStore(dataDirectory))
@@ -419,5 +454,8 @@ export async function buildApp(
     settingsProfileStore,
     managerAgent,
     managerStructuredMemory,
+    voiceConfig,
+    voiceEngineFactory,
+    voiceCapability,
   }
 }

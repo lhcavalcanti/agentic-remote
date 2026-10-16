@@ -1,17 +1,24 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { FastifyInstance } from 'fastify'
 import { build } from 'vite'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseAppVersion } from '../shared/app-version.js'
+import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
+import { buildApp } from './app.js'
+import { FakeVoiceEngineFactory } from './oracle-voice-engine.js'
 
 const directories: string[] = []
+const apps: FastifyInstance[] = []
 
 afterEach(async () => {
+  await Promise.all(apps.splice(0).map((app) => app.close()))
   await Promise.all(directories.splice(0).map((directory) =>
     rm(directory, { recursive: true, force: true }),
   ))
+  vi.unstubAllEnvs()
 })
 
 describe('production app build identity', () => {
@@ -59,4 +66,123 @@ describe('production app build identity', () => {
     expect(second.version).toBe(first.version)
     expect(second.buildId).not.toBe(first.buildId)
   }, 20_000)
+})
+
+describe('Oracle voice app construction', () => {
+  const transcriptionService = {
+    initialize: async () => undefined,
+    stop: async () => undefined,
+    transcribe: async () => ({ transcript: 'unchanged', durationSeconds: 1 }),
+  }
+
+  async function dataDirectory() {
+    const directory = await mkdtemp(path.join(tmpdir(), 'app-voice-'))
+    directories.push(directory)
+    return directory
+  }
+
+  it('keeps voice disabled unless explicitly enabled without starting an injected engine', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'off')
+    const factory = new FakeVoiceEngineFactory(undefined, {
+      available: true,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      languages: ['en'],
+      sttProfile: 'zipformer',
+      ttsVoice: 'lessac',
+      resourceClass: 'low',
+    })
+
+    const runtime = await buildApp({
+      dataDirectory: await dataDirectory(),
+      logger: false,
+      managerAgent: false,
+      transcriptionService,
+      voiceEngineFactory: factory,
+    })
+    apps.push(runtime.app)
+
+    expect(runtime.voiceConfig).toEqual({ enabled: false })
+    expect(runtime.voiceEngineFactory).toBe(factory)
+    expect(runtime.voiceCapability).toEqual({
+      available: false,
+      reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
+    })
+    expect(factory.initializedWith).toEqual([])
+  })
+
+  it('exposes validated enabled configuration without starting the engine', async () => {
+    const directory = await dataDirectory()
+    await mkdir(path.join(directory, 'stt'), { recursive: true })
+    await writeFile(path.join(directory, 'stt', 'encoder.onnx'), 'model')
+    await writeFile(path.join(directory, 'piper'), 'binary')
+    await writeFile(path.join(directory, 'voice.onnx'), 'voice')
+    await writeFile(path.join(directory, 'voice.json'), '{}')
+    const environment = {
+      AGENTIC_REMOTE_ORACLE_VOICE: 'on',
+      AGENTIC_REMOTE_VOICE_STT_MODEL_DIR: 'stt',
+      AGENTIC_REMOTE_VOICE_STT_PROFILE: 'zipformer',
+      AGENTIC_REMOTE_VOICE_LANGUAGE: 'en',
+      AGENTIC_REMOTE_VOICE_THREADS: '2',
+      AGENTIC_REMOTE_VOICE_ENDPOINT_MS: '700',
+      AGENTIC_REMOTE_VOICE_TTS_BIN: 'piper',
+      AGENTIC_REMOTE_VOICE_TTS_MODEL: 'voice.onnx',
+      AGENTIC_REMOTE_VOICE_TTS_CONFIG: 'voice.json',
+    }
+    for (const [name, value] of Object.entries(environment)) vi.stubEnv(name, value)
+    const factory = new FakeVoiceEngineFactory(undefined, {
+      available: true,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      languages: ['en'],
+      sttProfile: 'zipformer',
+      ttsVoice: 'lessac',
+      resourceClass: 'low',
+    })
+
+    const runtime = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      managerAgent: false,
+      transcriptionService,
+      voiceEngineFactory: factory,
+    })
+    apps.push(runtime.app)
+
+    expect(runtime.voiceConfig).toMatchObject({
+      enabled: true,
+      language: 'en',
+      threads: 2,
+      endpointMs: 700,
+    })
+    expect(runtime.voiceCapability).toEqual(factory.capability())
+    expect(factory.initializedWith).toEqual([])
+  })
+
+  it('reports invalid enabled configuration as unavailable while core routes stay healthy', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.test')
+    const runtime = await buildApp({
+      dataDirectory: await dataDirectory(),
+      logger: false,
+      managerAgent: false,
+      transcriptionService,
+    })
+    apps.push(runtime.app)
+
+    expect(runtime.voiceConfig).toEqual({ enabled: false })
+    expect(runtime.voiceCapability).toMatchObject({
+      available: false,
+      reason: expect.stringContaining('AGENTIC_REMOTE_VOICE_STT_PROFILE'),
+    })
+    expect(await runtime.app.inject({ method: 'GET', url: '/health' }))
+      .toMatchObject({ statusCode: 200 })
+    const headers = { host: 'hub.test', origin: 'https://hub.test' }
+    expect(await runtime.app.inject({ method: 'GET', url: '/api/manager', headers }))
+      .toMatchObject({ statusCode: 200 })
+    expect((await runtime.app.inject({
+      method: 'POST',
+      url: '/api/transcriptions',
+      headers,
+    })).statusCode)
+      .not.toBe(404)
+  })
 })

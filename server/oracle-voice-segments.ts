@@ -17,15 +17,24 @@ interface ProseSegment {
   end: number
 }
 
-interface EmittedSourceRange extends SpeakableCandidate {
+interface EmittedCandidate extends SpeakableCandidate {
   messageId: string
-  sourceSnapshot: string
+  present: boolean
+}
+
+type CandidateAlignment =
+  | { type: 'aligned'; emittedIndex: number; candidateIndex: number }
+  | { type: 'deleted'; emittedIndex: number }
+  | { type: 'inserted'; candidateIndex: number }
+
+interface AlignmentCost {
+  cost: number
 }
 
 export class SpeakableSegmenter {
   private messageId: string
   private readonly maxSegmentCharacters: number
-  private readonly emittedSourceRanges: EmittedSourceRange[] = []
+  private readonly emittedCandidates: EmittedCandidate[] = []
 
   constructor(messageId: string, maxSegmentCharacters = 320) {
     validateMessageId(messageId)
@@ -47,7 +56,7 @@ export class SpeakableSegmenter {
   reset(messageId: string): void {
     validateMessageId(messageId)
     this.messageId = messageId
-    this.emittedSourceRanges.length = 0
+    this.emittedCandidates.length = 0
   }
 
   private consume(snapshot: string, includeUnfinishedSuffix: boolean): string[] {
@@ -56,35 +65,32 @@ export class SpeakableSegmenter {
       includeUnfinishedSuffix,
       this.maxSegmentCharacters,
     )
-    const matchedCandidates = new Set<number>()
-    const matchedEmitted = new Set<number>()
-    for (const [emittedIndex, emitted] of this.emittedSourceRanges.entries()) {
-      const mappedRange = mapSourceRange(emitted, emitted.sourceSnapshot, snapshot)
-      if (mappedRange === undefined) continue
-      const candidateIndex = candidates.findIndex((candidate, index) =>
-        !matchedCandidates.has(index)
-        && candidate.text === emitted.text
-        && candidate.sourceStart === mappedRange.sourceStart
-        && candidate.sourceEnd === mappedRange.sourceEnd
-      )
-      if (candidateIndex === -1) continue
-      matchedCandidates.add(candidateIndex)
-      matchedEmitted.add(emittedIndex)
-      updateEmittedRange(emitted, candidates[candidateIndex], snapshot)
+    const alignments = alignCandidateSequences(this.emittedCandidates, candidates)
+    const freshCandidates: SpeakableCandidate[] = []
+    const nextEmittedCandidates: EmittedCandidate[] = []
+    for (const alignment of alignments) {
+      if (alignment.type === 'inserted') {
+        const candidate = candidates[alignment.candidateIndex]
+        freshCandidates.push(candidate)
+        nextEmittedCandidates.push({
+          messageId: this.messageId,
+          present: true,
+          ...candidate,
+        })
+      } else if (alignment.type === 'aligned') {
+        nextEmittedCandidates.push({
+          messageId: this.messageId,
+          present: true,
+          ...candidates[alignment.candidateIndex],
+        })
+      } else {
+        nextEmittedCandidates.push({
+          ...this.emittedCandidates[alignment.emittedIndex],
+          present: false,
+        })
+      }
     }
-    for (const [emittedIndex, emitted] of this.emittedSourceRanges.entries()) {
-      if (matchedEmitted.has(emittedIndex)) continue
-      const candidateIndex = findOverlappingCandidate(emitted, candidates, matchedCandidates)
-      if (candidateIndex === -1) continue
-      matchedCandidates.add(candidateIndex)
-      updateEmittedRange(emitted, candidates[candidateIndex], snapshot)
-    }
-    const freshCandidates = candidates.filter((_, index) => !matchedCandidates.has(index))
-    this.emittedSourceRanges.push(...freshCandidates.map((candidate) => ({
-      messageId: this.messageId,
-      sourceSnapshot: snapshot,
-      ...candidate,
-    })))
+    this.emittedCandidates.splice(0, this.emittedCandidates.length, ...nextEmittedCandidates)
     return freshCandidates.map(({ text }) => text)
   }
 }
@@ -269,46 +275,6 @@ function validateMessageId(messageId: string): void {
   }
 }
 
-function commonPrefixLength(left: string, right: string): number {
-  const maximum = Math.min(left.length, right.length)
-  let index = 0
-  while (index < maximum && left[index] === right[index]) index += 1
-  return index
-}
-
-function commonSuffixLength(left: string, right: string, prefixLength: number): number {
-  const maximum = Math.min(left.length, right.length) - prefixLength
-  let length = 0
-  while (
-    length < maximum
-    && left[left.length - length - 1] === right[right.length - length - 1]
-  ) {
-    length += 1
-  }
-  return length
-}
-
-function mapSourceRange(
-  range: SpeakableCandidate,
-  previousSnapshot: string,
-  snapshot: string,
-): Pick<SpeakableCandidate, 'sourceStart' | 'sourceEnd'> | undefined {
-  const prefixLength = commonPrefixLength(previousSnapshot, snapshot)
-  if (range.sourceEnd <= prefixLength) {
-    return { sourceStart: range.sourceStart, sourceEnd: range.sourceEnd }
-  }
-
-  const suffixLength = commonSuffixLength(previousSnapshot, snapshot, prefixLength)
-  const previousSuffixStart = previousSnapshot.length - suffixLength
-  if (range.sourceStart < previousSuffixStart) return undefined
-
-  const offset = snapshot.length - previousSnapshot.length
-  return {
-    sourceStart: range.sourceStart + offset,
-    sourceEnd: range.sourceEnd + offset,
-  }
-}
-
 function locateSourceRange(
   snapshot: string,
   block: ProseBlock,
@@ -335,32 +301,82 @@ function locateSourceRange(
   return { sourceStart: block.sourceStart, sourceEnd: block.sourceEnd }
 }
 
-function findOverlappingCandidate(
-  emitted: EmittedSourceRange,
+function alignCandidateSequences(
+  emitted: EmittedCandidate[],
   candidates: SpeakableCandidate[],
-  matchedCandidates: Set<number>,
-): number {
-  let bestIndex = -1
-  let bestOverlap = 0
-  for (const [index, candidate] of candidates.entries()) {
-    if (matchedCandidates.has(index)) continue
-    const overlap = Math.min(emitted.sourceEnd, candidate.sourceEnd)
-      - Math.max(emitted.sourceStart, candidate.sourceStart)
-    if (overlap > bestOverlap) {
-      bestIndex = index
-      bestOverlap = overlap
+): CandidateAlignment[] {
+  const costs: AlignmentCost[][] = Array.from(
+    { length: emitted.length + 1 },
+    () => Array.from({ length: candidates.length + 1 }, () => ({ cost: 0 })),
+  )
+  for (let emittedIndex = emitted.length; emittedIndex >= 0; emittedIndex -= 1) {
+    costs[emittedIndex][candidates.length].cost = emitted.length - emittedIndex
+  }
+  for (let candidateIndex = candidates.length; candidateIndex >= 0; candidateIndex -= 1) {
+    costs[emitted.length][candidateIndex].cost = candidates.length - candidateIndex
+  }
+  for (let emittedIndex = emitted.length - 1; emittedIndex >= 0; emittedIndex -= 1) {
+    for (
+      let candidateIndex = candidates.length - 1;
+      candidateIndex >= 0;
+      candidateIndex -= 1
+    ) {
+      const substitutionCost = candidateSubstitutionCost(
+        emitted[emittedIndex],
+        candidates[candidateIndex],
+      )
+      costs[emittedIndex][candidateIndex].cost = Math.min(
+        substitutionCost + costs[emittedIndex + 1][candidateIndex + 1].cost,
+        1 + costs[emittedIndex + 1][candidateIndex].cost,
+        1 + costs[emittedIndex][candidateIndex + 1].cost,
+      )
     }
   }
-  return bestIndex
+
+  const alignments: CandidateAlignment[] = []
+  let emittedIndex = 0
+  let candidateIndex = 0
+  while (emittedIndex < emitted.length || candidateIndex < candidates.length) {
+    if (emittedIndex === emitted.length) {
+      alignments.push({ type: 'inserted', candidateIndex })
+      candidateIndex += 1
+      continue
+    }
+    if (candidateIndex === candidates.length) {
+      alignments.push({ type: 'deleted', emittedIndex })
+      emittedIndex += 1
+      continue
+    }
+
+    const substitutionCost = candidateSubstitutionCost(
+      emitted[emittedIndex],
+      candidates[candidateIndex],
+    )
+    if (
+      costs[emittedIndex][candidateIndex].cost
+      === substitutionCost + costs[emittedIndex + 1][candidateIndex + 1].cost
+    ) {
+      alignments.push({ type: 'aligned', emittedIndex, candidateIndex })
+      emittedIndex += 1
+      candidateIndex += 1
+    } else if (
+      costs[emittedIndex][candidateIndex].cost
+      === 1 + costs[emittedIndex][candidateIndex + 1].cost
+    ) {
+      alignments.push({ type: 'inserted', candidateIndex })
+      candidateIndex += 1
+    } else {
+      alignments.push({ type: 'deleted', emittedIndex })
+      emittedIndex += 1
+    }
+  }
+  return alignments
 }
 
-function updateEmittedRange(
-  emitted: EmittedSourceRange,
+function candidateSubstitutionCost(
+  emitted: EmittedCandidate,
   candidate: SpeakableCandidate,
-  snapshot: string,
-): void {
-  emitted.text = candidate.text
-  emitted.sourceStart = candidate.sourceStart
-  emitted.sourceEnd = candidate.sourceEnd
-  emitted.sourceSnapshot = snapshot
+): number {
+  if (emitted.text === candidate.text) return 0
+  return emitted.present ? 2 : 3
 }

@@ -31,6 +31,18 @@ describe('SpeakableSegmenter', () => {
     expect(segmenter.update('First. Second.')).toEqual(['First.'])
   })
 
+  it('speaks new prose inserted before and after an emitted sentence', () => {
+    const segmenter = new SpeakableSegmenter('message-1')
+    expect(segmenter.update('Second.')).toEqual(['Second.'])
+    expect(segmenter.update('First. Second. Third.')).toEqual(['First.', 'Third.'])
+  })
+
+  it('preserves occurrence identity for repeated identical sentences', () => {
+    const segmenter = new SpeakableSegmenter('message-1')
+    expect(segmenter.update('Echo. Echo.')).toEqual(['Echo.', 'Echo.'])
+    expect(segmenter.update('Intro. Echo. Echo. Outro.')).toEqual(['Intro.', 'Outro.'])
+  })
+
   it('strips Markdown controls while retaining speakable prose', () => {
     const segmenter = new SpeakableSegmenter('message-1')
     expect(segmenter.update(

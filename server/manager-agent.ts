@@ -917,7 +917,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const pendingNotes = state.pendingNotes ?? []
     notes.push(...pendingNotes)
     if (message.answerOnly) {
-      notes.push('The user chose Ask only for this message: answer it yourself from the current state, while their sessions keep working undisturbed. Read sessions and use ask_session as needed, but do not start, message, rename, stop, or close any session. If they ask for one of those, say what you would do and that they can untick Ask only to have it done.')
+      notes.push('The user asked this in Ask mode: answer it yourself from the current state, while their sessions keep working undisturbed. Read sessions and use ask_session as needed. Your own memory and settings stay yours to change, so use set_session_folder if they ask where new sessions should start. Do not start, message, rename, stop, or close any session; if they ask for one of those, say what you would do and that switching Oracle to Delegate lets you do it.')
     }
     let context = buildTurnContext({
       now: this.now(),

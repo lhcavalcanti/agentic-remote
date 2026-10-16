@@ -92,6 +92,12 @@ describe('manager turn context', () => {
     expect(context).toContain('Computers: development (hub, this hub, online, new sessions start in /home/me/src/oracle) · production (node, offline)')
   })
 
+  it('tells Oracle that Ask mode leaves its own settings changeable', () => {
+    expect(MANAGER_SYSTEM_PROMPT).toContain('Ask mode')
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(/Ask mode[^\n]*set_session_folder/)
+    expect(MANAGER_SYSTEM_PROMPT).not.toContain('Ask only')
+  })
+
   it('collapses status churn and asks for memory upkeep after removals', () => {
     const registry: ManagerRegistry = {
       'hub:a': { computerId: 'hub', sessionId: 'a', title: 'Alpha', origin: 'manager', firstSeenAt: 't' },

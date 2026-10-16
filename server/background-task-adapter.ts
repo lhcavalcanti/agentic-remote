@@ -1364,6 +1364,23 @@ export function backgroundTasksFromEvents(
 
   for (const event of events) {
     const data = recordValue(event.data)
+    if (
+      event.type === 'session.start' ||
+      event.type === 'session.resume' ||
+      event.type === 'session.shutdown'
+    ) {
+      for (const task of tasks.values()) {
+        if (
+          (task.status === 'running' || task.status === 'queued') &&
+          task.attachmentMode !== 'detached'
+        ) {
+          task.status = 'failed'
+          task.completedAt = event.timestamp
+          task.error = task.error || 'Ended without reporting completion'
+          task.canCancel = false
+        }
+      }
+    }
     const completingCallId = event.type === 'tool.execution_complete'
       ? eventString(data, 'toolCallId')
       : undefined
@@ -1740,8 +1757,13 @@ export function backgroundTasksFromEvents(
       if (!id) {
         continue
       }
+      const previous = tasks.get(id)
       const current =
-        tasks.get(id) || eventTask(id, event.timestamp, data, assumeBackground)
+        event.type === 'subagent.started' &&
+          previous &&
+          isTerminalTaskStatus(previous.status)
+          ? eventTask(id, event.timestamp, data, assumeBackground)
+          : previous || eventTask(id, event.timestamp, data, assumeBackground)
       if (eventAgentId) {
         aliases.set(eventAgentId, id)
       }
@@ -2079,26 +2101,6 @@ export function backgroundTasksFromEvents(
     task.completedAt = endedAt
     task.error = task.error || 'Ended without reporting completion'
     task.canCancel = false
-  }
-  if (sessionEndedAt) {
-    // The session stopping ends everything it was running, agents included.
-    // Leaving an agent running because its completion was never reported also
-    // keeps alive every shell that is waiting on it.
-    for (const task of tasks.values()) {
-      if (
-        (task.status === 'running' || task.status === 'queued') &&
-        // A detached shell is deliberately not the session's to end: it was
-        // put outside it precisely so it would carry on, and its own process
-        // may still be running long after the session has gone.
-        task.attachmentMode !== 'detached' &&
-        task.startedAt < sessionEndedAt
-      ) {
-        task.status = 'failed'
-        task.completedAt = sessionEndedAt
-        task.error = task.error || 'Ended without reporting completion'
-        task.canCancel = false
-      }
-    }
   }
   return [...tasks.values()]
     .sort(

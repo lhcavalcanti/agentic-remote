@@ -404,6 +404,83 @@ describe('Closed terminal activation', () => {
     expect(f.terminal.reopen).not.toHaveBeenCalled()
   })
 
+  it('waits for SDK runtime configuration and reopens with the committed settings', async () => {
+    const f = await fixture()
+    const sdk = sdkSession('pending')
+    const disconnect = vi.spyOn(sdk, 'disconnect')
+    vi.mocked(f.client.resumeSession).mockResolvedValueOnce(sdk)
+    await f.service.listCommands('pending')
+    await f.store.setOpen('pending', false, true)
+    const refresh = vi.spyOn(
+      f.service as unknown as {
+        refreshRuntimeModels: () => Promise<void>
+      },
+      'refreshRuntimeModels',
+    ).mockResolvedValue(undefined)
+    f.service['runtimeModels'].set('updated-model', {
+      id: 'updated-model',
+      name: 'Updated model',
+      reasoningEfforts: ['high'],
+      contextTiers: ['long_context'],
+      contextTokenLimits: {},
+    })
+    const switchStarted = gate(undefined)
+    const releaseSwitch = gate({
+      modelId: 'updated-model',
+      reasoningEffort: 'high',
+      contextTier: 'long_context' as const,
+    })
+    vi.spyOn(sdk.rpc.model, 'switchTo').mockImplementationOnce(async () => {
+      switchStarted.finish(undefined)
+      return releaseSwitch.pending
+    })
+
+    const configuration = f.service.configureRuntime('pending', {
+      model: 'updated-model',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+      mode: 'autopilot',
+    })
+    await switchStarted.pending
+    const serializedConfiguration = f.service['lifecycleLocks'].has('pending')
+    const activation = f.service.activateSession('pending')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(disconnect).not.toHaveBeenCalled()
+    expect(f.terminal.reopen).not.toHaveBeenCalled()
+    releaseSwitch.finish({
+      modelId: 'updated-model',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
+
+    await expect(configuration).resolves.toMatchObject({
+      runtime: {
+        model: 'updated-model',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      },
+    })
+    await expect(activation).resolves.toMatchObject({
+      id: 'pending',
+      isOpen: true,
+    })
+    expect(serializedConfiguration).toBe(true)
+    expect(f.terminal.reopen).toHaveBeenCalledWith(
+      'pending',
+      f.directory,
+      'pending',
+      false,
+      expect.objectContaining({
+        model: 'updated-model',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      }),
+    )
+    refresh.mockRestore()
+  })
+
   it.each(['running', 'error'] as const)(
     'drains preserved work after a ready owner resumes from stale %s state',
     async (status) => {

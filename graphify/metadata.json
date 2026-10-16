@@ -269,9 +269,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 157,
+  "communities": 158,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11722,
+  "edges": 11727,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -346,16 +346,16 @@
     "server/active-sessions.test.ts": "019f7c2497b164a597697ab7f1182d0a30bb53b11a72ff06f140cf6f03d3cb67",
     "server/active-sessions.ts": "f9382ef4309e678bc3dd7f21c3d070db0ee9f62e142b687b4c39bce4d9108639",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
-    "server/agent-service-recovery.test.ts": "9f7046dee8efaa2d51d54d93517e24ca10751f8a77fa98c857171116fee2a28a",
+    "server/agent-service-recovery.test.ts": "2cecc2c41040b5ccfc9d2912dc6ecc992735087f6b38a109b630bdeaa9cd39fd",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "5eda80dd17e0da49c9ac1b14592edd7785c36c3deaec191e1c30bd1d6260c4be",
-    "server/agent-service.ts": "a2932209b5c6918bdffdba4f5662599b53070ed3af9ca7ccb9242888b32af83e",
+    "server/agent-service.ts": "5b276f8881ecd948b24128a5770b447f8c0db9640adc83e90941a6eb995ff3fb",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
     "server/app.ts": "0106e87a54770e1b60e119052758eb6f1390713f175a10de129eb5c5d65ae8ff",
-    "server/background-task-adapter.test.ts": "95a73c1c7a1f3ddb127816d8d52dd9af5a8e91d9fb89f4594c0085c1d08454e0",
-    "server/background-task-adapter.ts": "f65bdc38394443acc940f4ad869894bc28893dfda30b976d2191f2b8f4b0fffa",
+    "server/background-task-adapter.test.ts": "63304b3d73481475147682d8f95513beffbbcc9049a43823cc39d5600f4a4760",
+    "server/background-task-adapter.ts": "a987390d4403ca4d8c12138f40287085d1c029a41528495c152a45771072b0b8",
     "server/background-task-stop.test.ts": "737c6bba771904456ac14c34b3acc53daf76e34fc589713908ec6839c416ae2b",
     "server/background-task-tracker.test.ts": "50154bcfeb4996dd6a4129fc16c10696da63ff73b439249f28d6aa1864c63137",
     "server/background-task-tracker.ts": "47f0fd9ebf4164c3347376c09aaca797738caeab49eb09312fda5b6ff1d5fdc0",
@@ -599,7 +599,7 @@
     "vite.config.ts": "9886115e263bf52bbdb4d7ad9b48e16b7cabaffa3159891b9a5caa9776bfa4d1"
   },
   "mode": "local-ast-only",
-  "nodes": 4134,
+  "nodes": 4135,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -657,24 +657,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d0fa843ea68eb0fcf5a7fe18885c6ee0574f1f50789b18353f736576ea56cfc0",
-    "communities.json": "8ca0d3386c0cd27a7f460b1c8a22343592029d11a6c2788620e0e3e5389402fd",
-    "graph.html": "3a2ea177cac68a0eeb6651a646aaa3420f604b31da7e4d5270df5374b4d1be64",
-    "graph.json": "9c0f29d6b9368ab6e9facff6c7981aba5efcada1ef4ad49476fcf303dd280e30"
+    "GRAPH_REPORT.md": "29864a78d7389f9a7f23c5f845dc02a507922b9ea7cbd50f434e65b05c8dabf2",
+    "communities.json": "2cf05c81c4df56ccd68fd8a99142312b4791248d9a986735b75a0ed8d880ac78",
+    "graph.html": "b43e3556dd4d002c7d5e48e514730e7626ed11010e6192ff92af9033e539a24b",
+    "graph.json": "fb4a5d39ae015c67ebdcdaee0ed1e4ad283e062c727415b80cc11057af9aa056"
   },
   "schema_version": 1,
-  "source_commit": "84c3444ef390c350d432757605cfd291e7988e89",
-  "source_fingerprint": "7055cd1784f17e50b883d513979d6485ecccb1c653cdd1f2919ab0b1f51662ac",
+  "source_commit": "eb14ab0bdaf554f29a7b65e2ffed67d69047d43a",
+  "source_fingerprint": "6b0eb3ff2deabb3a53148420b54111c0b332755441ad2bc04cb741c7aec65397",
   "working_tree_changes": [
-    "README.md",
-    "docs/app-spec.md",
-    "docs/provider-compatibility.md",
-    "server/active-sessions.test.ts",
-    "server/active-sessions.ts",
     "server/agent-service-recovery.test.ts",
-    "server/agent-service.test.ts",
     "server/agent-service.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts"
+    "server/background-task-adapter.test.ts",
+    "server/background-task-adapter.ts"
   ]
 }

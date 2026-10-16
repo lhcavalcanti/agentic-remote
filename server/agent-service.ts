@@ -2843,15 +2843,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               { statusCode: 409 },
             )
           }
+          const reopenStored = await this.store.readAfterWrites(id)
           this.launchingTerminalSessionIds.add(id)
           this.discoveryGeneration += 1
           try {
             await this.terminalController.reopen(
               id,
-              stored.cwd,
-              stored.title,
-              stored.runtime?.allowAllPermissions ?? true,
-              stored.runtime,
+              reopenStored.cwd,
+              reopenStored.title,
+              reopenStored.runtime?.allowAllPermissions ?? true,
+              reopenStored.runtime,
             )
           } catch (error) {
             throw Object.assign(
@@ -3053,6 +3054,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async configureRuntime(
+    id: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail> {
+    return this.serializeLifecycle(
+      id,
+      () => this.configureRuntimeSerialized(id, input),
+    )
+  }
+
+  private async configureRuntimeSerialized(
     id: string,
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail> {

@@ -143,6 +143,8 @@ end the turn.
   queue; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
   the hub default) chooses Oracle's model, and with `{ sessionFolders: { <computer id>: path | null } }`
   its session folders; each part is optional and leaves the rest as it is.
+  Only `null` clears a folder (a blank one is a 400), and a computer that is
+  not paired is a 404 unless a folder kept for it is being removed.
   The snapshot reports them as `settings` and the socket as
   `manager.settings`. `state.json` keeps `sessionFolders`, the model the SDK
   conversation runs on (`sessionRuntime`), and the model and effort that
@@ -176,8 +178,10 @@ end the turn.
   model and effort, and each computer's session folder, are chosen and kept on
   the hub.
 - The panel is a right-hand drawer on desktop, resizable from its left edge
-  (340px up to whatever leaves the conversation 360px, at most 960px;
-  remembered per browser), and a full-height sheet on a phone. It shows the transcript (Markdown), tool activity chips, and a
+  (340px up to whatever leaves the conversation 360px beside the sessions
+  list, at most 960px; remembered per browser, and shown narrower without
+  forgetting the choice when the window narrows), and a full-height sheet on
+  a phone. It shows the transcript (Markdown), tool activity chips, and a
   composer whose Return behaviour follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.

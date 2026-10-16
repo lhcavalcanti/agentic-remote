@@ -41,7 +41,8 @@ const sendSchema = z.object({
 const settingsSchema = z.object({
   model: z.string().trim().max(200).nullable().optional(),
   reasoningEffort: effort.nullable().optional(),
-  sessionFolders: z.record(z.string().trim().min(1).max(200), z.string().trim().max(4096).nullable()).optional(),
+  // Null clears a folder; a blank one is a mistake, not a way to clear it.
+  sessionFolders: z.record(z.string().trim().min(1).max(200), z.string().trim().min(1).max(4096).nullable()).optional(),
 })
 
 const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })

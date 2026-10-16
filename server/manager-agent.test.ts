@@ -879,6 +879,8 @@ describe('ManagerAgent', () => {
     expect(events.at(-1)).toMatchObject({ type: 'manager.settings', settings: { sessionFolders: { hub: '/home/me/src/oracle' } } })
     await expect(agent!.updateSettings({ sessionFolders: { hub: '~/missing' } })).rejects.toMatchObject({ statusCode: 400 })
     await expect(agent!.updateSettings({ sessionFolders: { elsewhere: '~/src' } })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(agent!.updateSettings({ sessionFolders: { elsewhere: null } })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(agent!.updateSettings({ sessionFolders: { hub: '   ' } })).rejects.toMatchObject({ statusCode: 400 })
     expect(agent!.snapshot().settings?.sessionFolders).toEqual({ hub: '/home/me/src/oracle' })
 
     sdk.behaviors.push(async (fakeSession, prompt) => {
@@ -905,6 +907,11 @@ describe('ManagerAgent', () => {
     store = await openStore()
     await start()
     expect(agent!.snapshot().settings?.sessionFolders).toEqual({ hub: '/home/me/src/next' })
+    // A folder kept for a computer since unpaired can still be removed.
+    await store.updateState((state) => {
+      state.sessionFolders = { ...state.sessionFolders, gone: '/home/me/old' }
+    })
+    await agent!.updateSettings({ sessionFolders: { gone: null } })
     await agent!.updateSettings({ sessionFolders: { hub: null } })
     expect(agent!.snapshot().settings?.sessionFolders).toBeUndefined()
     expect(agent!.snapshot().settings?.model).toBe('gpt-6-sol')

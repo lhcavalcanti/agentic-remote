@@ -15899,6 +15899,7 @@ function App() {
         onOpenSession={openManagedSession}
         onOpenSettings={() => setSettingsOpen(true)}
         open={oracleOpen}
+        reservedLeft={sidebarWidth}
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}
       />

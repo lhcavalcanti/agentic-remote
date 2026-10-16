@@ -420,6 +420,33 @@ describe('ManagerAssistant', () => {
     expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
   })
 
+  it('keeps the conversation beside the sessions list wide enough', async () => {
+    const width = window.innerWidth
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+      localStorage.setItem('agentic-remote:oracle-width', '900')
+      setup(empty, { reservedLeft: 320 })
+      await openPanel()
+      const edge = screen.getByRole('separator', { name: 'Resize Oracle' })
+      // 1440 - 320 for the sessions list - 360 for the conversation.
+      expect(edge).toHaveAttribute('aria-valuemax', '760')
+      expect(edge).toHaveAttribute('aria-valuenow', '760')
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(edge).toHaveAttribute('aria-valuenow', '520')
+      // The width chosen is kept for when there is room again.
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1920 })
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(edge).toHaveAttribute('aria-valuenow', '900')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+    }
+  })
+
   it('reopens at the width it was given', async () => {
     localStorage.setItem('agentic-remote:oracle-width', '520')
     setup()

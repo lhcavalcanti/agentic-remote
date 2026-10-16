@@ -128,6 +128,10 @@ describe('manager routes', () => {
       method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: 42 } },
     })
     expect(badFolders.statusCode).toBe(400)
+    const blankFolder = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: '  ' } },
+    })
+    expect(blankFolder.statusCode).toBe(400)
     const update = vi.spyOn(managerAgent!, 'updateSettings').mockResolvedValueOnce({ sessionFolders: { hub: '/home/me/src' } })
     const folders = await app.inject({
       method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: '~/src', node: null } },

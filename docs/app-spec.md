@@ -401,8 +401,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   working ring, an unread dot, and every current state in its accessible name,
   such as "Oracle, working, new reply". It opens a non-modal drawer on a
   desktop, resizable from its left edge by drag or arrow keys (Home or a
-  double-click resets it) and remembered per browser, and a full-height sheet
-  on a phone. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
+  double-click resets it), remembered per browser, and never leaving the
+  conversation less than 360px beside the sessions list, and a full-height
+  sheet on a phone. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
   now waits its turn, and Send becomes **Queue message**.

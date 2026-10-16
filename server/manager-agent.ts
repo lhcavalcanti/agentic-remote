@@ -416,15 +416,20 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   /** Each folder as validated on its computer; undefined returns it to the default. */
   private async resolveFolders(input: Record<string, string | null>): Promise<Record<string, string | undefined>> {
     const resolved: Record<string, string | undefined> = {}
+    const unpaired = () => Object.assign(new Error('That computer is not paired with this hub.'), { statusCode: 404 })
     for (const [computerId, folder] of Object.entries(input)) {
-      const path = folder?.trim()
-      if (!path) {
+      const paired = this.hub.listComputers().some((computer) => computer.id === computerId)
+      if (folder === null) {
+        // A folder kept for a computer since unpaired can still be removed.
+        if (!paired && !this.store.state().sessionFolders?.[computerId]) throw unpaired()
         resolved[computerId] = undefined
         continue
       }
-      if (!this.hub.listComputers().some((computer) => computer.id === computerId)) {
-        throw Object.assign(new Error('That computer is not paired with this hub.'), { statusCode: 404 })
+      const path = folder.trim()
+      if (!path) {
+        throw Object.assign(new Error('Choose a folder, or clear it to use the default.'), { statusCode: 400 })
       }
+      if (!paired) throw unpaired()
       resolved[computerId] = await this.hub.validateSessionDirectory(computerId, path)
     }
     return resolved

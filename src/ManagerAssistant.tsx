@@ -220,19 +220,15 @@ const WIDTH_MAX = 960
 /** The conversation keeps at least this much beside the panel. */
 const CONVERSATION_MIN = 360
 
-function widthLimit(): number {
-  const viewport = typeof window === 'undefined' ? WIDTH_MAX + CONVERSATION_MIN : window.innerWidth
-  return Math.max(WIDTH_MIN, Math.min(WIDTH_MAX, viewport - CONVERSATION_MIN))
+function boundWidth(value: number, limit = WIDTH_MAX): number {
+  return Math.min(limit, Math.max(WIDTH_MIN, Math.round(value)))
 }
 
-function clampWidth(value: number): number {
-  return Math.min(widthLimit(), Math.max(WIDTH_MIN, Math.round(value)))
-}
-
+/** The width chosen, which a narrow window may show narrower without forgetting it. */
 function readWidth(): number {
   try {
     const stored = Number(window.localStorage.getItem(widthStorageKey))
-    return Number.isFinite(stored) && stored > 0 ? clampWidth(stored) : WIDTH_DEFAULT
+    return Number.isFinite(stored) && stored > 0 ? boundWidth(stored) : WIDTH_DEFAULT
   } catch {
     return WIDTH_DEFAULT
   }
@@ -249,16 +245,29 @@ function storeWidth(width: number | undefined) {
 
 /**
  * The desktop panel's width, dragged from its left edge or changed with the
- * arrow keys, and remembered per browser. A phone always shows it full width.
+ * arrow keys, and remembered per browser. It never leaves the conversation
+ * less than 360px beside `reservedLeft`, the sessions list, even as the
+ * window narrows. A phone always shows it full width.
  */
-function usePanelWidth() {
-  const [width, setWidth] = useState(readWidth)
+function usePanelWidth(reservedLeft: number) {
+  const [preferred, setPreferred] = useState(readWidth)
+  const [viewport, setViewport] = useState(() => window.innerWidth)
   const [resizing, setResizing] = useState(false)
   const gesture = useRef<{ pointerId: number; startX: number; startWidth: number; width: number } | undefined>(undefined)
 
+  useEffect(() => {
+    const measure = () => setViewport(window.innerWidth)
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
+
+  const limit = boundWidth(viewport - reservedLeft - CONVERSATION_MIN)
+  const clampWidth = (value: number) => boundWidth(value, limit)
+  const width = clampWidth(preferred)
+
   function commit(next: number | undefined) {
     const value = next === undefined ? WIDTH_DEFAULT : clampWidth(next)
-    setWidth(value)
+    setPreferred(value)
     storeWidth(next === undefined ? undefined : value)
   }
 
@@ -269,7 +278,7 @@ function usePanelWidth() {
       'aria-controls': 'oracle-panel',
       'aria-label': 'Resize Oracle',
       'aria-orientation': 'vertical' as const,
-      'aria-valuemax': widthLimit(),
+      'aria-valuemax': limit,
       'aria-valuemin': WIDTH_MIN,
       'aria-valuenow': width,
       'data-resizing': resizing,
@@ -295,7 +304,7 @@ function usePanelWidth() {
         const current = gesture.current
         if (!current || current.pointerId !== event.pointerId) return
         current.width = clampWidth(current.startWidth + current.startX - event.clientX)
-        setWidth(current.width)
+        setPreferred(current.width)
       },
       onPointerUp: (event: PointerEvent<HTMLDivElement>) => finish(event),
       onPointerCancel: (event: PointerEvent<HTMLDivElement>) => finish(event),
@@ -420,6 +429,7 @@ export function ManagerAssistant({
   onManagedSessionsChange,
   onOpenSettings,
   controlRef,
+  reservedLeft = 0,
 }: {
   /** Changes each time the event socket reconnects, so the snapshot is reread. */
   connectionEpoch: number
@@ -433,6 +443,8 @@ export function ManagerAssistant({
   onManagedSessionsChange: (keys: string[]) => void
   onOpenSettings: () => void
   controlRef?: MutableRefObject<OracleControl | undefined>
+  /** Width taken on the left, such as the sessions list, that the panel may not reach into. */
+  reservedLeft?: number
 }) {
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
   const [draft, setDraft] = useState('')
@@ -447,7 +459,7 @@ export function ManagerAssistant({
   const listRef = useRef<HTMLOListElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
-  const panelWidth = usePanelWidth()
+  const panelWidth = usePanelWidth(reservedLeft)
   const openRef = useRef(open)
   const managedRef = useRef(onManagedSessionsChange)
   const indicatorRef = useRef(onIndicatorChange)

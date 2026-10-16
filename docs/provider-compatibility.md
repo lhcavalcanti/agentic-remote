@@ -85,6 +85,11 @@ history is not transferred between providers.
 - Restart has provider-specific meaning: Copilot reconnects or respawns its
   process; Claude clears transient error state and resumes lazily on the next
   turn.
+- Opening a retained Copilot tmux session uses the CLI's explicit same-ID
+  resume path. Agentic Remote recognizes both `--resume` and `--session-id`
+  owners, prevents duplicate launches, and releases preserved queued work only
+  after the resumed owner is ready. A refused provider resume leaves the
+  historical record and queue intact.
 - Recover conversation is distinct from same-ID Restart and destructive Clear.
   It creates a fresh Copilot identity, archives the visible transcript, seeds
   bounded earliest-and-latest text context before the preserved queue, and does

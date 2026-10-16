@@ -1101,6 +1101,15 @@ export async function removeQueuedManagerMessage(messageId: string): Promise<Man
   return response.message
 }
 
+/** Rewrites a waiting Oracle message in place, keeping its place in the queue. */
+export async function editQueuedManagerMessage(messageId: string, content: string): Promise<ManagerMessage> {
+  const response = await request<{ message: ManagerMessage }>(
+    `/api/manager/messages/${encodeURIComponent(messageId)}`,
+    { method: 'PUT', body: JSON.stringify({ content }) },
+  )
+  return response.message
+}
+
 export async function updateManagerSettings(
   input: UpdateManagerSettingsInput,
 ): Promise<ManagerSettingsSnapshot> {

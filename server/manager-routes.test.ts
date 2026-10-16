@@ -80,6 +80,11 @@ describe('manager routes', () => {
       payload: { content: 'hi', defaults: { mode: 'yolo' } },
     })
     expect(malformed.statusCode).toBe(400)
+    const oversized = await app.inject({
+      method: 'POST', url: '/api/manager/messages', headers: trusted,
+      payload: { content: 'x'.repeat(200_001) },
+    })
+    expect(oversized.statusCode).toBe(413)
   })
 
   it('applies the hub origin policy', async () => {
@@ -148,6 +153,26 @@ describe('manager routes', () => {
     const removed = await app.inject({ method: 'POST', url: '/api/manager/messages/m1/remove', headers: trusted })
     expect(removed.statusCode).toBe(200)
     expect(remove).toHaveBeenCalledWith('m1')
+
+    const editQueued = vi.spyOn(managerAgent!, 'editQueued').mockResolvedValue({
+      id: 'm2', role: 'user', content: 'revised', createdAt: 't', state: 'queued',
+    })
+    const edited = await app.inject({
+      method: 'PUT', url: '/api/manager/messages/m2', headers: trusted, payload: { content: 'revised' },
+    })
+    expect(edited.statusCode).toBe(200)
+    expect(edited.json().message).toMatchObject({ id: 'm2', content: 'revised' })
+    expect(editQueued).toHaveBeenCalledWith('m2', 'revised')
+    const missing = await app.inject({
+      method: 'PUT', url: '/api/manager/messages/m2', headers: trusted, payload: {},
+    })
+    expect(missing.statusCode).toBe(400)
+    const oversized = await app.inject({
+      method: 'PUT', url: '/api/manager/messages/m2', headers: trusted,
+      payload: { content: 'x'.repeat(200_001) },
+    })
+    expect(oversized.statusCode).toBe(413)
+    expect(editQueued).toHaveBeenCalledTimes(1)
   })
 
   it('takes your answer to a confirmation', async () => {

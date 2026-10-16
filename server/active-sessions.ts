@@ -7,7 +7,7 @@ import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 
 const execFileAsync = promisify(execFile)
 const sessionPattern =
-  /(?:^|\s)--session-id(?:=|\s+)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\s|$)/i
+  /(?:^|\s)(?:--session-id|--resume|-r)(?:=|\s+)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\s|$)/i
 let clockTicks: Promise<number> | undefined
 let bootTimeMs: Promise<number> | undefined
 

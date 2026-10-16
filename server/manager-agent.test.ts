@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
-import { MANAGER_SNAPSHOT_MESSAGES, type ManagerEvent } from '../shared/manager.js'
+import { MANAGER_MESSAGE_MAX_LENGTH, MANAGER_SNAPSHOT_MESSAGES, type ManagerEvent } from '../shared/manager.js'
 import {
   ManagerAgent,
   type ManagerAgentOptions,
@@ -162,6 +162,10 @@ describe('ManagerAgent', () => {
       }),
       renameSession: vi.fn(async (_computerId: string, id: string, input: { title: string }) => session(id, { title: input.title })),
       sendMessage: vi.fn(async (_computerId: string, id: string) => session(id)),
+      replyPermission: vi.fn(async (_computerId: string, id: string) => session(id)),
+      replyUserInput: vi.fn(async (_computerId: string, id: string) => session(id)),
+      activateSession: vi.fn(async (_computerId: string, id: string) => session(id)),
+      resumeSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       cancel: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     }
@@ -702,6 +706,34 @@ describe('ManagerAgent', () => {
     expect(sdk.prompts[1]).not.toContain('Ask mode')
   })
 
+  it('steers a session through what it is waiting on, and reaches closed sessions', async () => {
+    vi.mocked(hub.readSession).mockImplementation(async (_computerId, id) => id !== 'existing' ? session(id) : session('existing', {
+      status: 'waiting',
+      pendingPermission: {
+        requestId: 'trust-1',
+        title: 'Trust folder for this session: /home/me/src/llmlab',
+        kind: 'terminal',
+        choiceCount: 3,
+        options: [
+          { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+          { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+        ],
+      },
+    }))
+    vi.mocked(hub.listHistory).mockResolvedValue([session('closed-1', { isOpen: false })])
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('answer_session')({ sessionId: 'existing', response: 'approve' })
+      await fakeSession.tool('send_to_session')({ sessionId: 'closed-1', message: 'Pick it back up.' })
+      reply('Done.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('Approve the trust prompt and restart the old one')
+    await settled()
+    expect(hub.replyPermission).toHaveBeenCalledWith('hub', 'existing', 'trust-1', { optionId: 'terminal:allow' })
+    expect(hub.activateSession).toHaveBeenCalledWith('hub', 'closed-1')
+    expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'closed-1', { content: 'Pick it back up.', enqueue: true })
+  })
+
   it('applies a chosen model in place from the next answer, and starts afresh for the default', async () => {
     await start({ model: 'hub-default' })
     await agent!.send('first')
@@ -939,6 +971,89 @@ describe('ManagerAgent', () => {
     await settled()
     expect(sdk.prompts.map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0])).toEqual(['one', 'three'])
     expect(agent!.snapshot().messages.find((m) => m.id === third.id)!.state).toBe('done')
+  })
+
+  it('edits a waiting message in place, keeping its identity and place in the queue', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      reply('first')(fakeSession, '')
+    })
+    await start()
+    const first = await agent!.send('one')
+    const second = await agent!.send('two')
+    const third = await agent!.send('three')
+    await vi.waitFor(() => expect(agent!.snapshot().messages.find((m) => m.id === first.id)!.state).toBe('running'))
+    const edited = await agent!.editQueued(second.id, '  two, with everything I meant  ')
+    expect(edited).toMatchObject({ id: second.id, content: 'two, with everything I meant', state: 'queued', createdAt: second.createdAt })
+    expect(events.at(-1)).toMatchObject({ type: 'manager.message', message: { id: second.id, content: 'two, with everything I meant' } })
+    const waiting = () => agent!.snapshot().messages.filter((m) => m.role === 'user').map((m) => m.id)
+    expect(waiting()).toEqual([first.id, second.id, third.id])
+    expect(agent!.snapshot().queued).toBe(2)
+
+    await expect(agent!.editQueued(first.id, 'too late')).rejects.toMatchObject({ statusCode: 409 })
+    await expect(agent!.editQueued('missing', 'x')).rejects.toMatchObject({ statusCode: 404 })
+    await expect(agent!.editQueued(third.id, '   ')).rejects.toMatchObject({ statusCode: 400 })
+    await expect(agent!.editQueued(third.id, 'x'.repeat(MANAGER_MESSAGE_MAX_LENGTH + 1))).rejects.toMatchObject({ statusCode: 413 })
+
+    await settled()
+    expect(sdk.prompts.map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0]))
+      .toEqual(['one', 'two, with everything I meant', 'three'])
+    await expect(agent!.editQueued(second.id, 'after it was answered')).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('never lets a message Oracle already started become editable again by Retry', async () => {
+    sdk.behaviors.push(fail('down'), fail('down'), fail('down'), fail('down'))
+    await start()
+    const message = await agent!.send('try this')
+    await settled()
+    const failed = agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!
+    expect(failed.state).toBe('failed')
+    expect(failed.startedAt).toBeDefined()
+    sdk.behaviors.push(async () => undefined)
+    const retried = await agent!.retry(message.id)
+    expect(retried.startedAt).toBe(failed.startedAt)
+    await expect(agent!.editQueued(message.id, 'something else')).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('marks a retried message started even when it failed before startedAt was recorded', async () => {
+    await store.upsertMessage({ id: 'old', role: 'user', content: 'from before', createdAt: 't0', state: 'failed', error: 'down' })
+    sdk.behaviors.push(async () => undefined)
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      excludeFromDiscovery: () => undefined,
+    })
+    const retried = await agent.retry('old')
+    expect(retried.startedAt).toBeDefined()
+    await expect(agent.editQueued('old', 'changed')).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('keeps an edit across a restart, and refuses one to a message Oracle had already started', async () => {
+    await store.upsertMessage({ id: 'm1', role: 'user', content: 'started before the restart', createdAt: 't1', state: 'queued' })
+    await store.upsertMessage({ id: 'm2', role: 'user', content: 'still waiting', createdAt: 't2', state: 'queued' })
+    await store.upsertMessage({ id: 'm3', role: 'user', content: 'last', createdAt: 't3', state: 'queued' })
+    await store.updateState((state) => {
+      state.interruptions = { m1: 1 }
+    })
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      excludeFromDiscovery: () => undefined,
+    })
+    await expect(agent.editQueued('m1', 'changed')).rejects.toMatchObject({ statusCode: 409 })
+    await agent.editQueued('m2', 'still waiting, now clearer')
+    await store.flush()
+    agent = undefined
+    store = await openStore()
+    expect(store.messages().map((message) => [message.id, message.content])).toEqual([
+      ['m1', 'started before the restart'],
+      ['m2', 'still waiting, now clearer'],
+      ['m3', 'last'],
+    ])
   })
 
   it('keeps the queue across a restart', async () => {

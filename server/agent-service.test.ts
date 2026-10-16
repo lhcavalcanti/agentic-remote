@@ -2700,7 +2700,8 @@ describe('AgentService deletion', () => {
         const retained = store.get('terminal-owner')
         await expect(service.openSession('terminal-owner')).resolves.toEqual(retained)
         expect(store.shouldRecoverTerminalSession('terminal-owner')).toBe(true)
-        await expect(service.activateSession('terminal-owner')).rejects.toThrow(/discovery/)
+        await expect(service.activateSession('terminal-owner'))
+          .rejects.toThrow(/Reopening saved terminal sessions is not available/)
         await expect(service.listCommands('terminal-owner')).rejects.toThrow(/discovery/)
         expect(client.resumedSessionIds).toEqual([])
         expect(store.get('terminal-owner')).toEqual(retained)
@@ -10249,6 +10250,20 @@ describe('statusFromEvents', () => {
       ]),
     ).toBe('idle')
   })
+
+  it.each(['session.start', 'session.resume'])(
+    'resets stale foreground and background state when a process emits %s',
+    (type) => {
+      expect(
+        statusFromEvents([
+          event('assistant.turn_start'),
+          event('subagent.started', 'agent-1'),
+          event('session.error'),
+          event(type),
+        ]),
+      ).toBe('idle')
+    },
+  )
 
   it('still reports a question rather than the agents behind it', () => {
     expect(

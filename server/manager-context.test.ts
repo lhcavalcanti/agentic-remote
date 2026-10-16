@@ -92,6 +92,11 @@ describe('manager turn context', () => {
     expect(context).toContain('Computers: development (hub, this hub, online, new sessions start in /home/me/src/oracle) · production (node, offline)')
   })
 
+  it('lets Oracle answer waiting sessions in Delegate, and only leaves them to the user in Ask mode', () => {
+    expect(MANAGER_SYSTEM_PROMPT).not.toContain('you cannot answer for them')
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(/waiting for the user[^\n]*answer_session[^\n]*Ask mode/)
+  })
+
   it('tells Oracle that Ask mode leaves its own settings changeable', () => {
     expect(MANAGER_SYSTEM_PROMPT).toContain('Ask mode')
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/Ask mode[^\n]*set_session_folder/)

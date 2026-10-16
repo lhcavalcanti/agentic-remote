@@ -5,7 +5,10 @@ import type {
   ComputerSummary,
   CreateSessionInput,
   ManagedSession,
+  PendingPermission,
   RuntimeReasoningEffort,
+  UserInputField,
+  UserInputReplyInput,
 } from '../shared/contracts.js'
 import type { ManagerClientDefaults, ManagerSessionRef } from '../shared/manager.js'
 import { rosterLine } from './manager-context.js'
@@ -30,6 +33,14 @@ export interface ManagerToolHost {
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, title: string): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, content: string): Promise<ManagedSession>
+  /** Answers a permission request, such as folder trust, with one of its options. */
+  replyPermission(computerId: string, sessionId: string, requestId: string, optionId: string): Promise<ManagedSession>
+  /** Answers a question or form the session is waiting on. */
+  replyUserInput(computerId: string, sessionId: string, requestId: string, input: UserInputReplyInput): Promise<ManagedSession>
+  /** Opens a closed session again, so it can be steered. */
+  reopenSession(computerId: string, sessionId: string): Promise<ManagedSession>
+  /** Resumes a suspended session, so it can be steered. */
+  resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
   /** Asks you, in the app, to confirm closing a session. Nothing is deleted until you do. */
   requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void>
@@ -118,10 +129,104 @@ function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}… (truncated)` : text
 }
 
+const FOLDER_TRUST_PREFIX = 'Trust folder for this session:'
+const APPROVE_WORDS = new Set(['allow', 'approve', 'accept', 'yes', 'trust', 'ok', 'continue'])
+const DECLINE_WORDS = new Set(['deny', 'reject', 'decline', 'no', 'stop', 'cancel'])
+
+/** The option a response names: its id or name, or approve or deny in plain words. */
+function permissionOption(permission: PendingPermission, response: string) {
+  const wanted = response.trim().toLowerCase()
+  const named = permission.options.find((option) =>
+    option.optionId.toLowerCase() === wanted || option.name.toLowerCase() === wanted)
+  if (named) return named
+  if (APPROVE_WORDS.has(wanted)) return permission.options.find((option) => option.kind.startsWith('allow'))
+  if (DECLINE_WORDS.has(wanted)) return permission.options.find((option) => option.kind.startsWith('reject'))
+  return undefined
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * The folder a genuine Copilot folder-trust prompt names, joined back where
+ * the terminal wrapped it. Anything else that merely starts with the same
+ * words, such as a command's permission, is not one.
+ */
+function trustedFolderOf(permission: PendingPermission): string | undefined {
+  if (permission.stale || permission.kind !== 'terminal' || permission.choiceCount !== 3) return undefined
+  if (!permission.title.startsWith(FOLDER_TRUST_PREFIX)) return undefined
+  const [allow, stop, ...rest] = permission.options
+  if (rest.length || allow?.optionId !== 'terminal:allow' || allow.name !== 'Trust for this session'
+    || stop?.optionId !== 'terminal:stop') return undefined
+  return permission.title.slice(FOLDER_TRUST_PREFIX.length).split('\n').map((part) => part.trim()).join('')
+}
+
+function sameFolder(left: string, right: string): boolean {
+  return left.replace(/\/+$/, '') === right.replace(/\/+$/, '')
+}
+
+function describeField(field: UserInputField): string {
+  const parts: string[] = [field.type]
+  if (field.required) parts.push('required')
+  if (field.options?.length) parts.push(`one of ${field.options.map((option) => option.value).join(', ')}`)
+  if (field.minimum !== undefined || field.maximum !== undefined) parts.push(`${field.minimum ?? ''}–${field.maximum ?? ''}`)
+  if (field.minLength !== undefined || field.maxLength !== undefined) parts.push(`${field.minLength ?? 0}–${field.maxLength ?? ''} characters`)
+  if (field.minItems !== undefined || field.maxItems !== undefined) parts.push(`${field.minItems ?? 0}–${field.maxItems ?? ''} items`)
+  if (field.format) parts.push(field.format)
+  return `${field.name} (${parts.join(', ')})`
+}
+
 export function createManagerTools(
   host: ManagerToolHost,
   onActivity: (activity: ManagerToolActivity) => void,
+  timing: { pollMs?: number; trustWaitMs?: number } = {},
 ): ManagerTool[] {
+  const pollMs = timing.pollMs ?? 250
+  const trustWaitMs = timing.trustWaitMs ?? 10_000
+
+  /**
+   * Answers the folder-trust prompt a session opens on, as the user would for
+   * a folder they chose, and waits for it to go. Without `waitMs` it only
+   * looks once. True when a prompt was answered.
+   */
+  async function trustFolder(session: ManagedSession, waitMs = 0): Promise<boolean> {
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const detail = await host.readSession(session.computerId, session.id).catch(() => undefined)
+      const permission = detail?.pendingPermission
+      const folder = permission && trustedFolderOf(permission)
+      // Only the folder the session was given; any other prompt is left to answer_session.
+      if (permission && folder && sameFolder(folder, detail.cwd || session.cwd)) {
+        await host.replyPermission(session.computerId, session.id, permission.requestId, 'terminal:allow')
+        onActivity({
+          tool: 'trust_folder',
+          content: `Trusted ${folder} for "${session.title}"`,
+          sessionRefs: [ref(session)],
+        })
+        // Copilot takes a moment to act on the answer; until then the prompt is still showing.
+        const settled = Date.now() + trustWaitMs
+        while (Date.now() < settled) {
+          const next = await host.readSession(session.computerId, session.id).catch(() => undefined)
+          if (next?.pendingPermission?.requestId !== permission.requestId) break
+          await delay(pollMs)
+        }
+        return true
+      }
+      if (Date.now() >= deadline) return false
+      await delay(pollMs)
+    }
+  }
+
+  /** Delivers a message, first answering a folder-trust prompt, and once more if one appears. */
+  async function deliver(session: ManagedSession, content: string): Promise<void> {
+    await trustFolder(session)
+    try {
+      await host.sendMessage(session.computerId, session.id, content)
+    } catch (error) {
+      if (!(await trustFolder(session, trustWaitMs))) throw error
+      await host.sendMessage(session.computerId, session.id, content)
+    }
+  }
+
   async function resolveSession(
     sessionId: string,
     computer?: string,
@@ -201,10 +306,30 @@ export function createManagerTools(
     }
   }
 
-  const pendingRequests = (session: ManagedSession) => [
-    ...(session.pendingPermission ? [`Waiting for the user to approve: ${session.pendingPermission.title}`] : []),
-    ...(session.pendingUserInput ? [`Waiting for the user to answer: ${session.pendingUserInput.question}`] : []),
-  ]
+  /** What a session waits on, with what answer_session needs to answer it. */
+  const pendingRequests = (session: ManagedSession) => {
+    const lines: string[] = []
+    const permission = session.pendingPermission
+    if (permission && !permission.stale) {
+      const options = (permission.options ?? []).map((option) => `"${option.name}"`)
+      lines.push(`Waiting for the user to approve: ${permission.title} (requestId ${permission.requestId}).${
+        options.length ? ` Options: ${options.join(', ')}.` : ''}`)
+    }
+    const question = session.pendingUserInput
+    if (question && !question.stale) {
+      const details = [
+        ...(question.choices?.length ? [`Choices: ${question.choices.map((choice) => `"${choice}"`).join(', ')}`] : []),
+        ...(question.multiSelect ? ['several may be chosen'] : []),
+        ...(question.allowFreeform ? ['free text is allowed'] : []),
+      ]
+      lines.push(`Waiting for the user to answer: ${question.question} (requestId ${question.requestId}).${
+        details.length ? ` ${details.join('; ')}.` : ''}`)
+      if (question.form?.fields.length) {
+        lines.push(`Form fields: ${question.form.fields.map(describeField).join('; ')}.`)
+      }
+    }
+    return lines
+  }
 
   const describeSession = (session: ManagedSession) => {
     const line = rosterLine(session, host.registry()[registryKey(session.computerId, session.id)], host.now())
@@ -368,10 +493,10 @@ export function createManagerTools(
           sessionRefs: [ref(session)],
         })
         try {
-          await host.sendMessage(computer.id, session.id, args.prompt)
+          await deliver(session, args.prompt)
         } catch (error) {
           throw new ToolFailure(
-            `Session ${session.id} (${link(session)}) was created on ${computer.name}, but its task was not delivered: ${errorMessage(error)}. Retry with send_to_session using that id; do not create another session.`,
+            `Session ${session.id} (${link(session)}) was created on ${computer.name}, but its task was not delivered: ${errorMessage(error)}. Read it with get_session, answer anything it is waiting on with answer_session, then send the task with send_to_session using that id; do not create another session.`,
           )
         }
         return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}. Its task was sent.`
@@ -401,15 +526,22 @@ export function createManagerTools(
     ),
     define(
       'send_to_session',
-      'Send a message or follow-up instruction to an open session. If it is busy the message waits in its queue.',
+      'Send a message or follow-up instruction to any session. A closed session is reopened and a suspended one resumed first; a folder-trust prompt is answered. If it is busy the message waits in its queue.',
       z.object({
         sessionId: sessionIdField,
         computer: computerField.optional(),
         message: z.string().trim().min(1).max(100_000),
       }),
       async ({ sessionId, computer, message }) => {
-        const session = await resolveSession(sessionId, computer)
-        await host.sendMessage(session.computerId, session.id, message)
+        let session = await resolveSession(sessionId, computer, { history: true })
+        if (session.isOpen === false) {
+          session = { ...session, ...(await host.reopenSession(session.computerId, session.id)), title: session.title }
+          onActivity({ tool: 'send_to_session', content: `Reopened "${session.title}"`, sessionRefs: [ref(session)] })
+        } else if (session.suspended) {
+          session = { ...session, ...(await host.resumeSession(session.computerId, session.id)), title: session.title }
+          onActivity({ tool: 'send_to_session', content: `Resumed "${session.title}"`, sessionRefs: [ref(session)] })
+        }
+        await deliver(session, message)
         onActivity({ tool: 'send_to_session', content: `Sent a message to "${session.title}"`, sessionRefs: [ref(session)] })
         return `Sent to ${link(session)}${session.status === 'running' ? ' (it was busy, so the message is queued)' : ''}.`
       },
@@ -426,6 +558,80 @@ export function createManagerTools(
         return `Renamed to ${link(renamed)}.`
       },
       { actsOnSessions: true }
+    ),
+    define(
+      'answer_session',
+      "Answer what a session is waiting on, so it can carry on without the user: a permission request, including Copilot's folder-trust prompt, or a question or form. Read it first with get_session. For a permission, response names an option or says approve or deny. For a question, response is one of its choices or your own answer where it allows one; responses picks several; values fills a form; dismiss cancels a question.",
+      z.object({
+        sessionId: sessionIdField,
+        computer: computerField.optional(),
+        response: z.string().trim().min(1).max(20_000).optional(),
+        responses: z.array(z.string().trim().min(1).max(20_000)).min(1).max(32).optional(),
+        values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])).optional(),
+        dismiss: z.boolean().optional(),
+        requestId: z.string().trim().min(1).max(500).optional()
+          .describe('The request you read with get_session, so a different prompt is never answered by mistake.'),
+      }),
+      async ({ sessionId, computer, response, responses, values, dismiss, requestId }) => {
+        const found = await resolveSession(sessionId, computer)
+        const detail = await host.readSession(found.computerId, found.id)
+        const permission = detail.pendingPermission && !detail.pendingPermission.stale ? detail.pendingPermission : undefined
+        const question = detail.pendingUserInput && !detail.pendingUserInput.stale ? detail.pendingUserInput : undefined
+        const pending = permission ?? question
+        if (!pending) throw new ToolFailure(`"${found.title}" is not waiting on an answer.`)
+        if (requestId && pending.requestId !== requestId) {
+          throw new ToolFailure(`"${found.title}" is now waiting on something else (${permission ? permission.title : question!.question}). Read it with get_session before answering.`)
+        }
+        if (permission) {
+          const option = response ? permissionOption(permission, response) : undefined
+          if (!option) {
+            throw new ToolFailure(`Choose one of: ${permission.options.map((candidate) => `"${candidate.name}"`).join(', ')}.`)
+          }
+          await host.replyPermission(found.computerId, found.id, permission.requestId, option.optionId)
+          onActivity({
+            tool: 'answer_session',
+            content: `Answered "${truncate(permission.title, 120)}" on "${found.title}": ${option.name}`,
+            sessionRefs: [ref(found)],
+          })
+          return `Chose "${option.name}" for "${permission.title}" on ${link(found)}.`
+        }
+        const asked = question!
+        const choice = (text: string) => asked.choices.find((candidate) => candidate.toLowerCase() === text.trim().toLowerCase())
+        let reply: UserInputReplyInput
+        if (dismiss) {
+          reply = { action: 'cancel', answer: '', wasFreeform: false }
+        } else if (asked.form) {
+          if (!values) {
+            throw new ToolFailure(`This is a form; give values for: ${asked.form.fields.map((field) => field.name).join(', ')}.`)
+          }
+          reply = { answer: JSON.stringify(values), wasFreeform: false, values }
+        } else if (responses?.length) {
+          const picked = responses.map((text) => choice(text))
+          if (picked.some((candidate) => candidate === undefined) || (!asked.multiSelect && picked.length > 1)) {
+            throw new ToolFailure(`Choose ${asked.multiSelect ? 'from' : 'one of'}: ${asked.choices.map((candidate) => `"${candidate}"`).join(', ')}.`)
+          }
+          const answers = picked as string[]
+          reply = asked.multiSelect
+            ? { answer: answers.join(', '), wasFreeform: false, answers }
+            : { answer: answers[0], wasFreeform: false }
+        } else if (response) {
+          const chosen = choice(response)
+          if (chosen) reply = { answer: chosen, wasFreeform: false }
+          else if (asked.allowFreeform) reply = { answer: response, wasFreeform: true }
+          else throw new ToolFailure(`Choose one of: ${asked.choices.map((candidate) => `"${candidate}"`).join(', ')}.`)
+        } else {
+          throw new ToolFailure('Give a response, responses, values, or dismiss.')
+        }
+        await host.replyUserInput(found.computerId, found.id, asked.requestId, reply)
+        const said = reply.action === 'cancel' ? 'dismissed' : truncate(reply.answer, 120)
+        onActivity({
+          tool: 'answer_session',
+          content: `Answered "${truncate(asked.question, 120)}" on "${found.title}": ${said}`,
+          sessionRefs: [ref(found)],
+        })
+        return `Answered ${link(found)}: ${said}.`
+      },
+      { actsOnSessions: true },
     ),
     define(
       'cancel_session',

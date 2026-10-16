@@ -170,6 +170,123 @@ describe('background task adapter', () => {
     )
   })
 
+  it.each(['session.start', 'session.resume'])(
+    'ends non-detached work from the previous process at %s',
+    (type) => {
+      const tasks = backgroundTasksFromEvents([
+        {
+          type: 'session.background_tasks_changed',
+          id: 'tasks-before-boundary',
+          parentId: null,
+          timestamp: '2026-08-31T17:59:00.000Z',
+          data: {
+            tasks: [
+              {
+                type: 'agent',
+                id: 'queued-agent',
+                description: 'Queued work',
+                status: 'queued',
+                startedAt: '2026-08-31T17:59:00.000Z',
+              },
+              {
+                type: 'shell',
+                id: 'detached-shell',
+                description: 'Detached work',
+                status: 'running',
+                startedAt: '2026-08-31T17:59:00.000Z',
+                command: 'pnpm dev',
+                attachmentMode: 'detached',
+              },
+            ],
+          },
+        },
+        {
+          type: 'subagent.started',
+          id: 'old-start',
+          parentId: null,
+          timestamp: '2026-08-31T18:01:00.000Z',
+          agentId: 'old-agent',
+          data: { agentType: 'task', agentName: 'old' },
+        },
+        {
+          type,
+          id: 'process-boundary',
+          parentId: null,
+          timestamp: '2026-08-31T18:01:00.000Z',
+          data: {},
+        },
+        {
+          type: 'subagent.started',
+          id: 'new-start',
+          parentId: null,
+          timestamp: '2026-08-31T18:02:00.000Z',
+          agentId: 'new-agent',
+          data: { agentType: 'task', agentName: 'new' },
+        },
+      ] as SessionEvent[])
+
+      expect(tasks.find((task) => task.id === 'old-agent')).toMatchObject({
+        status: 'failed',
+        completedAt: '2026-08-31T18:01:00.000Z',
+        canCancel: false,
+      })
+      expect(tasks.find((task) => task.id === 'queued-agent')).toMatchObject({
+        status: 'failed',
+        completedAt: '2026-08-31T18:01:00.000Z',
+        canCancel: false,
+      })
+      expect(tasks.find((task) => task.id === 'detached-shell')).toMatchObject({
+        status: 'running',
+        attachmentMode: 'detached',
+      })
+      expect(tasks.find((task) => task.id === 'new-agent')).toMatchObject({
+        status: 'running',
+      })
+    },
+  )
+
+  it('creates a fresh task when an agent id is reused after resume', () => {
+    const tasks = backgroundTasksFromEvents([
+      {
+        type: 'subagent.started',
+        id: 'old-start',
+        parentId: null,
+        timestamp: '2026-08-31T18:00:00.000Z',
+        agentId: 'reused-agent',
+        data: {
+          agentType: 'task',
+          agentName: 'old',
+          agentDescription: 'Old execution',
+        },
+      },
+      {
+        type: 'session.resume',
+        id: 'resume',
+        parentId: null,
+        timestamp: '2026-08-31T18:01:00.000Z',
+        data: {},
+      },
+      {
+        type: 'subagent.started',
+        id: 'new-start',
+        parentId: null,
+        timestamp: '2026-08-31T18:02:00.000Z',
+        agentId: 'reused-agent',
+        data: {
+          agentType: 'task',
+          agentName: 'new',
+          agentDescription: 'New execution',
+        },
+      },
+    ] as SessionEvent[])
+
+    expect(tasks.find((task) => task.id === 'reused-agent')).toMatchObject({
+      status: 'running',
+      startedAt: '2026-08-31T18:02:00.000Z',
+      description: 'New execution',
+    })
+  })
+
   it('preserves an explicit background execution mode without inferring it', () => {
     const [task] = backgroundTasksFromEvents(
       JSON.parse(`[

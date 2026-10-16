@@ -442,6 +442,16 @@ describe('ManagerAssistant', () => {
         window.dispatchEvent(new Event('resize'))
       })
       expect(edge).toHaveAttribute('aria-valuenow', '900')
+      // A window with no room for both keeps the panel usable: its minimum
+      // wins, and it overlays more of the conversation, as on a phone.
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 980 })
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(edge).toHaveAttribute('aria-valuemax', '340')
+      expect(edge).toHaveAttribute('aria-valuenow', '340')
+      fireEvent.keyDown(edge, { key: 'ArrowLeft', shiftKey: true })
+      expect(edge).toHaveAttribute('aria-valuenow', '340')
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
     }

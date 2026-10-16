@@ -245,9 +245,12 @@ function storeWidth(width: number | undefined) {
 
 /**
  * The desktop panel's width, dragged from its left edge or changed with the
- * arrow keys, and remembered per browser. It never leaves the conversation
- * less than 360px beside `reservedLeft`, the sessions list, even as the
- * window narrows. A phone always shows it full width.
+ * arrow keys, and remembered per browser. Widening stops where the
+ * conversation would have less than 360px beside `reservedLeft`, the sessions
+ * list, and follows the window as it narrows. The panel never goes below
+ * 340px, so a window without room for both keeps it usable and lets it
+ * overlay more of the conversation, as a phone does. A phone always shows it
+ * full width.
  */
 function usePanelWidth(reservedLeft: number) {
   const [preferred, setPreferred] = useState(readWidth)

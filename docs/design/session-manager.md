@@ -180,8 +180,9 @@ end the turn.
 - The panel is a right-hand drawer on desktop, resizable from its left edge
   (340px up to whatever leaves the conversation 360px beside the sessions
   list, at most 960px; remembered per browser, and shown narrower without
-  forgetting the choice when the window narrows), and a full-height sheet on
-  a phone. It shows the transcript (Markdown), tool activity chips, and a
+  forgetting the choice when the window narrows). The 340px minimum wins on a
+  window without room for both, where the panel overlays more of the
+  conversation. On a phone it is a full-height sheet. It shows the transcript (Markdown), tool activity chips, and a
   composer whose Return behaviour follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.

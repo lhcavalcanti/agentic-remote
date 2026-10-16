@@ -301,7 +301,7 @@
     "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
     "config/agentic-remote-promotion.env.example": "3b93ccf7572bb980b70067dab871f06f58a8ca93d078132cc350c6342af6a2de",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "75990dd6f8fd5bc38d91fac899c27922ffc5ce1ce457255855fcbf5fbf14611e",
+    "docs/app-spec.md": "3fb9baa1097174606a5164cfde441e933df6c33e0ee5f8883584f5c794225af7",
     "docs/architecture.md": "4a73f878a8ae3eb7f34a48d98ee1d90dd7ada549dfbac4cc04694f26d7f51e78",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -309,7 +309,7 @@
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
     "docs/deployment-promotion.md": "b61e47425636a6a4552966549c5c763cd8e9b9224dc9e01aceb00242ce4c79cf",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
-    "docs/design/session-manager.md": "7d2f427b20c11c20fecb4d6ba5b09b7bd487458eadd6d6987ddf01cd1cb54226",
+    "docs/design/session-manager.md": "aaeb32b82d003e3b0a83a21394636cda3486c7fd8222c21b15ca4a5e3291cc7f",
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
     "docs/mockups/brand-logo.html": "1a1a3efd305260cfba6c2cf5d6eb0f5ec5a68472a010a0eaf9dfd426436766c1",
     "docs/native-shell.md": "bc434b4a881ec432c84c6744ab0ab0f73d8d023ceff73d0baffd60c6bccc7a9f",
@@ -519,8 +519,8 @@
     "src/KnowledgeRootChoices.tsx": "0eab2c54bd6a3187487a50e323204cae90c235469ae25e5bf7c61686c8a20852",
     "src/KnowledgeRootSelector.test.tsx": "817e7fdf9002ea5ed7c4869ef82a78627385729528699707daa79b0adf748f05",
     "src/KnowledgeRootSelector.tsx": "bf822308bd25c81dbfbc3de2ca99a95753c7bd8d360199bf9e00ad30225c76fc",
-    "src/ManagerAssistant.test.tsx": "d3673da295891f522e832ccbf81e69dd1fa45d61398d76f8095147c80562ebcf",
-    "src/ManagerAssistant.tsx": "ad275f82e1dd359b62ca6982c53811a12f04a00d158ba4f02953125831d980a6",
+    "src/ManagerAssistant.test.tsx": "9bbb36a24a5db5e6135928d04c20f21fd80a890bf4933712bf78379acb1aeb68",
+    "src/ManagerAssistant.tsx": "de1c581f67ebb11ee01b654588f2b8e00c70807ecfa2a143767968fb914ae7f1",
     "src/MarkdownCodeBlock.test.tsx": "d1f77ecdfb929df6e3970eaa06a065c8ef63a25ab3f030fff405cd0a46fefc69",
     "src/MarkdownCodeBlock.tsx": "46ffdce3491901abf4a9648f22c20dacf42972641346e444230dc72fa6e00f9a",
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
@@ -653,22 +653,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "40c97e3535f0d798c500bd7f950535a9b320e2a2066115a34614813e8c3f460a",
+    "GRAPH_REPORT.md": "7a0bfe2d71ae1bdc2c75d2cfb3015f3408a0e077fd60353d60bb1dec6e49cc88",
     "communities.json": "208f99efdbb56b300ea718e8e9cc867979d040bbace6ccb9f35ff6a3d8b59480",
-    "graph.html": "9d7b9fb8a6bb4c845a21bd85e6015307b390306da2c55657dc0a36ddcd94560a",
-    "graph.json": "e1893e21b52e7cd623d3cfa8d889f324c3f3831c040f485305612a5454f65448"
+    "graph.html": "1395428612a008653f15a8df359433ff265eca95026d596393dc07af3b262e9c",
+    "graph.json": "cce03cf4e93e4a927d5b7aff16e1ccd58de530f5fe479da593a49ac338c13b17"
   },
   "schema_version": 1,
-  "source_commit": "ea3cff3a363b0411dc9536032c96f4b3784cc40e",
-  "source_fingerprint": "37e93ab026ceaaac4c1960c5e74dcdd6ba105ae23893a70b42672ed430eb9c5e",
+  "source_commit": "3bd32af09eda353738e5d55401bdecb7f9adcdfc",
+  "source_fingerprint": "48467257919af9622f01a5c09bf0292bd775f9c58e5770875c6297c2e11500af",
   "working_tree_changes": [
     "docs/app-spec.md",
     "docs/design/session-manager.md",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-routes.test.ts",
-    "server/manager-routes.ts",
-    "src/App.tsx",
     "src/ManagerAssistant.test.tsx",
     "src/ManagerAssistant.tsx"
   ]

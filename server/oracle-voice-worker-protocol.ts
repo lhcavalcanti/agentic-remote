@@ -1,10 +1,10 @@
-import type { VoiceAudioFrame } from '../shared/oracle-voice.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import type {
   VoiceEndUtterance,
   VoiceEngineEvent,
   VoiceStartUtterance,
   VoiceSynthesisRequest,
+  VoiceUtteranceAudioFrame,
 } from './oracle-voice-engine.js'
 
 interface VoiceWorkerRequestBase {
@@ -22,7 +22,7 @@ export type VoiceWorkerParentMessage =
     })
   | (VoiceWorkerRequestBase & {
       type: 'stt_audio'
-      frame: VoiceAudioFrame
+      frame: VoiceUtteranceAudioFrame
     })
   | (VoiceWorkerRequestBase & {
       type: 'stt_end'
@@ -30,6 +30,7 @@ export type VoiceWorkerParentMessage =
     })
   | (VoiceWorkerRequestBase & {
       type: 'stt_cancel' | 'tts_cancel'
+      streamId: string
       generation: number
     })
   | (VoiceWorkerRequestBase & {

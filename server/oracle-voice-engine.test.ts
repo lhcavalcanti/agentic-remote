@@ -20,6 +20,7 @@ const config: EnabledOracleVoiceConfig = {
     binary: '/bin/piper',
     model: '/models/voice.onnx',
     config: '/models/voice.json',
+    sampleRate: 22_050,
   },
 }
 
@@ -30,23 +31,37 @@ describe('FakeVoiceEngine', () => {
     engine.onEvent((event) => seen.push(event))
 
     await engine.startUtterance({
+      streamId: 'stream-4',
       generation: 4,
       utteranceId: 'u4',
       language: 'en',
     })
     await engine.synthesize({
+      streamId: 'stream-4',
       generation: 4,
       segmentId: 's4',
       text: 'Hello.',
     })
-    await engine.cancelGeneration(4)
-    engine.emitLateEventsForTest(4)
+    await engine.cancelGeneration({ streamId: 'stream-4', generation: 4 })
+    engine.emitLateEventsForTest({ streamId: 'stream-4', generation: 4 })
 
     expect(seen).toEqual([])
     expect(engine.calls).toEqual([
-      { type: 'stt.start', generation: 4, utteranceId: 'u4', language: 'en' },
-      { type: 'tts.synthesize', generation: 4, segmentId: 's4', text: 'Hello.' },
-      { type: 'cancel', generation: 4 },
+      {
+        type: 'stt.start',
+        streamId: 'stream-4',
+        generation: 4,
+        utteranceId: 'u4',
+        language: 'en',
+      },
+      {
+        type: 'tts.synthesize',
+        streamId: 'stream-4',
+        generation: 4,
+        segmentId: 's4',
+        text: 'Hello.',
+      },
+      { type: 'cancel', streamId: 'stream-4', generation: 4 },
     ])
   })
 
@@ -56,12 +71,14 @@ describe('FakeVoiceEngine', () => {
     engine.onEvent((event) => seen.push(event))
     engine.queueEvent({
       type: 'partial',
+      streamId: 'stream-2',
       generation: 2,
       utteranceId: 'u2',
       text: 'Hel',
     })
     engine.queueEvent({
       type: 'final',
+      streamId: 'stream-2',
       generation: 2,
       utteranceId: 'u2',
       text: 'Hello',
@@ -71,8 +88,20 @@ describe('FakeVoiceEngine', () => {
     engine.flushEvents()
 
     expect(seen).toEqual([
-      { type: 'partial', generation: 2, utteranceId: 'u2', text: 'Hel' },
-      { type: 'final', generation: 2, utteranceId: 'u2', text: 'Hello' },
+      {
+        type: 'partial',
+        streamId: 'stream-2',
+        generation: 2,
+        utteranceId: 'u2',
+        text: 'Hel',
+      },
+      {
+        type: 'final',
+        streamId: 'stream-2',
+        generation: 2,
+        utteranceId: 'u2',
+        text: 'Hello',
+      },
     ])
   })
 
@@ -80,20 +109,39 @@ describe('FakeVoiceEngine', () => {
     const engine = new FakeVoiceEngine()
     await engine.stt.accept({
       direction: 'microphone',
+      streamId: 'stream-3',
       generation: 3,
+      utteranceId: 'u3',
       sequence: 7,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: Int16Array.of(-1, 2),
     })
-    await engine.stt.end({ generation: 3, utteranceId: 'u3' })
+    await engine.stt.end({
+      streamId: 'stream-3',
+      generation: 3,
+      utteranceId: 'u3',
+    })
     await engine.close()
 
     expect(engine.calls).toEqual([
-      { type: 'stt.accept', generation: 3, sequence: 7, sampleCount: 2 },
-      { type: 'stt.end', generation: 3, utteranceId: 'u3' },
+      {
+        type: 'stt.accept',
+        streamId: 'stream-3',
+        generation: 3,
+        utteranceId: 'u3',
+        sequence: 7,
+        sampleCount: 2,
+      },
+      {
+        type: 'stt.end',
+        streamId: 'stream-3',
+        generation: 3,
+        utteranceId: 'u3',
+      },
       { type: 'close' },
     ])
     await expect(engine.synthesize({
+      streamId: 'stream-3',
       generation: 3,
       segmentId: 'late',
       text: 'Late',
@@ -107,6 +155,7 @@ describe('FakeVoiceEngineFactory', () => {
     const factory = new FakeVoiceEngineFactory(engine, {
       available: true,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
       languages: ['en'],
       sttProfile: 'zipformer',
       ttsVoice: 'lessac',
@@ -118,6 +167,7 @@ describe('FakeVoiceEngineFactory', () => {
     expect(factory.capability()).toEqual({
       available: true,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
       languages: ['en'],
       sttProfile: 'zipformer',
       ttsVoice: 'lessac',

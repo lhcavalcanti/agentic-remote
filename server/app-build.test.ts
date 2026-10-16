@@ -86,6 +86,7 @@ describe('Oracle voice app construction', () => {
     const factory = new FakeVoiceEngineFactory(undefined, {
       available: true,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
       languages: ['en'],
       sttProfile: 'zipformer',
       ttsVoice: 'lessac',
@@ -116,7 +117,11 @@ describe('Oracle voice app construction', () => {
     await writeFile(path.join(directory, 'stt', 'encoder.onnx'), 'model')
     await writeFile(path.join(directory, 'piper'), 'binary')
     await writeFile(path.join(directory, 'voice.onnx'), 'voice')
-    await writeFile(path.join(directory, 'voice.json'), '{}')
+    await writeFile(path.join(directory, 'voice.json'), JSON.stringify({
+      audio: {
+        sample_rate: 22_050,
+      },
+    }))
     const environment = {
       AGENTIC_REMOTE_ORACLE_VOICE: 'on',
       AGENTIC_REMOTE_VOICE_STT_MODEL_DIR: 'stt',
@@ -132,6 +137,7 @@ describe('Oracle voice app construction', () => {
     const factory = new FakeVoiceEngineFactory(undefined, {
       available: true,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
       languages: ['en'],
       sttProfile: 'zipformer',
       ttsVoice: 'lessac',
@@ -152,6 +158,9 @@ describe('Oracle voice app construction', () => {
       language: 'en',
       threads: 2,
       endpointMs: 700,
+      tts: {
+        sampleRate: 22_050,
+      },
     })
     expect(runtime.voiceCapability).toEqual(factory.capability())
     expect(factory.initializedWith).toEqual([])

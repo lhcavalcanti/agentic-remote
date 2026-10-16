@@ -1,22 +1,41 @@
 export const ORACLE_VOICE_PROTOCOL = 1 as const
 export const ORACLE_VOICE_SAMPLE_RATE = 16_000 as const
+export const ORACLE_VOICE_MIN_PCM_SAMPLE_RATE = 8_000
+export const ORACLE_VOICE_MAX_PCM_SAMPLE_RATE = 192_000
 export const VOICE_AUDIO_HEADER_BYTES = 24
 
 const MAGIC = [0x41, 0x52, 0x56, 0x43] as const
 
 export type VoiceAudioDirection = 'microphone' | 'playback'
 
-export interface VoiceAudioHeader {
-  direction: VoiceAudioDirection
+interface VoiceAudioIdentity {
   generation: number
   sequence: number
-  sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
   sampleCount: number
 }
 
-export interface VoiceAudioFrame extends Omit<VoiceAudioHeader, 'sampleCount'> {
-  samples: Int16Array
-}
+export type VoiceAudioHeader = VoiceAudioIdentity & (
+  | {
+      direction: 'microphone'
+      sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
+    }
+  | {
+      direction: 'playback'
+      sampleRate: number
+    }
+)
+
+export type VoiceAudioFrame =
+  | (Omit<VoiceAudioIdentity, 'sampleCount'> & {
+      direction: 'microphone'
+      sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
+      samples: Int16Array
+    })
+  | (Omit<VoiceAudioIdentity, 'sampleCount'> & {
+      direction: 'playback'
+      sampleRate: number
+      samples: Int16Array
+    })
 
 export interface VoiceCapabilities {
   protocol: typeof ORACLE_VOICE_PROTOCOL
@@ -24,6 +43,7 @@ export interface VoiceCapabilities {
   computerId: string
   computerName: string
   sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
+  playbackSampleRate: number
   languages: string[]
   sttProfile: string
   ttsVoice: string
@@ -125,7 +145,7 @@ export function encodeVoiceAudioFrame(frame: VoiceAudioFrame): ArrayBuffer {
   validateDirection(frame.direction)
   validateUint32(frame.generation, 'generation')
   validateUint32(frame.sequence, 'sequence')
-  validateSampleRate(frame.sampleRate)
+  validateSampleRate(frame.direction, frame.sampleRate)
   if (!(frame.samples instanceof Int16Array)) {
     throw new VoiceProtocolError('samples must be an Int16Array')
   }
@@ -172,7 +192,8 @@ export function decodeVoiceAudioFrame(payload: ArrayBuffer): VoiceAudioFrame {
   const sequence = view.getUint32(12, true)
   const sampleRate = view.getUint32(16, true)
   const sampleCount = view.getUint32(20, true)
-  validateSampleRate(sampleRate)
+  const direction = directionByte === 0 ? 'microphone' : 'playback'
+  validateSampleRate(direction, sampleRate)
   if (sampleCount > (Number.MAX_SAFE_INTEGER - VOICE_AUDIO_HEADER_BYTES) / 2) {
     throw new VoiceProtocolError('audio sample count is too large')
   }
@@ -184,13 +205,21 @@ export function decodeVoiceAudioFrame(payload: ArrayBuffer): VoiceAudioFrame {
   for (let index = 0; index < sampleCount; index += 1) {
     samples[index] = view.getInt16(VOICE_AUDIO_HEADER_BYTES + index * 2, true)
   }
-  return {
-    direction: directionByte === 0 ? 'microphone' : 'playback',
-    generation,
-    sequence,
-    sampleRate,
-    samples,
-  }
+  return direction === 'microphone'
+    ? {
+        direction,
+        generation,
+        sequence,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        samples,
+      }
+    : {
+        direction,
+        generation,
+        sequence,
+        sampleRate,
+        samples,
+      }
 }
 
 export function isVoiceClientControl(value: unknown): value is VoiceClientControl {
@@ -267,15 +296,18 @@ export function isVoiceServerControl(value: unknown): value is VoiceServerContro
 function isVoiceCapabilities(value: unknown): value is VoiceCapabilities {
   if (!isRecord(value)) return false
   if (!hasOnlyKeys(value, [
-    'protocol', 'available', 'computerId', 'computerName', 'sampleRate', 'languages',
-    'sttProfile', 'ttsVoice', 'resourceClass', 'limits', 'reason',
+    'protocol', 'available', 'computerId', 'computerName', 'sampleRate',
+    'playbackSampleRate', 'languages', 'sttProfile', 'ttsVoice', 'resourceClass',
+    'limits', 'reason',
   ]) || !hasRequiredKeys(value, [
-    'protocol', 'available', 'computerId', 'computerName', 'sampleRate', 'languages',
-    'sttProfile', 'ttsVoice', 'resourceClass', 'limits',
+    'protocol', 'available', 'computerId', 'computerName', 'sampleRate',
+    'playbackSampleRate', 'languages', 'sttProfile', 'ttsVoice', 'resourceClass',
+    'limits',
   ])) return false
   if (value.protocol !== ORACLE_VOICE_PROTOCOL || typeof value.available !== 'boolean'
     || !isNonEmptyString(value.computerId) || !isNonEmptyString(value.computerName)
-    || !isValidSampleRate(value.sampleRate)
+    || value.sampleRate !== ORACLE_VOICE_SAMPLE_RATE
+    || !isVoicePlaybackSampleRate(value.playbackSampleRate)
     || !Array.isArray(value.languages) || !value.languages.every(isNonEmptyString)
     || typeof value.sttProfile !== 'string' || typeof value.ttsVoice !== 'string'
     || (value.resourceClass !== 'low' && value.resourceClass !== 'quality')
@@ -329,8 +361,11 @@ function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && typeof value === 'number' && value > 0
 }
 
-function isValidSampleRate(value: unknown): value is typeof ORACLE_VOICE_SAMPLE_RATE {
-  return value === ORACLE_VOICE_SAMPLE_RATE
+export function isVoicePlaybackSampleRate(value: unknown): value is number {
+  return Number.isSafeInteger(value)
+    && typeof value === 'number'
+    && value >= ORACLE_VOICE_MIN_PCM_SAMPLE_RATE
+    && value <= ORACLE_VOICE_MAX_PCM_SAMPLE_RATE
 }
 
 function validateDirection(value: unknown): asserts value is VoiceAudioDirection {
@@ -345,8 +380,17 @@ function validateUint32(value: unknown, name: string): asserts value is number {
   }
 }
 
-function validateSampleRate(value: unknown): asserts value is typeof ORACLE_VOICE_SAMPLE_RATE {
-  if (!isValidSampleRate(value)) {
+function validateSampleRate(
+  direction: VoiceAudioDirection,
+  value: unknown,
+): asserts value is number {
+  if (direction === 'microphone' && value !== ORACLE_VOICE_SAMPLE_RATE) {
     throw new VoiceProtocolError(`sample rate must be ${ORACLE_VOICE_SAMPLE_RATE} Hz`)
+  }
+  if (direction === 'playback' && !isVoicePlaybackSampleRate(value)) {
+    throw new VoiceProtocolError(
+      `playback sample rate must be from ${ORACLE_VOICE_MIN_PCM_SAMPLE_RATE}`
+      + ` to ${ORACLE_VOICE_MAX_PCM_SAMPLE_RATE} Hz`,
+    )
   }
 }

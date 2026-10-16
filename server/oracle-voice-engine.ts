@@ -5,20 +5,33 @@ import {
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 
 export interface VoiceStartUtterance {
+  streamId: string
   generation: number
   utteranceId: string
   language: string
 }
 
 export interface VoiceEndUtterance {
+  streamId: string
   generation: number
   utteranceId: string
 }
 
 export interface VoiceSynthesisRequest {
+  streamId: string
   generation: number
   segmentId: string
   text: string
+}
+
+export interface VoiceGenerationIdentity {
+  streamId: string
+  generation: number
+}
+
+export type VoiceUtteranceAudioFrame = VoiceAudioFrame & {
+  streamId: string
+  utteranceId: string
 }
 
 export type VoiceEngineEvent =
@@ -27,12 +40,14 @@ export type VoiceEngineEvent =
     }
   | {
       type: 'partial' | 'final'
+      streamId: string
       generation: number
       utteranceId: string
       text: string
     }
   | {
       type: 'audio'
+      streamId: string
       generation: number
       segmentId: string
       sequence: number
@@ -41,6 +56,7 @@ export type VoiceEngineEvent =
     }
   | {
       type: 'audio_end'
+      streamId: string
       generation: number
       segmentId: string
     }
@@ -61,6 +77,7 @@ export type VoiceBackendCapability =
   | {
       available: true
       sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
+      playbackSampleRate: number
       languages: string[]
       sttProfile: string
       ttsVoice: string
@@ -69,15 +86,15 @@ export type VoiceBackendCapability =
 
 export interface VoiceSttEngine {
   start(input: VoiceStartUtterance): Promise<void>
-  accept(frame: VoiceAudioFrame): Promise<void>
+  accept(frame: VoiceUtteranceAudioFrame): Promise<void>
   end(input: VoiceEndUtterance): Promise<void>
-  cancel(generation: number): Promise<void>
+  cancel(input: VoiceGenerationIdentity): Promise<void>
   close(): Promise<void>
 }
 
 export interface VoiceTtsEngine {
   synthesize(input: VoiceSynthesisRequest): Promise<void>
-  cancel(generation: number): Promise<void>
+  cancel(input: VoiceGenerationIdentity): Promise<void>
   close(): Promise<void>
 }
 
@@ -85,7 +102,7 @@ export interface VoiceEngineSession {
   readonly stt: VoiceSttEngine
   readonly tts: VoiceTtsEngine
   onEvent(listener: (event: VoiceEngineEvent) => void): () => void
-  cancelGeneration(generation: number): Promise<void>
+  cancelGeneration(input: VoiceGenerationIdentity): Promise<void>
   close(): Promise<void>
 }
 
@@ -99,7 +116,9 @@ export type FakeVoiceEngineCall =
   | ({ type: 'stt.start' } & VoiceStartUtterance)
   | {
       type: 'stt.accept'
+      streamId: string
       generation: number
+      utteranceId: string
       sequence: number
       sampleCount: number
     }
@@ -107,6 +126,7 @@ export type FakeVoiceEngineCall =
   | ({ type: 'tts.synthesize' } & VoiceSynthesisRequest)
   | {
       type: 'cancel'
+      streamId: string
       generation: number
     }
   | {
@@ -118,7 +138,7 @@ export class FakeVoiceEngine implements VoiceEngineSession, VoiceSttEngine, Voic
   readonly tts: VoiceTtsEngine = this
   readonly calls: FakeVoiceEngineCall[] = []
   private readonly listeners = new Set<(event: VoiceEngineEvent) => void>()
-  private readonly cancelled = new Set<number>()
+  private readonly cancelled = new Set<string>()
   private readonly delayed: VoiceEngineEvent[] = []
   private closed = false
 
@@ -136,11 +156,13 @@ export class FakeVoiceEngine implements VoiceEngineSession, VoiceSttEngine, Voic
     this.calls.push({ type: 'stt.start', ...input })
   }
 
-  async accept(frame: VoiceAudioFrame): Promise<void> {
+  async accept(frame: VoiceUtteranceAudioFrame): Promise<void> {
     this.requireOpen()
     this.calls.push({
       type: 'stt.accept',
+      streamId: frame.streamId,
       generation: frame.generation,
+      utteranceId: frame.utteranceId,
       sequence: frame.sequence,
       sampleCount: frame.samples.length,
     })
@@ -156,19 +178,19 @@ export class FakeVoiceEngine implements VoiceEngineSession, VoiceSttEngine, Voic
     this.calls.push({ type: 'tts.synthesize', ...input })
   }
 
-  async cancel(generation: number): Promise<void> {
-    await this.cancelGeneration(generation)
+  async cancel(input: VoiceGenerationIdentity): Promise<void> {
+    await this.cancelGeneration(input)
   }
 
-  async cancelGeneration(generation: number): Promise<void> {
+  async cancelGeneration(input: VoiceGenerationIdentity): Promise<void> {
     this.requireOpen()
-    this.cancelled.add(generation)
+    this.cancelled.add(identityKey(input))
     for (let index = this.delayed.length - 1; index >= 0; index -= 1) {
-      if (eventGeneration(this.delayed[index]) === generation) {
+      if (sameGeneration(this.delayed[index], input)) {
         this.delayed.splice(index, 1)
       }
     }
-    this.calls.push({ type: 'cancel', generation })
+    this.calls.push({ type: 'cancel', ...input })
   }
 
   emit(event: VoiceEngineEvent): void {
@@ -185,17 +207,17 @@ export class FakeVoiceEngine implements VoiceEngineSession, VoiceSttEngine, Voic
     for (const event of this.delayed.splice(0)) this.emit(event)
   }
 
-  emitLateEventsForTest(generation: number): void {
+  emitLateEventsForTest(input: VoiceGenerationIdentity): void {
     this.emit({
       type: 'partial',
-      generation,
-      utteranceId: `late-${generation}`,
+      ...input,
+      utteranceId: `late-${input.generation}`,
       text: 'late',
     })
     this.emit({
       type: 'audio_end',
-      generation,
-      segmentId: `late-${generation}`,
+      ...input,
+      segmentId: `late-${input.generation}`,
     })
   }
 
@@ -237,11 +259,19 @@ export class FakeVoiceEngineFactory implements VoiceEngineFactory {
   }
 }
 
-function eventGeneration(event: VoiceEngineEvent): number | undefined {
-  return 'generation' in event ? event.generation : undefined
+function sameGeneration(
+  event: VoiceEngineEvent,
+  input: VoiceGenerationIdentity,
+): boolean {
+  return 'generation' in event
+    && event.streamId === input.streamId
+    && event.generation === input.generation
 }
 
-function isCancelled(event: VoiceEngineEvent, cancelled: ReadonlySet<number>): boolean {
-  const generation = eventGeneration(event)
-  return generation !== undefined && cancelled.has(generation)
+function isCancelled(event: VoiceEngineEvent, cancelled: ReadonlySet<string>): boolean {
+  return 'generation' in event && cancelled.has(identityKey(event))
+}
+
+function identityKey(input: VoiceGenerationIdentity): string {
+  return `${input.streamId}\u0000${input.generation}`
 }

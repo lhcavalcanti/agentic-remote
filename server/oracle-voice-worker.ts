@@ -4,18 +4,23 @@ import {
 } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ORACLE_VOICE_SAMPLE_RATE, type VoiceAudioFrame } from '../shared/oracle-voice.js'
+import {
+  ORACLE_VOICE_SAMPLE_RATE,
+  isVoicePlaybackSampleRate,
+} from '../shared/oracle-voice.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import type {
   VoiceBackendCapability,
   VoiceEndUtterance,
   VoiceEngineEvent,
   VoiceEngineFactory,
+  VoiceGenerationIdentity,
   VoiceEngineSession,
   VoiceStartUtterance,
   VoiceSttEngine,
   VoiceSynthesisRequest,
   VoiceTtsEngine,
+  VoiceUtteranceAudioFrame,
 } from './oracle-voice-engine.js'
 import type {
   VoiceWorkerChildMessage,
@@ -71,6 +76,14 @@ interface ReadyWaiter {
   reject: (error: Error) => void
 }
 
+interface ActiveUtteranceIdentity extends VoiceGenerationIdentity {
+  utteranceId: string
+}
+
+interface ActiveSynthesisIdentity extends VoiceGenerationIdentity {
+  segmentId: string
+}
+
 function defaultDependencies(): ChildVoiceEngineDependencies {
   return {
     fork: (entry, options) => forkChildProcess(entry, [], options),
@@ -108,7 +121,9 @@ export class ChildVoiceEngine implements
   private readyWaiter: ReadyWaiter | undefined
   private heartbeatTimer: Timer | undefined
   private requestSequence = 0
-  private cancelledThroughGeneration = -1
+  private readonly cancelledThroughGeneration = new Map<string, number>()
+  private activeUtterance: ActiveUtteranceIdentity | undefined
+  private activeSynthesis: ActiveSynthesisIdentity | undefined
   private exited = false
   private closing = false
   private fatal = false
@@ -154,15 +169,23 @@ export class ChildVoiceEngine implements
     return () => this.listeners.delete(listener)
   }
 
-  start(input: VoiceStartUtterance): Promise<void> {
-    return this.request({
+  async start(input: VoiceStartUtterance): Promise<void> {
+    await this.request({
       requestId: this.nextRequestId(),
       type: 'stt_start',
       input,
     })
+    this.activeUtterance = {
+      streamId: input.streamId,
+      generation: input.generation,
+      utteranceId: input.utteranceId,
+    }
   }
 
-  accept(frame: VoiceAudioFrame): Promise<void> {
+  accept(frame: VoiceUtteranceAudioFrame): Promise<void> {
+    if (!matchesUtterance(this.activeUtterance, frame)) {
+      return Promise.reject(new Error('stale STT audio identity'))
+    }
     return this.request({
       requestId: this.nextRequestId(),
       type: 'stt_audio',
@@ -171,6 +194,9 @@ export class ChildVoiceEngine implements
   }
 
   end(input: VoiceEndUtterance): Promise<void> {
+    if (!matchesUtterance(this.activeUtterance, input)) {
+      return Promise.reject(new Error('stale STT utterance identity'))
+    }
     return this.request({
       requestId: this.nextRequestId(),
       type: 'stt_end',
@@ -179,33 +205,49 @@ export class ChildVoiceEngine implements
   }
 
   synthesize(input: VoiceSynthesisRequest): Promise<void> {
+    if (this.activeSynthesis) {
+      return Promise.reject(new Error('Piper synthesis is already active'))
+    }
+    const active = {
+      streamId: input.streamId,
+      generation: input.generation,
+      segmentId: input.segmentId,
+    }
+    this.activeSynthesis = active
     return this.request({
       requestId: this.nextRequestId(),
       type: 'tts_synthesize',
       input,
+    }).finally(() => {
+      if (matchesSynthesis(this.activeSynthesis, active)) {
+        this.activeSynthesis = undefined
+      }
     })
   }
 
-  async cancel(generation: number): Promise<void> {
-    await this.cancelGeneration(generation)
+  async cancel(input: VoiceGenerationIdentity): Promise<void> {
+    await this.cancelGeneration(input)
   }
 
-  async cancelGeneration(generation: number): Promise<void> {
+  async cancelGeneration(input: VoiceGenerationIdentity): Promise<void> {
     this.requireInitialized()
-    this.cancelledThroughGeneration = Math.max(
-      this.cancelledThroughGeneration,
-      generation,
-    )
+    rememberCancellation(this.cancelledThroughGeneration, input)
+    if (matchesCancelled(this.activeUtterance, input)) {
+      this.activeUtterance = undefined
+    }
+    if (matchesCancelled(this.activeSynthesis, input)) {
+      this.activeSynthesis = undefined
+    }
     await Promise.all([
       this.request({
         requestId: this.nextRequestId(),
         type: 'stt_cancel',
-        generation,
+        ...input,
       }),
       this.request({
         requestId: this.nextRequestId(),
         type: 'tts_cancel',
-        generation,
+        ...input,
       }),
     ])
   }
@@ -358,7 +400,17 @@ export class ChildVoiceEngine implements
       return
     }
     if (isCancelledEvent(event, this.cancelledThroughGeneration)) return
+    if (
+      (event.type === 'partial' || event.type === 'final')
+      && !matchesUtterance(this.activeUtterance, event)
+    ) return
+    if (
+      (event.type === 'audio' || event.type === 'audio_end')
+      && !matchesSynthesis(this.activeSynthesis, event)
+    ) return
     this.emit(event)
+    if (event.type === 'final') this.activeUtterance = undefined
+    if (event.type === 'audio_end') this.activeSynthesis = undefined
   }
 
   private handleChildExit(
@@ -395,6 +447,8 @@ export class ChildVoiceEngine implements
     this.clearHeartbeat()
     this.readyWaiter?.reject(error)
     this.rejectPending(error)
+    this.activeUtterance = undefined
+    this.activeSynthesis = undefined
     this.currentCapability = {
       available: false,
       reason: error.message,
@@ -509,6 +563,8 @@ export class ChildVoiceEngine implements
       }
     }
     this.rejectPending(new Error('voice worker stopped'))
+    this.activeUtterance = undefined
+    this.activeSynthesis = undefined
     this.currentCapability = {
       available: false,
       reason: 'Oracle voice worker is stopped',
@@ -567,6 +623,7 @@ function capabilityFromConfig(config: EnabledOracleVoiceConfig): VoiceBackendCap
   return {
     available: true,
     sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+    playbackSampleRate: config.tts.sampleRate,
     languages: [config.language],
     sttProfile: config.stt.profile,
     ttsVoice: path.basename(config.tts.model).replace(/\.onnx$/i, ''),
@@ -586,9 +643,10 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function isCancelledEvent(
   event: VoiceEngineEvent,
-  cancelledThroughGeneration: number,
+  cancelledThroughGeneration: ReadonlyMap<string, number>,
 ): boolean {
-  return 'generation' in event && event.generation <= cancelledThroughGeneration
+  if (!('generation' in event)) return false
+  return event.generation <= (cancelledThroughGeneration.get(event.streamId) ?? -1)
 }
 
 function isVoiceWorkerChildMessage(value: unknown): value is VoiceWorkerChildMessage {
@@ -621,28 +679,30 @@ function isVoiceEngineEvent(value: unknown): value is VoiceEngineEvent {
         && typeof value.message === 'string'
     case 'partial':
     case 'final':
-      return exactKeys(value, ['type', 'generation', 'utteranceId', 'text'])
+      return exactKeys(value, ['type', 'streamId', 'generation', 'utteranceId', 'text'])
+        && isNonEmptyString(value.streamId)
         && isUint32(value.generation)
         && isNonEmptyString(value.utteranceId)
         && typeof value.text === 'string'
     case 'audio':
       return exactKeys(value, [
         'type',
+        'streamId',
         'generation',
         'segmentId',
         'sequence',
         'sampleRate',
         'samples',
       ])
+        && isNonEmptyString(value.streamId)
         && isUint32(value.generation)
         && isNonEmptyString(value.segmentId)
         && isUint32(value.sequence)
-        && typeof value.sampleRate === 'number'
-        && Number.isSafeInteger(value.sampleRate)
-        && value.sampleRate > 0
+        && isVoicePlaybackSampleRate(value.sampleRate)
         && value.samples instanceof Int16Array
     case 'audio_end':
-      return exactKeys(value, ['type', 'generation', 'segmentId'])
+      return exactKeys(value, ['type', 'streamId', 'generation', 'segmentId'])
+        && isNonEmptyString(value.streamId)
         && isUint32(value.generation)
         && isNonEmptyString(value.segmentId)
     default:
@@ -668,4 +728,43 @@ function isUint32(value: unknown): value is number {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
+}
+
+function matchesUtterance(
+  active: ActiveUtteranceIdentity | undefined,
+  input: ActiveUtteranceIdentity,
+): boolean {
+  return active !== undefined
+    && active.streamId === input.streamId
+    && active.generation === input.generation
+    && active.utteranceId === input.utteranceId
+}
+
+function matchesSynthesis(
+  active: ActiveSynthesisIdentity | undefined,
+  input: ActiveSynthesisIdentity,
+): boolean {
+  return active !== undefined
+    && active.streamId === input.streamId
+    && active.generation === input.generation
+    && active.segmentId === input.segmentId
+}
+
+function matchesCancelled(
+  active: VoiceGenerationIdentity | undefined,
+  input: VoiceGenerationIdentity,
+): boolean {
+  return active !== undefined
+    && active.streamId === input.streamId
+    && active.generation <= input.generation
+}
+
+function rememberCancellation(
+  cancelledThroughGeneration: Map<string, number>,
+  input: VoiceGenerationIdentity,
+): void {
+  cancelledThroughGeneration.set(
+    input.streamId,
+    Math.max(cancelledThroughGeneration.get(input.streamId) ?? -1, input.generation),
+  )
 }

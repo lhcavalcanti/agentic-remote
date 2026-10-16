@@ -1,5 +1,10 @@
-import { readdir, realpath, stat } from 'node:fs/promises'
+import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
+import {
+  ORACLE_VOICE_MAX_PCM_SAMPLE_RATE,
+  ORACLE_VOICE_MIN_PCM_SAMPLE_RATE,
+  isVoicePlaybackSampleRate,
+} from '../shared/oracle-voice.js'
 
 export type OracleVoiceSttProfile = 'zipformer' | 'nemotron'
 
@@ -17,6 +22,7 @@ export interface EnabledOracleVoiceConfig {
     binary: string
     model: string
     config: string
+    sampleRate: number
     speaker?: number
   }
 }
@@ -52,6 +58,12 @@ export async function readOracleVoiceConfig(
 
   const computerName = optionalValue(env, 'AGENTIC_REMOTE_VOICE_COMPUTER')
   const speakerValue = optionalValue(env, 'AGENTIC_REMOTE_VOICE_TTS_SPEAKER')
+  const ttsConfig = await canonicalPath(
+    dataDirectory,
+    env,
+    'AGENTIC_REMOTE_VOICE_TTS_CONFIG',
+    'file',
+  )
   return {
     enabled: true,
     ...(computerName ? { computerName } : {}),
@@ -75,17 +87,32 @@ export async function readOracleVoiceConfig(
         'AGENTIC_REMOTE_VOICE_TTS_MODEL',
         'file',
       ),
-      config: await canonicalPath(
-        dataDirectory,
-        env,
-        'AGENTIC_REMOTE_VOICE_TTS_CONFIG',
-        'file',
-      ),
+      config: ttsConfig,
+      sampleRate: await readPiperSampleRate(ttsConfig),
       ...(speakerValue === undefined
         ? {}
         : { speaker: nonNegativeInteger('AGENTIC_REMOTE_VOICE_TTS_SPEAKER', speakerValue) }),
     },
   }
+}
+
+export async function readPiperSampleRate(configPath: string): Promise<number> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFile(configPath, 'utf8')) as unknown
+  } catch {
+    throw new Error('Piper TTS config must contain valid JSON')
+  }
+  const sampleRate = isRecord(parsed) && isRecord(parsed.audio)
+    ? parsed.audio.sample_rate
+    : undefined
+  if (!isVoicePlaybackSampleRate(sampleRate)) {
+    throw new Error(
+      'Piper TTS config audio.sample_rate must be an integer from '
+      + `${ORACLE_VOICE_MIN_PCM_SAMPLE_RATE} to ${ORACLE_VOICE_MAX_PCM_SAMPLE_RATE}`,
+    )
+  }
+  return sampleRate
 }
 
 function requiredValue(env: NodeJS.ProcessEnv, name: string): string {
@@ -176,4 +203,8 @@ async function validateModelDirectory(root: string): Promise<void> {
 function isInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

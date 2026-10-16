@@ -5,13 +5,15 @@ import {
 import path from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { ORACLE_VOICE_SAMPLE_RATE, type VoiceAudioFrame } from '../shared/oracle-voice.js'
+import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import type {
   VoiceEndUtterance,
   VoiceEngineEvent,
+  VoiceGenerationIdentity,
   VoiceStartUtterance,
   VoiceSynthesisRequest,
+  VoiceUtteranceAudioFrame,
 } from './oracle-voice-engine.js'
 import type {
   VoiceWorkerChildMessage,
@@ -20,7 +22,7 @@ import type {
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_MAX_UTTERANCE_SAMPLES = ORACLE_VOICE_SAMPLE_RATE * 30
-const PIPER_SAMPLE_RATE = 24_000
+const DEFAULT_PIPER_SHUTDOWN_TIMEOUT_MS = 2_000
 const MAX_PIPER_STDERR_BYTES = 4_096
 
 interface SherpaStream {
@@ -65,6 +67,7 @@ export interface VoiceWorkerOptions {
   now: () => number
   heartbeatIntervalMs: number
   maxUtteranceSamples: number
+  piperShutdownTimeoutMs: number
 }
 
 export interface VoiceWorker {
@@ -73,6 +76,7 @@ export interface VoiceWorker {
 }
 
 interface ActiveUtterance {
+  streamId: string
   generation: number
   utteranceId: string
   stream: SherpaStream
@@ -83,9 +87,19 @@ interface ActiveUtterance {
 }
 
 interface ActiveSynthesis {
+  streamId: string
   generation: number
   segmentId: string
   process: PiperProcess
+  exit: Promise<PiperExitResult>
+  exited: boolean
+  termination?: Promise<void>
+}
+
+interface PiperExitResult {
+  code: number | null
+  signal: NodeJS.Signals | null
+  error?: Error
 }
 
 export function createVoiceWorker(
@@ -96,6 +110,7 @@ export function createVoiceWorker(
     now: Date.now,
     heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
     maxUtteranceSamples: DEFAULT_MAX_UTTERANCE_SAMPLES,
+    piperShutdownTimeoutMs: DEFAULT_PIPER_SHUTDOWN_TIMEOUT_MS,
     ...provided,
   }
   return new ResidentVoiceWorker(options)
@@ -106,7 +121,7 @@ class ResidentVoiceWorker implements VoiceWorker {
   private recognizer: SherpaRecognizer | undefined
   private utterance: ActiveUtterance | undefined
   private synthesis: ActiveSynthesis | undefined
-  private cancelledThroughGeneration = -1
+  private readonly cancelledThroughGeneration = new Map<string, number>()
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined
   private closed = false
 
@@ -140,9 +155,10 @@ class ResidentVoiceWorker implements VoiceWorker {
       this.utterance = undefined
     }
     if (this.synthesis) {
-      this.rememberCancellation(this.synthesis.generation)
-      this.synthesis.process.kill('SIGTERM')
-      this.synthesis = undefined
+      const active = this.synthesis
+      this.rememberCancellation(active)
+      await this.terminatePiper(active)
+      if (this.synthesis === active) this.synthesis = undefined
     }
   }
 
@@ -164,13 +180,13 @@ class ResidentVoiceWorker implements VoiceWorker {
         await this.endUtterance(message.input)
         return
       case 'stt_cancel':
-        this.cancelStt(message.generation)
+        this.cancelStt(message)
         return
       case 'tts_synthesize':
         await this.synthesize(message.input)
         return
       case 'tts_cancel':
-        this.cancelTts(message.generation)
+        await this.cancelTts(message)
         return
       case 'close':
         await this.close()
@@ -222,12 +238,13 @@ class ResidentVoiceWorker implements VoiceWorker {
     if (this.utterance && !this.utterance.finalized) {
       throw new Error('an STT utterance is already active')
     }
-    if (this.isCancelled(input.generation)) {
+    if (this.isCancelled(input)) {
       throw new Error('STT generation is cancelled')
     }
     const stream = recognizer.createStream()
     stream.setOption('language', input.language)
     this.utterance = {
+      streamId: input.streamId,
       generation: input.generation,
       utteranceId: input.utteranceId,
       stream,
@@ -238,9 +255,9 @@ class ResidentVoiceWorker implements VoiceWorker {
     }
   }
 
-  private async acceptAudio(frame: VoiceAudioFrame): Promise<void> {
-    const utterance = this.requireUtterance(frame.generation)
-    if (utterance.finalized || this.isCancelled(frame.generation)) return
+  private async acceptAudio(frame: VoiceUtteranceAudioFrame): Promise<void> {
+    const utterance = this.requireUtterance(frame)
+    if (utterance.finalized || this.isCancelled(frame)) return
     if (frame.direction !== 'microphone') {
       throw new Error('STT accepts microphone audio only')
     }
@@ -268,16 +285,17 @@ class ResidentVoiceWorker implements VoiceWorker {
   private async endUtterance(input: VoiceEndUtterance): Promise<void> {
     const utterance = this.utterance
     if (!utterance) {
-      if (this.isCancelled(input.generation)) return
+      if (this.isCancelled(input)) return
       throw new Error('no STT utterance is active')
     }
     if (
-      utterance.generation !== input.generation
+      utterance.streamId !== input.streamId
+      || utterance.generation !== input.generation
       || utterance.utteranceId !== input.utteranceId
     ) {
       throw new Error('STT utterance identity does not match')
     }
-    if (utterance.finalized || this.isCancelled(input.generation)) return
+    if (utterance.finalized || this.isCancelled(input)) return
     await this.finalizeUtterance(utterance, true)
   }
 
@@ -302,9 +320,10 @@ class ResidentVoiceWorker implements VoiceWorker {
     await this.decodeAvailable(utterance)
     const recognizer = this.requireRecognizer()
     const text = recognizer.getResult(utterance.stream).text
-    if (!this.isCancelled(utterance.generation)) {
+    if (!this.isCancelled(utterance)) {
       await this.emit({
         type: 'final',
+        streamId: utterance.streamId,
         generation: utterance.generation,
         utteranceId: utterance.utteranceId,
         text,
@@ -320,11 +339,12 @@ class ResidentVoiceWorker implements VoiceWorker {
       const text = recognizer.getResult(utterance.stream).text
       if (
         text !== utterance.lastText
-        && !this.isCancelled(utterance.generation)
+        && !this.isCancelled(utterance)
       ) {
         utterance.lastText = text
         await this.emit({
           type: 'partial',
+          streamId: utterance.streamId,
           generation: utterance.generation,
           utteranceId: utterance.utteranceId,
           text,
@@ -333,16 +353,16 @@ class ResidentVoiceWorker implements VoiceWorker {
     }
   }
 
-  private cancelStt(generation: number): void {
-    this.rememberCancellation(generation)
-    if (this.utterance?.generation !== generation) return
+  private cancelStt(input: VoiceGenerationIdentity): void {
+    this.rememberCancellation(input)
+    if (!this.utterance || !matchesCancelled(this.utterance, input)) return
     this.recognizer?.reset(this.utterance.stream)
     this.utterance = undefined
   }
 
   private async synthesize(input: VoiceSynthesisRequest): Promise<void> {
     const config = this.requireConfig()
-    if (this.isCancelled(input.generation)) {
+    if (this.isCancelled(input)) {
       throw new Error('TTS generation is cancelled')
     }
     if (this.synthesis) throw new Error('Piper synthesis is already active')
@@ -358,19 +378,28 @@ class ResidentVoiceWorker implements VoiceWorker {
     ]
     const piper = this.options.spawnPiper(config.tts.binary, args)
     const active: ActiveSynthesis = {
+      streamId: input.streamId,
       generation: input.generation,
       segmentId: input.segmentId,
       process: piper,
+      exit: Promise.resolve({
+        code: null,
+        signal: null,
+      }),
+      exited: false,
     }
+    active.exit = waitForPiperExit(piper).then((result) => {
+      active.exited = true
+      return result
+    })
     this.synthesis = active
-    const exit = waitForPiperExit(piper)
     const stderr = readBoundedText(piper.stderr, MAX_PIPER_STDERR_BYTES)
     const audio = this.streamPiperAudio(active, piper.stdout)
     piper.stdin.end(`${input.text}\n`)
 
     try {
-      const [result, diagnostic] = await Promise.all([exit, stderr, audio])
-      if (this.isCancelled(input.generation)) {
+      const [result, diagnostic] = await Promise.all([active.exit, stderr, audio])
+      if (this.isCancelled(input)) {
         throw new Error('TTS generation is cancelled')
       }
       if (result.error) throw result.error
@@ -380,9 +409,13 @@ class ResidentVoiceWorker implements VoiceWorker {
       }
       await this.emit({
         type: 'audio_end',
+        streamId: input.streamId,
         generation: input.generation,
         segmentId: input.segmentId,
       })
+    } catch (error) {
+      await this.terminatePiper(active)
+      throw error
     } finally {
       if (this.synthesis === active) this.synthesis = undefined
     }
@@ -406,30 +439,33 @@ class ResidentVoiceWorker implements VoiceWorker {
         ? Buffer.alloc(0)
         : Buffer.from(combined.subarray(evenLength))
       if (evenLength === 0) continue
-      if (this.isCancelled(active.generation)) continue
+      if (this.isCancelled(active)) continue
       const samples = new Int16Array(evenLength / 2)
       for (let offset = 0; offset < evenLength; offset += 2) {
         samples[offset / 2] = combined.readInt16LE(offset)
       }
       await this.emit({
         type: 'audio',
+        streamId: active.streamId,
         generation: active.generation,
         segmentId: active.segmentId,
         sequence,
-        sampleRate: PIPER_SAMPLE_RATE,
+        sampleRate: this.requireConfig().tts.sampleRate,
         samples,
       })
       sequence += 1
     }
-    if (carry.length > 0 && !this.isCancelled(active.generation)) {
+    if (carry.length > 0 && !this.isCancelled(active)) {
       throw new Error('Piper emitted an incomplete PCM16 sample')
     }
   }
 
-  private cancelTts(generation: number): void {
-    this.rememberCancellation(generation)
-    if (this.synthesis?.generation !== generation) return
-    this.synthesis.process.kill('SIGTERM')
+  private async cancelTts(input: VoiceGenerationIdentity): Promise<void> {
+    this.rememberCancellation(input)
+    const active = this.synthesis
+    if (!active || !matchesCancelled(active, input)) return
+    await this.terminatePiper(active)
+    if (this.synthesis === active) this.synthesis = undefined
   }
 
   private requireRecognizer(): SherpaRecognizer {
@@ -442,9 +478,18 @@ class ResidentVoiceWorker implements VoiceWorker {
     return this.config
   }
 
-  private requireUtterance(generation: number): ActiveUtterance {
-    if (!this.utterance || this.utterance.generation !== generation) {
-      throw new Error('no matching STT utterance is active')
+  private requireUtterance(input: {
+    streamId: string
+    generation: number
+    utteranceId: string
+  }): ActiveUtterance {
+    if (
+      !this.utterance
+      || this.utterance.streamId !== input.streamId
+      || this.utterance.generation !== input.generation
+      || this.utterance.utteranceId !== input.utteranceId
+    ) {
+      throw new Error('STT utterance identity does not match')
     }
     return this.utterance
   }
@@ -453,15 +498,34 @@ class ResidentVoiceWorker implements VoiceWorker {
     return this.options.send({ type: 'event', event })
   }
 
-  private rememberCancellation(generation: number): void {
-    this.cancelledThroughGeneration = Math.max(
-      this.cancelledThroughGeneration,
-      generation,
+  private rememberCancellation(input: VoiceGenerationIdentity): void {
+    this.cancelledThroughGeneration.set(
+      input.streamId,
+      Math.max(
+        this.cancelledThroughGeneration.get(input.streamId) ?? -1,
+        input.generation,
+      ),
     )
   }
 
-  private isCancelled(generation: number): boolean {
-    return generation <= this.cancelledThroughGeneration
+  private isCancelled(input: VoiceGenerationIdentity): boolean {
+    return input.generation <= (this.cancelledThroughGeneration.get(input.streamId) ?? -1)
+  }
+
+  private terminatePiper(active: ActiveSynthesis): Promise<void> {
+    if (active.termination) return active.termination
+    active.termination = this.terminatePiperProcess(active)
+    return active.termination
+  }
+
+  private async terminatePiperProcess(active: ActiveSynthesis): Promise<void> {
+    if (active.exited) return
+    active.process.kill('SIGTERM')
+    if (await waitForActivePiperExit(active, this.options.piperShutdownTimeoutMs)) return
+    active.process.kill('SIGKILL')
+    if (!await waitForActivePiperExit(active, this.options.piperShutdownTimeoutMs)) {
+      throw new Error('Piper did not exit after SIGKILL')
+    }
   }
 }
 
@@ -495,11 +559,7 @@ function sherpaProfile(config: EnabledOracleVoiceConfig): {
   }
 }
 
-function waitForPiperExit(piper: PiperProcess): Promise<{
-  code: number | null
-  signal: NodeJS.Signals | null
-  error?: Error
-}> {
+function waitForPiperExit(piper: PiperProcess): Promise<PiperExitResult> {
   return new Promise((resolve) => {
     let settled = false
     const finish = (result: {
@@ -514,6 +574,32 @@ function waitForPiperExit(piper: PiperProcess): Promise<{
     piper.once('exit', (code, signal) => finish({ code, signal }))
     piper.once('error', (error) => finish({ code: null, signal: null, error }))
   })
+}
+
+function waitForActivePiperExit(
+  active: ActiveSynthesis,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (active.exited) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (exited: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(exited)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    void active.exit.then(() => finish(true))
+  })
+}
+
+function matchesCancelled(
+  active: VoiceGenerationIdentity,
+  input: VoiceGenerationIdentity,
+): boolean {
+  return active.streamId === input.streamId
+    && active.generation <= input.generation
 }
 
 async function readBoundedText(

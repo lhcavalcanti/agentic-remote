@@ -34,6 +34,7 @@ const config: EnabledOracleVoiceConfig = {
     binary: '/opt/piper/piper',
     model: '/models/en_US-lessac-medium.onnx',
     config: '/models/en_US-lessac-medium.onnx.json',
+    sampleRate: 22_050,
   },
 }
 
@@ -135,6 +136,11 @@ describe('ChildVoiceEngine parent supervision', () => {
     expect(forkCalls[0].options.env).not.toBe(process.env)
     expect(forkCalls[0].options.env).not.toHaveProperty('GITHUB_TOKEN')
     expect(forkCalls[0].options.env).not.toHaveProperty('COPILOT_GITHUB_TOKEN')
+    expect(engine.capability()).toMatchObject({
+      available: true,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
+    })
 
     const closing = session.close()
     child.respond(child.sent.at(-1))
@@ -252,14 +258,14 @@ describe('ChildVoiceEngine parent supervision', () => {
     readonly pid = 52_052
     private exited = false
 
-    constructor() {
+    constructor(private readonly exitOnKill = true) {
       super()
       this.stdin.on('data', (chunk: Buffer) => this.input.push(Buffer.from(chunk)))
     }
 
     kill(signal: NodeJS.Signals): boolean {
       this.signals.push(signal)
-      this.finish(null, signal)
+      if (this.exitOnKill) this.finish(null, signal)
       return true
     }
 
@@ -286,6 +292,8 @@ describe('ChildVoiceEngine parent supervision', () => {
     send?: (message: VoiceWorkerChildMessage) => Promise<void>
     now?: () => number
     heartbeatIntervalMs?: number
+    piperExitOnKill?: boolean
+    piperShutdownTimeoutMs?: number
     workerConfig?: EnabledOracleVoiceConfig
   } = {}): {
     worker: ReturnType<typeof createVoiceWorker>
@@ -304,7 +312,7 @@ describe('ChildVoiceEngine parent supervision', () => {
       sherpa: sherpa.module,
       spawnPiper: (binary, args) => {
         spawnCalls.push({ binary, args })
-        const piper = new FakePiperProcess()
+        const piper = new FakePiperProcess(options.piperExitOnKill)
         pipers.push(piper)
         return piper
       },
@@ -314,6 +322,7 @@ describe('ChildVoiceEngine parent supervision', () => {
       },
       now: options.now ?? (() => 123),
       heartbeatIntervalMs: options.heartbeatIntervalMs ?? 0,
+      piperShutdownTimeoutMs: options.piperShutdownTimeoutMs ?? 10,
       ...(options.maxUtteranceSamples === undefined
         ? {}
         : { maxUtteranceSamples: options.maxUtteranceSamples }),
@@ -380,6 +389,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'stt_start',
         requestId: 'start',
         input: {
+          streamId: 'stream-1',
           generation: 1,
           utteranceId: 'utterance-1',
           language: 'pt-BR',
@@ -390,7 +400,9 @@ describe('ChildVoiceEngine parent supervision', () => {
         requestId: 'audio-1',
         frame: {
           direction: 'microphone',
+          streamId: 'stream-1',
           generation: 1,
+          utteranceId: 'utterance-1',
           sequence: 0,
           sampleRate: ORACLE_VOICE_SAMPLE_RATE,
           samples: Int16Array.of(-32_768, 0, 32_767),
@@ -401,7 +413,9 @@ describe('ChildVoiceEngine parent supervision', () => {
         requestId: 'audio-2',
         frame: {
           direction: 'microphone',
+          streamId: 'stream-1',
           generation: 1,
+          utteranceId: 'utterance-1',
           sequence: 1,
           sampleRate: ORACLE_VOICE_SAMPLE_RATE,
           samples: Int16Array.of(1, 2),
@@ -411,6 +425,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'stt_end',
         requestId: 'end',
         input: {
+          streamId: 'stream-1',
           generation: 1,
           utteranceId: 'utterance-1',
         },
@@ -451,6 +466,7 @@ describe('ChildVoiceEngine parent supervision', () => {
       expect(workerEvents(harness.messages)
         .filter((event) => event.type === 'final')).toEqual([{
         type: 'final',
+        streamId: 'stream-1',
         generation: 1,
         utteranceId: 'utterance-1',
         text: 'hello',
@@ -467,6 +483,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'stt_start',
         requestId: 'start',
         input: {
+          streamId: 'stream-2',
           generation: 2,
           utteranceId: 'utterance-2',
           language: 'en',
@@ -477,7 +494,9 @@ describe('ChildVoiceEngine parent supervision', () => {
         requestId: 'audio',
         frame: {
           direction: 'microphone',
+          streamId: 'stream-2',
           generation: 2,
+          utteranceId: 'utterance-2',
           sequence: 0,
           sampleRate: ORACLE_VOICE_SAMPLE_RATE,
           samples: Int16Array.of(1),
@@ -487,6 +506,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'stt_end',
         requestId: 'end',
         input: {
+          streamId: 'stream-2',
           generation: 2,
           utteranceId: 'utterance-2',
         },
@@ -503,6 +523,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'stt_start',
         requestId: 'start',
         input: {
+          streamId: 'stream-3',
           generation: 3,
           utteranceId: 'utterance-3',
           language: 'en',
@@ -513,7 +534,9 @@ describe('ChildVoiceEngine parent supervision', () => {
         requestId: 'too-long',
         frame: {
           direction: 'microphone',
+          streamId: 'stream-3',
           generation: 3,
+          utteranceId: 'utterance-3',
           sequence: 0,
           sampleRate: ORACLE_VOICE_SAMPLE_RATE,
           samples: Int16Array.of(1, 2, 3, 4),
@@ -535,6 +558,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'stt_start',
         requestId: 'start',
         input: {
+          streamId: 'stream-4',
           generation: 4,
           utteranceId: 'utterance-4',
           language: 'en',
@@ -543,12 +567,14 @@ describe('ChildVoiceEngine parent supervision', () => {
       await harness.worker.handle({
         type: 'stt_cancel',
         requestId: 'cancel',
+        streamId: 'stream-4',
         generation: 4,
       })
       await harness.worker.handle({
         type: 'stt_end',
         requestId: 'end',
         input: {
+          streamId: 'stream-4',
           generation: 4,
           utteranceId: 'utterance-4',
         },
@@ -557,10 +583,64 @@ describe('ChildVoiceEngine parent supervision', () => {
       expect(workerEvents(harness.messages)
         .filter((event) => event.type === 'final')).toEqual([])
     })
+
+    it('rejects delayed same-generation audio from an older stream and utterance', async () => {
+      const harness = childHarness()
+      await initializeWorker(harness)
+      await harness.worker.handle({
+        type: 'stt_start',
+        requestId: 'old-start',
+        input: {
+          streamId: 'old-stream',
+          generation: 5,
+          utteranceId: 'old-utterance',
+          language: 'en',
+        },
+      })
+      await harness.worker.handle({
+        type: 'stt_end',
+        requestId: 'old-end',
+        input: {
+          streamId: 'old-stream',
+          generation: 5,
+          utteranceId: 'old-utterance',
+        },
+      })
+      await harness.worker.handle({
+        type: 'stt_start',
+        requestId: 'new-start',
+        input: {
+          streamId: 'new-stream',
+          generation: 5,
+          utteranceId: 'new-utterance',
+          language: 'en',
+        },
+      })
+      await harness.worker.handle({
+        type: 'stt_audio',
+        requestId: 'late-audio',
+        frame: {
+          direction: 'microphone',
+          streamId: 'old-stream',
+          generation: 5,
+          utteranceId: 'old-utterance',
+          sequence: 0,
+          sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+          samples: Int16Array.of(1, 2),
+        },
+      })
+
+      expect(harness.messages.at(-1)).toEqual({
+        type: 'response_error',
+        requestId: 'late-audio',
+        message: expect.stringContaining('identity'),
+      })
+      expect(harness.sherpa.recognizers[0].streams[1].accepted).toEqual([])
+    })
   })
 
   describe('Piper TTS worker', () => {
-    it('frames one segment on stdin and emits even PCM16 chunks at 24 kHz', async () => {
+    it('frames one segment on stdin and emits even PCM16 chunks at the native rate', async () => {
       const harness = childHarness({
         workerConfig: {
           ...config,
@@ -575,6 +655,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'tts_synthesize',
         requestId: 'synthesize',
         input: {
+          streamId: 'stream-5',
           generation: 5,
           segmentId: 'segment-5',
           text: 'Hello there.',
@@ -604,19 +685,22 @@ describe('ChildVoiceEngine parent supervision', () => {
       const audioEvents = workerEvents(harness.messages)
         .filter((event) => event.type === 'audio')
       expect(audioEvents.map((event) => ({
+        streamId: event.streamId,
         generation: event.generation,
         segmentId: event.segmentId,
         sequence: event.sequence,
         sampleRate: event.sampleRate,
       }))).toEqual([{
+        streamId: 'stream-5',
         generation: 5,
         segmentId: 'segment-5',
         sequence: 0,
-        sampleRate: 24_000,
+        sampleRate: 22_050,
       }])
       expect(audioEvents.flatMap((event) => [...event.samples])).toEqual([513, 1_027])
       expect(workerEvents(harness.messages).at(-1)).toEqual({
         type: 'audio_end',
+        streamId: 'stream-5',
         generation: 5,
         segmentId: 'segment-5',
       })
@@ -629,6 +713,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'tts_synthesize',
         requestId: 'synthesize',
         input: {
+          streamId: 'stream-6',
           generation: 6,
           segmentId: 'segment-6',
           text: 'Do not echo this text.',
@@ -660,6 +745,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'tts_synthesize',
         requestId: 'synthesize',
         input: {
+          streamId: 'stream-7',
           generation: 7,
           segmentId: 'segment-7',
           text: 'Cancelled.',
@@ -669,6 +755,7 @@ describe('ChildVoiceEngine parent supervision', () => {
       await harness.worker.handle({
         type: 'tts_cancel',
         requestId: 'cancel',
+        streamId: 'stream-7',
         generation: 7,
       })
       await synthesis
@@ -678,6 +765,153 @@ describe('ChildVoiceEngine parent supervision', () => {
       expect(workerEvents(harness.messages)
         .filter((event) => 'generation' in event && event.generation === 7)).toEqual([])
     })
+
+    it('does not let an old stream cancel same-generation synthesis', async () => {
+      const harness = childHarness()
+      await initializeWorker(harness)
+      const synthesis = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'synthesize',
+        input: {
+          streamId: 'new-stream',
+          generation: 9,
+          segmentId: 'new-segment',
+          text: 'Still active.',
+        },
+      })
+      const piper = harness.pipers[0]
+
+      await harness.worker.handle({
+        type: 'tts_cancel',
+        requestId: 'stale-cancel',
+        streamId: 'old-stream',
+        generation: 9,
+      })
+
+      expect(piper.signals).toEqual([])
+      piper.finish()
+      await synthesis
+      expect(workerEvents(harness.messages)).toContainEqual({
+        type: 'audio_end',
+        streamId: 'new-stream',
+        generation: 9,
+        segmentId: 'new-segment',
+      })
+    })
+
+    it('escalates a stalled Piper cancellation from SIGTERM to SIGKILL', async () => {
+      vi.useFakeTimers()
+      try {
+        const harness = childHarness({
+          piperExitOnKill: false,
+          piperShutdownTimeoutMs: 10,
+        })
+        await initializeWorker(harness)
+        const synthesis = harness.worker.handle({
+          type: 'tts_synthesize',
+          requestId: 'synthesize',
+          input: {
+            streamId: 'cancel-stream',
+            generation: 10,
+            segmentId: 'cancel-segment',
+            text: 'Cancel me.',
+          },
+        })
+        const piper = harness.pipers[0]
+        const cancellation = harness.worker.handle({
+          type: 'tts_cancel',
+          requestId: 'cancel',
+          streamId: 'cancel-stream',
+          generation: 10,
+        })
+
+        expect(piper.signals).toEqual(['SIGTERM'])
+        await vi.advanceTimersByTimeAsync(11)
+        expect(piper.signals).toEqual(['SIGTERM', 'SIGKILL'])
+        piper.finish(null, 'SIGKILL')
+        await cancellation
+        await synthesis
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('escalates a stalled Piper close from SIGTERM to SIGKILL', async () => {
+      vi.useFakeTimers()
+      try {
+        const harness = childHarness({
+          piperExitOnKill: false,
+          piperShutdownTimeoutMs: 10,
+        })
+        await initializeWorker(harness)
+        const synthesis = harness.worker.handle({
+          type: 'tts_synthesize',
+          requestId: 'synthesize',
+          input: {
+            streamId: 'close-stream',
+            generation: 11,
+            segmentId: 'close-segment',
+            text: 'Close me.',
+          },
+        })
+        const piper = harness.pipers[0]
+        const closing = harness.worker.close()
+
+        expect(piper.signals).toEqual(['SIGTERM'])
+        await vi.advanceTimersByTimeAsync(11)
+        expect(piper.signals).toEqual(['SIGTERM', 'SIGKILL'])
+        piper.finish(null, 'SIGKILL')
+        await closing
+        await synthesis
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it.each(['send', 'stream'] as const)(
+      'terminates Piper with escalation after a %s failure',
+      async (failure) => {
+        const harness = childHarness({
+          piperExitOnKill: false,
+          piperShutdownTimeoutMs: 100,
+          send: async (message) => {
+            if (
+              failure === 'send'
+              && message.type === 'event'
+              && message.event.type === 'audio'
+            ) {
+              throw new Error('audio IPC failed')
+            }
+          },
+        })
+        await initializeWorker(harness)
+        const synthesis = harness.worker.handle({
+          type: 'tts_synthesize',
+          requestId: 'synthesize',
+          input: {
+            streamId: `${failure}-stream`,
+            generation: 12,
+            segmentId: `${failure}-segment`,
+            text: 'Failure path.',
+          },
+        })
+        const piper = harness.pipers[0]
+        if (failure === 'send') {
+          piper.stdout.write(Buffer.from([1, 0]))
+        } else {
+          piper.stdout.destroy(new Error('Piper stdout failed'))
+        }
+        await vi.waitFor(() => expect(piper.signals).toContain('SIGTERM'))
+        await vi.waitFor(() => expect(piper.signals).toEqual(['SIGTERM', 'SIGKILL']))
+        piper.finish(null, 'SIGKILL')
+        await synthesis
+        expect(harness.messages).toContainEqual({
+          type: 'response_error',
+          requestId: 'synthesize',
+          message: expect.stringContaining('failed'),
+        })
+      },
+    )
 
     it('awaits downstream audio delivery before consuming the next Piper chunk', async () => {
       let releaseFirstAudio = () => {}
@@ -697,6 +931,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         type: 'tts_synthesize',
         requestId: 'synthesize',
         input: {
+          streamId: 'stream-8',
           generation: 8,
           segmentId: 'segment-8',
           text: 'Backpressure.',
@@ -801,12 +1036,22 @@ describe('ChildVoiceEngine parent supervision', () => {
   it('rejects every pending operation when the worker exits', async () => {
     const { child, engine } = parentHarness()
     const session = await initialize(engine, child)
+    const starting = session.stt.start({
+      streamId: 'stream-7',
+      generation: 7,
+      utteranceId: 'utterance-7',
+      language: 'en',
+    })
+    child.respond(child.sent.at(-1))
+    await starting
     const synthesis = session.tts.synthesize({
+      streamId: 'stream-7',
       generation: 7,
       segmentId: 'segment-7',
       text: 'Sensitive transcript text.',
     })
     const end = session.stt.end({
+      streamId: 'stream-7',
       generation: 7,
       utteranceId: 'utterance-7',
     })
@@ -820,16 +1065,28 @@ describe('ChildVoiceEngine parent supervision', () => {
   it('bounds pending requests before sending more work to the child', async () => {
     const { child, engine } = parentHarness({ maxPendingRequests: 2 })
     const session = await initialize(engine, child)
+    const starting = session.stt.start({
+      streamId: 'stream-1',
+      generation: 1,
+      utteranceId: 'utterance-1',
+      language: 'en',
+    })
+    child.respond(child.sent.at(-1))
+    await starting
     const first = session.stt.accept({
       direction: 'microphone',
+      streamId: 'stream-1',
       generation: 1,
+      utteranceId: 'utterance-1',
       sequence: 0,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: Int16Array.of(1),
     })
     const second = session.stt.accept({
       direction: 'microphone',
+      streamId: 'stream-1',
       generation: 1,
+      utteranceId: 'utterance-1',
       sequence: 1,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: Int16Array.of(2),
@@ -837,7 +1094,9 @@ describe('ChildVoiceEngine parent supervision', () => {
 
     await expect(session.stt.accept({
       direction: 'microphone',
+      streamId: 'stream-1',
       generation: 1,
+      utteranceId: 'utterance-1',
       sequence: 2,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: Int16Array.of(3),
@@ -883,8 +1142,19 @@ describe('ChildVoiceEngine parent supervision', () => {
     const session = await initialize(engine, child)
     const events: VoiceEngineEvent[] = []
     session.onEvent((event) => events.push(event))
+    const starting = session.stt.start({
+      streamId: 'stream-5',
+      generation: 5,
+      utteranceId: 'utterance-5',
+      language: 'en',
+    })
+    child.respond(child.sent.at(-1))
+    await starting
 
-    const cancellation = session.cancelGeneration(4)
+    const cancellation = session.cancelGeneration({
+      streamId: 'stream-4',
+      generation: 4,
+    })
     const cancelRequests = child.sent.filter((message) =>
       message.type === 'stt_cancel' || message.type === 'tts_cancel')
     expect(cancelRequests).toHaveLength(2)
@@ -893,23 +1163,27 @@ describe('ChildVoiceEngine parent supervision', () => {
 
     child.emitEvent({
       type: 'partial',
+      streamId: 'stream-4',
       generation: 4,
       utteranceId: 'utterance-4',
       text: 'late',
     })
     child.emitEvent({
       type: 'audio_end',
+      streamId: 'stream-4',
       generation: 4,
       segmentId: 'segment-4',
     })
     child.emitEvent({
       type: 'partial',
+      streamId: 'stream-3',
       generation: 3,
       utteranceId: 'utterance-3',
       text: 'older',
     })
     child.emitEvent({
       type: 'partial',
+      streamId: 'stream-5',
       generation: 5,
       utteranceId: 'utterance-5',
       text: 'current',
@@ -917,10 +1191,115 @@ describe('ChildVoiceEngine parent supervision', () => {
 
     expect(events).toEqual([{
       type: 'partial',
+      streamId: 'stream-5',
       generation: 5,
       utteranceId: 'utterance-5',
       text: 'current',
     }])
+  })
+
+  it('rejects delayed same-generation audio outside the active stream and utterance', async () => {
+    const { child, engine } = parentHarness()
+    const session = await initialize(engine, child)
+    const starting = session.stt.start({
+      streamId: 'new-stream',
+      generation: 1,
+      utteranceId: 'new-utterance',
+      language: 'en',
+    })
+    child.respond(child.sent.at(-1))
+    await starting
+
+    await expect(session.stt.accept({
+      direction: 'microphone',
+      streamId: 'old-stream',
+      generation: 1,
+      utteranceId: 'old-utterance',
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: Int16Array.of(1),
+    })).rejects.toThrow('stale STT audio')
+
+    expect(child.sent.filter((message) => message.type === 'stt_audio')).toEqual([])
+  })
+
+  it('drops same-generation STT and TTS events outside the active identities', async () => {
+    const { child, engine } = parentHarness()
+    const session = await initialize(engine, child)
+    const events: VoiceEngineEvent[] = []
+    session.onEvent((event) => events.push(event))
+
+    const starting = session.stt.start({
+      streamId: 'active-stream',
+      generation: 2,
+      utteranceId: 'active-utterance',
+      language: 'en',
+    })
+    child.respond(child.sent.at(-1))
+    await starting
+    const synthesis = session.tts.synthesize({
+      streamId: 'active-stream',
+      generation: 2,
+      segmentId: 'active-segment',
+      text: 'Active.',
+    })
+
+    child.emitEvent({
+      type: 'partial',
+      streamId: 'stale-stream',
+      generation: 2,
+      utteranceId: 'active-utterance',
+      text: 'stale stream',
+    })
+    child.emitEvent({
+      type: 'partial',
+      streamId: 'active-stream',
+      generation: 2,
+      utteranceId: 'stale-utterance',
+      text: 'stale utterance',
+    })
+    child.emitEvent({
+      type: 'audio',
+      streamId: 'active-stream',
+      generation: 2,
+      segmentId: 'stale-segment',
+      sequence: 0,
+      sampleRate: 22_050,
+      samples: Int16Array.of(1),
+    })
+    child.emitEvent({
+      type: 'partial',
+      streamId: 'active-stream',
+      generation: 2,
+      utteranceId: 'active-utterance',
+      text: 'current',
+    })
+    child.emitEvent({
+      type: 'audio_end',
+      streamId: 'active-stream',
+      generation: 2,
+      segmentId: 'active-segment',
+    })
+    const request = child.sent.find((message) => message.type === 'tts_synthesize')
+    expect(request).toBeDefined()
+    child.respond(request!)
+    await synthesis
+
+    expect(events).toEqual([
+      {
+        type: 'partial',
+        streamId: 'active-stream',
+        generation: 2,
+        utteranceId: 'active-utterance',
+        text: 'current',
+      },
+      {
+        type: 'audio_end',
+        streamId: 'active-stream',
+        generation: 2,
+        segmentId: 'active-segment',
+      },
+    ])
   })
 
   it('closes gracefully when the worker acknowledges and exits', async () => {

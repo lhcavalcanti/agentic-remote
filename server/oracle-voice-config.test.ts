@@ -29,7 +29,11 @@ async function fixture() {
   await writeFile(path.join(dataDirectory, 'models', 'stt', 'encoder.onnx'), 'model')
   await writeFile(path.join(dataDirectory, 'bin', 'piper'), 'binary')
   await writeFile(path.join(dataDirectory, 'models', 'voice.onnx'), 'voice')
-  await writeFile(path.join(dataDirectory, 'models', 'voice.json'), '{}')
+  await writeFile(path.join(dataDirectory, 'models', 'voice.json'), JSON.stringify({
+    audio: {
+      sample_rate: 22_050,
+    },
+  }))
   return dataDirectory
 }
 
@@ -83,9 +87,23 @@ describe('readOracleVoiceConfig', () => {
         binary: path.join(dataDirectory, 'bin', 'piper'),
         model: path.join(dataDirectory, 'models', 'voice.onnx'),
         config: path.join(dataDirectory, 'models', 'voice.json'),
+        sampleRate: 22_050,
         speaker: 2,
       },
     })
+  })
+
+  it.each([
+    ['{}', 'audio.sample_rate'],
+    [JSON.stringify({ audio: { sample_rate: 7_999 } }), 'from 8000 to 192000'],
+    [JSON.stringify({ audio: { sample_rate: 192_001 } }), 'from 8000 to 192000'],
+    ['not json', 'valid JSON'],
+  ])('rejects an invalid Piper sample rate config', async (contents, message) => {
+    const dataDirectory = await fixture()
+    await writeFile(path.join(dataDirectory, 'models', 'voice.json'), contents)
+
+    await expect(readOracleVoiceConfig(dataDirectory, enabledEnv()))
+      .rejects.toThrow(message)
   })
 
   it('rejects a symlinked model file escaping the configured model directory', async () => {

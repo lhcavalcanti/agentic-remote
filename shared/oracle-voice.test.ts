@@ -17,7 +17,7 @@ describe('Oracle voice audio protocol', () => {
       direction: 'microphone',
       generation: 7,
       sequence: 11,
-      sampleRate: 16_000,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: pcm,
     })
 
@@ -36,7 +36,7 @@ describe('Oracle voice audio protocol', () => {
       direction: 'playback',
       generation: 0x0102_0304,
       sequence: 0x0506_0708,
-      sampleRate: 16_000,
+      sampleRate: 22_050,
       samples: new Int16Array([0x1234]),
     })
     const bytes = new Uint8Array(encoded)
@@ -46,7 +46,7 @@ describe('Oracle voice audio protocol', () => {
       ORACLE_VOICE_PROTOCOL, 1, 0, 0,
       4, 3, 2, 1,
       8, 7, 6, 5,
-      128, 62, 0, 0,
+      34, 86, 0, 0,
       1, 0, 0, 0,
       52, 18,
     ])
@@ -64,7 +64,7 @@ describe('Oracle voice audio protocol', () => {
       direction: 'microphone',
       generation: 1,
       sequence: 2,
-      sampleRate: 16_000,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: new Int16Array([1, 2]),
     })
     new DataView(encoded).setUint32(20, 3, true)
@@ -72,19 +72,36 @@ describe('Oracle voice audio protocol', () => {
     expect(() => decodeVoiceAudioFrame(encoded)).toThrow(VoiceProtocolError)
   })
 
-  it('rejects non-16 kHz transported audio and non-uint32 routing identity', () => {
+  it('accepts bounded native playback rates but keeps microphone audio at 16 kHz', () => {
+    expect(decodeVoiceAudioFrame(encodeVoiceAudioFrame({
+      direction: 'playback',
+      generation: 0,
+      sequence: 0,
+      sampleRate: 22_050,
+      samples: Int16Array.of(1),
+    }))).toMatchObject({
+      direction: 'playback',
+      sampleRate: 22_050,
+    })
     expect(() => encodeVoiceAudioFrame({
       direction: 'microphone',
       generation: -1,
       sequence: 0,
-      sampleRate: 16_000,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: new Int16Array(),
     })).toThrow(VoiceProtocolError)
     expect(() => encodeVoiceAudioFrame({
       direction: 'microphone',
       generation: 0,
       sequence: 0,
-      sampleRate: 48_000 as typeof ORACLE_VOICE_SAMPLE_RATE,
+      sampleRate: 22_050 as typeof ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(),
+    })).toThrow(VoiceProtocolError)
+    expect(() => encodeVoiceAudioFrame({
+      direction: 'playback',
+      generation: 0,
+      sequence: 0,
+      sampleRate: 192_001,
       samples: new Int16Array(),
     })).toThrow(VoiceProtocolError)
 
@@ -92,10 +109,10 @@ describe('Oracle voice audio protocol', () => {
       direction: 'microphone',
       generation: 0,
       sequence: 0,
-      sampleRate: 16_000,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: new Int16Array(),
     })
-    new DataView(encoded).setUint32(16, 48_000, true)
+    new DataView(encoded).setUint32(16, 22_050, true)
     expect(() => decodeVoiceAudioFrame(encoded)).toThrow(VoiceProtocolError)
   })
 })
@@ -107,6 +124,7 @@ describe('Oracle voice control protocol', () => {
     computerId: 'computer-1',
     computerName: 'Computer',
     sampleRate: 16_000,
+    playbackSampleRate: 22_050,
     languages: ['en'],
     sttProfile: 'quality',
     ttsVoice: 'voice',
@@ -163,13 +181,20 @@ describe('Oracle voice control protocol', () => {
     }
   })
 
-  it('requires capabilities to advertise 16 kHz audio', () => {
+  it('requires 16 kHz microphone capability and a bounded playback rate', () => {
     expect(isVoiceServerControl({
       type: 'hello',
       protocol: ORACLE_VOICE_PROTOCOL,
       streamId: 'stream-1',
       generation: 3,
       capabilities: { ...capabilities, sampleRate: 48_000 },
+    })).toBe(false)
+    expect(isVoiceServerControl({
+      type: 'hello',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId: 'stream-1',
+      generation: 3,
+      capabilities: { ...capabilities, playbackSampleRate: 192_001 },
     })).toBe(false)
   })
 

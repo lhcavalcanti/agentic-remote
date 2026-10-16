@@ -2,16 +2,20 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
-import type { EnabledOracleVoiceConfig } from '../server/oracle-voice-config.js'
+import {
+  readPiperSampleRate,
+  type EnabledOracleVoiceConfig,
+} from '../server/oracle-voice-config.js'
 import type { VoiceEngineEvent } from '../server/oracle-voice-engine.js'
 import { ChildVoiceEngine } from '../server/oracle-voice-worker.js'
+import { smokeEventLogLine } from './oracle-voice-engine-smoke-output.js'
 
 const wavPath = process.argv[2]
 if (!wavPath) {
   throw new Error('Usage: oracle-voice-engine-smoke.ts <16-kHz-mono-pcm16.wav>')
 }
 
-const config = voiceConfigFromEnvironment()
+const config = await voiceConfigFromEnvironment()
 const wave = parsePcm16Wave(await readFile(path.resolve(wavPath)))
 if (wave.sampleRate !== ORACLE_VOICE_SAMPLE_RATE || wave.channels !== 1) {
   throw new Error(`Smoke WAV must be mono ${ORACLE_VOICE_SAMPLE_RATE} Hz PCM16`)
@@ -23,10 +27,12 @@ let firstAudioMs: number | undefined
 let playbackSamples = 0
 let sttStarted = 0
 let ttsStarted = 0
-const partials: string[] = []
+let partialCount = 0
+let sttFinalized = false
 
 try {
   const session = await engine.initialize(config)
+  const streamId = 'real-smoke-stream'
   const generation = 1
   const utteranceId = 'real-smoke-utterance'
   const segmentId = 'real-smoke-segment'
@@ -35,12 +41,15 @@ try {
   const unsubscribe = session.onEvent((event: VoiceEngineEvent) => {
     if (event.type === 'partial') {
       firstPartialMs ??= performance.now() - sttStarted
-      partials.push(event.text)
-      console.log(`partial: ${event.text}`)
+      partialCount += 1
     } else if (event.type === 'final') {
-      console.log(`final: ${event.text}`)
+      sttFinalized = true
       final.resolve(event.text)
     } else if (event.type === 'audio') {
+      if (event.sampleRate !== config.tts.sampleRate) {
+        audioEnd.reject(new Error('Piper playback sample rate does not match its config'))
+        return
+      }
       firstAudioMs ??= performance.now() - ttsStarted
       playbackSamples += event.samples.length
     } else if (event.type === 'audio_end') {
@@ -49,10 +58,13 @@ try {
       final.reject(new Error(event.message))
       audioEnd.reject(new Error(event.message))
     }
+    const logLine = smokeEventLogLine(event)
+    if (logLine) console.log(logLine)
   })
 
   sttStarted = performance.now()
   await session.stt.start({
+    streamId,
     generation,
     utteranceId,
     language: config.language,
@@ -62,26 +74,32 @@ try {
     const end = Math.min(wave.samples.length, offset + frameSamples)
     await session.stt.accept({
       direction: 'microphone',
+      streamId,
       generation,
+      utteranceId,
       sequence,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       samples: wave.samples.subarray(offset, end),
     })
     offset = end
+    if (sttFinalized) break
   }
-  await session.stt.end({ generation, utteranceId })
+  if (!sttFinalized) {
+    await session.stt.end({ streamId, generation, utteranceId })
+  }
   const transcript = await final.promise
   const sttElapsedMs = performance.now() - sttStarted
 
   ttsStarted = performance.now()
   await session.tts.synthesize({
+    streamId,
     generation,
     segmentId,
     text: transcript || 'Oracle voice smoke test.',
   })
   await audioEnd.promise
   const ttsElapsedMs = performance.now() - ttsStarted
-  const audioDurationMs = playbackSamples / 24_000 * 1_000
+  const audioDurationMs = playbackSamples / config.tts.sampleRate * 1_000
   const rssBytes = await workerRssBytes(engine.workerPid())
 
   console.log(`first-partial latency ms: ${format(firstPartialMs)}`)
@@ -89,13 +107,14 @@ try {
   console.log(`STT RTF: ${format(sttElapsedMs / wave.durationMs)}`)
   console.log(`TTS RTF: ${format(audioDurationMs > 0 ? ttsElapsedMs / audioDurationMs : undefined)}`)
   console.log(`worker RSS MiB: ${format(rssBytes === undefined ? undefined : rssBytes / 1_048_576)}`)
-  console.log(`partials observed: ${partials.length}`)
+  console.log(`partials observed: ${partialCount}`)
   unsubscribe()
 } finally {
   await engine.stop()
 }
 
-function voiceConfigFromEnvironment(): EnabledOracleVoiceConfig {
+async function voiceConfigFromEnvironment(): Promise<EnabledOracleVoiceConfig> {
+  const ttsConfig = requiredEnvironment('AGENTIC_REMOTE_VOICE_TTS_CONFIG')
   return {
     enabled: true,
     language: process.env.AGENTIC_REMOTE_VOICE_LANGUAGE ?? 'en',
@@ -110,7 +129,8 @@ function voiceConfigFromEnvironment(): EnabledOracleVoiceConfig {
     tts: {
       binary: requiredEnvironment('AGENTIC_REMOTE_VOICE_TTS_BIN'),
       model: requiredEnvironment('AGENTIC_REMOTE_VOICE_TTS_MODEL'),
-      config: requiredEnvironment('AGENTIC_REMOTE_VOICE_TTS_CONFIG'),
+      config: ttsConfig,
+      sampleRate: await readPiperSampleRate(ttsConfig),
       ...(process.env.AGENTIC_REMOTE_VOICE_TTS_SPEAKER === undefined
         ? {}
         : {

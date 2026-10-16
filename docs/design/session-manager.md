@@ -91,7 +91,7 @@ The roster is capped at 80 open sessions, and each activity at 120 characters.
 | `list_computers` | Computers, online state, and providers |
 | `list_sessions` | Open sessions, or recent history with `includeClosed` |
 | `get_session` | Detail and the last N messages (default 6, maximum 30, each truncated), read as recorded: the session is never opened or resumed |
-| `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it (Copilot only) |
+| `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
 | `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task |
 | `send_to_session` | Send or queue a follow-up; always queued, so a busy session does not refuse it |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |

@@ -408,7 +408,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - **Ask only** is the panel's conversational mode: you ask Oracle about your
   sessions while their work carries on. Oracle answers from the current state,
   reading sessions as they are recorded and asking side questions that fork a
-  session's finished history, and MUST NOT interrupt, cancel, redirect, prompt,
+  session's finished history, with the current state of a session still in a
+  turn added so its answer is not mistaken for the whole story, and MUST NOT
+  interrupt, cancel, redirect, prompt,
   or otherwise change any session or its work. The hub refuses every tool that
   would start, message, rename, stop, or close a session for that message, and
   Oracle's reads never open, resume, or reconcile a session. Oracle's memory is

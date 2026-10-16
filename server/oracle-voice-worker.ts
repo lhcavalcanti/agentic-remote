@@ -22,17 +22,20 @@ import type {
   VoiceTtsEngine,
   VoiceUtteranceAudioFrame,
 } from './oracle-voice-engine.js'
-import type {
-  VoiceWorkerChildMessage,
-  VoiceWorkerParentMessage,
+import {
+  VOICE_MAX_CANCELLATION_STREAMS,
+  VOICE_WORKER_CLOSE_TIMEOUT_MS,
+  type VoiceWorkerChildMessage,
+  type VoiceWorkerParentMessage,
 } from './oracle-voice-worker-protocol.js'
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000
-const DEFAULT_CLOSE_REQUEST_TIMEOUT_MS = 2_000
+const DEFAULT_CLOSE_REQUEST_TIMEOUT_MS = VOICE_WORKER_CLOSE_TIMEOUT_MS
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000
 const DEFAULT_MAX_PENDING_REQUESTS = 128
+const DEFAULT_MAX_CANCELLATION_STREAMS = VOICE_MAX_CANCELLATION_STREAMS
 
 type Timer = ReturnType<typeof setTimeout>
 
@@ -60,6 +63,7 @@ export interface ChildVoiceEngineDependencies {
   closeRequestTimeoutMs: number
   shutdownTimeoutMs: number
   maxPendingRequests: number
+  maxCancellationStreams: number
   setTimeout: typeof setTimeout
   clearTimeout: typeof clearTimeout
 }
@@ -93,6 +97,7 @@ function defaultDependencies(): ChildVoiceEngineDependencies {
     closeRequestTimeoutMs: DEFAULT_CLOSE_REQUEST_TIMEOUT_MS,
     shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
     maxPendingRequests: DEFAULT_MAX_PENDING_REQUESTS,
+    maxCancellationStreams: DEFAULT_MAX_CANCELLATION_STREAMS,
     setTimeout,
     clearTimeout,
   }
@@ -231,7 +236,19 @@ export class ChildVoiceEngine implements
 
   async cancelGeneration(input: VoiceGenerationIdentity): Promise<void> {
     this.requireInitialized()
-    rememberCancellation(this.cancelledThroughGeneration, input)
+    try {
+      rememberCancellation(
+        this.cancelledThroughGeneration,
+        input,
+        this.dependencies.maxCancellationStreams,
+      )
+    } catch (error) {
+      const failure = error instanceof Error
+        ? error
+        : new Error('voice cancellation stream limit exceeded')
+      this.failWorker(failure, true)
+      throw failure
+    }
     if (matchesCancelled(this.activeUtterance, input)) {
       this.activeUtterance = undefined
     }
@@ -563,6 +580,7 @@ export class ChildVoiceEngine implements
       }
     }
     this.rejectPending(new Error('voice worker stopped'))
+    this.cancelledThroughGeneration.clear()
     this.activeUtterance = undefined
     this.activeSynthesis = undefined
     this.currentCapability = {
@@ -762,7 +780,14 @@ function matchesCancelled(
 function rememberCancellation(
   cancelledThroughGeneration: Map<string, number>,
   input: VoiceGenerationIdentity,
+  maximumStreams: number,
 ): void {
+  if (
+    !cancelledThroughGeneration.has(input.streamId)
+    && cancelledThroughGeneration.size >= maximumStreams
+  ) {
+    throw new Error('voice cancellation stream limit exceeded')
+  }
   cancelledThroughGeneration.set(
     input.streamId,
     Math.max(cancelledThroughGeneration.get(input.streamId) ?? -1, input.generation),

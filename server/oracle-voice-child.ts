@@ -15,14 +15,17 @@ import type {
   VoiceSynthesisRequest,
   VoiceUtteranceAudioFrame,
 } from './oracle-voice-engine.js'
-import type {
-  VoiceWorkerChildMessage,
-  VoiceWorkerParentMessage,
+import {
+  VOICE_MAX_CANCELLATION_STREAMS,
+  VOICE_PIPER_SHUTDOWN_TIMEOUT_MS,
+  type VoiceWorkerChildMessage,
+  type VoiceWorkerParentMessage,
 } from './oracle-voice-worker-protocol.js'
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_MAX_UTTERANCE_SAMPLES = ORACLE_VOICE_SAMPLE_RATE * 30
-const DEFAULT_PIPER_SHUTDOWN_TIMEOUT_MS = 2_000
+const DEFAULT_PIPER_SHUTDOWN_TIMEOUT_MS = VOICE_PIPER_SHUTDOWN_TIMEOUT_MS
+const DEFAULT_MAX_CANCELLATION_STREAMS = VOICE_MAX_CANCELLATION_STREAMS
 const MAX_PIPER_STDERR_BYTES = 4_096
 
 interface SherpaStream {
@@ -68,6 +71,7 @@ export interface VoiceWorkerOptions {
   heartbeatIntervalMs: number
   maxUtteranceSamples: number
   piperShutdownTimeoutMs: number
+  maxCancellationStreams: number
 }
 
 export interface VoiceWorker {
@@ -84,6 +88,7 @@ interface ActiveUtterance {
   nextSequence: number
   lastText: string
   finalized: boolean
+  cancelled: boolean
 }
 
 interface ActiveSynthesis {
@@ -93,6 +98,7 @@ interface ActiveSynthesis {
   process: PiperProcess
   exit: Promise<PiperExitResult>
   exited: boolean
+  cancelled: boolean
   termination?: Promise<void>
 }
 
@@ -111,6 +117,7 @@ export function createVoiceWorker(
     heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
     maxUtteranceSamples: DEFAULT_MAX_UTTERANCE_SAMPLES,
     piperShutdownTimeoutMs: DEFAULT_PIPER_SHUTDOWN_TIMEOUT_MS,
+    maxCancellationStreams: DEFAULT_MAX_CANCELLATION_STREAMS,
     ...provided,
   }
   return new ResidentVoiceWorker(options)
@@ -135,6 +142,13 @@ class ResidentVoiceWorker implements VoiceWorker {
         requestId: message.requestId,
       })
     } catch (error) {
+      if (error instanceof CancellationStreamLimitError) {
+        try {
+          await this.close()
+        } catch {
+          // The worker is still closed even if an owned Piper resists SIGKILL.
+        }
+      }
       await this.options.send({
         type: 'response_error',
         requestId: message.requestId,
@@ -151,12 +165,13 @@ class ResidentVoiceWorker implements VoiceWorker {
       this.heartbeatTimer = undefined
     }
     if (this.utterance) {
+      this.utterance.cancelled = true
       this.recognizer?.reset(this.utterance.stream)
       this.utterance = undefined
     }
     if (this.synthesis) {
       const active = this.synthesis
-      this.rememberCancellation(active)
+      active.cancelled = true
       await this.terminatePiper(active)
       if (this.synthesis === active) this.synthesis = undefined
     }
@@ -252,6 +267,7 @@ class ResidentVoiceWorker implements VoiceWorker {
       nextSequence: 0,
       lastText: '',
       finalized: false,
+      cancelled: false,
     }
   }
 
@@ -356,6 +372,7 @@ class ResidentVoiceWorker implements VoiceWorker {
   private cancelStt(input: VoiceGenerationIdentity): void {
     this.rememberCancellation(input)
     if (!this.utterance || !matchesCancelled(this.utterance, input)) return
+    this.utterance.cancelled = true
     this.recognizer?.reset(this.utterance.stream)
     this.utterance = undefined
   }
@@ -387,6 +404,7 @@ class ResidentVoiceWorker implements VoiceWorker {
         signal: null,
       }),
       exited: false,
+      cancelled: false,
     }
     active.exit = waitForPiperExit(piper).then((result) => {
       active.exited = true
@@ -464,6 +482,7 @@ class ResidentVoiceWorker implements VoiceWorker {
     this.rememberCancellation(input)
     const active = this.synthesis
     if (!active || !matchesCancelled(active, input)) return
+    active.cancelled = true
     await this.terminatePiper(active)
     if (this.synthesis === active) this.synthesis = undefined
   }
@@ -499,6 +518,12 @@ class ResidentVoiceWorker implements VoiceWorker {
   }
 
   private rememberCancellation(input: VoiceGenerationIdentity): void {
+    if (
+      !this.cancelledThroughGeneration.has(input.streamId)
+      && this.cancelledThroughGeneration.size >= this.options.maxCancellationStreams
+    ) {
+      throw new CancellationStreamLimitError()
+    }
     this.cancelledThroughGeneration.set(
       input.streamId,
       Math.max(
@@ -508,8 +533,11 @@ class ResidentVoiceWorker implements VoiceWorker {
     )
   }
 
-  private isCancelled(input: VoiceGenerationIdentity): boolean {
-    return input.generation <= (this.cancelledThroughGeneration.get(input.streamId) ?? -1)
+  private isCancelled(
+    input: VoiceGenerationIdentity & { cancelled?: boolean },
+  ): boolean {
+    return input.cancelled === true
+      || input.generation <= (this.cancelledThroughGeneration.get(input.streamId) ?? -1)
   }
 
   private terminatePiper(active: ActiveSynthesis): Promise<void> {
@@ -526,6 +554,12 @@ class ResidentVoiceWorker implements VoiceWorker {
     if (!await waitForActivePiperExit(active, this.options.piperShutdownTimeoutMs)) {
       throw new Error('Piper did not exit after SIGKILL')
     }
+  }
+}
+
+class CancellationStreamLimitError extends Error {
+  constructor() {
+    super('voice cancellation stream limit exceeded')
   }
 }
 

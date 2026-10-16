@@ -85,6 +85,26 @@ class FakeChildProcess extends EventEmitter {
   }
 }
 
+class InProcessVoiceChild extends FakeChildProcess {
+  handleMessage: ((message: VoiceWorkerParentMessage) => Promise<void>) | undefined
+
+  override send(
+    message: VoiceWorkerParentMessage,
+    callback?: (error: Error | null) => void,
+  ): boolean {
+    this.sent.push(message)
+    callback?.(null)
+    const handling = this.handleMessage?.(message)
+    if (!handling) return true
+    void handling.then(() => {
+      if (message.type !== 'close' || !this.connected) return
+      this.connected = false
+      this.emit('exit', 0, null)
+    })
+    return true
+  }
+}
+
 function parentHarness(
   overrides: Partial<ChildVoiceEngineDependencies> = {},
 ): {
@@ -294,6 +314,7 @@ describe('ChildVoiceEngine parent supervision', () => {
     heartbeatIntervalMs?: number
     piperExitOnKill?: boolean
     piperShutdownTimeoutMs?: number
+    maxCancellationStreams?: number
     workerConfig?: EnabledOracleVoiceConfig
   } = {}): {
     worker: ReturnType<typeof createVoiceWorker>
@@ -323,6 +344,9 @@ describe('ChildVoiceEngine parent supervision', () => {
       now: options.now ?? (() => 123),
       heartbeatIntervalMs: options.heartbeatIntervalMs ?? 0,
       piperShutdownTimeoutMs: options.piperShutdownTimeoutMs ?? 10,
+      ...(options.maxCancellationStreams === undefined
+        ? {}
+        : { maxCancellationStreams: options.maxCancellationStreams }),
       ...(options.maxUtteranceSamples === undefined
         ? {}
         : { maxUtteranceSamples: options.maxUtteranceSamples }),
@@ -582,6 +606,46 @@ describe('ChildVoiceEngine parent supervision', () => {
 
       expect(workerEvents(harness.messages)
         .filter((event) => event.type === 'final')).toEqual([])
+    })
+
+    it('fails closed at the cancellation stream limit without forgetting prior streams', async () => {
+      const harness = childHarness({ maxCancellationStreams: 2 })
+      await initializeWorker(harness)
+      for (const [streamId, requestId] of [
+        ['stream-a', 'cancel-a'],
+        ['stream-b', 'cancel-b'],
+        ['stream-c', 'cancel-c'],
+      ] as const) {
+        await harness.worker.handle({
+          type: 'stt_cancel',
+          requestId,
+          streamId,
+          generation: 1,
+        })
+      }
+
+      expect(harness.messages).toContainEqual({
+        type: 'response_error',
+        requestId: 'cancel-c',
+        message: expect.stringContaining('cancellation stream limit'),
+      })
+      await harness.worker.handle({
+        type: 'stt_start',
+        requestId: 'stale-a',
+        input: {
+          streamId: 'stream-a',
+          generation: 1,
+          utteranceId: 'stale-a',
+          language: 'en',
+        },
+      })
+      expect(harness.messages.at(-1)).toEqual({
+        type: 'response_error',
+        requestId: 'stale-a',
+        message: expect.stringContaining('closed'),
+      })
+      expect(workerEvents(harness.messages)
+        .filter((event) => 'generation' in event)).toEqual([])
     })
 
     it('rejects delayed same-generation audio from an older stream and utterance', async () => {
@@ -1198,6 +1262,29 @@ describe('ChildVoiceEngine parent supervision', () => {
     }])
   })
 
+  it('terminates the worker at the parent cancellation stream limit', async () => {
+    const { child, engine } = parentHarness({ maxCancellationStreams: 2 })
+    const session = await initialize(engine, child)
+    for (const streamId of ['stream-a', 'stream-b']) {
+      const cancellation = session.cancelGeneration({
+        streamId,
+        generation: 1,
+      })
+      const requests = child.sent.slice(-2)
+      for (const request of requests) child.respond(request)
+      await cancellation
+    }
+
+    await expect(session.cancelGeneration({
+      streamId: 'stream-c',
+      generation: 1,
+    })).rejects.toThrow('cancellation stream limit')
+    expect(child.sent.filter((message) =>
+      (message.type === 'stt_cancel' || message.type === 'tts_cancel')
+      && message.streamId === 'stream-c')).toEqual([])
+    expect(child.signals).toContain('SIGTERM')
+  })
+
   it('rejects delayed same-generation audio outside the active stream and utterance', async () => {
     const { child, engine } = parentHarness()
     const session = await initialize(engine, child)
@@ -1315,6 +1402,59 @@ describe('ChildVoiceEngine parent supervision', () => {
 
     expect(child.signals).toEqual([])
     expect(child.connected).toBe(false)
+  })
+
+  it('lets the child finish resistant Piper shutdown before signaling the worker', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new InProcessVoiceChild()
+      const sherpa = fakeSherpa()
+      const pipers: FakePiperProcess[] = []
+      const worker = createVoiceWorker({
+        sherpa: sherpa.module,
+        spawnPiper: () => {
+          const piper = new FakePiperProcess(false)
+          pipers.push(piper)
+          return piper
+        },
+        send: async (message) => {
+          child.emit('message', message)
+        },
+        heartbeatIntervalMs: 0,
+      })
+      child.handleMessage = (message) => worker.handle(message)
+      const engine = new ChildVoiceEngine({
+        fork: () => child,
+        startupTimeoutMs: 100,
+        operationTimeoutMs: 5_000,
+        heartbeatTimeoutMs: 10_000,
+        shutdownTimeoutMs: 10,
+        maxPendingRequests: 8,
+      })
+      const session = await engine.initialize(config)
+      const synthesis = session.tts.synthesize({
+        streamId: 'resistant-stream',
+        generation: 1,
+        segmentId: 'resistant-segment',
+        text: 'Stop safely.',
+      })
+      const synthesisResult = synthesis.catch((error: unknown) => error)
+      const piper = pipers[0]
+
+      const closing = session.close()
+      expect(piper.signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(3_999)
+      const workerSignalsBeforeChildAcknowledgement = [...child.signals]
+      expect(piper.signals).toEqual(['SIGTERM', 'SIGKILL'])
+      await vi.advanceTimersByTimeAsync(2)
+      await closing
+      piper.finish(null, 'SIGKILL')
+
+      expect(workerSignalsBeforeChildAcknowledgement).toEqual([])
+      await expect(synthesisResult).resolves.toBeInstanceOf(Error)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('escalates from SIGTERM to SIGKILL when graceful close stalls', async () => {

@@ -7,6 +7,11 @@ import type {
   VoiceUtteranceAudioFrame,
 } from './oracle-voice-engine.js'
 
+export const VOICE_PIPER_SHUTDOWN_TIMEOUT_MS = 2_000
+export const VOICE_WORKER_CLOSE_TIMEOUT_MS =
+  VOICE_PIPER_SHUTDOWN_TIMEOUT_MS * 2 + 1_000
+export const VOICE_MAX_CANCELLATION_STREAMS = 1_024
+
 interface VoiceWorkerRequestBase {
   requestId: string
 }

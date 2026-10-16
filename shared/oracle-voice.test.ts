@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ORACLE_VOICE_PROTOCOL,
+  ORACLE_VOICE_SAMPLE_RATE,
   VOICE_AUDIO_HEADER_BYTES,
   VoiceProtocolError,
   decodeVoiceAudioFrame,
@@ -35,7 +36,7 @@ describe('Oracle voice audio protocol', () => {
       direction: 'playback',
       generation: 0x0102_0304,
       sequence: 0x0506_0708,
-      sampleRate: 48_000,
+      sampleRate: 16_000,
       samples: new Int16Array([0x1234]),
     })
     const bytes = new Uint8Array(encoded)
@@ -45,7 +46,7 @@ describe('Oracle voice audio protocol', () => {
       ORACLE_VOICE_PROTOCOL, 1, 0, 0,
       4, 3, 2, 1,
       8, 7, 6, 5,
-      128, 187, 0, 0,
+      128, 62, 0, 0,
       1, 0, 0, 0,
       52, 18,
     ])
@@ -71,7 +72,7 @@ describe('Oracle voice audio protocol', () => {
     expect(() => decodeVoiceAudioFrame(encoded)).toThrow(VoiceProtocolError)
   })
 
-  it('rejects unsupported rates and non-uint32 routing identity', () => {
+  it('rejects non-16 kHz transported audio and non-uint32 routing identity', () => {
     expect(() => encodeVoiceAudioFrame({
       direction: 'microphone',
       generation: -1,
@@ -83,29 +84,93 @@ describe('Oracle voice audio protocol', () => {
       direction: 'microphone',
       generation: 0,
       sequence: 0,
-      sampleRate: 7_999,
+      sampleRate: 48_000 as typeof ORACLE_VOICE_SAMPLE_RATE,
       samples: new Int16Array(),
     })).toThrow(VoiceProtocolError)
+
+    const encoded = encodeVoiceAudioFrame({
+      direction: 'microphone',
+      generation: 0,
+      sequence: 0,
+      sampleRate: 16_000,
+      samples: new Int16Array(),
+    })
+    new DataView(encoded).setUint32(16, 48_000, true)
+    expect(() => decodeVoiceAudioFrame(encoded)).toThrow(VoiceProtocolError)
   })
 })
 
 describe('Oracle voice control protocol', () => {
-  it('accepts versioned client and server controls', () => {
-    expect(isVoiceClientControl({
-      type: 'speech_confirmed',
-      protocol: 1,
-      streamId: 'stream-1',
-      generation: 3,
-      utteranceId: 'utterance-3',
-    })).toBe(true)
+  const capabilities = {
+    protocol: 1,
+    available: true,
+    computerId: 'computer-1',
+    computerName: 'Computer',
+    sampleRate: 16_000,
+    languages: ['en'],
+    sttProfile: 'quality',
+    ttsVoice: 'voice',
+    resourceClass: 'quality',
+    limits: {
+      maxFrameBytes: 64_000,
+      maxQueueBytes: 256_000,
+      maxUtteranceMs: 30_000,
+    },
+  }
+  const clientControls = [
+    { type: 'start', language: 'en' },
+    { type: 'speech_tentative' },
+    { type: 'speech_confirmed', utteranceId: 'utterance-3' },
+    { type: 'speech_end', utteranceId: 'utterance-3' },
+    { type: 'stop' },
+    { type: 'synthesize', segmentId: 'segment-3', text: 'Hello' },
+    { type: 'cancel' },
+    { type: 'heartbeat', timestamp: 123 },
+  ]
+  const serverControls = [
+    { type: 'hello', capabilities },
+    { type: 'partial', utteranceId: 'utterance-3', text: 'Hel' },
+    { type: 'final', utteranceId: 'utterance-3', text: 'Hello' },
+    { type: 'state', state: 'ready' },
+    { type: 'audio_end', segmentId: 'segment-3' },
+    { type: 'error', code: 'failed', message: 'Failed', fatal: false },
+    { type: 'heartbeat', timestamp: 123 },
+  ]
+
+  it('requires stream and generation routing identities on every control variant', () => {
+    for (const variant of clientControls) {
+      const control = {
+        ...variant,
+        protocol: ORACLE_VOICE_PROTOCOL,
+        streamId: 'stream-1',
+        generation: 3,
+      }
+      expect(isVoiceClientControl(control), variant.type).toBe(true)
+      expect(isVoiceClientControl({ ...control, streamId: undefined }), variant.type).toBe(false)
+      expect(isVoiceClientControl({ ...control, generation: undefined }), variant.type).toBe(false)
+    }
+
+    for (const variant of serverControls) {
+      const control = {
+        ...variant,
+        protocol: ORACLE_VOICE_PROTOCOL,
+        streamId: 'stream-1',
+        generation: 3,
+      }
+      expect(isVoiceServerControl(control), variant.type).toBe(true)
+      expect(isVoiceServerControl({ ...control, streamId: undefined }), variant.type).toBe(false)
+      expect(isVoiceServerControl({ ...control, generation: undefined }), variant.type).toBe(false)
+    }
+  })
+
+  it('requires capabilities to advertise 16 kHz audio', () => {
     expect(isVoiceServerControl({
-      type: 'final',
-      protocol: 1,
+      type: 'hello',
+      protocol: ORACLE_VOICE_PROTOCOL,
       streamId: 'stream-1',
       generation: 3,
-      utteranceId: 'utterance-3',
-      text: 'Hello',
-    })).toBe(true)
+      capabilities: { ...capabilities, sampleRate: 48_000 },
+    })).toBe(false)
   })
 
   it('rejects unknown versions, variants, and routing identity keys', () => {

@@ -1,9 +1,8 @@
 export const ORACLE_VOICE_PROTOCOL = 1 as const
+export const ORACLE_VOICE_SAMPLE_RATE = 16_000 as const
 export const VOICE_AUDIO_HEADER_BYTES = 24
 
 const MAGIC = [0x41, 0x52, 0x56, 0x43] as const
-const MIN_SAMPLE_RATE = 8_000
-const MAX_SAMPLE_RATE = 192_000
 
 export type VoiceAudioDirection = 'microphone' | 'playback'
 
@@ -11,7 +10,7 @@ export interface VoiceAudioHeader {
   direction: VoiceAudioDirection
   generation: number
   sequence: number
-  sampleRate: number
+  sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
   sampleCount: number
 }
 
@@ -24,7 +23,7 @@ export interface VoiceCapabilities {
   available: boolean
   computerId: string
   computerName: string
-  sampleRate: number
+  sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
   languages: string[]
   sttProfile: string
   ttsVoice: string
@@ -40,6 +39,7 @@ export interface VoiceCapabilities {
 interface VoiceControlBase {
   protocol: typeof ORACLE_VOICE_PROTOCOL
   streamId: string
+  generation: number
 }
 
 export type VoiceClientControl =
@@ -105,7 +105,6 @@ export type VoiceServerControl =
   })
   | (VoiceControlBase & {
     type: 'error'
-    generation?: number
     code: string
     message: string
     fatal: boolean
@@ -221,7 +220,8 @@ export function isVoiceClientControl(value: unknown): value is VoiceClientContro
       return hasExactKeys(value, ['type', 'protocol', 'streamId', 'generation'])
         && isUint32(value.generation)
     case 'heartbeat':
-      return hasExactKeys(value, ['type', 'protocol', 'streamId', 'timestamp'])
+      return hasExactKeys(value, ['type', 'protocol', 'streamId', 'generation', 'timestamp'])
+        && isUint32(value.generation)
         && isFiniteNumber(value.timestamp)
     default:
       return false
@@ -232,8 +232,9 @@ export function isVoiceServerControl(value: unknown): value is VoiceServerContro
   if (!isControlBase(value)) return false
   switch (value.type) {
     case 'hello':
-      return hasExactKeys(value, ['type', 'protocol', 'streamId', 'capabilities'])
-        && isVoiceCapabilities(value.capabilities)
+      return hasExactKeys(value, [
+        'type', 'protocol', 'streamId', 'generation', 'capabilities',
+      ]) && isUint32(value.generation) && isVoiceCapabilities(value.capabilities)
     case 'partial':
     case 'final':
       return hasExactKeys(value, [
@@ -249,15 +250,14 @@ export function isVoiceServerControl(value: unknown): value is VoiceServerContro
       return hasExactKeys(value, ['type', 'protocol', 'streamId', 'generation', 'segmentId'])
         && isUint32(value.generation) && isNonEmptyString(value.segmentId)
     case 'error':
-      return hasOnlyKeys(value, [
+      return hasExactKeys(value, [
         'type', 'protocol', 'streamId', 'generation', 'code', 'message', 'fatal',
-      ]) && hasRequiredKeys(value, [
-        'type', 'protocol', 'streamId', 'code', 'message', 'fatal',
-      ]) && (value.generation === undefined || isUint32(value.generation))
+      ]) && isUint32(value.generation)
         && isNonEmptyString(value.code) && typeof value.message === 'string'
         && typeof value.fatal === 'boolean'
     case 'heartbeat':
-      return hasExactKeys(value, ['type', 'protocol', 'streamId', 'timestamp'])
+      return hasExactKeys(value, ['type', 'protocol', 'streamId', 'generation', 'timestamp'])
+        && isUint32(value.generation)
         && isFiniteNumber(value.timestamp)
     default:
       return false
@@ -329,9 +329,8 @@ function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && typeof value === 'number' && value > 0
 }
 
-function isValidSampleRate(value: unknown): value is number {
-  return Number.isInteger(value) && typeof value === 'number'
-    && value >= MIN_SAMPLE_RATE && value <= MAX_SAMPLE_RATE
+function isValidSampleRate(value: unknown): value is typeof ORACLE_VOICE_SAMPLE_RATE {
+  return value === ORACLE_VOICE_SAMPLE_RATE
 }
 
 function validateDirection(value: unknown): asserts value is VoiceAudioDirection {
@@ -346,8 +345,8 @@ function validateUint32(value: unknown, name: string): asserts value is number {
   }
 }
 
-function validateSampleRate(value: unknown): asserts value is number {
+function validateSampleRate(value: unknown): asserts value is typeof ORACLE_VOICE_SAMPLE_RATE {
   if (!isValidSampleRate(value)) {
-    throw new VoiceProtocolError('sample rate must be an integer from 8000 to 192000 Hz')
+    throw new VoiceProtocolError(`sample rate must be ${ORACLE_VOICE_SAMPLE_RATE} Hz`)
   }
 }

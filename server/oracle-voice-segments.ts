@@ -377,6 +377,6 @@ function candidateSubstitutionCost(
   emitted: EmittedCandidate,
   candidate: SpeakableCandidate,
 ): number {
-  if (emitted.text === candidate.text) return 0
+  if (emitted.text === candidate.text) return emitted.present ? 0 : 1
   return emitted.present ? 2 : 3
 }

@@ -43,6 +43,13 @@ describe('SpeakableSegmenter', () => {
     expect(segmenter.update('Intro. Echo. Echo. Outro.')).toEqual(['Intro.', 'Outro.'])
   })
 
+  it('preserves a current exact match before matching a deleted tombstone', () => {
+    const segmenter = new SpeakableSegmenter('message-1')
+    expect(segmenter.update('First. Second.')).toEqual(['First.', 'Second.'])
+    expect(segmenter.update('Second.')).toEqual([])
+    expect(segmenter.update('Second. First.')).toEqual(['First.'])
+  })
+
   it('strips Markdown controls while retaining speakable prose', () => {
     const segmenter = new SpeakableSegmenter('message-1')
     expect(segmenter.update(

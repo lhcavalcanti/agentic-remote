@@ -13878,6 +13878,13 @@ describe('App', () => {
           'workspace-guide', 'repeat', 'repeat-1', 'repeat-1-1',
           'section', 'section-1', 'repeat-2', 'unknownmissing',
         ])
+        // The address follows the opened document in an effect that runs
+        // after the heading is painted. Recorded before it settled, a busy run
+        // saw it change during the outline clicks below.
+        await act(async () => undefined)
+        if (source === 'knowledge') {
+          await waitFor(() => expect(new URL(window.location.href).searchParams.get('file')).toBe('guide.md'))
+        }
         const location = window.location.href
         for (const [entry, index] of [0, 1, 2, 3, 5, 6, 7].entries()) {
           fireEvent.click(screen.getByRole('button', { name: 'Document outline' }))

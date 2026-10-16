@@ -80,6 +80,11 @@ describe('manager routes', () => {
       payload: { content: 'hi', defaults: { mode: 'yolo' } },
     })
     expect(malformed.statusCode).toBe(400)
+    const oversized = await app.inject({
+      method: 'POST', url: '/api/manager/messages', headers: trusted,
+      payload: { content: 'x'.repeat(200_001) },
+    })
+    expect(oversized.statusCode).toBe(413)
   })
 
   it('applies the hub origin policy', async () => {
@@ -162,6 +167,12 @@ describe('manager routes', () => {
       method: 'PUT', url: '/api/manager/messages/m2', headers: trusted, payload: {},
     })
     expect(missing.statusCode).toBe(400)
+    const oversized = await app.inject({
+      method: 'PUT', url: '/api/manager/messages/m2', headers: trusted,
+      payload: { content: 'x'.repeat(200_001) },
+    })
+    expect(oversized.statusCode).toBe(413)
+    expect(editQueued).toHaveBeenCalledTimes(1)
   })
 
   it('takes your answer to a confirmation', async () => {

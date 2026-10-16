@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager.js'
 import type {
   ManagerClientDefaults,
   ManagerMessage,
@@ -52,6 +53,25 @@ const confirmationSchema = z.object({ accept: z.boolean() })
 
 const editSchema = z.object({ content: z.string().max(200_000) })
 
+function managerInputError(error: z.ZodError): Error {
+  if (
+    error.issues.some(
+      (issue) =>
+        issue.code === 'too_big' &&
+        issue.path.length === 1 &&
+        issue.path[0] === 'content',
+    )
+  ) {
+    return Object.assign(
+      new Error(
+        `Messages are limited to ${MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.`,
+      ),
+      { statusCode: 413 },
+    )
+  }
+  return error
+}
+
 export function unavailableSnapshot(reason: string): ManagerSnapshot {
   return {
     available: false,
@@ -80,7 +100,9 @@ export async function registerManagerRoutes(
   })
 
   app.post('/api/manager/messages', async (request, reply) => {
-    const input = sendSchema.parse(request.body ?? {})
+    const parsed = sendSchema.safeParse(request.body ?? {})
+    if (!parsed.success) throw managerInputError(parsed.error)
+    const input = parsed.data
     const message = await requireAgent().send(
       input.content,
       input.defaults,
@@ -103,7 +125,9 @@ export async function registerManagerRoutes(
   // Rewrites a waiting message in place, keeping its place in the queue.
   app.put('/api/manager/messages/:messageId', async (request) => {
     const { messageId } = messageParams.parse(request.params)
-    const { content } = editSchema.parse(request.body ?? {})
+    const parsed = editSchema.safeParse(request.body ?? {})
+    if (!parsed.success) throw managerInputError(parsed.error)
+    const { content } = parsed.data
     return { message: await requireAgent().editQueued(messageId, content) }
   })
 

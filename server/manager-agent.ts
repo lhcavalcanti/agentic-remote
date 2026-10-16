@@ -554,7 +554,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       throw Object.assign(new Error('Message not found'), { statusCode: 404 })
     }
     if (message.state === 'queued' || message.state === 'running') return message
-    const next: ManagerMessage = { ...message, state: 'queued', updatedAt: this.now().toISOString() }
+    const timestamp = this.now().toISOString()
+    // A message being retried has been tried, even one from before startedAt
+    // was recorded, so it stays the user's no longer to edit.
+    const next: ManagerMessage = { ...message, state: 'queued', startedAt: message.startedAt ?? timestamp, updatedAt: timestamp }
     delete next.error
     await this.updateMessage(next)
     this.publishStatus()

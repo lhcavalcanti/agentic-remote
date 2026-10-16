@@ -269,9 +269,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 166,
+  "communities": 160,
   "community_algorithm": "louvain-seed-42",
-  "edges": 11686,
+  "edges": 11687,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -383,8 +383,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "9290ab7bc66004d5a0dbf0fd1053c9e3c3c5c3be8c924521e6f8325c1f937c8f",
-    "server/manager-agent.ts": "1a80d726d1ca06ffdd30639b3c957b5a424506cbc1fbbafadafecd639f103280",
+    "server/manager-agent.test.ts": "a4cc450d902d6e9433c92eeee718da7dd65089902f871f46c90ee7d7b9328166",
+    "server/manager-agent.ts": "1d54cdf852da1f602c8d546d9983536f28d540252dc89a766b85f07704362222",
     "server/manager-context.test.ts": "49cf8fd2b691c66c550c3c2d617e8722a33fb25915eb4d38b977bd007973e534",
     "server/manager-context.ts": "d159e44f0560033613f2d19a6ec5b41cedaf1d1c630e4997575c6850e61a3343",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -590,8 +590,8 @@
     "src/side-question-command.ts": "9395ad3d98ef416fca1c48c67fdea57257a8d7b0c52af35a49a7d6d54b75a232",
     "src/use-session-knowledge-root.test.tsx": "4f80b53683ee9b270982608b2de9a8f7aa5b03baa03be3ce2a29f073317349c4",
     "src/use-session-knowledge-root.ts": "931caaf6414ed837536b35bd930f257c9365b675dbd35ec641d70cf71b192b7e",
-    "src/voice-recorder.test.ts": "9eb59bed1e74e90422d175f4cc3bd8e120f9b7988bf7ac0cfed2005f85646b4e",
-    "src/voice-recorder.ts": "c1e1e9998fdff9ad7d018425da69347fe5b59fdfbeea02fa102d41210e9784fe",
+    "src/voice-recorder.test.ts": "233efe2e6c66d7fb78706918bebf21f6115e36491fbcd9af9fe389185c8d59bf",
+    "src/voice-recorder.ts": "b01fad559d219bb7290666a30c315939a8ca53ca30a14d2b5255455c466dd2b4",
     "tsconfig.app.json": "9db467556a29303882f9844ff4a1607ac9ee47225b42c0589cb348cf913b4bb3",
     "tsconfig.json": "91434fd9d32940ba5f1347be26f2c7ff676e7c1e203dba03e9986d71915755ff",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
@@ -657,26 +657,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "2ee61599fce5ccb2c6a6bceec1a3fb659d6458675329ecf9cd514897479ff918",
-    "communities.json": "264f79a9d522df51ea15c3d4ab997d5b5d6a2a0e04fbb5ef8619c312909c6f41",
-    "graph.html": "54b252b5308d690df5d2ca10c28c110bd6d481de528feb4cefc18732f54aec67",
-    "graph.json": "da11b27f248282158ad2b5ec09ebf368df697d89634a8d3e12269fe508ecb6e0"
+    "GRAPH_REPORT.md": "c34c8d9c101b85851e3ee943bf032f9c186f19af1a9b079dbcfc5314621f1d63",
+    "communities.json": "1679cfd7dfea2730dc8924c0a1f8c5a2aef8d2b75d6a6c02191493945c890cfd",
+    "graph.html": "573d99360f6a440e5954a560b97f07a36bfd4b8111922a8fe58c4934704079e6",
+    "graph.json": "8259533099d4b8c6d590ec24e1a7e84e87eef2cb03c947f441f6cce33c42865d"
   },
   "schema_version": 1,
-  "source_commit": "3e316bb521b50cd80ac7871d24d9afb9362403f9",
-  "source_fingerprint": "b3c76ebc26e264b6c50d3c3d115f70029b8c215c4e648c7a56135724840bb10a",
+  "source_commit": "15e932417ec2922d2ae7fcfbd8de11057c308940",
+  "source_fingerprint": "8e2f842f57a2bb0844f1f397b6af7225f0df40ae5cc313aacd5f0de3b4bd1764",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/design/session-manager.md",
     "server/manager-agent.test.ts",
     "server/manager-agent.ts",
-    "server/manager-context.test.ts",
-    "server/manager-context.ts",
-    "server/manager-tools.test.ts",
-    "server/manager-tools.ts",
-    "shared/manager.ts",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
     "src/voice-recorder.test.ts",
     "src/voice-recorder.ts"
   ]

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { transcribeAudio } from './api'
@@ -156,5 +157,12 @@ describe('useVoiceRecorder', () => {
     expect(transcribeAudio).not.toHaveBeenCalled()
     expect(track.stop).toHaveBeenCalled()
     expect(result.current.recording).toBe(false)
+  })
+
+  it('still records after StrictMode unmounts and remounts it', async () => {
+    const { result } = renderHook(() => useVoiceRecorder({ onTranscript: vi.fn(), onError: vi.fn() }), { wrapper: StrictMode })
+    await act(() => result.current.start())
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1)
+    expect(result.current.recording).toBe(true)
   })
 })

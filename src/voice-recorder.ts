@@ -142,14 +142,18 @@ export function useVoiceRecorder({
   }, [release, transcribe, transcribing])
 
   // Leaving never keeps the microphone on, including one still being granted.
-  useEffect(() => () => {
-    disposedRef.current = true
-    if (acquiringRef.current) acquiringRef.current.wanted = false
-    discardRef.current = true
-    const recorder = recorderRef.current
-    if (recorder && recorder.state !== 'inactive') recorder.stop()
-    if (timerRef.current !== undefined) window.clearInterval(timerRef.current)
-    for (const track of streamRef.current?.getTracks() ?? []) track.stop()
+  // Set up again on every mount: StrictMode unmounts and remounts once.
+  useEffect(() => {
+    disposedRef.current = false
+    return () => {
+      disposedRef.current = true
+      if (acquiringRef.current) acquiringRef.current.wanted = false
+      discardRef.current = true
+      const recorder = recorderRef.current
+      if (recorder && recorder.state !== 'inactive') recorder.stop()
+      if (timerRef.current !== undefined) window.clearInterval(timerRef.current)
+      for (const track of streamRef.current?.getTracks() ?? []) track.stop()
+    }
   }, [])
 
   return { recording, starting, seconds, transcribing, start, stop }

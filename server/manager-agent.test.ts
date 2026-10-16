@@ -1015,6 +1015,21 @@ describe('ManagerAgent', () => {
     await expect(agent!.editQueued(message.id, 'something else')).rejects.toMatchObject({ statusCode: 409 })
   })
 
+  it('marks a retried message started even when it failed before startedAt was recorded', async () => {
+    await store.upsertMessage({ id: 'old', role: 'user', content: 'from before', createdAt: 't0', state: 'failed', error: 'down' })
+    sdk.behaviors.push(async () => undefined)
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      excludeFromDiscovery: () => undefined,
+    })
+    const retried = await agent.retry('old')
+    expect(retried.startedAt).toBeDefined()
+    await expect(agent.editQueued('old', 'changed')).rejects.toMatchObject({ statusCode: 409 })
+  })
+
   it('keeps an edit across a restart, and refuses one to a message Oracle had already started', async () => {
     await store.upsertMessage({ id: 'm1', role: 'user', content: 'started before the restart', createdAt: 't1', state: 'queued' })
     await store.upsertMessage({ id: 'm2', role: 'user', content: 'still waiting', createdAt: 't2', state: 'queued' })

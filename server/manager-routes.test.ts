@@ -148,6 +148,20 @@ describe('manager routes', () => {
     const removed = await app.inject({ method: 'POST', url: '/api/manager/messages/m1/remove', headers: trusted })
     expect(removed.statusCode).toBe(200)
     expect(remove).toHaveBeenCalledWith('m1')
+
+    const editQueued = vi.spyOn(managerAgent!, 'editQueued').mockResolvedValue({
+      id: 'm2', role: 'user', content: 'revised', createdAt: 't', state: 'queued',
+    })
+    const edited = await app.inject({
+      method: 'PUT', url: '/api/manager/messages/m2', headers: trusted, payload: { content: 'revised' },
+    })
+    expect(edited.statusCode).toBe(200)
+    expect(edited.json().message).toMatchObject({ id: 'm2', content: 'revised' })
+    expect(editQueued).toHaveBeenCalledWith('m2', 'revised')
+    const missing = await app.inject({
+      method: 'PUT', url: '/api/manager/messages/m2', headers: trusted, payload: {},
+    })
+    expect(missing.statusCode).toBe(400)
   })
 
   it('takes your answer to a confirmation', async () => {

@@ -424,8 +424,12 @@ badges **Oracle**.
 - **Ask | Delegate**: in **Ask**, Oracle reads your sessions and asks them side
   questions but never starts, messages, or stops one (`/oracle <question>` in
   a session asks the same way). **Delegate** lets it start and steer sessions.
-- Messages sent while it is busy wait in a queue where you can see and remove
-  them.
+- In **Delegate** it steers any session: it messages them, reopening closed or
+  suspended ones, and answers their permission prompts (including folder trust)
+  and questions so they carry on without you.
+- Messages sent while it is busy wait in a queue where you can see, edit in
+  place, and remove them.
+- The microphone dictates to Oracle; the words land in its message bar.
 - **App settings → Oracle** chooses its model and, per computer, the folder it
   starts sessions in. Both are kept on the hub; ask Oracle to start sessions
   somewhere else and it updates its folder.

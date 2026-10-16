@@ -94,7 +94,8 @@ The roster is capped at 80 open sessions, and each activity at 120 characters.
 | `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
 | `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder |
 | `set_session_folder` | Change Oracle's session folder for a computer when you ask; checked on that computer, kept with Oracle's settings, and allowed in Ask mode since it touches no session |
-| `send_to_session` | Send or queue a follow-up; always queued, so a busy session does not refuse it |
+| `send_to_session` | Send or queue a follow-up to any session; always queued, so a busy session does not refuse it. A closed session is reopened and a suspended one resumed first, and a folder-trust prompt is answered |
+| `answer_session` | Answer what a session waits on, so it carries on without you: a permission request (option by name, or approve/deny), including Copilot's folder trust; a question (a choice or free text), several choices, or a form's values; or dismiss it. An optional `requestId` stops an answer reaching a different prompt |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
 | `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
@@ -140,7 +141,10 @@ end the turn.
   a close request. The outcome reaches the agent as a note on its next turn.
 - `POST /api/manager/messages` also takes `answerOnly`;
   `POST /api/manager/messages/:id/remove` takes a waiting message out of the
-  queue; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
+  queue; `PUT /api/manager/messages/:id` with `{ content }` rewrites a waiting
+  one in place (409 once Oracle has started on it, including after an
+  interrupting restart; 400 blank; 413 too long), keeping its id and its place,
+  which is its first line in `conversation.jsonl`; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
   the hub default) chooses Oracle's model, and with `{ sessionFolders: { <computer id>: path | null } }`
   its session folders; each part is optional and leaves the rest as it is.
   Only `null` clears a folder (a blank one is a 400), and a computer that is
@@ -164,7 +168,10 @@ end the turn.
   phone, and the phone's session list. The bubble shows an activity ring while
   Oracle works and a dot for replies you have not read.
 - Waiting messages sit above the message bar, numbered in answer order, each
-  removable until Oracle starts on it.
+  editable in place (Save, Cancel; Ctrl+Enter, Esc) or removable until Oracle
+  starts on it. An edit Oracle overtakes goes back to the message bar.
+- **Dictate to Oracle** records and transcribes through `/api/transcriptions`
+  (`src/voice-recorder.ts`), adding the words to the message.
 - The message field reads "Ask me anything"; while Oracle answers, a separate
   line says that anything sent now waits its turn.
 - **Ask | Delegate**, a two-way switch under the message bar remembered per

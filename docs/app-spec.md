@@ -407,12 +407,24 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   340px over more of the conversation. On a phone it is a full-height sheet. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
-  now waits its turn, and Send becomes **Queue message**.
+  now waits its turn, and Send becomes **Queue message**. **Dictate to
+  Oracle** records from the microphone (Cancel, a timer, **Stop &
+  transcribe**; at most 15 minutes), transcribes on the hub as a session's
+  recording does, and adds the words to the message rather than sending them.
+  Closing the panel discards a recording in progress.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process
   of its own. Its tools only manage sessions and its own memory, so it MUST NOT
   run commands or edit files; work it accepts becomes a normal session on a
   chosen computer, named, given its task, and badged **Oracle** in the session
   list.
+- In **Delegate**, Oracle MUST be able to steer every session, not only the
+  ones it started: it messages any session, reopening a closed one or resuming
+  a suspended one first, and answers what a session waits on (a permission
+  request, a question, or a form) so the session carries on without you.
+  Creating or messaging a session answers Copilot's folder-trust prompt for
+  that session's folder, then delivers the message. Oracle approves what a
+  session needs for its task and denies, or asks you about, anything
+  destructive or beyond it; every answer appears in its transcript.
 - **Ask** is the panel's conversational mode: you ask Oracle about your
   sessions while their work carries on. Oracle answers from the current state,
   reading sessions as they are recorded and asking side questions that fork a
@@ -456,7 +468,13 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   Messages wait in a durable first-in, first-out queue and are answered one at
   a time. Waiting messages are shown above the message bar, numbered in the
   order they will be answered and marked **Ask** where chosen; each can
-  be removed before Oracle starts on it. The queue is kept on the hub, so it
+  be edited or removed before Oracle starts on it. **Edit** rewrites the
+  message where it stands, keeping its identity and place in the queue rather
+  than queueing a replacement, with **Save** and **Cancel** (Ctrl+Enter and
+  Esc on a keyboard). Once Oracle has started on a message, including one a
+  restart interrupted, it cannot be edited; an edit that arrives too late is
+  handed back to the message bar instead of being lost. Edits are kept in the
+  hub's transcript like the queue itself. The queue is kept on the hub, so it
   survives a reload, a reconnect, and a hub restart, and a snapshot lists every
   waiting message however long the transcript. Only a blank message or
   one over 100,000 characters is refused. Oracle being busy is the only thing

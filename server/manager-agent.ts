@@ -4,9 +4,11 @@ import type {
   ComputerSummary,
   CreateSessionInput,
   ManagedSession,
+  PermissionReplyInput,
   RenameSessionInput,
   RuntimeReasoningEffort,
   SendMessageInput,
+  UserInputReplyInput,
 } from '../shared/contracts.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
@@ -51,6 +53,11 @@ export interface ManagerHub {
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, input: RenameSessionInput): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, input: SendMessageInput): Promise<ManagedSession>
+  replyPermission(computerId: string, sessionId: string, requestId: string, input: PermissionReplyInput): Promise<ManagedSession>
+  replyUserInput(computerId: string, sessionId: string, requestId: string, input: UserInputReplyInput): Promise<ManagedSession>
+  /** Opens a closed session again. */
+  activateSession(computerId: string, sessionId: string): Promise<ManagedSession>
+  resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
   deleteSession(computerId: string, sessionId: string): Promise<void>
 }
@@ -162,6 +169,19 @@ function errorMessage(error: unknown): string {
 function isNotFound(error: unknown): boolean {
   const statusCode = typeof error === 'object' && error !== null ? Reflect.get(error, 'statusCode') : undefined
   return statusCode === 404 || /not found/i.test(errorMessage(error))
+}
+
+/** A message Oracle can take: not blank, and within the limit. */
+function checkContent(content: string): void {
+  if (!content.trim()) {
+    throw Object.assign(new Error('Type a message first.'), { statusCode: 400 })
+  }
+  if (content.length > MANAGER_MESSAGE_MAX_LENGTH) {
+    throw Object.assign(
+      new Error(`Messages are limited to ${MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.`),
+      { statusCode: 413 },
+    )
+  }
 }
 
 function isQueued(message: ManagerMessage): boolean {
@@ -458,15 +478,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     defaults?: ManagerClientDefaults,
     options: { answerOnly?: boolean } = {},
   ): Promise<ManagerMessage> {
-    if (!content.trim()) {
-      throw Object.assign(new Error('Type a message first.'), { statusCode: 400 })
-    }
-    if (content.length > MANAGER_MESSAGE_MAX_LENGTH) {
-      throw Object.assign(
-        new Error(`Messages are limited to ${MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.`),
-        { statusCode: 413 },
-      )
-    }
+    checkContent(content)
     if (defaults) {
       await this.store.updateState((state) => {
         state.defaults = defaults
@@ -486,6 +498,33 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.publishStatus()
     void this.pump()
     return message
+  }
+
+  /**
+   * Rewrites a waiting message where it stands: the same message, in the same
+   * place in the queue, with new words. Once Oracle has started on it, even
+   * if a restart interrupted that, it is no longer the user's to change.
+   */
+  async editQueued(messageId: string, content: string): Promise<ManagerMessage> {
+    const message = this.store.message(messageId)
+    if (!message || message.role !== 'user') {
+      throw Object.assign(new Error('Message not found'), { statusCode: 404 })
+    }
+    const started = message.state === 'running'
+      || (this.store.state().interruptions ?? {})[messageId] !== undefined
+    if (message.state !== 'queued' || started) {
+      throw Object.assign(
+        new Error(started
+          ? 'Oracle has already started on this message, so it can no longer be edited.'
+          : 'This message is no longer waiting, so it can no longer be edited.'),
+        { statusCode: 409 },
+      )
+    }
+    const text = content.trim()
+    checkContent(text)
+    const next: ManagerMessage = { ...message, content: text, updatedAt: this.now().toISOString() }
+    await this.updateMessage(next)
+    return next
   }
 
   /** Takes a message out of the queue before Oracle starts on it. */
@@ -662,6 +701,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       renameSession: (computerId, sessionId, title) => hub.renameSession(computerId, sessionId, { title }),
       sendMessage: (computerId, sessionId, content) =>
         hub.sendMessage(computerId, sessionId, { content, enqueue: true }),
+      replyPermission: (computerId, sessionId, requestId, optionId) =>
+        hub.replyPermission(computerId, sessionId, requestId, { optionId }),
+      replyUserInput: (computerId, sessionId, requestId, input) =>
+        hub.replyUserInput(computerId, sessionId, requestId, input),
+      reopenSession: (computerId, sessionId) => hub.activateSession(computerId, sessionId),
+      resumeSession: (computerId, sessionId) => hub.resumeSession(computerId, sessionId),
       cancel: (computerId, sessionId) => hub.cancel(computerId, sessionId),
       requestCloseConfirmation: (session, reason) => this.requestCloseConfirmation(session, reason),
       discoverSkills: (projectPaths) => this.discoverSkills(projectPaths),

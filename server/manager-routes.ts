@@ -14,6 +14,7 @@ export interface ManagerRouteAgent {
   send(content: string, defaults?: ManagerClientDefaults, options?: { answerOnly?: boolean }): Promise<ManagerMessage>
   retry(messageId: string): Promise<ManagerMessage>
   removeQueued(messageId: string): Promise<ManagerMessage>
+  editQueued(messageId: string, content: string): Promise<ManagerMessage>
   updateSettings(input: UpdateManagerSettingsInput): Promise<ManagerSettingsSnapshot>
   resolveConfirmation(messageId: string, accept: boolean): Promise<ManagerMessage>
   cancel(): Promise<void>
@@ -48,6 +49,8 @@ const settingsSchema = z.object({
 const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })
 
 const confirmationSchema = z.object({ accept: z.boolean() })
+
+const editSchema = z.object({ content: z.string().max(200_000) })
 
 export function unavailableSnapshot(reason: string): ManagerSnapshot {
   return {
@@ -95,6 +98,13 @@ export async function registerManagerRoutes(
   app.put('/api/manager/settings', async (request) => {
     const input = settingsSchema.parse(request.body ?? {})
     return { settings: await requireAgent().updateSettings(input) }
+  })
+
+  // Rewrites a waiting message in place, keeping its place in the queue.
+  app.put('/api/manager/messages/:messageId', async (request) => {
+    const { messageId } = messageParams.parse(request.params)
+    const { content } = editSchema.parse(request.body ?? {})
+    return { message: await requireAgent().editQueued(messageId, content) }
   })
 
   app.post('/api/manager/messages/:messageId/retry', async (request) => {

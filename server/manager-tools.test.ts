@@ -64,6 +64,10 @@ describe('manager tools', () => {
       createSession: vi.fn(async () => created),
       renameSession: vi.fn(async (_computerId: string, id: string, title: string) => session(id, { title })),
       sendMessage: vi.fn(async (_computerId: string, id: string) => session(id)),
+      replyPermission: vi.fn(async (_computerId: string, id: string) => session(id)),
+      replyUserInput: vi.fn(async (_computerId: string, id: string) => session(id)),
+      reopenSession: vi.fn(async (_computerId: string, id: string) => session(id)),
+      resumeSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       cancel: vi.fn(async () => undefined),
       requestCloseConfirmation: vi.fn(async () => undefined),
       discoverSkills: vi.fn(async () => [{ name: 'brainstorming', description: 'Explore intent before building', source: 'personal' }]),
@@ -82,7 +86,8 @@ describe('manager tools', () => {
       defaults: () => ({ computerId: 'hub', mode: 'autopilot', provider: 'copilot', model: 'gpt-6-sol', folders: { hub: '~/src/web' } }),
       now: () => new Date('2026-10-15T12:00:00.000Z'),
     }
-    tools = new Map(createManagerTools(host, (activity) => activities.push(activity)).map((tool) => [tool.name, tool]))
+    tools = new Map(createManagerTools(host, (activity) => activities.push(activity), { pollMs: 1, trustWaitMs: 40 })
+      .map((tool) => [tool.name, tool]))
   })
 
   afterEach(async () => {
@@ -91,7 +96,7 @@ describe('manager tools', () => {
 
   it('offers only management tools, none of which prompt for permission', () => {
     expect([...tools.keys()].sort()).toEqual([
-      'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
+      'answer_session', 'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
       'list_computers', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
       'memory_list', 'memory_read', 'memory_write', 'rename_session', 'send_to_session',
       'set_session_folder',
@@ -216,6 +221,129 @@ describe('manager tools', () => {
     expect(activities.at(-1)).toMatchObject({ content: "Back to development's default folder for new sessions" })
   })
 
+  it('answers what a session is waiting on, such as folder trust, and only that', async () => {
+    const waiting = session('abc12345-aaaa', { status: 'waiting', pendingPermission: {
+      requestId: 'trust-1',
+      title: 'Trust folder for this session: /home/me/src/llmlab',
+      kind: 'terminal',
+      options: [
+        { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    } })
+    vi.mocked(host.readSession).mockResolvedValue(waiting)
+    expect(String(await call('answer_session', { sessionId: 'abc12345', response: 'approve' }))).toContain('Trust for this session')
+    expect(host.replyPermission).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'trust-1', 'terminal:allow')
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'answer_session',
+      content: 'Answered "Trust folder for this session: /home/me/src/llmlab" on "Session abc12345-aaaa": Trust for this session',
+    })
+    await call('answer_session', { sessionId: 'abc12345', response: 'stop' })
+    expect(host.replyPermission).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'trust-1', 'terminal:stop')
+    const unknown = await call('answer_session', { sessionId: 'abc12345', response: 'maybe' })
+    expect(JSON.stringify(unknown)).toContain('Trust for this session')
+    expect(unknown).toMatchObject({ resultType: 'failure' })
+    // An answer meant for another prompt is never given to this one.
+    const moved = await call('answer_session', { sessionId: 'abc12345', response: 'approve', requestId: 'older' })
+    expect(moved).toMatchObject({ resultType: 'failure' })
+    expect(host.replyPermission).toHaveBeenCalledTimes(2)
+
+    vi.mocked(host.readSession).mockResolvedValue(session('abc12345-aaaa'))
+    expect(await call('answer_session', { sessionId: 'abc12345', response: 'approve' })).toMatchObject({ resultType: 'failure' })
+  })
+
+  it("answers a session's question with a choice, its own words, several choices, or a form", async () => {
+    const question = (change: Partial<NonNullable<ManagedSession['pendingUserInput']>>) => session('abc12345-aaaa', {
+      status: 'waiting',
+      pendingUserInput: { requestId: 'q1', question: 'Which database?', choices: ['Postgres', 'SQLite'], allowFreeform: false, ...change },
+    })
+    vi.mocked(host.readSession).mockResolvedValue(question({}))
+    await call('answer_session', { sessionId: 'abc12345', response: 'sqlite' })
+    expect(host.replyUserInput).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'q1', { answer: 'SQLite', wasFreeform: false })
+    expect(await call('answer_session', { sessionId: 'abc12345', response: 'MySQL' })).toMatchObject({ resultType: 'failure' })
+
+    vi.mocked(host.readSession).mockResolvedValue(question({ allowFreeform: true }))
+    await call('answer_session', { sessionId: 'abc12345', response: 'MySQL 8' })
+    expect(host.replyUserInput).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'q1', { answer: 'MySQL 8', wasFreeform: true })
+
+    vi.mocked(host.readSession).mockResolvedValue(question({ multiSelect: true }))
+    await call('answer_session', { sessionId: 'abc12345', responses: ['postgres', 'SQLite'] })
+    expect(host.replyUserInput).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'q1', {
+      answer: 'Postgres, SQLite', wasFreeform: false, answers: ['Postgres', 'SQLite'],
+    })
+
+    vi.mocked(host.readSession).mockResolvedValue(question({
+      choices: [],
+      form: { fields: [{ name: 'port', type: 'number', label: 'Port', required: true }] } as unknown as NonNullable<ManagedSession['pendingUserInput']>['form'],
+    }))
+    await call('answer_session', { sessionId: 'abc12345', values: { port: 5432 } })
+    expect(host.replyUserInput).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'q1', {
+      answer: JSON.stringify({ port: 5432 }), wasFreeform: false, values: { port: 5432 },
+    })
+    await call('answer_session', { sessionId: 'abc12345', dismiss: true })
+    expect(host.replyUserInput).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'q1', { action: 'cancel', answer: '', wasFreeform: false })
+  })
+
+  it('trusts the folder a new session opens on, then hands it its task', async () => {
+    let reads = 0
+    vi.mocked(host.readSession).mockImplementation(async (_computerId, id) => {
+      reads += 1
+      return reads === 1 ? session(id, { status: 'waiting', pendingPermission: {
+      requestId: 'trust-1',
+      title: 'Trust folder for this session: /home/me/src/llmlab',
+      kind: 'terminal',
+      options: [
+        { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    } }) : session(id)
+    })
+    const result = await call('create_session', { title: 'LLM lab', prompt: 'Check every product.', cwd: '~/src/llmlab' })
+    expect(host.replyPermission).toHaveBeenCalledWith('hub', 'new1', 'trust-1', 'terminal:allow')
+    expect(host.sendMessage).toHaveBeenCalledWith('hub', 'new1', 'Check every product.')
+    expect(vi.mocked(host.replyPermission).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(host.sendMessage).mock.invocationCallOrder[0])
+    expect(String(result)).toContain('Its task was sent.')
+    expect(activities.map((activity) => activity.content)).toEqual([
+      'Started "LLM lab" on development',
+      'Trusted /home/me/src/llmlab for "LLM lab"',
+    ])
+  })
+
+  it('trusts a folder whose prompt appears only after the first delivery fails, and tries once more', async () => {
+    let reads = 0
+    vi.mocked(host.readSession).mockImplementation(async (_computerId, id) => {
+      reads += 1
+      return reads === 2 ? session(id, { status: 'waiting', pendingPermission: {
+      requestId: 'trust-1',
+      title: 'Trust folder for this session: /home/me/src/llmlab',
+      kind: 'terminal',
+      options: [
+        { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    } }) : session(id)
+    })
+    vi.mocked(host.sendMessage).mockRejectedValueOnce(new Error('Copilot is showing a prompt'))
+    expect(String(await call('create_session', { title: 'LLM lab', prompt: 'Go.' }))).toContain('Its task was sent.')
+    expect(host.sendMessage).toHaveBeenCalledTimes(2)
+    expect(host.replyPermission).toHaveBeenCalledTimes(1)
+  })
+
+  it('reopens a closed session and resumes a suspended one to steer it', async () => {
+    expect(String(await call('send_to_session', { sessionId: 'old99999', message: 'Pick this back up.' }))).toContain('Sent')
+    expect(host.reopenSession).toHaveBeenCalledWith('hub', 'old99999-cccc')
+    expect(host.sendMessage).toHaveBeenLastCalledWith('hub', 'old99999-cccc', 'Pick this back up.')
+    expect(activities.map((activity) => activity.content)).toEqual([
+      'Reopened "Session old99999-cccc"',
+      'Sent a message to "Session old99999-cccc"',
+    ])
+    vi.mocked(host.listSessions).mockResolvedValue([session('abc12345-aaaa', { suspended: true })])
+    await call('send_to_session', { sessionId: 'abc12345', message: 'Carry on.' })
+    expect(host.resumeSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
+    expect(host.sendMessage).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'Carry on.')
+  })
+
   it('only asks the user to close a session and never closes one itself', async () => {
     const result = await call('close_session', { sessionId: 'abc12345', userConfirmed: true, reason: 'It finished.' })
     expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'It finished.')
@@ -248,6 +376,7 @@ describe('manager tools', () => {
       ['rename_session', { sessionId: 'abc12345', title: 'New' }],
       ['cancel_session', { sessionId: 'abc12345' }],
       ['close_session', { sessionId: 'abc12345' }],
+      ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
     ] as const) {
       const result = await call(name, args)
       expect(result, name).toMatchObject({ resultType: 'failure' })

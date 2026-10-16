@@ -6,12 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagerEvent, ManagerSnapshot } from '../shared/manager'
 import {
   cancelManager,
+  editQueuedManagerMessage,
   getManager,
   removeQueuedManagerMessage,
   resetManager,
   resolveManagerConfirmation,
   retryManagerMessage,
   sendManagerMessage,
+  transcribeAudio,
 } from './api'
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
@@ -19,6 +21,8 @@ import { sessionLinkTarget } from './manager-links'
 
 vi.mock('./api', () => ({
   getManager: vi.fn(),
+  editQueuedManagerMessage: vi.fn(),
+  transcribeAudio: vi.fn(),
   sendManagerMessage: vi.fn(),
   retryManagerMessage: vi.fn(),
   resolveManagerConfirmation: vi.fn(),
@@ -102,6 +106,8 @@ describe('ManagerAssistant', () => {
     vi.mocked(cancelManager).mockReset()
     vi.mocked(resetManager).mockReset()
     vi.mocked(removeQueuedManagerMessage).mockReset()
+    vi.mocked(editQueuedManagerMessage).mockReset()
+    vi.mocked(transcribeAudio).mockReset()
     localStorage.clear()
   })
 
@@ -462,6 +468,187 @@ describe('ManagerAssistant', () => {
     setup()
     await openPanel()
     expect(screen.getByRole('separator', { name: 'Resize Oracle' })).toHaveAttribute('aria-valuenow', '520')
+  })
+
+  describe('editing a waiting message', () => {
+    const waiting: ManagerSnapshot = {
+      ...empty,
+      status: 'working',
+      queued: 2,
+      messages: [
+        { id: 'r0', role: 'user', content: 'being answered', createdAt: 't', state: 'running' },
+        { id: 'q1', role: 'user', content: 'first waiting', createdAt: 't1', updatedAt: '2026-10-15T00:00:01.000Z', state: 'queued' },
+        { id: 'q2', role: 'user', content: 'second waiting', createdAt: 't2', updatedAt: '2026-10-15T00:00:02.000Z', state: 'queued', answerOnly: true },
+      ],
+    }
+    const items = () => within(screen.getByRole('region', { name: 'Queued for Oracle' })).getAllByRole('listitem')
+
+    it('rewrites it in place, keeping its place in the queue', async () => {
+      vi.mocked(editQueuedManagerMessage).mockResolvedValue({
+        id: 'q1', role: 'user', content: 'first waiting, with everything I meant', createdAt: 't1',
+        updatedAt: '2026-10-15T00:00:05.000Z', state: 'queued',
+      })
+      setup(waiting)
+      await openPanel()
+      const editButton = screen.getByRole('button', { name: 'Edit queued message: first waiting' })
+      fireEvent.click(editButton)
+      const editor = screen.getByRole('textbox', { name: 'Edit queued message 1' })
+      await waitFor(() => expect(editor).toHaveFocus())
+      expect(editor).toHaveValue('first waiting')
+      expect(editor).toHaveAccessibleDescription(/Keeps its place/)
+      // Unchanged, there is nothing to save; one edit at a time.
+      expect(screen.getByRole('button', { name: 'Save edit' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Edit queued message: second waiting' })).toBeDisabled()
+      fireEvent.change(editor, { target: { value: 'first waiting, with everything I meant' } })
+      fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+      await waitFor(() => expect(editQueuedManagerMessage).toHaveBeenCalledWith('q1', 'first waiting, with everything I meant'))
+      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Edit queued message 1' })).not.toBeInTheDocument())
+      expect(items().map((item) => item.textContent)).toEqual([
+        expect.stringMatching(/^1Number 1: first waiting, with everything I meant/),
+        expect.stringMatching(/^2Number 2: second waitingAsk/),
+      ])
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Edit queued message: first waiting, with/ })).toHaveFocus())
+      expect(screen.getByText('Saved your edit. It keeps its place in the queue.')).toBeInTheDocument()
+      // Nothing new was queued in its place.
+      expect(sendManagerMessage).not.toHaveBeenCalled()
+    })
+
+    it('cancels with Escape or Cancel, leaving it as it was and the panel open', async () => {
+      setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: second waiting' }))
+      const editor = screen.getByRole('textbox', { name: 'Edit queued message 2' })
+      fireEvent.change(editor, { target: { value: 'something else' } })
+      fireEvent.keyDown(editor, { key: 'Escape' })
+      expect(screen.queryByRole('textbox', { name: 'Edit queued message 2' })).not.toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+      expect(items()[1]).toHaveTextContent('second waiting')
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: second waiting' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))
+      expect(editQueuedManagerMessage).not.toHaveBeenCalled()
+    })
+
+    it('keeps an edit Oracle started on before it was saved in the message bar', async () => {
+      vi.mocked(editQueuedManagerMessage).mockRejectedValue(Object.assign(
+        new Error('Oracle has already started on this message, so it can no longer be edited.'),
+        { statusCode: 409 },
+      ))
+      setup(waiting)
+      await openPanel()
+      vi.mocked(getManager).mockResolvedValue({
+        ...waiting,
+        messages: waiting.messages.map((message) => message.id === 'q1' ? { ...message, state: 'running' } : message),
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: first waiting' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Edit queued message 1' }), { target: { value: 'my late change' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Oracle started on that message before your edit was saved. Your edit is in the message bar to send.',
+      )
+      expect(screen.queryByRole('textbox', { name: 'Edit queued message 1' })).not.toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('my late change')
+    })
+
+    it('hands the edit back when Oracle starts on the message while it is open', async () => {
+      const { emit } = setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: first waiting' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Edit queued message 1' }), { target: { value: 'half typed' } })
+      emit({ type: 'manager.message', message: { ...waiting.messages[1], state: 'running', updatedAt: '2026-10-15T00:00:09.000Z' } })
+      expect(screen.queryByRole('textbox', { name: 'Edit queued message 1' })).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('Oracle started on that message before your edit was saved.')
+      expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('half typed')
+      expect(editQueuedManagerMessage).not.toHaveBeenCalled()
+    })
+
+    it('stays open with the reason when saving fails for another reason', async () => {
+      vi.mocked(editQueuedManagerMessage).mockRejectedValue(new Error('Origin is not allowed'))
+      setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: first waiting' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Edit queued message 1' }), { target: { value: 'changed' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Origin is not allowed')
+      expect(screen.getByRole('textbox', { name: 'Edit queued message 1' })).toHaveValue('changed')
+    })
+  })
+
+  describe('voice', () => {
+    let track: { stop: ReturnType<typeof vi.fn> }
+    class FakeRecorder extends EventTarget {
+      static isTypeSupported = (type: string) => type === 'audio/webm'
+      state: 'inactive' | 'recording' = 'inactive'
+      readonly mimeType: string
+      constructor(_stream: unknown, options?: { mimeType?: string }) {
+        super()
+        this.mimeType = options?.mimeType ?? ''
+      }
+      start() {
+        this.state = 'recording'
+      }
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(Object.assign(new Event('dataavailable'), { data: new Blob(['audio'], { type: 'audio/webm' }) }))
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+
+    beforeEach(() => {
+      track = { stop: vi.fn() }
+      vi.stubGlobal('MediaRecorder', FakeRecorder)
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
+      })
+    })
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+      Reflect.deleteProperty(navigator, 'mediaDevices')
+    })
+
+    it('records, transcribes on the hub, and adds what was said to the message', async () => {
+      vi.mocked(transcribeAudio).mockResolvedValue({ transcript: 'what is running right now' } as Awaited<ReturnType<typeof transcribeAudio>>)
+      setup()
+      await openPanel()
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'Quick one:' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+      expect(await screen.findByText(/Recording 0:00/)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Stop & transcribe/ }))
+      await waitFor(() => expect(transcribeAudio).toHaveBeenCalledTimes(1))
+      const file = vi.mocked(transcribeAudio).mock.calls[0][0]
+      expect(file.type).toBe('audio/webm')
+      expect(file.name).toBe('recording.webm')
+      await waitFor(() => expect(input).toHaveValue('Quick one: what is running right now'))
+      expect(track.stop).toHaveBeenCalled()
+      expect(sendManagerMessage).not.toHaveBeenCalled()
+    })
+
+    it('discards a cancelled recording, and one left running when the panel closes', async () => {
+      setup()
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+      await waitFor(() => expect(screen.queryByText(/Recording/)).not.toBeInTheDocument())
+      expect(track.stop).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+      await screen.findByText(/Recording 0:00/)
+      fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+      await waitFor(() => expect(track.stop).toHaveBeenCalledTimes(2))
+      expect(transcribeAudio).not.toHaveBeenCalled()
+    })
+
+    it('says so when the browser cannot record or the microphone is refused', async () => {
+      vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
+      setup()
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Microphone permission was denied')
+      vi.unstubAllGlobals()
+      fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Microphone recording is not supported in this browser'))
+    })
   })
 
   it('offers Retry on a failed message', async () => {

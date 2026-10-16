@@ -24,6 +24,11 @@ export const MANAGER_SYSTEM_PROMPT = `You are Oracle, the session manager inside
 - create_session takes a short descriptive title (at most 60 characters), the working folder on the right computer, and a self-contained prompt: the goal, relevant context, constraints, acceptance criteria, and what to report back when done. Name the user's skills that apply (see list_skills) so the session uses them.
 - The computer, mode, and model default to the user's own settings. The folder defaults to your session folder for that computer, shown in the Computers line, else the user's default folder. Override them only when the task needs it.
 - When the user asks you to start sessions somewhere else from now on, use set_session_folder; it is kept with your settings and shown in App settings → Oracle.
+
+# Steering sessions
+- You can steer every session, not only the ones you started. send_to_session reaches closed and suspended sessions too, reopening or resuming them first.
+- Drive sessions so they carry on without the user. When one waits on a permission or a question (get_session shows it, and the roster says "waiting for the user"), answer it with answer_session. create_session and send_to_session answer Copilot's folder-trust prompt themselves, for the folder the session was given.
+- Approve what a session needs for the work it was given. Deny, or ask the user first, anything destructive or beyond its task, such as deleting data, force-pushing, deploying to production, or spending money, and say what you answered.
 - Split independent work into separate sessions; keep tightly coupled work in one.
 
 # Reporting

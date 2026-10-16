@@ -8,9 +8,12 @@ import {
   CircleStop,
   ExternalLink,
   LoaderCircle,
+  Mic,
   Orbit,
+  Pencil,
   RotateCcw,
   SlidersHorizontal,
+  Square,
   X,
 } from 'lucide-react'
 import type {
@@ -24,6 +27,7 @@ import type {
 import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager'
 import {
   cancelManager,
+  editQueuedManagerMessage,
   getManager,
   removeQueuedManagerMessage,
   resetManager,
@@ -34,6 +38,7 @@ import {
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { remarkSafeBreaks } from './remark-safe-breaks'
+import { recordingDuration, useVoiceRecorder } from './voice-recorder'
 
 const suggestions = [
   'What is running right now?',
@@ -459,10 +464,53 @@ export function ManagerAssistant({
   const [unread, setUnread] = useState(false)
   const [loadError, setLoadError] = useState<string>()
   const [announcement, setAnnouncement] = useState('')
+  // A waiting message being rewritten in place, and what it now says.
+  const [editing, setEditing] = useState<{ id: string; text: string }>()
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [editError, setEditError] = useState<string>()
+  const editInputRef = useRef<HTMLTextAreaElement>(null)
+  const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const listRef = useRef<HTMLOListElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const panelWidth = usePanelWidth(reservedLeft)
+  const voice = useVoiceRecorder({
+    onTranscript: (text) => {
+      setDraft((current) => current.trim() ? `${current.trimEnd()} ${text}` : text)
+      window.requestAnimationFrame(() => inputRef.current?.focus())
+    },
+    onError: (message) => setSendError(message),
+  })
+  const { recording: voiceRecording, stop: stopVoice } = voice
+
+  // A closed panel never keeps the microphone on.
+  useEffect(() => {
+    if (!open && voiceRecording) stopVoice(true)
+  }, [open, voiceRecording, stopVoice])
+
+  const editingId = editing?.id
+  useEffect(() => {
+    const editor = editInputRef.current
+    if (!editingId || !editor) return
+    editor.focus()
+    editor.closest('li')?.scrollIntoView?.({ block: 'nearest' })
+  }, [editingId])
+
+  // Oracle started on a message while it was being edited, or it left the
+  // queue another way: the words go to the message bar rather than being lost.
+  // Clearing the edit here means this happens once.
+  if (editing && snapshot && !snapshot.messages.some(
+    (message) => message.id === editing.id && message.role === 'user' && message.state === 'queued',
+  )) {
+    const kept = editing.text.trim()
+    setEditing(undefined)
+    if (kept) {
+      setDraft((current) => current.trimEnd().endsWith(kept)
+        ? current
+        : current.trim() ? `${current.trimEnd()}\n\n${kept}` : kept)
+    }
+    setSendError('Oracle started on that message before your edit was saved. Your edit is in the message bar to send.')
+  }
   const openRef = useRef(open)
   const managedRef = useRef(onManagedSessionsChange)
   const indicatorRef = useRef(onIndicatorChange)
@@ -653,6 +701,60 @@ export function ManagerAssistant({
     }
   }
 
+  function startEdit(message: ManagerMessage) {
+    setEditError(undefined)
+    setEditing({ id: message.id, text: message.content })
+  }
+
+  function returnFocusToEdit(id: string) {
+    window.requestAnimationFrame(() => editButtons.current.get(id)?.focus())
+  }
+
+  function cancelEdit() {
+    const id = editing?.id
+    setEditing(undefined)
+    setEditError(undefined)
+    if (id) returnFocusToEdit(id)
+  }
+
+  async function saveEdit() {
+    if (!editing || savingEdit) return
+    const { id, text } = editing
+    setSavingEdit(true)
+    setEditError(undefined)
+    try {
+      const next = await editQueuedManagerMessage(id, text)
+      setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
+      setEditing((current) => current?.id === id ? undefined : current)
+      setAnnouncement('Saved your edit. It keeps its place in the queue.')
+      returnFocusToEdit(id)
+    } catch (caught) {
+      const reason = caught instanceof Error ? caught.message : String(caught)
+      // Too late: once the latest state shows Oracle has the message, the
+      // edit is handed back to the message bar above.
+      const latest = Reflect.get(caught as object, 'statusCode') === 409
+        ? await getManager().catch(() => undefined)
+        : undefined
+      const stillWaiting = latest?.messages?.some((message) => message.id === id && message.state === 'queued')
+      if (latest?.available && !stillWaiting) setSnapshot(latest)
+      else setEditError(reason)
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  function onEditKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      cancelEdit()
+    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      void saveEdit()
+    }
+  }
+
   function changeAnswerOnly(value: boolean) {
     setAnswerOnly(value)
     try {
@@ -814,26 +916,89 @@ export function ManagerAssistant({
             {queue.length} waiting · answered in this order
           </p>
           <ol className="oracle-queue__list">
-            {queue.map((message, index) => (
-              <li className="oracle-queue__item" key={message.id}>
-                <span aria-hidden="true" className="oracle-queue__position">{index + 1}</span>
-                <p className="oracle-queue__text">
-                  <span className="visually-hidden">{`Number ${index + 1}: `}</span>
-                  {message.content}
-                </p>
-                {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
-                <button
-                  aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
-                  className="icon-button oracle-queue__remove"
-                  disabled={busyMessage === message.id}
-                  onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
-                  title="Remove from the queue"
-                  type="button"
-                >
-                  <X aria-hidden="true" size={15} />
-                </button>
-              </li>
-            ))}
+            {queue.map((message, index) => {
+              const rewriting = editing?.id === message.id ? editing : undefined
+              const editTooLong = (rewriting?.text.length ?? 0) > MANAGER_MESSAGE_MAX_LENGTH
+              const editUnchanged = rewriting?.text.trim() === message.content.trim()
+              return (
+                <li className={`oracle-queue__item${rewriting ? ' oracle-queue__item--editing' : ''}`} key={message.id}>
+                  <span aria-hidden="true" className="oracle-queue__position">{index + 1}</span>
+                  {rewriting ? (
+                    <div className="oracle-queue__editor">
+                      <textarea
+                        aria-describedby={`oracle-edit-hint-${message.id}`}
+                        aria-label={`Edit queued message ${index + 1}`}
+                        disabled={savingEdit}
+                        onChange={(event) => {
+                          const text = event.target.value
+                          setEditing((current) => current?.id === message.id ? { ...current, text } : current)
+                        }}
+                        onKeyDown={onEditKeyDown}
+                        ref={editInputRef}
+                        rows={3}
+                        value={rewriting.text}
+                      />
+                      {editTooLong ? (
+                        <p className="form-error" role="alert">
+                          Messages are limited to {MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.
+                        </p>
+                      ) : null}
+                      {editError ? <p className="form-error" role="alert">{editError}</p> : null}
+                      <div className="oracle-queue__editor-actions">
+                        <span className="oracle-queue__editor-hint" id={`oracle-edit-hint-${message.id}`}>
+                          Keeps its place
+                          <span className="oracle-queue__editor-keys"> · Ctrl+Enter saves · Esc cancels</span>
+                        </span>
+                        <button aria-label="Cancel edit" className="secondary-button" disabled={savingEdit} onClick={cancelEdit} type="button">
+                          Cancel
+                        </button>
+                        <button
+                          aria-label="Save edit"
+                          className="primary-button"
+                          disabled={savingEdit || !rewriting.text.trim() || editTooLong || editUnchanged}
+                          onClick={() => void saveEdit()}
+                          type="button"
+                        >
+                          {savingEdit ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="oracle-queue__text">
+                        <span className="visually-hidden">{`Number ${index + 1}: `}</span>
+                        {message.content}
+                      </p>
+                      {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
+                      <button
+                        aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
+                        className="icon-button oracle-queue__edit"
+                        disabled={Boolean(editing) || busyMessage === message.id}
+                        onClick={() => startEdit(message)}
+                        ref={(element) => {
+                          if (element) editButtons.current.set(message.id, element)
+                          else editButtons.current.delete(message.id)
+                        }}
+                        title="Edit; it keeps its place in the queue"
+                        type="button"
+                      >
+                        <Pencil aria-hidden="true" size={14} />
+                      </button>
+                      <button
+                        aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
+                        className="icon-button oracle-queue__remove"
+                        disabled={busyMessage === message.id}
+                        onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
+                        title="Remove from the queue"
+                        type="button"
+                      >
+                        <X aria-hidden="true" size={15} />
+                      </button>
+                    </>
+                  )}
+                </li>
+              )
+            })}
           </ol>
         </section>
       ) : null}
@@ -855,6 +1020,21 @@ export function ManagerAssistant({
             Oracle is answering; anything you send now waits its turn.
           </p>
         ) : null}
+        {voice.recording ? (
+          <div className="recording-panel manager-composer__recording" role="status">
+            <button className="recording-panel__cancel" onClick={() => voice.stop(true)} type="button">
+              Cancel
+            </button>
+            <span className="recording-panel__status">
+              <i />
+              Recording {recordingDuration(voice.seconds)}
+            </span>
+            <button className="recording-panel__stop" onClick={() => voice.stop()} type="button">
+              <Square fill="currentColor" size={12} />
+              Stop & transcribe
+            </button>
+          </div>
+        ) : null}
         <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}`}>
           <textarea
             aria-label="Message Oracle"
@@ -867,6 +1047,18 @@ export function ManagerAssistant({
             value={draft}
           />
           <div className="manager-composer__actions">
+            <button
+              aria-label={voice.transcribing ? 'Transcribing audio' : 'Dictate to Oracle'}
+              className="icon-button manager-composer__mic"
+              disabled={voice.transcribing || voice.recording}
+              onClick={() => void voice.start()}
+              title="Record and transcribe"
+              type="button"
+            >
+              {voice.transcribing
+                ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={17} />
+                : <Mic aria-hidden="true" size={17} />}
+            </button>
             {working ? (
               <button aria-label="Stop Oracle's reply" className="icon-button manager-composer__stop" onClick={() => void cancelManager()} title="Stop" type="button">
                 <CircleStop aria-hidden="true" size={18} />

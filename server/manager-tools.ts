@@ -7,6 +7,7 @@ import type {
   ManagedSession,
   PendingPermission,
   RuntimeReasoningEffort,
+  UserInputField,
   UserInputReplyInput,
 } from '../shared/contracts.js'
 import type { ManagerClientDefaults, ManagerSessionRef } from '../shared/manager.js'
@@ -145,6 +146,35 @@ function permissionOption(permission: PendingPermission, response: string) {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * The folder a genuine Copilot folder-trust prompt names, joined back where
+ * the terminal wrapped it. Anything else that merely starts with the same
+ * words, such as a command's permission, is not one.
+ */
+function trustedFolderOf(permission: PendingPermission): string | undefined {
+  if (permission.stale || permission.kind !== 'terminal' || permission.choiceCount !== 3) return undefined
+  if (!permission.title.startsWith(FOLDER_TRUST_PREFIX)) return undefined
+  const [allow, stop, ...rest] = permission.options
+  if (rest.length || allow?.optionId !== 'terminal:allow' || allow.name !== 'Trust for this session'
+    || stop?.optionId !== 'terminal:stop') return undefined
+  return permission.title.slice(FOLDER_TRUST_PREFIX.length).split('\n').map((part) => part.trim()).join('')
+}
+
+function sameFolder(left: string, right: string): boolean {
+  return left.replace(/\/+$/, '') === right.replace(/\/+$/, '')
+}
+
+function describeField(field: UserInputField): string {
+  const parts: string[] = [field.type]
+  if (field.required) parts.push('required')
+  if (field.options?.length) parts.push(`one of ${field.options.map((option) => option.value).join(', ')}`)
+  if (field.minimum !== undefined || field.maximum !== undefined) parts.push(`${field.minimum ?? ''}–${field.maximum ?? ''}`)
+  if (field.minLength !== undefined || field.maxLength !== undefined) parts.push(`${field.minLength ?? 0}–${field.maxLength ?? ''} characters`)
+  if (field.minItems !== undefined || field.maxItems !== undefined) parts.push(`${field.minItems ?? 0}–${field.maxItems ?? ''} items`)
+  if (field.format) parts.push(field.format)
+  return `${field.name} (${parts.join(', ')})`
+}
+
 export function createManagerTools(
   host: ManagerToolHost,
   onActivity: (activity: ManagerToolActivity) => void,
@@ -163,13 +193,13 @@ export function createManagerTools(
     for (;;) {
       const detail = await host.readSession(session.computerId, session.id).catch(() => undefined)
       const permission = detail?.pendingPermission
-      if (permission && !permission.stale && permission.title.startsWith(FOLDER_TRUST_PREFIX)) {
-        const allow = permission.options.find((option) => option.kind.startsWith('allow'))
-        if (!allow) return false
-        await host.replyPermission(session.computerId, session.id, permission.requestId, allow.optionId)
+      const folder = permission && trustedFolderOf(permission)
+      // Only the folder the session was given; any other prompt is left to answer_session.
+      if (permission && folder && sameFolder(folder, detail.cwd || session.cwd)) {
+        await host.replyPermission(session.computerId, session.id, permission.requestId, 'terminal:allow')
         onActivity({
           tool: 'trust_folder',
-          content: `Trusted ${permission.title.slice(FOLDER_TRUST_PREFIX.length).trim()} for "${session.title}"`,
+          content: `Trusted ${folder} for "${session.title}"`,
           sessionRefs: [ref(session)],
         })
         // Copilot takes a moment to act on the answer; until then the prompt is still showing.
@@ -276,10 +306,30 @@ export function createManagerTools(
     }
   }
 
-  const pendingRequests = (session: ManagedSession) => [
-    ...(session.pendingPermission ? [`Waiting for the user to approve: ${session.pendingPermission.title}`] : []),
-    ...(session.pendingUserInput ? [`Waiting for the user to answer: ${session.pendingUserInput.question}`] : []),
-  ]
+  /** What a session waits on, with what answer_session needs to answer it. */
+  const pendingRequests = (session: ManagedSession) => {
+    const lines: string[] = []
+    const permission = session.pendingPermission
+    if (permission && !permission.stale) {
+      const options = (permission.options ?? []).map((option) => `"${option.name}"`)
+      lines.push(`Waiting for the user to approve: ${permission.title} (requestId ${permission.requestId}).${
+        options.length ? ` Options: ${options.join(', ')}.` : ''}`)
+    }
+    const question = session.pendingUserInput
+    if (question && !question.stale) {
+      const details = [
+        ...(question.choices?.length ? [`Choices: ${question.choices.map((choice) => `"${choice}"`).join(', ')}`] : []),
+        ...(question.multiSelect ? ['several may be chosen'] : []),
+        ...(question.allowFreeform ? ['free text is allowed'] : []),
+      ]
+      lines.push(`Waiting for the user to answer: ${question.question} (requestId ${question.requestId}).${
+        details.length ? ` ${details.join('; ')}.` : ''}`)
+      if (question.form?.fields.length) {
+        lines.push(`Form fields: ${question.form.fields.map(describeField).join('; ')}.`)
+      }
+    }
+    return lines
+  }
 
   const describeSession = (session: ManagedSession) => {
     const line = rosterLine(session, host.registry()[registryKey(session.computerId, session.id)], host.now())

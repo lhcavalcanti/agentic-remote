@@ -22,9 +22,13 @@ export function useVoiceRecorder({
   onError: (message: string) => void
 }) {
   const [recording, setRecording] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [transcribing, setTranscribing] = useState(false)
   const recorderRef = useRef<MediaRecorder | undefined>(undefined)
+  // The microphone being asked for, and whether it is still wanted when it arrives.
+  const acquiringRef = useRef<{ wanted: boolean } | undefined>(undefined)
+  const disposedRef = useRef(false)
   const streamRef = useRef<MediaStream | undefined>(undefined)
   const chunksRef = useRef<Blob[]>([])
   const discardRef = useRef(false)
@@ -59,6 +63,8 @@ export function useVoiceRecorder({
   }, [])
 
   const stop = useCallback((discard = false) => {
+    // Asked to stop before the microphone arrived: it is released on arrival.
+    if (acquiringRef.current) acquiringRef.current.wanted = false
     const recorder = recorderRef.current
     if (!recorder || recorder.state === 'inactive') {
       release()
@@ -69,17 +75,25 @@ export function useVoiceRecorder({
   }, [release])
 
   const start = useCallback(async () => {
-    if (recorderRef.current || transcribing) return
+    if (recorderRef.current || acquiringRef.current || transcribing || disposedRef.current) return
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       callbacks.current.onError('Microphone recording is not supported in this browser')
       return
     }
+    const acquisition = { wanted: true }
+    acquiringRef.current = acquisition
+    setStarting(true)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Held from here, so every way out below releases it.
+      streamRef.current = stream
+      if (!acquisition.wanted || disposedRef.current) {
+        release()
+        return
+      }
       const preferredType = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
         .find((type) => MediaRecorder.isTypeSupported(type))
       const recorder = new MediaRecorder(stream, preferredType ? { mimeType: preferredType } : undefined)
-      streamRef.current = stream
       recorderRef.current = recorder
       chunksRef.current = []
       discardRef.current = false
@@ -97,7 +111,10 @@ export function useVoiceRecorder({
         void transcribe(new File(chunks, `recording.${extension}`, { type: mimeType }))
       })
       recorder.addEventListener('error', () => {
-        release()
+        // What was recorded before the failure is not transcribed.
+        discardRef.current = true
+        if (recorder.state !== 'inactive') recorder.stop()
+        else release()
         callbacks.current.onError('The microphone recording failed')
       })
       recorder.start(1_000)
@@ -111,16 +128,23 @@ export function useVoiceRecorder({
       }, 250)
     } catch (caught) {
       release()
-      callbacks.current.onError(
-        caught instanceof DOMException && caught.name === 'NotAllowedError'
-          ? 'Microphone permission was denied'
-          : caught instanceof Error ? caught.message : String(caught),
-      )
+      if (!disposedRef.current) {
+        callbacks.current.onError(
+          caught instanceof DOMException && caught.name === 'NotAllowedError'
+            ? 'Microphone permission was denied'
+            : caught instanceof Error ? caught.message : String(caught),
+        )
+      }
+    } finally {
+      if (acquiringRef.current === acquisition) acquiringRef.current = undefined
+      if (!disposedRef.current) setStarting(false)
     }
   }, [release, transcribe, transcribing])
 
-  // Leaving never keeps the microphone on.
+  // Leaving never keeps the microphone on, including one still being granted.
   useEffect(() => () => {
+    disposedRef.current = true
+    if (acquiringRef.current) acquiringRef.current.wanted = false
     discardRef.current = true
     const recorder = recorderRef.current
     if (recorder && recorder.state !== 'inactive') recorder.stop()
@@ -128,5 +152,5 @@ export function useVoiceRecorder({
     for (const track of streamRef.current?.getTracks() ?? []) track.stop()
   }, [])
 
-  return { recording, seconds, transcribing, start, stop }
+  return { recording, starting, seconds, transcribing, start, stop }
 }

@@ -713,6 +713,7 @@ describe('ManagerAgent', () => {
         requestId: 'trust-1',
         title: 'Trust folder for this session: /home/me/src/llmlab',
         kind: 'terminal',
+        choiceCount: 3,
         options: [
           { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
           { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
@@ -998,6 +999,20 @@ describe('ManagerAgent', () => {
     expect(sdk.prompts.map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0]))
       .toEqual(['one', 'two, with everything I meant', 'three'])
     await expect(agent!.editQueued(second.id, 'after it was answered')).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('never lets a message Oracle already started become editable again by Retry', async () => {
+    sdk.behaviors.push(fail('down'), fail('down'), fail('down'), fail('down'))
+    await start()
+    const message = await agent!.send('try this')
+    await settled()
+    const failed = agent!.snapshot().messages.find((candidate) => candidate.id === message.id)!
+    expect(failed.state).toBe('failed')
+    expect(failed.startedAt).toBeDefined()
+    sdk.behaviors.push(async () => undefined)
+    const retried = await agent!.retry(message.id)
+    expect(retried.startedAt).toBe(failed.startedAt)
+    await expect(agent!.editQueued(message.id, 'something else')).rejects.toMatchObject({ statusCode: 409 })
   })
 
   it('keeps an edit across a restart, and refuses one to a message Oracle had already started', async () => {

@@ -60,6 +60,11 @@ export interface ManagerMessage {
    * or close one, so their work carries on undisturbed.
    */
   answerOnly?: boolean
+  /**
+   * When Oracle first started on it. From then on it is no longer the user's
+   * to edit, even if a restart or Retry puts it back in the queue.
+   */
+  startedAt?: string
   /** Why a message failed, shown beside its Retry. */
   error?: string
   /** The message of yours a reply or activity belongs to. */

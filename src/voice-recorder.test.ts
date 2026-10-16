@@ -30,6 +30,7 @@ describe('useVoiceRecorder', () => {
   let track: { stop: ReturnType<typeof vi.fn> }
 
   beforeEach(() => {
+    FakeRecorder.last = undefined
     vi.useFakeTimers()
     track = { stop: vi.fn() }
     vi.stubGlobal('MediaRecorder', FakeRecorder)
@@ -85,5 +86,75 @@ describe('useVoiceRecorder', () => {
     await act(async () => undefined)
     expect(onError).toHaveBeenCalledWith('Whisper is not installed on this computer')
     expect(result.current.transcribing).toBe(false)
+  })
+
+  it('asks for the microphone once, and releases it if the page goes away while asking', async () => {
+    let grant: (stream: unknown) => void = () => undefined
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockImplementation(() => new Promise((resolve) => {
+      grant = resolve as (stream: unknown) => void
+    }))
+    const onError = vi.fn()
+    const { result, unmount } = renderHook(() => useVoiceRecorder({ onTranscript: vi.fn(), onError }))
+    let first: Promise<void> | undefined
+    act(() => {
+      first = result.current.start()
+    })
+    expect(result.current.starting).toBe(true)
+    await act(() => result.current.start())
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1)
+    unmount()
+    await act(async () => {
+      grant({ getTracks: () => [track] })
+      await first
+    })
+    expect(track.stop).toHaveBeenCalled()
+    expect(FakeRecorder.last).toBeUndefined()
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('releases the microphone it is still being granted when stopped', async () => {
+    let grant: (stream: unknown) => void = () => undefined
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockImplementation(() => new Promise((resolve) => {
+      grant = resolve as (stream: unknown) => void
+    }))
+    const { result } = renderHook(() => useVoiceRecorder({ onTranscript: vi.fn(), onError: vi.fn() }))
+    let started: Promise<void> | undefined
+    act(() => {
+      started = result.current.start()
+    })
+    act(() => result.current.stop(true))
+    await act(async () => {
+      grant({ getTracks: () => [track] })
+      await started
+    })
+    expect(track.stop).toHaveBeenCalled()
+    expect(result.current.recording).toBe(false)
+    expect(result.current.starting).toBe(false)
+  })
+
+  it('releases the microphone when a recorder cannot be made for it', async () => {
+    vi.stubGlobal('MediaRecorder', Object.assign(function Broken() {
+      throw new Error('Recording is not available')
+    }, { isTypeSupported: () => false }))
+    const onError = vi.fn()
+    const { result } = renderHook(() => useVoiceRecorder({ onTranscript: vi.fn(), onError }))
+    await act(() => result.current.start())
+    expect(track.stop).toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith('Recording is not available')
+    expect(result.current.recording).toBe(false)
+  })
+
+  it('never transcribes a recording that failed', async () => {
+    const onError = vi.fn()
+    const { result } = renderHook(() => useVoiceRecorder({ onTranscript: vi.fn(), onError }))
+    await act(() => result.current.start())
+    await act(async () => {
+      FakeRecorder.last!.dispatchEvent(new Event('error'))
+    })
+    await act(async () => undefined)
+    expect(onError).toHaveBeenCalledWith('The microphone recording failed')
+    expect(transcribeAudio).not.toHaveBeenCalled()
+    expect(track.stop).toHaveBeenCalled()
+    expect(result.current.recording).toBe(false)
   })
 })

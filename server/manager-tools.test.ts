@@ -222,10 +222,11 @@ describe('manager tools', () => {
   })
 
   it('answers what a session is waiting on, such as folder trust, and only that', async () => {
-    const waiting = session('abc12345-aaaa', { status: 'waiting', pendingPermission: {
+    const waiting = session('abc12345-aaaa', { cwd: '/home/me/src/llmlab', status: 'waiting', pendingPermission: {
       requestId: 'trust-1',
       title: 'Trust folder for this session: /home/me/src/llmlab',
       kind: 'terminal',
+      choiceCount: 3,
       options: [
         { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
         { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
@@ -288,10 +289,11 @@ describe('manager tools', () => {
     let reads = 0
     vi.mocked(host.readSession).mockImplementation(async (_computerId, id) => {
       reads += 1
-      return reads === 1 ? session(id, { status: 'waiting', pendingPermission: {
+      return reads === 1 ? session(id, { cwd: '/home/me/src/llmlab', status: 'waiting', pendingPermission: {
       requestId: 'trust-1',
       title: 'Trust folder for this session: /home/me/src/llmlab',
       kind: 'terminal',
+      choiceCount: 3,
       options: [
         { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
         { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
@@ -314,10 +316,11 @@ describe('manager tools', () => {
     let reads = 0
     vi.mocked(host.readSession).mockImplementation(async (_computerId, id) => {
       reads += 1
-      return reads === 2 ? session(id, { status: 'waiting', pendingPermission: {
+      return reads === 2 ? session(id, { cwd: '/home/me/src/llmlab', status: 'waiting', pendingPermission: {
       requestId: 'trust-1',
       title: 'Trust folder for this session: /home/me/src/llmlab',
       kind: 'terminal',
+      choiceCount: 3,
       options: [
         { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
         { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
@@ -328,6 +331,82 @@ describe('manager tools', () => {
     expect(String(await call('create_session', { title: 'LLM lab', prompt: 'Go.' }))).toContain('Its task was sent.')
     expect(host.sendMessage).toHaveBeenCalledTimes(2)
     expect(host.replyPermission).toHaveBeenCalledTimes(1)
+  })
+
+  it('trusts only a real folder-trust prompt for the folder the session was given', async () => {
+    const lookalike = (change: Record<string, unknown>) => session('new1', {
+      cwd: '/home/me/src/web',
+      status: 'waiting',
+      pendingPermission: {
+        requestId: 'p9',
+        title: 'Trust folder for this session: /home/me/src/web',
+        kind: 'terminal',
+        choiceCount: 3,
+        options: [
+          { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+          { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+        ],
+        ...change,
+      },
+    })
+    for (const change of [
+      { kind: 'shell' },
+      { title: 'Trust folder for this session: /home/me/elsewhere' },
+      { options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }] },
+    ]) {
+      vi.mocked(host.readSession).mockResolvedValue(lookalike(change))
+      vi.mocked(host.sendMessage).mockClear()
+      vi.mocked(host.replyPermission).mockClear()
+      vi.mocked(host.sendMessage).mockRejectedValueOnce(new Error('Copilot is showing a prompt'))
+      const result = await call('create_session', { title: 'Web', prompt: 'Go.' })
+      expect(result, JSON.stringify(change)).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result)).toContain('answer_session')
+      expect(host.replyPermission).not.toHaveBeenCalled()
+    }
+    // The real prompt, for the session's own folder, even wrapped across lines.
+    let reads = 0
+    vi.mocked(host.readSession).mockImplementation(async () => {
+      reads += 1
+      return reads === 1 ? lookalike({ title: 'Trust folder for this session: /home/me/src/\nweb' }) : session('new1', { cwd: '/home/me/src/web' })
+    })
+    vi.mocked(host.sendMessage).mockResolvedValue(session('new1'))
+    expect(String(await call('create_session', { title: 'Web', prompt: 'Go.' }))).toContain('Its task was sent.')
+    expect(host.replyPermission).toHaveBeenCalledWith('hub', 'new1', 'p9', 'terminal:allow')
+  })
+
+  it('shows what a waiting session asks, in enough detail to answer it', async () => {
+    vi.mocked(host.readSession).mockResolvedValueOnce(session('abc12345-aaaa', {
+      status: 'waiting',
+      pendingPermission: {
+        requestId: 'perm-7', title: 'Run npm publish', kind: 'shell',
+        options: [
+          { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
+        ],
+      },
+    }))
+    const permission = String(await call('get_session', { sessionId: 'abc12345' }))
+    expect(permission).toContain('Waiting for the user to approve: Run npm publish (requestId perm-7). Options: "Allow once", "Deny".')
+    vi.mocked(host.readSession).mockResolvedValueOnce(session('abc12345-aaaa', {
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'q-3', question: 'Which database?', choices: ['Postgres', 'SQLite'], allowFreeform: true, multiSelect: true,
+      },
+    }))
+    const question = String(await call('get_session', { sessionId: 'abc12345' }))
+    expect(question).toContain('Waiting for the user to answer: Which database? (requestId q-3). Choices: "Postgres", "SQLite"; several may be chosen; free text is allowed.')
+    vi.mocked(host.readSession).mockResolvedValueOnce(session('abc12345-aaaa', {
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'f-1', question: 'Configure the service', choices: [], allowFreeform: false,
+        form: { fields: [
+          { name: 'port', title: 'Port', type: 'integer', required: true, minimum: 1, maximum: 65535 },
+          { name: 'tier', title: 'Tier', type: 'string', required: false, options: [{ value: 'free', label: 'Free' }, { value: 'pro', label: 'Pro' }] },
+        ] },
+      },
+    }))
+    const form = String(await call('get_session', { sessionId: 'abc12345' }))
+    expect(form).toContain('Form fields: port (integer, required, 1–65535); tier (string, one of free, pro).')
   })
 
   it('reopens a closed session and resumes a suspended one to steer it', async () => {

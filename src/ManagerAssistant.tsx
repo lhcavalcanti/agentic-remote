@@ -499,7 +499,9 @@ export function ManagerAssistant({
   // Oracle started on a message while it was being edited, or it left the
   // queue another way: the words go to the message bar rather than being lost.
   // Clearing the edit here means this happens once.
-  if (editing && snapshot && !snapshot.messages.some(
+  // Not while saving: an edit that was saved and then taken by Oracle is not
+  // to be copied back; the save itself says what happened.
+  if (editing && !savingEdit && snapshot && !snapshot.messages.some(
     (message) => message.id === editing.id && message.role === 'user' && message.state === 'queued',
   )) {
     const kept = editing.text.trim()
@@ -717,27 +719,38 @@ export function ManagerAssistant({
     if (id) returnFocusToEdit(id)
   }
 
+  function announce(message: string) {
+    // The same words twice in a row would not be read out again.
+    setAnnouncement((current) => current === message ? `${message}\u200b` : message)
+  }
+
   async function saveEdit() {
     if (!editing || savingEdit) return
     const { id, text } = editing
+    const original = snapshot?.messages.find((message) => message.id === id)
+    // The same checks as the Save button, for Ctrl+Enter too.
+    if (!text.trim() || text.length > MANAGER_MESSAGE_MAX_LENGTH || text.trim() === original?.content.trim()) return
     setSavingEdit(true)
     setEditError(undefined)
     try {
       const next = await editQueuedManagerMessage(id, text)
       setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
       setEditing((current) => current?.id === id ? undefined : current)
-      setAnnouncement('Saved your edit. It keeps its place in the queue.')
+      announce('Saved your edit. It keeps its place in the queue.')
       returnFocusToEdit(id)
     } catch (caught) {
-      const reason = caught instanceof Error ? caught.message : String(caught)
-      // Too late: once the latest state shows Oracle has the message, the
-      // edit is handed back to the message bar above.
-      const latest = Reflect.get(caught as object, 'statusCode') === 409
-        ? await getManager().catch(() => undefined)
-        : undefined
-      const stillWaiting = latest?.messages?.some((message) => message.id === id && message.state === 'queued')
-      if (latest?.available && !stillWaiting) setSnapshot(latest)
-      else setEditError(reason)
+      const reason = (caught instanceof Error ? caught.message : String(caught)).replace(/[.\s]+$/, '')
+      if (Reflect.get(caught as object, 'statusCode') === 409) {
+        // Too late, whatever the queue still shows: the words go to the message bar.
+        const kept = text.trim()
+        setEditing((current) => current?.id === id ? undefined : current)
+        setDraft((current) => current.trimEnd().endsWith(kept)
+          ? current
+          : current.trim() ? `${current.trimEnd()}\n\n${kept}` : kept)
+        setSendError(`${reason}. Your edit is in the message bar to send.`)
+      } else {
+        setEditError(reason)
+      }
     } finally {
       setSavingEdit(false)
     }
@@ -1050,7 +1063,7 @@ export function ManagerAssistant({
             <button
               aria-label={voice.transcribing ? 'Transcribing audio' : 'Dictate to Oracle'}
               className="icon-button manager-composer__mic"
-              disabled={voice.transcribing || voice.recording}
+              disabled={voice.transcribing || voice.recording || voice.starting}
               onClick={() => void voice.start()}
               title="Record and transcribe"
               type="button"

@@ -421,8 +421,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   ones it started: it messages any session, reopening a closed one or resuming
   a suspended one first, and answers what a session waits on (a permission
   request, a question, or a form) so the session carries on without you.
-  Creating or messaging a session answers Copilot's folder-trust prompt for
-  that session's folder, then delivers the message. Oracle approves what a
+  Creating or messaging a session answers Copilot's folder-trust prompt, and
+  only that genuine prompt for the session's own folder, then delivers the
+  message; anything else it is shown goes through Oracle's judgment instead. Oracle approves what a
   session needs for its task and denies, or asks you about, anything
   destructive or beyond it; every answer appears in its transcript.
 - **Ask** is the panel's conversational mode: you ask Oracle about your
@@ -472,8 +473,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   message where it stands, keeping its identity and place in the queue rather
   than queueing a replacement, with **Save** and **Cancel** (Ctrl+Enter and
   Esc on a keyboard). Once Oracle has started on a message, including one a
-  restart interrupted, it cannot be edited; an edit that arrives too late is
-  handed back to the message bar instead of being lost. Edits are kept in the
+  restart interrupted or Retry requeued, it cannot be edited; an edit that
+  arrives too late is handed back to the message bar instead of being lost. Edits are kept in the
   hub's transcript like the queue itself. The queue is kept on the hub, so it
   survives a reload, a reconnect, and a hub restart, and a snapshot lists every
   waiting message however long the transcript. Only a blank message or

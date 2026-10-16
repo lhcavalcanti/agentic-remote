@@ -511,6 +511,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       throw Object.assign(new Error('Message not found'), { statusCode: 404 })
     }
     const started = message.state === 'running'
+      || message.startedAt !== undefined
       || (this.store.state().interruptions ?? {})[messageId] !== undefined
     if (message.state !== 'queued' || started) {
       throw Object.assign(
@@ -804,7 +805,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.cancelledMessageId = undefined
     this.streaming = undefined
     const interrupted = (this.store.state().interruptions ?? {})[message.id] !== undefined
-    await this.updateMessage({ ...message, state: 'running', updatedAt: this.now().toISOString() })
+    const startedAt = this.now().toISOString()
+    await this.updateMessage({ ...message, state: 'running', startedAt: message.startedAt ?? startedAt, updatedAt: startedAt })
     this.setStatus('working')
     const rungs: Array<{ rung: Rung; wait: number }> = [
       { rung: 'same', wait: 0 },

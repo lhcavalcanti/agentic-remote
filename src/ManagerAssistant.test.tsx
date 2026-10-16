@@ -533,17 +533,15 @@ describe('ManagerAssistant', () => {
         new Error('Oracle has already started on this message, so it can no longer be edited.'),
         { statusCode: 409 },
       ))
+      // The queue still shows it waiting, as for a message a restart
+      // interrupted; the hub's refusal is what counts.
       setup(waiting)
       await openPanel()
-      vi.mocked(getManager).mockResolvedValue({
-        ...waiting,
-        messages: waiting.messages.map((message) => message.id === 'q1' ? { ...message, state: 'running' } : message),
-      })
       fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: first waiting' }))
       fireEvent.change(screen.getByRole('textbox', { name: 'Edit queued message 1' }), { target: { value: 'my late change' } })
       fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
       expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Oracle started on that message before your edit was saved. Your edit is in the message bar to send.',
+        'Oracle has already started on this message, so it can no longer be edited. Your edit is in the message bar to send.',
       )
       expect(screen.queryByRole('textbox', { name: 'Edit queued message 1' })).not.toBeInTheDocument()
       expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('my late change')
@@ -559,6 +557,48 @@ describe('ManagerAssistant', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Oracle started on that message before your edit was saved.')
       expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('half typed')
       expect(editQueuedManagerMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not copy back an edit that was saved before Oracle took the message', async () => {
+      let resolve: (message: ManagerSnapshot['messages'][number]) => void = () => undefined
+      vi.mocked(editQueuedManagerMessage).mockImplementation(() => new Promise((done) => {
+        resolve = done
+      }))
+      const { emit } = setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: first waiting' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Edit queued message 1' }), { target: { value: 'revised in time' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
+      const saved = { ...waiting.messages[1], content: 'revised in time', updatedAt: '2026-10-15T00:00:05.000Z' }
+      emit({ type: 'manager.message', message: { ...saved, state: 'running', updatedAt: '2026-10-15T00:00:06.000Z' } })
+      await act(async () => resolve(saved))
+      expect(screen.queryByRole('textbox', { name: 'Edit queued message 1' })).not.toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('')
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('checks Ctrl+Enter like Save, and announces every save', async () => {
+      vi.mocked(editQueuedManagerMessage).mockImplementation(async (id, content) => ({
+        ...waiting.messages.find((message) => message.id === id)!, content, updatedAt: new Date().toISOString(),
+      }))
+      setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: first waiting' }))
+      const editor = screen.getByRole('textbox', { name: 'Edit queued message 1' })
+      fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+      fireEvent.change(editor, { target: { value: '   ' } })
+      fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+      expect(editQueuedManagerMessage).not.toHaveBeenCalled()
+      const live = () => [...document.querySelectorAll('[aria-live="polite"]')].map((element) => element.textContent).join('|')
+      fireEvent.change(editor, { target: { value: 'first change' } })
+      fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+      await waitFor(() => expect(live()).toContain('Saved your edit.'))
+      const firstAnnouncement = live()
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit queued message: second waiting' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Edit queued message 2' }), { target: { value: 'second change' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
+      await waitFor(() => expect(live()).not.toBe(firstAnnouncement))
+      expect(live()).toContain('Saved your edit.')
     })
 
     it('stays open with the reason when saving fails for another reason', async () => {

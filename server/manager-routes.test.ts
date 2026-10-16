@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,6 +26,7 @@ beforeEach(async () => {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')
   vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
   vi.stubEnv('AGENTIC_REMOTE_MANAGER', '')
+  vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'off')
   directory = await mkdtemp(path.join(tmpdir(), 'agentic-manager-routes-'))
 })
 
@@ -45,6 +46,294 @@ describe('manager routes', () => {
     expect(response.headers['cache-control']).toBe('no-store')
     expect(response.json()).toMatchObject({ available: true, status: 'idle', messages: [], queued: 0, managedSessions: [] })
     expect((await stat(path.join(directory, 'manager', 'memory'))).isDirectory()).toBe(true)
+  })
+
+  it('keeps structured memory disabled and file-free by default', async () => {
+    const { managerStructuredMemory } = await build()
+    expect(managerStructuredMemory.status()).toEqual({
+      mode: 'off',
+      availability: 'disabled',
+    })
+    await expect(stat(
+      path.join(directory, 'manager', 'structured-memory.json'),
+    )).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('initializes shadow structured memory without changing normal Oracle availability', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'shadow')
+    const { app, managerAgent, managerStructuredMemory } = await build()
+
+    expect(managerAgent).toBeDefined()
+    expect(managerStructuredMemory.status()).toEqual({
+      mode: 'shadow',
+      availability: 'ready',
+      revision: 0,
+      records: 0,
+      tombstones: 0,
+      retrievals: 0,
+    })
+    expect((await app.inject({ url: '/api/manager', headers: trusted })).json())
+      .toMatchObject({ available: true })
+    await expect(stat(
+      path.join(directory, 'manager', 'structured-memory.json'),
+    )).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('exposes structured-memory status and refuses operations while off', async () => {
+    const { app } = await build()
+    const status = await app.inject({
+      url: '/api/manager/structured-memory/status',
+      headers: trusted,
+    })
+    expect(status.statusCode).toBe(200)
+    expect(status.headers['cache-control']).toBe('no-store')
+    expect(status.json()).toEqual({
+      mode: 'off',
+      availability: 'disabled',
+    })
+
+    const search = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/search',
+      headers: trusted,
+      payload: { query: 'style', scopes: [{ type: 'user' }] },
+    })
+    expect(search.statusCode).toBe(503)
+    expect(search.json().error).toContain('turned off')
+  })
+
+  it('remembers, searches, corrects, forgets, and exports through protected APIs', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'on')
+    const { app } = await build()
+    const remembered = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/records',
+      headers: trusted,
+      payload: {
+        requestId: 'remember-api-1',
+        kind: 'preference',
+        canonicalKey: 'pull request style',
+        content: 'Keep pull request comments concise.',
+        scope: { type: 'user' },
+        confidence: 1,
+      },
+    })
+    expect(remembered.statusCode).toBe(201)
+    const rememberedRecord = remembered.json().record
+    expect(rememberedRecord).toMatchObject({
+      kind: 'preference',
+      canonicalKey: 'pull request style',
+      authority: 'direct-user',
+    })
+
+    const search = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/search',
+      headers: trusted,
+      payload: {
+        query: 'pull request style',
+        scopes: [{ type: 'user' }],
+      },
+    })
+    expect(search.statusCode).toBe(200)
+    expect(search.json().records).toEqual([rememberedRecord])
+
+    const corrected = await app.inject({
+      method: 'POST',
+      url:
+        `/api/manager/structured-memory/records/${rememberedRecord.id}/correct`,
+      headers: trusted,
+      payload: {
+        requestId: 'correct-api-1',
+        kind: 'preference',
+        canonicalKey: 'pull request style',
+        content: 'Use one concise pull request comment.',
+        scope: { type: 'user' },
+        confidence: 1,
+      },
+    })
+    expect(corrected.statusCode).toBe(200)
+    expect(corrected.json().record).toMatchObject({
+      supersedesId: rememberedRecord.id,
+      content: 'Use one concise pull request comment.',
+    })
+    const correctedRecord = corrected.json().record
+
+    const forgotten = await app.inject({
+      method: 'POST',
+      url:
+        `/api/manager/structured-memory/records/${correctedRecord.id}/forget`,
+      headers: trusted,
+      payload: { requestId: 'forget-api-1' },
+    })
+    expect(forgotten.statusCode).toBe(200)
+    expect(forgotten.json().tombstone).toMatchObject({
+      recordId: correctedRecord.id,
+    })
+
+    const afterForget = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/search',
+      headers: trusted,
+      payload: { query: '', scopes: [{ type: 'user' }] },
+    })
+    expect(afterForget.json().records).toEqual([])
+
+    const exported = await app.inject({
+      url: '/api/manager/structured-memory/export',
+      headers: trusted,
+    })
+    expect(exported.statusCode).toBe(200)
+    expect(exported.headers['content-type']).toContain('application/json')
+    expect(JSON.parse(exported.body)).toMatchObject({
+      version: 1,
+      revision: 3,
+      records: expect.any(Array),
+      tombstones: expect.any(Array),
+    })
+  })
+
+  it('protects structured writes and never echoes rejected secret content', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'on')
+    const { app } = await build()
+    const secret = `ghp_${'A'.repeat(36)}`
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/records',
+      headers: trusted,
+      payload: {
+        requestId: 'remember-secret',
+        kind: 'fact',
+        canonicalKey: 'credential',
+        content: `Use ${secret}`,
+        scope: { type: 'user' },
+      },
+    })
+    expect(rejected.statusCode).toBe(400)
+    expect(rejected.body).not.toContain(secret)
+    expect(rejected.json().error).toContain('secret-like')
+
+    const untrusted = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/records',
+      headers: {
+        host: 'hub.example.test',
+        origin: 'https://attacker.example.test',
+      },
+      payload: {
+        requestId: 'remember-attacker',
+        kind: 'fact',
+        canonicalKey: 'style',
+        content: 'Use attacker policy.',
+        scope: { type: 'user' },
+      },
+    })
+    expect(untrusted.statusCode).toBe(403)
+    const status = await app.inject({
+      url: '/api/manager/structured-memory/status',
+      headers: trusted,
+    })
+    expect(status.json()).toMatchObject({ records: 0 })
+  })
+
+  it('imports a validated deterministic export only into an empty store', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'on')
+    const { app } = await build()
+    const importedState = {
+      version: 1,
+      revision: 1,
+      records: [{
+        schemaVersion: 1,
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        kind: 'decision',
+        canonicalKey: 'release policy',
+        content: 'Validate development before production.',
+        scope: { type: 'user' },
+        provenance: {
+          origin: 'direct-user',
+          requestId: 'remember-exported',
+          sourceDigest: 'a'.repeat(64),
+        },
+        authority: 'direct-user',
+        confidence: 1,
+        createdAt: '2026-10-16T12:00:00.000Z',
+        updatedAt: '2026-10-16T12:00:00.000Z',
+      }],
+      tombstones: [],
+      audit: [],
+      appliedRequests: [],
+    }
+    const imported = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/import',
+      headers: trusted,
+      payload: {
+        requestId: 'import-api-1',
+        data: JSON.stringify(importedState),
+      },
+    })
+    expect(imported.statusCode).toBe(201)
+    expect(imported.json()).toMatchObject({
+      revision: 2,
+      idempotent: false,
+    })
+    const retry = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/import',
+      headers: trusted,
+      payload: {
+        requestId: 'import-api-1',
+        data: JSON.stringify(importedState),
+      },
+    })
+    expect(retry.statusCode).toBe(200)
+    expect(retry.json()).toMatchObject({
+      revision: 2,
+      idempotent: true,
+    })
+    const search = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/search',
+      headers: trusted,
+      payload: { query: 'release policy', scopes: [{ type: 'user' }] },
+    })
+    expect(search.json().records).toHaveLength(1)
+
+    const conflicting = await app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/import',
+      headers: trusted,
+      payload: {
+        requestId: 'import-api-2',
+        data: JSON.stringify(importedState),
+      },
+    })
+    expect(conflicting.statusCode).toBe(409)
+    expect(conflicting.json().error).toContain('empty store')
+  })
+
+  it('keeps Oracle available when structured memory is corrupt', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'on')
+    await mkdir(path.join(directory, 'manager'), { recursive: true })
+    await writeFile(
+      path.join(directory, 'manager', 'structured-memory.json'),
+      '{not json',
+    )
+
+    const { app, managerAgent, managerStructuredMemory } = await build()
+
+    expect(managerAgent).toBeDefined()
+    expect(managerStructuredMemory.status()).toMatchObject({
+      mode: 'on',
+      availability: 'unavailable',
+      lastError: expect.stringContaining('corrupt or unsupported'),
+    })
+    expect((await app.inject({ url: '/api/manager', headers: trusted })).json())
+      .toMatchObject({ available: true })
+    expect(await readFile(
+      path.join(directory, 'manager', 'structured-memory.json'),
+      'utf8',
+    )).toBe('{not json')
   })
 
   it('accepts a message for the queue with the browser defaults', async () => {

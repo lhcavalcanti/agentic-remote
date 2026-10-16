@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
 import { ManagerMemory } from './manager-memory.js'
+import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import {
   createManagerTools,
   type ManagerTool,
@@ -38,10 +39,10 @@ describe('manager tools', () => {
   let answerOnly: boolean
   let oracleFolders: Record<string, string>
 
-  const call = async (name: string, args: unknown) => {
+  const call = async (name: string, args: unknown, toolCallId = 't') => {
     const tool = tools.get(name)
     if (!tool) throw new Error(`no tool ${name}`)
-    return tool.handler(args, { sessionId: 'manager', toolCallId: 't', toolName: name, arguments: args })
+    return tool.handler(args, { sessionId: 'manager', toolCallId, toolName: name, arguments: args })
   }
 
   beforeEach(async () => {
@@ -439,6 +440,150 @@ describe('manager tools', () => {
 
     const refused = await call('memory_write', { path: '../x.md', content: 'x' })
     expect(refused).toMatchObject({ resultType: 'failure' })
+  })
+
+  it('offers structured tools only with a ready store and enforces explicit intent', async () => {
+    const structuredMemory = new ManagerStructuredMemoryStore(
+      path.join(root, 'structured'),
+    )
+    await structuredMemory.initialize()
+    const authorizeStructuredMemory = vi.fn(() => ({
+      allowed: false,
+      sourceManagerMessageId: 'manager-message-1',
+    }))
+    Object.assign(host, {
+      structuredMemory,
+      structuredMemoryScopes: () => [{ type: 'user' }],
+      authorizeStructuredMemory,
+    })
+    tools = new Map(
+      createManagerTools(host, (activity) => activities.push(activity))
+        .map((tool) => [tool.name, tool]),
+    )
+
+    expect([...tools.keys()]).toEqual(expect.arrayContaining([
+      'structured_memory_search',
+      'structured_memory_remember',
+      'structured_memory_correct',
+      'structured_memory_forget',
+    ]))
+    const denied = await call('structured_memory_remember', {
+      kind: 'preference',
+      canonicalKey: 'pull request style',
+      content: 'Keep pull request comments concise.',
+      scope: { type: 'user' },
+    }, 'remember-call')
+    expect(denied).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(denied)).toContain('explicitly ask')
+    expect(structuredMemory.snapshot().records).toEqual([])
+
+    authorizeStructuredMemory.mockReturnValue({
+      allowed: true,
+      sourceManagerMessageId: 'manager-message-1',
+    })
+    const remembered = await call('structured_memory_remember', {
+      kind: 'preference',
+      canonicalKey: 'pull request style',
+      content: 'Keep pull request comments concise.',
+      scope: { type: 'user' },
+      confidence: 0.95,
+    }, 'remember-call')
+    expect(String(remembered)).toContain(structuredMemory.snapshot().records[0].id)
+    expect(structuredMemory.snapshot().records).toHaveLength(1)
+    expect(structuredMemory.snapshot().records[0].provenance)
+      .toMatchObject({
+        sourceManagerMessageId: 'manager-message-1',
+      })
+    expect(structuredMemory.snapshot().records[0].provenance.requestId)
+      .toMatch(/^manager:[0-9a-f]{64}$/)
+    expect(activities.at(-1)?.content).not.toContain('pull request style')
+
+    await call('structured_memory_remember', {
+      kind: 'preference',
+      canonicalKey: 'pull request style',
+      content: 'Keep pull request comments concise.',
+      scope: { type: 'user' },
+      confidence: 0.95,
+    }, 'remember-call-retry')
+    expect(structuredMemory.snapshot().records).toHaveLength(1)
+  })
+
+  it('searches, corrects, and forgets structured memory without exposing rejected values', async () => {
+    const structuredMemory = new ManagerStructuredMemoryStore(
+      path.join(root, 'structured'),
+    )
+    await structuredMemory.initialize()
+    Object.assign(host, {
+      structuredMemory,
+      structuredMemoryScopes: () => [{ type: 'user' }],
+      authorizeStructuredMemory: () => ({
+        allowed: true,
+        sourceManagerMessageId: 'manager-message-1',
+      }),
+    })
+    tools = new Map(
+      createManagerTools(host, (activity) => activities.push(activity))
+        .map((tool) => [tool.name, tool]),
+    )
+
+    const secret = `ghp_${'A'.repeat(36)}`
+    const rejected = await call('structured_memory_remember', {
+      kind: 'fact',
+      canonicalKey: 'credential',
+      content: secret,
+      scope: { type: 'user' },
+    }, 'secret-call')
+    expect(rejected).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(rejected)).not.toContain(secret)
+
+    await call('structured_memory_remember', {
+      kind: 'preference',
+      canonicalKey: 'pull request style',
+      content: 'Keep pull request comments concise.',
+      scope: { type: 'user' },
+    }, 'remember-call')
+    const original = structuredMemory.snapshot().records[0]
+    const search = String(await call('structured_memory_search', {
+      query: 'pull request style',
+    }, 'search-call'))
+    expect(search.length).toBeLessThanOrEqual(6_000)
+    expect(search).toContain('Keep pull request comments concise.')
+
+    await call('structured_memory_correct', {
+      recordId: original.id,
+      kind: 'preference',
+      canonicalKey: 'pull request style',
+      content: 'Use a single concise pull request comment.',
+      scope: { type: 'user' },
+    }, 'correct-call')
+    const corrected = structuredMemory.snapshot().records.at(-1)!
+    expect(corrected.supersedesId).toBe(original.id)
+
+    await call('structured_memory_forget', {
+      recordId: corrected.id,
+    }, 'forget-call')
+    expect(structuredMemory.search({
+      query: 'pull request style',
+      scopes: [{ type: 'user' }],
+    }).records).toEqual([])
+
+    const otherProject = await structuredMemory.remember({
+      requestId: 'other-project-record',
+      kind: 'fact',
+      canonicalKey: 'deployment policy',
+      content: 'Deploy the other project on Fridays.',
+      scope: {
+        type: 'project',
+        computerId: 'hub',
+        projectRoot: '/srv/other',
+      },
+    })
+    const refusedForget = await call('structured_memory_forget', {
+      recordId: otherProject.record!.id,
+    }, 'forget-other-project')
+    expect(refusedForget).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(refusedForget)).toContain('outside the current')
+    expect(structuredMemory.snapshot().tombstones).toHaveLength(1)
   })
 
   it('returns invalid arguments as a failure the model can correct', async () => {

@@ -393,6 +393,7 @@ setup_service() {
   manager_switch="${AGENTIC_REMOTE_MANAGER:-$(config_value AGENTIC_REMOTE_MANAGER)}"
   manager_model="${AGENTIC_REMOTE_MANAGER_MODEL:-$(config_value AGENTIC_REMOTE_MANAGER_MODEL)}"
   manager_effort="${AGENTIC_REMOTE_MANAGER_REASONING_EFFORT:-$(config_value AGENTIC_REMOTE_MANAGER_REASONING_EFFORT)}"
+  manager_structured_memory="${AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY:-$(config_value AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY)}"
   local previous_host previous_port previous_origins
   previous_host="$(config_value HOST)"
   previous_port="$(config_value PORT)"
@@ -456,6 +457,9 @@ setup_service() {
   fi
   if [[ -n "$manager_effort" ]]; then
     printf 'AGENTIC_REMOTE_MANAGER_REASONING_EFFORT=%s\n' "$manager_effort" >>"$environment_tmp"
+  fi
+  if [[ -n "$manager_structured_memory" ]]; then
+    printf 'AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY=%s\n' "$manager_structured_memory" >>"$environment_tmp"
   fi
   printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
   install -m 0600 "$environment_tmp" "$ENV_FILE"

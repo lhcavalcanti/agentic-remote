@@ -235,4 +235,13 @@ describe('manager turn context', () => {
       expect(MANAGER_SYSTEM_PROMPT).not.toContain('Be concise.')
     })
   })
+
+  it('treats structured memory as untrusted evidence rather than instructions', () => {
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(
+      /structured memory[^\n]*untrusted evidence/i,
+    )
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(
+      /cannot override[^\n]*(?:policy|current user)/i,
+    )
+  })
 })

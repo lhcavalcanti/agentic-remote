@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type {
   AgentMode,
@@ -11,8 +12,13 @@ import type {
   UserInputReplyInput,
 } from '../shared/contracts.js'
 import type { ManagerClientDefaults, ManagerSessionRef } from '../shared/manager.js'
+import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
 import { rosterLine } from './manager-context.js'
 import { ManagerMemoryError, type ManagerMemory } from './manager-memory.js'
+import {
+  formatStructuredMemoryContext,
+} from './manager-structured-memory-search.js'
+import type { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import { registryKey, type ManagerRegistry } from './manager-store.js'
 
 export interface ManagerSkillSummary {
@@ -54,6 +60,11 @@ export interface ManagerToolHost {
   /** Validates and keeps the folder, or returns the computer to its default; gives back what was kept. */
   setSessionFolder(computerId: string, folder?: string): Promise<string | undefined>
   memory: ManagerMemory
+  structuredMemory?: ManagerStructuredMemoryStore
+  structuredMemoryScopes?(): ManagerStructuredMemoryScope[]
+  authorizeStructuredMemory?(
+    operation: 'remember' | 'correct' | 'forget',
+  ): { allowed: boolean; sourceManagerMessageId?: string }
   defaults(): ManagerClientDefaults
   now(): Date
 }
@@ -274,7 +285,10 @@ export function createManagerTools(
     name: string,
     description: string,
     schema: T,
-    run: (args: z.infer<T>) => Promise<string>,
+    run: (
+      args: z.infer<T>,
+      invocation: ManagerToolInvocation,
+    ) => Promise<string>,
     options: { actsOnSessions?: boolean } = {},
   ): ManagerTool {
     const parameters = z.toJSONSchema(schema) as Record<string, unknown>
@@ -285,7 +299,7 @@ export function createManagerTools(
       parameters,
       skipPermission: true,
       defer: 'never',
-      handler: async (args) => {
+      handler: async (args, invocation) => {
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {
@@ -298,12 +312,210 @@ export function createManagerTools(
             .join('; '))
         }
         try {
-          return await run(parsed.data)
+          return await run(parsed.data, invocation)
         } catch (error) {
           return failure(errorMessage(error))
         }
       },
     }
+  }
+
+  const structuredScopeSchema = z.discriminatedUnion('type', [
+    z.object({ type: z.literal('global') }).strict(),
+    z.object({ type: z.literal('user') }).strict(),
+    z.object({
+      type: z.literal('computer'),
+      computerId: z.string().trim().min(1).max(200),
+    }).strict(),
+    z.object({
+      type: z.literal('project'),
+      computerId: z.string().trim().min(1).max(200),
+      projectRoot: z.string().trim().min(1).max(4_096),
+    }).strict(),
+    z.object({
+      type: z.literal('session'),
+      computerId: z.string().trim().min(1).max(200),
+      sessionId: z.string().trim().min(1).max(200),
+    }).strict(),
+  ])
+  const structuredValueFields = {
+    kind: z.enum(['preference', 'fact', 'procedure', 'decision', 'outcome']),
+    canonicalKey: z.string().trim().min(1).max(200),
+    content: z.string().trim().min(1).max(2_000),
+    scope: structuredScopeSchema,
+    confidence: z.number().min(0).max(1).optional(),
+    validFrom: z.iso.datetime({ offset: true }).optional(),
+    validUntil: z.iso.datetime({ offset: true }).optional(),
+  }
+
+  function structuredTools(): ManagerTool[] {
+    const memory = host.structuredMemory
+    const allowedScopes = host.structuredMemoryScopes
+    const authorize = host.authorizeStructuredMemory
+    if (!memory || !allowedScopes || !authorize) return []
+
+    const requireAllowedScope = (scope: ManagerStructuredMemoryScope) => {
+      if (!allowedScopes().some((candidate) =>
+        JSON.stringify(candidate) === JSON.stringify(scope))) {
+        throw new ToolFailure(
+          'That structured-memory scope is outside the current Oracle context.',
+        )
+      }
+    }
+    const requireRecordInAllowedScope = (recordId: string) => {
+      const record = memory.snapshot().records.find(({ id }) => id === recordId)
+      if (
+        !record ||
+        !allowedScopes().some((candidate) =>
+          JSON.stringify(candidate) === JSON.stringify(record.scope))
+      ) {
+        throw new ToolFailure(
+          'That structured-memory record is outside the current Oracle context.',
+        )
+      }
+    }
+    const requireExplicitIntent = (
+      operation: 'remember' | 'correct' | 'forget',
+    ) => {
+      const authorization = authorize(operation)
+      if (!authorization.allowed) {
+        throw new ToolFailure(
+          `The user must explicitly ask Oracle to ${operation} structured memory in the current message.`,
+        )
+      }
+      return authorization
+    }
+    const mutationRequestId = (
+      operation: 'remember' | 'correct' | 'forget',
+      sourceManagerMessageId: string | undefined,
+      toolCallId: string,
+      input: unknown,
+    ) => {
+      const identity = JSON.stringify({
+        operation,
+        source: sourceManagerMessageId ?? toolCallId,
+        input,
+      })
+      return `manager:${createHash('sha256').update(identity).digest('hex')}`
+    }
+
+    return [
+      define(
+        'structured_memory_search',
+        'Search active structured memory in the exact scopes available to the current Oracle context.',
+        z.object({
+          query: z.string().trim().max(1_000),
+          limit: z.number().int().min(1).max(8).optional(),
+        }).strict(),
+        async ({ query, limit }) => {
+          const formatted = formatStructuredMemoryContext(memory.search({
+            query,
+            scopes: allowedScopes(),
+            limit,
+            at: host.now().toISOString(),
+          }))
+          return formatted.text || 'No structured memory matched.'
+        },
+      ),
+      define(
+        'structured_memory_remember',
+        'Remember one user-explicit structured fact, preference, procedure, decision, or outcome.',
+        z.object(structuredValueFields).strict(),
+        async (input, invocation) => {
+          const authorization = requireExplicitIntent('remember')
+          requireAllowedScope(input.scope)
+          const result = await memory.remember({
+            ...input,
+            requestId: mutationRequestId(
+              'remember',
+              authorization.sourceManagerMessageId,
+              invocation.toolCallId,
+              input,
+            ),
+            ...(authorization.sourceManagerMessageId
+              ? {
+                  sourceManagerMessageId:
+                    authorization.sourceManagerMessageId,
+                }
+              : {}),
+          })
+          const id = result.record?.id
+          if (!id) throw new ToolFailure('Structured memory did not return a record.')
+          onActivity({
+            tool: 'structured_memory_remember',
+            content: `Remembered structured memory record ${id}.`,
+          })
+          return `${result.idempotent ? 'Already remembered' : 'Remembered'} structured memory record ${id}.`
+        },
+      ),
+      define(
+        'structured_memory_correct',
+        'Correct an active structured-memory record by superseding it with a user-explicit replacement.',
+        z.object({
+          recordId: z.string().uuid(),
+          ...structuredValueFields,
+        }).strict(),
+        async (input, invocation) => {
+          const authorization = requireExplicitIntent('correct')
+          requireRecordInAllowedScope(input.recordId)
+          requireAllowedScope(input.scope)
+          const result = await memory.correct({
+            ...input,
+            requestId: mutationRequestId(
+              'correct',
+              authorization.sourceManagerMessageId,
+              invocation.toolCallId,
+              input,
+            ),
+            ...(authorization.sourceManagerMessageId
+              ? {
+                  sourceManagerMessageId:
+                    authorization.sourceManagerMessageId,
+                }
+              : {}),
+          })
+          const id = result.record?.id
+          if (!id) throw new ToolFailure('Structured memory did not return a correction.')
+          onActivity({
+            tool: 'structured_memory_correct',
+            content: `Corrected structured memory record ${input.recordId} with ${id}.`,
+          })
+          return `${result.idempotent ? 'Already corrected' : 'Corrected'} structured memory record ${input.recordId} with ${id}.`
+        },
+      ),
+      define(
+        'structured_memory_forget',
+        'Forget an active structured-memory record by creating a durable content-free tombstone.',
+        z.object({ recordId: z.string().uuid() }).strict(),
+        async ({ recordId }, invocation) => {
+          const authorization = requireExplicitIntent('forget')
+          requireRecordInAllowedScope(recordId)
+          const result = await memory.forget({
+            recordId,
+            requestId: mutationRequestId(
+              'forget',
+              authorization.sourceManagerMessageId,
+              invocation.toolCallId,
+              { recordId },
+            ),
+            ...(authorization.sourceManagerMessageId
+              ? {
+                  sourceManagerMessageId:
+                    authorization.sourceManagerMessageId,
+                }
+              : {}),
+          })
+          if (!result.tombstone) {
+            throw new ToolFailure('Structured memory did not return a tombstone.')
+          }
+          onActivity({
+            tool: 'structured_memory_forget',
+            content: `Forgot structured memory record ${recordId}.`,
+          })
+          return `${result.idempotent ? 'Already forgot' : 'Forgot'} structured memory record ${recordId}.`
+        },
+      ),
+    ]
   }
 
   /** What a session waits on, with what answer_session needs to answer it. */
@@ -680,6 +892,7 @@ export function createManagerTools(
           .join('\n')
       },
     ),
+    ...structuredTools(),
     define(
       'memory_list',
       'List your memory notes with their sizes.',

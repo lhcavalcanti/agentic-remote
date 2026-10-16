@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
+import path from 'node:path'
 import type {
   ComputerSummary,
   CreateSessionInput,
@@ -31,6 +32,17 @@ import {
 } from './manager-context.js'
 import type { JournalRecorder } from './manager-journal.js'
 import type { ManagerStore } from './manager-store.js'
+import {
+  formatStructuredMemoryContext,
+} from './manager-structured-memory-search.js'
+import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
+import {
+  hasExplicitStructuredMemoryIntent,
+} from './manager-structured-memory-intent.js'
+import type {
+  ManagerStructuredMemoryScope,
+  ManagerStructuredMemoryStatus,
+} from '../shared/manager-structured-memory.js'
 import {
   createManagerTools,
   type ManagerSkillSummary,
@@ -141,6 +153,7 @@ export interface ManagerAgentOptions {
   now?: () => Date
   /** The user's response style, read as each turn's prompt is built. */
   responseStyle?: () => OracleResponseStyle | undefined
+  structuredMemory?: ManagerStructuredMemoryRuntime
 }
 
 class TurnError extends Error {
@@ -247,6 +260,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly earlyIdleMs: number
   private readonly sessionIdFactory: () => string
   private readonly now: () => Date
+  private readonly structuredMemory?: ManagerStructuredMemoryRuntime
   private readonly tools: ManagerTool[]
   private client?: ManagerSdkClient
   private session?: ManagerSdkSession
@@ -293,7 +307,15 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.earlyIdleMs = options.earlyIdleMs ?? 10_000
     this.sessionIdFactory = options.sessionIdFactory ?? randomUUID
     this.now = options.now ?? (() => new Date())
+    this.structuredMemory = options.structuredMemory
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
+  }
+
+  structuredMemoryStatus(): ManagerStructuredMemoryStatus {
+    return this.structuredMemory?.status() ?? {
+      mode: 'off',
+      availability: 'disabled',
+    }
   }
 
   /** Every SDK session ID that must stay out of the session lists. */
@@ -729,9 +751,58 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       setSessionFolder: async (computerId, folder) =>
         (await this.updateSettings({ sessionFolders: { [computerId]: folder ?? null } })).sessionFolders?.[computerId],
       memory: this.store.memory,
+      ...(this.structuredMemory?.store
+        ? {
+            structuredMemory: this.structuredMemory.store,
+            structuredMemoryScopes: () => this.structuredMemoryScopes(),
+            authorizeStructuredMemory: (
+              operation: 'remember' | 'correct' | 'forget',
+            ) => {
+              const sourceManagerMessageId = this.currentReplyTo
+              const message = sourceManagerMessageId
+                ? this.store.messages().find(
+                    ({ id, role }) =>
+                      id === sourceManagerMessageId && role === 'user',
+                  )
+                : undefined
+              return {
+                allowed: Boolean(
+                  message &&
+                    hasExplicitStructuredMemoryIntent(
+                      message.content,
+                      operation,
+                    ),
+                ),
+                ...(message ? { sourceManagerMessageId: message.id } : {}),
+              }
+            },
+          }
+        : {}),
       defaults: () => this.store.state().defaults ?? {},
       now: () => this.now(),
     }
+  }
+
+  private structuredMemoryScopes(): ManagerStructuredMemoryScope[] {
+    const scopes: ManagerStructuredMemoryScope[] = [
+      { type: 'global' },
+      { type: 'user' },
+    ]
+    const defaults = this.store.state().defaults
+    const computerId = defaults?.computerId
+    if (!computerId || !this.hub.findComputer(computerId)) return scopes
+    scopes.push({ type: 'computer', computerId })
+    const folder =
+      this.store.state().sessionFolders?.[computerId] ??
+      defaults?.folders?.[computerId]
+    if (folder && path.isAbsolute(folder)) {
+      scopes.push({
+        type: 'project',
+        computerId,
+        projectRoot: path.normalize(folder),
+      })
+    }
+    return scopes
   }
 
   private async discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]> {
@@ -997,6 +1068,35 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         memoryIndex: index,
         messages: this.store.messages().filter((candidate) => candidate.id !== message.id),
       })}\n\n${context}`
+    }
+    const structuredMemory = this.structuredMemory
+    if (
+      structuredMemory &&
+      structuredMemory.mode !== 'off' &&
+      structuredMemory.store
+    ) {
+      const startedAt = performance.now()
+      try {
+        const formatted = formatStructuredMemoryContext(
+          structuredMemory.store.search({
+            query: message.content,
+            scopes: this.structuredMemoryScopes(),
+            at: this.now().toISOString(),
+          }),
+        )
+        structuredMemory.recordRetrieval({
+          durationMs: performance.now() - startedAt,
+          records: formatted.recordCount,
+          promptCharacters: formatted.characterCount,
+        })
+        if (structuredMemory.mode === 'on' && formatted.text) {
+          context = `${context}\n\n${formatted.text}`
+        }
+      } catch {
+        structuredMemory.recordRetrievalFailure(
+          performance.now() - startedAt,
+        )
+      }
     }
     this.pendingAcknowledgement = {
       journalSeq: changes.at(-1)?.seq ?? state.acknowledgedJournalSeq,

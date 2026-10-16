@@ -3213,10 +3213,19 @@ function DefaultSessionFolderControl({
   computer,
   value,
   onChange,
+  label = 'default session folder',
+  blankLabel = 'Home directory (blank)',
+  selectHint = 'the default for new sessions',
 }: {
-  computer: ComputerSummary
+  computer: Pick<ComputerSummary, 'id' | 'name' | 'online'>
   value?: string
   onChange: (path?: string) => void
+  /** What the folder is for, as in "Browse <label> for <computer>". */
+  label?: string
+  /** Shown when no folder is chosen. */
+  blankLabel?: string
+  /** Completes "Select <folder> as …". */
+  selectHint?: string
 }) {
   const [open, setOpen] = useState(false)
   const [listing, setListing] = useState<DirectoryListing>()
@@ -3304,12 +3313,12 @@ function DefaultSessionFolderControl({
       <div className="default-session-folder__header">
         <span>
           <strong>{computer.name}</strong>
-          <small>{value ? shortPath(value) : 'Home directory (blank)'}</small>
+          <small>{value ? shortPath(value) : blankLabel}</small>
         </span>
         <div className="default-session-folder__actions">
           <button
             aria-expanded={open}
-            aria-label={`Browse default session folder for ${computer.name}`}
+            aria-label={`Browse ${label} for ${computer.name}`}
             className="secondary-button"
             disabled={!computer.online}
             onClick={() => {
@@ -3322,7 +3331,7 @@ function DefaultSessionFolderControl({
           </button>
           {value ? (
             <button
-              aria-label={`Remove default session folder for ${computer.name}`}
+              aria-label={`Remove ${label} for ${computer.name}`}
               className="icon-button icon-button--danger"
               disabled={validating}
               onClick={() => {
@@ -3388,9 +3397,9 @@ function DefaultSessionFolderControl({
             )}
           </div>
           <p className="folder-picker__hint">
-            Select <strong>{listing?.path || value || '~'}</strong> as the
-            default for new sessions. The folder is checked against this
-            computer’s session roots before it is saved.
+            Select <strong>{listing?.path || value || '~'}</strong> as{' '}
+            {selectHint}. The folder is checked against this computer’s
+            session roots before it is saved.
           </p>
           {error ? <p className="form-error">{error}</p> : null}
           <button
@@ -3992,9 +4001,22 @@ function AppSettingsDialog({
       </section>
 
       <OracleSettings
+        computers={computers}
         models={hubCopilotModels}
         modelsError={hubCopilotError}
         onRetryModels={retryHubCopilotModels}
+        renderFolderControl={(computer, value, onChange) => (
+          <DefaultSessionFolderControl
+            blankLabel={defaultSessionFolders[computer.id]
+              ? `Your default: ${shortPath(defaultSessionFolders[computer.id])}`
+              : 'Your default: home directory'}
+            computer={computer}
+            label="Oracle's session folder"
+            onChange={onChange}
+            selectHint="where Oracle starts new sessions"
+            value={value}
+          />
+        )}
       />
 
       <section className="app-settings-section">
@@ -14469,8 +14491,9 @@ function App() {
               <small>Notifications, updates, and display</small>
             </span>
           </button>
-          {/* On a phone the session list covers the conversation header, so
-              Oracle is offered here too; CSS shows this copy only there. */}
+          {/* On a phone the session list covers the conversation and its
+              Oracle bubble, so Oracle is offered here too; CSS shows this
+              copy only there. */}
           <OracleButton
             className="sidebar-settings__oracle"
             compact
@@ -14546,7 +14569,6 @@ function App() {
               <span>Ready when you are</span>
             )}
           </div>
-          <OracleButton indicator={oracleIndicator} onToggle={toggleOracle} open={oracleOpen} />
           <button
             aria-label="Session knowledge"
             aria-pressed={knowledgeMode !== 'hidden'}
@@ -14845,20 +14867,24 @@ function App() {
               {selected.activity}
             </div>
           ) : null}
-          {selected && !followingLatest ? (
-            <div className="timeline-follow">
-              <button
-                aria-label="Scroll to latest"
-                className="timeline-follow__button"
-                onClick={followLatest}
-                title="Scroll to latest"
-                type="button"
-              >
-                <ChevronDown size={18} />
-              </button>
-            </div>
-          ) : null}
           <div aria-hidden="true" className="timeline-bottom" ref={bottomRef} />
+        </div>
+        {/* Over the timeline's bottom right, outside its scroll, so Oracle's
+            bubble stays in the corner however short the conversation, and
+            Scroll to latest stacks above it instead of underneath. */}
+        <div className="timeline-dock">
+          {selected && !followingLatest ? (
+            <button
+              aria-label="Scroll to latest"
+              className="timeline-follow__button"
+              onClick={followLatest}
+              title="Scroll to latest"
+              type="button"
+            >
+              <ChevronDown size={18} />
+            </button>
+          ) : null}
+          <OracleButton floating indicator={oracleIndicator} onToggle={toggleOracle} open={oracleOpen} />
         </div>
 
         {selected && statusline.enabled ? (
@@ -15487,9 +15513,9 @@ function App() {
               <Maximize2 size={16} />
             )}
           </button>
-          {/* Knowledge covers the conversation header whenever it is expanded,
-              and on a phone whenever it is open; CSS hides this copy where
-              that header is still in view. */}
+          {/* Knowledge covers the conversation, and its Oracle bubble,
+              whenever it is expanded, and on a phone whenever it is open;
+              CSS hides this copy where the conversation is still in view. */}
           <OracleButton
             className="knowledge-panel__oracle"
             compact

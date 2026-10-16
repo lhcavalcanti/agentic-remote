@@ -92,7 +92,8 @@ The roster is capped at 80 open sessions, and each activity at 120 characters.
 | `list_sessions` | Open sessions, or recent history with `includeClosed` |
 | `get_session` | Detail and the last N messages (default 6, maximum 30, each truncated), read as recorded: the session is never opened or resumed |
 | `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
-| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task |
+| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder |
+| `set_session_folder` | Change Oracle's session folder for a computer when you ask; checked on that computer, kept with Oracle's settings, and allowed in Ask mode since it touches no session |
 | `send_to_session` | Send or queue a follow-up; always queued, so a busy session does not refuse it |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
 | `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
@@ -140,35 +141,43 @@ end the turn.
 - `POST /api/manager/messages` also takes `answerOnly`;
   `POST /api/manager/messages/:id/remove` takes a waiting message out of the
   queue; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
-  the hub default) chooses Oracle's model, which the snapshot reports as
-  `settings` and the socket as `manager.settings`. `state.json` records the
-  model the SDK conversation runs on (`sessionRuntime`) and a chosen model that
-  and effort that could not start (`unavailableRuntime`); each answer compares the choice with
+  the hub default) chooses Oracle's model, and with `{ sessionFolders: { <computer id>: path | null } }`
+  its session folders; each part is optional and leaves the rest as it is.
+  The snapshot reports them as `settings` and the socket as
+  `manager.settings`. `state.json` keeps `sessionFolders`, the model the SDK
+  conversation runs on (`sessionRuntime`), and the model and effort that
+  could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.
 - WebSocket: `manager.status`, `manager.message` (upsert), and
   `manager.delta` (streamed text, throttled).
 
 ## UI
 
-- An **Oracle** button in the conversation header, beside Knowledge, opens the
-  panel; while Knowledge covers the conversation (expanded, or open on a
-  phone) the Knowledge header carries it, and an open document's header does
-  on a phone, as does the phone's session list. Nothing floats over the
-  conversation, so **Scroll to latest** and Send
-  stay clear. The button shows an activity ring while Oracle works and a dot
-  for replies you have not read.
+- A round bubble at the bottom right of the conversation opens the panel. It
+  sits in one dock with **Scroll to latest**, which stacks above it, laid over
+  the timeline's grid area so it stays in the corner however short the
+  conversation and never covers Send. Where the conversation is out of view, a
+  compact icon stands in: the Knowledge header while Knowledge covers the
+  conversation (expanded, or open on a phone), an open document's header on a
+  phone, and the phone's session list. The bubble shows an activity ring while
+  Oracle works and a dot for replies you have not read.
 - Waiting messages sit above the message bar, numbered in answer order, each
   removable until Oracle starts on it.
-- **Ask only** (a box under the message bar, remembered per browser; `/oracle`
-  in a session's message bar is a shortcut) is a conversation about your work
-  while it carries on: Oracle reads and asks side questions, and the hub
-  refuses every tool that would start, message, rename, stop, or close a
-  session for that message. Ask only questions queue behind Oracle's own work
-  only, never behind sessions.
+- The message field reads "Ask me anything"; while Oracle answers, a separate
+  line says that anything sent now waits its turn.
+- **Ask | Delegate**, a two-way switch under the message bar remembered per
+  browser (`/oracle` in a session's message bar asks the same way). **Ask** is a
+  conversation about your work while it carries on: Oracle reads and asks side
+  questions, and the hub refuses every tool that would start, message, rename,
+  stop, or close a session for that message. Ask questions queue behind
+  Oracle's own work only, never behind sessions. **Delegate** lets Oracle start
+  and steer sessions.
 - The model under the message bar opens **App settings → Oracle**, where the
-  model and effort are chosen and kept on the hub.
-- The panel is a right-hand drawer on desktop and a full-height sheet on a
-  phone. It shows the transcript (Markdown), tool activity chips, and a
+  model and effort, and each computer's session folder, are chosen and kept on
+  the hub.
+- The panel is a right-hand drawer on desktop, resizable from its left edge
+  (340px up to whatever leaves the conversation 360px, at most 960px;
+  remembered per browser), and a full-height sheet on a phone. It shows the transcript (Markdown), tool activity chips, and a
   composer whose Return behaviour follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.

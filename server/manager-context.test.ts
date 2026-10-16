@@ -85,6 +85,13 @@ describe('manager turn context', () => {
     expect(context).toContain('Open sessions (8):')
   })
 
+  it("says where Oracle's new sessions start on each computer that has a folder", () => {
+    const context = buildTurnContext({
+      now, computers, sessions: [], registry: {}, changes: [], sessionFolders: { hub: '/home/me/src/oracle' },
+    })
+    expect(context).toContain('Computers: development (hub, this hub, online, new sessions start in /home/me/src/oracle) · production (node, offline)')
+  })
+
   it('collapses status churn and asks for memory upkeep after removals', () => {
     const registry: ManagerRegistry = {
       'hub:a': { computerId: 'hub', sessionId: 'a', title: 'Alpha', origin: 'manager', firstSeenAt: 't' },

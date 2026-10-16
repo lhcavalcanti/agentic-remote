@@ -99,6 +99,12 @@ export interface ManagerSettingsSnapshot extends ManagerSettings {
   defaultReasoningEffort?: RuntimeReasoningEffort
   /** The chosen model could not start, so Copilot's default is answering. */
   modelUnavailable?: boolean
+  /**
+   * Where Oracle starts new sessions, by computer ID. Chosen in App settings
+   * or changed by Oracle when you ask; a computer without one uses your
+   * default session folder.
+   */
+  sessionFolders?: Record<string, string>
 }
 
 export interface ManagerSnapshot {
@@ -128,9 +134,12 @@ export interface SendManagerMessageInput {
 }
 
 export interface UpdateManagerSettingsInput {
-  /** Null or absent returns to the hub's default. */
+  /** Null returns to the hub's default; absent leaves the model as it is. */
   model?: string | null
+  /** Applies with `model`. */
   reasoningEffort?: RuntimeReasoningEffort | null
+  /** Folders to change, by computer ID; null returns that computer to its default. */
+  sessionFolders?: Record<string, string | null>
 }
 
 export type ManagerEvent =

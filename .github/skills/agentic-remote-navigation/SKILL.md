@@ -100,7 +100,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Provider aggregation | `server/provider-session-service.ts` |
 | Session persistence | `server/session-store.ts` |
 | Side questions (`/ask`) | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
-| Oracle (session manager agent; "manager" internally) | `src/ManagerAssistant.tsx` (panel, header button), `src/OracleSettings.tsx`; `server/manager-agent.ts` (runtime, queue, recovery, settings), `manager-tools.ts`, `manager-context.ts`, `manager-journal.ts`, `manager-store.ts`; `docs/design/session-manager.md` |
+| Oracle (session manager agent; "manager" internally) | `src/ManagerAssistant.tsx` (panel, bubble, mode switch, resizer), `src/OracleSettings.tsx` (model, session folders); `server/manager-agent.ts` (runtime, queue, recovery, settings, session folders), `manager-tools.ts`, `manager-context.ts`, `manager-journal.ts`, `manager-store.ts`; `docs/design/session-manager.md` |
 | Copilot event log reading | `server/event-log.ts` |
 | tmux behavior | `server/terminal-session.ts` |
 | Hub routes and origin policy | `server/hub-routes.ts` |

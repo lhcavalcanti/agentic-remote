@@ -11,15 +11,21 @@ interface SpeakableCandidate {
   sourceEnd: number
 }
 
+interface ProseSegment {
+  text: string
+  start: number
+  end: number
+}
+
 interface EmittedSourceRange extends SpeakableCandidate {
   messageId: string
+  sourceSnapshot: string
 }
 
 export class SpeakableSegmenter {
   private messageId: string
   private readonly maxSegmentCharacters: number
   private readonly emittedSourceRanges: EmittedSourceRange[] = []
-  private previousSnapshot = ''
 
   constructor(messageId: string, maxSegmentCharacters = 320) {
     validateMessageId(messageId)
@@ -42,7 +48,6 @@ export class SpeakableSegmenter {
     validateMessageId(messageId)
     this.messageId = messageId
     this.emittedSourceRanges.length = 0
-    this.previousSnapshot = ''
   }
 
   private consume(snapshot: string, includeUnfinishedSuffix: boolean): string[] {
@@ -51,22 +56,35 @@ export class SpeakableSegmenter {
       includeUnfinishedSuffix,
       this.maxSegmentCharacters,
     )
-    const spokenCount = this.emittedSourceRanges.length
-    const sharedPrefix = commonPrefixLength(this.previousSnapshot, snapshot)
-    for (let index = 0; index < Math.min(spokenCount, candidates.length); index += 1) {
-      if (sharedPrefix < this.emittedSourceRanges[index].sourceEnd) {
-        this.emittedSourceRanges[index] = {
-          messageId: this.messageId,
-          ...candidates[index],
-        }
-      }
+    const matchedCandidates = new Set<number>()
+    const matchedEmitted = new Set<number>()
+    for (const [emittedIndex, emitted] of this.emittedSourceRanges.entries()) {
+      const mappedRange = mapSourceRange(emitted, emitted.sourceSnapshot, snapshot)
+      if (mappedRange === undefined) continue
+      const candidateIndex = candidates.findIndex((candidate, index) =>
+        !matchedCandidates.has(index)
+        && candidate.text === emitted.text
+        && candidate.sourceStart === mappedRange.sourceStart
+        && candidate.sourceEnd === mappedRange.sourceEnd
+      )
+      if (candidateIndex === -1) continue
+      matchedCandidates.add(candidateIndex)
+      matchedEmitted.add(emittedIndex)
+      updateEmittedRange(emitted, candidates[candidateIndex], snapshot)
     }
-    const freshCandidates = candidates.slice(spokenCount)
+    for (const [emittedIndex, emitted] of this.emittedSourceRanges.entries()) {
+      if (matchedEmitted.has(emittedIndex)) continue
+      const candidateIndex = findOverlappingCandidate(emitted, candidates, matchedCandidates)
+      if (candidateIndex === -1) continue
+      matchedCandidates.add(candidateIndex)
+      updateEmittedRange(emitted, candidates[candidateIndex], snapshot)
+    }
+    const freshCandidates = candidates.filter((_, index) => !matchedCandidates.has(index))
     this.emittedSourceRanges.push(...freshCandidates.map((candidate) => ({
       messageId: this.messageId,
+      sourceSnapshot: snapshot,
       ...candidate,
     })))
-    this.previousSnapshot = snapshot
     return freshCandidates.map(({ text }) => text)
   }
 }
@@ -82,13 +100,17 @@ function extractSpeakableSegments(
   for (const [index, block] of blocks.entries()) {
     const isLastBlock = index === blocks.length - 1
     const allowUnfinished = block.hasBoundary || (includeUnfinishedSuffix && isLastBlock)
+    let sourceCursor = block.sourceStart
     for (const segment of splitCompletedProse(block.text, allowUnfinished)) {
-      if (isActivityOnly(segment)) continue
-      segments.push(...capSegment(segment, maxSegmentCharacters).map((text) => ({
-        text,
-        sourceStart: block.sourceStart,
-        sourceEnd: block.sourceEnd,
-      })))
+      if (isActivityOnly(segment.text)) continue
+      for (const chunk of capSegment(segment, maxSegmentCharacters)) {
+        const sourceRange = locateSourceRange(snapshot, block, chunk.text, sourceCursor)
+        sourceCursor = sourceRange.sourceEnd
+        segments.push({
+          text: chunk.text,
+          ...sourceRange,
+        })
+      }
     }
   }
 
@@ -151,19 +173,22 @@ function collectProseBlocks(snapshot: string): ProseBlock[] {
   return blocks
 }
 
-function splitCompletedProse(text: string, allowUnfinished: boolean): string[] {
-  const segments: string[] = []
+function splitCompletedProse(text: string, allowUnfinished: boolean): ProseSegment[] {
+  const segments: ProseSegment[] = []
   const sentencePattern = /.+?[.!?]+(?:["')\]]+)?(?=\s|$)/g
   let consumed = 0
   for (const match of text.matchAll(sentencePattern)) {
     const sentence = normalizeProse(match[0])
-    if (sentence.length > 0) segments.push(sentence)
+    if (sentence.length > 0) {
+      const start = match.index ?? 0
+      segments.push({ text: sentence, start, end: start + match[0].length })
+    }
     consumed = (match.index ?? 0) + match[0].length
   }
 
   const remainder = normalizeProse(text.slice(consumed))
   if (allowUnfinished && remainder.length > 0) {
-    segments.push(remainder)
+    segments.push({ text: remainder, start: consumed, end: text.length })
   }
   return segments
 }
@@ -187,12 +212,12 @@ function normalizeProse(value: string): string {
     .trim()
 }
 
-function capSegment(segment: string, maximum: number): string[] {
-  if (segment.length <= maximum) return [segment]
+function capSegment(segment: ProseSegment, maximum: number): ProseSegment[] {
+  if (segment.text.length <= maximum) return [segment]
 
   const chunks: string[] = []
   let chunk = ''
-  for (const word of segment.split(' ')) {
+  for (const word of segment.text.split(' ')) {
     if (word.length > maximum) {
       if (chunk.length > 0) {
         chunks.push(chunk)
@@ -212,7 +237,17 @@ function capSegment(segment: string, maximum: number): string[] {
     }
   }
   if (chunk.length > 0) chunks.push(chunk)
-  return chunks
+
+  let cursor = 0
+  return chunks.map((text) => {
+    const start = segment.text.indexOf(text, cursor)
+    cursor = start + text.length
+    return {
+      text,
+      start: segment.start + start,
+      end: segment.start + cursor,
+    }
+  })
 }
 
 function isTableLine(line: string): boolean {
@@ -239,4 +274,93 @@ function commonPrefixLength(left: string, right: string): number {
   let index = 0
   while (index < maximum && left[index] === right[index]) index += 1
   return index
+}
+
+function commonSuffixLength(left: string, right: string, prefixLength: number): number {
+  const maximum = Math.min(left.length, right.length) - prefixLength
+  let length = 0
+  while (
+    length < maximum
+    && left[left.length - length - 1] === right[right.length - length - 1]
+  ) {
+    length += 1
+  }
+  return length
+}
+
+function mapSourceRange(
+  range: SpeakableCandidate,
+  previousSnapshot: string,
+  snapshot: string,
+): Pick<SpeakableCandidate, 'sourceStart' | 'sourceEnd'> | undefined {
+  const prefixLength = commonPrefixLength(previousSnapshot, snapshot)
+  if (range.sourceEnd <= prefixLength) {
+    return { sourceStart: range.sourceStart, sourceEnd: range.sourceEnd }
+  }
+
+  const suffixLength = commonSuffixLength(previousSnapshot, snapshot, prefixLength)
+  const previousSuffixStart = previousSnapshot.length - suffixLength
+  if (range.sourceStart < previousSuffixStart) return undefined
+
+  const offset = snapshot.length - previousSnapshot.length
+  return {
+    sourceStart: range.sourceStart + offset,
+    sourceEnd: range.sourceEnd + offset,
+  }
+}
+
+function locateSourceRange(
+  snapshot: string,
+  block: ProseBlock,
+  text: string,
+  sourceCursor: number,
+): Pick<SpeakableCandidate, 'sourceStart' | 'sourceEnd'> {
+  const exactStart = snapshot.indexOf(text, sourceCursor)
+  if (exactStart >= block.sourceStart && exactStart + text.length <= block.sourceEnd) {
+    return { sourceStart: exactStart, sourceEnd: exactStart + text.length }
+  }
+
+  const firstWord = text.split(' ')[0]
+  const lastWord = text.split(' ').at(-1) ?? firstWord
+  const firstStart = snapshot.indexOf(firstWord, sourceCursor)
+  const lastStart = snapshot.indexOf(lastWord, Math.max(firstStart, sourceCursor))
+  if (
+    firstStart >= block.sourceStart
+    && lastStart >= firstStart
+    && lastStart + lastWord.length <= block.sourceEnd
+  ) {
+    return { sourceStart: firstStart, sourceEnd: lastStart + lastWord.length }
+  }
+
+  return { sourceStart: block.sourceStart, sourceEnd: block.sourceEnd }
+}
+
+function findOverlappingCandidate(
+  emitted: EmittedSourceRange,
+  candidates: SpeakableCandidate[],
+  matchedCandidates: Set<number>,
+): number {
+  let bestIndex = -1
+  let bestOverlap = 0
+  for (const [index, candidate] of candidates.entries()) {
+    if (matchedCandidates.has(index)) continue
+    const overlap = Math.min(emitted.sourceEnd, candidate.sourceEnd)
+      - Math.max(emitted.sourceStart, candidate.sourceStart)
+    if (overlap > bestOverlap) {
+      bestIndex = index
+      bestOverlap = overlap
+    }
+  }
+  return bestIndex
+}
+
+function updateEmittedRange(
+  emitted: EmittedSourceRange,
+  candidate: SpeakableCandidate,
+  snapshot: string,
+): void {
+  emitted.text = candidate.text
+  emitted.sourceStart = candidate.sourceStart
+  emitted.sourceEnd = candidate.sourceEnd
+  emitted.sourceSnapshot = snapshot
 }

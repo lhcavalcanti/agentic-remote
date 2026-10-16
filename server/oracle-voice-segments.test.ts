@@ -25,6 +25,12 @@ describe('SpeakableSegmenter', () => {
     ])
   })
 
+  it('does not replay an emitted sentence when earlier prose is inserted', () => {
+    const segmenter = new SpeakableSegmenter('message-1')
+    expect(segmenter.update('Second.')).toEqual(['Second.'])
+    expect(segmenter.update('First. Second.')).toEqual(['First.'])
+  })
+
   it('strips Markdown controls while retaining speakable prose', () => {
     const segmenter = new SpeakableSegmenter('message-1')
     expect(segmenter.update(

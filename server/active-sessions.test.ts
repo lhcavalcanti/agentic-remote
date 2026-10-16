@@ -86,66 +86,69 @@ describe('active Copilot processes', () => {
     child.kill('SIGTERM')
   })
 
-  it('terminates a tmux process carrying a matching session argument', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
-    directories.push(directory)
-    const copilotHome = path.join(directory, 'copilot-home')
-    vi.stubEnv('COPILOT_HOME', copilotHome)
-    const sessionId = '12345678-1234-1234-1234-123456789abc'
-    const executable = path.join(directory, 'copilot-argument-test.cjs')
-    await writeFile(executable, 'setTimeout(() => {}, 60_000)\n')
-    const tmuxSession = `agentic-argument-${process.pid}`
-    tmuxSessions.push(tmuxSession)
-    await execFileAsync('tmux', [
-      'new-session',
-      '-d',
-      '-s',
-      tmuxSession,
-      '-e',
-      `COPILOT_HOME=${copilotHome}`,
-      process.execPath,
-      executable,
-      '--session-id',
-      sessionId,
-    ])
-    const pid = Number.parseInt(
-      (
-        await execFileAsync('tmux', [
-          'display-message',
-          '-p',
-          '-t',
-          tmuxSession,
-          '#{pane_pid}',
-        ])
-      ).stdout,
-      10,
-    )
-    await waitForProcessCommand(pid, [executable, sessionId])
+  it.each(['--session-id', '--resume', '-r'])(
+    'recognizes and terminates a tmux process carrying %s',
+    async (sessionArgument) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+      directories.push(directory)
+      const copilotHome = path.join(directory, 'copilot-home')
+      vi.stubEnv('COPILOT_HOME', copilotHome)
+      const sessionId = '12345678-1234-1234-1234-123456789abc'
+      const executable = path.join(directory, 'copilot-argument-test.cjs')
+      await writeFile(executable, 'setTimeout(() => {}, 60_000)\n')
+      const tmuxSession = `agentic-argument-${process.pid}`
+      tmuxSessions.push(tmuxSession)
+      await execFileAsync('tmux', [
+        'new-session',
+        '-d',
+        '-s',
+        tmuxSession,
+        '-e',
+        `COPILOT_HOME=${copilotHome}`,
+        process.execPath,
+        executable,
+        sessionArgument,
+        sessionId,
+      ])
+      const pid = Number.parseInt(
+        (
+          await execFileAsync('tmux', [
+            'display-message',
+            '-p',
+            '-t',
+            tmuxSession,
+            '#{pane_pid}',
+          ])
+        ).stdout,
+        10,
+      )
+      await waitForProcessCommand(pid, [executable, sessionId])
 
-    const processes = await eventually(
-      () => findActiveCopilotProcesses(),
-      (entries) =>
-        entries.some(
-          (processInfo) =>
-            processInfo.pid === pid && processInfo.sessionId === sessionId,
-        ),
-    )
-    expect(
-      processes.filter((processInfo) => processInfo.sessionId === sessionId),
-    ).toEqual([{ pid, sessionId, source: 'argument' }])
+      const processes = await eventually(
+        () => findActiveCopilotProcesses(),
+        (entries) =>
+          entries.some(
+            (processInfo) =>
+              processInfo.pid === pid && processInfo.sessionId === sessionId,
+          ),
+      )
+      expect(
+        processes.filter((processInfo) => processInfo.sessionId === sessionId),
+      ).toEqual([{ pid, sessionId, source: 'argument' }])
 
-    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(true)
-    expect(await isDirectCopilotSessionProcess(pid, 'aaaaaaaa-1234-1234-1234-123456789abc'))
-      .toBe(false)
-    vi.stubEnv('COPILOT_HOME', path.join(directory, 'different-home'))
-    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
-    vi.stubEnv('COPILOT_HOME', copilotHome)
+      expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(true)
+      expect(await isDirectCopilotSessionProcess(pid, 'aaaaaaaa-1234-1234-1234-123456789abc'))
+        .toBe(false)
+      vi.stubEnv('COPILOT_HOME', path.join(directory, 'different-home'))
+      expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
+      vi.stubEnv('COPILOT_HOME', copilotHome)
 
-    await stopActiveCopilotSession(sessionId)
+      await stopActiveCopilotSession(sessionId)
 
-    expect(await waitForProcessExit(pid)).toBe(true)
-    expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
-  })
+      expect(await waitForProcessExit(pid)).toBe(true)
+      expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
+    },
+  )
 
   it('selects the nested Copilot process instead of its argument wrapper', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))

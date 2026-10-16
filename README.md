@@ -221,7 +221,8 @@ matrix.
 
 - **New session**: choose computer, provider, folder, and the configured provider
   default model and agent mode.
-- **Open previous**: resume provider history known to Agentic Remote.
+- **Open previous**: resume provider history known to Agentic Remote under the
+  same session ID, including saved runtime settings and queued work.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
 - **Ask**: use the header button or `/ask` (`/btw`) to ask a quick side question

@@ -69,6 +69,13 @@ export interface TerminalSessionController {
     allowAllPermissions?: boolean,
     runtime?: SessionRuntimeInfo,
   ): Promise<{ sessionName: string; windowId: string }>
+  reopen?(
+    sessionId: string,
+    cwd: string,
+    title: string,
+    allowAllPermissions?: boolean,
+    runtime?: SessionRuntimeInfo,
+  ): Promise<{ sessionName: string; windowId: string }>
   rename?(sessionId: string, title: string): Promise<boolean>
   configure?(
     sessionId: string,
@@ -349,6 +356,41 @@ export class TmuxTerminalSessionController
     allowAllPermissions = true,
     runtime?: SessionRuntimeInfo,
   ): Promise<{ sessionName: string; windowId: string }> {
+    return this.launchWindow(
+      sessionId,
+      cwd,
+      title,
+      allowAllPermissions,
+      runtime,
+      false,
+    )
+  }
+
+  async reopen(
+    sessionId: string,
+    cwd: string,
+    title: string,
+    allowAllPermissions = true,
+    runtime?: SessionRuntimeInfo,
+  ): Promise<{ sessionName: string; windowId: string }> {
+    return this.launchWindow(
+      sessionId,
+      cwd,
+      title,
+      allowAllPermissions,
+      runtime,
+      true,
+    )
+  }
+
+  private launchWindow(
+    sessionId: string,
+    cwd: string,
+    title: string,
+    allowAllPermissions: boolean,
+    runtime: SessionRuntimeInfo | undefined,
+    resumeExisting: boolean,
+  ): Promise<{ sessionName: string; windowId: string }> {
     const creation = this.creationQueue.then(() =>
       this.createWindow(
         sessionId,
@@ -356,6 +398,7 @@ export class TmuxTerminalSessionController
         title,
         allowAllPermissions,
         runtime,
+        resumeExisting,
       ),
     )
     this.creationQueue = creation.then(
@@ -2377,6 +2420,7 @@ export class TmuxTerminalSessionController
     title: string,
     allowAllPermissions: boolean,
     runtime?: SessionRuntimeInfo,
+    resumeExisting = false,
   ): Promise<{ sessionName: string; windowId: string }> {
     const sessions = await listTmuxSessions()
     const configured = process.env.AGENTIC_REMOTE_TMUX_SESSION?.trim()
@@ -2395,7 +2439,7 @@ export class TmuxTerminalSessionController
     const command = [
       copilot,
       ...(allowAllPermissions ? ['--yolo'] : []),
-      '--session-id',
+      resumeExisting ? '--resume' : '--session-id',
       sessionId,
       ...(runtime?.model ? ['--model', runtime.model] : []),
       ...(runtime?.reasoningEffort

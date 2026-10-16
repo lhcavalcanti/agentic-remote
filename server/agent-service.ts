@@ -177,6 +177,15 @@ class TerminalDiscoveryError extends Error {
   }
 }
 
+class TerminalActivationSupersededError extends Error {
+  readonly statusCode = 409
+
+  constructor() {
+    super('The session is reopening in a terminal')
+    this.name = 'TerminalActivationSupersededError'
+  }
+}
+
 type TerminalRecoveryResult = 'created' | 'existing' | 'skipped' | 'deferred'
 
 interface DeliveryBoundary {
@@ -1294,6 +1303,11 @@ export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   // agents still running are tracked separately from it.
   const workingAgents = new Set<string>()
   for (const event of events) {
+    if (event.type === 'session.start' || event.type === 'session.resume') {
+      workingAgents.clear()
+      status = 'idle'
+      continue
+    }
     if (!isForegroundLifecycleEvent(event)) {
       const agentId = eventAgentId(event)
       if (agentId) {
@@ -1771,6 +1785,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // by that flag, so admission is held shut separately until the prompt that
   // was already waiting has been taken.
   private readonly admissionClosed = new Set<string>()
+  private readonly terminalActivations = new Set<string>()
 
   private async runSessionCreation<T>(run: () => Promise<T>): Promise<T> {
     if (this.stopped) {
@@ -2779,11 +2794,101 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async activateSession(id: string): Promise<SessionDetail> {
+    return this.publicSession(await this.serializeLifecycle(
+      id,
+      () => this.admissions.run(
+        id,
+        () => this.activateSerialized(id),
+        this.store.backend(id) === 'terminal',
+      ),
+    ))
+  }
+
+  private async activateSerialized(id: string): Promise<SessionDetail> {
+    const terminal = this.store.backend(id) === 'terminal'
+    if (terminal) {
+      this.terminalActivations.add(id)
+      this.admissionClosed.add(id)
+      let releaseDispatch: (() => void) | undefined
+      try {
+        const stored = await this.store.readAfterWrites(id)
+        this.assertTerminalQueueSettled(id, true)
+        if (stored.suspended) {
+          await this.openSession(id)
+          const opened = await this.store.setOpen(id, true, true)
+          this.publish(opened)
+          return opened
+        }
+        await this.retireSdkOwnerForTerminalActivation(id)
+        const hasQueue = Boolean(stored.queuedPrompts?.length)
+        releaseDispatch = hasQueue ? this.holdDispatch(id) : undefined
+        let hasOwner: boolean
+        try {
+          hasOwner = await this.terminalController.has(id)
+        } catch (error) {
+          throw Object.assign(
+            new Error(
+              `Terminal discovery has not settled for this session: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              { cause: error },
+            ),
+            { statusCode: 409 },
+          )
+        }
+        if (!hasOwner) {
+          if (!this.terminalController.reopen) {
+            throw Object.assign(
+              new Error('Reopening saved terminal sessions is not available'),
+              { statusCode: 409 },
+            )
+          }
+          this.launchingTerminalSessionIds.add(id)
+          this.discoveryGeneration += 1
+          try {
+            await this.terminalController.reopen(
+              id,
+              stored.cwd,
+              stored.title,
+              stored.runtime?.allowAllPermissions ?? true,
+              stored.runtime,
+            )
+          } catch (error) {
+            throw Object.assign(
+              new Error(
+                `Unable to reopen terminal session from its saved Copilot state: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+                { cause: error },
+              ),
+              { statusCode: 409 },
+            )
+          } finally {
+            this.discoveryGeneration += 1
+            this.launchingTerminalSessionIds.delete(id)
+          }
+        }
+        this.externalSessionIds.add(id)
+        const opened = await this.store.setOpen(id, true, true)
+        const ready = await this.reconcileReopenedTerminalStatus(id, opened)
+        this.settleTerminalRecoveryForActivation(id)
+        this.publish(ready)
+        if (ready.queuedPrompts?.length) {
+          await this.drainTerminalQueue(id, true)
+        }
+        return this.store.readAfterWrites(id)
+      } finally {
+        this.admissionClosed.delete(id)
+        this.terminalActivations.delete(id)
+        releaseDispatch?.()
+      }
+    }
+    await this.store.readAfterWrites(id)
     this.assertTerminalQueueSettled(id)
     await this.openSession(id)
     const opened = await this.store.setOpen(id, true, true)
     this.publish(opened)
-    return this.publicSession(opened)
+    return opened
   }
 
   async createSession(
@@ -7271,6 +7376,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped || this.deletedSessionIds.has(sessionId)) {
       throw new Error('Session is no longer available')
     }
+    if (this.terminalActivations.has(sessionId)) {
+      throw Object.assign(
+        new Error('The terminal session is still reopening'),
+        { statusCode: 409 },
+      )
+    }
     const active = this.sessions.get(sessionId)
     if (active) {
       return active
@@ -7303,6 +7414,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return await loading
     } finally {
       if (this.loadingSessions.get(sessionId) === loading) this.loadingSessions.delete(sessionId)
+    }
+  }
+
+  private async retireSdkOwnerForTerminalActivation(
+    sessionId: string,
+  ): Promise<void> {
+    const loading = this.loadingSessions.get(sessionId)
+    if (loading) {
+      await loading.catch((error: unknown) => {
+        if (!(error instanceof TerminalActivationSupersededError)) throw error
+      })
+    }
+    const active = this.sessions.get(sessionId)
+    if (!active) return
+    if (
+      this.activePrompts.has(sessionId) ||
+      this.dispatchingSessions.has(sessionId)
+    ) {
+      throw Object.assign(
+        new Error('The SDK session is still handling work; wait before reopening it in the terminal'),
+        { statusCode: 409 },
+      )
+    }
+    await active.disconnect()
+    if (this.sessions.get(sessionId) === active) {
+      this.sessions.delete(sessionId)
+      this.hydratedSessions.delete(sessionId)
     }
   }
 
@@ -7354,6 +7492,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId)) {
       await sdkSession.disconnect()
       throw new Error('Session is no longer available')
+    }
+    if (this.terminalActivations.has(sessionId)) {
+      try {
+        await sdkSession.disconnect()
+      } catch (error) {
+        if (!this.sessions.has(sessionId)) {
+          this.sessions.set(sessionId, sdkSession)
+          this.attachSession(sdkSession, sessionId)
+        }
+        throw Object.assign(
+          new Error(
+            'Unable to retire the SDK owner before reopening the terminal',
+            { cause: error },
+          ),
+          { statusCode: 409 },
+        )
+      }
+      throw new TerminalActivationSupersededError()
     }
     const current = this.sessions.get(sessionId)
     if (current && current !== sdkSession) {
@@ -9168,11 +9324,59 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
-  private assertTerminalQueueSettled(sessionId: string): void {
+  private settleTerminalRecoveryForActivation(sessionId: string): void {
+    if (!this.isTerminalRecoveryPending(sessionId)) return
+    this.terminalRecoveryStates ??= new Map(
+      (this.terminalController.create ? this.store.terminalRecoverySessions() : [])
+        .map(({ id }) => [id, 'pending']),
+    )
+    this.terminalRecoveryStates.set(sessionId, 'settled')
+    this.startupTerminalQueues.delete(sessionId)
+    this.pendingTerminalQueueClaims.delete(sessionId)
+  }
+
+  private async reconcileReopenedTerminalStatus(
+    sessionId: string,
+    session: SessionDetail,
+  ): Promise<SessionDetail> {
+    if (
+      session.status === 'idle' ||
+      session.pendingPermission ||
+      session.pendingUserInput ||
+      session.failedPrompt ||
+      session.queuedDispatch
+    ) {
+      return session
+    }
+    if (await this.terminalController.inputReady?.(sessionId) !== true) {
+      return session
+    }
+    this.liveTranscriptWatermarks.set(sessionId, new Date().toISOString())
+    const updated = await this.store.updateIf(sessionId, (current) => {
+      if (
+        current.status === 'idle' ||
+        current.pendingPermission ||
+        current.pendingUserInput ||
+        current.failedPrompt ||
+        current.queuedDispatch
+      ) {
+        return false
+      }
+      current.status = 'idle'
+      current.activity = undefined
+      return true
+    })
+    return updated ?? this.store.readAfterWrites(sessionId)
+  }
+
+  private assertTerminalQueueSettled(
+    sessionId: string,
+    allowRecoveryPending = false,
+  ): void {
     if (this.stopped) {
       throw new Error('The session service is stopping')
     }
-    this.assertTerminalRecoverySettled(sessionId)
+    if (!allowRecoveryPending) this.assertTerminalRecoverySettled(sessionId)
     if (this.store.terminalQueueDispatch(sessionId) ||
         this.pendingTerminalPromptDispatches.has(sessionId)) {
       throw Object.assign(

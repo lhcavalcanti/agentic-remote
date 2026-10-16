@@ -121,7 +121,15 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   opened by the process.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves
   that the process has the corresponding `session.db` open.
-- Historical sessions MAY be opened from the new-session flow.
+- Historical sessions MAY be opened from the new-session flow. Reopening a
+  retained tmux session MUST explicitly resume its provider session under the
+  same ID and preserve its title, working folder, transcript, queue, runtime
+  settings, and list identity.
+- Reopen MUST serialize with other lifecycle changes and MUST NOT create a
+  duplicate provider owner. Preserved queued work MUST resume in FIFO order only
+  after the same-ID owner is ready. If saved provider state is unavailable or
+  corrupt, the session MUST remain closed with its history, metadata, and queue
+  unchanged, and the failure MUST be shown explicitly.
 - An open new-session dialog MUST preserve user choices across computer status
   updates. If its computer becomes unavailable, it MUST select an available
   computer when one returns and require a new compatible historical selection.

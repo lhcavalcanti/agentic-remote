@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import type { SessionEvent } from '@github/copilot-sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ServerEvent, SessionDetail } from '../shared/contracts.js'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
@@ -119,6 +120,12 @@ async function fixture(ids = ['pending']) {
       ownership.owners.add(id)
       return { sessionName: 'fixture', windowId: '@1' }
     }),
+    reopen: vi.fn(async (id: string) => {
+      expect(ownership.owners.has(id)).toBe(false)
+      ownership.owners.add(id)
+      return { sessionName: 'fixture', windowId: '@2' }
+    }),
+    inputReady: vi.fn(async () => true),
     send: vi.fn(async () => true),
     capture: vi.fn<NonNullable<TerminalSessionController['capture']>>(async () => undefined),
     cancel: vi.fn(async () => true),
@@ -191,6 +198,360 @@ afterEach(async () => {
   }
 })
 
+describe('Closed terminal activation', () => {
+  it('reopens the same provider session and starts its preserved FIFO', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    await f.store.enqueuePrompt('pending', prompt('first'))
+    await f.store.enqueuePrompt('pending', prompt('second'))
+    const before = f.store.get('pending')!
+
+    const reopened = await f.service.activateSession('pending')
+
+    expect(f.terminal.reopen).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      f.directory,
+      'pending',
+      false,
+      {
+        allowAllPermissions: false,
+        model: 'fixture-model',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      },
+    )
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      'first',
+      false,
+    )
+    expect(reopened).toMatchObject({
+      id: 'pending',
+      isOpen: true,
+      messages: before.messages,
+      queuedPrompts: [prompt('second')],
+    })
+    expect(f.store.isManagedOpen('pending')).toBe(true)
+  })
+
+  it('does not duplicate a terminal owner when two opens arrive together', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    const started = gate(undefined)
+    const release = gate(undefined)
+    f.terminal.reopen.mockImplementationOnce(async (id: string) => {
+      started.finish(undefined)
+      await release.pending
+      f.ownership.owners.add(id)
+      return { sessionName: 'fixture', windowId: '@2' }
+    })
+
+    const first = f.service.activateSession('pending')
+    await started.pending
+    const second = f.service.activateSession('pending')
+    release.finish(undefined)
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ id: 'pending', isOpen: true }),
+      expect.objectContaining({ id: 'pending', isOpen: true }),
+    ])
+    expect(f.terminal.reopen).toHaveBeenCalledOnce()
+  })
+
+  it('does not register admission while activation waits behind lifecycle work', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    const entered = gate(undefined)
+    const release = gate(undefined)
+    vi.spyOn(
+      f.service as unknown as {
+        deleteSerialized: (id: string) => Promise<void>
+      },
+      'deleteSerialized',
+    ).mockImplementationOnce(async () => {
+      entered.finish(undefined)
+      await release.pending
+    })
+
+    const deletion = f.service.deleteSession('pending')
+    await entered.pending
+    const activation = f.service.activateSession('pending')
+    const admissions = f.service['admissions'] as unknown as {
+      pending: Map<string, Set<unknown>>
+    }
+    const pendingAdmissions = admissions.pending.get('pending')?.size ?? 0
+    release.finish(undefined)
+    await expect(deletion).resolves.toBeUndefined()
+    await expect(activation).resolves.toMatchObject({
+      id: 'pending',
+      isOpen: true,
+    })
+    expect(pendingAdmissions).toBe(0)
+  })
+
+  it('does not attach an SDK owner while terminal reopening is in flight', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    const started = gate(undefined)
+    const release = gate(undefined)
+    f.terminal.reopen.mockImplementationOnce(async (id: string) => {
+      started.finish(undefined)
+      await release.pending
+      f.ownership.owners.add(id)
+      return { sessionName: 'fixture', windowId: '@2' }
+    })
+    vi.mocked(f.client.resumeSession).mockResolvedValueOnce(
+      sdkSession('pending'),
+    )
+
+    const activation = f.service.activateSession('pending')
+    await started.pending
+    const competing = await Promise.allSettled([
+      f.service.listCommands('pending'),
+      f.service.sendMessage('pending', 'Do not attach another owner'),
+    ])
+    release.finish(undefined)
+    await expect(activation).resolves.toMatchObject({
+      id: 'pending',
+      isOpen: true,
+    })
+    expect(competing).toEqual([
+      expect.objectContaining({
+        status: 'rejected',
+        reason: expect.objectContaining({ statusCode: 409 }),
+      }),
+      expect.objectContaining({
+        status: 'rejected',
+        reason: expect.objectContaining({ statusCode: 409 }),
+      }),
+    ])
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('retires an SDK load that began before terminal reopening', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    const sdk = sdkSession('pending')
+    const disconnect = vi.spyOn(sdk, 'disconnect')
+    const started = gate(undefined)
+    const loading = gate<CopilotSessionLike>(sdk)
+    vi.mocked(f.client.resumeSession).mockImplementationOnce(async () => {
+      started.finish(undefined)
+      return loading.pending
+    })
+
+    const commands = f.service.listCommands('pending')
+    await started.pending
+    const activation = f.service.activateSession('pending')
+    await vi.waitFor(() => {
+      expect(f.service['terminalActivations'].has('pending')).toBe(true)
+    })
+    loading.finish(sdk)
+    const [commandResult, activationResult] = await Promise.allSettled([
+      commands,
+      activation,
+    ])
+
+    expect(commandResult).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ statusCode: 409 }),
+    })
+    expect(activationResult).toMatchObject({
+      status: 'fulfilled',
+      value: expect.objectContaining({ id: 'pending', isOpen: true }),
+    })
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(f.service['sessions'].has('pending')).toBe(false)
+    expect(f.terminal.reopen).toHaveBeenCalledOnce()
+  })
+
+  it('does not reopen when an in-flight SDK owner cannot disconnect', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    const sdk = sdkSession('pending')
+    const disconnectFailure = new Error('SDK disconnect failed')
+    const disconnect = vi
+      .spyOn(sdk, 'disconnect')
+      .mockRejectedValueOnce(disconnectFailure)
+      .mockResolvedValue(undefined)
+    const started = gate(undefined)
+    const loading = gate<CopilotSessionLike>(sdk)
+    vi.mocked(f.client.resumeSession).mockImplementationOnce(async () => {
+      started.finish(undefined)
+      return loading.pending
+    })
+
+    const commands = f.service.listCommands('pending')
+    await started.pending
+    const activation = f.service.activateSession('pending')
+    await vi.waitFor(() => {
+      expect(f.service['terminalActivations'].has('pending')).toBe(true)
+    })
+    loading.finish(sdk)
+    const [commandResult, activationResult] = await Promise.allSettled([
+      commands,
+      activation,
+    ])
+
+    expect(commandResult.status).toBe('rejected')
+    expect(activationResult).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ statusCode: 409 }),
+    })
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(f.service['sessions'].get('pending')).toBe(sdk)
+    expect(f.terminal.reopen).not.toHaveBeenCalled()
+  })
+
+  it.each(['running', 'error'] as const)(
+    'drains preserved work after a ready owner resumes from stale %s state',
+    async (status) => {
+      const f = await fixture()
+      await f.store.setOpen('pending', false, true)
+      await f.store.update('pending', (session) => {
+        session.status = status
+        session.activity = `Stale ${status}`
+      })
+      await f.store.enqueuePrompt('pending', prompt(`after ${status}`))
+
+      await expect(f.service.activateSession('pending')).resolves.toMatchObject({
+        isOpen: true,
+        queuedPrompts: [],
+      })
+
+      expect(f.terminal.inputReady).toHaveBeenCalledWith('pending')
+      expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+        'pending',
+        `after ${status}`,
+        false,
+      )
+    },
+  )
+
+  it('keeps transcript polling from restoring stale status before the first queue claim', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    await f.store.update('pending', (session) => {
+      session.status = 'running'
+      session.activity = 'Historical turn'
+    })
+    await f.store.enqueuePrompt('pending', prompt('after stale history'))
+    f.eventVersion.mockResolvedValue('1:1')
+    f.readEvents.mockResolvedValue([{
+      id: 'historical-turn',
+      type: 'assistant.turn_start',
+      parentId: null,
+      timestamp,
+      data: {},
+    }] as SessionEvent[])
+    const captureStarted = gate(undefined)
+    const capture = gate('Ready composer')
+    f.terminal.capture.mockImplementationOnce(async () => {
+      captureStarted.finish(undefined)
+      return capture.pending
+    })
+
+    const activation = f.service.activateSession('pending')
+    await captureStarted.pending
+    await f.service.refreshTranscripts()
+    capture.finish('Ready composer')
+
+    await expect(activation).resolves.toMatchObject({
+      isOpen: true,
+      queuedPrompts: [],
+    })
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      'after stale history',
+      false,
+    )
+  })
+
+  it('preserves a permission that arrives while resumed readiness is checked', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    await f.store.update('pending', (session) => {
+      session.status = 'running'
+      session.activity = 'Historical turn'
+    })
+    const readinessStarted = gate(undefined)
+    const readiness = gate(true)
+    f.terminal.inputReady.mockImplementationOnce(async () => {
+      readinessStarted.finish(undefined)
+      return readiness.pending
+    })
+
+    const activation = f.service.activateSession('pending')
+    await readinessStarted.pending
+    await f.store.update('pending', (session) => {
+      session.pendingPermission = {
+        requestId: 'permission',
+        kind: 'tool',
+        title: 'Allow tool',
+        options: [],
+      }
+      session.status = 'waiting'
+      session.activity = 'Allow tool'
+    })
+    readiness.finish(true)
+
+    await expect(activation).resolves.toMatchObject({
+      status: 'waiting',
+      activity: 'Allow tool',
+      pendingPermission: { requestId: 'permission' },
+    })
+  })
+
+  it('keeps history and queued work closed when saved provider state cannot resume', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false)
+    await f.store.enqueuePrompt('pending', prompt('still waiting'))
+    const before = f.store.get('pending')!
+    f.terminal.reopen.mockRejectedValueOnce(
+      new Error('Copilot saved session is unavailable or corrupt'),
+    )
+
+    await expect(f.service.activateSession('pending')).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/saved Copilot state/i),
+    })
+
+    expect(f.store.get('pending')).toMatchObject({
+      isOpen: false,
+      messages: before.messages,
+      queuedPrompts: before.queuedPrompts,
+    })
+    expect(f.store.isManagedOpen('pending')).toBe(true)
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it('releases admission and remains retryable when the open-state write fails', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    await f.store.enqueuePrompt('pending', prompt('deliver after retry'))
+    await f.blockWrites()
+
+    await expect(f.service.activateSession('pending')).rejects.toMatchObject({
+      code: 'EISDIR',
+    })
+
+    await f.unblockWrites()
+    expect(f.service['admissionClosed'].has('pending')).toBe(false)
+    await expect(f.service.activateSession('pending')).resolves.toMatchObject({
+      id: 'pending',
+      isOpen: true,
+      queuedPrompts: [],
+    })
+    expect(f.terminal.reopen).toHaveBeenCalledOnce()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      'deliver after retry',
+      false,
+    )
+  })
+})
+
 describe('PR167 reviewed-parent composition', () => {
   const emptyComposer = ['Synthetic idle owner', '╻▄▄▄▄▄▄▄▄▄▄', '┃ ', '╹▀▀▀▀▀▀▀▀▀▀', ' / commands'].join('\n')
 
@@ -247,7 +608,7 @@ describe('PR167 reviewed-parent composition', () => {
     },
   )
 
-  it('starts with native queued demand while aggregate discovery is indeterminate', async () => {
+  it('explicitly reopens queued demand while aggregate discovery is indeterminate', async () => {
     const f = await fixture()
     await f.store.enqueuePrompt('pending', prompt('Persisted native work'))
     const retained = f.store.get('pending')!
@@ -263,11 +624,20 @@ describe('PR167 reviewed-parent composition', () => {
       isOpen: true, messages: retained.messages, queuedPrompts: retained.queuedPrompts,
     })
     expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
-    await expect(f.service.activateSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    await expect(f.service.activateSession('pending')).resolves.toMatchObject({
+      isOpen: true,
+      queuedPrompts: [],
+    })
+    expect(f.terminal.reopen).toHaveBeenCalledOnce()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      'Persisted native work',
+      false,
+    )
     expect(f.client.resumeSession).not.toHaveBeenCalled()
   })
 
-  it('does not create or force open an absent owner merely because startup work is queued', async () => {
+  it('does not auto-create an absent queued owner but explicitly reopens it', async () => {
     const f = await fixture()
     await f.store.enqueuePrompt('pending', prompt('Wait for a positive owner'))
     f.ownership.aggregateError = undefined
@@ -284,8 +654,16 @@ describe('PR167 reviewed-parent composition', () => {
     })
     expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
     expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
-    await expect(f.service.activateSession('pending')).rejects.toMatchObject({ statusCode: 409 })
-    expect(f.client.resumeSession).not.toHaveBeenCalled()
+    await expect(f.service.activateSession('pending')).resolves.toMatchObject({
+      isOpen: true,
+      queuedPrompts: [],
+    })
+    expect(f.terminal.reopen).toHaveBeenCalledOnce()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      'Wait for a positive owner',
+      false,
+    )
   })
 
   it('does not let the new queue pump bypass a still-deferred per-session probe', async () => {
@@ -558,10 +936,19 @@ describe('Deferred terminal ownership recovery', () => {
     await restarted.start()
     expect(f.terminal.create).not.toHaveBeenCalled()
     expect(restartedStore.shouldRecoverTerminalSession('pending')).toBe(true)
-    await expect(restarted.activateSession('pending')).rejects.toMatchObject({ statusCode: 409 })
-    f.ownership.owners.add('pending')
+    await expect(restarted.activateSession('pending')).resolves.toMatchObject({
+      isOpen: true,
+      queuedPrompts: [],
+    })
+    expect(f.terminal.reopen).toHaveBeenCalledOnce()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      'Durable pending work',
+      false,
+    )
     await restarted.refreshDiscovery()
     await expect(restarted.activateSession('pending')).resolves.toMatchObject({ isOpen: true })
+    expect(f.terminal.reopen).toHaveBeenCalledOnce()
   })
 
   it('recovers and admits healthy sessions while a different ownership probe remains unreadable', async () => {

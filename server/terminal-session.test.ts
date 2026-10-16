@@ -3163,6 +3163,67 @@ Permission request (1 remaining)
     expect(cleared).toBe(true)
   }, 20_000)
 
+  it('reopens a saved Copilot session with explicit resume semantics', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-resume-fake')
+    await writeFile(
+      executable,
+      "#!/usr/bin/env bash\nprintf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'\nsleep 60\n",
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `resume-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const sessionId = randomUUID()
+
+    const controller = new TmuxTerminalSessionController()
+    const location = await controller.reopen(
+      sessionId,
+      directory,
+      'Saved conversation',
+      true,
+      {
+        model: 'fixture-resume',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      },
+    )
+    const panePid = (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        location.windowId,
+        '#{pane_pid}',
+      ])
+    ).stdout.trim()
+    const commandLine = await eventually(
+      async () =>
+        (await readFile(`/proc/${panePid}/cmdline`, 'utf8'))
+          .replaceAll('\0', ' ')
+          .trim(),
+      (line) => line.includes(`--resume ${sessionId}`),
+    )
+
+    expect(commandLine).toContain(`--resume ${sessionId}`)
+    expect(commandLine).not.toContain('--session-id')
+    expect(commandLine).toContain('--model fixture-resume')
+    expect(commandLine).toContain('--effort high')
+    expect(commandLine).toContain('--context long_context')
+    expect(commandLine).toContain('--mode autopilot')
+  }, 20_000)
+
   it('reauthorizes the restored owner when reset fails', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)

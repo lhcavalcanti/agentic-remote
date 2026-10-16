@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "acd74287859226070c97f69d556953969958573d",
+  "built_at_commit": "b935ff927cdca70dc676c39543dccc69ea4edb1c",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -56602,7 +56602,7 @@
       "relation": "contains",
       "source": "server_manager_tools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L488",
+      "source_location": "L502",
       "target": "server_manager_tools_localcomputer",
       "weight": 1.0
     },
@@ -56857,7 +56857,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L201",
+      "source_location": "L206",
       "target": "server_manager_context_rosterline",
       "weight": 1.0
     },
@@ -56869,7 +56869,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L201",
+      "source_location": "L206",
       "target": "server_manager_store_registrykey",
       "weight": 1.0
     },
@@ -56917,7 +56917,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L356",
+      "source_location": "L370",
       "target": "server_manager_tools_errormessage",
       "weight": 1.0
     },
@@ -56929,7 +56929,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L356",
+      "source_location": "L370",
       "target": "server_manager_tools_link",
       "weight": 1.0
     },
@@ -56941,7 +56941,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L317",
+      "source_location": "L331",
       "target": "server_manager_tools_localcomputer",
       "weight": 1.0
     },
@@ -56953,7 +56953,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L299",
+      "source_location": "L302",
       "target": "server_manager_tools_managertoolhost_asksession",
       "weight": 1.0
     },
@@ -56965,7 +56965,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L397",
+      "source_location": "L411",
       "target": "server_manager_tools_managertoolhost_cancel",
       "weight": 1.0
     },
@@ -56977,7 +56977,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L219",
+      "source_location": "L224",
       "target": "server_manager_tools_managertoolhost_computers",
       "weight": 1.0
     },
@@ -56989,7 +56989,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L337",
+      "source_location": "L351",
       "target": "server_manager_tools_managertoolhost_createsession",
       "weight": 1.0
     },
@@ -57001,7 +57001,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L316",
+      "source_location": "L330",
       "target": "server_manager_tools_managertoolhost_defaults",
       "weight": 1.0
     },
@@ -57013,7 +57013,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L431",
+      "source_location": "L445",
       "target": "server_manager_tools_managertoolhost_discoverskills",
       "weight": 1.0
     },
@@ -57025,7 +57025,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L247",
+      "source_location": "L252",
       "target": "server_manager_tools_managertoolhost_listhistory",
       "weight": 1.0
     },
@@ -57037,7 +57037,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L241",
+      "source_location": "L246",
       "target": "server_manager_tools_managertoolhost_listsessions",
       "weight": 1.0
     },
@@ -57049,7 +57049,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L346",
+      "source_location": "L360",
       "target": "server_manager_tools_managertoolhost_markmanaged",
       "weight": 1.0
     },
@@ -57061,7 +57061,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L201",
+      "source_location": "L206",
       "target": "server_manager_tools_managertoolhost_now",
       "weight": 1.0
     },
@@ -57073,7 +57073,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L267",
+      "source_location": "L272",
       "target": "server_manager_tools_managertoolhost_readsession",
       "weight": 1.0
     },
@@ -57085,7 +57085,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L201",
+      "source_location": "L206",
       "target": "server_manager_tools_managertoolhost_registry",
       "weight": 1.0
     },
@@ -57097,7 +57097,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L341",
+      "source_location": "L355",
       "target": "server_manager_tools_managertoolhost_renamesession",
       "weight": 1.0
     },
@@ -57109,7 +57109,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L413",
+      "source_location": "L427",
       "target": "server_manager_tools_managertoolhost_requestcloseconfirmation",
       "weight": 1.0
     },
@@ -57121,7 +57121,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L353",
+      "source_location": "L367",
       "target": "server_manager_tools_managertoolhost_sendmessage",
       "weight": 1.0
     },
@@ -57133,7 +57133,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L350",
+      "source_location": "L364",
       "target": "server_manager_tools_ref",
       "weight": 1.0
     },
@@ -57145,7 +57145,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L338",
+      "source_location": "L352",
       "target": "server_manager_tools_sessiontitle",
       "weight": 1.0
     },
@@ -57157,7 +57157,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L209",
+      "source_location": "L214",
       "target": "server_manager_tools_toolfailure",
       "weight": 1.0
     },
@@ -57169,7 +57169,7 @@
       "relation": "calls",
       "source": "server_manager_tools_createmanagertools",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L272",
+      "source_location": "L275",
       "target": "server_manager_tools_truncate",
       "weight": 1.0
     },
@@ -57301,7 +57301,7 @@
       "relation": "calls",
       "source": "server_manager_tools_localcomputer",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L489",
+      "source_location": "L503",
       "target": "server_manager_tools_managertoolhost_computers",
       "weight": 1.0
     },
@@ -57313,7 +57313,7 @@
       "relation": "calls",
       "source": "server_manager_tools_localcomputer",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L490",
+      "source_location": "L504",
       "target": "server_manager_tools_toolfailure",
       "weight": 1.0
     },
@@ -139567,7 +139567,7 @@
       "source_file": "shell/src-tauri/Cargo.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "1.15.1"
+      "version": "1.15.2"
     },
     {
       "_origin": "ast",
@@ -153025,7 +153025,7 @@
       "label": "localComputer()",
       "norm_label": "localcomputer()",
       "source_file": "server/manager-tools.ts",
-      "source_location": "L488"
+      "source_location": "L502"
     },
     {
       "_callable": true,

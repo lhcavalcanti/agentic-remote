@@ -197,6 +197,11 @@ export function createManagerTools(
     }
   }
 
+  const pendingRequests = (session: ManagedSession) => [
+    ...(session.pendingPermission ? [`Waiting for the user to approve: ${session.pendingPermission.title}`] : []),
+    ...(session.pendingUserInput ? [`Waiting for the user to answer: ${session.pendingUserInput.question}`] : []),
+  ]
+
   const describeSession = (session: ManagedSession) => {
     const line = rosterLine(session, host.registry()[registryKey(session.computerId, session.id)], host.now())
     return session.isOpen === false ? `${line} · closed` : line
@@ -265,9 +270,7 @@ export function createManagerTools(
       async ({ sessionId, computer, messages }) => {
         const found = await resolveSession(sessionId, computer, { history: true })
         const detail = await host.readSession(found.computerId, found.id)
-        const lines = [describeSession({ ...detail, isOpen: found.isOpen })]
-        if (detail.pendingPermission) lines.push(`Waiting for the user to approve: ${detail.pendingPermission.title}`)
-        if (detail.pendingUserInput) lines.push(`Waiting for the user to answer: ${detail.pendingUserInput.question}`)
+        const lines = [describeSession({ ...detail, isOpen: found.isOpen }), ...pendingRequests(detail)]
         if (detail.queuedPrompts?.length) {
           lines.push(`Queued prompts: ${detail.queuedPrompts.map((prompt) => truncate(prompt.content, 200)).join(' | ')}`)
         }
@@ -285,7 +288,7 @@ export function createManagerTools(
     ),
     define(
       'ask_session',
-      "Ask a session a question about its own work (findings, results, blockers). It is answered from the session's conversation without prompting or interrupting it. Copilot sessions only.",
+      "Ask a session a question about its own work (findings, results, blockers). It is answered from the session's finished turns without prompting or interrupting it; for a session in the middle of a turn, its current state is added. Copilot sessions only.",
       z.object({
         sessionId: sessionIdField,
         computer: computerField.optional(),
@@ -296,7 +299,18 @@ export function createManagerTools(
         if ((found.provider ?? 'copilot') !== 'copilot') {
           throw new ToolFailure('Only Copilot sessions answer side questions; use get_session to read this one.')
         }
-        return host.askSession(found.computerId, found.id, question)
+        const answer = await host.askSession(found.computerId, found.id, question)
+        // A side question is answered from the session's finished turns, so
+        // one it is still working on, or waiting on the user in, is told
+        // apart from the answer rather than missed.
+        if (found.status !== 'running' && found.status !== 'waiting') return answer
+        return [
+          answer,
+          '',
+          'Note: this session is in the middle of a turn, which the answer above cannot see because side questions read only finished turns. Its current state:',
+          describeSession(found),
+          ...pendingRequests(found),
+        ].join('\n')
       },
     ),
     define(

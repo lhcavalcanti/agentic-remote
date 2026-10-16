@@ -163,6 +163,24 @@ describe('manager tools', () => {
     expect(host.askSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa', 'What did you find?')
   })
 
+  it("adds a working session's current state, which its side question cannot see", async () => {
+    vi.mocked(host.listSessions).mockResolvedValue([
+      session('abc12345-aaaa'),
+      session('def67890-bbbb', { status: 'running', activity: 'Running sleep 75 && echo slept' }),
+      session('ghi24680-cccc', { status: 'waiting', pendingPermission: { requestId: 'p1', title: 'Run the deploy script', kind: 'shell' } as ManagedSession['pendingPermission'] }),
+    ])
+    const running = String(await call('ask_session', { sessionId: 'def67890', question: 'What are you waiting on?' }))
+    expect(running).toMatch(/^It fixed the bug and opened PR #12\./)
+    expect(running).toContain('in the middle of a turn')
+    expect(running).toContain('Running sleep 75 && echo slept')
+    const waiting = String(await call('ask_session', { sessionId: 'ghi24680', question: 'What now?' }))
+    expect(waiting).toContain('in the middle of a turn')
+    expect(waiting).toContain('Run the deploy script')
+    // A session between turns is answered as it is.
+    expect(await call('ask_session', { sessionId: 'abc12345', question: 'What did you find?' }))
+      .toBe('It fixed the bug and opened PR #12.')
+  })
+
   it('only asks the user to close a session and never closes one itself', async () => {
     const result = await call('close_session', { sessionId: 'abc12345', userConfirmed: true, reason: 'It finished.' })
     expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'It finished.')

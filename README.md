@@ -417,14 +417,20 @@ Knowledge are unaffected, and naming the hub's own computer matches the default.
 
 ### Oracle
 
-The **Oracle** button in the conversation header opens an agent that knows
-every session and hands work to new sessions, which it names and badges
-**Oracle**. Tick **Ask only** to ask about your sessions while they keep
-working: Oracle reads them and asks side questions but never starts, messages,
-or stops one (`/oracle <question>` in a session asks the same way). Messages
-sent while it is busy wait in a queue where you can see and remove them. Choose its model in
-**App settings → Oracle**; the choice is kept on the hub. Its notes are in
-`~/.agentic-remote/manager/memory/`.
+The **Oracle** bubble at the bottom right of a conversation opens an agent
+that knows every session and hands work to new sessions, which it names and
+badges **Oracle**.
+
+- **Ask | Delegate**: in **Ask**, Oracle reads your sessions and asks them side
+  questions but never starts, messages, or stops one (`/oracle <question>` in
+  a session asks the same way). **Delegate** lets it start and steer sessions.
+- Messages sent while it is busy wait in a queue where you can see and remove
+  them.
+- **App settings → Oracle** chooses its model and, per computer, the folder it
+  starts sessions in. Both are kept on the hub; ask Oracle to start sessions
+  somewhere else and it updates its folder.
+- On a desktop, drag the panel's left edge to resize it.
+- Its notes are in `~/.agentic-remote/manager/memory/`.
 
 `setup` keeps these hub settings across updates (the names predate "Oracle"):
 

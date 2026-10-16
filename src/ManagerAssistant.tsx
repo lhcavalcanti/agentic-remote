@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, MouseEvent, MutableRefObject } from 'react'
+import type { CSSProperties, KeyboardEvent, MouseEvent, MutableRefObject, PointerEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -188,7 +188,7 @@ function UserMessage({
           {expanded ? 'Show less' : 'Show all'}
         </button>
       ) : null}
-      {message.answerOnly ? <span className="manager-message__state">Ask only</span> : null}
+      {message.answerOnly ? <span className="manager-message__state">Ask</span> : null}
       {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
       {message.state === 'failed' && message.error ? (
         <p className="manager-message__error" role="alert">{message.error}</p>
@@ -210,6 +210,123 @@ function readAnswerOnly(): boolean {
     return window.localStorage.getItem(answerOnlyStorageKey) === 'true'
   } catch {
     return false
+  }
+}
+
+const widthStorageKey = 'agentic-remote:oracle-width'
+const WIDTH_DEFAULT = 440
+const WIDTH_MIN = 340
+const WIDTH_MAX = 960
+/** The conversation keeps at least this much beside the panel. */
+const CONVERSATION_MIN = 360
+
+function boundWidth(value: number, limit = WIDTH_MAX): number {
+  return Math.min(limit, Math.max(WIDTH_MIN, Math.round(value)))
+}
+
+/** The width chosen, which a narrow window may show narrower without forgetting it. */
+function readWidth(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(widthStorageKey))
+    return Number.isFinite(stored) && stored > 0 ? boundWidth(stored) : WIDTH_DEFAULT
+  } catch {
+    return WIDTH_DEFAULT
+  }
+}
+
+function storeWidth(width: number | undefined) {
+  try {
+    if (width === undefined) window.localStorage.removeItem(widthStorageKey)
+    else window.localStorage.setItem(widthStorageKey, String(width))
+  } catch {
+    // Resizing still works without browser storage; it is just not remembered.
+  }
+}
+
+/**
+ * The desktop panel's width, dragged from its left edge or changed with the
+ * arrow keys, and remembered per browser. Widening stops where the
+ * conversation would have less than 360px beside `reservedLeft`, the sessions
+ * list, and follows the window as it narrows. The panel never goes below
+ * 340px, so a window without room for both keeps it usable and lets it
+ * overlay more of the conversation, as a phone does. A phone always shows it
+ * full width.
+ */
+function usePanelWidth(reservedLeft: number) {
+  const [preferred, setPreferred] = useState(readWidth)
+  const [viewport, setViewport] = useState(() => window.innerWidth)
+  const [resizing, setResizing] = useState(false)
+  const gesture = useRef<{ pointerId: number; startX: number; startWidth: number; width: number } | undefined>(undefined)
+
+  useEffect(() => {
+    const measure = () => setViewport(window.innerWidth)
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
+
+  const limit = boundWidth(viewport - reservedLeft - CONVERSATION_MIN)
+  const clampWidth = (value: number) => boundWidth(value, limit)
+  const width = clampWidth(preferred)
+
+  function commit(next: number | undefined) {
+    const value = next === undefined ? WIDTH_DEFAULT : clampWidth(next)
+    setPreferred(value)
+    storeWidth(next === undefined ? undefined : value)
+  }
+
+  return {
+    width,
+    resizing,
+    separator: {
+      'aria-controls': 'oracle-panel',
+      'aria-label': 'Resize Oracle',
+      'aria-orientation': 'vertical' as const,
+      'aria-valuemax': limit,
+      'aria-valuemin': WIDTH_MIN,
+      'aria-valuenow': width,
+      'data-resizing': resizing,
+      onDoubleClick: () => commit(undefined),
+      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+        const step = event.shiftKey ? 32 : 8
+        // The panel sits on the right, so moving its edge left widens it.
+        if (event.key === 'ArrowLeft') commit(width + step)
+        else if (event.key === 'ArrowRight') commit(width - step)
+        else if (event.key === 'Home') commit(undefined)
+        else return
+        event.preventDefault()
+        event.stopPropagation()
+      },
+      onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
+        if (event.button !== 0 || gesture.current) return
+        event.preventDefault()
+        gesture.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width, width }
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+        setResizing(true)
+      },
+      onPointerMove: (event: PointerEvent<HTMLDivElement>) => {
+        const current = gesture.current
+        if (!current || current.pointerId !== event.pointerId) return
+        current.width = clampWidth(current.startWidth + current.startX - event.clientX)
+        setPreferred(current.width)
+      },
+      onPointerUp: (event: PointerEvent<HTMLDivElement>) => finish(event),
+      onPointerCancel: (event: PointerEvent<HTMLDivElement>) => finish(event),
+      onLostPointerCapture: (event: PointerEvent<HTMLDivElement>) => finish(event),
+      role: 'separator',
+      tabIndex: 0,
+      title: 'Drag or use arrow keys to resize · Shift for larger steps · Home or double-click to reset',
+    },
+  }
+
+  function finish(event: PointerEvent<HTMLDivElement>) {
+    const current = gesture.current
+    if (!current || current.pointerId !== event.pointerId) return
+    gesture.current = undefined
+    setResizing(false)
+    if (current.width !== current.startWidth) storeWidth(current.width)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
   }
 }
 
@@ -251,12 +368,16 @@ export interface OracleControl {
   ask(text: string, options: { answerOnly: boolean }): Promise<void>
 }
 
-/** Opens Oracle from a header, beside Knowledge. */
+/**
+ * Opens Oracle: a floating bubble at the bottom right of the conversation,
+ * or a compact icon where the conversation is out of view.
+ */
 export function OracleButton({
   indicator,
   open,
   onToggle,
   compact = false,
+  floating = false,
   className = '',
   offscreen = false,
 }: {
@@ -264,6 +385,8 @@ export function OracleButton({
   open: boolean
   onToggle: () => void
   compact?: boolean
+  /** The round bubble that sits with Scroll to latest. */
+  floating?: boolean
   className?: string
   /** In a layer that is out of view, such as a closed drawer; focus never returns here. */
   offscreen?: boolean
@@ -281,7 +404,7 @@ export function OracleButton({
       aria-expanded={open}
       aria-label={['Oracle', ...states].join(', ')}
       data-oracle-offscreen={offscreen ? '' : undefined}
-      className={`icon-button oracle-toggle${open ? ' icon-button--active' : ''}${
+      className={`${floating ? 'oracle-bubble' : 'icon-button'} oracle-toggle${open ? ' icon-button--active' : ''}${
         working ? ' oracle-toggle--working' : ''
       }${indicator.status === 'offline' ? ' oracle-toggle--offline' : ''}${className ? ` ${className}` : ''}`}
       onClick={onToggle}
@@ -289,10 +412,10 @@ export function OracleButton({
       type="button"
     >
       <span className="oracle-toggle__mark">
-        <Orbit aria-hidden="true" size={18} strokeWidth={1.8} />
+        <Orbit aria-hidden="true" size={floating ? 22 : 18} strokeWidth={1.8} />
         {indicator.unread ? <span aria-hidden="true" className="oracle-toggle__unread" /> : null}
       </span>
-      {compact ? null : <span className="header-action-label">Oracle</span>}
+      {compact || floating ? null : <span className="header-action-label">Oracle</span>}
     </button>
   )
 }
@@ -309,6 +432,7 @@ export function ManagerAssistant({
   onManagedSessionsChange,
   onOpenSettings,
   controlRef,
+  reservedLeft = 0,
 }: {
   /** Changes each time the event socket reconnects, so the snapshot is reread. */
   connectionEpoch: number
@@ -322,6 +446,8 @@ export function ManagerAssistant({
   onManagedSessionsChange: (keys: string[]) => void
   onOpenSettings: () => void
   controlRef?: MutableRefObject<OracleControl | undefined>
+  /** Width taken on the left, such as the sessions list, that the panel may not reach into. */
+  reservedLeft?: number
 }) {
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
   const [draft, setDraft] = useState('')
@@ -336,6 +462,7 @@ export function ManagerAssistant({
   const listRef = useRef<HTMLOListElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const panelWidth = usePanelWidth(reservedLeft)
   const openRef = useRef(open)
   const managedRef = useRef(onManagedSessionsChange)
   const indicatorRef = useRef(onIndicatorChange)
@@ -570,6 +697,7 @@ export function ManagerAssistant({
     <section
       aria-label="Oracle"
       className="manager-panel"
+      data-resizing={panelWidth.resizing}
       id="oracle-panel"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !event.defaultPrevented) {
@@ -578,7 +706,9 @@ export function ManagerAssistant({
         }
       }}
       role="dialog"
+      style={{ '--oracle-width': `${panelWidth.width}px` } as CSSProperties}
     >
+      <div className="oracle-resizer" {...panelWidth.separator} />
       <header className="manager-panel__header">
         <span aria-hidden="true" className={`manager-panel__mark${working ? ' manager-panel__mark--working' : ''}`}>
           <Orbit size={18} strokeWidth={1.8} />
@@ -691,7 +821,7 @@ export function ManagerAssistant({
                   <span className="visually-hidden">{`Number ${index + 1}: `}</span>
                   {message.content}
                 </p>
-                {message.answerOnly ? <span className="oracle-queue__tag">Ask only</span> : null}
+                {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
                 <button
                   aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
                   className="icon-button oracle-queue__remove"
@@ -720,17 +850,18 @@ export function ManagerAssistant({
             Messages are limited to {MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.
           </p>
         ) : null}
+        {working ? (
+          <p className="manager-composer__status">
+            Oracle is answering; anything you send now waits its turn.
+          </p>
+        ) : null}
         <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}`}>
           <textarea
             aria-label="Message Oracle"
             enterKeyHint={phoneEnterCreatesNewline() ? 'enter' : 'send'}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={answerOnly
-              ? working
-                ? 'Ask; answered after the current reply…'
-                : 'Ask about your sessions; running work is left alone…'
-              : working ? 'Add to the queue…' : 'Ask about sessions or hand off work…'}
+            placeholder="Ask me anything"
             ref={inputRef}
             rows={2}
             value={draft}
@@ -753,15 +884,29 @@ export function ManagerAssistant({
           </div>
         </div>
         <div className="manager-composer__options">
-          <label className="oracle-only" title="Oracle answers from the current state of your sessions and never starts, messages, stops, or changes one, so their work carries on undisturbed">
-            <input
-              checked={answerOnly}
-              onChange={(event) => changeAnswerOnly(event.target.checked)}
-              type="checkbox"
-            />
-            <span>Ask only</span>
-            <span className="oracle-only__hint">running work is left alone</span>
-          </label>
+          <div className="oracle-mode-field">
+            <div aria-describedby="oracle-mode-hint" aria-label="Oracle mode" className="oracle-mode" role="group">
+              <button
+                aria-pressed={answerOnly}
+                onClick={() => changeAnswerOnly(true)}
+                title="Oracle answers from the current state of your sessions and never starts, messages, stops, or changes one"
+                type="button"
+              >
+                Ask
+              </button>
+              <button
+                aria-pressed={!answerOnly}
+                onClick={() => changeAnswerOnly(false)}
+                title="Oracle can also start sessions for work you hand it, and message, rename, stop, or close them"
+                type="button"
+              >
+                Delegate
+              </button>
+            </div>
+            <span className="oracle-mode__hint" id="oracle-mode-hint">
+              {answerOnly ? 'Running work is left alone' : 'Can start and steer sessions'}
+            </span>
+          </div>
           <button
             aria-label={`Oracle model: ${runtimeLabel}. Change it in App settings`}
             className="oracle-runtime"

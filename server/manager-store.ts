@@ -30,6 +30,8 @@ export interface ManagerState {
    * conversation from before Oracle's settings, which ran on the hub default.
    */
   sessionRuntime?: ManagerSettings
+  /** Where Oracle starts new sessions, by computer ID, as validated on that computer. */
+  sessionFolders?: Record<string, string>
   /** A model and effort that could not start; Copilot's default answers until the choice changes. */
   unavailableRuntime?: ManagerSettings
   /** The newest journal entry a completed turn has shown the agent. */

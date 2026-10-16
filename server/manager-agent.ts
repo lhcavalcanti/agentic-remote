@@ -46,6 +46,8 @@ export interface ManagerHub {
   /** A session as recorded, never opened or resumed, so reading cannot change it. */
   readSession(computerId: string, sessionId: string): Promise<ManagedSession>
   askSession(computerId: string, sessionId: string, question: string): Promise<string>
+  /** The folder as an absolute path on that computer, or an error saying why it cannot hold sessions. */
+  validateSessionDirectory(computerId: string, path: string): Promise<string>
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, input: RenameSessionInput): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, input: SendMessageInput): Promise<ManagedSession>
@@ -371,18 +373,32 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       ...(this.model ? { defaultModel: this.model } : {}),
       ...(this.reasoningEffort ? { defaultReasoningEffort: this.reasoningEffort } : {}),
       ...(this.modelFallback() ? { modelUnavailable: true } : {}),
+      ...(this.store.state().sessionFolders ? { sessionFolders: { ...this.store.state().sessionFolders } } : {}),
     }
   }
 
   /** Chooses Oracle's model and effort; it applies from the next answer. */
   async updateSettings(input: UpdateManagerSettingsInput): Promise<ManagerSettingsSnapshot> {
-    const model = input.model?.trim() || undefined
-    const reasoningEffort = model ? input.reasoningEffort ?? undefined : undefined
+    // Checked before anything is saved, so a folder that is refused changes nothing.
+    const folders = input.sessionFolders ? await this.resolveFolders(input.sessionFolders) : undefined
     const before = this.runtime()
     await this.store.updateState((state) => {
-      state.settings = {
-        ...(model ? { model } : {}),
-        ...(reasoningEffort ? { reasoningEffort } : {}),
+      if (input.model !== undefined) {
+        const model = input.model?.trim() || undefined
+        const reasoningEffort = model ? input.reasoningEffort ?? undefined : undefined
+        state.settings = {
+          ...(model ? { model } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+        }
+      }
+      if (folders) {
+        const next = { ...state.sessionFolders }
+        for (const [computerId, folder] of Object.entries(folders)) {
+          if (folder) next[computerId] = folder
+          else delete next[computerId]
+        }
+        if (Object.keys(next).length) state.sessionFolders = next
+        else delete state.sessionFolders
       }
     })
     // A new choice is tried afresh. The next answer compares it with what
@@ -395,6 +411,28 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const settings = this.settingsSnapshot()
     this.emit('event', { type: 'manager.settings', settings })
     return settings
+  }
+
+  /** Each folder as validated on its computer; undefined returns it to the default. */
+  private async resolveFolders(input: Record<string, string | null>): Promise<Record<string, string | undefined>> {
+    const resolved: Record<string, string | undefined> = {}
+    const unpaired = () => Object.assign(new Error('That computer is not paired with this hub.'), { statusCode: 404 })
+    for (const [computerId, folder] of Object.entries(input)) {
+      const paired = this.hub.listComputers().some((computer) => computer.id === computerId)
+      if (folder === null) {
+        // A folder kept for a computer since unpaired can still be removed.
+        if (!paired && !this.store.state().sessionFolders?.[computerId]) throw unpaired()
+        resolved[computerId] = undefined
+        continue
+      }
+      const path = folder.trim()
+      if (!path) {
+        throw Object.assign(new Error('Choose a folder, or clear it to use the default.'), { statusCode: 400 })
+      }
+      if (!paired) throw unpaired()
+      resolved[computerId] = await this.hub.validateSessionDirectory(computerId, path)
+    }
+    return resolved
   }
 
   /** The model and effort in effect: your choice, else the hub default. */
@@ -633,6 +671,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       },
       registry: () => this.store.registry(),
       answerOnly: () => this.currentAnswerOnly,
+      sessionFolders: () => ({ ...this.store.state().sessionFolders }),
+      setSessionFolder: async (computerId, folder) =>
+        (await this.updateSettings({ sessionFolders: { [computerId]: folder ?? null } })).sessionFolders?.[computerId],
       memory: this.store.memory,
       defaults: () => this.store.state().defaults ?? {},
       now: () => this.now(),
@@ -884,6 +925,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       sessions,
       registry: this.store.registry(),
       changes,
+      sessionFolders: this.store.state().sessionFolders,
       ...(showIndex && !this.needsBrief ? { memoryIndex: index } : {}),
       notes,
     })

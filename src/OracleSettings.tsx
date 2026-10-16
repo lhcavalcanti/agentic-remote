@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import type { RuntimeModelOption, RuntimeReasoningEffort } from '../shared/contracts'
+import { Fragment, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import type { ComputerSummary, RuntimeModelOption, RuntimeReasoningEffort } from '../shared/contracts'
 import type { ManagerSettingsSnapshot } from '../shared/manager'
 import { getManager, updateManagerSettings } from './api'
 
@@ -19,18 +20,27 @@ export function OracleSettings({
   models,
   modelsError,
   onRetryModels,
+  computers = [],
+  renderFolderControl,
 }: {
   models?: RuntimeModelOption[]
   /** Why the hub's catalog could not be read; Retry asks for it again. */
   modelsError?: string
   onRetryModels?: () => void
+  computers?: Pick<ComputerSummary, 'id' | 'name' | 'isLocal' | 'online'>[]
+  /** The app's folder picker; it hands back a folder already checked on that computer. */
+  renderFolderControl?: (
+    computer: Pick<ComputerSummary, 'id' | 'name' | 'isLocal' | 'online'>,
+    value: string | undefined,
+    onChange: (path?: string) => void,
+  ) => ReactNode
 }) {
   const [settings, setSettings] = useState<ManagerSettingsSnapshot>()
   const [unavailable, setUnavailable] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [saved, setSaved] = useState<string>()
 
   useEffect(() => {
     let active = true
@@ -56,21 +66,35 @@ export function OracleSettings({
     }
   }, [])
 
-  async function save(model: string, reasoningEffort?: RuntimeReasoningEffort) {
+  async function update(
+    input: Parameters<typeof updateManagerSettings>[0],
+    confirmation: string,
+  ) {
     setSaving(true)
-    setSaved(false)
+    setSaved(undefined)
     setError(undefined)
     try {
-      setSettings(await updateManagerSettings({
-        model: model || null,
-        reasoningEffort: model && reasoningEffort ? reasoningEffort : null,
-      }))
-      setSaved(true)
+      setSettings(await updateManagerSettings(input))
+      setSaved(confirmation)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSaving(false)
     }
+  }
+
+  function save(model: string, reasoningEffort?: RuntimeReasoningEffort) {
+    return update({
+      model: model || null,
+      reasoningEffort: model && reasoningEffort ? reasoningEffort : null,
+    }, 'Saved. Oracle uses it from its next answer.')
+  }
+
+  function saveFolder(computerId: string, path?: string) {
+    return update(
+      { sessionFolders: { [computerId]: path ?? null } },
+      path ? 'Saved. Oracle starts new sessions there.' : 'Saved. Oracle uses your default folder there.',
+    )
   }
 
   const chosen = settings?.model ?? ''
@@ -144,8 +168,29 @@ export function OracleSettings({
               {settings.model ?? settings.defaultModel ?? 'The chosen model'} could not start, so Copilot&apos;s default model is answering.
             </p>
           ) : null}
+          {renderFolderControl && computers.length ? (
+            <div className="oracle-settings__folders">
+              <h4>Session folders</h4>
+              <p className="dialog-message">
+                Where Oracle starts new sessions on each computer. Oracle can change
+                these when you ask; a computer left blank uses your default session
+                folder.
+              </p>
+              <div className="default-session-folder-list">
+                {computers.map((computer) => (
+                  <Fragment key={computer.id}>
+                    {renderFolderControl(
+                      computer,
+                      settings.sessionFolders?.[computer.id],
+                      (path) => void saveFolder(computer.id, path),
+                    )}
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {saved && !saving ? (
-            <p className="dialog-message" role="status">Saved. Oracle uses it from its next answer.</p>
+            <p className="dialog-message" role="status">{saved}</p>
           ) : null}
         </>
       ) : null}

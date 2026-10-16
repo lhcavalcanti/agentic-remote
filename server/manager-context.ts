@@ -22,7 +22,8 @@ export const MANAGER_SYSTEM_PROMPT = `You are Oracle, the session manager inside
 
 # Delegating well
 - create_session takes a short descriptive title (at most 60 characters), the working folder on the right computer, and a self-contained prompt: the goal, relevant context, constraints, acceptance criteria, and what to report back when done. Name the user's skills that apply (see list_skills) so the session uses them.
-- The computer, folder, mode, and model default to the user's own settings. Override them only when the task needs it.
+- The computer, mode, and model default to the user's own settings. The folder defaults to your session folder for that computer, shown in the Computers line, else the user's default folder. Override them only when the task needs it.
+- When the user asks you to start sessions somewhere else from now on, use set_session_folder; it is kept with your settings and shown in App settings → Oracle.
 - Split independent work into separate sessions; keep tightly coupled work in one.
 
 # Reporting
@@ -164,6 +165,8 @@ export interface TurnContextInput {
   /** MEMORY.md, when the agent has not seen this version of it. */
   memoryIndex?: string
   notes?: string[]
+  /** Where Oracle starts new sessions, by computer ID. */
+  sessionFolders?: Record<string, string>
   rosterLimit?: number
   changeLimit?: number
 }
@@ -173,7 +176,8 @@ export function buildTurnContext(input: TurnContextInput): string {
   const rosterLimit = input.rosterLimit ?? 80
   const computers = input.computers.length
     ? input.computers.map((computer) =>
-        `${computer.name} (${computer.id}${computer.isLocal ? ', this hub' : ''}, ${computer.online ? 'online' : 'offline'})`)
+        `${computer.name} (${computer.id}${computer.isLocal ? ', this hub' : ''}, ${computer.online ? 'online' : 'offline'}${
+          input.sessionFolders?.[computer.id] ? `, new sessions start in ${input.sessionFolders[computer.id]}` : ''})`)
       .join(' · ')
     : 'none'
   const sessions = [...input.sessions].sort((left, right) =>

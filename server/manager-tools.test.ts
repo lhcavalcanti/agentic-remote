@@ -36,6 +36,7 @@ describe('manager tools', () => {
   let activities: ManagerToolActivity[]
   let tools: Map<string, ManagerTool>
   let answerOnly: boolean
+  let oracleFolders: Record<string, string>
 
   const call = async (name: string, args: unknown) => {
     const tool = tools.get(name)
@@ -47,6 +48,7 @@ describe('manager tools', () => {
     root = await mkdtemp(path.join(tmpdir(), 'manager-tools-'))
     activities = []
     answerOnly = false
+    oracleFolders = {}
     const created = session('new1', { cwd: '/home/me/src/web' })
     host = {
       computers: () => computers,
@@ -68,6 +70,14 @@ describe('manager tools', () => {
       markManaged: vi.fn(async () => undefined),
       registry: () => ({}),
       answerOnly: () => answerOnly,
+      sessionFolders: () => oracleFolders,
+      setSessionFolder: vi.fn(async (computerId: string, folder?: string) => {
+        if (folder === '~/missing') throw new Error('Folder does not exist')
+        const normalized = folder?.replace(/^~/, '/home/me')
+        if (normalized) oracleFolders = { ...oracleFolders, [computerId]: normalized }
+        else oracleFolders = Object.fromEntries(Object.entries(oracleFolders).filter(([id]) => id !== computerId))
+        return normalized
+      }),
       memory: new ManagerMemory(path.join(root, 'memory')),
       defaults: () => ({ computerId: 'hub', mode: 'autopilot', provider: 'copilot', model: 'gpt-6-sol', folders: { hub: '~/src/web' } }),
       now: () => new Date('2026-10-15T12:00:00.000Z'),
@@ -84,6 +94,7 @@ describe('manager tools', () => {
       'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
       'list_computers', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
       'memory_list', 'memory_read', 'memory_write', 'rename_session', 'send_to_session',
+      'set_session_folder',
     ])
     for (const tool of tools.values()) {
       expect(tool.skipPermission).toBe(true)
@@ -179,6 +190,30 @@ describe('manager tools', () => {
     // A session between turns is answered as it is.
     expect(await call('ask_session', { sessionId: 'abc12345', question: 'What did you find?' }))
       .toBe('It fixed the bug and opened PR #12.')
+  })
+
+  it("starts sessions in Oracle's own folder for that computer, before the user's default", async () => {
+    oracleFolders = { hub: '/home/me/src/oracle' }
+    await call('create_session', { title: 'Docs', prompt: 'Write the docs.' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ cwd: '/home/me/src/oracle' }))
+    // A folder the task names still wins.
+    await call('create_session', { title: 'Docs', prompt: 'Write the docs.', cwd: '~/src/docs' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ cwd: '~/src/docs' }))
+    oracleFolders = {}
+    await call('create_session', { title: 'Docs', prompt: 'Write the docs.' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ cwd: '~/src/web' }))
+  })
+
+  it('changes where Oracle starts sessions when the user asks, even in Ask only', async () => {
+    answerOnly = true
+    expect(String(await call('set_session_folder', { computer: 'development', folder: '~/src/app' })))
+      .toContain('/home/me/src/app')
+    expect(host.setSessionFolder).toHaveBeenLastCalledWith('hub', '~/src/app')
+    expect(activities.at(-1)).toMatchObject({ tool: 'set_session_folder', content: 'Now starting sessions on development in /home/me/src/app' })
+    expect(await call('set_session_folder', { folder: '~/missing' })).toMatchObject({ resultType: 'failure' })
+    expect(String(await call('set_session_folder', { folder: null }))).toContain("development's default folder")
+    expect(host.setSessionFolder).toHaveBeenLastCalledWith('hub', undefined)
+    expect(activities.at(-1)).toMatchObject({ content: "Back to development's default folder for new sessions" })
   })
 
   it('only asks the user to close a session and never closes one itself', async () => {

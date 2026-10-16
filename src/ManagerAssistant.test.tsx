@@ -141,7 +141,7 @@ describe('ManagerAssistant', () => {
     ))
     const queue = await screen.findByRole('region', { name: 'Queued for Oracle' })
     expect(queue).toHaveTextContent('What is running right now?')
-    expect(queue).toHaveTextContent('Ask only')
+    expect(queue).toHaveTextContent('Ask')
   })
 
   it('shows waiting messages in order, outside the conversation, and removes one on request', async () => {
@@ -165,7 +165,7 @@ describe('ManagerAssistant', () => {
     const items = within(queue).getAllByRole('listitem')
     expect(items.map((item) => item.textContent)).toEqual([
       expect.stringMatching(/^1Number 1: first waiting/),
-      expect.stringMatching(/^2Number 2: second waitingAsk only/),
+      expect.stringMatching(/^2Number 2: second waitingAsk$/),
     ])
     expect(within(screen.getByRole('list', { name: 'Oracle conversation' })).queryByText('first waiting')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Remove from the queue: first waiting' }))
@@ -173,24 +173,32 @@ describe('ManagerAssistant', () => {
     await waitFor(() => expect(within(screen.getByRole('region', { name: 'Queued for Oracle' })).getAllByRole('listitem')).toHaveLength(1))
   })
 
-  it('remembers the Ask only choice and sends with it', async () => {
+  it('switches between Ask and Delegate, remembers it, and sends with it', async () => {
     vi.mocked(sendManagerMessage).mockResolvedValue({ id: 'm1', role: 'user', content: 'x', createdAt: 't', state: 'queued' })
     setup()
     await openPanel()
-    const toggle = screen.getByRole('checkbox', { name: /Ask only/ })
-    expect(toggle).not.toBeChecked()
-    fireEvent.click(toggle)
+    const mode = screen.getByRole('group', { name: 'Oracle mode' })
+    const ask = within(mode).getByRole('button', { name: 'Ask' })
+    const delegate = within(mode).getByRole('button', { name: 'Delegate' })
+    expect(ask).toHaveAttribute('aria-pressed', 'false')
+    expect(delegate).toHaveAttribute('aria-pressed', 'true')
+    expect(mode).toHaveAccessibleDescription('Can start and steer sessions')
+    fireEvent.click(ask)
+    expect(ask).toHaveAttribute('aria-pressed', 'true')
+    expect(delegate).toHaveAttribute('aria-pressed', 'false')
+    expect(mode).toHaveAccessibleDescription('Running work is left alone')
     expect(localStorage.getItem('agentic-remote:oracle-answer-only')).toBe('true')
     const input = screen.getByRole('textbox', { name: 'Message Oracle' })
-    expect(input).toHaveAttribute('placeholder', 'Ask about your sessions; running work is left alone…')
-    expect(toggle).toHaveAccessibleName(/running work is left alone/)
+    expect(input).toHaveAttribute('placeholder', 'Ask me anything')
     fireEvent.change(input, { target: { value: 'Just tell me' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith('Just tell me', expect.anything(), { answerOnly: true }))
     cleanup()
     setup()
     await openPanel()
-    expect(screen.getByRole('checkbox', { name: /Ask only/ })).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Ask', pressed: true })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+    expect(localStorage.getItem('agentic-remote:oracle-answer-only')).toBe('false')
   })
 
   it('queues an Ask only question while Oracle is busy, without stopping anything', async () => {
@@ -203,7 +211,9 @@ describe('ManagerAssistant', () => {
     })
     await openPanel()
     const input = screen.getByRole('textbox', { name: 'Message Oracle' })
-    expect(input).toHaveAttribute('placeholder', 'Ask; answered after the current reply…')
+    // The field invites a question; that it will wait is said beside it.
+    expect(input).toHaveAttribute('placeholder', 'Ask me anything')
+    expect(screen.getByText('Oracle is answering; anything you send now waits its turn.')).toBeInTheDocument()
     fireEvent.change(input, { target: { value: 'How is the docs work going?' } })
     fireEvent.click(screen.getByRole('button', { name: 'Queue message' }))
     await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(
@@ -211,7 +221,7 @@ describe('ManagerAssistant', () => {
     ))
     const queue = await screen.findByRole('region', { name: 'Queued for Oracle' })
     expect(within(queue).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      expect.stringMatching(/^1Number 1: How is the docs work going\?Ask only/),
+      expect.stringMatching(/^1Number 1: How is the docs work going\?Ask$/),
     ])
     expect(cancelManager).not.toHaveBeenCalled()
   })
@@ -313,7 +323,7 @@ describe('ManagerAssistant', () => {
       'Could not send to Oracle: Origin is not allowed. Your question is in the message bar to send again.',
     )
     expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('What is riskiest?')
-    expect(screen.getByRole('checkbox', { name: /Ask only/ })).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Ask', pressed: true })).toBeInTheDocument()
   })
 
   it('tells the app why Oracle cannot take a message', async () => {
@@ -381,6 +391,77 @@ describe('ManagerAssistant', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Follow link' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument())
     expect(within(screen.getByTestId('header')).getByRole('button', { name: 'Oracle' })).toHaveFocus()
+  })
+
+  it('resizes the desktop panel from its left edge and remembers the width', async () => {
+    setup()
+    const panel = await openPanel()
+    const edge = screen.getByRole('separator', { name: 'Resize Oracle' })
+    expect(edge).toHaveAttribute('aria-valuenow', '440')
+    expect(panel.style.getPropertyValue('--oracle-width')).toBe('440px')
+    fireEvent.keyDown(edge, { key: 'ArrowLeft' })
+    expect(edge).toHaveAttribute('aria-valuenow', '448')
+    fireEvent.keyDown(edge, { key: 'ArrowLeft', shiftKey: true })
+    expect(edge).toHaveAttribute('aria-valuenow', '480')
+    fireEvent.keyDown(edge, { key: 'ArrowRight' })
+    expect(edge).toHaveAttribute('aria-valuenow', '472')
+    expect(panel.style.getPropertyValue('--oracle-width')).toBe('472px')
+    expect(localStorage.getItem('agentic-remote:oracle-width')).toBe('472')
+    // Never narrower than the minimum, nor so wide the conversation disappears.
+    for (let step = 0; step < 20; step += 1) fireEvent.keyDown(edge, { key: 'ArrowRight', shiftKey: true })
+    expect(edge).toHaveAttribute('aria-valuenow', '340')
+    for (let step = 0; step < 40; step += 1) fireEvent.keyDown(edge, { key: 'ArrowLeft', shiftKey: true })
+    expect(edge).toHaveAttribute('aria-valuenow', String(Math.min(960, window.innerWidth - 360)))
+    fireEvent.keyDown(edge, { key: 'Home' })
+    expect(edge).toHaveAttribute('aria-valuenow', '440')
+    expect(localStorage.getItem('agentic-remote:oracle-width')).toBeNull()
+    // Escape on the edge still closes the panel.
+    fireEvent.keyDown(edge, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the conversation beside the sessions list wide enough', async () => {
+    const width = window.innerWidth
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+      localStorage.setItem('agentic-remote:oracle-width', '900')
+      setup(empty, { reservedLeft: 320 })
+      await openPanel()
+      const edge = screen.getByRole('separator', { name: 'Resize Oracle' })
+      // 1440 - 320 for the sessions list - 360 for the conversation.
+      expect(edge).toHaveAttribute('aria-valuemax', '760')
+      expect(edge).toHaveAttribute('aria-valuenow', '760')
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(edge).toHaveAttribute('aria-valuenow', '520')
+      // The width chosen is kept for when there is room again.
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1920 })
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(edge).toHaveAttribute('aria-valuenow', '900')
+      // A window with no room for both keeps the panel usable: its minimum
+      // wins, and it overlays more of the conversation, as on a phone.
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 980 })
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(edge).toHaveAttribute('aria-valuemax', '340')
+      expect(edge).toHaveAttribute('aria-valuenow', '340')
+      fireEvent.keyDown(edge, { key: 'ArrowLeft', shiftKey: true })
+      expect(edge).toHaveAttribute('aria-valuenow', '340')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+    }
+  })
+
+  it('reopens at the width it was given', async () => {
+    localStorage.setItem('agentic-remote:oracle-width', '520')
+    setup()
+    await openPanel()
+    expect(screen.getByRole('separator', { name: 'Resize Oracle' })).toHaveAttribute('aria-valuenow', '520')
   })
 
   it('offers Retry on a failed message', async () => {

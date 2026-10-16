@@ -150,6 +150,10 @@ describe('ManagerAgent', () => {
       listSessions: vi.fn(async () => sessions),
       listHistory: vi.fn(async () => []),
       readSession: vi.fn(async (_computerId: string, id: string) => session(id)),
+      validateSessionDirectory: vi.fn(async (_computerId: string, folder: string) => {
+        if (folder.includes('missing')) throw Object.assign(new Error('That folder does not exist'), { statusCode: 400 })
+        return folder.replace(/^~/, '/home/me')
+      }),
       askSession: vi.fn(async () => 'answer'),
       createSession: vi.fn(async () => {
         const created = session('worker-1', { cwd: '/home/me/src/web' })
@@ -864,6 +868,53 @@ describe('ManagerAgent', () => {
     ])
     expect(snapshot.messages).toHaveLength(MANAGER_SNAPSHOT_MESSAGES + 3)
     expect(snapshot.queued).toBe(2)
+  })
+
+  it('keeps where Oracle starts sessions on the hub, and starts them there', async () => {
+    await start()
+    await agent!.updateSettings({ model: 'gpt-6-sol', reasoningEffort: 'high' })
+    const settings = await agent!.updateSettings({ sessionFolders: { hub: '~/src/oracle' } })
+    // A change of folder leaves the model alone.
+    expect(settings).toMatchObject({ model: 'gpt-6-sol', reasoningEffort: 'high', sessionFolders: { hub: '/home/me/src/oracle' } })
+    expect(events.at(-1)).toMatchObject({ type: 'manager.settings', settings: { sessionFolders: { hub: '/home/me/src/oracle' } } })
+    await expect(agent!.updateSettings({ sessionFolders: { hub: '~/missing' } })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(agent!.updateSettings({ sessionFolders: { elsewhere: '~/src' } })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(agent!.updateSettings({ sessionFolders: { elsewhere: null } })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(agent!.updateSettings({ sessionFolders: { hub: '   ' } })).rejects.toMatchObject({ statusCode: 400 })
+    expect(agent!.snapshot().settings?.sessionFolders).toEqual({ hub: '/home/me/src/oracle' })
+
+    sdk.behaviors.push(async (fakeSession, prompt) => {
+      expect(prompt).toContain('new sessions start in /home/me/src/oracle')
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Started.')(fakeSession, '')
+    })
+    await agent!.send('Start the docs work')
+    await settled()
+    expect(hub.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ cwd: '/home/me/src/oracle' }))
+
+    // Asked to, Oracle moves it, and App settings sees the change.
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('set_session_folder')({ folder: '~/src/next' })
+      reply('Done.')(fakeSession, '')
+    })
+    await agent!.send('From now on start sessions in ~/src/next')
+    await settled()
+    expect(agent!.snapshot().settings?.sessionFolders).toEqual({ hub: '/home/me/src/next' })
+    expect(events.some((event) => event.type === 'manager.settings' && event.settings.sessionFolders?.hub === '/home/me/src/next')).toBe(true)
+
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    expect(agent!.snapshot().settings?.sessionFolders).toEqual({ hub: '/home/me/src/next' })
+    // A folder kept for a computer since unpaired can still be removed.
+    await store.updateState((state) => {
+      state.sessionFolders = { ...state.sessionFolders, gone: '/home/me/old' }
+    })
+    await agent!.updateSettings({ sessionFolders: { gone: null } })
+    await agent!.updateSettings({ sessionFolders: { hub: null } })
+    expect(agent!.snapshot().settings?.sessionFolders).toBeUndefined()
+    expect(agent!.snapshot().settings?.model).toBe('gpt-6-sol')
   })
 
   it('keeps queued messages in order and lets you take one out before it starts', async () => {

@@ -38,6 +38,10 @@ export interface ManagerToolHost {
   registry(): ManagerRegistry
   /** The message being answered is Ask only, so no session may be acted on. */
   answerOnly(): boolean
+  /** Where Oracle starts new sessions, by computer ID. */
+  sessionFolders(): Record<string, string>
+  /** Validates and keeps the folder, or returns the computer to its default; gives back what was kept. */
+  setSessionFolder(computerId: string, folder?: string): Promise<string | undefined>
   memory: ManagerMemory
   defaults(): ManagerClientDefaults
   now(): Date
@@ -315,7 +319,7 @@ export function createManagerTools(
     ),
     define(
       'create_session',
-      'Start a new session to do a piece of work, name it, and give it its task. The computer, folder, mode, and model default to the user\'s settings. The session appears in the user\'s app immediately.',
+      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer, mode, and model default to the user\'s settings. The session appears in the user\'s app immediately.',
       z.object({
         title: z.string().trim().min(1).max(100).describe('Short descriptive name, at most 60 characters.'),
         prompt: z.string().trim().min(1).max(100_000).describe('The self-contained task: goal, context, constraints, acceptance criteria, what to report back, and which of the user\'s skills to use.'),
@@ -340,7 +344,7 @@ export function createManagerTools(
         const reasoningEffort: RuntimeReasoningEffort | undefined =
           args.reasoningEffort ?? (sameProvider && !args.model ? defaults.reasoningEffort : undefined)
         const input: CreateSessionInput = {
-          cwd: args.cwd ?? defaults.folders?.[computer.id]?.trim() ?? '~',
+          cwd: args.cwd ?? (host.sessionFolders()[computer.id] || defaults.folders?.[computer.id]?.trim() || '~'),
           provider,
           terminalBacked: capability?.terminalBacked === true,
           allowAllPermissions: true,
@@ -373,6 +377,27 @@ export function createManagerTools(
         return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}. Its task was sent.`
       },
       { actsOnSessions: true }
+    ),
+    define(
+      'set_session_folder',
+      "Change the folder your new sessions start in on a computer, when the user asks you to. The user's choice in App settings → Oracle is where it starts; null returns that computer to its default folder. Existing sessions stay where they are.",
+      z.object({
+        folder: z.string().trim().min(1).max(4096).nullable().describe('Folder on that computer, e.g. ~/src/<project>; null returns to the default.'),
+        computer: computerField.optional(),
+      }),
+      async ({ folder, computer }) => {
+        const target = requireComputer(computer ?? host.defaults().computerId ?? localComputer(host).id)
+        const saved = await host.setSessionFolder(target.id, folder ?? undefined)
+        onActivity({
+          tool: 'set_session_folder',
+          content: saved
+            ? `Now starting sessions on ${target.name} in ${saved}`
+            : `Back to ${target.name}'s default folder for new sessions`,
+        })
+        return saved
+          ? `New sessions on ${target.name} (${target.id}) now start in ${saved}.`
+          : `New sessions on ${target.name} (${target.id}) now start in ${target.name}'s default folder.`
+      },
     ),
     define(
       'send_to_session',

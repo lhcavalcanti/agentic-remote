@@ -391,15 +391,23 @@ Oracle is the session manager agent. Its design is in
 user-facing name is Oracle; routes (`/api/manager`), events (`manager.*`),
 settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 
-- A hub MUST offer Oracle from an **Oracle** button in the conversation header,
-  beside Knowledge, and wherever that header is covered: from the Knowledge
-  header while Knowledge covers the conversation (expanded, or open at all on
-  a phone), from an open document's header on a phone, and from the phone's
-  session list beside **Manage computers**. It MUST NOT float over the conversation, where it would
-  cover **Scroll to latest** or Send. On a phone the button is a 40px icon like
-  Knowledge. It shows a working ring, an unread dot, and every current state
-  in its accessible name, such as "Oracle, working, new reply". It opens a non-modal drawer on a desktop and a full-height
-  sheet on a phone. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
+- A hub MUST offer Oracle from a round 48px bubble at the bottom right of the
+  conversation, above the status line and message bar. **Scroll to latest**
+  shares its dock and stacks above it, so neither MUST ever cover the other or
+  Send. Where the conversation is out of view, a compact Oracle icon stands in:
+  in the Knowledge header while Knowledge covers the conversation (expanded,
+  or open at all on a phone), in an open document's header on a phone, and in
+  the phone's session list beside **Manage computers**. The button shows a
+  working ring, an unread dot, and every current state in its accessible name,
+  such as "Oracle, working, new reply". It opens a non-modal drawer on a
+  desktop, resizable from its left edge by drag or arrow keys (Home or a
+  double-click resets it) and remembered per browser. Widening stops where the
+  conversation would have less than 360px beside the sessions list; the panel
+  is never narrower than 340px, so a window without room for both shows it at
+  340px over more of the conversation. On a phone it is a full-height sheet. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
+- Oracle's message field reads "Ask me anything" and is labelled "Message
+  Oracle". While Oracle is answering, a line above it says that anything sent
+  now waits its turn, and Send becomes **Queue message**.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process
   of its own. Its tools only manage sessions and its own memory, so it MUST NOT
   run commands or edit files; work it accepts becomes a normal session on a
@@ -413,9 +421,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   interrupt, cancel, redirect, prompt,
   or otherwise change any session or its work. The hub refuses every tool that
   would start, message, rename, stop, or close a session for that message, and
-  Oracle's reads never open, resume, or reconcile a session. Oracle's memory is
-  its own and stays writable. The box under Oracle's message bar is remembered
-  per browser; `/oracle <question>` in a session's message bar is a shortcut
+  Oracle's reads never open, resume, or reconcile a session. Oracle's memory and
+  settings are its own and stay writable. Under the message bar, an **Ask |
+  Delegate** switch chooses the mode, remembered per browser; **Delegate** lets
+  Oracle start and steer sessions. `/oracle <question>` in a session's message
+  bar is a shortcut
   that asks the same way and never reaches that session. While Oracle is
   unavailable or still loading, `/oracle` stays in the message bar with the
   reason; a question that cannot be sent waits in Oracle's message bar with
@@ -432,6 +442,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   models, with **Retry** if they cannot be read. A model that cannot start
   falls back to the default and Oracle says so until the choice changes or you
   **Start over**.
+- **App settings → Oracle → Session folders** chooses, per computer, where
+  Oracle starts new sessions; each folder is checked on its computer before it
+  is kept on the hub. Oracle keeps them as its own settings and changes one
+  when you ask it to, which App settings then shows. A session's task can
+  still name another folder, and a computer without one uses your default
+  session folder, else its home directory.
 - Every turn MUST start with a context block the hub generates: computers, open
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.
@@ -439,7 +455,7 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Sending MUST NOT be refused because Oracle is busy, recovering, or offline.
   Messages wait in a durable first-in, first-out queue and are answered one at
   a time. Waiting messages are shown above the message bar, numbered in the
-  order they will be answered and marked **Ask only** where chosen; each can
+  order they will be answered and marked **Ask** where chosen; each can
   be removed before Oracle starts on it. The queue is kept on the hub, so it
   survives a reload, a reconnect, and a hub restart, and a snapshot lists every
   waiting message however long the transcript. Only a blank message or

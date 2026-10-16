@@ -2333,23 +2333,30 @@ button {
   overflow-x: auto;
 }
 
-.timeline-follow {
-  position: sticky;
-  bottom: 4px;
-  z-index: 2;
+/* Over the bottom right of the timeline: Scroll to latest above Oracle's
+   bubble, laid out together so neither can cover the other. */
+.timeline-dock {
+  grid-area: timeline;
+  z-index: 3;
   display: flex;
-  justify-content: flex-end;
-  height: 0;
+  align-self: end;
+  justify-self: end;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin: 0 max(16px, env(safe-area-inset-right)) 14px 0;
   pointer-events: none;
 }
 
-.timeline-follow__button {
+.timeline-dock > * {
   pointer-events: auto;
+}
+
+.timeline-follow__button {
   display: grid;
   place-items: center;
   width: 38px;
   height: 38px;
-  transform: translateY(-100%);
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--panel-raised);
@@ -7126,7 +7133,96 @@ button {
   opacity: 0.6;
 }
 
-/* Oracle, the session manager agent: a header button and the panel it opens. */
+/* Oracle, the session manager agent: a bubble, and the panel it opens. */
+.oracle-toggle.oracle-bubble {
+  position: relative;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-popover);
+  color: var(--accent);
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.oracle-toggle.oracle-bubble:hover,
+.oracle-toggle.oracle-bubble.icon-button--active {
+  border-color: var(--accent);
+}
+
+.oracle-toggle.oracle-bubble:active {
+  transform: scale(0.96);
+}
+
+.oracle-toggle.oracle-bubble:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.oracle-toggle.oracle-bubble.oracle-toggle--offline {
+  border-color: var(--warning);
+}
+
+/* The bubble's ring circles the whole bubble rather than its mark. */
+.oracle-bubble.oracle-toggle--working::after {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  content: '';
+  animation: activity-spin 1.6s linear infinite;
+}
+
+.oracle-bubble.oracle-toggle--working .oracle-toggle__mark::after {
+  content: none;
+}
+
+.oracle-bubble .oracle-toggle__unread {
+  border-color: var(--panel-raised);
+}
+
+.oracle-resizer {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.oracle-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  content: '';
+  transition: background 120ms ease-out;
+}
+
+.oracle-resizer:hover::after,
+.oracle-resizer:focus-visible::after,
+.oracle-resizer[data-resizing='true']::after {
+  background: var(--accent, var(--border-strong));
+}
+
+.oracle-resizer:focus-visible {
+  outline: none;
+}
+
+.manager-panel[data-resizing='true'] {
+  user-select: none;
+}
+
 .manager-panel__mark--working::after,
 .oracle-toggle--working .oracle-toggle__mark::after {
   position: absolute;
@@ -7174,7 +7270,7 @@ button {
   bottom: 0;
   z-index: 25;
   display: flex;
-  width: min(440px, 100vw);
+  width: min(var(--oracle-width, 440px), 100vw);
   flex-direction: column;
   border-left: 1px solid var(--border);
   background: var(--bg);
@@ -7632,25 +7728,60 @@ button {
   margin-top: 6px;
 }
 
-.oracle-only {
+.manager-composer__status {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oracle-mode-field {
   display: inline-flex;
-  min-height: 32px;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  color: var(--muted-strong);
-  font-size: 12.5px;
+  gap: 4px 8px;
+}
+
+/* Two modes side by side, like a document's Preview and Source. */
+.oracle-mode {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+
+.oracle-mode button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
 
-.oracle-only input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--accent);
+.oracle-mode button[aria-pressed='true'] {
+  background: var(--panel-soft);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+  color: var(--text);
 }
 
-.oracle-only__hint {
+.oracle-mode button:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: 2px;
+}
+
+.oracle-mode__hint {
   color: var(--muted);
+  font-size: 12px;
+}
+
+.oracle-settings__folders h4 {
+  margin: 16px 0 4px;
+  font-size: 13px;
 }
 
 .oracle-runtime {
@@ -7700,6 +7831,14 @@ button {
 }
 
 @media (max-width: 960px) {
+  .oracle-resizer {
+    display: none;
+  }
+
+  .oracle-mode button {
+    min-height: 36px;
+  }
+
   .manager-panel {
     top: var(--visual-viewport-top, 0px);
     bottom: auto;

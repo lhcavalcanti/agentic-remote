@@ -124,6 +124,21 @@ describe('manager routes', () => {
       method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { reasoningEffort: 'extreme' },
     })
     expect(invalid.statusCode).toBe(400)
+    const badFolders = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: 42 } },
+    })
+    expect(badFolders.statusCode).toBe(400)
+    const blankFolder = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: '  ' } },
+    })
+    expect(blankFolder.statusCode).toBe(400)
+    const update = vi.spyOn(managerAgent!, 'updateSettings').mockResolvedValueOnce({ sessionFolders: { hub: '/home/me/src' } })
+    const folders = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: '~/src', node: null } },
+    })
+    expect(folders.statusCode).toBe(200)
+    expect(update).toHaveBeenLastCalledWith({ sessionFolders: { hub: '~/src', node: null } })
+    expect(folders.json().settings).toEqual({ sessionFolders: { hub: '/home/me/src' } })
     const reset = await app.inject({ method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { model: null } })
     expect(reset.json().settings.model).toBeUndefined()
 

@@ -1848,12 +1848,14 @@ describe('App', () => {
     render(<App />)
     const row = await screen.findByRole('button', { name: /Project chat, started by Oracle/ })
     expect(within(row).getByText('Oracle')).toBeInTheDocument()
-    const header = document.querySelector<HTMLElement>('.conversation-header')!
-    const oracle = await within(header).findByRole('button', { name: 'Oracle' })
-    // Beside Knowledge in the conversation header, never floating over the
-    // conversation where the Scroll to latest button sits.
-    expect(document.querySelector('.manager-bubble')).toBeNull()
-    // The phone session list covers that header, so it offers Oracle too;
+    // A bubble at the bottom right of the conversation, not in its header,
+    // sharing a dock with Scroll to latest so neither covers the other.
+    const dock = document.querySelector<HTMLElement>('.timeline-dock')!
+    const oracle = await within(dock).findByRole('button', { name: 'Oracle' })
+    expect(oracle).toHaveClass('oracle-bubble')
+    expect(within(document.querySelector<HTMLElement>('.conversation-header')!)
+      .queryByRole('button', { name: /^Oracle/ })).toBeNull()
+    // The phone session list covers the conversation, so it offers Oracle too;
     // CSS shows that copy only on a phone.
     const sidebarOracle = within(document.querySelector<HTMLElement>('.sidebar-settings')!)
       .getByRole('button', { name: 'Oracle' })
@@ -1877,7 +1879,7 @@ describe('App', () => {
       } as MessageEvent)
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(within(header).getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
+    expect(within(dock).getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /Project chat, started by Oracle/ })).not.toBeInTheDocument())
   })
@@ -1890,7 +1892,7 @@ describe('App', () => {
       id: 'o1', role: 'user', content: 'Which sessions finished?', createdAt: 't', state: 'queued', answerOnly: true,
     })
     render(<App />)
-    await within(document.querySelector<HTMLElement>('.conversation-header')!).findByRole('button', { name: 'Oracle' })
+    await within(document.querySelector<HTMLElement>('.timeline-dock')!).findByRole('button', { name: 'Oracle' })
     fireEvent.change(await screen.findByLabelText('Message'), { target: { value: '/oracle Which sessions finished?' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(
@@ -10500,8 +10502,12 @@ describe('App', () => {
   })
 
   it('offers a way back to the latest only once the reader has left it', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
     render(<App />)
     await screen.findAllByText('Project chat')
+    await within(document.querySelector<HTMLElement>('.timeline-dock')!).findByRole('button', { name: 'Oracle' })
 
     expect(
       screen.queryByRole('button', { name: 'Scroll to latest' }),
@@ -10516,6 +10522,11 @@ describe('App', () => {
     fireEvent.scroll(timeline)
 
     const jump = await screen.findByRole('button', { name: 'Scroll to latest' })
+    // Stacked above Oracle's bubble in the same dock, never under it.
+    const dock = document.querySelector<HTMLElement>('.timeline-dock')!
+    expect(jump.parentElement).toBe(dock)
+    expect(dock.lastElementChild).toHaveClass('oracle-bubble')
+    expect(jump.compareDocumentPosition(dock.lastElementChild!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
     scrollIntoView.mockClear()
     fireEvent.click(jump)

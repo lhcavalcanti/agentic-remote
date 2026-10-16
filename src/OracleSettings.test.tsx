@@ -92,4 +92,41 @@ describe('OracleSettings', () => {
     render(<OracleSettings models={models} />)
     expect(await screen.findByText(/env-model could not start/)).toBeInTheDocument()
   })
+
+  it('keeps where Oracle starts sessions, per computer, on the hub', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { sessionFolders: { hub: '/home/me/src/oracle' } },
+    })
+    vi.mocked(updateManagerSettings)
+      .mockResolvedValueOnce({ sessionFolders: { hub: '/home/me/src/next' } })
+      .mockResolvedValueOnce({})
+    const computers = [
+      { id: 'hub', name: 'development', isLocal: true, online: true },
+      { id: 'node', name: 'production', isLocal: false, online: true },
+    ]
+    render(
+      <OracleSettings
+        computers={computers}
+        models={models}
+        renderFolderControl={(computer, value, onChange) => (
+          <div data-testid={`folder-${computer.id}`}>
+            <span>{value ?? 'default'}</span>
+            <button onClick={() => onChange('/home/me/src/next')} type="button">Choose for {computer.name}</button>
+            <button onClick={() => onChange()} type="button">Clear for {computer.name}</button>
+          </div>
+        )}
+      />,
+    )
+    expect(await screen.findByRole('heading', { name: 'Session folders' })).toBeInTheDocument()
+    expect(screen.getByTestId('folder-hub')).toHaveTextContent('/home/me/src/oracle')
+    expect(screen.getByTestId('folder-node')).toHaveTextContent('default')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose for development' }))
+    await waitFor(() => expect(updateManagerSettings).toHaveBeenCalledWith({ sessionFolders: { hub: '/home/me/src/next' } }))
+    expect(await screen.findByText('Saved. Oracle starts new sessions there.')).toBeInTheDocument()
+    expect(screen.getByTestId('folder-hub')).toHaveTextContent('/home/me/src/next')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear for development' }))
+    await waitFor(() => expect(updateManagerSettings).toHaveBeenLastCalledWith({ sessionFolders: { hub: null } }))
+    await waitFor(() => expect(screen.getByTestId('folder-hub')).toHaveTextContent('default'))
+  })
 })

@@ -6489,6 +6489,8 @@ function App() {
     }
   }, [])
   const [oracleOpen, setOracleOpen] = useState(false)
+  // The open Oracle panel's width; the timeline dock moves beside it.
+  const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
     available: false,
     status: 'idle',
@@ -14871,8 +14873,15 @@ function App() {
         </div>
         {/* Over the timeline's bottom right, outside its scroll, so Oracle's
             bubble stays in the corner however short the conversation, and
-            Scroll to latest stacks above it instead of underneath. */}
-        <div className="timeline-dock">
+            Scroll to latest stacks above it instead of underneath. While
+            Oracle's panel covers that corner, the dock sits just left of it. */}
+        <div
+          className="timeline-dock"
+          data-oracle-open={oraclePanelWidth === undefined ? undefined : ''}
+          style={oraclePanelWidth === undefined
+            ? undefined
+            : { '--oracle-panel-width': `${oraclePanelWidth}px` } as CSSProperties}
+        >
           {selected && !followingLatest ? (
             <button
               aria-label="Scroll to latest"
@@ -15898,6 +15907,7 @@ function App() {
         onOpenChange={setOracleOpen}
         onOpenSession={openManagedSession}
         onOpenSettings={() => setSettingsOpen(true)}
+        onWidthChange={setOraclePanelWidth}
         open={oracleOpen}
         reservedLeft={sidebarWidth}
         openSessions={sessions.filter((session) => session.isOpen !== false).length}

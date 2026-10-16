@@ -10527,6 +10527,17 @@ describe('App', () => {
     expect(jump.parentElement).toBe(dock)
     expect(dock.lastElementChild).toHaveClass('oracle-bubble')
     expect(jump.compareDocumentPosition(dock.lastElementChild!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // With Oracle's panel open over the right of the conversation, the dock
+    // moves to just left of it, so Scroll to latest stays in reach.
+    expect(dock).not.toHaveAttribute('data-oracle-open')
+    fireEvent.click(within(dock).getByRole('button', { name: 'Oracle' }))
+    const panel = await screen.findByRole('dialog', { name: 'Oracle' })
+    expect(dock).toHaveAttribute('data-oracle-open')
+    expect(dock.style.getPropertyValue('--oracle-panel-width')).toMatch(/^\d+px$/)
+    expect(dock.style.getPropertyValue('--oracle-panel-width')).toBe(panel.style.getPropertyValue('--oracle-width'))
+    expect(within(dock).getByRole('button', { name: 'Scroll to latest' })).toBe(jump)
+    fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+    expect(dock).not.toHaveAttribute('data-oracle-open')
     const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
     scrollIntoView.mockClear()
     fireEvent.click(jump)

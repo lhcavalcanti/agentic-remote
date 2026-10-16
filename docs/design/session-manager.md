@@ -167,6 +167,11 @@ end the turn.
   conversation (expanded, or open on a phone), an open document's header on a
   phone, and the phone's session list. The bubble shows an activity ring while
   Oracle works and a dot for replies you have not read.
+- While the desktop panel is open, the dock sits 16px left of the panel's
+  edge: the panel reports its width (`onWidthChange`), the dock gets
+  `data-oracle-open` and `--oracle-panel-width`, and CSS subtracts a docked
+  Knowledge panel's `--knowledge-width`, never pushing the dock out of the
+  conversation. A phone's full-screen sheet moves nothing.
 - Waiting messages sit above the message bar, numbered in answer order, each
   editable in place (Save, Cancel; Ctrl+Enter, Esc) or removable until Oracle
   starts on it. An edit Oracle overtakes goes back to the message bar.

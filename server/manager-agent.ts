@@ -28,6 +28,7 @@ import {
   buildTurnContext,
   managerPrompt,
   MANAGER_SYSTEM_PROMPT,
+  MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT,
   recoveryBrief,
 } from './manager-context.js'
 import type { JournalRecorder } from './manager-journal.js'
@@ -1409,7 +1410,13 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       ...(reasoningEffort ? { reasoningEffort } : {}),
       streaming: true,
       workingDirectory: `${this.store.directory}/workspace`,
-      systemMessage: { mode: 'append', content: MANAGER_SYSTEM_PROMPT },
+      systemMessage: {
+        mode: 'append',
+        content: this.structuredMemory?.mode === 'off' ||
+            !this.structuredMemory
+          ? MANAGER_SYSTEM_PROMPT
+          : `${MANAGER_SYSTEM_PROMPT}\n\n${MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT}`,
+      },
       tools: this.tools,
       availableTools: this.tools.map((tool) => tool.name),
       enableSkills: false,

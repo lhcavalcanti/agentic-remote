@@ -438,6 +438,10 @@ badges **Oracle**.
   somewhere else and it updates its folder.
 - On a desktop, drag the panel's left edge to resize it.
 - Its notes are in `~/.agentic-remote/manager/memory/`.
+- Optional structured memory is stored beside those notes in
+  `~/.agentic-remote/manager/structured-memory.json`. Back up the complete
+  `~/.agentic-remote/manager/` directory; release rollback does not rewind
+  application data.
 
 `setup` keeps these hub settings across updates (the names predate "Oracle"):
 
@@ -446,6 +450,12 @@ badges **Oracle**.
 | `AGENTIC_REMOTE_MANAGER=off` | Turns Oracle off on this hub |
 | `AGENTIC_REMOTE_MANAGER_MODEL` | Oracle's default model until one is chosen in App settings; Copilot's default when unset or unavailable |
 | `AGENTIC_REMOTE_MANAGER_REASONING_EFFORT` | Effort for that default: `low`, `medium`, `high`, `xhigh`, or `max` |
+| `AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY` | Durable typed memory: `off` (default, unchanged Oracle), `shadow` (local retrieval metrics only), or `on` (bounded prompt context) |
+
+Structured memory accepts explicit remember, correct, forget, search,
+export, and empty-store import operations. It rejects credentials, sensitive
+paths, unsupported personal data, and malformed or oversized records before
+writing. `off` leaves any existing structured-memory files untouched.
 
 ## Documentation
 

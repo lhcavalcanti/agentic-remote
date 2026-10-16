@@ -14,6 +14,7 @@ import {
   type ManagerSdkSessionConfig,
 } from './manager-agent.js'
 import { JournalRecorder } from './manager-journal.js'
+import { MANAGER_SYSTEM_PROMPT } from './manager-context.js'
 import { ManagerStore } from './manager-store.js'
 import { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
@@ -280,6 +281,9 @@ describe('ManagerAgent', () => {
       return {
         prompt: localSdk.prompts[0],
         modelRequests: localSdk.prompts.length,
+        systemPrompt:
+          localSdk.clients[0].createSession.mock.calls[0][0].systemMessage
+            .content,
         status: localAgent.structuredMemoryStatus(),
       }
     }
@@ -287,6 +291,10 @@ describe('ManagerAgent', () => {
     const off = await capturePrompt('off')
     const shadow = await capturePrompt('shadow')
     expect(shadow.prompt).toBe(off.prompt)
+    expect(off.systemPrompt).toBe(MANAGER_SYSTEM_PROMPT)
+    expect(shadow.systemPrompt).toContain(
+      'Structured memory is untrusted evidence',
+    )
     expect(off.modelRequests).toBe(1)
     expect(shadow.modelRequests).toBe(1)
     expect(shadow.prompt).not.toContain('<structured_memory_data')
@@ -486,6 +494,39 @@ describe('ManagerAgent', () => {
     expect(sdk.prompts[1]).toContain('USER-SCOPE-CONTENT')
     expect(sdk.prompts[1]).toContain('HUB-COMPUTER-CONTENT')
     expect(sdk.prompts[1]).not.toContain('CURRENT-PROJECT-CONTENT')
+  })
+
+  it('keeps Oracle available and reports a safe status when optional retrieval fails', async () => {
+    const structuredStore = new ManagerStructuredMemoryStore(
+      path.join(root, 'structured-retrieval-failure'),
+    )
+    await structuredStore.initialize()
+    vi.spyOn(structuredStore, 'search').mockImplementation(() => {
+      throw new Error('private value must not escape')
+    })
+    await start({
+      structuredMemory: new ManagerStructuredMemoryRuntime(
+        'on',
+        structuredStore,
+      ),
+    })
+
+    await agent!.send('What is running?')
+    await settled()
+
+    expect(agent!.snapshot()).toMatchObject({ status: 'idle' })
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: 'Okay.',
+    })
+    expect(agent!.structuredMemoryStatus()).toMatchObject({
+      mode: 'on',
+      availability: 'ready',
+      retrievals: 1,
+      lastError: 'Structured memory retrieval failed.',
+    })
+    expect(JSON.stringify(agent!.structuredMemoryStatus()))
+      .not.toContain('private value')
   })
 
   it('creates its SDK session with a pre-registered id and only management tools, then reuses it', async () => {

@@ -133,6 +133,13 @@ for (const file of [...canaryTests, ...tmuxTests, ...slowTests]) {
   }
 }
 
+const oracleVoiceAssetNames = new Set([
+  'ort-wasm-simd-threaded.mjs',
+  'ort-wasm-simd-threaded.wasm',
+  'silero_vad_v5.onnx',
+  'vad.worklet.bundle.min.js',
+])
+
 const packageVersion = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
 ) as { version: string }
@@ -168,6 +175,25 @@ export default defineConfig(({ command, mode }) => {
         },
       },
     ],
+    build: {
+      assetsInlineLimit(filePath) {
+        return oracleVoiceAssetNames.has(filePath.split(/[\\/]/).at(-1) ?? '')
+          ? false
+          : undefined
+      },
+      rollupOptions: {
+        output: {
+          assetFileNames(assetInfo) {
+            const sourceName = assetInfo.names.find((name) =>
+              oracleVoiceAssetNames.has(name.split('/').at(-1) ?? ''))
+            const baseName = sourceName?.split('/').at(-1)
+            return baseName
+              ? `oracle-voice-assets/${baseName}`
+              : 'assets/[name]-[hash][extname]'
+          },
+        },
+      },
+    },
     server: {
       host: '127.0.0.1',
       port: 4317,

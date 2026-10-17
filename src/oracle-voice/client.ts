@@ -22,6 +22,11 @@ import {
 
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000] as const
 const OPEN = 1
+const CLIENT_NORMAL_CLOSE_CODE = 1000
+const CLIENT_FATAL_CLOSE_CODE = 4000
+const HELLO_TIMEOUT_MS = 10_000
+const MAX_CLOSE_REASON_BYTES = 123
+const UTF8_ENCODER = new TextEncoder()
 
 export type OracleVoiceUiState =
   | 'off'
@@ -130,6 +135,10 @@ interface VoiceTicketResponse {
   expiresAt: string
 }
 
+interface PendingHello {
+  cancel(): void
+}
+
 export class OracleVoiceClient {
   private readonly language: string
   private readonly defaults: ManagerClientDefaults
@@ -144,6 +153,7 @@ export class OracleVoiceClient {
   private connectionEpoch = 0
   private reconnectAttempt = 0
   private reconnectTimer: ReturnType<typeof globalThis.setTimeout> | undefined
+  private pendingHello: PendingHello | undefined
   private startPromise: Promise<void> | undefined
   private socket: OracleVoiceSocket | undefined
   private streamId: string | undefined
@@ -206,7 +216,9 @@ export class OracleVoiceClient {
       .catch(async (error: unknown) => {
         const failure = clientError(error)
         const ownsConnection = epoch === this.connectionEpoch
-        if (ownsConnection) await this.teardownConnection()
+        if (ownsConnection) {
+          await this.teardownConnection(CLIENT_FATAL_CLOSE_CODE, failure.message)
+        }
         if (
           this.manuallyStopped
           || !ownsConnection
@@ -231,6 +243,7 @@ export class OracleVoiceClient {
     this.terminalFailure = false
     this.connectionEpoch += 1
     this.cancelReconnect()
+    this.cancelHelloWait()
     const socket = this.socket
     const streamId = this.streamId
     if (socket && streamId && socket.readyState === OPEN) {
@@ -246,11 +259,10 @@ export class OracleVoiceClient {
         // Closing the local resources is authoritative even if the peer vanished.
       }
     }
-    this.detachSocket(socket)
-    if (socket && socket.readyState !== socket.CLOSED) {
-      socket.close(1000, 'Conversation stopped')
-    }
-    await this.teardownMedia()
+    await this.teardownConnection(
+      CLIENT_NORMAL_CLOSE_CODE,
+      'Conversation stopped',
+    )
     this.capabilities = undefined
     this.streamId = undefined
     this.setState('off')
@@ -272,14 +284,7 @@ export class OracleVoiceClient {
     socket.binaryType = 'arraybuffer'
     this.socket = socket
     this.capabilities = capabilities
-    let hello: Extract<VoiceServerControl, { type: 'hello' }>
-    try {
-      hello = await this.waitForHello(socket, epoch)
-    } catch (error) {
-      this.detachSocket(socket)
-      if (socket.readyState !== socket.CLOSED) socket.close(1002, 'Invalid voice hello')
-      throw error
-    }
+    const hello = await this.waitForHello(socket, epoch)
     this.requireEpoch(epoch)
     this.streamId = hello.streamId
     this.capabilities = hello.capabilities
@@ -303,7 +308,7 @@ export class OracleVoiceClient {
       onSpeechConfirmed: (generation) => this.handleConfirmedSpeech(generation),
       onVadMisfire: () => this.handleVadMisfire(),
       onError: (error) => {
-        void this.failFatal(captureClientError(error), 1011)
+        void this.failFatal(captureClientError(error))
       },
     })
     this.capture = capture
@@ -320,12 +325,47 @@ export class OracleVoiceClient {
     epoch: number,
   ): Promise<Extract<VoiceServerControl, { type: 'hello' }>> {
     return new Promise((resolve, reject) => {
-      let helloReceived = false
-      const rejectBeforeHello = (error: OracleVoiceClientError) => {
-        if (helloReceived) return
-        helloReceived = true
+      let settled = false
+      let timeout: ReturnType<typeof globalThis.setTimeout> | undefined
+      const cleanup = (pending: PendingHello) => {
+        if (timeout !== undefined) {
+          this.dependencies.clearTimeout(timeout)
+          timeout = undefined
+        }
+        if (this.pendingHello === pending) this.pendingHello = undefined
+      }
+      const pending: PendingHello = {
+        cancel: () => {
+          rejectBeforeHello(new OracleVoiceClientError(
+            'socket-failed',
+            'Oracle voice connection was superseded',
+            { fatal: false },
+          ))
+        },
+      }
+      const resolveHello = (
+        hello: Extract<VoiceServerControl, { type: 'hello' }>,
+      ) => {
+        if (settled) return
+        settled = true
+        cleanup(pending)
+        resolve(hello)
+      }
+      function rejectBeforeHello(error: OracleVoiceClientError) {
+        if (settled) return
+        settled = true
+        cleanup(pending)
         reject(error)
       }
+      this.cancelHelloWait()
+      this.pendingHello = pending
+      timeout = this.dependencies.setTimeout(() => {
+        rejectBeforeHello(new OracleVoiceClientError(
+          'socket-failed',
+          'Oracle voice did not send hello before the connection timed out',
+          { fatal: false },
+        ))
+      }, HELLO_TIMEOUT_MS)
       socket.onerror = () => {
         rejectBeforeHello(new OracleVoiceClientError(
           'socket-failed',
@@ -334,7 +374,7 @@ export class OracleVoiceClient {
         ))
       }
       socket.onclose = (event) => {
-        if (!helloReceived) {
+        if (!settled) {
           rejectBeforeHello(closeError(event))
           return
         }
@@ -342,11 +382,10 @@ export class OracleVoiceClient {
       }
       socket.onmessage = (event) => {
         if (epoch !== this.connectionEpoch || socket !== this.socket) return
-        if (!helloReceived) {
+        if (!settled) {
           try {
             const hello = parseHello(event.data)
-            helloReceived = true
-            resolve(hello)
+            resolveHello(hello)
           } catch (error) {
             rejectBeforeHello(clientError(error))
           }
@@ -412,7 +451,7 @@ export class OracleVoiceClient {
               'playback-failed',
               error instanceof Error ? error.message : String(error),
             )
-      await this.failFatal(failure, failure.code === 'slow-consumer' ? 1013 : 1008)
+      await this.failFatal(failure)
     }
   }
 
@@ -422,7 +461,7 @@ export class OracleVoiceClient {
       await this.failFatal(new OracleVoiceClientError(
         'server-error',
         control.message,
-      ), 1011)
+      ))
       return
     }
     if (control.generation < this.generation) return
@@ -442,7 +481,7 @@ export class OracleVoiceClient {
         this.setState('thinking')
         return
       case 'state':
-        this.applyServerState(control.state)
+        await this.applyServerState(control.state)
         return
       case 'audio_end':
         this.playback?.endSegment(control.generation, control.segmentId)
@@ -512,9 +551,9 @@ export class OracleVoiceClient {
       await this.establish(epoch, playbackReady)
     } catch (error) {
       if (epoch !== this.connectionEpoch) return
-      await this.teardownConnection()
-      if (this.manuallyStopped || this.terminalFailure) return
       const failure = clientError(error)
+      await this.teardownConnection(CLIENT_FATAL_CLOSE_CODE, failure.message)
+      if (this.manuallyStopped || this.terminalFailure) return
       if (failure.code === 'protocol-mismatch' || failure.dictationFallback) {
         this.terminalFailure = true
         this.report(failure)
@@ -540,7 +579,7 @@ export class OracleVoiceClient {
       void this.failFatal(new OracleVoiceClientError(
         'playback-failed',
         error instanceof Error ? error.message : String(error),
-      ), 1011)
+      ))
     }
   }
 
@@ -549,7 +588,7 @@ export class OracleVoiceClient {
       void this.failFatal(new OracleVoiceClientError(
         'protocol-mismatch',
         'Microphone generation did not advance by one',
-      ), 1008)
+      ))
       return
     }
     this.generation = generation
@@ -563,7 +602,7 @@ export class OracleVoiceClient {
       void this.failFatal(new OracleVoiceClientError(
         'playback-failed',
         error instanceof Error ? error.message : String(error),
-      ), 1011)
+      ))
     }
   }
 
@@ -581,13 +620,13 @@ export class OracleVoiceClient {
       void this.failFatal(new OracleVoiceClientError(
         'playback-failed',
         error instanceof Error ? error.message : String(error),
-      ), 1011)
+      ))
     }
   }
 
-  private applyServerState(
+  private async applyServerState(
     state: Extract<VoiceServerControl, { type: 'state' }>['state'],
-  ): void {
+  ): Promise<void> {
     switch (state) {
       case 'ready':
       case 'listening':
@@ -604,8 +643,22 @@ export class OracleVoiceClient {
         this.setState('speaking')
         return
       case 'stopped':
-        this.setState('off')
+        await this.handleServerStopped()
     }
+  }
+
+  private async handleServerStopped(): Promise<void> {
+    this.manuallyStopped = true
+    this.terminalFailure = false
+    this.connectionEpoch += 1
+    this.cancelReconnect()
+    this.cancelHelloWait()
+    await this.teardownConnection(
+      CLIENT_NORMAL_CLOSE_CODE,
+      'Voice stream stopped',
+    )
+    this.capabilities = undefined
+    this.setState('off')
   }
 
   private sendControl(control: VoiceClientControl): void {
@@ -652,7 +705,7 @@ export class OracleVoiceClient {
         'slow-producer',
         'Microphone audio could not be sent fast enough',
       )
-      void this.failFatal(failure, 1013)
+      void this.failFatal(failure)
       throw failure
     }
     socket.send(payload)
@@ -674,19 +727,15 @@ export class OracleVoiceClient {
 
   private async failFatal(
     error: OracleVoiceClientError,
-    closeCode: number,
   ): Promise<void> {
     if (this.terminalFailure) return
     this.terminalFailure = true
     this.cancelReconnect()
     this.report(error)
     this.setState('error')
-    const socket = this.socket
-    this.detachSocket(socket)
-    if (socket && socket.readyState !== socket.CLOSED) {
-      socket.close(closeCode, closeReason(error.message))
-    }
-    await this.teardownMedia()
+    this.cancelHelloWait()
+    await this.teardownConnection(CLIENT_FATAL_CLOSE_CODE, error.message)
+    this.capabilities = undefined
   }
 
   private async fetchCapabilities(): Promise<VoiceCapabilities> {
@@ -743,13 +792,24 @@ export class OracleVoiceClient {
     return url.toString()
   }
 
-  private async teardownConnection(): Promise<void> {
+  private async teardownConnection(
+    closeCode = CLIENT_NORMAL_CLOSE_CODE,
+    reason = 'Voice connection reset',
+  ): Promise<void> {
     const socket = this.socket
+    this.cancelHelloWait()
     this.detachSocket(socket)
-    if (socket && socket.readyState !== socket.CLOSED) {
-      socket.close(1000, 'Voice connection reset')
+    try {
+      await this.teardownMedia()
+    } finally {
+      if (socket && socket.readyState !== socket.CLOSED) {
+        try {
+          socket.close(closeCode, closeReason(reason))
+        } catch {
+          // Local media teardown remains authoritative if the browser rejects close().
+        }
+      }
     }
-    await this.teardownMedia()
   }
 
   private async teardownMedia(): Promise<void> {
@@ -781,6 +841,13 @@ export class OracleVoiceClient {
     if (this.reconnectTimer === undefined) return
     this.dependencies.clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
+  }
+
+  private cancelHelloWait(): void {
+    const pending = this.pendingHello
+    if (!pending) return
+    this.pendingHello = undefined
+    pending.cancel()
   }
 
   private advanceGeneration(): void {
@@ -943,5 +1010,13 @@ function responseMessage(payload: unknown, fallback: string): string {
 }
 
 function closeReason(message: string): string {
-  return message.slice(0, 123)
+  let reason = ''
+  let byteLength = 0
+  for (const character of message) {
+    const characterBytes = UTF8_ENCODER.encode(character).byteLength
+    if (byteLength + characterBytes > MAX_CLOSE_REASON_BYTES) break
+    reason += character
+    byteLength += characterBytes
+  }
+  return reason
 }

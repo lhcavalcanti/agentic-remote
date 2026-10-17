@@ -150,7 +150,8 @@ describe('OracleVoiceClient', () => {
 
     await expect(starting).rejects.toMatchObject({ code: 'protocol-mismatch' })
     expect(client.captures).toEqual([])
-    expect(client.sockets[0].closedWith).toMatchObject({ code: 1002 })
+    expect(isBrowserClientCloseCode(client.sockets[0].closedWith?.code)).toBe(true)
+    expect(client.playbacks[0].close).toHaveBeenCalledOnce()
     expect(client.instance.currentState).toBe('error')
   })
 
@@ -235,6 +236,47 @@ describe('OracleVoiceClient', () => {
     expect(client.playbacks[1].close).not.toHaveBeenCalled()
   })
 
+  it('settles a hello wait on stop and permits a clean restart', async () => {
+    const client = harness()
+    const firstStart = client.instance.start()
+    const firstSettled = vi.fn()
+    void firstStart.then(firstSettled, firstSettled)
+    await vi.waitFor(() => expect(client.sockets).toHaveLength(1))
+    client.sockets[0].open()
+
+    await client.instance.stop()
+    await vi.waitFor(() => expect(firstSettled).toHaveBeenCalledOnce(), {
+      timeout: 100,
+    })
+
+    const secondStart = client.instance.start()
+    await vi.waitFor(() => expect(client.sockets).toHaveLength(2))
+    client.sockets[1].open()
+    client.sockets[1].message(hello('stream-2'))
+    await secondStart
+
+    expect(client.instance.currentState).toBe('listening')
+    expect(client.errors()).toEqual([])
+    expect(client.playbacks[0].close).toHaveBeenCalledOnce()
+    expect(client.playbacks[1].close).not.toHaveBeenCalled()
+  })
+
+  it('bounds the wait for the server hello', async () => {
+    const client = harness()
+    const starting = client.instance.start()
+    await vi.waitFor(() => expect(client.sockets).toHaveLength(1))
+    client.sockets[0].open()
+
+    expect(client.scheduler.pending()).toBe(1)
+    expect(await client.scheduler.runNext()).toBe(true)
+    await expect(starting).rejects.toMatchObject({
+      code: 'socket-failed',
+      message: expect.stringContaining('hello'),
+    })
+    expect(client.playbacks[0].close).toHaveBeenCalledOnce()
+    expect(client.instance.currentState).toBe('error')
+  })
+
   it('emits current final transcripts and rejects stale audio and controls', async () => {
     const client = harness()
     await client.connect('stream-1')
@@ -288,22 +330,50 @@ describe('OracleVoiceClient', () => {
     expect(client.playbacks[0].close).toHaveBeenCalledOnce()
   })
 
-  it('stops immediately on an explicit fatal server error', async () => {
+  it('treats server stopped as terminal cleanup without a later close error', async () => {
     const client = harness()
     await client.connect('stream-1')
 
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'stopped',
+    }))
+
+    await vi.waitFor(() => expect(client.captures[0].stop).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(
+      isBrowserClientCloseCode(client.sockets[0].closedWith?.code),
+    ).toBe(true))
+    client.sockets[0].serverClose(1000, 'Voice stream stopped')
+    expect(client.playbacks[0].close).toHaveBeenCalledOnce()
+    expect(client.instance.currentState).toBe('off')
+    expect(client.errors()).toEqual([])
+    expect(client.scheduler.pending()).toBe(0)
+  })
+
+  it('tears down a fatal error before closing with a UTF-8-safe browser code', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    const message = `Voice engine stopped: ${'💥'.repeat(40)}`
+
     client.sockets[0].message(control('error', 'stream-1', 0, {
       code: 'voice_engine_failed',
-      message: 'Voice engine stopped',
+      message,
       fatal: true,
     }))
 
     await vi.waitFor(() => expect(client.instance.currentState).toBe('error'))
     expect(client.errors()).toContainEqual(expect.objectContaining({
       code: 'server-error',
-      message: 'Voice engine stopped',
+      message,
     }))
-    expect(client.sockets[0].closedWith).toMatchObject({ code: 1011 })
+    expect(client.captures[0].stop).toHaveBeenCalledOnce()
+    expect(client.playbacks[0].close).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(
+      isBrowserClientCloseCode(client.sockets[0].closedWith?.code),
+    ).toBe(true))
+    expect(new TextEncoder().encode(
+      client.sockets[0].closedWith?.reason,
+    ).byteLength).toBeLessThanOrEqual(123)
+    expect(message.startsWith(client.sockets[0].closedWith?.reason ?? '')).toBe(true)
     expect(client.scheduler.pending()).toBe(0)
   })
 })
@@ -410,7 +480,7 @@ function harness({
     requestPaths: () => requests,
     ticketRequests: () => requests.filter((request) =>
       request === 'POST /api/oracle-voice/tickets').length,
-    scheduledDelays: () => scheduler.delays,
+    scheduledDelays: () => scheduler.scheduledDelays(),
     releaseCapabilities,
     releaseCapture,
     startControls: (socketIndex: number) => sockets[socketIndex].jsonMessages()
@@ -528,6 +598,12 @@ class FakeSocket implements OracleVoiceSocket {
 
   close(code?: number, reason?: string): void {
     if (this.readyState === this.CLOSED) return
+    if (code !== undefined && !isBrowserClientCloseCode(code)) {
+      throw new DOMException('Invalid WebSocket close code', 'InvalidAccessError')
+    }
+    if (new TextEncoder().encode(reason ?? '').byteLength > 123) {
+      throw new DOMException('WebSocket close reason is too long', 'SyntaxError')
+    }
     this.closedWith = { code, reason }
     this.serverClose(code ?? 1000, reason ?? '')
   }
@@ -562,15 +638,15 @@ class FakeSocket implements OracleVoiceSocket {
 }
 
 class FakeScheduler {
-  readonly delays: number[] = []
+  private readonly elapsedDelays: number[] = []
   private timers: Array<{
     callback: () => void
+    delay: number
     cancelled: boolean
   }> = []
 
   readonly setTimeout = (callback: () => void, delay: number) => {
-    this.delays.push(delay)
-    const timer = { callback, cancelled: false }
+    const timer = { callback, delay, cancelled: false }
     this.timers.push(timer)
     return timer as unknown as ReturnType<typeof setTimeout>
   }
@@ -584,12 +660,25 @@ class FakeScheduler {
     return this.timers.filter((timer) => !timer.cancelled).length
   }
 
+  scheduledDelays(): number[] {
+    return [
+      ...this.elapsedDelays,
+      ...this.timers
+        .filter((timer) => !timer.cancelled)
+        .map((timer) => timer.delay),
+    ]
+  }
+
   async runNext(): Promise<boolean> {
-    const timer = this.timers.shift()
-    if (!timer || timer.cancelled) return false
-    timer.callback()
-    await Promise.resolve()
-    return true
+    while (this.timers.length > 0) {
+      const timer = this.timers.shift()!
+      if (timer.cancelled) continue
+      this.elapsedDelays.push(timer.delay)
+      timer.callback()
+      await Promise.resolve()
+      return true
+    }
+    return false
   }
 }
 
@@ -665,4 +754,14 @@ function jsonResponse(payload: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function isBrowserClientCloseCode(code: number | undefined): code is number {
+  return code === 1000
+    || (
+      Number.isInteger(code)
+      && code !== undefined
+      && code >= 3000
+      && code <= 4999
+    )
 }

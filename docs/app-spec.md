@@ -1487,7 +1487,7 @@ Every material release SHOULD preserve:
 | Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
 | Session-actions disclosure | `src/SessionActions.tsx` |
 | Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
-| Oracle (session manager agent) | `src/ManagerAssistant.tsx`, `src/OracleSettings.tsx`, `server/manager-*.ts`, `shared/manager.ts` |
+| Oracle (session manager agent) | `src/ManagerAssistant.tsx`, `src/OracleSettings.tsx`, `src/use-oracle-settings.ts`, `server/manager-*.ts`, `shared/manager.ts` |
 | Browser API client | `src/api.ts` |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |

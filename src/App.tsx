@@ -3580,7 +3580,7 @@ function ShortcutEditor({
  * dialog when the element cannot reach the top, such as the last group,
  * which moved the dialog off screen and left the app scrolled behind it.
  */
-function scrollSettingsTo(id: string) {
+function scrollSettingsTo(id: string, { focus = false } = {}) {
   const target = document.getElementById(id)
   const container = target?.closest<HTMLElement>('.app-settings-dialog')
   if (!target || !container) return
@@ -3594,7 +3594,15 @@ function scrollSettingsTo(id: string) {
   ))
   if (typeof container.scrollTo === 'function') container.scrollTo({ top })
   else container.scrollTop = top
+  // Moving the focus too takes keyboard and screen reader users there, not
+  // just the eye; Tab carries on from the heading into that part.
+  if (focus) {
+    target.querySelector<HTMLElement>(':scope > h3, :scope > h4')?.focus({ preventScroll: true })
+  }
 }
+
+/** Anything that shows you have taken over scrolling App settings yourself. */
+const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
 
 /** App settings' groups, in order, for its jump bar. */
 const settingsGroups = [
@@ -3861,11 +3869,34 @@ function AppSettingsDialog({
   ])
 
   // Opened from somewhere in particular, such as Oracle's model, it starts
-  // there; otherwise at the top.
+  // there; otherwise at the top. The catalogs above it load afterwards and,
+  // stacked on a phone, would push it away, so it stays with that part as
+  // the settings grow until you scroll, tap or type yourself.
   useEffect(() => {
     if (!open || !initialSection) return
-    const frame = window.requestAnimationFrame(() => scrollSettingsTo(initialSection))
-    return () => window.cancelAnimationFrame(frame)
+    const section = initialSection
+    let observer: ResizeObserver | undefined
+    let dialog: HTMLElement | null | undefined
+    const stopFollowing = () => {
+      observer?.disconnect()
+      observer = undefined
+    }
+    const frame = window.requestAnimationFrame(() => {
+      scrollSettingsTo(section, { focus: true })
+      dialog = document.getElementById(section)?.closest<HTMLElement>('.app-settings-dialog')
+      const sections = dialog?.querySelector('.app-settings-dialog__sections')
+      if (!dialog || !sections || typeof ResizeObserver === 'undefined') return
+      for (const type of settingsTakeoverEvents) {
+        dialog.addEventListener(type, stopFollowing, { passive: true })
+      }
+      observer = new ResizeObserver(() => scrollSettingsTo(section))
+      observer.observe(sections)
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      stopFollowing()
+      for (const type of settingsTakeoverEvents) dialog?.removeEventListener(type, stopFollowing)
+    }
   }, [initialSection, open])
 
   if (!open) {
@@ -3953,7 +3984,7 @@ function AppSettingsDialog({
         {settingsGroups.map((group) => (
           <button
             key={group.id}
-            onClick={() => scrollSettingsTo(group.id)}
+            onClick={() => scrollSettingsTo(group.id, { focus: true })}
             type="button"
           >
             {group.label}
@@ -3966,7 +3997,7 @@ function AppSettingsDialog({
         className="app-settings-group"
         id="settings-models"
       >
-        <h3 id="settings-models-heading">Models</h3>
+        <h3 id="settings-models-heading" tabIndex={-1}>Models</h3>
         <div className="app-settings-group__body">
           <section className="app-settings-section">
             <h4>New sessions</h4>
@@ -4004,7 +4035,7 @@ function AppSettingsDialog({
         className="app-settings-group"
         id="settings-folders"
       >
-        <h3 id="settings-folders-heading">Folders</h3>
+        <h3 id="settings-folders-heading" tabIndex={-1}>Folders</h3>
         <p className="dialog-message">
           Where new sessions start on each computer, and where Oracle starts
           the sessions it hands work to. Existing sessions keep their folders.
@@ -4063,7 +4094,7 @@ function AppSettingsDialog({
         className="app-settings-group"
         id="settings-notifications"
       >
-        <h3 id="settings-notifications-heading">Notifications</h3>
+        <h3 id="settings-notifications-heading" tabIndex={-1}>Notifications</h3>
         {!supported ? (
           <p className="dialog-message">
             Push notifications are not supported in this browser.
@@ -4126,7 +4157,7 @@ function AppSettingsDialog({
         className="app-settings-group"
         id="settings-interface"
       >
-        <h3 id="settings-interface-heading">Interface</h3>
+        <h3 id="settings-interface-heading" tabIndex={-1}>Interface</h3>
         <div className="app-settings-group__body">
           <section className="app-settings-section">
             <h4>Appearance</h4>
@@ -4230,7 +4261,7 @@ function AppSettingsDialog({
         className="app-settings-group"
         id="settings-app"
       >
-        <h3 id="settings-app-heading">App</h3>
+        <h3 id="settings-app-heading" tabIndex={-1}>App</h3>
         <div className="app-settings-group__body">
           {shellSettingsAvailable() && (
             <section className="app-settings-section">

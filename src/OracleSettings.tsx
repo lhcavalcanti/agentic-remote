@@ -46,7 +46,7 @@ export function OracleModelSettings({
 
   return (
     <section aria-label="Oracle settings" className="app-settings-section" id="settings-oracle">
-      <h4>Oracle</h4>
+      <h4 tabIndex={-1}>Oracle</h4>
       <p className="dialog-message">
         The model Oracle answers with. It is kept on this hub for every browser and
         applies from Oracle&apos;s next answer.

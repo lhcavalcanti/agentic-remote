@@ -3004,20 +3004,59 @@ describe('App', () => {
     fireEvent.click(within(jump).getByRole('button', { name: 'Folders' }))
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 592 })
     expect(scrollIntoView).not.toHaveBeenCalled()
+    // It takes the focus there too, and Tab carries on into that group.
+    const foldersHeading = within(folders).getByRole('heading', { name: 'Folders' })
+    expect(foldersHeading).toHaveFocus()
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(100)
+    try {
+      fireEvent.keyDown(document, { key: 'Tab' })
+      expect(within(computerFolders).getByRole('button', { name: 'Browse default session folder for development' }))
+        .toHaveFocus()
+      foldersHeading.focus()
+      fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+      expect(models.contains(document.activeElement)).toBe(true)
+    } finally {
+      width.mockRestore()
+    }
   })
 
   it("opens app settings at Oracle's model from Oracle's panel", async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [], settings: {},
     })
+    // Catches the observer that keeps Oracle in place while the settings load.
+    const watched: { target: Element; callback: ResizeObserverCallback; on: boolean }[] = []
+    vi.stubGlobal('ResizeObserver', class {
+      private entry?: (typeof watched)[number]
+      private readonly callback: ResizeObserverCallback
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback
+      }
+      observe(target: Element) {
+        this.entry = { target, callback: this.callback, on: true }
+        watched.push(this.entry)
+      }
+      unobserve() {}
+      disconnect() {
+        if (this.entry) this.entry.on = false
+      }
+    })
+    const settingsGrow = () => {
+      for (const entry of watched) {
+        if (entry.on && entry.target.matches('.app-settings-dialog__sections')) {
+          entry.callback([], {} as ResizeObserver)
+        }
+      }
+    }
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(await within(document.querySelector<HTMLElement>('.timeline-dock')!).findByRole('button', { name: 'Oracle' }))
     const scrollTo = vi.fn()
     const scrollToBefore = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTo')
     Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    let oracleTop = 400
     const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-      const top = this.id === 'settings-oracle' ? 400 : this.classList.contains('app-settings-dialog') ? 100 : 0
+      const top = this.id === 'settings-oracle' ? oracleTop : this.classList.contains('app-settings-dialog') ? 100 : 0
       return { top } as DOMRect
     })
     try {
@@ -3025,15 +3064,27 @@ describe('App', () => {
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
       await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 292 }))
       expect(scrollTo.mock.contexts.at(-1)).toBe(dialog)
+      expect(within(dialog).getByRole('heading', { name: 'Oracle' })).toHaveFocus()
+      // Catalogs loading above it push it down; it follows.
+      oracleTop = 600
+      settingsGrow()
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 492 })
+      // Once you scroll yourself, it stays where you put it.
+      scrollTo.mockClear()
+      fireEvent.wheel(dialog)
+      oracleTop = 800
+      settingsGrow()
+      expect(scrollTo).not.toHaveBeenCalled()
       // Opened from the sessions panel, it starts at the top.
       fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
-      scrollTo.mockClear()
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       await screen.findByRole('dialog', { name: 'App settings' })
       await new Promise((resolve) => requestAnimationFrame(resolve))
+      settingsGrow()
       expect(scrollTo).not.toHaveBeenCalled()
     } finally {
       rect.mockRestore()
+      vi.unstubAllGlobals()
       if (scrollToBefore) Object.defineProperty(Element.prototype, 'scrollTo', scrollToBefore)
       else Reflect.deleteProperty(Element.prototype, 'scrollTo')
     }

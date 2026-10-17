@@ -4072,6 +4072,18 @@ button {
   font-size: 15px;
 }
 
+.app-settings-group > h3:focus,
+.app-settings-section > h4:focus {
+  outline: none;
+}
+
+.app-settings-group > h3:focus-visible,
+.app-settings-section > h4:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
 .app-settings-group__body {
   display: grid;
   align-items: start;

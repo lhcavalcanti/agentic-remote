@@ -8157,9 +8157,14 @@ button {
   font-weight: 600;
 }
 
-.manager-conversation-stop:hover {
+.manager-conversation-stop:hover:not(:disabled) {
   border-color: var(--danger);
   background: rgba(184, 73, 73, 0.1);
+}
+
+.manager-conversation-stop:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .manager-composer__row--only {
@@ -8213,6 +8218,15 @@ button {
 .oracle-mode button[aria-pressed='true'] {
   background: var(--panel-soft);
   box-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+  color: var(--text);
+}
+
+.oracle-mode button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.oracle-mode button[aria-pressed='true']:disabled {
   color: var(--text);
 }
 

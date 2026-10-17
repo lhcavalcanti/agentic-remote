@@ -10,11 +10,14 @@ import {
 
 const MAX_REMEMBERED_FINALS = 128
 
+export type OracleConversationState = OracleVoiceUiState | 'stopping'
+
 export interface OracleConversation {
   capability?: VoiceCapabilities
-  state: OracleVoiceUiState
+  state: OracleConversationState
   partial: string
   error?: string
+  ownsResources: boolean
   start(): Promise<void>
   stop(): void
 }
@@ -27,11 +30,16 @@ export function useOracleConversation(options: {
   onError: (message: string) => void
 }): OracleConversation {
   const [capability, setCapability] = useState<VoiceCapabilities>()
-  const [state, setState] = useState<OracleVoiceUiState>('off')
+  const [state, setState] = useState<OracleConversationState>('off')
   const [partial, setPartial] = useState('')
   const [error, setError] = useState<string>()
+  const [ownsResources, setOwnsResources] = useState(false)
   const clientRef = useRef<OracleVoiceClient | undefined>(undefined)
   const disposedRef = useRef(false)
+  const errorRef = useRef<string | undefined>(undefined)
+  const stoppingRef = useRef(false)
+  const fatalErrorRef = useRef(false)
+  const operationRef = useRef(0)
   const seenFinalsRef = useRef(new Set<string>())
   const callbacksRef = useRef({
     defaults: options.defaults,
@@ -51,21 +59,50 @@ export function useOracleConversation(options: {
 
   const reportError = useCallback((message: string) => {
     if (disposedRef.current) return
+    if (errorRef.current !== message) callbacksRef.current.onError(message)
+    errorRef.current = message
     setError(message)
-    callbacksRef.current.onError(message)
+  }, [])
+
+  const clearError = useCallback(() => {
+    errorRef.current = undefined
+    if (!disposedRef.current) setError(undefined)
   }, [])
 
   const stop = useCallback(() => {
     const client = clientRef.current
-    clientRef.current = undefined
-    seenFinalsRef.current.clear()
-    if (!disposedRef.current) {
-      setState('off')
-      setPartial('')
-      setError(undefined)
+    if (!client) {
+      if (!disposedRef.current) {
+        setState('off')
+        setPartial('')
+        clearError()
+        setOwnsResources(false)
+      }
+      return
     }
-    void client?.stop()
-  }, [])
+    if (stoppingRef.current) return
+    const operation = ++operationRef.current
+    stoppingRef.current = true
+    if (!disposedRef.current) {
+      setState('stopping')
+      setPartial('')
+      setOwnsResources(true)
+    }
+    const finish = () => {
+      if (operationRef.current !== operation) return
+      stoppingRef.current = false
+      fatalErrorRef.current = false
+      if (clientRef.current === client) clientRef.current = undefined
+      seenFinalsRef.current.clear()
+      if (!disposedRef.current) {
+        setState('off')
+        setPartial('')
+        clearError()
+        setOwnsResources(false)
+      }
+    }
+    void client.stop().then(finish, finish)
+  }, [clearError])
 
   useEffect(() => {
     if (!options.open) stop()
@@ -96,73 +133,105 @@ export function useOracleConversation(options: {
   }, [stop])
 
   const start = useCallback(async () => {
-    if (!capability?.available || disposedRef.current) return
+    if (
+      !capability?.available
+      || disposedRef.current
+      || clientRef.current
+      || stoppingRef.current
+    ) return
+    const operation = ++operationRef.current
     setPartial('')
-    setError(undefined)
+    clearError()
+    setState('starting')
+    setOwnsResources(true)
+    fatalErrorRef.current = false
+    seenFinalsRef.current.clear()
 
-    let client = clientRef.current
-    if (!client) {
-      const current = callbacksRef.current
-      client = new OracleVoiceClient({
-        language: capability.languages[0] ?? 'auto',
-        defaults: current.defaults,
-        answerOnly: current.answerOnly,
-        onState: (next) => {
-          if (clientRef.current !== client || disposedRef.current) return
-          setState(next)
-          if (
-            next === 'listening'
-            || next === 'thinking'
-            || next === 'speaking'
-            || next === 'off'
-          ) {
-            setPartial('')
-          }
-          if (next !== 'error' && next !== 'reconnecting') setError(undefined)
-        },
-        onPartial: (event) => {
-          if (clientRef.current !== client || disposedRef.current) return
-          setPartial(event.text)
-        },
-        onFinal: (event) => {
-          if (clientRef.current !== client || disposedRef.current) return
+    const current = callbacksRef.current
+    const client = new OracleVoiceClient({
+      language: capability.languages[0] ?? 'auto',
+      defaults: current.defaults,
+      answerOnly: current.answerOnly,
+      onState: (next) => {
+        if (
+          clientRef.current !== client
+          || disposedRef.current
+          || stoppingRef.current
+        ) return
+        if (next === 'off') {
+          clientRef.current = undefined
+          fatalErrorRef.current = false
+          seenFinalsRef.current.clear()
+          setOwnsResources(false)
+        } else if (next === 'error' && fatalErrorRef.current) {
+          clientRef.current = undefined
+          fatalErrorRef.current = false
+          seenFinalsRef.current.clear()
+          setOwnsResources(false)
+        }
+        setState(next)
+        if (
+          next === 'listening'
+          || next === 'thinking'
+          || next === 'speaking'
+          || next === 'off'
+        ) {
           setPartial('')
-          const text = event.text.trim()
-          const key = `${event.generation}:${event.utteranceId}`
-          if (!text || seenFinalsRef.current.has(key)) return
-          if (seenFinalsRef.current.size >= MAX_REMEMBERED_FINALS) {
-            const oldest = seenFinalsRef.current.values().next().value
-            if (oldest) seenFinalsRef.current.delete(oldest)
-          }
-          seenFinalsRef.current.add(key)
-          callbacksRef.current.onFinalTranscript(text)
-        },
-        onError: (failure: OracleVoiceClientError) => {
-          if (clientRef.current !== client || disposedRef.current) return
-          reportError(failure.message)
-        },
-      })
-      clientRef.current = client
-    }
+        }
+        if (next !== 'error' && next !== 'reconnecting') clearError()
+      },
+      onPartial: (event) => {
+        if (clientRef.current !== client || disposedRef.current) return
+        setPartial(event.text)
+      },
+      onFinal: (event) => {
+        if (clientRef.current !== client || disposedRef.current) return
+        setPartial('')
+        const text = event.text.trim()
+        const key = `${event.generation}:${event.utteranceId}`
+        if (!text || seenFinalsRef.current.has(key)) return
+        if (seenFinalsRef.current.size >= MAX_REMEMBERED_FINALS) {
+          const oldest = seenFinalsRef.current.values().next().value
+          if (oldest) seenFinalsRef.current.delete(oldest)
+        }
+        seenFinalsRef.current.add(key)
+        callbacksRef.current.onFinalTranscript(text)
+      },
+      onError: (failure: OracleVoiceClientError) => {
+        if (clientRef.current !== client || disposedRef.current) return
+        if (failure.fatal) {
+          fatalErrorRef.current = true
+          setState('stopping')
+        }
+        reportError(failure.message)
+      },
+    })
+    clientRef.current = client
 
     try {
       await client.start()
     } catch (caught) {
-      if (clientRef.current !== client || disposedRef.current) return
+      if (
+        operationRef.current !== operation
+        || clientRef.current !== client
+        || disposedRef.current
+        || stoppingRef.current
+      ) return
+      clientRef.current = undefined
+      fatalErrorRef.current = false
+      setOwnsResources(false)
       const message = caught instanceof Error ? caught.message : String(caught)
       setState('error')
-      setError((current) => {
-        if (current !== message) callbacksRef.current.onError(message)
-        return message
-      })
+      reportError(message)
     }
-  }, [capability, reportError])
+  }, [capability, clearError, reportError])
 
   return {
     capability,
     state,
     partial,
     error,
+    ownsResources,
     start,
     stop,
   }

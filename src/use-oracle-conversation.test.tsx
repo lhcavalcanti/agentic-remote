@@ -58,7 +58,7 @@ const defaults: ManagerClientDefaults = {
 
 class FakeVoiceClient {
   readonly start = vi.fn(async () => undefined)
-  readonly stop = vi.fn(async () => undefined)
+  readonly stop = vi.fn<() => Promise<void>>(async () => undefined)
   readonly options: OracleVoiceClientOptions
 
   constructor(options: OracleVoiceClientOptions) {
@@ -73,15 +73,21 @@ class FakeVoiceClient {
     this.options.onPartial?.(transcript(text, utteranceId))
   }
 
-  final(text: string, utteranceId = 'utterance-1') {
-    this.options.onFinal?.(transcript(text, utteranceId))
+  final(text: string, utteranceId = 'utterance-1', generation = 3) {
+    this.options.onFinal?.(transcript(text, utteranceId, generation))
   }
 
-  error(message: string) {
+  error(
+    message: string,
+    options: { fatal?: boolean; dictationFallback?: boolean } = {},
+  ) {
     this.options.onError?.(new OracleVoiceClientError(
-      'capture-failed',
+      options.fatal === false ? 'server-error' : 'capture-failed',
       message,
-      { dictationFallback: true },
+      {
+        fatal: options.fatal,
+        dictationFallback: options.dictationFallback ?? options.fatal !== false,
+      },
     ))
   }
 }
@@ -89,8 +95,9 @@ class FakeVoiceClient {
 function transcript(
   text: string,
   utteranceId: string,
+  generation = 3,
 ): OracleVoiceTranscriptEvent {
-  return { generation: 3, utteranceId, text }
+  return { generation, utteranceId, text }
 }
 
 function renderConversation(
@@ -169,7 +176,7 @@ describe('useOracleConversation', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
-  it('projects client state and partials without duplicating a failed final', async () => {
+  it('deduplicates failed finals by generation and utterance identity only', async () => {
     vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
     const { result, onFinalTranscript, onError } = renderConversation({
       answerOnly: true,
@@ -191,18 +198,140 @@ describe('useOracleConversation', () => {
     act(() => {
       client.final('where is the docs work')
       client.final('where is the docs work')
+      client.final('where is the docs work', 'utterance-2')
+      client.final('where is the docs work', 'utterance-2', 4)
     })
     expect(result.current.partial).toBe('')
-    expect(onFinalTranscript).toHaveBeenCalledOnce()
-    expect(onFinalTranscript).toHaveBeenCalledWith('where is the docs work')
+    expect(onFinalTranscript).toHaveBeenCalledTimes(3)
+    expect(onFinalTranscript).toHaveBeenNthCalledWith(1, 'where is the docs work')
+    expect(onFinalTranscript).toHaveBeenNthCalledWith(2, 'where is the docs work')
+    expect(onFinalTranscript).toHaveBeenNthCalledWith(3, 'where is the docs work')
 
     act(() => client.error('Microphone permission was denied. Dictation is still available.'))
     expect(result.current.error).toBe(
       'Microphone permission was denied. Dictation is still available.',
     )
+    expect(result.current.state).toBe('stopping')
+    expect(result.current.ownsResources).toBe(true)
     expect(onError).toHaveBeenCalledWith(
       'Microphone permission was denied. Dictation is still available.',
     )
+  })
+
+  it('keeps ownership until an explicit stop resolves and blocks an immediate restart', async () => {
+    vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
+    const { result } = renderConversation()
+    await waitFor(() => expect(result.current.capability).toEqual(availableCapability))
+    await act(async () => result.current.start())
+    const firstClient = clients[0]
+    let releaseStop: () => void = () => undefined
+    firstClient.stop.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseStop = resolve
+    }))
+
+    act(() => result.current.stop())
+
+    expect(result.current.state).toBe('stopping')
+    expect(result.current.ownsResources).toBe(true)
+    await act(async () => result.current.start())
+    expect(firstClient.start).toHaveBeenCalledOnce()
+    expect(clients).toHaveLength(1)
+
+    await act(async () => releaseStop())
+    await waitFor(() => expect(result.current.state).toBe('off'))
+    expect(result.current.ownsResources).toBe(false)
+
+    await act(async () => result.current.start())
+    expect(clients).toHaveLength(2)
+  })
+
+  it('maps manager-send and TTS failures to Error until the live stream recovers', async () => {
+    vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
+    const { result, onFinalTranscript } = renderConversation()
+    await waitFor(() => expect(result.current.capability).toEqual(availableCapability))
+    await act(async () => result.current.start())
+    const client = clients[0]
+
+    act(() => {
+      client.final('keep this request', 'manager-send')
+      client.error('Could not send to Oracle: request failed', { fatal: false })
+      client.state('error')
+    })
+    expect(onFinalTranscript).toHaveBeenCalledOnce()
+    expect(result.current.state).toBe('error')
+    expect(result.current.error).toBe('Could not send to Oracle: request failed')
+    expect(result.current.ownsResources).toBe(true)
+
+    act(() => client.state('listening'))
+    expect(result.current.state).toBe('listening')
+    expect(result.current.error).toBeUndefined()
+
+    act(() => {
+      client.error('Oracle speech synthesis failed', { fatal: false })
+      client.state('error')
+    })
+    expect(result.current.state).toBe('error')
+    expect(result.current.error).toBe('Oracle speech synthesis failed')
+
+    act(() => client.state('speech'))
+    expect(result.current.state).toBe('speech')
+    expect(result.current.error).toBeUndefined()
+  })
+
+  it('clears reconnect errors on recovery and clears an error only after stop finishes', async () => {
+    vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
+    const { result } = renderConversation()
+    await waitFor(() => expect(result.current.capability).toEqual(availableCapability))
+    await act(async () => result.current.start())
+    const client = clients[0]
+
+    act(() => {
+      client.error('Temporary ticket failure', { fatal: false })
+      client.state('reconnecting')
+    })
+    expect(result.current.state).toBe('reconnecting')
+    expect(result.current.error).toBe('Temporary ticket failure')
+
+    act(() => client.state('listening'))
+    expect(result.current.error).toBeUndefined()
+
+    act(() => {
+      client.error('Could not send to Oracle', { fatal: false })
+      client.state('error')
+    })
+    let releaseStop: () => void = () => undefined
+    client.stop.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseStop = resolve
+    }))
+    act(() => result.current.stop())
+
+    expect(result.current.state).toBe('stopping')
+    expect(result.current.error).toBe('Could not send to Oracle')
+    expect(result.current.ownsResources).toBe(true)
+
+    await act(async () => releaseStop())
+    await waitFor(() => expect(result.current.state).toBe('off'))
+    expect(result.current.error).toBeUndefined()
+    expect(result.current.ownsResources).toBe(false)
+  })
+
+  it('allows a fresh start after a fatal client error reports completed teardown', async () => {
+    vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
+    const { result } = renderConversation()
+    await waitFor(() => expect(result.current.capability).toEqual(availableCapability))
+    await act(async () => result.current.start())
+    const firstClient = clients[0]
+
+    act(() => firstClient.error('Voice engine stopped'))
+    expect(result.current.state).toBe('stopping')
+    expect(result.current.ownsResources).toBe(true)
+
+    act(() => firstClient.state('error'))
+    expect(result.current.state).toBe('error')
+    expect(result.current.ownsResources).toBe(false)
+
+    await act(async () => result.current.start())
+    expect(clients).toHaveLength(2)
   })
 
   it('stops the client when the panel closes and on StrictMode unmount', async () => {
@@ -217,7 +346,7 @@ describe('useOracleConversation', () => {
 
     rerender({ open: false })
     await waitFor(() => expect(firstClient.stop).toHaveBeenCalledOnce())
-    expect(result.current.state).toBe('off')
+    await waitFor(() => expect(result.current.state).toBe('off'))
 
     rerender({ open: true })
     await waitFor(() => expect(result.current.capability).toEqual(availableCapability))

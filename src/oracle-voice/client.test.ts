@@ -330,6 +330,33 @@ describe('OracleVoiceClient', () => {
     expect(client.playbacks[0].close).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['oracle_send_failed', 'Could not send to Oracle'],
+    ['voice_synthesis_failed', 'Oracle speech synthesis failed'],
+  ])('maps nonfatal %s turn failures to recoverable Error', async (code, message) => {
+    const client = harness()
+    await client.connect('stream-1')
+
+    client.sockets[0].message(control('error', 'stream-1', 0, {
+      code,
+      message,
+      fatal: false,
+    }))
+
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('error'))
+    expect(client.errors()).toContainEqual(expect.objectContaining({
+      code: 'server-error',
+      message,
+      fatal: false,
+    }))
+    expect(client.captures[0].stop).not.toHaveBeenCalled()
+
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'listening',
+    }))
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
+  })
+
   it('treats server stopped as terminal cleanup without a later close error', async () => {
     const client = harness()
     await client.connect('stream-1')
@@ -353,6 +380,10 @@ describe('OracleVoiceClient', () => {
     const client = harness()
     await client.connect('stream-1')
     const message = `Voice engine stopped: ${'💥'.repeat(40)}`
+    let releaseCapture: () => void = () => undefined
+    client.captures[0].stop.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseCapture = resolve
+    }))
 
     client.sockets[0].message(control('error', 'stream-1', 0, {
       code: 'voice_engine_failed',
@@ -360,13 +391,16 @@ describe('OracleVoiceClient', () => {
       fatal: true,
     }))
 
-    await vi.waitFor(() => expect(client.instance.currentState).toBe('error'))
-    expect(client.errors()).toContainEqual(expect.objectContaining({
+    await vi.waitFor(() => expect(client.errors()).toContainEqual(expect.objectContaining({
       code: 'server-error',
       message,
-    }))
-    expect(client.captures[0].stop).toHaveBeenCalledOnce()
+    })))
+    expect(client.instance.currentState).not.toBe('error')
     expect(client.playbacks[0].close).toHaveBeenCalledOnce()
+
+    releaseCapture()
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('error'))
+    expect(client.captures[0].stop).toHaveBeenCalledOnce()
     await vi.waitFor(() => expect(
       isBrowserClientCloseCode(client.sockets[0].closedWith?.code),
     ).toBe(true))

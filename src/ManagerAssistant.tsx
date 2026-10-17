@@ -69,6 +69,8 @@ function conversationStateLabel(state: OracleConversation['state']): string {
       return 'Interrupted'
     case 'reconnecting':
       return 'Reconnecting'
+    case 'stopping':
+      return 'Stopping'
     case 'error':
       return 'Error'
   }
@@ -510,7 +512,6 @@ export function ManagerAssistant({
     if (!transcript) return
     setDraft((current) => {
       const draft = current.trimEnd()
-      if (draft === transcript || draft.endsWith(`\n\n${transcript}`)) return current
       return draft ? `${draft}\n\n${transcript}` : transcript
     })
     window.requestAnimationFrame(() => inputRef.current?.focus())
@@ -527,12 +528,12 @@ export function ManagerAssistant({
     answerOnly,
     open,
     onFinalTranscript: returnFinalTranscript,
-    onError: (message) => setSendError(message),
+    onError: announce,
   })
   const { recording: voiceRecording, stop: stopVoice } = voice
   const conversationAvailable = conversation.capability?.available === true
   const conversationActive = conversation.state !== 'off'
-  const conversationOwnsMicrophone = conversationActive && conversation.state !== 'error'
+  const conversationOwnsMicrophone = conversation.ownsResources
   const liveAnnouncement = [
     announcement,
     conversationActive
@@ -857,7 +858,6 @@ export function ManagerAssistant({
   }
 
   async function startConversation() {
-    setSendError(undefined)
     voice.stop(true)
     await conversation.start()
   }
@@ -1094,6 +1094,11 @@ export function ManagerAssistant({
         }}
       >
         {sendError ? <p className="form-error manager-composer__error" role="alert">{sendError}</p> : null}
+        {conversation.error ? (
+          <p className="form-error manager-composer__error" role="alert">
+            {conversation.error}
+          </p>
+        ) : null}
         {tooLong ? (
           <p className="form-error manager-composer__error" role="alert">
             Messages are limited to {MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.
@@ -1128,15 +1133,18 @@ export function ManagerAssistant({
                 Speech processing stays on your selected computer; Oracle uses remote Copilot.
               </p>
             </div>
-            <button
-              aria-label="Stop conversation"
-              className="manager-conversation-stop"
-              onClick={conversation.stop}
-              type="button"
-            >
-              <Square aria-hidden="true" fill="currentColor" size={11} />
-              Stop
-            </button>
+            {conversation.ownsResources ? (
+              <button
+                aria-label="Stop conversation"
+                className="manager-conversation-stop"
+                disabled={conversation.state === 'stopping'}
+                onClick={conversation.stop}
+                type="button"
+              >
+                <Square aria-hidden="true" fill="currentColor" size={11} />
+                {conversation.state === 'stopping' ? 'Stopping' : 'Stop'}
+              </button>
+            ) : null}
           </div>
         ) : voice.recording ? (
           <div className="recording-panel manager-composer__recording" role="status">
@@ -1169,7 +1177,7 @@ export function ManagerAssistant({
           <div className={`manager-composer__actions${
             conversationAvailable ? ' manager-composer__actions--conversation' : ''
           }`}>
-            {conversationAvailable && !conversationActive ? (
+            {conversationAvailable && !conversation.ownsResources ? (
               <button
                 aria-label="Start conversation"
                 className="manager-conversation-toggle"
@@ -1222,6 +1230,7 @@ export function ManagerAssistant({
             <div aria-describedby="oracle-mode-hint" aria-label="Oracle mode" className="oracle-mode" role="group">
               <button
                 aria-pressed={answerOnly}
+                disabled={conversation.ownsResources}
                 onClick={() => changeAnswerOnly(true)}
                 title="Oracle answers from the current state of your sessions and never starts, messages, stops, or changes one"
                 type="button"
@@ -1230,6 +1239,7 @@ export function ManagerAssistant({
               </button>
               <button
                 aria-pressed={!answerOnly}
+                disabled={conversation.ownsResources}
                 onClick={() => changeAnswerOnly(false)}
                 title="Oracle can also start sessions for work you hand it, and message, rename, stop, or close them"
                 type="button"
@@ -1238,7 +1248,9 @@ export function ManagerAssistant({
               </button>
             </div>
             <span className="oracle-mode__hint" id="oracle-mode-hint">
-              {answerOnly ? 'Running work is left alone' : 'Can start and steer sessions'}
+              {conversation.ownsResources
+                ? `${answerOnly ? 'Ask' : 'Delegate'} is locked while Conversation is active`
+                : answerOnly ? 'Running work is left alone' : 'Can start and steer sessions'}
             </span>
           </div>
           <button

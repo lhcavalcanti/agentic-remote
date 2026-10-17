@@ -91,6 +91,7 @@ function conversationState(
     capability: conversationCapability,
     state,
     partial: '',
+    ownsResources: state !== 'off' && state !== 'error',
     start: startConversation,
     stop: stopConversation,
     ...overrides,
@@ -789,7 +790,7 @@ describe('ManagerAssistant', () => {
       )).toBeVisible()
     })
 
-    it('returns one failed finalized utterance to the draft once', async () => {
+    it('restores every failed final delivered by the identity-deduplicating hook', async () => {
       vi.mocked(useOracleConversation).mockReturnValue(conversationState('thinking'))
       setup()
       await openPanel()
@@ -802,7 +803,9 @@ describe('ManagerAssistant', () => {
         hookOptions?.onFinalTranscript('where is the docs work')
       })
 
-      expect(input).toHaveValue('Keep this draft\n\nwhere is the docs work')
+      expect(input).toHaveValue(
+        'Keep this draft\n\nwhere is the docs work\n\nwhere is the docs work',
+      )
     })
 
     it('offers explicit Start and Stop controls with keyboard focus', async () => {
@@ -843,33 +846,72 @@ describe('ManagerAssistant', () => {
     ])('shows the Conversation failure and leaves dictation available: %s', async (message) => {
       vi.mocked(useOracleConversation).mockReturnValue(conversationState(
         'error',
-        { error: message },
+        { error: message, ownsResources: false },
       ))
       setup()
       await openPanel()
-      const hookOptions = vi.mocked(useOracleConversation).mock.calls.at(-1)?.[0]
-      act(() => hookOptions?.onError(message))
 
       expect(screen.getByText('Error')).toBeVisible()
       expect(screen.getByRole('alert')).toHaveTextContent(message)
       expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeEnabled()
     })
 
-    it('disables dictation while Conversation owns the microphone, then switches back', async () => {
-      let current = conversationState('listening')
+    it('locks the active mode while Conversation owns resources, then makes it switchable', async () => {
+      localStorage.setItem('agentic-remote:oracle-answer-only', 'true')
+      let current = conversationState('listening', { ownsResources: true })
       vi.mocked(useOracleConversation).mockImplementation(() => current)
       const view = setup()
       await openPanel()
+
+      const ask = screen.getByRole('button', { name: 'Ask' })
+      const delegate = screen.getByRole('button', { name: 'Delegate' })
+      expect(ask).toBeDisabled()
+      expect(ask).toHaveAttribute('aria-pressed', 'true')
+      expect(delegate).toBeDisabled()
+      expect(screen.getByText('Ask is locked while Conversation is active')).toBeVisible()
+      fireEvent.click(delegate)
+      expect(delegate).toHaveAttribute('aria-pressed', 'false')
       expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeDisabled()
 
       fireEvent.click(screen.getByRole('button', { name: 'Stop conversation' }))
       current = conversationState('off')
       view.rerender(<Harness {...view.props} />)
 
+      expect(screen.getByRole('button', { name: 'Delegate' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+      expect(screen.getByRole('button', { name: 'Delegate' })).toHaveAttribute('aria-pressed', 'true')
       const dictate = screen.getByRole('button', { name: 'Dictate to Oracle' })
       expect(dictate).toBeEnabled()
       fireEvent.click(dictate)
       expect(await screen.findByText(/Recording 0:00/)).toBeVisible()
+    })
+
+    it('keeps typed send errors independent from recovering Conversation errors', async () => {
+      vi.mocked(sendManagerMessage).mockRejectedValue(new Error('Typed send failed'))
+      let current = conversationState('off')
+      vi.mocked(useOracleConversation).mockImplementation(() => current)
+      const view = setup()
+      await openPanel()
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'Typed request' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await screen.findByText('Typed send failed')
+
+      current = conversationState('error', {
+        error: 'Oracle speech synthesis failed',
+        ownsResources: true,
+      })
+      view.rerender(<Harness {...view.props} />)
+      expect(screen.getByText('Typed send failed')).toBeVisible()
+      expect(screen.getByText('Oracle speech synthesis failed')).toBeVisible()
+
+      current = conversationState('listening', {
+        error: undefined,
+        ownsResources: true,
+      })
+      view.rerender(<Harness {...view.props} />)
+      expect(screen.getByText('Typed send failed')).toBeVisible()
+      expect(screen.queryByText('Oracle speech synthesis failed')).not.toBeInTheDocument()
     })
 
     it('hands panel close to the Conversation lifecycle and keeps controls usable at 390px', async () => {

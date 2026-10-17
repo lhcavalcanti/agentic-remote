@@ -492,6 +492,7 @@ export class OracleVoiceClient {
           control.message,
           { fatal: false },
         ))
+        this.setState('error')
         return
       case 'heartbeat':
         return
@@ -732,10 +733,10 @@ export class OracleVoiceClient {
     this.terminalFailure = true
     this.cancelReconnect()
     this.report(error)
-    this.setState('error')
     this.cancelHelloWait()
     await this.teardownConnection(CLIENT_FATAL_CLOSE_CODE, error.message)
     this.capabilities = undefined
+    this.setState('error')
   }
 
   private async fetchCapabilities(): Promise<VoiceCapabilities> {

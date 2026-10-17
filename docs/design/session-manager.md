@@ -186,9 +186,11 @@ end the turn.
   stop, or close a session for that message. Ask questions queue behind
   Oracle's own work only, never behind sessions. **Delegate** lets Oracle start
   and steer sessions.
-- The model under the message bar opens **App settings → Oracle**, where the
-  model and effort, and each computer's session folder, are chosen and kept on
-  the hub.
+- The model under the message bar opens **App settings** at **Models →
+  Oracle**, where the model and effort are chosen; each computer's Oracle
+  folder sits under **Folders**, beside the folder new sessions use. Both are
+  kept on the hub (`useOracleSettings` in `src/use-oracle-settings.ts` holds
+  the one copy both parts read).
 - The panel is a right-hand drawer on desktop, resizable from its left edge
   (340px up to whatever leaves the conversation 360px beside the sessions
   list, at most 960px; remembered per browser, and shown narrower without

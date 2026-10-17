@@ -12,7 +12,8 @@ import ReaderWorkspace from './ReaderWorkspace'
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { oracleCommand } from './oracle-command'
-import { OracleSettings } from './OracleSettings'
+import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
+import { useOracleSettings } from './use-oracle-settings'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
 import type {
@@ -3216,6 +3217,9 @@ function DefaultSessionFolderControl({
   label = 'default session folder',
   blankLabel = 'Home directory (blank)',
   selectHint = 'the default for new sessions',
+  title,
+  purpose,
+  offlineNote = true,
 }: {
   computer: Pick<ComputerSummary, 'id' | 'name' | 'online'>
   value?: string
@@ -3226,6 +3230,12 @@ function DefaultSessionFolderControl({
   blankLabel?: string
   /** Completes "Select <folder> as …". */
   selectHint?: string
+  /** The row's name; the computer's when it stands alone. */
+  title?: string
+  /** Tells apart two pickers for the same computer, as in "Folders on <computer> for <purpose>". */
+  purpose?: string
+  /** Whether to say the computer is offline; off where the computer's card says it once. */
+  offlineNote?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [listing, setListing] = useState<DirectoryListing>()
@@ -3312,7 +3322,7 @@ function DefaultSessionFolderControl({
     <div className="default-session-folder">
       <div className="default-session-folder__header">
         <span>
-          <strong>{computer.name}</strong>
+          <strong>{title ?? computer.name}</strong>
           <small>{value ? shortPath(value) : blankLabel}</small>
         </span>
         <div className="default-session-folder__actions">
@@ -3346,7 +3356,7 @@ function DefaultSessionFolderControl({
           ) : null}
         </div>
       </div>
-      {!computer.online ? (
+      {offlineNote && !computer.online ? (
         <small className="default-session-folder__offline">
           Connect to browse this computer.
         </small>
@@ -3355,7 +3365,7 @@ function DefaultSessionFolderControl({
         <div className="folder-picker default-session-folder__picker">
           <div className="folder-picker__toolbar">
             <button
-              aria-label={`Parent folder for ${computer.name}`}
+              aria-label={`Parent folder for ${computer.name}${purpose ? ` for ${purpose}` : ''}`}
               className="icon-button"
               disabled={!listing?.parent || loading || validating}
               onClick={() => void browse(listing?.parent || '~')}
@@ -3369,7 +3379,7 @@ function DefaultSessionFolderControl({
             </div>
           </div>
           <div
-            aria-label={`Folders on ${computer.name}`}
+            aria-label={`Folders on ${computer.name}${purpose ? ` for ${purpose}` : ''}`}
             className="folder-picker__list"
             role="listbox"
           >
@@ -3564,6 +3574,45 @@ function ShortcutEditor({
   )
 }
 
+/**
+ * Scrolls App settings, and only App settings, so the element sits just
+ * below the jump bar. `scrollIntoView` also scrolls whatever holds the
+ * dialog when the element cannot reach the top, such as the last group,
+ * which moved the dialog off screen and left the app scrolled behind it.
+ */
+function scrollSettingsTo(id: string, { focus = false } = {}) {
+  const target = document.getElementById(id)
+  const container = target?.closest<HTMLElement>('.app-settings-dialog')
+  if (!target || !container) return
+  const nav = container.querySelector<HTMLElement>('.app-settings-nav')
+  const top = Math.max(0, Math.round(
+    container.scrollTop
+      + target.getBoundingClientRect().top
+      - container.getBoundingClientRect().top
+      - (nav?.offsetHeight ?? 0)
+      - 8,
+  ))
+  if (typeof container.scrollTo === 'function') container.scrollTo({ top })
+  else container.scrollTop = top
+  // Moving the focus too takes keyboard and screen reader users there, not
+  // just the eye; Tab carries on from the heading into that part.
+  if (focus) {
+    target.querySelector<HTMLElement>(':scope > h3, :scope > h4')?.focus({ preventScroll: true })
+  }
+}
+
+/** Anything that shows you have taken over scrolling App settings yourself. */
+const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
+
+/** App settings' groups, in order, for its jump bar. */
+const settingsGroups = [
+  { id: 'settings-models', label: 'Models' },
+  { id: 'settings-folders', label: 'Folders' },
+  { id: 'settings-notifications', label: 'Notifications' },
+  { id: 'settings-interface', label: 'Interface' },
+  { id: 'settings-app', label: 'App' },
+] as const
+
 function AppSettingsDialog({
   open,
   computers,
@@ -3585,6 +3634,7 @@ function AppSettingsDialog({
   onShortcutsChange,
   updateRegistration,
   updatingApp,
+  initialSection,
 }: {
   open: boolean
   computers: ComputerSummary[]
@@ -3608,11 +3658,14 @@ function AppSettingsDialog({
   ) => void
   updateRegistration?: ServiceWorkerRegistration
   updatingApp: boolean
+  /** The element to open at, such as Oracle's model; the top when unset. */
+  initialSection?: string
 }) {
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const [appearanceError, setAppearanceError] = useState<string>()
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateMessage, setUpdateMessage] = useState<string>()
   const [testingNotification, setTestingNotification] = useState(false)
@@ -3624,6 +3677,7 @@ function AppSettingsDialog({
     Partial<Record<AgentProvider, boolean>>
   >({})
   const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const oracle = useOracleSettings(open)
   const [hubCopilotModels, setHubCopilotModels] = useState<RuntimeModelOption[]>()
   const [hubCopilotError, setHubCopilotError] = useState<string>()
   const [runtimeErrors, setRuntimeErrors] = useState<
@@ -3814,6 +3868,37 @@ function AppSettingsDialog({
     runtimeModels,
   ])
 
+  // Opened from somewhere in particular, such as Oracle's model, it starts
+  // there; otherwise at the top. The catalogs above it load afterwards and,
+  // stacked on a phone, would push it away, so it stays with that part as
+  // the settings grow until you scroll, tap or type yourself.
+  useEffect(() => {
+    if (!open || !initialSection) return
+    const section = initialSection
+    let observer: ResizeObserver | undefined
+    let dialog: HTMLElement | null | undefined
+    const stopFollowing = () => {
+      observer?.disconnect()
+      observer = undefined
+    }
+    const frame = window.requestAnimationFrame(() => {
+      scrollSettingsTo(section, { focus: true })
+      dialog = document.getElementById(section)?.closest<HTMLElement>('.app-settings-dialog')
+      const sections = dialog?.querySelector('.app-settings-dialog__sections')
+      if (!dialog || !sections || typeof ResizeObserver === 'undefined') return
+      for (const type of settingsTakeoverEvents) {
+        dialog.addEventListener(type, stopFollowing, { passive: true })
+      }
+      observer = new ResizeObserver(() => scrollSettingsTo(section))
+      observer.observe(sections)
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      stopFollowing()
+      for (const type of settingsTakeoverEvents) dialog?.removeEventListener(type, stopFollowing)
+    }
+  }, [initialSection, open])
+
   if (!open) {
     return null
   }
@@ -3895,159 +3980,121 @@ function AppSettingsDialog({
       onClose={onClose}
       title="App settings"
     >
-      <div className="app-settings-dialog__sections">
-      {shellSettingsAvailable() && (
-        <section className="app-settings-section">
-          <h3>Hub connection</h3>
-          <p className="dialog-message">
-            This app is connected to a hub you chose when you installed it.
-            Change it if the hub moved or you entered the wrong address.
-          </p>
+      <nav aria-label="Settings sections" className="app-settings-nav">
+        {settingsGroups.map((group) => (
           <button
-            className="secondary-button"
-            onClick={() => openShellSettings()}
+            key={group.id}
+            onClick={() => scrollSettingsTo(group.id, { focus: true })}
             type="button"
           >
-            Change hub…
+            {group.label}
           </button>
-        </section>
-      )}
-
-      <section className="app-settings-section">
-        <h3>Appearance</h3>
-        <fieldset className="appearance-options">
-          <legend>Reading surfaces</legend>
-          {(['graphite', 'light'] as const).map((option) => (
-            <label className="appearance-option" data-appearance={option} key={option}>
-              <input
-                aria-label={`${option === 'light' ? 'Light' : 'Graphite'} appearance`}
-                checked={appearance === option}
-                name="appearance"
-                onChange={() => {
-                  try {
-                    onAppearanceChange(option)
-                    setError(undefined)
-                  } catch (caught) {
-                    setError(`Could not save appearance: ${
-                      caught instanceof Error ? caught.message : String(caught)
-                    }`)
-                  }
-                }}
-                type="radio"
-              />
-              <span aria-hidden="true" className="appearance-option__preview" />
-              <strong>{option === 'light' ? 'Light' : 'Graphite'}</strong>
-            </label>
-          ))}
-        </fieldset>
-        <p className="dialog-message">
-          Choose an accent for this tab. Other Agentic Remote tabs keep their
-          own color.
-        </p>
-        <div
-          aria-label="Accent color"
-          className="accent-theme-list"
-          role="radiogroup"
-        >
-          {accentThemes.map((theme) => (
-            <label
-              className={`accent-theme-option ${
-                accentTheme === theme.id
-                  ? 'accent-theme-option--selected'
-                  : ''
-              }`}
-              key={theme.id}
-            >
-              <input
-                aria-label={`${theme.name} accent`}
-                checked={accentTheme === theme.id}
-                name="accent-theme"
-                onChange={() => onAccentThemeChange(theme.id)}
-                type="radio"
-              />
-              <span
-                aria-hidden="true"
-                className="accent-theme-option__swatch"
-                style={{ '--accent-choice': theme.color } as CSSProperties}
-              />
-              <strong>{theme.name}</strong>
-            </label>
-          ))}
-        </div>
-      </section>
-
-      <section className="app-settings-section">
-        <h3>Session defaults</h3>
-        <p className="dialog-message">
-          New sessions use these provider settings. Existing sessions keep
-          their current model, effort, context, and agent mode.
-        </p>
-        {(['copilot', 'claude'] as const).map((provider) => (
-          <DefaultRuntimeControls
-            error={runtimeErrors[provider]}
-            key={provider}
-            loading={runtimeLoading}
-            models={runtimeModels[provider] || []}
-            onChange={(selection) =>
-              onDefaultRuntimesChange({
-                ...defaultRuntimes,
-                [provider]: selection,
-              })
-            }
-            provider={provider}
-            selection={defaultRuntimes[provider]}
-          />
         ))}
-      </section>
-
-      <OracleSettings
-        computers={computers}
-        models={hubCopilotModels}
-        modelsError={hubCopilotError}
-        onRetryModels={retryHubCopilotModels}
-        renderFolderControl={(computer, value, onChange) => (
-          <DefaultSessionFolderControl
-            blankLabel={defaultSessionFolders[computer.id]
-              ? `Your default: ${shortPath(defaultSessionFolders[computer.id])}`
-              : 'Your default: home directory'}
-            computer={computer}
-            label="Oracle's session folder"
-            onChange={onChange}
-            selectHint="where Oracle starts new sessions"
-            value={value}
-          />
-        )}
-      />
-
-      <section className="app-settings-section">
-        <h3>Default session folders</h3>
-        <p className="dialog-message">
-          Choose one optional folder per computer for new sessions. Existing
-          sessions keep their current working directories. Leave a computer
-          blank to start in its home directory.
-        </p>
-        <div className="default-session-folder-list">
-          {computers.map((computer) => (
-            <DefaultSessionFolderControl
-              computer={computer}
-              key={computer.id}
-              onChange={(path) => {
-                const next = { ...defaultSessionFolders }
-                if (path) {
-                  next[computer.id] = path
-                } else {
-                  delete next[computer.id]
+      </nav>
+      <div className="app-settings-dialog__sections">
+      <section
+        aria-labelledby="settings-models-heading"
+        className="app-settings-group"
+        id="settings-models"
+      >
+        <h3 id="settings-models-heading" tabIndex={-1}>Models</h3>
+        <div className="app-settings-group__body">
+          <section className="app-settings-section">
+            <h4>New sessions</h4>
+            <p className="dialog-message">
+              New sessions use these provider settings. Existing sessions keep
+              their current model, effort, context, and agent mode.
+            </p>
+            {(['copilot', 'claude'] as const).map((provider) => (
+              <DefaultRuntimeControls
+                error={runtimeErrors[provider]}
+                key={provider}
+                loading={runtimeLoading}
+                models={runtimeModels[provider] || []}
+                onChange={(selection) =>
+                  onDefaultRuntimesChange({
+                    ...defaultRuntimes,
+                    [provider]: selection,
+                  })
                 }
-                onDefaultSessionFoldersChange(next)
-              }}
-              value={defaultSessionFolders[computer.id]}
-            />
-          ))}
+                provider={provider}
+                selection={defaultRuntimes[provider]}
+              />
+            ))}
+          </section>
+          <OracleModelSettings
+            models={hubCopilotModels}
+            modelsError={hubCopilotError}
+            onRetryModels={retryHubCopilotModels}
+            oracle={oracle}
+          />
         </div>
       </section>
-
-      <section className="app-settings-section">
-        <h3>Notifications</h3>
+      <section
+        aria-labelledby="settings-folders-heading"
+        className="app-settings-group"
+        id="settings-folders"
+      >
+        <h3 id="settings-folders-heading" tabIndex={-1}>Folders</h3>
+        <p className="dialog-message">
+          Where new sessions start on each computer, and where Oracle starts
+          the sessions it hands work to. Existing sessions keep their folders.
+          A blank folder is the computer&apos;s home directory, and a blank
+          Oracle folder follows yours. Oracle can change its own when you ask.
+        </p>
+        <div className="app-settings-group__body app-settings-group__body--folders">
+          {computers.map((computer) => (
+            <div
+              aria-label={`Session folders on ${computer.name}`}
+              className="settings-computer-folders"
+              key={computer.id}
+              role="group"
+            >
+              <strong className="settings-computer-folders__name">{computer.name}</strong>
+              <DefaultSessionFolderControl
+                computer={computer}
+                offlineNote={false}
+                onChange={(path) => {
+                  const next = { ...defaultSessionFolders }
+                  if (path) {
+                    next[computer.id] = path
+                  } else {
+                    delete next[computer.id]
+                  }
+                  onDefaultSessionFoldersChange(next)
+                }}
+                title="New sessions"
+                value={defaultSessionFolders[computer.id]}
+              />
+              {oracle.settings && !oracle.unavailable ? (
+                <DefaultSessionFolderControl
+                  blankLabel="Same as new sessions"
+                  computer={computer}
+                  label="Oracle's session folder"
+                  offlineNote={false}
+                  onChange={(path) => void oracle.saveFolder(computer.id, path)}
+                  purpose="Oracle"
+                  selectHint="where Oracle starts new sessions"
+                  title="Oracle"
+                  value={oracle.settings.sessionFolders?.[computer.id]}
+                />
+              ) : null}
+              {!computer.online ? (
+                <small className="default-session-folder__offline">
+                  Connect to browse this computer.
+                </small>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        <OracleSettingsStatus oracle={oracle} part="folders" />
+      </section>
+      <section
+        aria-labelledby="settings-notifications-heading"
+        className="app-settings-group"
+        id="settings-notifications"
+      >
+        <h3 id="settings-notifications-heading" tabIndex={-1}>Notifications</h3>
         {!supported ? (
           <p className="dialog-message">
             Push notifications are not supported in this browser.
@@ -4105,75 +4152,169 @@ function AppSettingsDialog({
         )}
         {error ? <p className="form-error">{error}</p> : null}
       </section>
-
-      <section className="app-settings-section">
-        <h3>App updates</h3>
-        <p className="dialog-message">
-          Version {__APP_VERSION__}. Updates are checked automatically when the
-          app opens and returns to the foreground.
-        </p>
-        {updateRegistration ? (
-          <p className="dialog-message">
-            A new Agentic Remote version is ready.
-          </p>
-        ) : null}
-        <button
-          className="secondary-button app-settings-section__action"
-          disabled={checkingUpdate || updatingApp}
-          onClick={
-            updateRegistration
-              ? onApplyUpdate
-              : () => void checkForUpdate()
-          }
-          type="button"
-        >
-          {updatingApp
-            ? 'Updating…'
-            : checkingUpdate
-              ? 'Checking…'
-              : updateRegistration
-                ? 'Update now'
-                : 'Check for updates'}
-        </button>
-        {updateMessage ? (
-          <p className="app-settings-section__result" role="status">
-            {updateMessage}
-          </p>
-        ) : null}
+      <section
+        aria-labelledby="settings-interface-heading"
+        className="app-settings-group"
+        id="settings-interface"
+      >
+        <h3 id="settings-interface-heading" tabIndex={-1}>Interface</h3>
+        <div className="app-settings-group__body">
+          <section className="app-settings-section">
+            <h4>Appearance</h4>
+            <fieldset className="appearance-options">
+              <legend>Reading surfaces</legend>
+              {(['graphite', 'light'] as const).map((option) => (
+                <label className="appearance-option" data-appearance={option} key={option}>
+                  <input
+                    aria-label={`${option === 'light' ? 'Light' : 'Graphite'} appearance`}
+                    checked={appearance === option}
+                    name="appearance"
+                    onChange={() => {
+                      try {
+                        onAppearanceChange(option)
+                        setAppearanceError(undefined)
+                      } catch (caught) {
+                        setAppearanceError(`Could not save appearance: ${
+                          caught instanceof Error ? caught.message : String(caught)
+                        }`)
+                      }
+                    }}
+                    type="radio"
+                  />
+                  <span aria-hidden="true" className="appearance-option__preview" />
+                  <strong>{option === 'light' ? 'Light' : 'Graphite'}</strong>
+                </label>
+              ))}
+            </fieldset>
+            <p className="dialog-message">
+              Choose an accent for this tab. Other Agentic Remote tabs keep their
+              own color.
+            </p>
+            <div
+              aria-label="Accent color"
+              className="accent-theme-list"
+              role="radiogroup"
+            >
+              {accentThemes.map((theme) => (
+                <label
+                  className={`accent-theme-option ${
+                    accentTheme === theme.id
+                      ? 'accent-theme-option--selected'
+                      : ''
+                  }`}
+                  key={theme.id}
+                >
+                  <input
+                    aria-label={`${theme.name} accent`}
+                    checked={accentTheme === theme.id}
+                    name="accent-theme"
+                    onChange={() => onAccentThemeChange(theme.id)}
+                    type="radio"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="accent-theme-option__swatch"
+                    style={{ '--accent-choice': theme.color } as CSSProperties}
+                  />
+                  <strong>{theme.name}</strong>
+                </label>
+              ))}
+            </div>
+            {appearanceError ? <p className="form-error" role="alert">{appearanceError}</p> : null}
+          </section>
+          <section className="app-settings-section">
+            <h4>Status line</h4>
+            <p className="dialog-message">
+              Choose the session and runtime details shown above the composer.
+            </p>
+            <StatuslineControls
+              onChange={onStatuslineChange}
+              settings={statusline}
+            />
+          </section>
+          <section className="app-settings-section app-settings-section--wide">
+            <h4>Keyboard shortcuts</h4>
+            <p className="dialog-message">
+              Available on a keyboard, outside dialogs and the message box. Choose
+              one to give it different keys.
+            </p>
+            <ShortcutEditor
+              onChange={onShortcutsChange}
+              overrides={shortcutOverrides}
+              shortcuts={shortcuts}
+            />
+            <ul className="shortcut-list">
+              <li>
+                <span>Recall previous message</span>
+                <kbd>{'\u2191'}</kbd>
+              </li>
+            </ul>
+            <p className="dialog-message">
+              Recall works in the message box itself, so it is not one of the keys
+              above.
+            </p>
+          </section>
+        </div>
       </section>
-
-      <section className="app-settings-section">
-        <h3>Status line</h3>
-        <p className="dialog-message">
-          Choose the session and runtime details shown above the composer.
-        </p>
-        <StatuslineControls
-          onChange={onStatuslineChange}
-          settings={statusline}
-        />
-      </section>
-
-      <section className="app-settings-section">
-        <h3>Keyboard shortcuts</h3>
-        <p className="dialog-message">
-          Available on a keyboard, outside dialogs and the message box. Choose
-          one to give it different keys.
-        </p>
-        <ShortcutEditor
-          onChange={onShortcutsChange}
-          overrides={shortcutOverrides}
-          shortcuts={shortcuts}
-        />
-        <ul className="shortcut-list">
-          <li>
-            <span>Recall previous message</span>
-            <kbd>{'\u2191'}</kbd>
-          </li>
-        </ul>
-        <p className="dialog-message">
-          Recall works in the message box itself, so it is not one of the keys
-          above.
-        </p>
+      <section
+        aria-labelledby="settings-app-heading"
+        className="app-settings-group"
+        id="settings-app"
+      >
+        <h3 id="settings-app-heading" tabIndex={-1}>App</h3>
+        <div className="app-settings-group__body">
+          {shellSettingsAvailable() && (
+            <section className="app-settings-section">
+              <h4>Hub connection</h4>
+              <p className="dialog-message">
+                This app is connected to a hub you chose when you installed it.
+                Change it if the hub moved or you entered the wrong address.
+              </p>
+              <button
+                className="secondary-button"
+                onClick={() => openShellSettings()}
+                type="button"
+              >
+                Change hub…
+              </button>
+            </section>
+          )}
+          <section className="app-settings-section">
+            <h4>App updates</h4>
+            <p className="dialog-message">
+              Version {__APP_VERSION__}. Updates are checked automatically when the
+              app opens and returns to the foreground.
+            </p>
+            {updateRegistration ? (
+              <p className="dialog-message">
+                A new Agentic Remote version is ready.
+              </p>
+            ) : null}
+            <button
+              className="secondary-button app-settings-section__action"
+              disabled={checkingUpdate || updatingApp}
+              onClick={
+                updateRegistration
+                  ? onApplyUpdate
+                  : () => void checkForUpdate()
+              }
+              type="button"
+            >
+              {updatingApp
+                ? 'Updating…'
+                : checkingUpdate
+                  ? 'Checking…'
+                  : updateRegistration
+                    ? 'Update now'
+                    : 'Check for updates'}
+            </button>
+            {updateMessage ? (
+              <p className="app-settings-section__result" role="status">
+                {updateMessage}
+              </p>
+            ) : null}
+          </section>
+        </div>
       </section>
       </div>
     </DialogFrame>
@@ -6883,6 +7024,8 @@ function App() {
   const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Where App settings opens: Oracle's model when opened from Oracle's panel.
+  const [settingsSection, setSettingsSection] = useState<string>()
   const [statuslineOpen, setStatuslineOpen] = useState(false)
   const [backgroundTasksOpen, setBackgroundTasksOpen] = useState(false)
   const [backgroundTaskRefreshVersion, setBackgroundTaskRefreshVersion] =
@@ -14483,6 +14626,7 @@ function App() {
             className="sidebar-settings__button"
             onClick={() => {
               setSidebarOpen(false)
+              setSettingsSection(undefined)
               setSettingsOpen(true)
             }}
             type="button"
@@ -15782,6 +15926,7 @@ function App() {
       ) : null}
       <AppSettingsDialog
         accentTheme={accentTheme}
+        initialSection={settingsSection}
         onApplyUpdate={() => void applyPwaUpdate()}
         onAccentThemeChange={setAccentTheme}
         appearance={appearance}
@@ -15906,7 +16051,10 @@ function App() {
         onManagedSessionsChange={changeManagedSessions}
         onOpenChange={setOracleOpen}
         onOpenSession={openManagedSession}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          setSettingsSection('settings-oracle')
+          setSettingsOpen(true)
+        }}
         onWidthChange={setOraclePanelWidth}
         open={oracleOpen}
         reservedLeft={sidebarWidth}

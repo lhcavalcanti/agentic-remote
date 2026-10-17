@@ -84,10 +84,23 @@ export function DialogFrame({
       // dialog is open -- a button that stops applying, a field that goes
       // away with the mode it belonged to. The focus falls to the body, and
       // Tab from there walks the page behind a dialog that says it is out of
-      // reach, so it is brought back in.
+      // reach, so it is brought back in. Focus placed on something inside the
+      // dialog that Tab itself skips, such as a heading a jump link moved it
+      // to, carries on from there instead of starting over.
       if (!reachable.some((element) => element === active)) {
         event.preventDefault()
-        ;(event.shiftKey ? last : first).focus()
+        const within =
+          active instanceof HTMLElement &&
+          active !== dialog.current &&
+          dialog.current.contains(active)
+        const next = !within
+          ? undefined
+          : event.shiftKey
+            ? reachable.findLast((element) =>
+                Boolean(element.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_FOLLOWING))
+            : reachable.find((element) =>
+                Boolean(element.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_PRECEDING))
+        ;(next ?? (event.shiftKey ? last : first)).focus()
         return
       }
       if (event.shiftKey && (active === first || active === dialog.current)) {

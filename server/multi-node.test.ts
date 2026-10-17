@@ -839,7 +839,7 @@ describe('multi-node hub', () => {
         statusCode: 401,
       })
       await expect(openNodeVoiceSocket(
-        `${endpoint}?protocol=2&streamId=voice-one`,
+        `${endpoint}?protocol=${ORACLE_VOICE_PROTOCOL + 1}&streamId=voice-one`,
         `Bearer ${worker.identity.token}`,
       )).rejects.toMatchObject({ statusCode: 400 })
 

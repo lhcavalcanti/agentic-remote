@@ -80,17 +80,26 @@ Expected: FAIL because `shared/oracle-voice.ts` does not exist.
 - [ ] **Step 3: Implement exact protocol constants, discriminated unions, and binary parsing**
 
 ```ts
-export const ORACLE_VOICE_PROTOCOL = 1 as const
+export const ORACLE_VOICE_PROTOCOL = 2 as const
 export const VOICE_AUDIO_HEADER_BYTES = 24
 export type VoiceAudioDirection = 'microphone' | 'playback'
 
-export interface VoiceAudioFrame {
-  direction: VoiceAudioDirection
-  generation: number
-  sequence: number
-  sampleRate: number
-  samples: Int16Array
-}
+export type VoiceAudioFrame =
+  | {
+      direction: 'microphone'
+      generation: number
+      sequence: number
+      sampleRate: 16_000
+      samples: Int16Array
+    }
+  | {
+      direction: 'playback'
+      generation: number
+      segmentId: string
+      sequence: number
+      sampleRate: number
+      samples: Int16Array
+    }
 
 export function decodeVoiceAudioFrame(payload: ArrayBuffer): VoiceAudioFrame
 export function encodeVoiceAudioFrame(frame: VoiceAudioFrame): ArrayBuffer
@@ -595,7 +604,7 @@ Use a real listening Fastify test server and `ws`:
 ```ts
 await expect(openNodeVoiceSocket(url)).rejects.toMatchObject({ statusCode: 401 })
 const socket = await openNodeVoiceSocket(url, `Bearer ${identity.tokenForTest()}`)
-expect(await nextJson(socket)).toMatchObject({ type: 'hello', protocol: 1 })
+expect(await nextJson(socket)).toMatchObject({ type: 'hello', protocol: 2 })
 ```
 
 Also reject invalid protocol, missing backend, and a second concurrent stream.

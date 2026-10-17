@@ -5,10 +5,10 @@ import type WebSocket from 'ws'
 import { z } from 'zod'
 import {
   ORACLE_VOICE_PROTOCOL,
-  VOICE_AUDIO_HEADER_BYTES,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
   isVoiceClientControl,
+  voiceAudioFrameByteLength,
   type VoiceCapabilities,
 } from '../shared/oracle-voice.js'
 import {
@@ -241,7 +241,7 @@ function sendNodeVoiceOutput(
 ): Promise<void> {
   if (
     'direction' in output
-    && VOICE_AUDIO_HEADER_BYTES + output.samples.byteLength > limits.maxFrameBytes
+    && voiceAudioFrameByteLength(output) > limits.maxFrameBytes
   ) {
     return Promise.reject(new VoiceSessionError('Voice playback frame is too large', 1009))
   }

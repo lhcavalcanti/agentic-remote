@@ -195,6 +195,7 @@ describe('RemoteVoiceClient', () => {
     node.send(encodeVoiceAudioFrame({
       direction: 'playback',
       generation: 2,
+      segmentId: 'segment-2',
       sequence: 0,
       sampleRate: 22_050,
       samples: Int16Array.of(-2, 2),
@@ -206,6 +207,7 @@ describe('RemoteVoiceClient', () => {
       {
         direction: 'playback',
         generation: 2,
+        segmentId: 'segment-2',
         sequence: 0,
         sampleRate: 22_050,
         samples: Int16Array.of(-2, 2),
@@ -353,6 +355,7 @@ describe('RemoteVoiceClient', () => {
     node.send(encodeVoiceAudioFrame({
       direction: 'playback',
       generation: 1,
+      segmentId: 'segment-1',
       sequence: 0,
       sampleRate: 22_050,
       samples: new Int16Array(

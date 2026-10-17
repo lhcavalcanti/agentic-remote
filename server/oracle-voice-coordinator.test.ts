@@ -108,14 +108,24 @@ class FakeBackend implements OracleVoiceBackendConnector {
   readonly controls: VoiceClientControl[] = []
   readonly audio: VoiceAudioFrame[] = []
   readonly closed: string[] = []
+  readonly closeStarted: Promise<void>
+  readonly deliveryTimeline: string[] = []
   private output:
     | ((message: OracleVoiceBackendOutput) => Promise<void>)
     | undefined
   private disconnect:
     | ((failure: OracleVoiceBackendDisconnect) => Promise<void>)
     | undefined
+  private readonly resolveCloseStarted: () => void
+  private deliveryTail: Promise<void> = Promise.resolve()
 
-  constructor(private readonly timeline: string[] = []) {}
+  constructor(private readonly timeline: string[] = []) {
+    let resolveCloseStarted!: () => void
+    this.closeStarted = new Promise<void>((resolve) => {
+      resolveCloseStarted = resolve
+    })
+    this.resolveCloseStarted = resolveCloseStarted
+  }
 
   async connect(options: Parameters<OracleVoiceBackendConnector['connect']>[0]) {
     this.output = options.output
@@ -136,14 +146,35 @@ class FakeBackend implements OracleVoiceBackendConnector {
         this.audio.push(frame)
       },
       close: async (reason: string) => {
+        this.deliveryTimeline.push(`backend.close.start:${reason}`)
+        this.resolveCloseStarted()
+        await this.deliveryTail
         this.closed.push(reason)
+        this.deliveryTimeline.push(`backend.close.done:${reason}`)
       },
     }
   }
 
   emit(message: OracleVoiceBackendOutput): Promise<void> {
     if (!this.output) throw new Error('backend is not connected')
-    return this.output(message)
+    let finishDelivery!: () => void
+    const delivery = new Promise<void>((resolve) => {
+      finishDelivery = resolve
+    })
+    this.deliveryTail = this.deliveryTail.then(() => delivery)
+    this.deliveryTimeline.push('backend.output.start')
+    const delivered = this.output(message)
+    void delivered.then(
+      () => {
+        this.deliveryTimeline.push('backend.output.done')
+        finishDelivery()
+      },
+      () => {
+        this.deliveryTimeline.push('backend.output.done')
+        finishDelivery()
+      },
+    )
+    return delivered
   }
 
   lose(failure: OracleVoiceBackendDisconnect): Promise<void> {
@@ -264,11 +295,13 @@ function final(
 
 function audio(
   generation: number,
+  segmentId: string,
   sequence: number,
-): VoiceAudioFrame {
+): VoiceAudioFrame & { segmentId: string } {
   return {
     direction: 'playback',
     generation,
+    segmentId,
     sequence,
     sampleRate: 22_050,
     samples: new Int16Array([1, -1]),
@@ -338,6 +371,99 @@ describe('OracleVoiceCoordinator', () => {
 
     expect(test.browser).toContainEqual(partial(1, 'u1', 'display only'))
     expect(test.manager.send).not.toHaveBeenCalled()
+  })
+
+  it('finishes a fatal backend callback before draining and closing it', async () => {
+    const test = harness()
+    await test.start(0)
+
+    const delivery = test.backend.emit({
+      type: 'error',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId: 'stream-1',
+      generation: 0,
+      code: 'voice_backend_failed',
+      message: 'Voice worker failed',
+      fatal: true,
+    })
+    await test.backend.closeStarted
+
+    const deliveryDone = test.backend.deliveryTimeline.indexOf('backend.output.done')
+    const closeStarted = test.backend.deliveryTimeline.indexOf(
+      'backend.close.start:Voice worker failed',
+    )
+    expect(deliveryDone).toBeGreaterThanOrEqual(0)
+    expect(deliveryDone).toBeLessThan(closeStarted)
+
+    await delivery
+    await test.coordinator.close('Voice worker failed')
+    expect(test.backend.closed).toEqual(['Voice worker failed'])
+  })
+
+  it('tracks a working manager status before the browser starts', async () => {
+    const test = harness()
+    await test.coordinator.start()
+    test.manager.emit('event', {
+      type: 'manager.status',
+      status: 'working',
+      queued: 0,
+    })
+
+    await test.start(2)
+    await test.coordinator.receive(confirm(3, 'u3'))
+
+    expect(test.backend.calls).toContain('tts.cancel:2')
+    expect(test.manager.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('tracks a running manager message before the browser starts', async () => {
+    const test = harness()
+    await test.coordinator.start()
+    test.manager.emit('event', {
+      type: 'manager.message',
+      message: managerMessage('started-before-browser', { state: 'running' }),
+    })
+
+    await test.start(2)
+    await test.coordinator.receive(confirm(3, 'u3'))
+
+    expect(test.backend.calls).toContain('tts.cancel:2')
+    expect(test.manager.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('rejects speech end for a different same-generation utterance', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'active-utterance'))
+
+    await expect(test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'stale-utterance',
+    }))).rejects.toThrow('active utterance')
+  })
+
+  it('drops partials and finals for a different same-generation utterance', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'active-utterance'))
+
+    await test.backend.emit(partial(1, 'stale-utterance', 'Stale partial'))
+    await test.backend.emit(final(1, 'stale-utterance', 'Stale final'))
+
+    expect(test.browser).not.toContainEqual(
+      partial(1, 'stale-utterance', 'Stale partial'),
+    )
+    expect(test.manager.send).not.toHaveBeenCalled()
+
+    await test.backend.emit(partial(1, 'active-utterance', 'Current partial'))
+    await test.backend.emit(final(1, 'active-utterance', 'Current final'))
+    expect(test.browser).toContainEqual(
+      partial(1, 'active-utterance', 'Current partial'),
+    )
+    expect(test.manager.send).toHaveBeenCalledWith(
+      'Current final',
+      defaults,
+      { answerOnly: true },
+    )
   })
 
   it('releases an opened backend when the browser cannot receive hello', async () => {
@@ -511,7 +637,7 @@ describe('OracleVoiceCoordinator', () => {
 
     await test.coordinator.receive(confirm(2, 'new-utterance'))
     const browserCount = test.browser.length
-    await test.backend.emit(audio(1, 0))
+    await test.backend.emit(audio(1, oldSegment.segmentId, 0))
     await test.backend.emit(audioEnd(1, oldSegment.segmentId))
     await test.coordinator.managerEvent({
       type: 'manager.delta',
@@ -534,6 +660,74 @@ describe('OracleVoiceCoordinator', () => {
     await test.backend.emit(final(2, 'new-utterance', 'New request.'))
     expect(test.manager.send).toHaveBeenCalledTimes(2)
   })
+
+  it('forwards playback only for the active same-generation segment', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-user'))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.backend.emit(final(1, 'u1', 'Speak the result.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-user', { state: 'running' }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.delta',
+      messageId: 'voice-reply',
+      content: 'Current sentence.',
+    })
+    const active = test.backend.controls.find(
+      (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+        message.type === 'synthesize',
+    )!
+    const staleAudio = audio(1, 'stale-segment', 0)
+    const activeAudio = audio(1, active.segmentId, 0)
+
+    await test.backend.emit(staleAudio)
+    await test.backend.emit(audioEnd(1, 'stale-segment'))
+    expect(test.browser).not.toContainEqual(staleAudio)
+
+    await test.backend.emit(activeAudio)
+    await test.backend.emit(audioEnd(1, active.segmentId))
+    expect(test.browser).toContainEqual(activeAudio)
+    expect(test.browser).toContainEqual(audioEnd(1, active.segmentId))
+  })
+
+  it.each(['failed', 'cancelled', 'interrupted'] as const)(
+    'clears and cancels speech when the manager turn is %s',
+    async (state) => {
+      const test = harness()
+      test.manager.send.mockResolvedValueOnce(managerMessage('voice-user'))
+      await test.start(0)
+      await test.coordinator.receive(confirm(1, 'u1'))
+      await test.backend.emit(final(1, 'u1', 'Speak the result.'))
+      await test.coordinator.managerEvent({
+        type: 'manager.message',
+        message: managerMessage('voice-user', { state: 'running' }),
+      })
+      await test.coordinator.managerEvent({
+        type: 'manager.delta',
+        messageId: 'voice-reply',
+        content: 'First sentence. Second sentence.',
+      })
+      const active = test.backend.controls.find(
+        (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+          message.type === 'synthesize',
+      )!
+
+      await test.coordinator.managerEvent({
+        type: 'manager.message',
+        message: managerMessage('voice-user', { state }),
+      })
+
+      expect(test.backend.calls).toContain('tts.cancel:1')
+      const browserCount = test.browser.length
+      await test.backend.emit(audio(1, active.segmentId, 0))
+      await test.backend.emit(audioEnd(1, active.segmentId))
+      expect(test.browser).toHaveLength(browserCount)
+      expect(test.backend.calls).not.toContain('tts.synthesize:Second sentence.')
+    },
+  )
 
   it('does not speak a late assistant message for a cancelled queued turn', async () => {
     const test = harness()

@@ -53,19 +53,20 @@ describe('VoiceTurnState', () => {
   it('finalizes the confirmed utterance after an endpoint hint only once', () => {
     const turn = new VoiceTurnState()
     turn.confirmSpeech(12, 'utterance-a')
-    turn.hintSpeechEnd(12)
-    expect(turn.finalize(12, 'Hello')).toEqual({
+    turn.hintSpeechEnd(12, 'utterance-a')
+    expect(turn.finalize(12, 'utterance-a', 'Hello')).toEqual({
       generation: 12,
       utteranceId: 'utterance-a',
       transcript: 'Hello',
     })
-    expect(() => turn.finalize(12, 'Hello again')).toThrow('already finalized')
+    expect(() => turn.finalize(12, 'utterance-a', 'Hello again'))
+      .toThrow('already finalized')
   })
 
   it('allows the server endpoint to finalize without a client hint', () => {
     const turn = new VoiceTurnState()
     turn.confirmSpeech(13, 'utterance-b')
-    expect(turn.finalize(13, 'Server endpoint')).toEqual({
+    expect(turn.finalize(13, 'utterance-b', 'Server endpoint')).toEqual({
       generation: 13,
       utteranceId: 'utterance-b',
       transcript: 'Server endpoint',
@@ -76,11 +77,12 @@ describe('VoiceTurnState', () => {
     const turn = new VoiceTurnState()
     turn.confirmSpeech(20, 'utterance-a')
     turn.advanceGeneration(21)
-    turn.hintSpeechEnd(20)
+    turn.hintSpeechEnd(20, 'utterance-a')
     expect(turn.acceptFrame(frame(20, 0))).toEqual({
       accepted: false,
       reason: 'stale-generation',
     })
-    expect(() => turn.finalize(20, 'Old speech')).toThrow('stale generation')
+    expect(() => turn.finalize(20, 'utterance-a', 'Old speech'))
+      .toThrow('stale generation')
   })
 })

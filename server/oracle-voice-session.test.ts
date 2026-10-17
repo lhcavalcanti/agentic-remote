@@ -333,6 +333,7 @@ describe('VoiceBackendSession', () => {
     expect(sent.find((entry) => 'direction' in entry)).toEqual({
       direction: 'playback',
       generation: 2,
+      segmentId: 'segment-2',
       sequence: 0,
       sampleRate: 22_050,
       samples: Int16Array.of(-2, 2),
@@ -446,7 +447,9 @@ describe('VoiceBackendSession', () => {
       utteranceId: 'u2',
       text: 'x'.repeat(300),
     } satisfies VoiceServerControl
-    const playbackBytes = VOICE_AUDIO_HEADER_BYTES + Int16Array.BYTES_PER_ELEMENT * 64
+    const playbackBytes = VOICE_AUDIO_HEADER_BYTES
+      + 9
+      + Int16Array.BYTES_PER_ELEMENT * 64
     const maxQueueBytes = Buffer.byteLength(JSON.stringify(partial)) + playbackBytes - 1
     const { engine, sent, session, terminated } = harness(
       new FakeVoiceEngine(),

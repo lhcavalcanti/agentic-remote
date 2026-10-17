@@ -248,7 +248,7 @@ export class OracleVoiceCoordinator {
         return
       case 'speech_end':
         this.requireCurrentGeneration(message.generation)
-        turn.hintSpeechEnd(message.generation)
+        turn.hintSpeechEnd(message.generation, message.utteranceId)
         await connection.control(message)
         return
       case 'stop':
@@ -321,8 +321,7 @@ export class OracleVoiceCoordinator {
     if ('direction' in output) {
       if (
         output.direction === 'playback'
-        && output.generation === this.currentGeneration
-        && this.activeSpeech
+        && this.isActiveSpeech(output.generation, output.segmentId)
       ) {
         await this.sendOutput(output)
       }
@@ -338,22 +337,24 @@ export class OracleVoiceCoordinator {
       }
       if (output.fatal) {
         this.terminate(1011, output.message)
-        await this.finishClose(output.message)
+        this.scheduleClose(output.message)
       }
       return
     }
     if (output.generation !== this.currentGeneration) return
     switch (output.type) {
       case 'partial':
+        if (!this.requireTurn().isActiveUtterance(
+          output.generation,
+          output.utteranceId,
+        )) return
         await this.sendOutput(output)
         return
       case 'final':
         await this.submitFinal({ ...output, type: 'final' })
         return
       case 'audio_end':
-        if (!this.activeSpeech || output.segmentId !== this.activeSpeech.segmentId) {
-          return
-        }
+        if (!this.isActiveSpeech(output.generation, output.segmentId)) return
         await this.sendOutput(output)
         this.activeSpeech = undefined
         await this.pumpSpeech()
@@ -368,13 +369,18 @@ export class OracleVoiceCoordinator {
     output: VoiceFinalControl,
   ): Promise<void> {
     const turn = this.requireTurn()
-    let transcript: string
+    let finalTranscript: ReturnType<VoiceTurnState['finalize']>
     try {
-      transcript = turn.finalize(output.generation, output.text).transcript.trim()
+      finalTranscript = turn.finalize(
+        output.generation,
+        output.utteranceId,
+        output.text,
+      )
     } catch {
       return
     }
-    if (!turn.rememberSubmission(output.utteranceId)) return
+    const transcript = finalTranscript.transcript.trim()
+    if (!turn.rememberSubmission(finalTranscript.utteranceId)) return
     if (!transcript) {
       await this.returnFinalToComposer(output, 'The final transcript was empty')
       return
@@ -409,12 +415,12 @@ export class OracleVoiceCoordinator {
   }
 
   private async handleManagerEvent(event: ManagerEvent): Promise<void> {
-    if (!this.clientStarted) return
     switch (event.type) {
       case 'manager.status':
         this.managerBusy = managerStatusIsBusy(event.status)
         return
       case 'manager.delta':
+        if (!this.clientStarted) return
         await this.consumeManagerDelta(event)
         return
       case 'manager.message':
@@ -460,8 +466,23 @@ export class OracleVoiceCoordinator {
       } else if (['done', 'failed', 'cancelled', 'interrupted'].includes(
         message.state ?? '',
       )) {
+        const submission = this.submissions.get(message.id)
         this.submissions.delete(message.id)
         if (this.activeReplyTo === message.id) this.activeReplyTo = undefined
+        if (
+          message.state !== 'done'
+          && submission
+          && submission.generation === this.currentGeneration
+        ) {
+          this.clearSpeechOutput()
+          await withTimeout(
+            this.requireConnection().control(
+              this.clientControl('cancel', submission.generation, {}),
+            ),
+            this.cancelTimeoutMs,
+            'Voice synthesis cancellation timed out',
+          )
+        }
       }
       return
     }
@@ -621,6 +642,16 @@ export class OracleVoiceCoordinator {
     this.activeSpeech = undefined
     this.segmenter = undefined
     this.segmenterMessageId = undefined
+  }
+
+  private isActiveSpeech(generation: number, segmentId: string): boolean {
+    return generation === this.currentGeneration
+      && this.activeSpeech?.generation === generation
+      && this.activeSpeech.segmentId === segmentId
+  }
+
+  private scheduleClose(reason: string): void {
+    void this.close(reason).catch(() => undefined)
   }
 
   private async finishClose(reason: string): Promise<void> {

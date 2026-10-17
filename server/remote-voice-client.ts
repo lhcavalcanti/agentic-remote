@@ -2,11 +2,11 @@ import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import {
   ORACLE_VOICE_PROTOCOL,
-  VOICE_AUDIO_HEADER_BYTES,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
   isVoiceClientControl,
   isVoiceServerControl,
+  voiceAudioFrameByteLength,
   type VoiceAudioFrame,
   type VoiceCapabilities,
   type VoiceClientControl,
@@ -261,8 +261,7 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
           throw new VoiceSessionError('Remote voice accepts microphone audio only', 1008)
         }
         if (
-          VOICE_AUDIO_HEADER_BYTES + message.samples.byteLength
-          > this.capabilities.limits.maxFrameBytes
+          voiceAudioFrameByteLength(message) > this.capabilities.limits.maxFrameBytes
         ) {
           const error = new VoiceSessionError('Voice microphone frame is too large', 1009)
           this.disconnect(new RemoteVoiceDisconnectError(error.message, error.closeCode))

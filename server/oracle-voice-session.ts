@@ -2,8 +2,8 @@ import path from 'node:path'
 import {
   ORACLE_VOICE_PROTOCOL,
   ORACLE_VOICE_SAMPLE_RATE,
-  VOICE_AUDIO_HEADER_BYTES,
   isVoicePlaybackSampleRate,
+  voiceAudioFrameByteLength,
   type VoiceAudioFrame,
   type VoiceClientControl,
   type VoiceServerControl,
@@ -164,7 +164,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       if (frame.direction !== 'microphone' || frame.sampleRate !== ORACLE_VOICE_SAMPLE_RATE) {
         throw new VoiceSessionError('Only 16 kHz microphone audio is accepted', 1008)
       }
-      const frameBytes = VOICE_AUDIO_HEADER_BYTES + frame.samples.byteLength
+      const frameBytes = voiceAudioFrameByteLength(frame)
       if (frameBytes > this.limits.maxFrameBytes) {
         throw new VoiceSessionError('Voice audio frame is too large', 1009)
       }
@@ -424,17 +424,19 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         void this.fail(new VoiceSessionError('Voice engine emitted an invalid sample rate', 1011))
         return
       }
-      if (VOICE_AUDIO_HEADER_BYTES + event.samples.byteLength > this.limits.maxFrameBytes) {
-        void this.fail(new VoiceSessionError('Voice playback frame is too large', 1009))
-        return
-      }
-      void this.enqueueOutput({
+      const frame: VoiceAudioFrame = {
         direction: 'playback',
         generation: event.generation,
+        segmentId: event.segmentId,
         sequence: event.sequence,
         sampleRate: event.sampleRate,
         samples: event.samples,
-      }).catch(() => undefined)
+      }
+      if (voiceAudioFrameByteLength(frame) > this.limits.maxFrameBytes) {
+        void this.fail(new VoiceSessionError('Voice playback frame is too large', 1009))
+        return
+      }
+      void this.enqueueOutput(frame).catch(() => undefined)
       return
     }
     this.activeSegmentId = undefined
@@ -705,7 +707,7 @@ function sameUtterance(
 
 function outputBytes(output: VoiceBackendOutput): number {
   return 'direction' in output
-    ? VOICE_AUDIO_HEADER_BYTES + output.samples.byteLength
+    ? voiceAudioFrameByteLength(output)
     : Buffer.byteLength(JSON.stringify(output))
 }
 

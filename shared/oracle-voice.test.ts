@@ -35,6 +35,7 @@ describe('Oracle voice audio protocol', () => {
     const encoded = encodeVoiceAudioFrame({
       direction: 'playback',
       generation: 0x0102_0304,
+      segmentId: 's1',
       sequence: 0x0506_0708,
       sampleRate: 22_050,
       samples: new Int16Array([0x1234]),
@@ -43,11 +44,12 @@ describe('Oracle voice audio protocol', () => {
 
     expect([...bytes]).toEqual([
       65, 82, 86, 67,
-      ORACLE_VOICE_PROTOCOL, 1, 0, 0,
+      ORACLE_VOICE_PROTOCOL, 1, 2, 0,
       4, 3, 2, 1,
       8, 7, 6, 5,
       34, 86, 0, 0,
       1, 0, 0, 0,
+      115, 49,
       52, 18,
     ])
   })
@@ -76,11 +78,13 @@ describe('Oracle voice audio protocol', () => {
     expect(decodeVoiceAudioFrame(encodeVoiceAudioFrame({
       direction: 'playback',
       generation: 0,
+      segmentId: 'segment-0',
       sequence: 0,
       sampleRate: 22_050,
       samples: Int16Array.of(1),
     }))).toMatchObject({
       direction: 'playback',
+      segmentId: 'segment-0',
       sampleRate: 22_050,
     })
     expect(() => encodeVoiceAudioFrame({
@@ -100,10 +104,19 @@ describe('Oracle voice audio protocol', () => {
     expect(() => encodeVoiceAudioFrame({
       direction: 'playback',
       generation: 0,
+      segmentId: 'segment-0',
       sequence: 0,
       sampleRate: 192_001,
       samples: new Int16Array(),
     })).toThrow(VoiceProtocolError)
+
+    expect(() => encodeVoiceAudioFrame({
+      direction: 'playback',
+      generation: 0,
+      sequence: 0,
+      sampleRate: 22_050,
+      samples: new Int16Array(),
+    } as never)).toThrow(VoiceProtocolError)
 
     const encoded = encodeVoiceAudioFrame({
       direction: 'microphone',
@@ -119,7 +132,7 @@ describe('Oracle voice audio protocol', () => {
 
 describe('Oracle voice control protocol', () => {
   const capabilities = {
-    protocol: 1,
+    protocol: ORACLE_VOICE_PROTOCOL,
     available: true,
     computerId: 'computer-1',
     computerName: 'Computer',
@@ -213,7 +226,7 @@ describe('Oracle voice control protocol', () => {
   it('rejects unknown versions, variants, and routing identity keys', () => {
     expect(isVoiceClientControl({
       type: 'start',
-      protocol: 2,
+      protocol: ORACLE_VOICE_PROTOCOL + 1,
       streamId: 'stream-1',
       generation: 0,
       language: 'en',
@@ -222,7 +235,7 @@ describe('Oracle voice control protocol', () => {
     })).toBe(false)
     expect(isVoiceClientControl({
       type: 'speech_confirmed',
-      protocol: 1,
+      protocol: ORACLE_VOICE_PROTOCOL,
       streamId: 'stream-1',
       generation: 3,
       utteranceId: 'utterance-3',
@@ -230,7 +243,7 @@ describe('Oracle voice control protocol', () => {
     })).toBe(false)
     expect(isVoiceServerControl({
       type: 'unknown',
-      protocol: 1,
+      protocol: ORACLE_VOICE_PROTOCOL,
       streamId: 'stream-1',
     })).toBe(false)
   })

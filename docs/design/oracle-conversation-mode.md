@@ -68,14 +68,15 @@ same-origin browser session and prevent an unticketed upgrade.
 
 `shared/oracle-voice.ts` owns versioned control messages, capabilities, limits,
 generation IDs, sequence numbers, and binary PCM framing. JSON is used only
-for low-frequency control and transcript events. Audio uses fixed binary
-headers and signed 16-bit little-endian samples.
+for low-frequency control and transcript events. Audio uses a fixed binary
+header, a playback segment identity when applicable, and signed 16-bit
+little-endian samples.
 
 Every control message carries a protocol version and stream ID. Every audio
 frame carries a direction, generation, sequence, sample rate, and sample
-count. Parsers reject unknown versions, impossible lengths, unsupported sample
-rates, duplicate or out-of-order frames, and frames above the configured
-limit.
+count; playback frames also carry the active synthesis segment ID. Parsers
+reject unknown versions, impossible lengths, unsupported sample rates,
+duplicate or out-of-order frames, and frames above the configured limit.
 
 ### Browser client
 

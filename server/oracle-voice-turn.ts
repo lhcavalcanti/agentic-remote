@@ -90,18 +90,31 @@ export class VoiceTurnState {
     return { accepted: true }
   }
 
-  hintSpeechEnd(generation: number): void {
+  hintSpeechEnd(generation: number, utteranceId: string): void {
     this.validateGeneration(generation)
     if (this.generation === undefined || generation > this.generation) {
       throw new Error('speech end generation is out of order')
     }
     if (generation < this.generation) return
+    if (utteranceId !== this.utteranceId) {
+      throw new Error('speech end does not match the active utterance')
+    }
     if (this.phase === 'listening') {
       this.phase = 'endpoint-pending'
     }
   }
 
-  finalize(generation: number, transcript: string): VoiceFinalTranscript {
+  isActiveUtterance(generation: number, utteranceId: string): boolean {
+    return generation === this.generation
+      && utteranceId === this.utteranceId
+      && (this.phase === 'listening' || this.phase === 'endpoint-pending')
+  }
+
+  finalize(
+    generation: number,
+    utteranceId: string,
+    transcript: string,
+  ): VoiceFinalTranscript {
     this.validateGeneration(generation)
     if (this.generation === undefined || generation > this.generation) {
       throw new Error('final transcript generation is out of order')
@@ -115,11 +128,14 @@ export class VoiceTurnState {
     if ((this.phase !== 'listening' && this.phase !== 'endpoint-pending') || !this.utteranceId) {
       throw new Error('speech is not confirmed')
     }
+    if (utteranceId !== this.utteranceId) {
+      throw new Error('final transcript does not match the active utterance')
+    }
 
     this.phase = 'finalized'
     return {
       generation,
-      utteranceId: this.utteranceId,
+      utteranceId,
       transcript,
     }
   }

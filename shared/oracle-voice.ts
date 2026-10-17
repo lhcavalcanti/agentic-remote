@@ -1,12 +1,14 @@
 import type { ManagerClientDefaults } from './manager.js'
 
-export const ORACLE_VOICE_PROTOCOL = 1 as const
+export const ORACLE_VOICE_PROTOCOL = 2 as const
 export const ORACLE_VOICE_SAMPLE_RATE = 16_000 as const
 export const ORACLE_VOICE_MIN_PCM_SAMPLE_RATE = 8_000
 export const ORACLE_VOICE_MAX_PCM_SAMPLE_RATE = 192_000
 export const VOICE_AUDIO_HEADER_BYTES = 24
 
 const MAGIC = [0x41, 0x52, 0x56, 0x43] as const
+const UTF8_ENCODER = new TextEncoder()
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 
 export type VoiceAudioDirection = 'microphone' | 'playback'
 
@@ -23,6 +25,7 @@ export type VoiceAudioHeader = VoiceAudioIdentity & (
     }
   | {
       direction: 'playback'
+      segmentId: string
       sampleRate: number
     }
 )
@@ -35,6 +38,7 @@ export type VoiceAudioFrame =
     })
   | (Omit<VoiceAudioIdentity, 'sampleCount'> & {
       direction: 'playback'
+      segmentId: string
       sampleRate: number
       samples: Int16Array
     })
@@ -153,21 +157,36 @@ export function encodeVoiceAudioFrame(frame: VoiceAudioFrame): ArrayBuffer {
   if (!(frame.samples instanceof Int16Array)) {
     throw new VoiceProtocolError('samples must be an Int16Array')
   }
+  const segmentId = playbackSegmentIdBytes(frame)
 
-  const payload = new ArrayBuffer(VOICE_AUDIO_HEADER_BYTES + frame.samples.length * 2)
+  const payload = new ArrayBuffer(
+    VOICE_AUDIO_HEADER_BYTES + segmentId.byteLength + frame.samples.length * 2,
+  )
   const view = new DataView(payload)
   MAGIC.forEach((byte, index) => view.setUint8(index, byte))
   view.setUint8(4, ORACLE_VOICE_PROTOCOL)
   view.setUint8(5, frame.direction === 'microphone' ? 0 : 1)
-  view.setUint16(6, 0, true)
+  view.setUint16(6, segmentId.byteLength, true)
   view.setUint32(8, frame.generation, true)
   view.setUint32(12, frame.sequence, true)
   view.setUint32(16, frame.sampleRate, true)
   view.setUint32(20, frame.samples.length, true)
+  new Uint8Array(payload, VOICE_AUDIO_HEADER_BYTES, segmentId.byteLength)
+    .set(segmentId)
+  const samplesOffset = VOICE_AUDIO_HEADER_BYTES + segmentId.byteLength
   for (let index = 0; index < frame.samples.length; index += 1) {
-    view.setInt16(VOICE_AUDIO_HEADER_BYTES + index * 2, frame.samples[index], true)
+    view.setInt16(samplesOffset + index * 2, frame.samples[index], true)
   }
   return payload
+}
+
+export function voiceAudioFrameByteLength(frame: VoiceAudioFrame): number {
+  if (!(frame.samples instanceof Int16Array)) {
+    throw new VoiceProtocolError('samples must be an Int16Array')
+  }
+  return VOICE_AUDIO_HEADER_BYTES
+    + playbackSegmentIdBytes(frame).byteLength
+    + frame.samples.byteLength
 }
 
 export function decodeVoiceAudioFrame(payload: ArrayBuffer): VoiceAudioFrame {
@@ -184,46 +203,78 @@ export function decodeVoiceAudioFrame(payload: ArrayBuffer): VoiceAudioFrame {
   if (view.getUint8(4) !== ORACLE_VOICE_PROTOCOL) {
     throw new VoiceProtocolError('unsupported audio protocol version')
   }
-  if (view.getUint16(6, true) !== 0) {
-    throw new VoiceProtocolError('reserved audio header bytes must be zero')
-  }
-
   const directionByte = view.getUint8(5)
   if (directionByte !== 0 && directionByte !== 1) {
     throw new VoiceProtocolError('invalid audio direction')
   }
+  const segmentIdByteLength = view.getUint16(6, true)
   const generation = view.getUint32(8, true)
   const sequence = view.getUint32(12, true)
   const sampleRate = view.getUint32(16, true)
   const sampleCount = view.getUint32(20, true)
   const direction = directionByte === 0 ? 'microphone' : 'playback'
+  if (direction === 'microphone' && segmentIdByteLength !== 0) {
+    throw new VoiceProtocolError('microphone audio must not include a segment ID')
+  }
+  if (direction === 'playback' && segmentIdByteLength === 0) {
+    throw new VoiceProtocolError('playback audio requires a segment ID')
+  }
   validateSampleRate(direction, sampleRate)
   if (sampleCount > (Number.MAX_SAFE_INTEGER - VOICE_AUDIO_HEADER_BYTES) / 2) {
     throw new VoiceProtocolError('audio sample count is too large')
   }
-  if (payload.byteLength !== VOICE_AUDIO_HEADER_BYTES + sampleCount * 2) {
+  if (
+    payload.byteLength
+    !== VOICE_AUDIO_HEADER_BYTES + segmentIdByteLength + sampleCount * 2
+  ) {
     throw new VoiceProtocolError('audio frame length does not match its sample count')
   }
 
+  const samplesOffset = VOICE_AUDIO_HEADER_BYTES + segmentIdByteLength
   const samples = new Int16Array(sampleCount)
   for (let index = 0; index < sampleCount; index += 1) {
-    samples[index] = view.getInt16(VOICE_AUDIO_HEADER_BYTES + index * 2, true)
+    samples[index] = view.getInt16(samplesOffset + index * 2, true)
   }
-  return direction === 'microphone'
-    ? {
-        direction,
-        generation,
-        sequence,
-        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
-        samples,
-      }
-    : {
-        direction,
-        generation,
-        sequence,
-        sampleRate,
-        samples,
-      }
+  if (direction === 'microphone') {
+    return {
+      direction,
+      generation,
+      sequence,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples,
+    }
+  }
+  let segmentId: string
+  try {
+    segmentId = UTF8_DECODER.decode(
+      new Uint8Array(payload, VOICE_AUDIO_HEADER_BYTES, segmentIdByteLength),
+    )
+  } catch {
+    throw new VoiceProtocolError('playback segment ID must be valid UTF-8')
+  }
+  if (segmentId.length === 0) {
+    throw new VoiceProtocolError('playback audio requires a segment ID')
+  }
+  return {
+    direction,
+    generation,
+    segmentId,
+    sequence,
+    sampleRate,
+    samples,
+  }
+}
+
+function playbackSegmentIdBytes(frame: VoiceAudioFrame): Uint8Array {
+  if (frame.direction === 'microphone') return new Uint8Array()
+  if (typeof frame.segmentId !== 'string' || frame.segmentId.length === 0) {
+    throw new VoiceProtocolError('playback audio requires a segment ID')
+  }
+  const encoded = UTF8_ENCODER.encode(frame.segmentId)
+  if (encoded.byteLength > 0xffff) {
+    throw new VoiceProtocolError('playback segment ID is too long')
+  }
+  return encoded
 }
 
 export function isVoiceClientControl(value: unknown): value is VoiceClientControl {

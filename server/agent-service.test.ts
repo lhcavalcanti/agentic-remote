@@ -5046,6 +5046,70 @@ describe('AgentService deletion', () => {
     }
   })
 
+  it('takes in a message it just sent even moments after the session last changed', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    const logged = (values: object[]) => JSON.parse(JSON.stringify(values)) as SessionEvent[]
+    let events = logged([
+      { type: 'user.message', id: 'user-1', parentId: null, timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'build it' } },
+      { type: 'assistant.turn_start', id: 'turn-1', parentId: 'user-1', timestamp: '2026-07-22T00:00:00.100Z', data: { turnId: '0' } },
+    ])
+    const composer = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'
+    const terminal = {
+      has: vi.fn(async () => true),
+      capture: vi.fn(async () => composer),
+      cancel: vi.fn(async () => true),
+      // Copilot records what it was sent a moment after it is submitted.
+      send: vi.fn(async (_id: string, content: string) => {
+        events = [...events, ...logged([{
+          type: 'user.message', id: 'user-2', parentId: 'end-1',
+          timestamp: new Date().toISOString(), data: { content },
+        }])]
+        return true
+      }),
+    }
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => events,
+      async () => `events-${events.length}-${events.at(-1)?.id}`,
+      terminal,
+    )
+    try {
+      await service.start()
+      await vi.advanceTimersByTimeAsync(800)
+      await service.refreshTranscripts()
+      // The turn ends and is taken in...
+      events = [...events, ...logged([
+        { type: 'assistant.turn_end', id: 'end-1', parentId: 'turn-1', timestamp: '2026-07-22T00:00:01.000Z', data: { turnId: '0' } },
+      ])]
+      await vi.advanceTimersByTimeAsync(150)
+      for (let attempt = 0; attempt < 50 && store.get(sessionId)?.status !== 'idle'; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(store.get(sessionId)?.status).toBe('idle')
+      // ...and the reply to it is sent straight away, well inside the
+      // watcher's interval.
+      await service.sendMessage(sessionId, 'quick follow-up')
+      await vi.advanceTimersByTimeAsync(150)
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (store.get(sessionId)?.messages.some((message) => message.content === 'quick follow-up')) break
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(store.get(sessionId)?.messages.at(-1)).toMatchObject({
+        role: 'user', content: 'quick follow-up',
+      })
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
   it('takes in a busy terminal session no more often than the transcript watcher', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))

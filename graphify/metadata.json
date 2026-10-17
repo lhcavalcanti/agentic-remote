@@ -349,8 +349,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "2cecc2c41040b5ccfc9d2912dc6ecc992735087f6b38a109b630bdeaa9cd39fd",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "5ec216e5582c77c74d6d38cacccc9a4dcbb7b5472cfeda5056b6506bb21be550",
-    "server/agent-service.ts": "e3d83d30dba7e06734bc74e4280d01ea1047d4060e7c9056aefacf42ad0d2824",
+    "server/agent-service.test.ts": "73f102395bcd9cc1487038caeca8719b0d07377cb709e7adca12e0eeb07f177b",
+    "server/agent-service.ts": "e4a0f2dae631f899f548ba6b1edaa350880a8d4db5387fa81f14da484a3cb1e3",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -370,7 +370,7 @@
     "server/computer-manager.ts": "c6110939a5d05f5490b1a1419fdc8994be7ec0351773456759e754b58f133c97",
     "server/computer-registry.test.ts": "e0616b92fdfb650b523100af4a8f7b8e4f31b99764ec4ab71502d3b69b1bf55b",
     "server/computer-registry.ts": "0b7670e11309f21891b15e5a5265a4d8fae8cadbc3262b4484686bfe7caff15f",
-    "server/conversation-recovery.test.ts": "de03cb198de0d17ffed87367f653e9307ddb0bd494abba996b14b5b2e1186de7",
+    "server/conversation-recovery.test.ts": "61e33a22980e0897b02f2c9df1e130c79d3ce6474c4bdd5b7970ca2e8a5fe9b5",
     "server/delegated-transcription-service.test.ts": "a34fed74712fa98c501e7ed21e31b452ed201360cf0e784169a28fde124a9f1a",
     "server/delegated-transcription-service.ts": "875a5d15fb582e7d836b6d3f5d1cc7328480fa793d63f272aa3c163b1c07afb7",
     "server/directory-browser.test.ts": "9952e56f0dbc161daaa8e5ad8da3498629d83e2b934963266f6ee87ab9385ccb",
@@ -659,13 +659,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "65e2cff02c4a0c35131e9ab8c03b867ec22fc5ab74c1f90bd098af9af0bbcd11",
+    "GRAPH_REPORT.md": "f5a1a319fd64ac31a14b000cf33c726ffcf5ebf2195349a281779efa071691cf",
     "communities.json": "e8c17f63efadfacd7a24ffa222bc6fdef7b15f74437c4176764a9f53df44b5cf",
-    "graph.html": "db33764c77d2c0502bccef9abcc686b17795a6c8f29cdebc27af97b3354288e4",
-    "graph.json": "5777ac5e3a7d58987e71ef58fba6e7b310a833798b365b3ec131b6bbe8a7bd67"
+    "graph.html": "569fc291dadc29a82f68135f5b6d5542504bd3a783635ccd4b9f7279fbfeb598",
+    "graph.json": "cc44398620033c55c0a9c42fc2a06bb77d9cb067522202e3630823193b245a1e"
   },
   "schema_version": 1,
-  "source_commit": "1e58d5c83e8254452e9122532fb004950b518599",
-  "source_fingerprint": "a324dbfcad756738a1e3e0a557c90240df90dacbd4d909feb71cb09bace4e11e",
-  "working_tree_changes": []
+  "source_commit": "f50f72a66030eca9b2e33f298620f88554ac0395",
+  "source_fingerprint": "5dc445002825e28d0039dd0fbc2b1f707c88b19003b813e4aa6e8413dd4fcaba",
+  "working_tree_changes": [
+    "server/agent-service.test.ts",
+    "server/agent-service.ts",
+    "server/conversation-recovery.test.ts"
+  ]
 }

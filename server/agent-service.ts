@@ -1916,6 +1916,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly transcriptSessionSyncs = new Map<string, Promise<void>>()
   // When each session last had a changed event log taken in.
   private readonly transcriptChangesTakenAt = new Map<string, number>()
+  // Sessions just handed a message, whose next change is taken in at once
+  // even inside the watcher's interval: it is most likely that message.
+  private readonly awaitedTranscriptEchoes = new Set<string>()
   private externalSessionIds = new Set<string>()
   private readonly launchingTerminalSessionIds = new Set<string>()
   private discoveryGeneration = 0
@@ -2390,6 +2393,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                 throw error
               }
               if (!sent) throw new Error('Fresh terminal session did not accept the recovery brief')
+              this.awaitedTranscriptEchoes.add(sessionId)
               handedOff = true
               this.admissions.markCommitted(sessionId)
               const admitted = await this.store.admitRecoverySeed(
@@ -4054,6 +4058,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
       this.transcriptChangesTakenAt.delete(id)
+      this.awaitedTranscriptEchoes.delete(id)
       this.workspaceVersions.delete(id)
       this.backgroundTaskSyncs.delete(id)
       this.backgroundTaskTracker.remove(id)
@@ -5300,7 +5305,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<boolean> {
     try {
       const sent = await this.terminalController.send(sessionId, content, enqueue, ...(options ? [options] : []))
-      if (sent) this.admissions.markCommitted(sessionId)
+      if (sent) {
+        this.admissions.markCommitted(sessionId)
+        this.awaitedTranscriptEchoes.add(sessionId)
+      }
       return sent
     } catch (error) {
       if (error && typeof error === 'object' &&
@@ -7874,7 +7882,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await Promise.all([...this.externalSessionIds].map(async (sessionId) => {
         if (this.transcriptSessionSyncs.has(sessionId)) return
         const takenAt = this.transcriptChangesTakenAt.get(sessionId)
-        if (takenAt !== undefined && Date.now() - takenAt < TRANSCRIPT_POLL_MS) return
+        if (
+          takenAt !== undefined &&
+          Date.now() - takenAt < TRANSCRIPT_POLL_MS &&
+          !this.awaitedTranscriptEchoes.has(sessionId)
+        ) return
         const version = await this.sessionEventVersion(sessionId)
         if (!version || this.eventLogVersions.get(sessionId) === version) return
         await this.syncSessionTranscript(sessionId)
@@ -7941,6 +7953,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     this.transcriptChangesTakenAt.set(sessionId, Date.now())
+    this.awaitedTranscriptEchoes.delete(sessionId)
     const events = await this.sessionEventReader(sessionId)
     if (!this.store.isCurrentTranscript(sessionId, observed)) return
     const terminalTasks = this.externalSessionIds.has(sessionId)
@@ -9342,6 +9355,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (!sent) {
           throw new Error('External terminal is no longer available')
         }
+        this.awaitedTranscriptEchoes.add(sessionId)
         outcome = next.command
           ? { kind: 'feedback', command: next.content, before }
           : { kind: 'accepted', startedTurn: true }
@@ -9588,6 +9602,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         delivery.refuse()
         throw queueConflict('The owning terminal is no longer available.')
       }
+      this.awaitedTranscriptEchoes.add(sessionId)
     } catch (error) {
       if (terminalRefused(error)) delivery.refuse()
       throw error

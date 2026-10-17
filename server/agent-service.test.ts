@@ -5110,6 +5110,174 @@ describe('AgentService deletion', () => {
     }
   })
 
+  it('keeps waiting for a just-sent message through changes logged before it', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    const logged = (values: object[]) => JSON.parse(JSON.stringify(values)) as SessionEvent[]
+    let events = logged([
+      { type: 'user.message', id: 'user-1', parentId: null, timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'build it' } },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+      // Something unrelated is logged before Copilot records the message.
+      send: vi.fn(async () => {
+        events = [...events, ...logged([{
+          type: 'session.info', id: 'info-1', parentId: 'user-1',
+          timestamp: new Date().toISOString(), data: { infoType: 'notice', message: 'unrelated' },
+        }])]
+        return true
+      }),
+    }
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => events,
+      async () => `events-${events.length}-${events.at(-1)?.id}`,
+      terminal,
+    )
+    const realWait = () => new Promise((resolve) => setTimeout(resolve, 30))
+    try {
+      await service.start()
+      await vi.advanceTimersByTimeAsync(800)
+      await service.refreshTranscripts()
+      await service.sendMessage(sessionId, 'quick follow-up')
+      // The unrelated change is taken in first...
+      await vi.advanceTimersByTimeAsync(150)
+      await realWait()
+      // ...and the message lands just after it, inside the watcher's interval.
+      events = [...events, ...logged([{
+        type: 'user.message', id: 'user-2', parentId: 'info-1',
+        timestamp: new Date().toISOString(), data: { content: 'quick follow-up' },
+      }])]
+      await vi.advanceTimersByTimeAsync(150)
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (store.get(sessionId)?.messages.some((message) => message.content === 'quick follow-up')) break
+        await realWait()
+      }
+      expect(store.get(sessionId)?.messages.at(-1)).toMatchObject({
+        role: 'user', content: 'quick follow-up',
+      })
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('never takes in a session again within the watcher’s interval of a wake', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    const logged = (values: object[]) => JSON.parse(JSON.stringify(values)) as SessionEvent[]
+    let events = logged([
+      { type: 'user.message', id: 'user-1', parentId: null, timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'build it' } },
+    ])
+    const reads: number[] = []
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => {
+        reads.push(Date.now())
+        return events
+      },
+      async () => `events-${events.length}`,
+      { has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    const change = (id: string) => {
+      events = [...events, ...logged([{
+        type: 'tool.execution_start', id, parentId: null, timestamp: new Date().toISOString(),
+        data: { toolCallId: id, toolName: 'bash', arguments: { command: 'true' } },
+      }])]
+    }
+    const step = async (ms: number) => {
+      await vi.advanceTimersByTimeAsync(ms)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    }
+    try {
+      await service.start()
+      await step(800)
+      await service.refreshTranscripts()
+      reads.length = 0
+      // A wake takes in the first change...
+      change('tool-1')
+      await step(150)
+      // ...and another lands just before the watcher's next pass.
+      await step(450)
+      change('tool-2')
+      await step(200)
+      await step(300)
+      await step(300)
+      expect(reads.length).toBe(2)
+      expect(reads[1] - reads[0]).toBeGreaterThanOrEqual(750)
+      expect(store.get(sessionId)?.messages.some((message) => message.content.includes('true'))).toBe(true)
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits for a transcript wake that is still running when it stops', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    let events = JSON.parse(JSON.stringify([
+      { type: 'user.message', id: 'user-1', parentId: null, timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'build it' } },
+    ])) as SessionEvent[]
+    let holdReads = false
+    let release = () => {}
+    let readHeld = () => {}
+    const held = new Promise<void>((resolve) => { readHeld = resolve })
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => {
+        if (holdReads) {
+          readHeld()
+          await new Promise<void>((resolve) => { release = resolve })
+        }
+        return events
+      },
+      async () => `events-${events.length}`,
+      { has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    let stopped = false
+    try {
+      await service.start()
+      await vi.advanceTimersByTimeAsync(800)
+      await service.refreshTranscripts()
+      holdReads = true
+      events = [...events, ...JSON.parse(JSON.stringify([
+        { type: 'user.message', id: 'user-2', parentId: 'user-1', timestamp: '2026-07-22T00:00:01.000Z', data: { content: 'more' } },
+      ])) as SessionEvent[]]
+      await vi.advanceTimersByTimeAsync(150)
+      await held
+      const stopping = service.stop().then(() => { stopped = true })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(stopped).toBe(false)
+      release()
+      await stopping
+      expect(stopped).toBe(true)
+    } finally {
+      release()
+      if (!stopped) await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
   it('takes in a busy terminal session no more often than the transcript watcher', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))

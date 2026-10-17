@@ -334,6 +334,8 @@ function isUncertainDelivery(error: unknown): boolean {
 // is checked for something new between passes.
 const TRANSCRIPT_POLL_MS = 750
 const TRANSCRIPT_WAKE_MS = 100
+// How long a message handed to a terminal is watched for in its event log.
+const TRANSCRIPT_ECHO_WAIT_MS = 5_000
 
 const sessionInUseMessage =
   'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
@@ -1910,15 +1912,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private transcriptTimer?: NodeJS.Timeout
   private transcriptInFlight?: Promise<void>
   private transcriptWakeTimer?: NodeJS.Timeout
-  private transcriptWakeInFlight = false
+  private transcriptWake?: Promise<void>
   // One transcript sync per session at a time, whether the watcher or a wake
   // started it.
   private readonly transcriptSessionSyncs = new Map<string, Promise<void>>()
   // When each session last had a changed event log taken in.
   private readonly transcriptChangesTakenAt = new Map<string, number>()
-  // Sessions just handed a message, whose next change is taken in at once
-  // even inside the watcher's interval: it is most likely that message.
-  private readonly awaitedTranscriptEchoes = new Set<string>()
+  // Sessions just handed a message, and when: their changes are taken in at
+  // once, even inside the watcher's interval, until that message is logged.
+  private readonly awaitedTranscriptEchoes = new Map<string, number>()
   private externalSessionIds = new Set<string>()
   private readonly launchingTerminalSessionIds = new Set<string>()
   private discoveryGeneration = 0
@@ -2254,11 +2256,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }, 10_000)
     this.discoveryTimer.unref()
     this.transcriptTimer = setInterval(() => {
-      void this.refreshTranscripts()
+      void this.refreshTranscripts(Date.now())
     }, TRANSCRIPT_POLL_MS)
     this.transcriptTimer.unref()
     this.transcriptWakeTimer = setInterval(() => {
-      void this.wakeChangedTranscripts()
+      this.transcriptWake ??= this.wakeChangedTranscripts().finally(() => {
+        this.transcriptWake = undefined
+      })
     }, TRANSCRIPT_WAKE_MS)
     this.transcriptWakeTimer.unref()
   }
@@ -2381,6 +2385,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             this.publish(claimed)
             if (terminal) {
               let sent: boolean
+              const handedAt = Date.now()
               try {
                 sent = this.terminalController.sendWhenIdle
                   ? await this.terminalController.sendWhenIdle(sessionId, seed.prompt)
@@ -2393,7 +2398,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                 throw error
               }
               if (!sent) throw new Error('Fresh terminal session did not accept the recovery brief')
-              this.awaitedTranscriptEchoes.add(sessionId)
+              this.awaitTranscriptEcho(sessionId, handedAt)
               handedOff = true
               this.admissions.markCommitted(sessionId)
               const admitted = await this.store.admitRecoverySeed(
@@ -2525,6 +2530,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.admissions.wait()
     await Promise.allSettled([...this.pendingAcknowledgements.values()])
     await Promise.allSettled([
+      this.transcriptWake,
+      ...this.transcriptSessionSyncs.values(),
       ...this.sdkQueueWakeups.values(),
       ...this.terminalQueueWakeups.values(),
       ...this.loadingSessions.values(),
@@ -5303,11 +5310,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue: boolean,
     options?: TerminalSendOptions,
   ): Promise<boolean> {
+    const handedAt = Date.now()
     try {
       const sent = await this.terminalController.send(sessionId, content, enqueue, ...(options ? [options] : []))
       if (sent) {
         this.admissions.markCommitted(sessionId)
-        this.awaitedTranscriptEchoes.add(sessionId)
+        // A message Copilot queues itself is only logged when its turn comes.
+        if (!enqueue) this.awaitTranscriptEcho(sessionId, handedAt)
       }
       return sent
     } catch (error) {
@@ -7838,11 +7847,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return refresh
   }
 
-  refreshTranscripts(): Promise<void> {
+  /**
+   * Takes in every session's latest events. The watcher passes when it
+   * started, so a session a wake took in within its interval waits for the
+   * next pass; a direct call takes everything in now.
+   */
+  refreshTranscripts(passStartedAt?: number): Promise<void> {
     if (this.transcriptInFlight) {
       return this.transcriptInFlight
     }
-    const refresh = this.syncTranscripts()
+    const refresh = this.syncTranscripts(passStartedAt)
       .catch((error: unknown) => {
         this.publishError('', error)
       })
@@ -7853,7 +7867,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return refresh
   }
 
-  private async syncTranscripts(): Promise<void> {
+  private async syncTranscripts(passStartedAt?: number): Promise<void> {
     if (this.stopped) return
     const sessionIds = new Set([
       ...this.externalSessionIds,
@@ -7863,7 +7877,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...this.pendingTerminalQueueClaims.keys(),
     ])
     await Promise.all(
-      [...sessionIds].map((sessionId) => this.syncSessionTranscript(sessionId)),
+      [...sessionIds].map((sessionId) => this.syncSessionTranscript(sessionId, passStartedAt)),
     )
   }
 
@@ -7876,32 +7890,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * a busy session is not synced any more often than before.
    */
   private async wakeChangedTranscripts(): Promise<void> {
-    if (this.stopped || this.transcriptWakeInFlight) return
-    this.transcriptWakeInFlight = true
+    if (this.stopped) return
+    const wokeAt = Date.now()
     try {
       await Promise.all([...this.externalSessionIds].map(async (sessionId) => {
-        if (this.transcriptSessionSyncs.has(sessionId)) return
-        const takenAt = this.transcriptChangesTakenAt.get(sessionId)
-        if (
-          takenAt !== undefined &&
-          Date.now() - takenAt < TRANSCRIPT_POLL_MS &&
-          !this.awaitedTranscriptEchoes.has(sessionId)
-        ) return
+        if (this.transcriptSessionSyncs.has(sessionId) || this.transcriptPaced(sessionId, wokeAt)) return
         const version = await this.sessionEventVersion(sessionId)
         if (!version || this.eventLogVersions.get(sessionId) === version) return
-        await this.syncSessionTranscript(sessionId)
+        await this.syncSessionTranscript(sessionId, wokeAt)
       }))
     } catch (error) {
       this.publishError('', error)
-    } finally {
-      this.transcriptWakeInFlight = false
     }
   }
 
-  private syncSessionTranscript(sessionId: string): Promise<void> {
+  /**
+   * Whether a session's changes were taken in too recently to take in again
+   * at `at`, unless a message just handed to it is still to be logged.
+   */
+  private transcriptPaced(sessionId: string, at: number): boolean {
+    const handedAt = this.awaitedTranscriptEchoes.get(sessionId)
+    if (handedAt !== undefined) {
+      if (at - handedAt <= TRANSCRIPT_ECHO_WAIT_MS) return false
+      this.awaitedTranscriptEchoes.delete(sessionId)
+    }
+    const takenAt = this.transcriptChangesTakenAt.get(sessionId)
+    return takenAt !== undefined && at - takenAt < TRANSCRIPT_POLL_MS
+  }
+
+  /** Watches for a message handed to a terminal at `handedAt` to be logged. */
+  private awaitTranscriptEcho(sessionId: string, handedAt: number): void {
+    this.awaitedTranscriptEchoes.set(sessionId, handedAt)
+  }
+
+  private syncSessionTranscript(sessionId: string, pacedAt?: number): Promise<void> {
     const running = this.transcriptSessionSyncs.get(sessionId)
     if (running) return running
-    const sync = this.syncTranscriptFor(sessionId).finally(() => {
+    const sync = this.syncTranscriptFor(sessionId, pacedAt).finally(() => {
       if (this.transcriptSessionSyncs.get(sessionId) === sync) {
         this.transcriptSessionSyncs.delete(sessionId)
       }
@@ -7910,7 +7935,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return sync
   }
 
-  private async syncTranscriptFor(sessionId: string): Promise<void> {
+  private async syncTranscriptFor(sessionId: string, pacedAt?: number): Promise<void> {
     if (this.isTerminalRecoveryPending(sessionId)) return
     const pendingDispatchAt = this.pendingTerminalPromptDispatches.get(sessionId)
     if (pendingDispatchAt) {
@@ -7952,9 +7977,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.recoverHiddenUserInput(sessionId)
       return
     }
-    this.transcriptChangesTakenAt.set(sessionId, Date.now())
-    this.awaitedTranscriptEchoes.delete(sessionId)
+    // A change taken in moments ago by a wake; the next pass takes this in.
+    if (pacedAt !== undefined && this.transcriptPaced(sessionId, pacedAt)) return
+    this.transcriptChangesTakenAt.set(sessionId, pacedAt ?? Date.now())
     const events = await this.sessionEventReader(sessionId)
+    const handedAt = this.awaitedTranscriptEchoes.get(sessionId)
+    if (handedAt !== undefined && events.some((event) =>
+      event.type === 'user.message' && Date.parse(event.timestamp) >= handedAt)) {
+      this.awaitedTranscriptEchoes.delete(sessionId)
+    }
     if (!this.store.isCurrentTranscript(sessionId, observed)) return
     const terminalTasks = this.externalSessionIds.has(sessionId)
       ? backgroundTasksFromEvents(events, { assumeBackground: true })
@@ -9349,13 +9380,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.suspendingSessions.has(sessionId)) {
           throw new Error('The session began suspending before queued delivery; nothing was sent')
         }
+        const handedAt = Date.now()
         const sent = this.terminalController.sendWhenIdle
           ? await this.terminalController.sendWhenIdle(sessionId, next.content)
           : await this.terminalController.send(sessionId, next.content, false)
         if (!sent) {
           throw new Error('External terminal is no longer available')
         }
-        this.awaitedTranscriptEchoes.add(sessionId)
+        this.awaitTranscriptEcho(sessionId, handedAt)
         outcome = next.command
           ? { kind: 'feedback', command: next.content, before }
           : { kind: 'accepted', startedTurn: true }
@@ -9598,11 +9630,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const dispatchedAt = new Date().toISOString()
     try {
       delivery.submit()
+      const handedAt = Date.now()
       if (!(await this.terminalController.send(sessionId, prompt.content, false))) {
         delivery.refuse()
         throw queueConflict('The owning terminal is no longer available.')
       }
-      this.awaitedTranscriptEchoes.add(sessionId)
+      this.awaitTranscriptEcho(sessionId, handedAt)
     } catch (error) {
       if (terminalRefused(error)) delivery.refuse()
       throw error

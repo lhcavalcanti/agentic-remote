@@ -410,6 +410,64 @@ describe('OracleVoiceClient', () => {
     expect(message.startsWith(client.sockets[0].closedWith?.reason ?? '')).toBe(true)
     expect(client.scheduler.pending()).toBe(0)
   })
+
+  it('makes explicit stop await a fatal teardown already stopping capture', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    let releaseCapture: () => void = () => undefined
+    client.captures[0].stop.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseCapture = resolve
+    }))
+
+    client.sockets[0].message(control('error', 'stream-1', 0, {
+      code: 'voice_engine_failed',
+      message: 'Voice engine stopped',
+      fatal: true,
+    }))
+    await vi.waitFor(() => expect(client.captures[0].stop).toHaveBeenCalledOnce())
+
+    const stopping = client.instance.stop()
+    const stopped = vi.fn()
+    void stopping.then(stopped, stopped)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(stopped).not.toHaveBeenCalled()
+    expect(client.instance.currentState).not.toBe('off')
+    expect(client.captures[0].stop).toHaveBeenCalledOnce()
+
+    releaseCapture()
+    await stopping
+
+    expect(stopped).toHaveBeenCalledOnce()
+    expect(client.instance.currentState).toBe('off')
+  })
+
+  it('tears down fresh media after an earlier shared teardown finishes', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    let releaseCapture: () => void = () => undefined
+    client.captures[0].stop.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseCapture = resolve
+    }))
+
+    client.sockets[0].message(control('error', 'stream-1', 0, {
+      code: 'voice_engine_failed',
+      message: 'Voice engine stopped',
+      fatal: true,
+    }))
+    await vi.waitFor(() => expect(client.captures[0].stop).toHaveBeenCalledOnce())
+    releaseCapture()
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('error'))
+
+    const restarting = client.instance.start()
+    await client.openLatest('stream-2')
+    await restarting
+    await client.instance.stop()
+
+    expect(client.captures[1].stop).toHaveBeenCalledOnce()
+    expect(client.playbacks[1].close).toHaveBeenCalledOnce()
+    expect(client.instance.currentState).toBe('off')
+  })
 })
 
 function harness({

@@ -334,6 +334,32 @@ describe('useOracleConversation', () => {
     expect(clients).toHaveLength(2)
   })
 
+  it('keeps fatal teardown ownership while a panel close waits for client stop', async () => {
+    vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
+    const { result, rerender } = renderConversation()
+    await waitFor(() => expect(result.current.capability).toEqual(availableCapability))
+    await act(async () => result.current.start())
+    const client = clients[0]
+    let releaseStop: () => void = () => undefined
+    client.stop.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseStop = resolve
+    }))
+
+    act(() => client.error('Voice engine stopped'))
+    rerender({ open: false })
+    await waitFor(() => expect(client.stop).toHaveBeenCalledOnce())
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(result.current.state).toBe('stopping')
+    expect(result.current.ownsResources).toBe(true)
+
+    await act(async () => releaseStop())
+    await waitFor(() => expect(result.current.state).toBe('off'))
+    expect(result.current.ownsResources).toBe(false)
+  })
+
   it('stops the client when the panel closes and on StrictMode unmount', async () => {
     vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
     const wrapper = ({ children }: PropsWithChildren) => (

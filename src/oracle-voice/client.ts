@@ -160,6 +160,7 @@ export class OracleVoiceClient {
   private capabilities: VoiceCapabilities | undefined
   private capture: OracleVoiceCapture | undefined
   private playback: OracleVoicePlayback | undefined
+  private mediaTeardownPromise: Promise<void> | undefined
   private stateBeforeTentative: OracleVoiceUiState | undefined
   private captureReady = false
   private manuallyStopped = true
@@ -813,17 +814,41 @@ export class OracleVoiceClient {
     }
   }
 
-  private async teardownMedia(): Promise<void> {
+  private teardownMedia(): Promise<void> {
+    if (this.mediaTeardownPromise) return this.mediaTeardownPromise
     const capture = this.capture
     const playback = this.playback
     this.capture = undefined
     this.playback = undefined
     this.captureReady = false
     this.stateBeforeTentative = undefined
-    await Promise.all([
-      capture?.stop().catch(() => undefined),
-      playback?.close().catch(() => undefined),
-    ])
+    // Defer resource shutdown until callers can observe the shared promise.
+    const teardown = Promise.resolve()
+      .then(async () => {
+        await Promise.all([
+          (async () => {
+            try {
+              await capture?.stop()
+            } catch {
+              // Continue closing the remaining local resources.
+            }
+          })(),
+          (async () => {
+            try {
+              await playback?.close()
+            } catch {
+              // Continue closing the remaining local resources.
+            }
+          })(),
+        ])
+      })
+      .finally(() => {
+        if (this.mediaTeardownPromise === teardown) {
+          this.mediaTeardownPromise = undefined
+        }
+      })
+    this.mediaTeardownPromise = teardown
+    return teardown
   }
 
   private detachSocket(socket: OracleVoiceSocket | undefined): void {

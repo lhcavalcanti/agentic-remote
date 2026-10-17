@@ -5,6 +5,7 @@ import type WebSocket from 'ws'
 import { z } from 'zod'
 import {
   ORACLE_VOICE_PROTOCOL,
+  VOICE_AUDIO_HEADER_BYTES,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
   isVoiceClientControl,
@@ -35,6 +36,7 @@ import {
   type VoiceBackend,
   type VoiceBackendOutput,
   type VoiceBackendSession,
+  type VoiceBackendSessionLimits,
 } from './oracle-voice-session.js'
 
 export const AUDIO_FILENAME_HEADER = 'x-agentic-audio-filename'
@@ -235,8 +237,14 @@ async function receiveNodeVoiceMessage(
 function sendNodeVoiceOutput(
   socket: WebSocket,
   output: VoiceBackendOutput,
-  maxBufferedBytes: number,
+  limits: VoiceBackendSessionLimits,
 ): Promise<void> {
+  if (
+    'direction' in output
+    && VOICE_AUDIO_HEADER_BYTES + output.samples.byteLength > limits.maxFrameBytes
+  ) {
+    return Promise.reject(new VoiceSessionError('Voice playback frame is too large', 1009))
+  }
   const payload = 'direction' in output
     ? Buffer.from(encodeVoiceAudioFrame(output))
     : JSON.stringify(output)
@@ -244,7 +252,7 @@ function sendNodeVoiceOutput(
   if (socket.readyState !== socket.OPEN) {
     return Promise.reject(new VoiceSessionError('Node voice socket disconnected', 1001))
   }
-  if (socket.bufferedAmount > maxBufferedBytes - bytes) {
+  if (socket.bufferedAmount > limits.maxQueueBytes - bytes) {
     return Promise.reject(new VoiceSessionError('Node voice output queue is full', 1013))
   }
   return new Promise((resolve, reject) => {
@@ -349,6 +357,7 @@ export async function registerNodeRoutes(
             return
           }
           const streamId = request.query.streamId!
+          const voiceLimits = voice.limits()
           let session: VoiceBackendSession | undefined
           let closing: Promise<void> | undefined
           let pendingCloseReason: string | undefined
@@ -375,7 +384,7 @@ export async function registerNodeRoutes(
           })
           void voice.open({
             streamId,
-            send: (output) => sendNodeVoiceOutput(socket, output, voice.limits().maxQueueBytes),
+            send: (output) => sendNodeVoiceOutput(socket, output, voiceLimits),
             terminate: (code, reason) => socket.close(code, closeReason(reason)),
           }).then(async (opened) => {
             session = opened
@@ -392,7 +401,7 @@ export async function registerNodeRoutes(
                 generation: 0,
                 capabilities: nodeVoiceCapabilities(identity, voice),
               },
-              voice.limits().maxQueueBytes,
+              voiceLimits,
             )
           }).catch(async (error: unknown) => {
             try {

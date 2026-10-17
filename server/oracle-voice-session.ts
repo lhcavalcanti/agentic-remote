@@ -74,6 +74,13 @@ interface QueuedAudio {
   bytes: number
 }
 
+interface QueuedOutput {
+  output: VoiceBackendOutput
+  bytes: number
+  resolve: () => void
+  reject: (error: unknown) => void
+}
+
 type Timer = ReturnType<typeof setTimeout>
 
 export class VoiceSessionError extends Error {
@@ -101,13 +108,15 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private readonly onClosed: () => void
   private readonly unsubscribe: () => void
   private readonly audioQueue: QueuedAudio[] = []
+  private readonly outputQueue: QueuedOutput[] = []
   private controlTail: Promise<void> = Promise.resolve()
-  private outputTail: Promise<void> = Promise.resolve()
   private audioDrainPromise: Promise<void> = Promise.resolve()
   private closePromise: Promise<void> | undefined
   private idleTimer: Timer | undefined
   private queuedAudioBytes = 0
+  private queuedOutputBytes = 0
   private drainingAudio = false
+  private drainingOutput = false
   private started = false
   private closed = false
   private terminated = false
@@ -229,6 +238,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
           throw new VoiceSessionError('A voice utterance is already active', 1008)
         }
         if (this.generation !== undefined && message.generation > this.generation) {
+          this.activeSegmentId = undefined
           await this.engine.cancelGeneration({
             streamId: this.streamId,
             generation: this.generation,
@@ -327,7 +337,11 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         return
       case 'stop':
         this.requireStartedGeneration(message.generation)
-        await this.closeSession(message.reason || 'Voice stream stopped')
+        {
+          const reason = message.reason || 'Voice stream stopped'
+          await this.close(reason)
+          this.terminateTransport(1000, reason)
+        }
     }
   }
 
@@ -370,7 +384,9 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         code: 'voice_backend_failed',
         message: event.message,
         fatal: true,
-      }).finally(() => this.fail(new VoiceSessionError(event.message, 1011)))
+      }).catch(() => undefined).finally(
+        () => this.fail(new VoiceSessionError(event.message, 1011)),
+      )
       return
     }
     if (event.type === 'heartbeat') {
@@ -378,7 +394,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         type: 'heartbeat',
         generation: this.generation ?? 0,
         timestamp: event.timestamp,
-      })
+      }).catch(() => undefined)
       return
     }
     if (event.streamId !== this.streamId || event.generation !== this.generation) return
@@ -398,7 +414,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         generation: event.generation,
         utteranceId: event.utteranceId,
         text: event.text,
-      })
+      }).catch(() => undefined)
       return
     }
     if (event.type !== 'audio' && event.type !== 'audio_end') return
@@ -408,13 +424,17 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         void this.fail(new VoiceSessionError('Voice engine emitted an invalid sample rate', 1011))
         return
       }
+      if (VOICE_AUDIO_HEADER_BYTES + event.samples.byteLength > this.limits.maxFrameBytes) {
+        void this.fail(new VoiceSessionError('Voice playback frame is too large', 1009))
+        return
+      }
       void this.enqueueOutput({
         direction: 'playback',
         generation: event.generation,
         sequence: event.sequence,
         sampleRate: event.sampleRate,
         samples: event.samples,
-      })
+      }).catch(() => undefined)
       return
     }
     this.activeSegmentId = undefined
@@ -422,7 +442,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       type: 'audio_end',
       generation: event.generation,
       segmentId: event.segmentId,
-    })
+    }).catch(() => undefined)
   }
 
   private sendControl(
@@ -437,11 +457,46 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
 
   private enqueueOutput(output: VoiceBackendOutput): Promise<void> {
     if (this.closed) return Promise.resolve()
-    const sending = this.outputTail.then(() => this.sendOutput(output))
-    this.outputTail = sending.catch(async (error: unknown) => {
-      await this.fail(asSessionError(error, 1011))
+    const bytes = outputBytes(output)
+    if (bytes > this.limits.maxQueueBytes - this.queuedOutputBytes) {
+      const error = new VoiceSessionError('Voice output queue is full', 1013)
+      void this.fail(error)
+      return Promise.reject(error)
+    }
+    this.queuedOutputBytes += bytes
+    const queued = new Promise<void>((resolve, reject) => {
+      this.outputQueue.push({ output, bytes, resolve, reject })
     })
-    return sending
+    this.startOutputDrain()
+    return queued
+  }
+
+  private startOutputDrain(): void {
+    if (this.drainingOutput) return
+    this.drainingOutput = true
+    void this.drainOutput()
+  }
+
+  private async drainOutput(): Promise<void> {
+    try {
+      while (!this.closed && this.outputQueue.length > 0) {
+        const queued = this.outputQueue.shift()!
+        try {
+          await this.sendOutput(queued.output)
+          queued.resolve()
+        } catch (error) {
+          const failure = asSessionError(error, 1011)
+          queued.reject(failure)
+          await this.fail(failure)
+          return
+        } finally {
+          this.queuedOutputBytes -= queued.bytes
+        }
+      }
+    } finally {
+      this.drainingOutput = false
+      if (!this.closed && this.outputQueue.length > 0) this.startOutputDrain()
+    }
   }
 
   private requireStarted(): void {
@@ -479,11 +534,14 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   }
 
   private async fail(error: VoiceSessionError): Promise<void> {
-    if (!this.terminated) {
-      this.terminated = true
-      this.terminate(error.closeCode, error.message)
-    }
+    this.terminateTransport(error.closeCode, error.message)
     await this.close(error.message)
+  }
+
+  private terminateTransport(code: number, reason: string): void {
+    if (this.terminated) return
+    this.terminated = true
+    this.terminate(code, reason)
   }
 
   private async closeSession(_reason: string): Promise<void> {
@@ -492,6 +550,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     this.clearIdleTimeout()
     this.unsubscribe()
     this.clearAudioQueue()
+    this.clearOutputQueue()
     const generation = this.generation
     this.clearCurrentWork()
     try {
@@ -519,6 +578,13 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private clearAudioQueue(): void {
     this.audioQueue.length = 0
     this.queuedAudioBytes = 0
+  }
+
+  private clearOutputQueue(): void {
+    for (const queued of this.outputQueue.splice(0)) {
+      this.queuedOutputBytes -= queued.bytes
+      queued.resolve()
+    }
   }
 
   private armIdleTimeout(): void {
@@ -635,6 +701,12 @@ function sameUtterance(
   right: ActiveUtterance,
 ): boolean {
   return left?.generation === right.generation && left.utteranceId === right.utteranceId
+}
+
+function outputBytes(output: VoiceBackendOutput): number {
+  return 'direction' in output
+    ? VOICE_AUDIO_HEADER_BYTES + output.samples.byteLength
+    : Buffer.byteLength(JSON.stringify(output))
 }
 
 function asSessionError(error: unknown, closeCode = 1008): VoiceSessionError {

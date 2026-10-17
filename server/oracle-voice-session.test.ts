@@ -78,6 +78,7 @@ function frame(
 function harness(
   engine = new FakeVoiceEngine(),
   overrides: Partial<VoiceBackendSessionLimits> = {},
+  sendOutput?: (output: VoiceBackendOutput) => Promise<void>,
 ) {
   const sent: VoiceBackendOutput[] = []
   const terminated: Array<{ code: number; reason: string }> = []
@@ -87,6 +88,7 @@ function harness(
     limits: { ...limits, ...overrides },
     send: async (output) => {
       sent.push(output)
+      await sendOutput?.(output)
     },
     terminate: (code, reason) => {
       terminated.push({ code, reason })
@@ -153,12 +155,12 @@ describe('VoiceBackendSession', () => {
         await super.accept(input)
       }
     }
-    const { engine, session } = harness(new BlockingEngine(), { maxQueueBytes: 4 })
+    const { engine, session } = harness(new BlockingEngine(), { maxQueueBytes: 256 })
     await beginUtterance(session)
 
-    await session.audio(frame(2, 0))
-    await session.audio(frame(2, 1))
-    await expect(session.audio(frame(2, 2))).rejects.toMatchObject({
+    await session.audio(frame(2, 0, 128))
+    await session.audio(frame(2, 1, 128))
+    await expect(session.audio(frame(2, 2, 128))).rejects.toMatchObject({
       closeCode: 1013,
     })
     expect(engine.calls.some((call) => call.type === 'stt.accept')).toBe(false)
@@ -369,6 +371,156 @@ describe('VoiceBackendSession', () => {
       generation: 2,
     })
     release()
+  })
+
+  it('clears stale synthesis identity when speech confirmation advances the generation', async () => {
+    const { engine, session } = harness()
+    await session.control(control('start', 1, { language: 'en' }))
+    await session.control(control('synthesize', 1, {
+      segmentId: 'segment-1',
+      text: 'Old response.',
+    }))
+
+    await session.control(control('speech_confirmed', 2, {
+      utteranceId: 'u2',
+    }))
+    await expect(session.control(control('synthesize', 2, {
+      segmentId: 'segment-2',
+      text: 'New response.',
+    }))).resolves.toBeUndefined()
+
+    engine.emit({
+      type: 'audio_end',
+      streamId,
+      generation: 1,
+      segmentId: 'segment-1',
+    })
+    expect(engine.calls).toContainEqual({
+      type: 'tts.synthesize',
+      streamId,
+      generation: 2,
+      segmentId: 'segment-2',
+      text: 'New response.',
+    })
+  })
+
+  it('fails closed when the engine emits a playback frame above the advertised limit', async () => {
+    const { engine, sent, session, terminated } = harness(new FakeVoiceEngine(), {
+      maxFrameBytes: VOICE_AUDIO_HEADER_BYTES + 3,
+    })
+    await session.control(control('start', 2, { language: 'en' }))
+    await session.control(control('synthesize', 2, {
+      segmentId: 'segment-2',
+      text: 'Hello.',
+    }))
+
+    engine.emit({
+      type: 'audio',
+      streamId,
+      generation: 2,
+      segmentId: 'segment-2',
+      sequence: 0,
+      sampleRate: 22_050,
+      samples: Int16Array.of(-2, 2),
+    })
+
+    await vi.waitFor(() => {
+      expect(terminated).toEqual([
+        { code: 1009, reason: 'Voice playback frame is too large' },
+      ])
+    })
+    expect(sent.some((entry) => 'direction' in entry)).toBe(false)
+  })
+
+  it('bounds queued control and playback output before enqueueing behind a slow consumer', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let blockOutput = false
+    const partial = {
+      type: 'partial',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId,
+      generation: 2,
+      utteranceId: 'u2',
+      text: 'x'.repeat(300),
+    } satisfies VoiceServerControl
+    const playbackBytes = VOICE_AUDIO_HEADER_BYTES + Int16Array.BYTES_PER_ELEMENT * 64
+    const maxQueueBytes = Buffer.byteLength(JSON.stringify(partial)) + playbackBytes - 1
+    const { engine, sent, session, terminated } = harness(
+      new FakeVoiceEngine(),
+      { maxQueueBytes },
+      async () => {
+        if (blockOutput) await gate
+      },
+    )
+    await beginUtterance(session)
+    await session.control(control('synthesize', 2, {
+      segmentId: 'segment-2',
+      text: 'Hello.',
+    }))
+    blockOutput = true
+
+    engine.emit({
+      type: 'partial',
+      streamId,
+      generation: 2,
+      utteranceId: 'u2',
+      text: partial.text,
+    })
+    await vi.waitFor(() => {
+      expect(sent).toContainEqual(partial)
+    })
+    engine.emit({
+      type: 'audio',
+      streamId,
+      generation: 2,
+      segmentId: 'segment-2',
+      sequence: 0,
+      sampleRate: 22_050,
+      samples: new Int16Array(64),
+    })
+
+    await vi.waitFor(() => {
+      expect(terminated).toEqual([
+        { code: 1013, reason: 'Voice output queue is full' },
+      ])
+    })
+    expect(sent.some((entry) => 'direction' in entry)).toBe(false)
+    release()
+  })
+
+  it('closes the transport after stop cleanup without cleaning up twice', async () => {
+    const order: string[] = []
+    class OrderedEngine extends FakeVoiceEngine {
+      override async cancelGeneration(
+        input: Parameters<FakeVoiceEngine['cancelGeneration']>[0],
+      ): Promise<void> {
+        await super.cancelGeneration(input)
+        order.push('cancel')
+      }
+    }
+    const engine = new OrderedEngine()
+    const session = createVoiceBackendSession({
+      streamId,
+      engine,
+      limits,
+      send: async () => undefined,
+      terminate: (code, reason) => {
+        order.push(`transport:${code}:${reason}`)
+      },
+    })
+    await session.control(control('start', 2, { language: 'en' }))
+
+    await session.control(control('stop', 2, { reason: 'User stopped' }))
+    await session.close('socket close after stop')
+
+    expect(order).toEqual([
+      'cancel',
+      'transport:1000:User stopped',
+    ])
+    expect(engine.calls.filter((call) => call.type === 'cancel')).toHaveLength(1)
   })
 
   it('drops stale worker events and cancels without closing the warm engine on socket close', async () => {

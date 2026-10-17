@@ -882,6 +882,40 @@ describe('multi-node hub', () => {
         `${endpoint}?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-two`,
         `Bearer ${worker.identity.token}`,
       )).rejects.toMatchObject({ statusCode: 409 })
+
+      socket.send(JSON.stringify({
+        type: 'start',
+        protocol: ORACLE_VOICE_PROTOCOL,
+        streamId: 'voice-one',
+        generation: 1,
+        language: 'en',
+      }))
+      expect(await nextVoiceControl(socket)).toMatchObject({
+        type: 'state',
+        state: 'ready',
+      })
+      const stopped = new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('Timed out waiting for a clean node voice stop')),
+          1_000,
+        )
+        socket!.once('close', (code, reason) => {
+          clearTimeout(timer)
+          resolve({ code, reason: reason.toString() })
+        })
+      })
+      socket.send(JSON.stringify({
+        type: 'stop',
+        protocol: ORACLE_VOICE_PROTOCOL,
+        streamId: 'voice-one',
+        generation: 1,
+        reason: 'User stopped',
+      }))
+      await expect(stopped).resolves.toEqual({
+        code: 1000,
+        reason: 'User stopped',
+      })
+      socket = undefined
     } finally {
       socket?.close()
       await worker.app.close()

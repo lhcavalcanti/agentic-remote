@@ -5,6 +5,7 @@ import WebSocket, { WebSocketServer } from 'ws'
 import {
   ORACLE_VOICE_PROTOCOL,
   ORACLE_VOICE_SAMPLE_RATE,
+  VOICE_AUDIO_HEADER_BYTES,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
   type VoiceAudioFrame,
@@ -306,6 +307,82 @@ describe('RemoteVoiceClient', () => {
     }))).rejects.toMatchObject({ closeCode: 1013 })
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
     expect(node.received).toEqual([])
+  })
+
+  it('fails closed before sending microphone audio above the advertised frame limit', async () => {
+    const node = await voiceNode()
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
+    const disconnected = vi.fn()
+    remote.on('disconnect', disconnected)
+    const oversized: VoiceAudioFrame = {
+      direction: 'microphone',
+      generation: 1,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(
+        Math.floor(
+          (capabilities.limits.maxFrameBytes - VOICE_AUDIO_HEADER_BYTES) / 2,
+        ) + 1,
+      ),
+    }
+
+    await expect(remote.send(oversized)).rejects.toMatchObject({
+      closeCode: 1009,
+    })
+    await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
+    expect(node.received).toEqual([])
+  })
+
+  it('disconnects before exposing playback audio above the advertised frame limit', async () => {
+    const node = await voiceNode()
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
+    const seen = vi.fn()
+    const disconnected = vi.fn()
+    remote.on('event', seen)
+    remote.on('disconnect', disconnected)
+
+    node.send(encodeVoiceAudioFrame({
+      direction: 'playback',
+      generation: 1,
+      sequence: 0,
+      sampleRate: 22_050,
+      samples: new Int16Array(
+        Math.floor(
+          (capabilities.limits.maxFrameBytes - VOICE_AUDIO_HEADER_BYTES) / 2,
+        ) + 1,
+      ),
+    }))
+
+    await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
+    expect(disconnected.mock.calls[0][0]).toMatchObject({
+      message: expect.stringContaining('frame is too large'),
+    })
+    expect(seen).not.toHaveBeenCalled()
+  })
+
+  it('treats a protocol stop as a clean transport close after the node receives it', async () => {
+    const node = await voiceNode((socket) => {
+      socket.on('message', (data, isBinary) => {
+        if (!isBinary && (JSON.parse(data.toString()) as VoiceClientControl).type === 'stop') {
+          socket.close(1000, 'Voice stream stopped')
+        }
+      })
+    })
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
+    const disconnected = vi.fn()
+    remote.on('disconnect', disconnected)
+    await remote.control(control('start', 1, 'stream-1', { language: 'en' }))
+
+    await remote.control(control('stop', 1, 'stream-1', {
+      reason: 'User stopped',
+    }))
+
+    expect(node.received).toEqual([
+      control('start', 1, 'stream-1', { language: 'en' }),
+      control('stop', 1, 'stream-1', { reason: 'User stopped' }),
+    ])
+    expect(disconnected).not.toHaveBeenCalled()
+    await expect(remote.send(frame(1, 0))).rejects.toThrow('stopped')
   })
 
   it('stops explicitly and aborts immediately with its RemoteNodeClient registration', async () => {

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import {
   ORACLE_VOICE_PROTOCOL,
+  VOICE_AUDIO_HEADER_BYTES,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
   isVoiceClientControl,
@@ -53,6 +54,8 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
   private readonly registrationAbort: (() => void) | undefined
   private sendTail: Promise<void> = Promise.resolve()
   private pendingBytes = 0
+  private stopRequested = false
+  private closingLocally = false
   private stopped = false
   private disconnected = false
   private disconnectError: RemoteVoiceDisconnectError | undefined
@@ -65,7 +68,10 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
   ) {
     super()
     this.capabilities = capabilities
-    this.maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES
+    this.maxBufferedBytes = Math.min(
+      options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
+      capabilities.limits.maxQueueBytes,
+    )
     if (!Number.isSafeInteger(this.maxBufferedBytes) || this.maxBufferedBytes <= 0) {
       throw new RangeError('maxBufferedBytes must be a positive safe integer')
     }
@@ -86,6 +92,10 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     socket.on('message', (data, isBinary) => this.receive(data, isBinary))
     socket.on('close', (code, reason) => {
       if (this.stopped || this.disconnected) return
+      if (this.closingLocally || (this.stopRequested && code === 1000)) {
+        this.markStopped()
+        return
+      }
       this.disconnect(new RemoteVoiceDisconnectError(
         `Paired node voice socket disconnected (${code})`,
         code,
@@ -93,7 +103,7 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
       ), false)
     })
     socket.on('error', (error) => {
-      if (this.stopped || this.disconnected) return
+      if (this.stopped || this.disconnected || this.closingLocally) return
       this.disconnect(new RemoteVoiceDisconnectError(
         `Paired node voice socket failed: ${error.message}`,
         1011,
@@ -239,6 +249,7 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
   send(message: VoiceClientControl | VoiceAudioFrame): Promise<void> {
     try {
       this.requireConnected()
+      const stop = 'type' in message && message.type === 'stop'
       let payload: string | Buffer
       if ('type' in message) {
         if (!isVoiceClientControl(message) || message.streamId !== this.streamId) {
@@ -248,6 +259,14 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
       } else {
         if (message.direction !== 'microphone') {
           throw new VoiceSessionError('Remote voice accepts microphone audio only', 1008)
+        }
+        if (
+          VOICE_AUDIO_HEADER_BYTES + message.samples.byteLength
+          > this.capabilities.limits.maxFrameBytes
+        ) {
+          const error = new VoiceSessionError('Voice microphone frame is too large', 1009)
+          this.disconnect(new RemoteVoiceDisconnectError(error.message, error.closeCode))
+          return Promise.reject(error)
         }
         payload = Buffer.from(encodeVoiceAudioFrame(message))
       }
@@ -260,9 +279,10 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
         this.disconnect(new RemoteVoiceDisconnectError(error.message, error.closeCode))
         return Promise.reject(error)
       }
+      if (stop) this.stopRequested = true
       this.pendingBytes += bytes
       const sending = this.sendTail.catch(() => undefined).then(async () => {
-        this.requireConnected()
+        this.requireConnected(true)
         await sendSocket(this.socket, payload)
       }).catch((error: unknown) => {
         if (error instanceof VoiceSessionError) throw error
@@ -278,7 +298,9 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
         this.pendingBytes -= bytes
       })
       this.sendTail = sending.catch(() => undefined)
-      return sending
+      return stop
+        ? this.awaitProtocolStop(sending)
+        : sending
     } catch (error) {
       return Promise.reject(error)
     }
@@ -294,16 +316,23 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
 
   async stop(reason = 'Remote voice stopped'): Promise<void> {
     if (this.stopped) return
-    this.stopped = true
+    this.stopRequested = true
+    this.closingLocally = true
     this.removeRegistrationAbort()
-    if (this.socket.readyState === WebSocket.CLOSED) return
+    await this.sendTail
+    if (this.socket.readyState === WebSocket.CLOSED) {
+      this.markStopped()
+      return
+    }
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
         this.socket.terminate()
+        this.markStopped()
         resolve()
       }, 1_000)
       this.socket.once('close', () => {
         clearTimeout(timer)
+        this.markStopped()
         resolve()
       })
       this.socket.close(1000, closeReason(reason))
@@ -318,7 +347,11 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     if (this.stopped || this.disconnected) return
     try {
       if (isBinary) {
-        const frame = decodeVoiceAudioFrame(exactArrayBuffer(data))
+        const buffer = rawDataBuffer(data)
+        if (buffer.byteLength > this.capabilities.limits.maxFrameBytes) {
+          throw new VoiceSessionError('Voice playback frame is too large', 1009)
+        }
+        const frame = decodeVoiceAudioFrame(exactArrayBuffer(buffer))
         if (frame.direction !== 'playback') {
           throw new Error('invalid remote voice audio direction')
         }
@@ -339,7 +372,7 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
         error instanceof Error && error.message
           ? `Paired node sent an invalid voice payload: ${error.message}`
           : 'Paired node sent an invalid voice payload',
-        1003,
+        error instanceof VoiceSessionError ? error.closeCode : 1003,
       ))
     }
   }
@@ -355,8 +388,8 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     this.emit('disconnect', error)
   }
 
-  private requireConnected(): void {
-    if (this.stopped) {
+  private requireConnected(allowStopRequested = false): void {
+    if (this.stopped || (this.stopRequested && !allowStopRequested)) {
       throw new RemoteVoiceDisconnectError('Remote voice client is stopped', 1000)
     }
     if (this.registrationSignal?.aborted) {
@@ -375,6 +408,37 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     if (this.registrationSignal && this.registrationAbort) {
       this.registrationSignal.removeEventListener('abort', this.registrationAbort)
     }
+  }
+
+  private async awaitProtocolStop(sending: Promise<void>): Promise<void> {
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      this.socket.once('close', (code, reason) => {
+        resolve({ code, reason: reason.toString() })
+      })
+    })
+    await sending
+    const timer = setTimeout(() => {
+      this.socket.terminate()
+    }, 1_000)
+    try {
+      const result = await closed
+      if (result.code !== 1000) {
+        throw this.disconnectError ?? new RemoteVoiceDisconnectError(
+          `Paired node voice socket disconnected (${result.code})`,
+          result.code,
+          result.reason,
+        )
+      }
+      this.markStopped()
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private markStopped(): void {
+    if (this.stopped) return
+    this.stopped = true
+    this.removeRegistrationAbort()
   }
 }
 

@@ -4,7 +4,11 @@ import { TERMINAL_STARTUP_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { findActiveCopilotProcesses, isDirectCopilotSessionProcess } from './active-sessions.js'
+import {
+  findActiveCopilotProcesses,
+  isDirectCopilotSessionProcess,
+  processStartTimeMs,
+} from './active-sessions.js'
 import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 import type {
   ConfigureRuntimeInput,
@@ -275,6 +279,10 @@ const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
 const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
 const REPLACEMENT_READY_FRAMES = 30
+// A Copilot running this long is past the dialogs it opens as it starts, so a
+// first message to it only needs its prompt seen steady once.
+const SETTLED_OWNER_AGE_MS = 30_000
+const SETTLED_READY_FRAMES = 2
 const PROBE_COLUMNS = 80
 const PROBE_ROWS = 24
 const PROBE_ANSWER_TIMEOUT_MS = 10_000
@@ -346,6 +354,7 @@ export class TmuxTerminalSessionController
   }
   private readonly replacementComposerTimeoutMs =
     REPLACEMENT_COMPOSER_TIMEOUT_MS
+  private readonly settledOwnerAgeMs = SETTLED_OWNER_AGE_MS
   /** When Stop last sent each session Ctrl+C. */
   private readonly interruptedAt = new Map<string, number>()
 
@@ -1901,6 +1910,10 @@ export class TmuxTerminalSessionController
           )
         }
       } else {
+        // Not seen ready by this process, as after a hub restart. A Copilot
+        // that has been running a while has nothing left to open over its
+        // prompt, so it is not held to the settling a fresh one needs.
+        const settled = await this.ownerSettled(owner.pid)
         let startup: Awaited<ReturnType<typeof waitForTerminalStartup>>
         try {
           startup = await waitForTerminalStartup(
@@ -1918,6 +1931,8 @@ export class TmuxTerminalSessionController
                 )
               }
             },
+            TERMINAL_STARTUP_TIMEOUT_MS,
+            settled ? SETTLED_READY_FRAMES : undefined,
           )
         } catch (error) {
           if (
@@ -2260,6 +2275,14 @@ export class TmuxTerminalSessionController
         }
       }
       return true
+  }
+
+  private async ownerSettled(pid: number): Promise<boolean> {
+    try {
+      return Date.now() - (await processStartTimeMs(pid)) >= this.settledOwnerAgeMs
+    } catch {
+      return false
+    }
   }
 
   private async target(

@@ -506,7 +506,8 @@ async function processMatchesLock(
   }
 }
 
-async function processStartTimeMs(pid: number): Promise<number> {
+/** When a process started, in milliseconds since the epoch. */
+export async function processStartTimeMs(pid: number): Promise<number> {
   const [processStat, boot, ticks] = await Promise.all([
     readFile(`/proc/${pid}/stat`, 'utf8'),
     getBootTimeMs(),

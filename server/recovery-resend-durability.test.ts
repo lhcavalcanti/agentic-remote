@@ -1424,6 +1424,10 @@ describe('Recovery and admission integration', () => {
       await context.service.store.enqueuePrompt(sessionId, {
         id: 'waiting', content: 'Native FIFO after recovery', createdAt: originalToken,
       })
+      // The native log is taken in first, as the transcript watcher does as
+      // soon as it changes, so nothing reads the turn as still open once the
+      // session is idle below.
+      await context.service.refreshTranscripts()
       await context.service.store.update(sessionId, (session) => { session.status = 'idle' })
       const held = gate()
       const capture = vi.fn(async () => {

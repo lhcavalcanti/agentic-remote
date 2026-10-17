@@ -4957,6 +4957,141 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('publishes a terminal session’s new event without waiting for the transcript watcher', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    let events = JSON.parse(JSON.stringify([{
+      type: 'user.message', id: 'user-1', parentId: null,
+      timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'first' },
+    }])) as SessionEvent[]
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => events,
+      async () => `events-${events.length}-${events.at(-1)?.id}`,
+      { has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    try {
+      await service.start()
+      expect(store.get(sessionId)?.messages.at(-1)).toMatchObject({ content: 'first' })
+      // One watcher pass with nothing new, so its next pass is a full
+      // interval away when Copilot records the message.
+      await vi.advanceTimersByTimeAsync(800)
+      // Let that pass finish its reads before Copilot logs anything new.
+      await service.refreshTranscripts()
+      events = [...events, ...JSON.parse(JSON.stringify([{
+        type: 'user.message', id: 'user-2', parentId: 'user-1',
+        timestamp: '2026-07-22T00:00:01.000Z', data: { content: 'are you there?' },
+      }])) as SessionEvent[]]
+      await vi.advanceTimersByTimeAsync(150)
+      // Real time only from here: the watcher's interval does not advance.
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (store.get(sessionId)?.messages.at(-1)?.content === 'are you there?') break
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(store.get(sessionId)?.messages.at(-1)).toMatchObject({
+        role: 'user', content: 'are you there?',
+      })
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('publishes a terminal turn’s end without waiting for the transcript watcher', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    const logged = (values: object[]) => JSON.parse(JSON.stringify(values)) as SessionEvent[]
+    let events = logged([
+      { type: 'user.message', id: 'user-1', parentId: null, timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'build it' } },
+      { type: 'assistant.turn_start', id: 'turn-1', parentId: 'user-1', timestamp: '2026-07-22T00:00:00.100Z', data: { turnId: '0' } },
+    ])
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => events,
+      async () => `events-${events.length}-${events.at(-1)?.id}`,
+      { has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    try {
+      await service.start()
+      expect(store.get(sessionId)?.status).toBe('running')
+      await vi.advanceTimersByTimeAsync(800)
+      // Let that pass finish its reads before Copilot logs anything new.
+      await service.refreshTranscripts()
+      events = [...events, ...logged([
+        { type: 'assistant.message', id: 'reply-1', parentId: 'turn-1', timestamp: '2026-07-22T00:00:01.000Z', data: { messageId: 'reply-1', content: 'done' } },
+        { type: 'assistant.turn_end', id: 'end-1', parentId: 'reply-1', timestamp: '2026-07-22T00:00:01.100Z', data: { turnId: '0' } },
+      ])]
+      await vi.advanceTimersByTimeAsync(150)
+      for (let attempt = 0; attempt < 50 && store.get(sessionId)?.status !== 'idle'; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      // Ready for the next message as soon as Copilot says so, so a send is
+      // not judged against a turn that already ended.
+      expect(store.get(sessionId)?.status).toBe('idle')
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('takes in a busy terminal session no more often than the transcript watcher', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    let events: SessionEvent[] = []
+    let reads = 0
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [{ id: sessionId, cwd: directory, title: 'Busy', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => {
+        reads += 1
+        return events
+      },
+      async () => `events-${events.length}`,
+      { has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    const append = (index: number) => {
+      events = [...events, ...JSON.parse(JSON.stringify([{
+        type: 'tool.execution_start', id: `tool-${index}`, parentId: null,
+        timestamp: new Date(Date.UTC(2026, 6, 22, 0, 0, index)).toISOString(),
+        data: { toolCallId: `call-${index}`, toolName: 'bash', arguments: { command: 'true' } },
+      }])) as SessionEvent[]]
+    }
+    try {
+      append(0)
+      await service.start()
+      reads = 0
+      // An agent logging something every 50 ms for three watcher intervals.
+      for (let step = 1; step <= 45; step += 1) {
+        append(step)
+        await vi.advanceTimersByTimeAsync(50)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      // The watcher alone reads it about three times here; a wake that took in
+      // every change would read it some twenty more.
+      expect(reads).toBeLessThanOrEqual(7)
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
   it('synchronizes external workspace metadata without transcript events', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -7245,6 +7380,53 @@ describe('AgentService deletion', () => {
       service.store.get(client.session.sessionId)?.messages.at(-1)?.role,
     ).toBe('notice')
     await service.stop()
+  })
+
+  it('sends the next queued terminal prompt as soon as the turn’s end is logged', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    let eventVersion: string | undefined = 'events-v0'
+    let events: SessionEvent[] = []
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{ id: sessionId, cwd: directory, title: 'Active Copilot session', updatedAt: new Date().toISOString() }],
+      async () => undefined,
+      async () => events,
+      async () => eventVersion,
+      terminal,
+    )
+    try {
+      await service.start()
+      await service.store.updateStatus(sessionId, 'running')
+      const queued = await service.sendMessage(sessionId, 'next terminal prompt', true)
+      expect(terminal.send).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(800)
+      // Let that pass finish its reads before Copilot logs anything new.
+      await service.refreshTranscripts()
+      events = JSON.parse(JSON.stringify([{
+        type: 'session.idle', id: 'idle-event', parentId: null,
+        timestamp: queued.queuedPrompts?.[0]?.createdAt, data: {},
+      }])) as SessionEvent[]
+      eventVersion = 'events-v1'
+      await vi.advanceTimersByTimeAsync(150)
+      for (let attempt = 0; attempt < 50 && !terminal.send.mock.calls.length; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(terminal.send).toHaveBeenCalledWith(sessionId, 'next terminal prompt', false)
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
   })
 
   it('keeps explicit terminal enqueue requests in the app when status is stale-idle', async () => {

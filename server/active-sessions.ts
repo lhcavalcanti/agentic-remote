@@ -36,7 +36,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
   }
   let output = ''
   try {
-    const result = await execFileAsync('ps', ['-eo', 'pid=,args='], {
+    const result = await execFileAsync('ps', ['-eo', 'pid=,ppid=,args='], {
       maxBuffer: 4 * 1024 * 1024,
     })
     output = result.stdout
@@ -50,19 +50,29 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
   }
 
   const tmuxPanePids = await listTmuxPanePids()
+  // Parents come from the same listing, so placing a candidate in a pane is a
+  // lookup rather than a /proc read for every pane, ancestor and candidate --
+  // hundreds of sequential reads on a host with a few stray processes.
+  const parents = new Map<number, number>()
+  const listed: { pid: number; args: string }[] = []
+  for (const line of output.split('\n')) {
+    const row = /^\s*(\d+)\s+(\d+)(?:\s(.*))?$/.exec(line)
+    if (!row) {
+      continue
+    }
+    const pid = Number.parseInt(row[1], 10)
+    parents.set(pid, Number.parseInt(row[2], 10))
+    listed.push({ pid, args: row[3] ?? '' })
+  }
   const argumentCandidates: ActiveProcess[] = []
   const argumentPids = new Set<number>()
-  for (const line of output.split('\n')) {
-    const match = line.match(sessionPattern)
+  for (const { pid, args } of listed) {
+    const match = args.match(sessionPattern)
     if (!match) {
       continue
     }
-    const pid = Number.parseInt(line.trimStart().split(/\s+/, 1)[0], 10)
-    if (!Number.isInteger(pid)) {
-      continue
-    }
     if (
-      (await processRunsInTmux(pid, tmuxPanePids)) &&
+      (await processRunsInTmux(pid, tmuxPanePids, parents)) &&
       (await processUsesSessionState(pid)) &&
       (await isCopilotProcess(pid))
     ) {
@@ -73,7 +83,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
       })
     }
   }
-  const processes = await removeArgumentWrappers(argumentCandidates)
+  const processes = await removeArgumentWrappers(argumentCandidates, parents)
   for (const processInfo of processes) {
     argumentPids.add(processInfo.pid)
   }
@@ -115,7 +125,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
           )
           if (
             commandLine.toLowerCase().includes('copilot') &&
-            (await processRunsInTmux(pid, tmuxPanePids)) &&
+            (await processRunsInTmux(pid, tmuxPanePids, parents)) &&
             (await processMatchesLock(pid, lockPath))
           ) {
             lockCandidates.push({
@@ -251,17 +261,28 @@ async function listTmuxPanePids(): Promise<number[]> {
 async function processRunsInTmux(
   pid: number,
   panePids: number[],
+  parents: ReadonlyMap<number, number>,
 ): Promise<boolean> {
-  for (const panePid of panePids) {
-    if (pid === panePid || (await isDescendantOf(pid, panePid))) {
+  const panes = new Set(panePids)
+  let current = pid
+  const seen = new Set<number>()
+  while (current > 1 && !seen.has(current)) {
+    if (panes.has(current)) {
       return true
     }
+    seen.add(current)
+    const parent = await parentOf(current, parents)
+    if (parent === undefined) {
+      return false
+    }
+    current = parent
   }
   return false
 }
 
 async function removeArgumentWrappers(
   candidates: ActiveProcess[],
+  parents: ReadonlyMap<number, number>,
 ): Promise<ActiveProcess[]> {
   const selected: ActiveProcess[] = []
   for (const candidate of candidates) {
@@ -271,7 +292,7 @@ async function removeArgumentWrappers(
           async (other) =>
             other.pid !== candidate.pid &&
             other.sessionId === candidate.sessionId &&
-            (await isDescendantOf(other.pid, candidate.pid)),
+            (await isDescendantOf(other.pid, candidate.pid, parents)),
         ),
       )
     ).some(Boolean)
@@ -527,6 +548,7 @@ function getBootTimeMs(): Promise<number> {
 async function isDescendantOf(
   candidatePid: number,
   ancestorPid: number,
+  parents: ReadonlyMap<number, number>,
 ): Promise<boolean> {
   let current = candidatePid
   const seen = new Set<number>()
@@ -535,19 +557,38 @@ async function isDescendantOf(
       return true
     }
     seen.add(current)
-    try {
-      const stat = await readFile(`/proc/${current}/stat`, 'utf8')
-      const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)
-      current = Number.parseInt(fields[1], 10)
-    } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code === 'ENOENT' ||
-        (error as NodeJS.ErrnoException).code === 'ESRCH'
-      ) {
-        return false
-      }
-      throw error
+    const parent = await parentOf(current, parents)
+    if (parent === undefined) {
+      return false
     }
+    current = parent
   }
   return false
+}
+
+/**
+ * A process's parent from the listing it was found in, or read from /proc
+ * for one that started after it. Undefined once the process has gone.
+ */
+async function parentOf(
+  pid: number,
+  parents: ReadonlyMap<number, number>,
+): Promise<number | undefined> {
+  const listed = parents.get(pid)
+  if (listed !== undefined) {
+    return listed
+  }
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, 'utf8')
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)
+    return Number.parseInt(fields[1], 10)
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (error as NodeJS.ErrnoException).code === 'ESRCH'
+    ) {
+      return undefined
+    }
+    throw error
+  }
 }

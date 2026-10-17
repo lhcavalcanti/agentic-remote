@@ -468,6 +468,33 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   transcribe**; at most 15 minutes), transcribes on the hub as a session's
   recording does, and adds the words to the message rather than sending them.
   Closing the panel discards a recording in progress.
+- A separate **Conversation** control MAY stream speech continuously only when
+  `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete explicitly installed profile
+  is available. There MUST be no automatic/default profile, and setup and
+  startup MUST NOT download models or enable the feature.
+- Conversation microphone PCM MUST travel only to the hub and, when selected,
+  one authenticated paired node. The selected computer MUST perform STT and
+  TTS locally. Conversation mode MUST NOT persist raw audio, synthesized audio,
+  partials, or finalized transcripts. Finalized text and Oracle's generated
+  context MUST still be sent through the existing remote Copilot boundary, and
+  the UI MUST NOT describe the experience as offline.
+- Partials MUST remain display-only; each finalized utterance MUST reach Oracle
+  at most once. A failed submission MUST restore its final text to the
+  composer. A disconnect MUST discard the current utterance rather than replay
+  PCM. TTS failure MUST leave the text reply usable, and typed input plus
+  **Dictate to Oracle** MUST remain available.
+- Conversation mode MUST require microphone permission, `getUserMedia`,
+  `AudioWorklet`, Web Audio playback, and WebSocket support. If a required
+  browser primitive is unavailable, it MUST refuse to start and offer
+  dictation instead of using a deprecated capture fallback.
+- Voice installation MUST stage below
+  `<data>/models/oracle-voice/.staging-*`, show applicable licenses before any
+  download, verify pinned HTTPS URL metadata, byte size, and SHA-256 before
+  extraction or use, reject archive traversal, remove partial staging, and
+  atomically activate only a complete version. Failure MUST leave the prior
+  active profile unchanged. Existing `AGENTIC_REMOTE_ORACLE_VOICE` and
+  `AGENTIC_REMOTE_VOICE_*` values MUST survive setup in the mode-`0600`
+  environment file without being printed.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process
   of its own. Its tools only manage sessions and its own memory, so it MUST NOT
   run commands or edit files; work it accepts becomes a normal session on a
@@ -1624,6 +1651,8 @@ Persistent state MUST NOT include:
 - Voice recordings
 - Temporary transcription artifacts
 - Live `.env` files or credentials
+- Conversation-mode PCM, synthesized audio, partial transcripts, or finalized
+  transcript artifacts
 
 Awaited session mutations MUST become visible only after their state write
 commits. A refused write MUST NOT leave the mutation in memory, subsequent

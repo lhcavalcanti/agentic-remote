@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "id": "fast-en",
+      "version": "zipformer-en-20m-2023-02-17_piper-2023-11-14-2_lessac-medium",
+      "description": "Measured low-resource English streaming STT with a local Piper Lessac voice.",
+      "language": "en",
+      "modelType": "sherpa-onnx streaming transducer plus Piper VITS",
+      "modelVersion": "zipformer-en-20M-2023-02-17 / piper-2023.11.14-2 / lessac-medium-v1.0.0",
+      "platforms": [
+        "linux-x64"
+      ],
+      "configuration": {
+        "AGENTIC_REMOTE_VOICE_STT_PROFILE": "zipformer",
+        "AGENTIC_REMOTE_VOICE_LANGUAGE": "en",
+        "AGENTIC_REMOTE_VOICE_THREADS": "1",
+        "AGENTIC_REMOTE_VOICE_ENDPOINT_MS": "800",
+        "AGENTIC_REMOTE_VOICE_STT_MODEL_DIR": "stt/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
+        "AGENTIC_REMOTE_VOICE_TTS_BIN": "tts/runtime/piper/piper",
+        "AGENTIC_REMOTE_VOICE_TTS_MODEL": "tts/voice/en_US-lessac-medium.onnx",
+        "AGENTIC_REMOTE_VOICE_TTS_CONFIG": "tts/voice/en_US-lessac-medium.onnx.json"
+      },
+      "notices": [
+        {
+          "name": "sherpa-onnx Zipformer English 20M model",
+          "license": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0"
+        },
+        {
+          "name": "Piper standalone runtime",
+          "license": "MIT source; bundled eSpeak NG components are GPL-3.0-or-later",
+          "url": "https://github.com/espeak-ng/espeak-ng/blob/1.52.0/COPYING"
+        },
+        {
+          "name": "Lessac medium voice training data",
+          "license": "Lessac/Voice Factory research-only licence",
+          "url": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html"
+        }
+      ],
+      "assets": [
+        {
+          "id": "zipformer-en-20m",
+          "destination": "stt",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
+          "bytes": 127887156,
+          "sha256": "9c559283e8498d3fe95913c79ca1cb454bb26281ac2b102b41306c7d752765d9",
+          "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
+          "language": "en",
+          "modelType": "sherpa-onnx streaming Zipformer transducer int8",
+          "modelVersion": "20M-2023-02-17",
+          "archive": "tar.bz2"
+        },
+        {
+          "id": "piper-linux-x64",
+          "destination": "tts/runtime",
+          "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz",
+          "bytes": 26460462,
+          "sha256": "a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992",
+          "licenseUrl": "https://github.com/rhasspy/piper/blob/2023.11.14-2/LICENSE.md",
+          "language": "multilingual",
+          "modelType": "Piper standalone CLI with bundled eSpeak NG",
+          "modelVersion": "2023.11.14-2",
+          "archive": "tar.gz"
+        },
+        {
+          "id": "lessac-medium-model",
+          "destination": "tts/voice/en_US-lessac-medium.onnx",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+          "bytes": 63201294,
+          "sha256": "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f",
+          "licenseUrl": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html",
+          "language": "en-US",
+          "modelType": "Piper VITS voice",
+          "modelVersion": "lessac-medium-v1.0.0"
+        },
+        {
+          "id": "lessac-medium-config",
+          "destination": "tts/voice/en_US-lessac-medium.onnx.json",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
+          "bytes": 4885,
+          "sha256": "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0",
+          "licenseUrl": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html",
+          "language": "en-US",
+          "modelType": "Piper voice configuration",
+          "modelVersion": "lessac-medium-v1.0.0"
+        }
+      ]
+    },
+    {
+      "id": "multilingual-quality",
+      "version": "nemotron-3.5-0.6b-160ms-int8-2026-06-11_piper-2023-11-14-2_faber-medium",
+      "description": "Higher-resource Nemotron 3.5 multilingual streaming STT configured for pt-BR with a compatible local Piper Faber voice.",
+      "language": "pt-BR",
+      "modelType": "Nemotron 3.5 FastConformer-RNNT plus Piper VITS",
+      "modelVersion": "0.6b-160ms-int8-2026-06-11 / piper-2023.11.14-2 / faber-medium-v1.0.0",
+      "platforms": [
+        "linux-x64"
+      ],
+      "configuration": {
+        "AGENTIC_REMOTE_VOICE_STT_PROFILE": "nemotron",
+        "AGENTIC_REMOTE_VOICE_LANGUAGE": "pt-BR",
+        "AGENTIC_REMOTE_VOICE_THREADS": "4",
+        "AGENTIC_REMOTE_VOICE_ENDPOINT_MS": "1200",
+        "AGENTIC_REMOTE_VOICE_STT_MODEL_DIR": "stt/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11",
+        "AGENTIC_REMOTE_VOICE_TTS_BIN": "tts/runtime/piper/piper",
+        "AGENTIC_REMOTE_VOICE_TTS_MODEL": "tts/voice/pt_BR-faber-medium.onnx",
+        "AGENTIC_REMOTE_VOICE_TTS_CONFIG": "tts/voice/pt_BR-faber-medium.onnx.json"
+      },
+      "notices": [
+        {
+          "name": "NVIDIA Nemotron 3.5 ASR model",
+          "license": "OpenMDW-1.1",
+          "url": "https://openmdw.ai/license/1-1/"
+        },
+        {
+          "name": "Piper standalone runtime",
+          "license": "MIT source; bundled eSpeak NG components are GPL-3.0-or-later",
+          "url": "https://github.com/espeak-ng/espeak-ng/blob/1.52.0/COPYING"
+        },
+        {
+          "name": "Faber medium voice training data",
+          "license": "CC0-1.0",
+          "url": "https://creativecommons.org/publicdomain/zero/1.0/legalcode.en"
+        }
+      ],
+      "assets": [
+        {
+          "id": "nemotron-3.5-160ms-int8",
+          "destination": "stt",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11.tar.bz2",
+          "bytes": 475273363,
+          "sha256": "a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
+          "licenseUrl": "https://openmdw.ai/license/1-1/",
+          "language": "40 language-locales including en-US and pt-BR",
+          "modelType": "Nemotron 3.5 FastConformer cache-aware RNNT ONNX int8",
+          "modelVersion": "0.6b-160ms-int8-2026-06-11",
+          "archive": "tar.bz2"
+        },
+        {
+          "id": "piper-linux-x64",
+          "destination": "tts/runtime",
+          "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz",
+          "bytes": 26460462,
+          "sha256": "a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992",
+          "licenseUrl": "https://github.com/rhasspy/piper/blob/2023.11.14-2/LICENSE.md",
+          "language": "multilingual",
+          "modelType": "Piper standalone CLI with bundled eSpeak NG",
+          "modelVersion": "2023.11.14-2",
+          "archive": "tar.gz"
+        },
+        {
+          "id": "faber-medium-model",
+          "destination": "tts/voice/pt_BR-faber-medium.onnx",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx",
+          "bytes": 63201294,
+          "sha256": "858555e3a064209c57088fe6bd70c4c3dc54d03eaa00c45d5ecaf43a33f95aa7",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/legalcode.en",
+          "language": "pt-BR",
+          "modelType": "Piper VITS voice",
+          "modelVersion": "faber-medium-v1.0.0"
+        },
+        {
+          "id": "faber-medium-config",
+          "destination": "tts/voice/pt_BR-faber-medium.onnx.json",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json",
+          "bytes": 4855,
+          "sha256": "7e694de195ae3fc36dd732c445eb04fb49b649854893cb5506b978f0d50a1d6f",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/legalcode.en",
+          "language": "pt-BR",
+          "modelType": "Piper voice configuration",
+          "modelVersion": "faber-medium-v1.0.0"
+        }
+      ]
+    }
+  ]
+}

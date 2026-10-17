@@ -49,6 +49,28 @@ State, transcript, journal, registry, and the agent's Markdown memory live in
 service's discovery before they exist. See
 [docs/design/session-manager.md](design/session-manager.md).
 
+### Oracle Conversation speech path
+
+Conversation mode is an optional extension of the hub-owned Oracle
+conversation. The browser sends 16 kHz microphone PCM to a same-origin,
+single-use-ticket WebSocket on the hub. The hub either uses its local voice
+backend or relays the stream over the authenticated node API to the paired
+computer named by `AGENTIC_REMOTE_VOICE_COMPUTER`. Both roles isolate native
+STT/TTS in a child process; the node never receives Oracle's manager state.
+
+Raw and synthesized audio stay in memory and on the selected speech computer.
+Only finalized transcript text crosses into `ManagerAgent.send`, after which
+the transcript and generated Oracle context enter remote Copilot's existing
+trust boundary. Partials never enter Oracle. Voice state is not persisted; a
+restart or disconnect ends the stream and stale generations cannot be replayed.
+
+The feature is disabled unless `AGENTIC_REMOTE_ORACLE_VOICE=on`. Setup
+preserves existing voice configuration but downloads nothing. Profiles are
+installed only by `agentic-remote voice-install <profile>`, with pinned
+verification and atomic activation. Current shipped assets are Linux x86-64;
+browser requirements and measured limits are documented in
+[Oracle Conversation mode](oracle-conversation.md).
+
 ## Transport and authentication
 
 The browser communicates only with the hub. The hub is a single trusted-admin

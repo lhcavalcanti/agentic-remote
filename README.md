@@ -447,6 +447,9 @@ badges **Oracle**.
 - Messages sent while it is busy wait in a queue where you can see, edit in
   place, and remove them.
 - The microphone dictates to Oracle; the words land in its message bar.
+- **Conversation** streams speech to local STT and plays local TTS while Oracle
+  continues to use remote Copilot. It is disabled by default and keeps
+  dictation as the fallback.
 - **App settings → Models** chooses its model, and **Folders** the folder it
   starts sessions in on each computer. Both are kept on the hub; ask Oracle to start sessions
   somewhere else and it updates its folder.
@@ -478,9 +481,36 @@ files that other users can read are tightened to owner-only on startup, or
 refused if another user owns them. `off` leaves any existing structured-memory
 files untouched.
 
+### Oracle Conversation mode
+
+Conversation mode must be installed and enabled explicitly; `setup` never
+downloads speech models:
+
+```bash
+agentic-remote voice-install fast-en
+# or: agentic-remote voice-install multilingual-quality
+```
+
+The installer verifies pinned sizes and SHA-256 values, activates only a
+complete version, and prints the exact `AGENTIC_REMOTE_VOICE_*` settings. Add
+those settings to the protected environment file, then separately opt in with
+`AGENTIC_REMOTE_ORACLE_VOICE=on`.
+
+Speech recognition and synthesis run on the selected hub or paired node. Raw
+audio remains within those trusted computers and is not persisted, but the
+final transcript and Oracle context go to remote Copilot. Browser support
+requires microphone, AudioWorklet, Web Audio, and WebSocket APIs; unsupported
+browsers continue to offer dictation. See
+[Oracle Conversation mode](docs/oracle-conversation.md) for paired-node setup,
+measured limitations, removal, and troubleshooting, and
+[voice asset notices](docs/licenses/oracle-voice.md) for the Lessac,
+OpenMDW, Piper, GPL/eSpeak, and voice-data terms.
+
 ## Documentation
 
 - [Application specification](docs/app-spec.md) — normative product behavior
+- [Oracle Conversation mode](docs/oracle-conversation.md) — local speech
+  profiles, privacy, installation, evidence, and troubleshooting
 - [Multi-computer architecture](docs/architecture.md) — routing and ownership
 - [Provider compatibility](docs/provider-compatibility.md) — Copilot/Claude
   differences

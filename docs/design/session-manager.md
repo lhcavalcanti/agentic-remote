@@ -295,6 +295,13 @@ end the turn.
   starts on it. An edit Oracle overtakes goes back to the message bar.
 - **Dictate to Oracle** records and transcribes through `/api/transcriptions`
   (`src/voice-recorder.ts`), adding the words to the message.
+- **Conversation** is a separate, explicit mode beside dictation. It streams
+  microphone PCM to the configured local or paired-computer speech backend,
+  shows partials without submitting them, sends each finalized utterance once
+  to Oracle, and speaks stable reply segments. Stop remains available in every
+  state. Unsupported AudioWorklet, denied permission, model failure, or TTS
+  failure leaves typed messages and dictation usable; a failed final returns
+  to the composer rather than being silently retried.
 - The message field reads "Ask me anything"; while Oracle answers, a separate
   line says that anything sent now waits its turn.
 - **Ask | Delegate**, a two-way switch under the message bar remembered per
@@ -319,6 +326,22 @@ end the turn.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
 - Sessions Oracle started get a small **Oracle** badge in the session list.
+
+## Conversation-mode operations
+
+Conversation mode is off unless `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete
+profile is configured. `agentic-remote voice-install <profile>` is the only
+model installation path; ordinary setup and startup do not download assets.
+The selected speech computer performs STT and TTS locally without persisting
+audio or transcript artifacts. Final transcript text and the normal generated
+turn context still go to Oracle's remote Copilot model.
+
+One stream per hub is supported initially. Local VAD can duck playback, but
+the server owns endpoint and finalization decisions. Confirmed interruption
+advances generation, cancels Oracle and TTS, and rejects stale STT, deltas, and
+audio. Reconnect never replays microphone frames. See
+[Oracle Conversation mode](../oracle-conversation.md) for profile evidence,
+browser requirements, topology, and licences.
 
 ## Testing
 

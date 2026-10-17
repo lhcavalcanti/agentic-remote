@@ -10,7 +10,6 @@ import {
 } from '../shared/oracle-voice.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import type {
-  VoiceBackendCapability,
   VoiceEndUtterance,
   VoiceEngineEvent,
   VoiceEngineFactory,
@@ -22,6 +21,7 @@ import type {
   VoiceTtsEngine,
   VoiceUtteranceAudioFrame,
 } from './oracle-voice-engine.js'
+import type { VoiceBackendCapability } from '../shared/contracts.js'
 import {
   VOICE_MAX_CANCELLATION_STREAMS,
   VOICE_WORKER_CLOSE_TIMEOUT_MS,

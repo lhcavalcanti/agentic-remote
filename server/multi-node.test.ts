@@ -29,10 +29,24 @@ import type {
   SideQuestionExchange,
 } from '../shared/contracts.js'
 import { SessionPatchReceiver } from '../src/session-patches.js'
+import {
+  ORACLE_VOICE_PROTOCOL,
+  ORACLE_VOICE_SAMPLE_RATE,
+  type VoiceServerControl,
+} from '../shared/oracle-voice.js'
 import { buildApp } from './app.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { NodeIdentityStore } from './node-identity.js'
+import {
+  FakeVoiceEngine,
+  FakeVoiceEngineFactory,
+} from './oracle-voice-engine.js'
+import {
+  LocalVoiceBackend,
+  type VoiceBackend,
+  type VoiceBackendSession,
+} from './oracle-voice-session.js'
 import { RemoteNodeClient } from './remote-node-client.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
 import { SessionDirectoryError } from './session-directory.js'
@@ -670,6 +684,95 @@ function waitForEvent(
   })
 }
 
+function openNodeVoiceSocket(
+  url: string,
+  authorization?: string,
+): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, {
+      headers: authorization ? { authorization } : undefined,
+    })
+    voiceControlQueues.set(socket, [])
+    socket.on('message', (data, isBinary) => {
+      const waiter = voiceControlWaiters.get(socket)
+      if (waiter) {
+        voiceControlWaiters.delete(socket)
+        waiter(data, isBinary)
+      } else {
+        voiceControlQueues.get(socket)?.push({ data, isBinary })
+      }
+    })
+    socket.once('open', () => resolve(socket))
+    socket.once('unexpected-response', (_request, response) => {
+      response.resume()
+      reject(Object.assign(
+        new Error(`Voice upgrade failed (${response.statusCode})`),
+        { statusCode: response.statusCode },
+      ))
+    })
+    socket.once('error', reject)
+  })
+}
+
+const voiceControlQueues = new WeakMap<
+  WebSocket,
+  Array<{ data: WebSocket.RawData; isBinary: boolean }>
+>()
+const voiceControlWaiters = new WeakMap<
+  WebSocket,
+  (data: WebSocket.RawData, isBinary: boolean) => void
+>()
+
+function nextVoiceControl(socket: WebSocket): Promise<VoiceServerControl> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      voiceControlWaiters.delete(socket)
+      reject(new Error('Timed out waiting for node voice control'))
+    }, 5_000)
+    const receive = (data: WebSocket.RawData, isBinary: boolean) => {
+      clearTimeout(timer)
+      if (isBinary) {
+        reject(new Error('Expected a voice control message'))
+        return
+      }
+      resolve(JSON.parse(data.toString()) as VoiceServerControl)
+    }
+    const queued = voiceControlQueues.get(socket)?.shift()
+    if (queued) receive(queued.data, queued.isBinary)
+    else voiceControlWaiters.set(socket, receive)
+  })
+}
+
+function voiceBackend(): VoiceBackend {
+  return new LocalVoiceBackend(
+    new FakeVoiceEngineFactory(new FakeVoiceEngine(), {
+      available: true,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
+      languages: ['en'],
+      sttProfile: 'zipformer',
+      ttsVoice: 'lessac',
+      resourceClass: 'low',
+    }),
+    {
+      enabled: true,
+      language: 'en',
+      threads: 2,
+      endpointMs: 800,
+      stt: {
+        profile: 'zipformer',
+        modelDirectory: '/models/stt',
+      },
+      tts: {
+        binary: '/bin/piper',
+        model: '/models/lessac.onnx',
+        config: '/models/lessac.json',
+        sampleRate: 22_050,
+      },
+    },
+  )
+}
+
 afterEach(async () => {
   vi.unstubAllEnvs()
   await Promise.all(
@@ -715,6 +818,157 @@ describe('multi-node hub', () => {
 
   beforeEach(() => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+  })
+
+  it('authenticates node voice upgrades and advertises only non-sensitive capability', async () => {
+    const backend = voiceBackend()
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-voice'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      voiceBackend: backend,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = worker.app.server.address() as AddressInfo
+    const endpoint = `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+    const validUrl = `${endpoint}?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-one`
+    let socket: WebSocket | undefined
+    try {
+      await expect(openNodeVoiceSocket(validUrl)).rejects.toMatchObject({
+        statusCode: 401,
+      })
+      await expect(openNodeVoiceSocket(
+        `${endpoint}?protocol=2&streamId=voice-one`,
+        `Bearer ${worker.identity.token}`,
+      )).rejects.toMatchObject({ statusCode: 400 })
+
+      const info = await worker.app.inject({
+        method: 'GET',
+        url: '/node-api/info',
+        headers: { authorization: `Bearer ${worker.identity.token}` },
+      })
+      expect(info.statusCode).toBe(200)
+      expect(info.json().voice).toEqual({
+        available: true,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        playbackSampleRate: 22_050,
+        languages: ['en'],
+        sttProfile: 'zipformer',
+        ttsVoice: 'lessac',
+        resourceClass: 'low',
+      })
+      expect(JSON.stringify(info.json().voice)).not.toContain('/models/')
+      expect(JSON.stringify(info.json().voice)).not.toContain('/bin/')
+
+      socket = await openNodeVoiceSocket(
+        validUrl,
+        `Bearer ${worker.identity.token}`,
+      )
+      expect(await nextVoiceControl(socket)).toMatchObject({
+        type: 'hello',
+        protocol: ORACLE_VOICE_PROTOCOL,
+        streamId: 'voice-one',
+        generation: 0,
+        capabilities: {
+          available: true,
+          computerId: worker.identity.info.id,
+          computerName: worker.identity.info.name,
+          sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+          playbackSampleRate: 22_050,
+        },
+      })
+      await expect(openNodeVoiceSocket(
+        `${endpoint}?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-two`,
+        `Bearer ${worker.identity.token}`,
+      )).rejects.toMatchObject({ statusCode: 409 })
+    } finally {
+      socket?.close()
+      await worker.app.close()
+      await backend.stop()
+    }
+  })
+
+  it('rejects a node voice upgrade when this runtime has no backend', async () => {
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-voice-missing'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = worker.app.server.address() as AddressInfo
+    try {
+      await expect(openNodeVoiceSocket(
+        `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+          + `?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-one`,
+        `Bearer ${worker.identity.token}`,
+      )).rejects.toMatchObject({ statusCode: 503 })
+    } finally {
+      await worker.app.close()
+    }
+  })
+
+  it('closes a voice session that finishes opening after its socket disconnects', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const closeSession = vi.fn(async () => undefined)
+    const session: VoiceBackendSession = {
+      control: async () => undefined,
+      audio: async () => undefined,
+      close: closeSession,
+    }
+    const backend: VoiceBackend = {
+      capability: () => ({
+        available: true,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        playbackSampleRate: 22_050,
+        languages: ['en'],
+        sttProfile: 'zipformer',
+        ttsVoice: 'lessac',
+        resourceClass: 'low',
+      }),
+      limits: () => ({
+        maxFrameBytes: 32 * 1024,
+        maxQueueBytes: 64 * 1024,
+        maxUtteranceMs: 30_000,
+        idleTimeoutMs: 30_000,
+      }),
+      busy: () => false,
+      open: async () => {
+        await gate
+        return session
+      },
+      stop: async () => undefined,
+    }
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-voice-opening'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      voiceBackend: backend,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = worker.app.server.address() as AddressInfo
+    const socket = await openNodeVoiceSocket(
+      `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+        + `?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-opening`,
+      `Bearer ${worker.identity.token}`,
+    )
+    try {
+      await new Promise<void>((resolve) => {
+        socket.once('close', () => resolve())
+        socket.close()
+      })
+      release()
+
+      await vi.waitFor(() => expect(closeSession).toHaveBeenCalledOnce())
+    } finally {
+      release()
+      await worker.app.close()
+    }
   })
 
   it('fails closed when an older node does not advertise context recovery', async () => {

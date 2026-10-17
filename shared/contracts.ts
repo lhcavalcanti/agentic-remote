@@ -397,6 +397,7 @@ export interface ComputerSummary {
   /** Opaque runtime registration lifetime; changes on a same-ID re-pair. */
   registrationId?: string
   providers?: AgentProviderCapability[]
+  voice?: VoiceBackendCapability
 }
 
 export interface ManagedSession extends SessionDetail {
@@ -423,7 +424,23 @@ export interface NodeInfo {
   name: string
   version: string
   providers?: AgentProviderCapability[]
+  voice?: VoiceBackendCapability
 }
+
+export type VoiceBackendCapability =
+  | {
+      available: false
+      reason: string
+    }
+  | {
+      available: true
+      sampleRate: 16_000
+      playbackSampleRate: number
+      languages: string[]
+      sttProfile: string
+      ttsVoice: string
+      resourceClass: 'low' | 'quality'
+    }
 
 export type ServerEvent =
   | { type: 'session.upserted'; session: SessionDetail }

@@ -1,7 +1,15 @@
 import { timingSafeEqual } from 'node:crypto'
 import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
+import type WebSocket from 'ws'
 import { z } from 'zod'
+import {
+  ORACLE_VOICE_PROTOCOL,
+  decodeVoiceAudioFrame,
+  encodeVoiceAudioFrame,
+  isVoiceClientControl,
+  type VoiceCapabilities,
+} from '../shared/oracle-voice.js'
 import {
   SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
   SIDE_QUESTION_EARLIER_LIMIT,
@@ -22,6 +30,12 @@ import {
   TranscriptionError,
   type TranscriptionService,
 } from './transcription-service.js'
+import {
+  VoiceSessionError,
+  type VoiceBackend,
+  type VoiceBackendOutput,
+  type VoiceBackendSession,
+} from './oracle-voice-session.js'
 
 export const AUDIO_FILENAME_HEADER = 'x-agentic-audio-filename'
 export const AUDIO_TYPE_HEADER = 'x-agentic-audio-type'
@@ -164,11 +178,117 @@ function tokenMatches(actual: string | undefined, expected: string): boolean {
   return received.length === stored.length && timingSafeEqual(received, stored)
 }
 
+function nodeVoiceCapabilities(
+  identity: NodeIdentityStore,
+  voice: VoiceBackend,
+): VoiceCapabilities {
+  const capability = voice.capability()
+  if (!capability.available) {
+    throw new VoiceSessionError(capability.reason, 1011)
+  }
+  const limits = voice.limits()
+  return {
+    protocol: ORACLE_VOICE_PROTOCOL,
+    available: true,
+    computerId: identity.info.id,
+    computerName: identity.info.name,
+    sampleRate: capability.sampleRate,
+    playbackSampleRate: capability.playbackSampleRate,
+    languages: [...capability.languages],
+    sttProfile: capability.sttProfile,
+    ttsVoice: capability.ttsVoice,
+    resourceClass: capability.resourceClass,
+    limits: {
+      maxFrameBytes: limits.maxFrameBytes,
+      maxQueueBytes: limits.maxQueueBytes,
+      maxUtteranceMs: limits.maxUtteranceMs,
+    },
+  }
+}
+
+async function receiveNodeVoiceMessage(
+  session: VoiceBackendSession,
+  streamId: string,
+  data: WebSocket.RawData,
+  isBinary: boolean,
+): Promise<void> {
+  if (isBinary) {
+    const frame = decodeVoiceAudioFrame(exactArrayBuffer(data))
+    if (frame.direction !== 'microphone') {
+      throw new VoiceSessionError('Node voice clients may send microphone audio only', 1008)
+    }
+    await session.audio(frame)
+    return
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawDataBuffer(data).toString('utf8')) as unknown
+  } catch {
+    throw new VoiceSessionError('Invalid Oracle voice control JSON', 1007)
+  }
+  if (!isVoiceClientControl(parsed) || parsed.streamId !== streamId) {
+    throw new VoiceSessionError('Invalid Oracle voice control message', 1008)
+  }
+  await session.control(parsed)
+}
+
+function sendNodeVoiceOutput(
+  socket: WebSocket,
+  output: VoiceBackendOutput,
+  maxBufferedBytes: number,
+): Promise<void> {
+  const payload = 'direction' in output
+    ? Buffer.from(encodeVoiceAudioFrame(output))
+    : JSON.stringify(output)
+  const bytes = typeof payload === 'string' ? Buffer.byteLength(payload) : payload.byteLength
+  if (socket.readyState !== socket.OPEN) {
+    return Promise.reject(new VoiceSessionError('Node voice socket disconnected', 1001))
+  }
+  if (socket.bufferedAmount > maxBufferedBytes - bytes) {
+    return Promise.reject(new VoiceSessionError('Node voice output queue is full', 1013))
+  }
+  return new Promise((resolve, reject) => {
+    socket.send(payload, (error) => {
+      if (error) reject(error)
+      else resolve()
+    })
+  })
+}
+
+function closeVoiceSocket(socket: WebSocket, error: unknown): void {
+  const failure = error instanceof VoiceSessionError
+    ? error
+    : new VoiceSessionError(
+        error instanceof Error && error.message ? error.message : 'Oracle voice backend failed',
+        1011,
+      )
+  socket.close(failure.closeCode, closeReason(failure.message))
+}
+
+function rawDataBuffer(data: WebSocket.RawData): Buffer {
+  if (Array.isArray(data)) return Buffer.concat(data)
+  if (data instanceof ArrayBuffer) return Buffer.from(data)
+  return Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+}
+
+function exactArrayBuffer(data: WebSocket.RawData): ArrayBuffer {
+  const buffer = rawDataBuffer(data)
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer
+}
+
+function closeReason(reason: string): string {
+  return reason.replace(/[^\x20-\x7e]/g, '').slice(0, 120) || 'Oracle voice closed'
+}
+
 export async function registerNodeRoutes(
   app: FastifyInstance,
   service: SessionService,
   identity: NodeIdentityStore,
   transcription: TranscriptionService,
+  voice?: VoiceBackend,
 ): Promise<void> {
   await app.register(
     async (node) => {
@@ -191,7 +311,98 @@ export async function registerNodeRoutes(
       node.get('/info', async () => ({
         ...identity.info,
         providers: service.providers(),
+        ...(voice ? { voice: voice.capability() } : {}),
       }))
+
+      node.get<{
+        Querystring: { protocol?: string; streamId?: string }
+      }>(
+        '/oracle-voice',
+        {
+          websocket: true,
+          preValidation: async (request, reply) => {
+            if (request.query.protocol !== String(ORACLE_VOICE_PROTOCOL)) {
+              return reply.code(400).send({ error: 'Unsupported Oracle voice protocol' })
+            }
+            if (
+              typeof request.query.streamId !== 'string'
+              || request.query.streamId.length === 0
+              || request.query.streamId.length > 200
+            ) {
+              return reply.code(400).send({ error: 'A valid voice stream ID is required' })
+            }
+            if (!voice) {
+              return reply.code(503).send({ error: 'Oracle voice is unavailable on this node' })
+            }
+            const capability = voice.capability()
+            if (!capability.available) {
+              return reply.code(503).send({ error: capability.reason })
+            }
+            if (voice.busy()) {
+              return reply.code(409).send({ error: 'Oracle voice is already in use' })
+            }
+          },
+        },
+        (socket, request) => {
+          if (!voice) {
+            socket.close(1011, 'Oracle voice backend is unavailable')
+            return
+          }
+          const streamId = request.query.streamId!
+          let session: VoiceBackendSession | undefined
+          let closing: Promise<void> | undefined
+          let pendingCloseReason: string | undefined
+          const closeSession = (reason: string) => {
+            pendingCloseReason ??= reason
+            if (!session) return Promise.resolve()
+            closing ??= session.close(pendingCloseReason)
+            return closing
+          }
+          socket.on('message', (data, isBinary) => {
+            if (!session) {
+              socket.close(1008, 'Oracle voice backend is not ready')
+              return
+            }
+            void receiveNodeVoiceMessage(session, streamId, data, isBinary).catch(
+              (error: unknown) => closeVoiceSocket(socket, error),
+            )
+          })
+          socket.on('close', () => {
+            void closeSession('Node voice socket closed')
+          })
+          socket.on('error', () => {
+            void closeSession('Node voice socket failed')
+          })
+          void voice.open({
+            streamId,
+            send: (output) => sendNodeVoiceOutput(socket, output, voice.limits().maxQueueBytes),
+            terminate: (code, reason) => socket.close(code, closeReason(reason)),
+          }).then(async (opened) => {
+            session = opened
+            if (pendingCloseReason || socket.readyState !== socket.OPEN) {
+              await closeSession(pendingCloseReason ?? 'Node voice socket closed')
+              return
+            }
+            await sendNodeVoiceOutput(
+              socket,
+              {
+                type: 'hello',
+                protocol: ORACLE_VOICE_PROTOCOL,
+                streamId,
+                generation: 0,
+                capabilities: nodeVoiceCapabilities(identity, voice),
+              },
+              voice.limits().maxQueueBytes,
+            )
+          }).catch(async (error: unknown) => {
+            try {
+              await closeSession('Node voice socket failed')
+            } finally {
+              closeVoiceSocket(socket, error)
+            }
+          })
+        },
+      )
 
       node.post<{ Body: Buffer }>(
         '/transcriptions',

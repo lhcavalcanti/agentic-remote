@@ -7,7 +7,10 @@ import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
-import type { HubEvent } from '../shared/contracts.js'
+import type {
+  HubEvent,
+  VoiceBackendCapability,
+} from '../shared/contracts.js'
 import {
   deliveryUncertaintyFromError,
   SubmissionError,
@@ -65,10 +68,8 @@ import {
   readOracleVoiceConfig,
   type OracleVoiceConfig,
 } from './oracle-voice-config.js'
-import type {
-  VoiceBackendCapability,
-  VoiceEngineFactory,
-} from './oracle-voice-engine.js'
+import type { VoiceEngineFactory } from './oracle-voice-engine.js'
+import type { VoiceBackend } from './oracle-voice-session.js'
 import {
   registerTranscriptionRoutes,
   transcriptionMultipartOptions,
@@ -93,6 +94,8 @@ export interface BuildAppOptions {
   settingsProfileStore?: SettingsProfileStore
   /** Injected speech-engine construction seam; buildApp never starts it. */
   voiceEngineFactory?: VoiceEngineFactory
+  /** Injected voice transport seam; Task 6 constructs the runtime backend. */
+  voiceBackend?: VoiceBackend
   /**
    * The session manager agent. Built on a hub with the built-in session
    * service unless false or turned off with AGENTIC_REMOTE_MANAGER=off.
@@ -253,7 +256,13 @@ export async function buildApp(
     options.transcriptionService ??
     new LocalTranscriptionService(localTranscriptionOptions(dataDirectory))
   await localTranscription.initialize()
-  await registerNodeRoutes(app, service, identity, localTranscription)
+  await registerNodeRoutes(
+    app,
+    service,
+    identity,
+    localTranscription,
+    options.voiceBackend,
+  )
 
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined

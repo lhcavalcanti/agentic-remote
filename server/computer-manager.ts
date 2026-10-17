@@ -1325,6 +1325,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       baseUrl: computer.baseUrl,
       registrationId: this.clients.get(computer.id)?.registrationId,
       providers: this.clients.get(computer.id)?.providers,
+      voice: this.clients.get(computer.id)?.voice,
     }
   }
 

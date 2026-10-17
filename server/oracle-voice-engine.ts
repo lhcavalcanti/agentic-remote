@@ -1,7 +1,5 @@
-import {
-  ORACLE_VOICE_SAMPLE_RATE,
-  type VoiceAudioFrame,
-} from '../shared/oracle-voice.js'
+import type { VoiceAudioFrame } from '../shared/oracle-voice.js'
+import type { VoiceBackendCapability } from '../shared/contracts.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 
 export interface VoiceStartUtterance {
@@ -67,21 +65,6 @@ export type VoiceEngineEvent =
   | {
       type: 'fatal_error'
       message: string
-    }
-
-export type VoiceBackendCapability =
-  | {
-      available: false
-      reason: string
-    }
-  | {
-      available: true
-      sampleRate: typeof ORACLE_VOICE_SAMPLE_RATE
-      playbackSampleRate: number
-      languages: string[]
-      sttProfile: string
-      ttsVoice: string
-      resourceClass: 'low' | 'quality'
     }
 
 export interface VoiceSttEngine {

@@ -4,6 +4,7 @@ import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager.js'
 import { MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES } from '../shared/manager-structured-memory.js'
 import type {
   ManagerClientDefaults,
+  ManagerEvent,
   ManagerMessage,
   ManagerSettingsSnapshot,
   ManagerSnapshot,
@@ -22,6 +23,11 @@ export interface ManagerRouteAgent {
   resolveConfirmation(messageId: string, accept: boolean): Promise<ManagerMessage>
   cancel(): Promise<void>
   reset(): Promise<void>
+}
+
+export interface ManagerEventSource {
+  on(event: 'event', listener: (event: ManagerEvent) => void): unknown
+  off(event: 'event', listener: (event: ManagerEvent) => void): unknown
 }
 
 const effort = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])

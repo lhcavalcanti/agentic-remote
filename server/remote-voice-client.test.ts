@@ -40,6 +40,12 @@ const capabilities: VoiceCapabilities = {
   },
 }
 
+const startFields = {
+  language: 'en',
+  defaults: {},
+  answerOnly: false,
+}
+
 function control(
   type: VoiceClientControl['type'],
   generation: number,
@@ -151,7 +157,7 @@ describe('RemoteVoiceClient', () => {
     const node = await voiceNode()
     const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
     try {
-      await remote.send(control('start', 1, 'stream-1', { language: 'en' }))
+      await remote.send(control('start', 1, 'stream-1', startFields))
       await remote.send(control('speech_confirmed', 1, 'stream-1', {
         utteranceId: 'u1',
       }))
@@ -162,7 +168,7 @@ describe('RemoteVoiceClient', () => {
       })
       expect(node.authorization).toEqual(['Bearer pairing-token'])
       expect(node.received).toEqual([
-        control('start', 1, 'stream-1', { language: 'en' }),
+        control('start', 1, 'stream-1', startFields),
         control('speech_confirmed', 1, 'stream-1', { utteranceId: 'u1' }),
         frame(1, 0),
       ])
@@ -302,9 +308,12 @@ describe('RemoteVoiceClient', () => {
     const disconnected = vi.fn()
     remote.on('disconnect', disconnected)
 
-    await expect(remote.send(control('start', 1, 'stream-1', {
-      language: 'en',
-    }))).rejects.toMatchObject({ closeCode: 1013 })
+    await expect(remote.send(control(
+      'start',
+      1,
+      'stream-1',
+      startFields,
+    ))).rejects.toMatchObject({ closeCode: 1013 })
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
     expect(node.received).toEqual([])
   })
@@ -371,14 +380,14 @@ describe('RemoteVoiceClient', () => {
     const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
     const disconnected = vi.fn()
     remote.on('disconnect', disconnected)
-    await remote.control(control('start', 1, 'stream-1', { language: 'en' }))
+    await remote.control(control('start', 1, 'stream-1', startFields))
 
     await remote.control(control('stop', 1, 'stream-1', {
       reason: 'User stopped',
     }))
 
     expect(node.received).toEqual([
-      control('start', 1, 'stream-1', { language: 'en' }),
+      control('start', 1, 'stream-1', startFields),
       control('stop', 1, 'stream-1', { reason: 'User stopped' }),
     ])
     expect(disconnected).not.toHaveBeenCalled()

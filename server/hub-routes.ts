@@ -31,6 +31,10 @@ import type { ClientPresence } from './client-presence.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
+import {
+  registerOracleVoiceRoutes,
+  type OracleVoiceRouteOptions,
+} from './oracle-voice-routes.js'
 
 /** The manager agent's events, carried on the same socket as session events. */
 export interface ManagerEventSource {
@@ -385,6 +389,7 @@ export async function registerHubRoutes(
   managerEvents?: ManagerEventSource,
   settingsProfile?: SettingsProfileStore,
   presence?: ClientPresence,
+  oracleVoice?: OracleVoiceRouteOptions,
 ): Promise<void> {
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
@@ -429,6 +434,7 @@ export async function registerHubRoutes(
       return reply.code(403).send({ error: 'Origin is not allowed' })
     }
   })
+  if (oracleVoice) await registerOracleVoiceRoutes(app, oracleVoice)
 
   const sessionKnowledgeLifecycle = sessionKnowledge
     ? await registerSessionKnowledgeRoutes(app, manager, knowledge, sessionKnowledge)

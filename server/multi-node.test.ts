@@ -889,6 +889,8 @@ describe('multi-node hub', () => {
         streamId: 'voice-one',
         generation: 1,
         language: 'en',
+        defaults: {},
+        answerOnly: false,
       }))
       expect(await nextVoiceControl(socket)).toMatchObject({
         type: 'state',

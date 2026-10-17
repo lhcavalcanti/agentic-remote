@@ -136,7 +136,19 @@ describe('Oracle voice control protocol', () => {
     },
   }
   const clientControls = [
-    { type: 'start', language: 'en' },
+    {
+      type: 'start',
+      language: 'en',
+      defaults: {
+        computerId: 'hub',
+        mode: 'autopilot',
+        provider: 'copilot',
+        model: 'gpt-6-sol',
+        reasoningEffort: 'high',
+        folders: { hub: '/home/me/src' },
+      },
+      answerOnly: true,
+    },
     { type: 'speech_tentative' },
     { type: 'speech_confirmed', utteranceId: 'utterance-3' },
     { type: 'speech_end', utteranceId: 'utterance-3' },
@@ -205,6 +217,8 @@ describe('Oracle voice control protocol', () => {
       streamId: 'stream-1',
       generation: 0,
       language: 'en',
+      defaults: {},
+      answerOnly: false,
     })).toBe(false)
     expect(isVoiceClientControl({
       type: 'speech_confirmed',
@@ -218,6 +232,44 @@ describe('Oracle voice control protocol', () => {
       type: 'unknown',
       protocol: 1,
       streamId: 'stream-1',
+    })).toBe(false)
+  })
+
+  it('validates the Oracle defaults and Ask or Delegate selection at stream start', () => {
+    const start = {
+      type: 'start',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId: 'stream-1',
+      generation: 0,
+      language: 'en',
+      defaults: {
+        computerId: 'hub',
+        mode: 'plan',
+        provider: 'claude',
+        model: 'claude-sonnet-5.5',
+        reasoningEffort: 'xhigh',
+        folders: { hub: '/home/me/src' },
+      },
+      answerOnly: false,
+    }
+
+    expect(isVoiceClientControl(start)).toBe(true)
+    expect(isVoiceClientControl({ ...start, answerOnly: undefined })).toBe(false)
+    expect(isVoiceClientControl({
+      ...start,
+      defaults: { ...start.defaults, mode: 'unsafe' },
+    })).toBe(false)
+    expect(isVoiceClientControl({
+      ...start,
+      defaults: { ...start.defaults, mode: ['plan'] },
+    })).toBe(false)
+    expect(isVoiceClientControl({
+      ...start,
+      defaults: { ...start.defaults, reasoningEffort: ['high'] },
+    })).toBe(false)
+    expect(isVoiceClientControl({
+      ...start,
+      defaults: { ...start.defaults, folders: { hub: '' } },
     })).toBe(false)
   })
 })

@@ -164,6 +164,17 @@ describe('Oracle voice app construction', () => {
     })
     expect(runtime.voiceCapability).toEqual(factory.capability())
     expect(factory.initializedWith).toEqual([])
+    const nodeInfo = await runtime.app.inject({
+      url: '/node-api/info',
+      headers: {
+        authorization: ['Bearer', runtime.identity.token].join(' '),
+      },
+    })
+    expect(nodeInfo.json().voice).toMatchObject({
+      available: true,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      ttsVoice: 'voice',
+    })
   })
 
   it('reports invalid enabled configuration as unavailable while core routes stay healthy', async () => {

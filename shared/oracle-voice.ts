@@ -1,3 +1,5 @@
+import type { ManagerClientDefaults } from './manager.js'
+
 export const ORACLE_VOICE_PROTOCOL = 1 as const
 export const ORACLE_VOICE_SAMPLE_RATE = 16_000 as const
 export const ORACLE_VOICE_MIN_PCM_SAMPLE_RATE = 8_000
@@ -67,6 +69,8 @@ export type VoiceClientControl =
     type: 'start'
     generation: number
     language: string
+    defaults: ManagerClientDefaults
+    answerOnly: boolean
   })
   | (VoiceControlBase & {
     type: 'speech_tentative'
@@ -226,8 +230,12 @@ export function isVoiceClientControl(value: unknown): value is VoiceClientContro
   if (!isControlBase(value)) return false
   switch (value.type) {
     case 'start':
-      return hasExactKeys(value, ['type', 'protocol', 'streamId', 'generation', 'language'])
-        && isUint32(value.generation) && isNonEmptyString(value.language)
+      return hasExactKeys(value, [
+        'type', 'protocol', 'streamId', 'generation', 'language', 'defaults',
+        'answerOnly',
+      ]) && isUint32(value.generation) && isNonEmptyString(value.language)
+        && isManagerClientDefaults(value.defaults)
+        && typeof value.answerOnly === 'boolean'
     case 'speech_tentative':
       return hasExactKeys(value, ['type', 'protocol', 'streamId', 'generation'])
         && isUint32(value.generation)
@@ -319,6 +327,45 @@ function isVoiceCapabilities(value: unknown): value is VoiceCapabilities {
     && isPositiveInteger(value.limits.maxUtteranceMs)
 }
 
+function isManagerClientDefaults(value: unknown): value is ManagerClientDefaults {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'computerId', 'mode', 'provider', 'model', 'reasoningEffort', 'folders',
+  ])) {
+    return false
+  }
+  if (
+    (value.computerId !== undefined && !isBoundedTrimmedString(value.computerId, 200))
+    || (
+      value.mode !== undefined
+      && (
+        typeof value.mode !== 'string'
+        || !['interactive', 'plan', 'autopilot'].includes(value.mode)
+      )
+    )
+    || (
+      value.provider !== undefined
+      && value.provider !== 'copilot'
+      && value.provider !== 'claude'
+    )
+    || (value.model !== undefined && !isBoundedTrimmedString(value.model, 200))
+    || (
+      value.reasoningEffort !== undefined
+      && (
+        typeof value.reasoningEffort !== 'string'
+        || !['low', 'medium', 'high', 'xhigh', 'max']
+          .includes(value.reasoningEffort)
+      )
+    )
+  ) {
+    return false
+  }
+  if (value.folders === undefined) return true
+  if (!isRecord(value.folders)) return false
+  return Object.entries(value.folders).every(([computerId, folder]) =>
+    isBoundedTrimmedString(computerId, 200)
+    && isBoundedTrimmedString(folder, 4096))
+}
+
 function isControlBase(value: unknown): value is Record<string, unknown> & VoiceControlBase & {
   type: string
 } {
@@ -347,6 +394,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
+}
+
+function isBoundedTrimmedString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string'
+    && value.length <= maxLength
+    && value.trim().length > 0
 }
 
 function isFiniteNumber(value: unknown): value is number {

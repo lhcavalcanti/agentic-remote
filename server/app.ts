@@ -69,7 +69,11 @@ import {
   type OracleVoiceConfig,
 } from './oracle-voice-config.js'
 import type { VoiceEngineFactory } from './oracle-voice-engine.js'
-import type { VoiceBackend } from './oracle-voice-session.js'
+import {
+  LocalVoiceBackend,
+  type VoiceBackend,
+} from './oracle-voice-session.js'
+import { ChildVoiceEngine } from './oracle-voice-worker.js'
 import {
   registerTranscriptionRoutes,
   transcriptionMultipartOptions,
@@ -168,21 +172,37 @@ export async function buildApp(
   } catch (error) {
     voiceConfigurationError = error instanceof Error ? error.message : String(error)
   }
-  const voiceEngineFactory = options.voiceEngineFactory
-  const voiceCapability: VoiceBackendCapability = voiceConfigurationError
-    ? {
-        available: false,
-        reason: `Oracle voice configuration is invalid: ${voiceConfigurationError}`,
-      }
-    : !voiceConfig.enabled
-      ? {
-          available: false,
-          reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
-        }
-      : voiceEngineFactory?.capability() ?? {
-          available: false,
-          reason: 'Oracle voice engine is unavailable.',
-        }
+  let voiceEngineFactory = options.voiceEngineFactory
+  if (
+    !options.voiceBackend
+    && !voiceConfigurationError
+    && voiceConfig.enabled
+    && !voiceEngineFactory
+  ) {
+    voiceEngineFactory = new ChildVoiceEngine(voiceConfig)
+  }
+  const voiceService = options.voiceBackend ?? (
+    !voiceConfigurationError && voiceConfig.enabled && voiceEngineFactory
+      ? new LocalVoiceBackend(voiceEngineFactory, voiceConfig)
+      : undefined
+  )
+  const voiceCapability: VoiceBackendCapability =
+    options.voiceBackend?.capability() ?? (
+      voiceConfigurationError
+        ? {
+            available: false,
+            reason: `Oracle voice configuration is invalid: ${voiceConfigurationError}`,
+          }
+        : !voiceConfig.enabled
+          ? {
+              available: false,
+              reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
+            }
+          : voiceEngineFactory?.capability() ?? {
+              available: false,
+              reason: 'Oracle voice engine is unavailable.',
+            }
+    )
   const agent = options.service
     ? undefined
     : new AgentService(new SessionStore(dataDirectory))
@@ -261,7 +281,7 @@ export async function buildApp(
     service,
     identity,
     localTranscription,
-    options.voiceBackend,
+    voiceService,
   )
 
   let manager: ComputerManager | undefined
@@ -362,6 +382,19 @@ export async function buildApp(
       managerAgent,
       settingsProfileStore,
       presence,
+      {
+        identity,
+        computers: manager,
+        manager: managerAgent,
+        managerEvents: managerAgent,
+        localBackend: voiceService,
+        ...(voiceConfig.enabled && voiceConfig.computerName
+          ? { selectedComputerName: voiceConfig.computerName }
+          : {}),
+        unavailableReason: voiceCapability.available
+          ? 'Oracle voice is unavailable.'
+          : voiceCapability.reason,
+      },
     )
     if (managerAgent) pushService.attachOracle(managerAgent)
     await registerManagerRoutes(
@@ -443,6 +476,7 @@ export async function buildApp(
   app.addHook('onClose', async () => {
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
+    await voiceService?.stop()
     await managerAgent?.stop()
     manager?.stop()
     pushService?.stop()

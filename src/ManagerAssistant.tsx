@@ -8,6 +8,7 @@ import {
   CircleStop,
   ExternalLink,
   LoaderCircle,
+  MessageCircle,
   Mic,
   Orbit,
   Pencil,
@@ -38,6 +39,8 @@ import {
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { remarkSafeBreaks } from './remark-safe-breaks'
+import { useOracleConversation } from './use-oracle-conversation'
+import type { OracleConversation } from './use-oracle-conversation'
 import { recordingDuration, useVoiceRecorder } from './voice-recorder'
 
 const suggestions = [
@@ -45,6 +48,31 @@ const suggestions = [
   'What needs my attention?',
   'What did my sessions finish today?',
 ]
+
+function conversationStateLabel(state: OracleConversation['state']): string {
+  switch (state) {
+    case 'off':
+      return 'Conversation off'
+    case 'starting':
+      return 'Starting'
+    case 'listening':
+      return 'Listening'
+    case 'speech':
+      return 'Speech detected'
+    case 'transcribing':
+      return 'Transcribing'
+    case 'thinking':
+      return 'Oracle is thinking'
+    case 'speaking':
+      return 'Speaking'
+    case 'interrupted':
+      return 'Interrupted'
+    case 'reconnecting':
+      return 'Reconnecting'
+    case 'error':
+      return 'Error'
+  }
+}
 
 function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnapshot {
   switch (event.type) {
@@ -477,6 +505,16 @@ export function ManagerAssistant({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const panelWidth = usePanelWidth(reservedLeft)
+  const returnFinalTranscript = useCallback((text: string) => {
+    const transcript = text.trim()
+    if (!transcript) return
+    setDraft((current) => {
+      const draft = current.trimEnd()
+      if (draft === transcript || draft.endsWith(`\n\n${transcript}`)) return current
+      return draft ? `${draft}\n\n${transcript}` : transcript
+    })
+    window.requestAnimationFrame(() => inputRef.current?.focus())
+  }, [])
   const voice = useVoiceRecorder({
     onTranscript: (text) => {
       setDraft((current) => current.trim() ? `${current.trimEnd()} ${text}` : text)
@@ -484,7 +522,23 @@ export function ManagerAssistant({
     },
     onError: (message) => setSendError(message),
   })
+  const conversation = useOracleConversation({
+    defaults,
+    answerOnly,
+    open,
+    onFinalTranscript: returnFinalTranscript,
+    onError: (message) => setSendError(message),
+  })
   const { recording: voiceRecording, stop: stopVoice } = voice
+  const conversationAvailable = conversation.capability?.available === true
+  const conversationActive = conversation.state !== 'off'
+  const conversationOwnsMicrophone = conversationActive && conversation.state !== 'error'
+  const liveAnnouncement = [
+    announcement,
+    conversationActive
+      ? `Conversation: ${conversationStateLabel(conversation.state)}`
+      : '',
+  ].filter(Boolean).join(' ')
 
   // A closed panel never keeps the microphone on.
   useEffect(() => {
@@ -802,8 +856,14 @@ export function ManagerAssistant({
     }
   }
 
+  async function startConversation() {
+    setSendError(undefined)
+    voice.stop(true)
+    await conversation.start()
+  }
+
   if (!snapshot?.available || !open) {
-    return <p aria-live="polite" className="visually-hidden">{announcement}</p>
+    return <p aria-live="polite" className="visually-hidden">{liveAnnouncement}</p>
   }
 
   const working = snapshot.status === 'working' || snapshot.status === 'recovering'
@@ -1044,7 +1104,41 @@ export function ManagerAssistant({
             Oracle is answering; anything you send now waits its turn.
           </p>
         ) : null}
-        {voice.recording ? (
+        {conversationActive ? (
+          <div
+            aria-label="Conversation status"
+            className={`manager-conversation-status manager-conversation-status--${conversation.state}`}
+            role="group"
+          >
+            {conversation.state === 'error' ? null : (
+              <LoaderCircle
+                aria-hidden="true"
+                className="activity-message__spinner manager-conversation-status__activity"
+                size={17}
+              />
+            )}
+            <div className="manager-conversation-status__content">
+              <strong>{conversationStateLabel(conversation.state)}</strong>
+              {conversation.partial ? (
+                <p aria-label="Live transcript" className="manager-conversation-status__partial">
+                  {conversation.partial}
+                </p>
+              ) : null}
+              <p className="manager-conversation-status__privacy">
+                Speech processing stays on your selected computer; Oracle uses remote Copilot.
+              </p>
+            </div>
+            <button
+              aria-label="Stop conversation"
+              className="manager-conversation-stop"
+              onClick={conversation.stop}
+              type="button"
+            >
+              <Square aria-hidden="true" fill="currentColor" size={11} />
+              Stop
+            </button>
+          </div>
+        ) : voice.recording ? (
           <div className="recording-panel manager-composer__recording" role="status">
             <button className="recording-panel__cancel" onClick={() => voice.stop(true)} type="button">
               Cancel
@@ -1059,7 +1153,9 @@ export function ManagerAssistant({
             </button>
           </div>
         ) : null}
-        <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}`}>
+        <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}${
+          conversationAvailable ? ' manager-composer__row--conversation' : ''
+        }`}>
           <textarea
             aria-label="Message Oracle"
             enterKeyHint={phoneEnterCreatesNewline() ? 'enter' : 'send'}
@@ -1070,13 +1166,35 @@ export function ManagerAssistant({
             rows={2}
             value={draft}
           />
-          <div className="manager-composer__actions">
+          <div className={`manager-composer__actions${
+            conversationAvailable ? ' manager-composer__actions--conversation' : ''
+          }`}>
+            {conversationAvailable && !conversationActive ? (
+              <button
+                aria-label="Start conversation"
+                className="manager-conversation-toggle"
+                disabled={voice.transcribing || voice.recording || voice.starting}
+                onClick={() => void startConversation()}
+                title="Start a hands-free conversation with Oracle"
+                type="button"
+              >
+                <MessageCircle aria-hidden="true" size={16} />
+                <span>Start conversation</span>
+              </button>
+            ) : null}
             <button
               aria-label={voice.transcribing ? 'Transcribing audio' : 'Dictate to Oracle'}
               className="icon-button manager-composer__mic"
-              disabled={voice.transcribing || voice.recording || voice.starting}
+              disabled={
+                conversationOwnsMicrophone
+                || voice.transcribing
+                || voice.recording
+                || voice.starting
+              }
               onClick={() => void voice.start()}
-              title="Record and transcribe"
+              title={conversationOwnsMicrophone
+                ? 'Stop Conversation before using dictation'
+                : 'Record and transcribe'}
               type="button"
             >
               {voice.transcribing
@@ -1140,7 +1258,7 @@ export function ManagerAssistant({
           </p>
         ) : null}
       </form>
-      <p aria-live="polite" className="visually-hidden">{announcement}</p>
+      <p aria-live="polite" className="visually-hidden">{liveAnnouncement}</p>
     </section>
   )
 }

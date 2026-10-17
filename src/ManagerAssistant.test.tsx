@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagerEvent, ManagerSnapshot } from '../shared/manager'
+import type { VoiceCapabilities } from '../shared/oracle-voice'
 import {
   cancelManager,
   editQueuedManagerMessage,
@@ -18,6 +19,8 @@ import {
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { sessionLinkTarget } from './manager-links'
+import { useOracleConversation } from './use-oracle-conversation'
+import type { OracleConversation } from './use-oracle-conversation'
 
 vi.mock('./api', () => ({
   getManager: vi.fn(),
@@ -29,6 +32,10 @@ vi.mock('./api', () => ({
   removeQueuedManagerMessage: vi.fn(),
   cancelManager: vi.fn(),
   resetManager: vi.fn(),
+}))
+
+vi.mock('./use-oracle-conversation', () => ({
+  useOracleConversation: vi.fn(),
 }))
 
 type Props = Parameters<typeof ManagerAssistant>[0]
@@ -53,6 +60,41 @@ function Harness(props: Omit<Props, 'open' | 'onOpenChange' | 'onIndicatorChange
       />
     </>
   )
+}
+
+const conversationCapability: VoiceCapabilities = {
+  protocol: 2,
+  available: true,
+  computerId: 'development',
+  computerName: 'Development',
+  sampleRate: 16_000,
+  playbackSampleRate: 22_050,
+  languages: ['en'],
+  sttProfile: 'sherpa-streaming',
+  ttsVoice: 'kitten-nano',
+  resourceClass: 'low',
+  limits: {
+    maxFrameBytes: 64_000,
+    maxQueueBytes: 256_000,
+    maxUtteranceMs: 60_000,
+  },
+}
+
+const startConversation = vi.fn(async () => undefined)
+const stopConversation = vi.fn()
+
+function conversationState(
+  state: OracleConversation['state'] = 'off',
+  overrides: Partial<OracleConversation> = {},
+): OracleConversation {
+  return {
+    capability: conversationCapability,
+    state,
+    partial: '',
+    start: startConversation,
+    stop: stopConversation,
+    ...overrides,
+  }
 }
 
 const empty: ManagerSnapshot = {
@@ -86,7 +128,14 @@ function setup(snapshot: ManagerSnapshot = empty, overrides: Partial<Parameters<
   const emit = (event: ManagerEvent) => act(() => {
     for (const listener of listeners) listener(event)
   })
-  return { ...view, emit, onOpenSession, onManagedSessionsChange, onOpenSettings }
+  return {
+    ...view,
+    emit,
+    props,
+    onOpenSession,
+    onManagedSessionsChange,
+    onOpenSettings,
+  }
 }
 
 async function openPanel() {
@@ -108,6 +157,10 @@ describe('ManagerAssistant', () => {
     vi.mocked(removeQueuedManagerMessage).mockReset()
     vi.mocked(editQueuedManagerMessage).mockReset()
     vi.mocked(transcribeAudio).mockReset()
+    vi.mocked(useOracleConversation).mockReset()
+    vi.mocked(useOracleConversation).mockReturnValue(conversationState())
+    startConversation.mockClear()
+    stopConversation.mockClear()
     localStorage.clear()
   })
 
@@ -701,6 +754,137 @@ describe('ManagerAssistant', () => {
       vi.unstubAllGlobals()
       fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
       await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Microphone recording is not supported in this browser'))
+    })
+
+    it.each([
+      ['listening', 'Listening'],
+      ['speech', 'Speech detected'],
+      ['transcribing', 'Transcribing'],
+      ['thinking', 'Oracle is thinking'],
+      ['speaking', 'Speaking'],
+      ['interrupted', 'Interrupted'],
+      ['reconnecting', 'Reconnecting'],
+    ] as const)('shows %s Conversation state as visible text', async (state, label) => {
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState(state))
+      setup()
+      await openPanel()
+
+      expect(screen.getByText(label)).toBeVisible()
+    })
+
+    it('keeps partial speech out of the draft and explains the local and remote boundary', async () => {
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState(
+        'transcribing',
+        { partial: 'where is the docs work' },
+      ))
+      setup()
+      await openPanel()
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'Keep this draft' } })
+
+      expect(screen.getByText('where is the docs work')).toBeVisible()
+      expect(input).toHaveValue('Keep this draft')
+      expect(screen.getByText(
+        'Speech processing stays on your selected computer; Oracle uses remote Copilot.',
+      )).toBeVisible()
+    })
+
+    it('returns one failed finalized utterance to the draft once', async () => {
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState('thinking'))
+      setup()
+      await openPanel()
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'Keep this draft' } })
+      const hookOptions = vi.mocked(useOracleConversation).mock.calls.at(-1)?.[0]
+
+      act(() => {
+        hookOptions?.onFinalTranscript('where is the docs work')
+        hookOptions?.onFinalTranscript('where is the docs work')
+      })
+
+      expect(input).toHaveValue('Keep this draft\n\nwhere is the docs work')
+    })
+
+    it('offers explicit Start and Stop controls with keyboard focus', async () => {
+      setup()
+      await openPanel()
+      const start = screen.getByRole('button', { name: 'Start conversation' })
+      start.focus()
+      expect(start).toHaveFocus()
+      fireEvent.click(start)
+      expect(startConversation).toHaveBeenCalledOnce()
+
+      cleanup()
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState('listening'))
+      setup()
+      await openPanel()
+      const stop = screen.getByRole('button', { name: 'Stop conversation' })
+      stop.focus()
+      expect(stop).toHaveFocus()
+      fireEvent.click(stop)
+      expect(stopConversation).toHaveBeenCalledOnce()
+    })
+
+    it('leaves dictation unchanged when Conversation is unavailable', async () => {
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState('off', {
+        capability: { ...conversationCapability, available: false, reason: 'Disabled' },
+      }))
+      setup()
+      await openPanel()
+
+      expect(screen.queryByRole('button', { name: 'Start conversation' })).not.toBeInTheDocument()
+      expect(screen.queryByText(/Speech processing stays/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeEnabled()
+    })
+
+    it.each([
+      'Microphone permission was denied. Dictation is still available.',
+      'Conversation requires AudioWorklet. Use dictation in this browser.',
+    ])('shows the Conversation failure and leaves dictation available: %s', async (message) => {
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState(
+        'error',
+        { error: message },
+      ))
+      setup()
+      await openPanel()
+      const hookOptions = vi.mocked(useOracleConversation).mock.calls.at(-1)?.[0]
+      act(() => hookOptions?.onError(message))
+
+      expect(screen.getByText('Error')).toBeVisible()
+      expect(screen.getByRole('alert')).toHaveTextContent(message)
+      expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeEnabled()
+    })
+
+    it('disables dictation while Conversation owns the microphone, then switches back', async () => {
+      let current = conversationState('listening')
+      vi.mocked(useOracleConversation).mockImplementation(() => current)
+      const view = setup()
+      await openPanel()
+      expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeDisabled()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Stop conversation' }))
+      current = conversationState('off')
+      view.rerender(<Harness {...view.props} />)
+
+      const dictate = screen.getByRole('button', { name: 'Dictate to Oracle' })
+      expect(dictate).toBeEnabled()
+      fireEvent.click(dictate)
+      expect(await screen.findByText(/Recording 0:00/)).toBeVisible()
+    })
+
+    it('hands panel close to the Conversation lifecycle and keeps controls usable at 390px', async () => {
+      vi.stubGlobal('innerWidth', 390)
+      setup()
+      await openPanel()
+
+      expect(screen.getByRole('button', { name: 'Start conversation' })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeVisible()
+      expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+
+      await waitFor(() => expect(useOracleConversation).toHaveBeenLastCalledWith(
+        expect.objectContaining({ open: false }),
+      ))
     })
   })
 

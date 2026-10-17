@@ -7244,6 +7244,10 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  .manager-conversation-status__activity {
+    animation: none !important;
+  }
 }
 
 /* Reveals the history a long session keeps out of the first render. */
@@ -7833,7 +7837,9 @@ button {
 }
 
 .manager-composer {
-  padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+  padding: 10px max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
   border-top: 1px solid var(--border);
 }
 
@@ -7853,6 +7859,10 @@ button {
 
 .manager-composer__row:focus-within {
   border-color: var(--accent);
+}
+
+.manager-composer__row--conversation {
+  flex-wrap: wrap;
 }
 
 .manager-composer textarea {
@@ -7876,6 +7886,7 @@ button {
 
 .manager-composer__actions {
   display: flex;
+  align-items: center;
   gap: 4px;
 }
 
@@ -8037,13 +8048,118 @@ button {
 }
 
 .manager-composer__mic {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   color: var(--muted-strong);
 }
 
 .manager-composer__recording {
   margin-bottom: 6px;
+}
+
+.manager-conversation-toggle,
+.manager-conversation-stop {
+  min-height: 44px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--muted-strong);
+  font: inherit;
+  cursor: pointer;
+}
+
+.manager-conversation-toggle {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.manager-conversation-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.manager-conversation-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.manager-conversation-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manager-conversation-stop:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manager-conversation-status {
+  display: flex;
+  min-width: 0;
+  min-height: 52px;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 6px;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.manager-conversation-status__activity {
+  flex: none;
+  color: var(--accent);
+}
+
+.manager-conversation-status__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.manager-conversation-status__content strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.manager-conversation-status__partial {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.manager-conversation-status__privacy {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.manager-conversation-stop {
+  display: inline-flex;
+  min-height: 44px;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: 9px;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.manager-conversation-stop:hover {
+  border-color: var(--danger);
+  background: rgba(184, 73, 73, 0.1);
 }
 
 .manager-composer__row--only {
@@ -8229,4 +8345,23 @@ button {
 
 .message__content--plain {
   white-space: pre-wrap;
+}
+
+@media (max-width: 420px) {
+  .manager-composer__row--conversation {
+    flex-wrap: wrap;
+  }
+
+  .manager-composer__row--conversation textarea {
+    flex: 1 0 100%;
+  }
+
+  .manager-composer__actions--conversation {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+  }
+
+  .manager-conversation-status {
+    align-items: flex-start;
+  }
 }

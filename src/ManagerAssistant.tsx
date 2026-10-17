@@ -438,6 +438,7 @@ export function ManagerAssistant({
   onOpenSettings,
   controlRef,
   reservedLeft = 0,
+  onWidthChange,
 }: {
   /** Changes each time the event socket reconnects, so the snapshot is reread. */
   connectionEpoch: number
@@ -453,6 +454,8 @@ export function ManagerAssistant({
   controlRef?: MutableRefObject<OracleControl | undefined>
   /** Width taken on the left, such as the sessions list, that the panel may not reach into. */
   reservedLeft?: number
+  /** The open panel's width, or undefined while it is closed, for whatever it covers to move beside it. */
+  onWidthChange?: (width: number | undefined) => void
 }) {
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
   const [draft, setDraft] = useState('')
@@ -561,6 +564,14 @@ export function ManagerAssistant({
   }, [managedKey])
 
   const available = Boolean(snapshot?.available)
+  const shownWidth = available && open ? panelWidth.width : undefined
+  const widthRef = useRef(onWidthChange)
+  useEffect(() => {
+    widthRef.current = onWidthChange
+  })
+  useEffect(() => {
+    widthRef.current?.(shownWidth)
+  }, [shownWidth])
   const status = snapshot?.status ?? 'offline'
   const queuedCount = snapshot?.queued ?? 0
   const unavailableReason = available

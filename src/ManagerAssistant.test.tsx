@@ -399,6 +399,19 @@ describe('ManagerAssistant', () => {
     expect(within(screen.getByTestId('header')).getByRole('button', { name: 'Oracle' })).toHaveFocus()
   })
 
+  it('tells the app how wide the open panel is, so what it covers can move beside it', async () => {
+    const onWidthChange = vi.fn()
+    setup(empty, { onWidthChange })
+    await screen.findByRole('button', { name: 'Oracle' })
+    expect(onWidthChange).toHaveBeenLastCalledWith(undefined)
+    await openPanel()
+    expect(onWidthChange).toHaveBeenLastCalledWith(440)
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize Oracle' }), { key: 'ArrowLeft', shiftKey: true })
+    expect(onWidthChange).toHaveBeenLastCalledWith(472)
+    fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+    expect(onWidthChange).toHaveBeenLastCalledWith(undefined)
+  })
+
   it('resizes the desktop panel from its left edge and remembers the width', async () => {
     setup()
     const panel = await openPanel()

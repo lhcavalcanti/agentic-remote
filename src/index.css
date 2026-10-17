@@ -2352,6 +2352,22 @@ button {
   pointer-events: auto;
 }
 
+/* Oracle's panel covers the window's right edge, so the dock moves to just
+   left of it. A docked Knowledge panel already fills part of that width;
+   the dock never leaves the conversation. */
+.timeline-dock[data-oracle-open] {
+  --dock-covered: calc(var(--oracle-panel-width, 0px) - var(--dock-beyond, 0px));
+
+  margin-right: min(
+    calc(100% - 64px),
+    max(max(16px, env(safe-area-inset-right)), calc(var(--dock-covered) + 16px))
+  );
+}
+
+.workspace--docked .timeline-dock[data-oracle-open] {
+  --dock-beyond: var(--knowledge-width);
+}
+
 .timeline-follow__button {
   display: grid;
   place-items: center;
@@ -7908,6 +7924,11 @@ button {
 @media (max-width: 960px) {
   .oracle-resizer {
     display: none;
+  }
+
+  /* On a phone the panel fills the screen, so nothing moves aside for it. */
+  .timeline-dock[data-oracle-open] {
+    margin-right: max(16px, env(safe-area-inset-right));
   }
 
   .oracle-mode button {

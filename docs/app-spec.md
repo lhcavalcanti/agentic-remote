@@ -402,7 +402,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - A hub MUST offer Oracle from a round 48px bubble at the bottom right of the
   conversation, above the status line and message bar. **Scroll to latest**
   shares its dock and stacks above it, so neither MUST ever cover the other or
-  Send. Where the conversation is out of view, a compact Oracle icon stands in:
+  Send. While Oracle's desktop panel is open over that corner, the dock moves
+  to just left of the panel's edge, following it as it is resized, so Scroll
+  to latest stays in reach; a docked Knowledge panel that the panel already
+  covers counts toward the distance. Where the conversation is out of view, a compact Oracle icon stands in:
   in the Knowledge header while Knowledge covers the conversation (expanded,
   or open at all on a phone), in an open document's header on a phone, and in
   the phone's session list beside **Manage computers**. The button shows a

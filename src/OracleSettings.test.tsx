@@ -1,10 +1,37 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getManager, updateManagerSettings } from './api'
 import type { RuntimeModelOption } from '../shared/contracts'
-import { OracleSettings } from './OracleSettings'
+import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
+import { useOracleSettings } from './use-oracle-settings'
+
+type HarnessProps = Omit<Parameters<typeof OracleModelSettings>[0], 'oracle'> & {
+  computers?: { id: string; name: string }[]
+}
+
+/** Oracle's settings as App settings places them: the model with the models, folders with the folders. */
+function OracleSettings({ computers = [], ...props }: HarnessProps) {
+  const oracle = useOracleSettings()
+  return (
+    <>
+      <OracleModelSettings oracle={oracle} {...props} />
+      {computers.length && oracle.settings ? (
+        <section aria-label="Folders">
+          {computers.map((computer) => (
+            <div data-testid={`folder-${computer.id}`} key={computer.id}>
+              <span>{oracle.settings?.sessionFolders?.[computer.id] ?? 'default'}</span>
+              <button onClick={() => void oracle.saveFolder(computer.id, '/home/me/src/next')} type="button">Choose for {computer.name}</button>
+              <button onClick={() => void oracle.saveFolder(computer.id)} type="button">Clear for {computer.name}</button>
+            </div>
+          ))}
+          <OracleSettingsStatus oracle={oracle} part="folders" />
+        </section>
+      ) : null}
+    </>
+  )
+}
 
 vi.mock('./api', () => ({
   getManager: vi.fn(),
@@ -105,28 +132,28 @@ describe('OracleSettings', () => {
       { id: 'hub', name: 'development', isLocal: true, online: true },
       { id: 'node', name: 'production', isLocal: false, online: true },
     ]
-    render(
-      <OracleSettings
-        computers={computers}
-        models={models}
-        renderFolderControl={(computer, value, onChange) => (
-          <div data-testid={`folder-${computer.id}`}>
-            <span>{value ?? 'default'}</span>
-            <button onClick={() => onChange('/home/me/src/next')} type="button">Choose for {computer.name}</button>
-            <button onClick={() => onChange()} type="button">Clear for {computer.name}</button>
-          </div>
-        )}
-      />,
-    )
-    expect(await screen.findByRole('heading', { name: 'Session folders' })).toBeInTheDocument()
-    expect(screen.getByTestId('folder-hub')).toHaveTextContent('/home/me/src/oracle')
+    render(<OracleSettings computers={computers} models={models} />)
+    expect(await screen.findByTestId('folder-hub')).toHaveTextContent('/home/me/src/oracle')
     expect(screen.getByTestId('folder-node')).toHaveTextContent('default')
     fireEvent.click(screen.getByRole('button', { name: 'Choose for development' }))
     await waitFor(() => expect(updateManagerSettings).toHaveBeenCalledWith({ sessionFolders: { hub: '/home/me/src/next' } }))
-    expect(await screen.findByText('Saved. Oracle starts new sessions there.')).toBeInTheDocument()
+    // The result shows with the folders, not with the model.
+    const folders = screen.getByRole('region', { name: 'Folders' })
+    expect(await within(folders).findByText('Saved. Oracle starts new sessions there.')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Oracle settings' })).queryByRole('status')).toBeNull()
     expect(screen.getByTestId('folder-hub')).toHaveTextContent('/home/me/src/next')
     fireEvent.click(screen.getByRole('button', { name: 'Clear for development' }))
     await waitFor(() => expect(updateManagerSettings).toHaveBeenLastCalledWith({ sessionFolders: { hub: null } }))
     await waitFor(() => expect(screen.getByTestId('folder-hub')).toHaveTextContent('default'))
+    expect(within(folders).getByText('Saved. Oracle uses your folder for new sessions there.')).toBeInTheDocument()
+  })
+
+  it('shows a model change where the model is chosen', async () => {
+    vi.mocked(updateManagerSettings).mockResolvedValueOnce({ model: 'gpt-6-sol', defaultModel: 'hub-default' })
+    render(<OracleSettings computers={[{ id: 'hub', name: 'development' }]} models={models} />)
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Oracle model' }), { target: { value: 'gpt-6-sol' } })
+    const model = screen.getByRole('region', { name: 'Oracle settings' })
+    expect(await within(model).findByText('Saved. Oracle uses it from its next answer.')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Folders' })).queryByRole('status')).toBeNull()
   })
 })

@@ -454,8 +454,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   unavailable or still loading, `/oracle` stays in the message bar with the
   reason; a question that cannot be sent waits in Oracle's message bar with
   the error.
-- Oracle's model and reasoning effort are chosen in **App settings → Oracle**
-  (also reached from the model shown under Oracle's message bar). The choice is
+- Oracle's model and reasoning effort are chosen in **App settings → Models →
+  Oracle** (also reached from the model shown under Oracle's message bar). The choice is
   kept on the hub for every browser and applies from Oracle's next answer: a
   chosen model is switched to in place; returning to Copilot's own default
   starts a new conversation briefed on the old one. The hub records what the
@@ -466,8 +466,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   models, with **Retry** if they cannot be read. A model that cannot start
   falls back to the default and Oracle says so until the choice changes or you
   **Start over**.
-- **App settings → Oracle → Session folders** chooses, per computer, where
-  Oracle starts new sessions; each folder is checked on its computer before it
+- **App settings → Folders** chooses, per computer, where Oracle starts new
+  sessions, beside where yours start; each folder is checked on its computer before it
   is kept on the hub. Oracle keeps them as its own settings and changes one
   when you ask it to, which App settings then shows. A session's task can
   still name another folder, and a computer without one uses your default
@@ -1288,6 +1288,20 @@ clear replacement IDs without losing, duplicating, or reordering content.
   reloads in that tab, and fall back to Agentic green for an unknown value.
 - The top-left brand mark and browser-tab icon MUST use the fixed Relay
   artwork in Agentic green and remain independent of the tab-local accent.
+
+### 9.2 App settings layout
+
+- App settings MUST group settings by what they are about, in this order:
+  - **Models**: new sessions' defaults per provider, then Oracle's model and
+    effort.
+  - **Folders**: one card per computer with the folder new sessions start in,
+    then Oracle's (blank means the same as new sessions).
+  - **Notifications**.
+  - **Interface**: Appearance, Status line, Keyboard shortcuts.
+  - **App**: Hub connection (native app only), App updates.
+- A jump bar MUST reach each group and stay in view while the settings scroll.
+- Opened from Oracle's model, App settings MUST open at Oracle's model;
+  opened any other way, at the top.
 
 ## 10. Notifications
 

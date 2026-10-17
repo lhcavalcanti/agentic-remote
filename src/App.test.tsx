@@ -2959,6 +2959,86 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
+  it('groups app settings by what they are about', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [], settings: {},
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = screen.getByRole('dialog', { name: 'App settings' })
+    const groups = [...dialog.querySelectorAll<HTMLElement>('.app-settings-group')]
+    expect(groups.map((group) => group.querySelector('h3')?.textContent)).toEqual([
+      'Models', 'Folders', 'Notifications', 'Interface', 'App',
+    ])
+    const [models, folders, notifications, ui, app] = groups
+    // Every model choice in one place: new sessions', then Oracle's.
+    expect(within(models).getByRole('heading', { name: 'New sessions' })).toBeInTheDocument()
+    expect(await within(models).findByLabelText('GitHub Copilot default model')).toBeInTheDocument()
+    expect(await within(models).findByRole('combobox', { name: 'Oracle model' })).toBeInTheDocument()
+    // Every folder in one place, per computer: yours, then Oracle's.
+    const computerFolders = within(folders).getByRole('group', { name: 'Session folders on development' })
+    expect(within(computerFolders).getByRole('button', { name: 'Browse default session folder for development' })).toBeInTheDocument()
+    expect(await within(computerFolders).findByRole('button', { name: "Browse Oracle's session folder for development" }))
+      .toBeInTheDocument()
+    expect(within(computerFolders).getByText('Same as new sessions')).toBeInTheDocument()
+    expect(within(notifications).getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
+    for (const name of ['Appearance', 'Status line', 'Keyboard shortcuts']) {
+      expect(within(ui).getByRole('heading', { name })).toBeInTheDocument()
+    }
+    expect(within(app).getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
+
+    // A jump bar reaches each group.
+    const jump = within(dialog).getByRole('navigation', { name: 'Settings sections' })
+    expect(within(jump).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Models', 'Folders', 'Notifications', 'Interface', 'App',
+    ])
+    // It scrolls the settings alone, placing the group under the jump bar;
+    // never the page behind the dialog.
+    const scrollTo = vi.fn()
+    Object.defineProperty(dialog, 'scrollTo', { configurable: true, value: scrollTo })
+    vi.spyOn(dialog, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect)
+    vi.spyOn(folders, 'getBoundingClientRect').mockReturnValue({ top: 700 } as DOMRect)
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+    fireEvent.click(within(jump).getByRole('button', { name: 'Folders' }))
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 592 })
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it("opens app settings at Oracle's model from Oracle's panel", async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [], settings: {},
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(await within(document.querySelector<HTMLElement>('.timeline-dock')!).findByRole('button', { name: 'Oracle' }))
+    const scrollTo = vi.fn()
+    const scrollToBefore = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTo')
+    Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const top = this.id === 'settings-oracle' ? 400 : this.classList.contains('app-settings-dialog') ? 100 : 0
+      return { top } as DOMRect
+    })
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: /^Oracle model:/ }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 292 }))
+      expect(scrollTo.mock.contexts.at(-1)).toBe(dialog)
+      // Opened from the sessions panel, it starts at the top.
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      scrollTo.mockClear()
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      await screen.findByRole('dialog', { name: 'App settings' })
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      expect(scrollTo).not.toHaveBeenCalled()
+    } finally {
+      rect.mockRestore()
+      if (scrollToBefore) Object.defineProperty(Element.prototype, 'scrollTo', scrollToBefore)
+      else Reflect.deleteProperty(Element.prototype, 'scrollTo')
+    }
+  })
+
   it('keeps an accent choice within the current browser tab', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

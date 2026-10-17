@@ -236,8 +236,10 @@ matrix.
 - **Skills / MCP servers**: use **Session actions** or `/skill`, `/skills`, and
   `/mcp` to inspect resource metadata without sending a prompt or changing
   configuration. Optional text after the command filters the list.
-- **App settings**: configure separate default models and agent modes for
-  Copilot and Claude.
+- **App settings**: grouped as Models, Folders, Notifications, Interface, and
+  App, with a jump bar. Models holds separate default models and agent modes
+  for Copilot and Claude, and Oracle's model; Folders holds each computer's
+  folder for new sessions and for Oracle.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Knowledge**: a per-session panel that docks beside the conversation or
   expands over it, with an in-place folder tree, remembered expansion and
@@ -431,8 +433,8 @@ badges **Oracle**.
 - Messages sent while it is busy wait in a queue where you can see, edit in
   place, and remove them.
 - The microphone dictates to Oracle; the words land in its message bar.
-- **App settings → Oracle** chooses its model and, per computer, the folder it
-  starts sessions in. Both are kept on the hub; ask Oracle to start sessions
+- **App settings → Models** chooses its model, and **Folders** the folder it
+  starts sessions in on each computer. Both are kept on the hub; ask Oracle to start sessions
   somewhere else and it updates its folder.
 - On a desktop, drag the panel's left edge to resize it.
 - Its notes are in `~/.agentic-remote/manager/memory/`.

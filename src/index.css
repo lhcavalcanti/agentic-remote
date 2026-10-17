@@ -4017,21 +4017,127 @@ button {
   overflow-y: auto;
 }
 
+/* Settings are grouped by what they are about: each group's heading, then
+   its parts, side by side on a wide screen. */
+.app-settings-nav {
+  position: sticky;
+  z-index: 2;
+  top: -22px;
+  display: flex;
+  gap: 6px;
+  margin: 0 -22px 4px;
+  padding: 10px 22px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  scrollbar-width: none;
+}
+
+.app-settings-nav button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-settings-nav button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.app-settings-nav button:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: 2px;
+}
+
+.app-settings-group {
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+  /* Clears the sticky jump bar when a group is reached by keyboard. */
+  scroll-margin-top: 64px;
+}
+
+.app-settings-group:first-of-type {
+  border-top: 0;
+}
+
+.app-settings-group > h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.app-settings-group__body {
+  display: grid;
+  align-items: start;
+  gap: 0 28px;
+}
+
+/* Parts of a group line up with each other, whichever comes first. */
+.app-settings-dialog .app-settings-group .app-settings-section {
+  padding: 12px 0 0;
+  border-top: 0;
+  scroll-margin-top: 64px;
+}
+
+.app-settings-group .app-settings-section h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.app-settings-group__body--folders {
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* One card per computer: where your sessions start, then Oracle's. */
+.settings-computer-folders {
+  display: grid;
+  gap: 2px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+
+.settings-computer-folders__name {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.settings-computer-folders .default-session-folder {
+  padding: 8px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.settings-computer-folders .default-session-folder + .default-session-folder {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-computer-folders .default-session-folder__header strong {
+  color: var(--muted-strong);
+  font-weight: 600;
+}
+
 @media (min-width: 900px) {
   .dialog.app-settings-dialog {
     width: min(100%, 940px);
   }
 
-  .app-settings-dialog__sections {
-    display: grid;
-    align-items: start;
-    gap: 0 28px;
+  .app-settings-group__body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .app-settings-dialog__sections > .app-settings-section:nth-of-type(2) {
-    padding-top: 0;
-    border-top: 0;
+  .app-settings-group__body > .app-settings-section--wide {
+    grid-column: 1 / -1;
   }
 }
 

@@ -2994,24 +2994,36 @@ const FOOTER_CONTEXT_CUT =
 
 /**
  * Copilot 1.0.98's model hint: the model, then its reasoning effort and the
- * context in use, either of those left out, and only the last cell cut short
- * when the row is narrow.
+ * context in use, in that order, each at most once, either later one left out,
+ * and only the last cell cut short when the row is narrow.
  */
 function isFooterModelHint(text: string): boolean {
   const cells = text.trim().replace(/\s+/gu, ' ').split(' · ')
-  if (cells.length > 3) return false
-  return cells.every((cell, index) => {
+  if (cells.length > 3 || !isFooterModelCell(cells[0], cells.length === 1)) return false
+  let slot = 0
+  for (const [index, cell] of cells.entries()) {
+    if (index === 0) continue
     const cut = index === cells.length - 1
-    if (index === 0) {
-      return cell.length <= 60 && !cell.includes('?') && (
-        FOOTER_MODEL.test(cell) ||
-        (cut && cell.length < 7 && FOOTER_MODEL_FAMILIES.some((family) =>
-          family.toLowerCase().startsWith(cell.toLowerCase()))))
+    if (cut && !cell) return true
+    if (slot < 1 && FOOTER_EFFORTS.some((effort) => effort === cell || (cut && effort.startsWith(cell)))) {
+      slot = 1
+    } else if (slot < 2 && (FOOTER_CONTEXT.test(cell) || (cut && FOOTER_CONTEXT_CUT.test(cell)))) {
+      slot = 2
+    } else {
+      return false
     }
-    if (index === 1 && FOOTER_EFFORTS.some((effort) =>
-      effort === cell || (cut && effort.startsWith(cell)))) return true
-    return FOOTER_CONTEXT.test(cell) || (cut && FOOTER_CONTEXT_CUT.test(cell))
-  })
+  }
+  return true
+}
+
+// A model with cells after it is named in full; only a last one is cut short.
+function isFooterModelCell(cell: string, cut: boolean): boolean {
+  if (cell.length > 60 || cell.includes('?')) return false
+  const complete = FOOTER_MODEL.test(cell) && !/[-\s]$/u.test(cell) &&
+    !FOOTER_MODEL_FAMILIES.some((family) =>
+      family !== 'Auto' && family.toLowerCase() === cell.toLowerCase())
+  return complete || (cut && (FOOTER_MODEL.test(cell) || (cell.length < 7 &&
+    FOOTER_MODEL_FAMILIES.some((family) => family.toLowerCase().startsWith(cell.toLowerCase())))))
 }
 
 // The reasoning hint, cut short, or followed by a model that may itself be cut.
@@ -3230,8 +3242,13 @@ function isKnownTerminalFooterRow(
   // context to fit. Anything after the interrupt key must be that hint.
   // Copilot 1.0.98 offers to edit the prompt before the turn gets going, adds
   // its queue key while the prompt holds text, and draws its own model hint.
-  const working = /^(.*\besc\s+(?:interrupt|edit\s+prompt))\b(.*)$/iu.exec(line)
+  const working = /^(.*?)\besc\s+(?:interrupt|edit\s+prompt)\b(.*)$/iu.exec(line)
   if (working) {
+    // The status ahead of the key says what the agent is doing. A question or
+    // a choice there is something waiting for an answer, not work going on.
+    if (/\?|\[[^\]]*\/[^\]]*\]|\([^)]*\/[^)]*\)|\b(?:y|yes)\s*\/\s*(?:n|no)\b/iu.test(working[1])) {
+      return false
+    }
     const rest = working[2].trim().replace(/\s+/gu, ' ')
       .replace(/^·\s*ctrl\+q\s+enqueue(?:\s|$)/u, '').trim()
     return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)

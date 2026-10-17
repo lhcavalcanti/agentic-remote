@@ -992,6 +992,10 @@ process.stdin.on('data', () => undefined)
     ' ● Working · 230 B esc interrupt                       Delete the folder? · y/n',
     ' ● Working esc edit prompt · enter to approve          GPT-5 mini · Low · (19%)',
     ' Interactive · Allow All · / commands   GPT-5 mini · Low · (19%) · enter to approve',
+    ' ● Delete the folder? esc edit prompt                  GPT-5 mini · Low · (19%)',
+    ' Interactive · Allow All · / commands   GPT- · Low · (19%)',
+    ' ○ Working · 138 B esc interrupt        GPT- · Low · (19%)',
+    ' Interactive · Allow All · / commands   GPT-5 mini · (19%) · (20%)',
   ])('still refuses a row that only resembles the 1.0.98 footer: %s', async (footer) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {

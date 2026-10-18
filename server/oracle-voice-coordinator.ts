@@ -15,17 +15,19 @@ import type {
   ManagerRouteAgent,
 } from './manager-routes.js'
 import { SpeakableSegmenter } from './oracle-voice-segments.js'
-import type { VoiceBackendOutput } from './oracle-voice-session.js'
+import {
+  VoiceSessionError,
+  type VoiceBackendDisconnect,
+  type VoiceBackendDisconnectCause,
+  type VoiceBackendOutput,
+} from './oracle-voice-session.js'
 import { VoiceTurnState } from './oracle-voice-turn.js'
 
 const DEFAULT_CANCEL_TIMEOUT_MS = 5_000
 
 export type OracleVoiceBackendOutput = VoiceBackendOutput
 
-export interface OracleVoiceBackendDisconnect {
-  code: number
-  reason: string
-}
+export interface OracleVoiceBackendDisconnect extends VoiceBackendDisconnect {}
 
 export interface OracleVoiceBackendConnection {
   capabilities: VoiceCapabilities
@@ -99,6 +101,7 @@ export class OracleVoiceCoordinator {
   private clientStarted = false
   private closing = false
   private closed = false
+  private backendFatalReported = false
 
   constructor(options: OracleVoiceCoordinatorOptions) {
     if (!options.streamId || options.streamId.length > 200) {
@@ -190,6 +193,11 @@ export class OracleVoiceCoordinator {
         capabilities: connection.capabilities,
       })
     } catch (error) {
+      const failure = backendDisconnectFromError(error)
+      this.terminate(
+        failure.retryable ? failure.code : terminalStartupCloseCode(failure.code),
+        failure.reason,
+      )
       await this.finishClose('Oracle voice failed to start')
       throw error
     }
@@ -336,6 +344,7 @@ export class OracleVoiceCoordinator {
         await this.sendOutput(output)
       }
       if (output.fatal) {
+        this.backendFatalReported = true
         this.terminate(1011, output.message)
         this.scheduleClose(output.message)
       }
@@ -548,12 +557,13 @@ export class OracleVoiceCoordinator {
     failure: OracleVoiceBackendDisconnect,
   ): Promise<void> {
     if (this.closed) return
-    const retryable = retryableBackendDisconnect(failure.code)
-    await this.sendError(
-      'voice_backend_disconnected',
-      failure.reason || 'The selected voice computer disconnected',
-      !retryable,
-    ).catch(() => undefined)
+    if (!(failure.cause === 'worker' && this.backendFatalReported)) {
+      await this.sendError(
+        'voice_backend_disconnected',
+        failure.reason || 'The selected voice computer disconnected',
+        !failure.retryable,
+      ).catch(() => undefined)
+    }
     this.terminate(failure.code, failure.reason)
     await this.finishClose(failure.reason || 'Voice backend disconnected')
   }
@@ -710,6 +720,81 @@ function managerStatusIsBusy(status: 'idle' | 'working' | 'recovering' | 'offlin
   return status === 'working' || status === 'recovering'
 }
 
-function retryableBackendDisconnect(code: number): boolean {
-  return code === 1001 || code === 1006 || code === 1011
+function backendDisconnectFromError(error: unknown): OracleVoiceBackendDisconnect {
+  if (isBackendDisconnect(error)) {
+    return {
+      code: error.code,
+      reason: errorMessage(error, error.reason || 'Oracle voice backend disconnected'),
+      retryable: error.retryable,
+      cause: error.cause,
+    }
+  }
+  if (error instanceof VoiceSessionError) {
+    return {
+      code: error.closeCode,
+      reason: error.message,
+      retryable: false,
+      cause: disconnectCause(error.closeCode),
+    }
+  }
+  const statusCode = typeof error === 'object' && error !== null
+    ? Reflect.get(error, 'statusCode')
+    : undefined
+  if (statusCode === 409 || statusCode === 429) {
+    return {
+      code: 1013,
+      reason: errorMessage(error, 'Voice backend rejected the connection'),
+      retryable: false,
+      cause: 'backpressure',
+    }
+  }
+  if (statusCode === 401 || statusCode === 403) {
+    return {
+      code: 1008,
+      reason: errorMessage(error, 'Voice backend authorization failed'),
+      retryable: false,
+      cause: 'policy',
+    }
+  }
+  return {
+    code: 1011,
+    reason: errorMessage(error, 'Oracle voice backend failed'),
+    retryable: false,
+    cause: 'internal',
+  }
+}
+
+function isBackendDisconnect(error: unknown): error is OracleVoiceBackendDisconnect {
+  if (typeof error !== 'object' || error === null) return false
+  return Number.isInteger(Reflect.get(error, 'code'))
+    && typeof Reflect.get(error, 'reason') === 'string'
+    && typeof Reflect.get(error, 'retryable') === 'boolean'
+    && typeof Reflect.get(error, 'cause') === 'string'
+}
+
+function disconnectCause(code: number): VoiceBackendDisconnectCause {
+  if (code === 1013) return 'backpressure'
+  if (
+    code === 1002
+    || code === 1003
+    || code === 1007
+    || code === 1008
+    || code === 1009
+  ) {
+    return 'protocol'
+  }
+  if (code === 1011) return 'internal'
+  return 'policy'
+}
+
+function terminalStartupCloseCode(code: number): number {
+  return code === 1000
+    || code === 1002
+    || code === 1003
+    || code === 1007
+    || code === 1008
+    || code === 1009
+    || code === 1013
+    ? code
+    : 1008
 }

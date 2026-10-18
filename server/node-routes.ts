@@ -388,7 +388,10 @@ export async function registerNodeRoutes(
           void voice.open({
             streamId,
             send: (output) => sendNodeVoiceOutput(socket, output, voiceLimits),
-            terminate: (code, reason) => socket.close(code, closeReason(reason)),
+            terminate: (failure) => socket.close(
+              failure.retryable && failure.cause === 'transport' ? 1012 : failure.code,
+              closeReason(failure.reason),
+            ),
           }).then(async (opened) => {
             session = opened
             if (pendingCloseReason || socket.readyState !== socket.OPEN) {

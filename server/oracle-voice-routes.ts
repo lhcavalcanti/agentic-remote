@@ -37,7 +37,10 @@ import {
   VoiceTicketStore,
   type VoiceTicketClient,
 } from './oracle-voice-tickets.js'
-import type { RemoteVoiceClient } from './remote-voice-client.js'
+import type {
+  RemoteVoiceClient,
+  RemoteVoiceDisconnectError,
+} from './remote-voice-client.js'
 
 const VOICE_OUTPUT_DRAIN_TIMEOUT_MS = 1_000
 
@@ -323,8 +326,8 @@ function localConnector(
           void delivery.catch(() => undefined)
           return Promise.resolve()
         },
-        terminate: (code, reason) => {
-          void options.disconnect({ code, reason }).catch(() => undefined)
+        terminate: (failure) => {
+          void options.disconnect(failure).catch(() => undefined)
         },
       })
       return {
@@ -369,14 +372,12 @@ function remoteConnector(
       const output = (message: OracleVoiceBackendOutput) => {
         void relay.accept(message).catch(() => undefined)
       }
-      const disconnect = (error: {
-        code: number
-        message: string
-        reason?: string
-      }) => {
+      const disconnect = (error: RemoteVoiceDisconnectError) => {
         void options.disconnect({
           code: error.code,
           reason: error.message || error.reason || 'Selected voice computer disconnected',
+          retryable: error.retryable,
+          cause: error.cause,
         }).catch(() => undefined)
       }
       client.on('event', output)
@@ -515,9 +516,17 @@ export function backendOutputRelay(
     if (failed) return
     failed = true
     abort(error instanceof Error ? error : new Error(errorMessage(error, 'Voice backend output failed')))
+    const deliveryTransportFailure = !(error instanceof VoiceSessionError)
+      || error.closeCode === 1001
     void disconnect({
       code: closeCode,
       reason: errorMessage(error, 'Voice backend output failed'),
+      retryable: deliveryTransportFailure,
+      cause: deliveryTransportFailure
+        ? 'transport'
+        : error instanceof VoiceSessionError
+        ? disconnectCause(error.closeCode)
+        : 'internal',
     }).catch(() => undefined)
   }
   const pump = () => {
@@ -723,6 +732,21 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function closeReason(reason: string): string {
   return reason.replace(/[^\x20-\x7e]/g, '').slice(0, 120) || 'Oracle voice closed'
+}
+
+function disconnectCause(code: number): OracleVoiceBackendDisconnect['cause'] {
+  if (code === 1013) return 'backpressure'
+  if (
+    code === 1002
+    || code === 1003
+    || code === 1007
+    || code === 1008
+    || code === 1009
+  ) {
+    return 'protocol'
+  }
+  if (code === 1011) return 'internal'
+  return 'policy'
 }
 
 function browserCloseCode(code: number): number {

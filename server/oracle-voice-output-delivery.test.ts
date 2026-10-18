@@ -178,6 +178,8 @@ describe('Oracle voice output delivery', () => {
     expect(disconnect).toHaveBeenCalledWith({
       code: 1013,
       reason: 'Voice backend output queue is full',
+      retryable: false,
+      cause: 'backpressure',
     })
     expect(relay.pendingBytes()).toBeLessThanOrEqual(selectedLimits.maxOutputQueueBytes)
     release()

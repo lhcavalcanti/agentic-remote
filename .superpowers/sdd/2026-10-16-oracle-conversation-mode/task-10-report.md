@@ -4,6 +4,8 @@
 
 The Task 10 review findings are addressed on top of
 `dab81efe912dd8822466ecca0e316e8f70cb77f9`.
+The remaining Important disconnect-classification issue at
+`ec094f43aed832478bdd11300b0acf8ddc171863` is also resolved.
 
 The implementation and focused validation are green. The ordinary full suite
 also passed. A later `NODE_ENV=production pnpm check` run reached one unrelated
@@ -36,14 +38,21 @@ no voice transcript or audio artifact.
 
 ## Retryable paired-node disconnect
 
-Backend disconnect handling now distinguishes transport loss from terminal
-policy and worker failure:
+Backend disconnect handling now carries explicit `retryable` and `cause`
+metadata from the local session or remote voice client into the coordinator.
+The coordinator no longer guesses from the WebSocket close code:
 
-- backend close `1001`, abnormal loss `1006`, and backend internal transport
-  loss `1011` are reported as nonfatal and closed with a browser-reconnectable
-  code;
-- protocol, payload, policy, size, and backpressure closes remain terminal;
-- worker fatal controls remain terminal.
+- established paired-node abnormal socket loss (`1006`), socket errors, and
+  explicitly classified transport delivery failures are reported as nonfatal
+  and closed with a browser-reconnectable code;
+- local session failures, worker/internal `1011`, registration or pairing
+  changes, protocol and invalid-audio failures, policy/auth failures, and
+  backpressure remain terminal;
+- a paired-node transport delivery failure is retryable only when the failed
+  payload is not retained or replayed; reconnect still creates a fresh ticket,
+  stream, and generation;
+- explicit worker `fatal_error` controls remain terminal and their following
+  disconnect is not reported a second time.
 
 During an existing reconnect cycle, temporary capability unavailability keeps
 the browser in reconnect mode instead of falling back to dictation. Every
@@ -135,13 +144,18 @@ Each finding began with a failing test:
    late-rejection test proved an aborted relay could still disconnect later;
 5. paired privacy sentinels exposed the node stream ID in automatic logs.
 
-The production changes were made only after those failures were observed.
+The production changes described above were made after their corresponding RED
+tests were observed. This follow-up classification fix began with failing
+session, coordinator, route, and remote-client regressions, including a
+separate RED proof that a local backend startup failure previously closed with
+reconnectable `1011`.
 
 ## Verification
 
 ```text
-Task 10 suites:                 2 files, 23 tests passed
-Ten-iteration repeat loop:      10/10 clean, 230 test executions
+Classification focused suites: 8 files, 136 tests passed
+Task 10 suites:                 2 files, 24 tests passed
+Ten-iteration repeat loop:      10/10 clean, 240 test executions
 Affected manager/UI/client:     9 files, 213 tests passed
 Oracle voice suite:             22 files, 369 tests passed
 Relay focused suite:            1 file, 9 tests passed
@@ -149,12 +163,11 @@ TypeScript project build:       passed
 Lint:                           passed (pre-existing React warnings only)
 Production build:               passed
 Ordinary full suite:            151 files passed, 1 skipped
-                                 4,701 tests passed, 1 skipped
+                                 4,711 tests passed, 1 skipped
 ```
 
-The ordinary full-suite result was obtained after the substantive review
-changes. The additional late-callback relay regression test was subsequently
-validated by the focused, affected, and Oracle voice suites.
+The final ordinary full-suite result includes the disconnect-classification
+follow-up and its paired-node internal `1011` integration regression.
 
 `NODE_ENV=production pnpm check` ran lint successfully and then failed one
 unrelated existing integration test:

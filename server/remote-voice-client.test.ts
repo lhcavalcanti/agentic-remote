@@ -15,7 +15,6 @@ import {
 import type { RegisteredComputer } from './computer-registry.js'
 import {
   RemoteVoiceClient,
-  RemoteVoiceDisconnectError,
 } from './remote-voice-client.js'
 import { RemoteNodeClient } from './remote-node-client.js'
 
@@ -78,6 +77,7 @@ interface VoiceNode {
   received: Array<VoiceClientControl | VoiceAudioFrame>
   send(output: string | ArrayBuffer): void
   closeSocket(code?: number, reason?: string): void
+  terminateSocket(): void
 }
 
 async function voiceNode(
@@ -141,6 +141,9 @@ async function voiceNode(
     },
     closeSocket(code, reason) {
       active?.close(code, reason)
+    },
+    terminateSocket() {
+      active?.terminate()
     },
   }
 }
@@ -295,10 +298,59 @@ describe('RemoteVoiceClient', () => {
 
     node.closeSocket(1011, 'node stopped')
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
-    expect(disconnected.mock.calls[0][0]).toBeInstanceOf(RemoteVoiceDisconnectError)
+    expect(disconnected.mock.calls[0][0]).toMatchObject({
+      name: 'RemoteVoiceDisconnectError',
+      code: 1011,
+      retryable: false,
+      cause: 'internal',
+    })
     await expect(remote.send(frame(1, 0))).rejects.toThrow('disconnected')
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(node.connections).toBe(1)
+    expect(node.received).toEqual([])
+  })
+
+  it('classifies established abnormal socket loss as retryable transport failure', async () => {
+    const node = await voiceNode()
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
+    const disconnected = vi.fn()
+    remote.on('disconnect', disconnected)
+
+    node.terminateSocket()
+
+    await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
+    expect(disconnected.mock.calls[0][0]).toMatchObject({
+      code: 1006,
+      retryable: true,
+      cause: 'transport',
+    })
+    expect(node.connections).toBe(1)
+  })
+
+  it('marks a failed transport send retryable without replaying the rejected payload', async () => {
+    const node = await voiceNode()
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
+    const disconnected = vi.fn()
+    remote.on('disconnect', disconnected)
+    const socket = Reflect.get(remote, 'socket') as WebSocket
+    vi.spyOn(socket, 'send').mockImplementation(((
+      _payload: WebSocket.Data,
+      callback?: (error?: Error) => void,
+    ) => {
+      callback?.(new Error('network write failed'))
+      return socket
+    }) as typeof socket.send)
+
+    await expect(remote.send(frame(1, 0))).rejects.toThrow('network write failed')
+
+    await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
+    expect(disconnected.mock.calls[0][0]).toMatchObject({
+      code: 1006,
+      retryable: true,
+      cause: 'transport',
+    })
+    expect(node.received).toEqual([])
+    await new Promise((resolve) => setTimeout(resolve, 30))
     expect(node.received).toEqual([])
   })
 
@@ -317,6 +369,10 @@ describe('RemoteVoiceClient', () => {
       startFields,
     ))).rejects.toMatchObject({ closeCode: 1013 })
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
+    expect(disconnected.mock.calls[0][0]).toMatchObject({
+      retryable: false,
+      cause: 'backpressure',
+    })
     expect(node.received).toEqual([])
   })
 
@@ -341,6 +397,10 @@ describe('RemoteVoiceClient', () => {
       closeCode: 1009,
     })
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
+    expect(disconnected.mock.calls[0][0]).toMatchObject({
+      retryable: false,
+      cause: 'protocol',
+    })
     expect(node.received).toEqual([])
   })
 
@@ -368,6 +428,8 @@ describe('RemoteVoiceClient', () => {
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
     expect(disconnected.mock.calls[0][0]).toMatchObject({
       message: expect.stringContaining('frame is too large'),
+      retryable: false,
+      cause: 'protocol',
     })
     expect(seen).not.toHaveBeenCalled()
   })
@@ -414,6 +476,10 @@ describe('RemoteVoiceClient', () => {
     owner.stop()
 
     await vi.waitFor(() => expect(ownedDisconnect).toHaveBeenCalledOnce())
+    expect(ownedDisconnect.mock.calls[0][0]).toMatchObject({
+      retryable: false,
+      cause: 'registration',
+    })
     await expect(owned.send(frame(1, 0))).rejects.toThrow('registration')
     expect(secondNode.connections).toBe(1)
   })
@@ -436,6 +502,8 @@ describe('RemoteVoiceClient', () => {
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
     expect(disconnected.mock.calls[0][0]).toMatchObject({
       message: expect.stringContaining('invalid'),
+      retryable: false,
+      cause: 'protocol',
     })
   })
 })

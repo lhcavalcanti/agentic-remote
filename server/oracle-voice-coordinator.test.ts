@@ -830,8 +830,8 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.backend.closed).toEqual(['Conversation stopped'])
   })
 
-  it.each([1001, 1006, 1011])(
-    'reports transport loss %s as reconnectable paired-node loss',
+  it.each([1000, 1006, 1011])(
+    'honors explicit retryable transport metadata for close %s',
     async (code) => {
       const test = harness()
       await test.start()
@@ -839,7 +839,9 @@ describe('OracleVoiceCoordinator', () => {
       await test.backend.lose({
         code,
         reason: 'Paired node transport was lost',
-      })
+        retryable: true,
+        cause: 'transport',
+      } as OracleVoiceBackendDisconnect)
 
       expect(test.browser).toContainEqual(expect.objectContaining({
         type: 'error',
@@ -855,8 +857,8 @@ describe('OracleVoiceCoordinator', () => {
     },
   )
 
-  it.each([1000, 1002, 1003, 1007, 1008, 1009, 1013])(
-    'keeps backend policy/protocol close %s terminal',
+  it.each([1000, 1002, 1003, 1007, 1008, 1009, 1011, 1013])(
+    'honors explicit terminal metadata for backend close %s',
     async (code) => {
       const test = harness()
       await test.start()
@@ -864,7 +866,9 @@ describe('OracleVoiceCoordinator', () => {
       await test.backend.lose({
         code,
         reason: 'Voice backend rejected the stream',
-      })
+        retryable: false,
+        cause: code === 1011 ? 'internal' : 'protocol',
+      } as OracleVoiceBackendDisconnect)
 
       expect(test.browser).toContainEqual(expect.objectContaining({
         type: 'error',
@@ -878,25 +882,58 @@ describe('OracleVoiceCoordinator', () => {
     },
   )
 
-  it('reports selected paired-node registration loss without making it terminal', async () => {
+  it('keeps selected paired-node registration loss terminal', async () => {
     const test = harness()
     await test.start()
 
     await test.backend.lose({
       code: 1001,
       reason: 'Paired node registration changed during the voice stream',
-    })
+      retryable: false,
+      cause: 'registration',
+    } as OracleVoiceBackendDisconnect)
 
     expect(test.browser).toContainEqual(expect.objectContaining({
       type: 'error',
       code: 'voice_backend_disconnected',
       message: expect.stringContaining('Paired node registration changed'),
-      fatal: false,
+      fatal: true,
     }))
     expect(test.terminated).toEqual([{
       code: 1001,
       reason: 'Paired node registration changed during the voice stream',
     }])
     expect(test.backend.closed).toHaveLength(1)
+  })
+
+  it('does not double-report an explicit worker fatal error when its terminal close arrives', async () => {
+    const test = harness()
+    await test.start()
+
+    await test.backend.emit({
+      type: 'error',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId: 'stream-1',
+      generation: 0,
+      code: 'voice_backend_failed',
+      message: 'Worker crashed',
+      fatal: true,
+    })
+    await test.backend.lose({
+      code: 1011,
+      reason: 'Worker crashed',
+      retryable: false,
+      cause: 'worker',
+    } as OracleVoiceBackendDisconnect)
+
+    expect(test.browser.filter(
+      (message) => !('direction' in message) && message.type === 'error',
+    )).toEqual([
+      expect.objectContaining({
+        code: 'voice_backend_failed',
+        message: 'Worker crashed',
+        fatal: true,
+      }),
+    ])
   })
 })

@@ -133,8 +133,18 @@ class RouteVoiceBackend implements VoiceBackend {
     return session
   }
 
-  disconnect(code: number, reason: string): void {
-    this.terminate?.(code, reason)
+  disconnect(failure: {
+    code: number
+    reason: string
+    retryable: boolean
+    cause: 'transport' | 'internal'
+  }): void {
+    ;(this.terminate as unknown as (value: {
+      code: number
+      reason: string
+      retryable: boolean
+      cause: 'transport' | 'internal'
+    }) => void)?.(failure)
   }
 
   stop(): Promise<void> {
@@ -459,6 +469,28 @@ describe('Oracle voice hub routes', () => {
     })
   })
 
+  it('makes a local backend startup failure terminal instead of reconnectable 1011', async () => {
+    const backend = new RouteVoiceBackend()
+    vi.spyOn(backend, 'open').mockRejectedValue(new Error('native backend failed'))
+    const { app } = await runtime(backend)
+    const endpoint = await listen(app)
+    const issued = await ticket(app)
+
+    const connected = await connect(
+      `${endpoint}/api/oracle-voice?ticket=${encodeURIComponent(issued)}`,
+    )
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      connected.socket.once('close', (code, reason) => {
+        resolve({ code, reason: reason.toString() })
+      })
+    })
+
+    await expect(closed).resolves.toEqual({
+      code: 1008,
+      reason: 'native backend failed',
+    })
+  })
+
   it('maps an abnormal selected-backend loss to a valid browser close code', async () => {
     const backend = new RouteVoiceBackend()
     const { app } = await runtime(backend)
@@ -474,11 +506,57 @@ describe('Oracle voice hub routes', () => {
       })
     })
 
-    backend.disconnect(1006, 'Selected voice computer disconnected')
+    backend.disconnect({
+      code: 1006,
+      reason: 'Selected voice computer disconnected',
+      retryable: true,
+      cause: 'transport',
+    })
 
     await expect(closed).resolves.toEqual({
       code: 1011,
       reason: 'Selected voice computer disconnected',
+    })
+  })
+
+  it('reports a local internal 1011 as fatal before closing the browser', async () => {
+    const backend = new RouteVoiceBackend()
+    const { app } = await runtime(backend)
+    const endpoint = await listen(app)
+    const issued = await ticket(app)
+    const connected = await connect(
+      `${endpoint}/api/oracle-voice?ticket=${encodeURIComponent(issued)}`,
+    )
+    await connected.first
+    const fatal = new Promise<VoiceServerControl>((resolve) => {
+      connected.socket.on('message', (data, isBinary) => {
+        if (isBinary) return
+        const message = JSON.parse(data.toString()) as VoiceServerControl
+        if (message.type === 'error') resolve(message)
+      })
+    })
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      connected.socket.once('close', (code, reason) => {
+        resolve({ code, reason: reason.toString() })
+      })
+    })
+
+    backend.disconnect({
+      code: 1011,
+      reason: 'stt accept rejected',
+      retryable: false,
+      cause: 'internal',
+    })
+
+    await expect(fatal).resolves.toMatchObject({
+      type: 'error',
+      code: 'voice_backend_disconnected',
+      message: 'stt accept rejected',
+      fatal: true,
+    })
+    await expect(closed).resolves.toEqual({
+      code: 1011,
+      reason: 'stt accept rejected',
     })
   })
 

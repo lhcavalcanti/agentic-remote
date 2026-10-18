@@ -1741,6 +1741,97 @@ describe('Oracle voice cross-layer integration', () => {
     expect(playbacks.at(-1)?.close).toHaveBeenCalledOnce()
   })
 
+  it('keeps a paired-node STT worker rejection terminal despite close code 1011', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
+    vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Rejecting speech node')
+
+    class RejectingNodeEngine extends FakeVoiceEngine {
+      override async accept(_frame: Parameters<FakeVoiceEngine['accept']>[0]): Promise<void> {
+        throw new Error('paired stt accept rejected')
+      }
+    }
+
+    const nodeRoot = await testRoot('oracle-voice-rejecting-node')
+    const nodeVoice = availableBackend(new RejectingNodeEngine())
+    const nodeBuilt = await buildApp({
+      dataDirectory: nodeRoot,
+      logger: false,
+      role: 'node',
+      service: new TestSessionService() as unknown as SessionService,
+      managerAgent: false,
+      voiceBackend: nodeVoice.backend,
+    })
+    const node = await listen(nodeBuilt, nodeRoot)
+
+    const hubRoot = await testRoot('oracle-voice-rejecting-node-hub')
+    const manager = await createManager(hubRoot)
+    const hubBuilt = await buildApp({
+      dataDirectory: hubRoot,
+      logger: false,
+      role: 'hub',
+      service: new TestSessionService() as unknown as SessionService,
+      managerAgent: manager as unknown as ManagerAgent,
+    })
+    const hub = await listen(hubBuilt, hubRoot)
+    expect((await requestJson(
+      hub.baseUrl,
+      'POST',
+      '/api/computers',
+      trusted,
+      {
+        baseUrl: node.baseUrl,
+        token: nodeBuilt.identity.token,
+        name: 'Rejecting speech node',
+      },
+    )).statusCode).toBe(201)
+    await vi.waitFor(async () => {
+      expect((await requestJson(
+        hub.baseUrl,
+        'GET',
+        '/api/oracle-voice/capabilities',
+        trusted,
+      )).body).toMatchObject({ available: true })
+    })
+
+    const ticket = await issueTicket(hub.baseUrl)
+    const { socket: browser, inbox } = await openSocketWithInbox(
+      `${hub.wsUrl}/api/oracle-voice?ticket=${encodeURIComponent(ticket)}`,
+      trusted,
+    )
+    const hello = await inbox.waitForControl<VoiceServerControl>(
+      (message) => message.type === 'hello',
+    )
+    if (hello.type !== 'hello') throw new Error('Expected paired voice hello')
+    sendControl(browser, hello.streamId, 'start', 70, {
+      language: 'en',
+      defaults,
+      answerOnly: true,
+    })
+    sendControl(browser, hello.streamId, 'speech_confirmed', 71, {
+      utteranceId: 'rejecting-node-71',
+    })
+    const closed = closeEvent(browser)
+    browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(
+      71,
+      0,
+      new Int16Array([401, -402, 403, -404]),
+    ))))
+
+    expect(await inbox.waitForControl<VoiceServerControl>(
+      (message) => message.type === 'error'
+        && message.code === 'voice_backend_disconnected',
+    )).toMatchObject({
+      type: 'error',
+      message: 'Paired node voice socket disconnected (1011)',
+      fatal: true,
+    })
+    expect(await closed).toMatchObject({
+      code: 1011,
+      reason: 'Paired node voice socket disconnected (1011)',
+    })
+    expect(manager.send).not.toHaveBeenCalled()
+  })
+
   it('fails closed when a paired node cannot consume incremental microphone frames', async () => {
     vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
     vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Slow speech node')

@@ -20,6 +20,7 @@ import {
   VoiceSessionError,
   createVoiceBackendSession,
   type VoiceBackendOutput,
+  type VoiceBackendSessionOpenOptions,
   type VoiceBackendSessionLimits,
   voiceOutputDeliveryByteLimit,
 } from './oracle-voice-session.js'
@@ -130,6 +131,7 @@ function harness(
 ) {
   const sent: VoiceBackendOutput[] = []
   const terminated: Array<{ code: number; reason: string }> = []
+  const disconnects: unknown[] = []
   const session = createVoiceBackendSession({
     streamId,
     engine,
@@ -138,11 +140,17 @@ function harness(
       sent.push(output)
       await sendOutput?.(output)
     },
-    terminate: (code, reason) => {
-      terminated.push({ code, reason })
-    },
+    terminate: ((failureOrCode: unknown, reason?: string) => {
+      disconnects.push(failureOrCode)
+      if (typeof failureOrCode === 'number') {
+        terminated.push({ code: failureOrCode, reason: reason ?? '' })
+        return
+      }
+      const failure = failureOrCode as { code: number; reason: string }
+      terminated.push({ code: failure.code, reason: failure.reason })
+    }) as VoiceBackendSessionOpenOptions['terminate'],
   })
-  return { engine, sent, session, terminated }
+  return { disconnects, engine, sent, session, terminated }
 }
 
 async function beginUtterance(
@@ -662,8 +670,8 @@ describe('VoiceBackendSession', () => {
       engine,
       limits,
       send: async () => undefined,
-      terminate: (code, reason) => {
-        order.push(`transport:${code}:${reason}`)
+      terminate: (failure) => {
+        order.push(`transport:${failure.code}:${failure.reason}`)
       },
     })
     await session.control(control('start', 2, { language: 'en' }))
@@ -715,7 +723,7 @@ describe('VoiceBackendSession', () => {
   })
 
   it('turns worker fatal errors into one ordered fatal output and explicit close', async () => {
-    const { engine, sent, session, terminated } = harness()
+    const { disconnects, engine, sent, session, terminated } = harness()
     await beginUtterance(session)
 
     engine.emit({ type: 'fatal_error', message: 'native recognizer failed' } as VoiceEngineEvent)
@@ -733,6 +741,61 @@ describe('VoiceBackendSession', () => {
       code: 'voice_backend_failed',
       message: 'native recognizer failed',
       fatal: true,
+    })
+    expect(disconnects).toEqual([{
+      code: 1011,
+      reason: 'native recognizer failed',
+      retryable: false,
+      cause: 'worker',
+    }])
+  })
+
+  it('classifies an asynchronous STT worker rejection as terminal internal failure', async () => {
+    class RejectingEngine extends FakeVoiceEngine {
+      override async accept(_frame: VoiceUtteranceAudioFrame): Promise<void> {
+        throw new Error('stt accept rejected')
+      }
+    }
+    const { disconnects, session } = harness(new RejectingEngine())
+    await beginUtterance(session)
+
+    await session.audio(frame(2, 0))
+
+    await vi.waitFor(() => {
+      expect(disconnects).toEqual([{
+        code: 1011,
+        reason: 'stt accept rejected',
+        retryable: false,
+        cause: 'internal',
+      }])
+    })
+  })
+
+  it('classifies an invalid worker playback sample rate as terminal internal failure', async () => {
+    const { disconnects, engine, session } = harness()
+    await session.control(control('start', 2, { language: 'en' }))
+    await session.control(control('synthesize', 2, {
+      segmentId: 'segment-invalid-rate',
+      text: 'Invalid sample rate',
+    }))
+
+    engine.emit({
+      type: 'audio',
+      streamId,
+      generation: 2,
+      segmentId: 'segment-invalid-rate',
+      sequence: 0,
+      sampleRate: 0,
+      samples: Int16Array.of(1, -1),
+    })
+
+    await vi.waitFor(() => {
+      expect(disconnects).toEqual([{
+        code: 1011,
+        reason: 'Voice engine emitted an invalid sample rate',
+        retryable: false,
+        cause: 'internal',
+      }])
     })
   })
 })

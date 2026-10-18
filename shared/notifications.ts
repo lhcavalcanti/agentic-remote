@@ -58,6 +58,20 @@ export function notificationBrief(value: string): string {
     : normalized
 }
 
+/**
+ * A hub alert that asked to be notified, such as a Copilot CLI that failed its
+ * startup check. One per computer, so a repeat replaces rather than piles up.
+ */
+export function alertNotification(computerId: string | undefined, message: string): NotificationPayload {
+  return {
+    title: 'Agentic Remote needs attention',
+    body: notificationBrief(message),
+    tag: `agentic-alert-${computerId || 'local'}`,
+    priority: 'high',
+    data: { url: '/' },
+  }
+}
+
 /** Markdown read aloud as text: links keep their words, emphasis its letters. */
 function plainText(markdown: string): string {
   return markdown

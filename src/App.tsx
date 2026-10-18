@@ -273,6 +273,7 @@ import {
   type SettingsProfileState,
 } from './settings-profile'
 import {
+  alertNotification,
   notificationAllowed,
   OracleNotifier,
   oracleNotificationTags,
@@ -7986,7 +7987,8 @@ function App() {
       oracleOnScreenRef.current = onScreen
       if (changed) reportOraclePresenceRef.current()
       if (onScreen) {
-        // Opening Oracle clears what it raised, as opening a session does.
+        // Opening Oracle clears what it raised, as opening a session does. A
+        // desktop shell has no withdrawal API, so there this does nothing.
         withdrawShellNotifications(oracleNotificationTags)
         void clearPushNotifications(oracleNotificationTags).catch((caught: unknown) => {
           console.warn('Unable to clear Oracle notifications:', caught)
@@ -8021,6 +8023,13 @@ function App() {
       body: payload.body,
       urgent: payload.priority === 'high',
     })
+  }
+  // Hub alerts reach a browser by Web Push; the shell raises them itself.
+  const raiseAlertShellNotificationRef = useRef((_computerId: string | undefined, _message: string) => {})
+  raiseAlertShellNotificationRef.current = (computerId, message) => {
+    if (!nativeShell() || !notificationAllowed(notificationScopeRef.current, 'alert')) return
+    const payload = alertNotification(computerId, message)
+    sendShellNotification({ tag: payload.tag, title: payload.title, body: payload.body, urgent: true })
   }
   const notificationStateRef = useRef<Map<string, SessionNotificationState>>(
     new Map(),
@@ -10238,6 +10247,9 @@ function App() {
           // A prompt that was handed over and then failed to send is gone from
           // the queue and was never in the composer, so the text comes back
           // here or nowhere. Anything typed since is newer and is left alone.
+          if (event.type === 'error' && event.notify) {
+            raiseAlertShellNotificationRef.current(event.computerId, event.message)
+          }
           if (event.type === 'error' && event.failedPrompt && event.sessionId) {
             restoreFailedPromptRef.current(
               `${event.computerId || ''}:${event.sessionId}`,

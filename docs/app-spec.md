@@ -1393,12 +1393,16 @@ people sharing a hub share its profile. See
   NOT push Oracle notifications. The app MUST report this over its event
   socket and renew it every 30 seconds. The hub MUST forget a report after 90
   seconds, so a frozen phone cannot hold notifications back.
-- Opening Oracle MUST clear Oracle notifications, and they MUST open Oracle
-  (`/?oracle=open`).
+- In a browser or installed PWA, Oracle notifications MUST open Oracle
+  (`/?oracle=open`), and opening Oracle MUST clear them.
 - One event MUST belong to one category, so a single event never sends both a
   session and an Oracle notification.
 - The native shell has no Web Push. It MUST apply the same scope and Oracle
-  rules to the notifications it raises itself.
+  rules to the notifications it raises itself, hub alerts included.
+  - Its notifications have no click target yet, so tapping one brings the app
+    forward.
+  - Only iOS and Android let it withdraw them; desktop platforms offer no API.
+  - Both limits already apply to its session notifications.
 - There are no quiet hours. Browser permission behaviour is unchanged.
 - Per-session mute MUST persist on the hub and synchronize across devices.
 - Question and permission notifications MUST use high urgency.

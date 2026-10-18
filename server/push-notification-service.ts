@@ -8,6 +8,7 @@ import webPush, {
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import {
+  alertNotification,
   notificationAllowed,
   notificationBrief,
   OracleNotifier,
@@ -366,14 +367,7 @@ export class PushNotificationService {
     computerId: string | undefined,
     message: string,
   ): Promise<void> {
-    await this.sendPayload({
-      title: 'Agentic Remote needs attention',
-      body: brief(message),
-      // One per computer, so a repeated alert replaces rather than piles up.
-      tag: `agentic-alert-${computerId || 'local'}`,
-      priority: 'high',
-      data: { url: '/' },
-    }, 'alert')
+    await this.sendPayload(alertNotification(computerId, message), 'alert')
   }
 
   private async notifyCompletion(session: ManagedSession): Promise<void> {

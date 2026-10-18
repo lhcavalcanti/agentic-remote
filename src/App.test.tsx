@@ -1675,6 +1675,36 @@ describe('App', () => {
       }])
     })
 
+    it.each([
+      ['all', 1],
+      ['oracle', 0],
+      ['off', 0],
+    ] as const)('raises hub alerts in the native shell only when the scope is %s-inclusive', async (scope, expected) => {
+      vi.spyOn(shell, 'nativeShell').mockReturnValue(true)
+      const raised = vi.spyOn(shell, 'sendShellNotification').mockReturnValue(true)
+      seedHubSettings({ notificationScope: scope })
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      await act(async () => {})
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'error', computerId: computer.id, notify: true,
+          message: 'Copilot CLI 1.0.98 did not start in a way Agentic Remote can use',
+        }),
+      } as MessageEvent))
+      // An ordinary error is not an alert anywhere.
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'error', computerId: computer.id, message: 'A send failed' }),
+      } as MessageEvent))
+      expect(raised.mock.calls.map(([notification]) => notification)).toEqual(expected ? [{
+        tag: `agentic-alert-${computer.id}`,
+        title: 'Agentic Remote needs attention',
+        body: 'Copilot CLI 1.0.98 did not start in a way Agentic Remote can use',
+        urgent: true,
+      }] : [])
+    })
+
     it('keeps the choice open when this device has notifications blocked', async () => {
       const restore = [
         ['PushManager', window] as const,

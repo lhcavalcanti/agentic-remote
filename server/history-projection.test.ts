@@ -2,6 +2,9 @@ import type { SessionEvent } from '@github/copilot-sdk'
 import { describe, expect, it } from 'vitest'
 import { messagesFromHistory } from './agent-service.js'
 
+/** A soak run sets this to explore new seeds; failures name the seed. */
+const seedOffset = Number(process.env.PROPERTY_SEED_OFFSET ?? 0)
+
 /** Deterministic PRNG so every failure can be replayed from its seed. */
 function random(seed: number): () => number {
   let state = seed >>> 0
@@ -118,7 +121,7 @@ function quadraticModel(events: SessionEvent[]): ModelMessage[] {
 
 describe('messagesFromHistory', () => {
   it('matches the quadratic reduction for generated histories', () => {
-    for (let seed = 1; seed <= 400; seed += 1) {
+    for (let seed = seedOffset + 1; seed <= seedOffset + 400; seed += 1) {
       const events = eventsFor(seed, 5 + (seed % 120))
       const actual = messagesFromHistory(events).map((message) => ({
         id: message.id,

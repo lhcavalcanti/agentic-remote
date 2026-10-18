@@ -12,6 +12,9 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
+/** A soak run sets this to explore new seeds; failures name the seed. */
+const seedOffset = Number(process.env.PROPERTY_SEED_OFFSET ?? 0)
+
 function random(seed: number): () => number {
   let state = seed >>> 0
   return () => {
@@ -84,7 +87,7 @@ describe('serializeState', () => {
 
 describe('serializeStateChunks', () => {
   it('writes the same bytes in pieces, joining small sessions and never copying a large one', () => {
-    for (let seed = 1; seed <= 40; seed += 1) {
+    for (let seed = seedOffset + 1; seed <= seedOffset + 40; seed += 1) {
       const next = random(seed)
       const sessions: Record<string, SessionDetail> = {}
       for (let index = 0; index < Math.floor(next() * 300); index += 1) {

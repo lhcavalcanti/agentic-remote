@@ -9,6 +9,9 @@ import type {
 import { SessionPatchReceiver } from '../src/session-patches.js'
 import { diffMessages, type PatchSocket, SessionPublications } from './session-patches.js'
 
+/** A soak run sets this to explore new seeds; failures name the seed. */
+const seedOffset = Number(process.env.PROPERTY_SEED_OFFSET ?? 0)
+
 function random(seed: number): () => number {
   let state = seed >>> 0
   return () => {
@@ -146,7 +149,7 @@ describe('session publications', () => {
   it('converges every browser on exactly what was published, whatever happens in between', () => {
     let patched = 0
     let resynced = 0
-    for (let seed = 1; seed <= 150; seed += 1) {
+    for (let seed = seedOffset + 1; seed <= seedOffset + 150; seed += 1) {
       const next = random(seed)
       const publications = new SessionPublications()
       const browsers: Browser[] = []

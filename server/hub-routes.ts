@@ -7,6 +7,7 @@ import {
 } from './side-question.js'
 import type {
   HubEvent,
+  HubResyncRequest,
   SessionOrderSnapshot,
   WorkspaceFile,
   WorkspaceListing,
@@ -23,6 +24,7 @@ import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
+import { type PatchSocket, SessionPublications } from './session-patches.js'
 
 /** The manager agent's events, carried on the same socket as session events. */
 export interface ManagerEventSource {
@@ -1093,21 +1095,36 @@ export async function registerHubRoutes(
     },
   )
 
-  const sockets = new Set<{
-    send: (payload: string) => void
-    readyState: number
-  }>()
-  app.get('/api/events', { websocket: true }, (socket) => {
-    sockets.add(socket)
-    socket.on('close', () => sockets.delete(socket))
+  const publications = new SessionPublications()
+  app.get('/api/events', { websocket: true }, (socket, request) => {
+    const query = request.query as Record<string, unknown> | undefined
+    const target: PatchSocket = socket
+    if (query?.patches === '1') {
+      target.patchVersions = new Map()
+      socket.on('message', (data: Buffer, binary: boolean) => {
+        // The only message a browser sends here. Anything else, or anything
+        // too large to be one, is ignored rather than parsed.
+        if (binary || data.length > 1_024) return
+        let request: Partial<HubResyncRequest>
+        try {
+          request = JSON.parse(data.toString('utf8')) as Partial<HubResyncRequest>
+        } catch {
+          return
+        }
+        if (
+          request?.type === 'session.resync' &&
+          typeof request.computerId === 'string' &&
+          typeof request.sessionId === 'string'
+        ) {
+          publications.resync(target, request.computerId, request.sessionId)
+        }
+      })
+    }
+    publications.add(target)
+    socket.on('close', () => publications.delete(target))
   })
   const broadcast = (event: HubEvent) => {
-    const payload = JSON.stringify(event)
-    for (const socket of sockets) {
-      if (socket.readyState === 1) {
-        socket.send(payload)
-      }
-    }
+    publications.broadcast(event)
   }
   manager.on('event', broadcast)
   managerEvents?.on('event', broadcast)

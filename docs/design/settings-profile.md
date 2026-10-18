@@ -34,8 +34,8 @@ existing Host/Origin policy. **The profile belongs to the hub.**
 
 | Scope | Settings | Why |
 |---|---|---|
-| **Synced** (hub profile) | Appearance, accent, status line, new-session runtimes (model, effort, context, mode), new-session folders, session sort, computer order, Oracle's response style | How you work, not what the device is |
-| **This device** | Keyboard shortcuts, sidebar, Knowledge and Oracle panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions | Depend on the keyboard, viewport or local file being read |
+| **Synced** (hub profile) | Appearance, accent, status line, new-session runtimes (model, effort, context, mode), new-session folders, session sort, computer order, Oracle's response style, what notifies you | How you work, not what the device is |
+| **This device** | Keyboard shortcuts, sidebar, Knowledge and Oracle panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription | Depend on the keyboard, viewport, browser, or local file being read |
 | **Never stored in the profile** | Drafts, queued prompts, transcripts, credentials, push subscriptions, machine capabilities | Content or secrets |
 
 Some related state is already hub-owned and is unchanged:
@@ -58,9 +58,16 @@ Some related state is already hub-owned and is unchanged:
 | `sessionSort` | `custom` \| `recent` \| `attention` \| `name` | `custom` |
 | `computerOrder` | Unique computer IDs, at most 200 | pairing order |
 | `oracleResponseStyle` | `concise` \| `balanced` \| `detailed` | `balanced` |
+| `notificationScope` | `all` \| `oracle` \| `off` | `all` |
 
 Oracle runs on the hub, so it reads `oracleResponseStyle` from the same store as
-each turn's prompt is built; no browser relays it. See
+each turn's prompt is built; no browser relays it.
+
+`notificationScope` works the same way:
+- The hub's push service reads it for every notification, so the choice
+  reaches all devices at once (see app-spec §10).
+- A later per-session or per-project scope becomes its own key, applied after
+  this one. The existing hub-side session mute already works that way. See
 [Oracle → Prompt composition](session-manager.md#prompt-composition).
 
 `system` follows the device's `prefers-color-scheme` live, and an unset

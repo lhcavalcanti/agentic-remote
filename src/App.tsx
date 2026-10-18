@@ -272,6 +272,12 @@ import {
   type SettingsCacheStorage,
   type SettingsProfileState,
 } from './settings-profile'
+import {
+  notificationAllowed,
+  OracleNotifier,
+  oracleNotificationTags,
+  type NotificationScope,
+} from '../shared/notifications'
 import type {
   AppearanceSetting,
   OracleResponseStyle,
@@ -296,6 +302,7 @@ import {
   activePushSubscription,
   checkForPwaUpdate,
   clearSessionPushNotifications,
+  clearPushNotifications,
   disablePushNotifications,
   enablePushNotifications,
   installedAsApp,
@@ -497,6 +504,24 @@ const accentThemes = [
 
 type AccentTheme = (typeof accentThemes)[number]['id']
 
+const notificationScopeOptions: Array<{ id: NotificationScope; name: string; description: string }> = [
+  {
+    id: 'all',
+    name: 'All activity',
+    description: 'Sessions that need you or finish, hub alerts, and Oracle.',
+  },
+  {
+    id: 'oracle',
+    name: 'Oracle only',
+    description: 'Oracle’s replies and its requests for your OK. Sessions stay quiet, including ones Oracle started.',
+  },
+  {
+    id: 'off',
+    name: 'Disabled',
+    description: 'Nothing, on any device. Each device stays set up, so turning them back on is instant.',
+  },
+]
+
 const appearanceOptions: Array<{ id: AppearanceSetting; name: string }> = [
   { id: 'system', name: 'System' },
   { id: 'graphite', name: 'Graphite' },
@@ -512,6 +537,7 @@ const settingNames: Record<SettingsProfileKey, string> = {
   sessionSort: 'Session sort',
   computerOrder: 'Computer order',
   oracleResponseStyle: 'Oracle’s response style',
+  notificationScope: 'What notifies you',
 }
 
 /** Storage that may be blocked outright, as some private modes do. */
@@ -3660,6 +3686,8 @@ function AppSettingsDialog({
   settingsSync,
   oracleResponseStyle,
   onOracleResponseStyleChange,
+  notificationScope,
+  onNotificationScopeChange,
   statusline,
   onStatuslineChange,
   shortcuts,
@@ -3685,6 +3713,8 @@ function AppSettingsDialog({
   settingsSync: SettingsProfileState
   oracleResponseStyle: OracleResponseStyle
   onOracleResponseStyleChange: (style: OracleResponseStyle) => void
+  notificationScope: NotificationScope
+  onNotificationScopeChange: (scope: NotificationScope) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
   shortcuts: ShortcutDefinition[]
@@ -4163,6 +4193,37 @@ function AppSettingsDialog({
         id="settings-notifications"
       >
         <h3 id="settings-notifications-heading" tabIndex={-1}>Notifications</h3>
+        <div className="app-settings-group__body">
+        <section className="app-settings-section">
+          <div className="app-settings-section__title">
+            <h4>What notifies you</h4>
+            <SettingScope synced />
+          </div>
+          <fieldset className="notification-scope-options">
+            <legend>What notifies you</legend>
+            {notificationScopeOptions.map((option) => (
+              <label className="notification-scope-option" key={option.id}>
+                <input
+                  aria-describedby={`notification-scope-${option.id}`}
+                  aria-label={option.name}
+                  checked={notificationScope === option.id}
+                  name="notification-scope"
+                  onChange={() => onNotificationScopeChange(option.id)}
+                  type="radio"
+                />
+                <span>
+                  <strong>{option.name}</strong>
+                  <small id={`notification-scope-${option.id}`}>{option.description}</small>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        </section>
+        <section className="app-settings-section">
+          <div className="app-settings-section__title">
+            <h4>This device</h4>
+            <SettingScope synced={false} />
+          </div>
         {!supported ? (
           <p className="dialog-message">
             Push notifications are not supported in this browser.
@@ -4180,8 +4241,8 @@ function AppSettingsDialog({
         ) : (
           <>
             <p className="dialog-message">
-              Notify this device when any agent needs your input or finishes
-              working. Individual sessions can be muted from their bell icon.
+              Let this device receive what you chose above. Individual sessions
+              can be muted from their bell icon.
             </p>
             <button
               className={
@@ -4219,6 +4280,8 @@ function AppSettingsDialog({
           </>
         )}
         {error ? <p className="form-error">{error}</p> : null}
+        </section>
+        </div>
       </section>
       <section
         aria-labelledby="settings-interface-heading"
@@ -4334,8 +4397,8 @@ function AppSettingsDialog({
             <h4>Settings sync</h4>
             <p className="dialog-message">
               Appearance, accent, status line, new-session models and folders,
-              session sort, computer order, and Oracle&apos;s response style
-              follow you to every device that opens this hub. Keyboard shortcuts, panel widths, and drafts stay
+              session sort, computer order, Oracle&apos;s response style, and
+              what notifies you follow you to every device that opens this hub. Keyboard shortcuts, panel widths, and drafts stay
               on this device.
             </p>
             <p className="app-settings-section__result" role="status">
@@ -6708,7 +6771,10 @@ function App() {
       managerListenersRef.current.delete(listener)
     }
   }, [])
-  const [oracleOpen, setOracleOpen] = useState(false)
+  // A notification about Oracle opens the app at its panel.
+  const [oracleOpen, setOracleOpen] = useState(
+    () => new URLSearchParams(window.location.search).get('oracle') === 'open',
+  )
   // The open Oracle panel's width; the timeline dock moves beside it.
   const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
@@ -7900,6 +7966,62 @@ function App() {
   // An embedded webview gets no Web Push, so inside the shell the app raises
   // its own notifications from the live session stream. A browser keeps using
   // the hub's Web Push and must not double-notify, hence the shell check.
+  // Which notifications may be raised, and whether Oracle is on screen, which
+  // makes Oracle's own redundant. The event socket's handlers read these.
+  const notificationScopeRef = useRef(profile.notificationScope)
+  notificationScopeRef.current = profile.notificationScope
+  const oracleOnScreenRef = useRef(false)
+  const eventSocketRef = useRef<WebSocket | undefined>(undefined)
+  /** Tells the hub whether Oracle is on screen, so it holds Oracle's pushes. */
+  const reportOraclePresenceRef = useRef(() => {})
+  reportOraclePresenceRef.current = () => {
+    const socket = eventSocketRef.current
+    if (socket?.readyState !== 1 || typeof socket.send !== 'function') return
+    socket.send(JSON.stringify({ type: 'presence', oracleVisible: oracleOnScreenRef.current }))
+  }
+  useEffect(() => {
+    const report = () => {
+      const onScreen = oracleOpen && document.visibilityState === 'visible'
+      const changed = onScreen !== oracleOnScreenRef.current
+      oracleOnScreenRef.current = onScreen
+      if (changed) reportOraclePresenceRef.current()
+      if (onScreen) {
+        // Opening Oracle clears what it raised, as opening a session does.
+        withdrawShellNotifications(oracleNotificationTags)
+        void clearPushNotifications(oracleNotificationTags).catch((caught: unknown) => {
+          console.warn('Unable to clear Oracle notifications:', caught)
+        })
+      }
+    }
+    report()
+    document.addEventListener('visibilitychange', report)
+    // The hub forgets a report after 90 seconds, so one from a phone that
+    // froze cannot hold Oracle's notifications back for long.
+    const renew = window.setInterval(() => {
+      if (oracleOnScreenRef.current) reportOraclePresenceRef.current()
+    }, 30_000)
+    return () => {
+      document.removeEventListener('visibilitychange', report)
+      window.clearInterval(renew)
+    }
+  }, [oracleOpen])
+  // The shell has no Web Push, so it raises Oracle's notifications itself,
+  // classified exactly as the hub classifies them.
+  const oracleShellNotifierRef = useRef<OracleNotifier | undefined>(undefined)
+  const raiseOracleShellNotificationRef = useRef((_event: ManagerEvent) => {})
+  raiseOracleShellNotificationRef.current = (event) => {
+    if (!nativeShell()) return
+    oracleShellNotifierRef.current ??= new OracleNotifier()
+    const payload = oracleShellNotifierRef.current.next(event)
+    if (!payload || oracleOnScreenRef.current) return
+    if (!notificationAllowed(notificationScopeRef.current, 'oracle')) return
+    sendShellNotification({
+      tag: payload.tag,
+      title: payload.title,
+      body: payload.body,
+      urgent: payload.priority === 'high',
+    })
+  }
   const notificationStateRef = useRef<Map<string, SessionNotificationState>>(
     new Map(),
   )
@@ -7909,6 +8031,11 @@ function App() {
     }
     const previous = notificationStateRef.current
     notificationStateRef.current = notificationState(sessions)
+    // The hub applies the scope to Web Push; the shell raises its own, so it
+    // applies the same scope here.
+    if (!notificationAllowed(notificationScopeRef.current, 'session')) {
+      return
+    }
     for (const notification of shellNotifications(sessions, {
       previous,
       computerNames: new Map(
@@ -9882,10 +10009,12 @@ function App() {
       // socket starts from whole sessions; an older hub ignores the request.
       const current = new WebSocket(`${protocol}//${window.location.host}/api/events?patches=1`)
       socket = current
+      eventSocketRef.current = current
       const patches = new SessionPatchReceiver((request) => {
         if (current.readyState === WebSocket.OPEN) current.send(JSON.stringify(request))
       })
       socket.onopen = () => {
+        reportOraclePresenceRef.current()
         reconnectDelay = 1_000
         setManagerEpoch((epoch) => epoch + 1)
         sessionKnowledgeRootRef.current.refresh()
@@ -9907,6 +10036,7 @@ function App() {
           // The manager's conversation, not session lifecycle: it must not
           // move the transcript sequence either.
           for (const listener of managerListenersRef.current) listener(event)
+          raiseOracleShellNotificationRef.current(event)
         } else if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
         } else if (event.type === 'session.order.updated') {
@@ -10119,6 +10249,7 @@ function App() {
         }
       }
       socket.onclose = () => {
+        if (eventSocketRef.current === current) eventSocketRef.current = undefined
         if (!stopped) {
           const delay = reconnectDelay
           reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
@@ -16013,6 +16144,8 @@ function App() {
         settingsSync={settingsProfile}
         oracleResponseStyle={profile.oracleResponseStyle ?? 'balanced'}
         onOracleResponseStyleChange={(next) => saveSetting('oracleResponseStyle', next)}
+        notificationScope={profile.notificationScope ?? 'all'}
+        onNotificationScopeChange={(next) => saveSetting('notificationScope', next)}
         onClose={() => setSettingsOpen(false)}
         computers={computers}
         defaultRuntimes={defaultRuntimes}

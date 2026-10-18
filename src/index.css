@@ -4364,6 +4364,62 @@ button {
   box-shadow: 0 0 0 1px #a5b0bf;
 }
 
+/* Which notifications reach you: one choice, each with what it means. */
+.notification-scope-options {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.notification-scope-options legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.notification-scope-option {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.notification-scope-option:has(:checked) {
+  border-color: var(--accent-foreground);
+  background: var(--accent-tint);
+}
+
+.notification-scope-option input {
+  margin: 2px 0 0;
+}
+
+.notification-scope-option span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.notification-scope-option strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.notification-scope-option small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 /* Sections that belong together share one cell of a settings group. */
 .app-settings-stack {
   display: grid;

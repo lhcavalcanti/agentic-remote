@@ -35,6 +35,7 @@ import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
 import { SessionOrderStore } from './session-order-store.js'
 import { SettingsProfileStore } from './settings-profile-store.js'
+import { ClientPresence } from './client-presence.js'
 import type { SessionService } from './session-service.js'
 import {
   LocalTranscriptionService,
@@ -235,6 +236,12 @@ export async function buildApp(
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
+    const presence = new ClientPresence()
+    const profile = settingsProfileStore
+    pushService.setPolicy({
+      scope: () => profile.snapshot().values.notificationScope,
+      oracleWatched: () => presence.oracleWatched(),
+    })
     const managerSettings = managerRuntimeSettings()
     if (options.managerAgent) {
       managerAgent = options.managerAgent
@@ -280,7 +287,9 @@ export async function buildApp(
       sessionOrderStore,
       managerAgent,
       settingsProfileStore,
+      presence,
     )
+    if (managerAgent) pushService.attachOracle(managerAgent)
     await registerManagerRoutes(app, managerAgent, managerUnavailable)
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()

@@ -104,6 +104,23 @@ Model and effort sit beside the prompt, not in it. Precedence: the
 **App settings → Oracle** choice, then `AGENTIC_REMOTE_MANAGER_MODEL` and
 `AGENTIC_REMOTE_MANAGER_REASONING_EFFORT`, then Copilot's default.
 
+### Notifications
+
+`OracleNotifier` (`shared/notifications.ts`) turns Oracle's events into
+notifications. The hub's Web Push and the native shell both use it.
+
+- **Events:**
+  - "Oracle replied" when your message is done;
+  - "Oracle couldn't answer" when it fails;
+  - "Oracle needs your OK" when it asks to close a session.
+- **Once per event.** A retried message that fails again notifies again.
+- **Held while watched.** Nothing is sent while an open app shows Oracle's
+  panel on a visible screen. That report is renewed every 30 seconds and
+  lapses after 90.
+- **Category.** These are the `oracle` category for the user's **What notifies
+  you** setting. Notifications Oracle decides to send on its own belong there
+  too.
+
 ### Response style
 
 **App settings → Models → Oracle's answers** offers Concise, Balanced (the

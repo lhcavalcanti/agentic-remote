@@ -1346,8 +1346,8 @@ people sharing a hub share its profile. See
 
 | Scope | Settings |
 |---|---|
-| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style |
-| **This device** | Keyboard shortcuts, panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions |
+| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
+| **This device** | Keyboard shortcuts, panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
 | **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
 
 - A change MUST apply at once, persist on the hub before it is reported, and
@@ -1365,11 +1365,47 @@ people sharing a hub share its profile. See
 ## 10. Notifications
 
 - Notification settings MUST be discoverable under App settings.
+- **What notifies you** is synced (§9.3) and the hub applies it to every
+  notification it sends, on every device. Unset MUST behave as All activity.
+
+  | Scope | Sends |
+  |---|---|
+  | All activity | Session, alert, and Oracle notifications |
+  | Oracle only | Oracle notifications only |
+  | Disabled | Nothing; devices stay subscribed |
+
+  - **Session:** a question, a permission request, or a finish, in any
+    session, including those Oracle started.
+  - **Alert:** the hub's own health, such as a Copilot CLI that failed its
+    startup check.
+  - **Oracle:**
+    - "Oracle replied" when your message is done, with a plain-text brief;
+    - "Oracle couldn't answer" when it fails;
+    - "Oracle needs your OK" (high urgency) when it asks to close a session.
+
+    Notifications Oracle decides to send on its own MUST also use this
+    category.
+- A test notification you ask for MUST be sent whatever the scope.
+- **This device** (its browser permission and push subscription) stays per
+  device. A blocked permission MUST NOT block choosing the scope.
+- Each Oracle event MUST notify at most once.
+- While any open app shows Oracle's panel on a visible screen, the hub MUST
+  NOT push Oracle notifications. The app MUST report this over its event
+  socket and renew it every 30 seconds. The hub MUST forget a report after 90
+  seconds, so a frozen phone cannot hold notifications back.
+- Opening Oracle MUST clear Oracle notifications, and they MUST open Oracle
+  (`/?oracle=open`).
+- One event MUST belong to one category, so a single event never sends both a
+  session and an Oracle notification.
+- The native shell has no Web Push. It MUST apply the same scope and Oracle
+  rules to the notifications it raises itself.
+- There are no quiet hours. Browser permission behaviour is unchanged.
 - Per-session mute MUST persist on the hub and synchronize across devices.
 - Question and permission notifications MUST use high urgency.
 - Completion notifications MUST use low urgency. RFC 8030 also defines
   `very-low`, but FCM rejects it, so `low` is the lowest portable value.
-- Every notification MUST include computer, session name, and a concise brief.
+- Every session notification MUST include computer, session name, and a
+  concise brief. Oracle notifications name Oracle and give a brief.
 - Completion notifications MUST say that no action is needed.
 - An alert that asks to be notified, such as a Copilot CLI version that failed
   its startup check, MUST use high urgency and replace the previous alert

@@ -1,4 +1,5 @@
 import type { AgentProvider, RuntimeReasoningEffort } from './contracts.js'
+import { notificationScopes, type NotificationScope } from './notifications.js'
 
 /**
  * The hub-owned settings profile: preferences that follow the user to every
@@ -14,6 +15,7 @@ export const settingsProfileKeys = [
   'sessionSort',
   'computerOrder',
   'oracleResponseStyle',
+  'notificationScope',
 ] as const
 
 export type SettingsProfileKey = (typeof settingsProfileKeys)[number]
@@ -71,6 +73,8 @@ export interface SettingsProfileValues {
   sessionSort?: SessionSortSetting
   computerOrder?: string[]
   oracleResponseStyle?: OracleResponseStyle
+  /** Unset sends every notification, as before the setting existed. */
+  notificationScope?: NotificationScope
 }
 
 export interface SettingsProfileSnapshot {
@@ -161,6 +165,8 @@ export function parseSettingValue<K extends SettingsProfileKey>(
       return oneOf(sessionSortSettings, value) ? valid(value) : invalid('is not a known sort')
     case 'oracleResponseStyle':
       return oneOf(oracleResponseStyles, value) ? valid(value) : invalid('is not a known response style')
+    case 'notificationScope':
+      return oneOf(notificationScopes, value) ? valid(value) : invalid('is not a known notification scope')
     case 'statusline': {
       if (!isRecord(value)) return invalid('must be an object')
       const parsed: StatuslineSetting = {}

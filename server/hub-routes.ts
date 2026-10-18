@@ -26,6 +26,7 @@ import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
 import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
+import type { ClientPresence } from './client-presence.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 
@@ -381,6 +382,7 @@ export async function registerHubRoutes(
   sessionOrder?: SessionOrderStore,
   managerEvents?: ManagerEventSource,
   settingsProfile?: SettingsProfileStore,
+  presence?: ClientPresence,
 ): Promise<void> {
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
@@ -1109,8 +1111,9 @@ export async function registerHubRoutes(
     if (query?.patches === '1') {
       target.patchVersions = new Map()
       socket.on('message', (data: Buffer, binary: boolean) => {
-        // The only message a browser sends here. Anything else, or anything
-        // too large to be one, is ignored rather than parsed.
+        // A resync request is one of the two messages a browser sends here.
+        // Anything else, or anything too large to be one, is ignored rather
+        // than parsed.
         if (binary || data.length > 1_024) return
         let request: Partial<HubResyncRequest>
         try {
@@ -1127,8 +1130,14 @@ export async function registerHubRoutes(
         }
       })
     }
+    // The other: a client says what it is showing. Each reader ignores what
+    // the other accepts.
+    socket.on('message', (data: unknown) => presence?.update(socket, data))
     publications.add(target)
-    socket.on('close', () => publications.delete(target))
+    socket.on('close', () => {
+      publications.delete(target)
+      presence?.remove(socket)
+    })
   })
   const broadcast = (event: HubEvent) => {
     publications.broadcast(event)

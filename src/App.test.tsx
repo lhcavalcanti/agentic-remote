@@ -253,6 +253,8 @@ vi.mock('./api', async (importOriginal) => ({
 
 class MockWebSocket {
   static instances: MockWebSocket[] = []
+  readyState = 1
+  send = vi.fn()
   onopen: (() => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   onclose: (() => void) | null = null
@@ -1294,7 +1296,7 @@ describe('App', () => {
   })
 
   describe('settings that follow you between devices', () => {
-    const shell = () => document.querySelector('.app-shell')
+    const appShell = () => document.querySelector('.app-shell')
     let restoreMatchMedia: (() => void) | undefined
 
     afterEach(() => {
@@ -1339,8 +1341,8 @@ describe('App', () => {
       expect(await screen.findByRole('radio', { name: 'System appearance' })).toBeChecked()
       fireEvent.click(screen.getByRole('radio', { name: 'Ocean accent' }))
       fireEvent.click(screen.getByRole('radio', { name: 'Light appearance' }))
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
-      expect(shell()).toHaveAttribute('data-accent-theme', 'ocean')
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
+      expect(appShell()).toHaveAttribute('data-accent-theme', 'ocean')
       expect(document.documentElement).toHaveAttribute('data-appearance', 'light')
       await waitFor(() =>
         expect(hubSettings.values).toEqual({ accent: 'ocean', appearance: 'light' }))
@@ -1355,27 +1357,27 @@ describe('App', () => {
       vi.mocked(fetchSettingsProfile).mockImplementation(() => new Promise(() => {}))
       render(<App />)
       await screen.findByLabelText('Message')
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
-      expect(shell()).toHaveAttribute('data-accent-theme', 'ocean')
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
+      expect(appShell()).toHaveAttribute('data-accent-theme', 'ocean')
     })
 
     it('follows the device’s light or dark setting until a choice is made', async () => {
       const setDeviceLight = deviceScheme(true)
       render(<App />)
       await screen.findByLabelText('Message')
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
       setDeviceLight(false)
-      expect(shell()).toHaveAttribute('data-appearance', 'graphite')
+      expect(appShell()).toHaveAttribute('data-appearance', 'graphite')
 
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       fireEvent.click(await screen.findByRole('radio', { name: 'Graphite appearance' }))
       setDeviceLight(true)
       // A choice is a choice: the device's setting no longer moves it.
-      expect(shell()).toHaveAttribute('data-appearance', 'graphite')
+      expect(appShell()).toHaveAttribute('data-appearance', 'graphite')
       await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'graphite' }))
 
       fireEvent.click(screen.getByRole('radio', { name: 'System appearance' }))
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
       await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'system' }))
     })
 
@@ -1383,8 +1385,8 @@ describe('App', () => {
       seedHubSettings({ accent: 'teal', appearance: 'light', sessionSort: 'name' })
       render(<App />)
       await screen.findByLabelText('Message')
-      await waitFor(() => expect(shell()).toHaveAttribute('data-accent-theme', 'teal'))
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      await waitFor(() => expect(appShell()).toHaveAttribute('data-accent-theme', 'teal'))
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
       expect(screen.getByRole('combobox', { name: 'Session order' })).toHaveValue('name')
       expect(importSettingsProfile).not.toHaveBeenCalled()
     })
@@ -1403,8 +1405,8 @@ describe('App', () => {
           },
         }),
       } as MessageEvent))
-      expect(shell()).toHaveAttribute('data-accent-theme', 'rose')
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(appShell()).toHaveAttribute('data-accent-theme', 'rose')
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
     })
 
     it('tells you when another device changed a setting first', async () => {
@@ -1422,7 +1424,7 @@ describe('App', () => {
       expect(await screen.findByText(
         'Accent was changed on another device first, so this device now uses that choice.',
       )).toBeVisible()
-      expect(shell()).toHaveAttribute('data-accent-theme', 'violet')
+      expect(appShell()).toHaveAttribute('data-accent-theme', 'violet')
       expect(hubSettings.values.accent).toBe('violet')
     })
 
@@ -1437,7 +1439,7 @@ describe('App', () => {
       expect(await screen.findByText(
         'The hub can’t be reached. Changes are kept on this device and sync when it’s back.',
       )).toBeVisible()
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
       expect(hubSettings.values).toEqual({})
 
       await act(async () => { MockWebSocket.instances.at(-1)?.onopen?.() })
@@ -1458,7 +1460,7 @@ describe('App', () => {
         await screen.findByLabelText('Message')
         fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
         fireEvent.click(await screen.findByRole('radio', { name: 'Light appearance' }))
-        expect(shell()).toHaveAttribute('data-appearance', 'light')
+        expect(appShell()).toHaveAttribute('data-appearance', 'light')
         await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'light' }))
         expect(await screen.findByText(
           'Saved on this hub. This browser can’t keep a copy, so settings load from the hub each time.',
@@ -1474,8 +1476,8 @@ describe('App', () => {
       sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
       const rendered = render(<App />)
       await screen.findByLabelText('Message')
-      expect(shell()).toHaveAttribute('data-accent-theme', 'rose')
-      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(appShell()).toHaveAttribute('data-accent-theme', 'rose')
+      expect(appShell()).toHaveAttribute('data-appearance', 'light')
       await waitFor(() => expect(hubSettings.values).toEqual({
         appearance: 'light', accent: 'rose', sessionSort: 'name',
       }))
@@ -1547,7 +1549,158 @@ describe('App', () => {
         ...cache, pending: { accent: { value: 'ember', baseRevision: cache.revision } },
       }))
       act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'agentic-remote:settings-profile' })))
-      expect(shell()).toHaveAttribute('data-accent-theme', 'ember')
+      expect(appShell()).toHaveAttribute('data-accent-theme', 'ember')
+    })
+
+    it('chooses which notifications reach every device, apart from what this device can receive', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      const scope = within(dialog).getByRole('group', { name: 'What notifies you' })
+      const radio = (name: string) => within(scope).getByRole('radio', { name })
+      // A hub that never chose sends everything, as before.
+      expect(radio('All activity')).toBeChecked()
+      expect(radio('All activity')).toHaveAccessibleDescription(
+        'Sessions that need you or finish, hub alerts, and Oracle.',
+      )
+      expect(radio('Oracle only')).toHaveAccessibleDescription(
+        'Oracle’s replies and its requests for your OK. Sessions stay quiet, including ones Oracle started.',
+      )
+      expect(radio('Disabled')).toHaveAccessibleDescription(
+        'Nothing, on any device. Each device stays set up, so turning them back on is instant.',
+      )
+      expect(scope.closest('section')!.querySelector('.settings-scope')).toHaveTextContent('Synced')
+      // This browser cannot receive push at all, which is its own business.
+      const device = within(dialog).getByRole('heading', { name: 'This device' }).closest('section')!
+      expect(device).toHaveTextContent('Push notifications are not supported in this browser.')
+      expect(device.querySelector('.settings-scope')).toHaveTextContent('This device')
+
+      fireEvent.click(radio('Oracle only'))
+      expect(radio('Oracle only')).toBeChecked()
+      await waitFor(() => expect(hubSettings.values).toEqual({ notificationScope: 'oracle' }))
+
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'settings.updated',
+          settings: { profileId: hubSettingsId, revision: 9, values: { notificationScope: 'off' } },
+        }),
+      } as MessageEvent))
+      expect(radio('Disabled')).toBeChecked()
+    })
+
+    it('tells the hub while Oracle is on screen, so it holds Oracle’s pushes', async () => {
+      vi.mocked(getManager).mockResolvedValue({
+        available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      })
+      const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+      const setVisibility = (value: DocumentVisibilityState) => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value })
+        act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+      }
+      try {
+        render(<App />)
+        await screen.findByLabelText('Message')
+        const socket = MockWebSocket.instances.at(-1)!
+        await act(async () => { socket.onopen?.() })
+        const presence = () => socket.send.mock.calls
+          .map(([data]) => JSON.parse(String(data)))
+          .filter((message) => message.type === 'presence')
+          .map((message) => message.oracleVisible)
+        expect(presence()).toEqual([false])
+        const dock = document.querySelector<HTMLElement>('.timeline-dock')!
+        fireEvent.click(await within(dock).findByRole('button', { name: 'Oracle' }))
+        expect(presence()).toEqual([false, true])
+        setVisibility('hidden')
+        expect(presence()).toEqual([false, true, false])
+        setVisibility('visible')
+        expect(presence()).toEqual([false, true, false, true])
+        // Renewed while on screen, so the hub never lets it lapse meanwhile.
+        vi.useFakeTimers()
+        try {
+          const toggle = within(dock).getByRole('button', { name: 'Oracle' })
+          fireEvent.click(toggle)
+          fireEvent.click(toggle)
+          expect(presence()).toEqual([false, true, false, true, false, true])
+          act(() => { vi.advanceTimersByTime(30_000) })
+          expect(presence()).toEqual([false, true, false, true, false, true, true])
+        } finally {
+          vi.useRealTimers()
+        }
+      } finally {
+        if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+        else Reflect.deleteProperty(document, 'visibilityState')
+      }
+    })
+
+    it('opens Oracle from one of its notifications', async () => {
+      vi.mocked(getManager).mockResolvedValue({
+        available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      })
+      window.history.replaceState({}, '', '/?oracle=open')
+      render(<App />)
+      expect(await screen.findByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+    })
+
+    it('raises only what the scope allows in the native shell, Oracle’s replies included', async () => {
+      vi.spyOn(shell, 'nativeShell').mockReturnValue(true)
+      const raised = vi.spyOn(shell, 'sendShellNotification').mockReturnValue(true)
+      seedHubSettings({ notificationScope: 'oracle' })
+      // The open session is never announced, so the one that finishes is another.
+      vi.mocked(listSessions).mockResolvedValue([session, { ...secondSession, status: 'running' }])
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      await act(async () => {})
+      const emit = (event: unknown) => act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify(event),
+      } as MessageEvent))
+      // A session finishing is session activity: quiet in Oracle only.
+      await screen.findAllByText(secondSession.title)
+      emit({ type: 'session.upserted', session: { ...secondSession, status: 'idle', updatedAt: new Date().toISOString() } })
+      emit({ type: 'manager.message', message: {
+        id: 'a1', role: 'assistant', replyTo: 'u1', content: 'Both sessions are done.', createdAt: 't',
+      } })
+      emit({ type: 'manager.message', message: {
+        id: 'u1', role: 'user', content: 'Status?', createdAt: 't', state: 'done',
+      } })
+      emit({ type: 'manager.message', message: {
+        id: 'u1', role: 'user', content: 'Status?', createdAt: 't', state: 'done',
+      } })
+      expect(raised.mock.calls.map(([notification]) => notification)).toEqual([{
+        tag: 'agentic-oracle-reply',
+        title: 'Oracle replied',
+        body: 'Both sessions are done.',
+        urgent: false,
+      }])
+    })
+
+    it('keeps the choice open when this device has notifications blocked', async () => {
+      const restore = [
+        ['PushManager', window] as const,
+        ['Notification', window] as const,
+        ['serviceWorker', navigator] as const,
+      ].map(([key, target]) => [key, target, Object.getOwnPropertyDescriptor(target, key)] as const)
+      Object.defineProperty(window, 'PushManager', { configurable: true, value: class {} })
+      Object.defineProperty(window, 'Notification', { configurable: true, value: { permission: 'denied' } })
+      Object.defineProperty(navigator, 'serviceWorker', {
+        configurable: true,
+        value: { ready: new Promise(() => {}), getRegistration: async () => undefined },
+      })
+      try {
+        render(<App />)
+        await screen.findByLabelText('Message')
+        fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+        const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+        expect(within(dialog).getByText(/Notifications are blocked/)).toBeVisible()
+        fireEvent.click(within(dialog).getByRole('radio', { name: 'Disabled' }))
+        await waitFor(() => expect(hubSettings.values).toEqual({ notificationScope: 'off' }))
+      } finally {
+        for (const [key, target, descriptor] of restore) {
+          if (descriptor) Object.defineProperty(target, key, descriptor)
+          else Reflect.deleteProperty(target, key)
+        }
+      }
     })
 
     it('says which settings follow you and which stay on this device', async () => {
@@ -1557,7 +1710,7 @@ describe('App', () => {
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
       const sync = within(dialog).getByRole('heading', { name: 'Settings sync' }).closest('section')!
       expect(sync).toHaveTextContent(
-        'Appearance, accent, status line, new-session models and folders, session sort, computer order, and Oracle\'s response style follow you to every device that opens this hub.',
+        'Appearance, accent, status line, new-session models and folders, session sort, computer order, Oracle\'s response style, and what notifies you follow you to every device that opens this hub.',
       )
       expect(sync).toHaveTextContent('Keyboard shortcuts, panel widths, and drafts stay on this device.')
       const scope = (heading: string) =>

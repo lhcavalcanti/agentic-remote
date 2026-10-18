@@ -148,9 +148,12 @@ and RTF targets passed in that run.
 
 The required real-time soak passed 30 minutes at six turns/minute after 500
 actual conversation WebSocket/session lifecycle cycles. Those cycles opened
-520 sockets, included 20 stops during startup with immediate restart, and
-completed 520 backend/socket cleanup checks in 502,616 ms. The timed phase then
-sent 180/180 unique manager submissions in 1,800,000.05 ms.
+520 sockets and completed 520 socket cleanup checks in 8,028.07 ms. Twenty
+explicit acquisition-gated races closed the old browser while backend startup
+was unresolved, started the replacement before releasing that gate, cancelled
+all 20 old acquisitions, leaked zero old hellos or stream messages, created
+exactly 20 replacement hellos/sessions, and cleaned all 20 gated workers. The
+timed phase then sent 180/180 unique manager submissions in 1,800,000.09 ms.
 
 The soak retained production `LocalVoiceBackend` and
 `EngineVoiceBackendSession` around a controlled engine. It measured 4,480
@@ -158,9 +161,9 @@ queued input bytes, 640 pending/in-flight input bytes, 5,120 total input
 backlog against the 64,000-byte limit, and 18,186 queued output bytes, with no
 overflow. It observed 681 cancellation-triggered stale backend emissions and
 zero stale client deliveries. A fixture-owned child PID was observed during
-the run and absent afterward. RSS across 232 samples was 155.3 MiB initially,
-392.6 MiB peak during lifecycle cycling, and 159.0 MiB finally; the final-half
-slope was 0.015 MiB/minute. All 19 assertions passed, including zero active
+the run and absent afterward. RSS across 182 samples was 150.6 MiB initially,
+261.6 MiB peak during lifecycle cycling, and 166.0 MiB finally; the final-half
+slope was 0.0011 MiB/minute. All 23 assertions passed, including zero active
 backend sessions, orphan child PIDs, unhandled rejections, or uncaught
 exceptions after stop.
 

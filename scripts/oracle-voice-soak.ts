@@ -54,7 +54,7 @@ interface RssSample {
 }
 
 interface SoakReport {
-  schemaVersion: 2
+  schemaVersion: 3
   generatedAt: string
   requested: {
     minutes: number
@@ -221,6 +221,28 @@ class SoakManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
   }
 }
 
+class ControlledAcquisitionGate {
+  started = false
+  resolved = false
+  released = false
+  private releaseGate!: () => void
+  private readonly pending = new Promise<void>((resolve) => {
+    this.releaseGate = resolve
+  })
+
+  async wait(): Promise<void> {
+    this.started = true
+    await this.pending
+    this.resolved = true
+  }
+
+  release(): void {
+    if (this.released) return
+    this.released = true
+    this.releaseGate()
+  }
+}
+
 class ControlledSoakEngine implements VoiceEngineFactory, VoiceEngineSession {
   readonly stt = {
     start: async (input: VoiceStartUtterance) => {
@@ -276,8 +298,12 @@ class ControlledSoakEngine implements VoiceEngineFactory, VoiceEngineSession {
   private readonly listeners = new Set<(event: VoiceEngineEvent) => void>()
   private child: ChildProcess | undefined
   private activeUtterance: VoiceStartUtterance | undefined
+  private nextInitializationGate: ControlledAcquisitionGate | undefined
 
   async initialize(_config: EnabledOracleVoiceConfig): Promise<VoiceEngineSession> {
+    const gate = this.nextInitializationGate
+    this.nextInitializationGate = undefined
+    await gate?.wait()
     if (!this.child) {
       this.child = spawn(process.execPath, [
         '-e',
@@ -286,6 +312,15 @@ class ControlledSoakEngine implements VoiceEngineFactory, VoiceEngineSession {
       await waitFor(() => this.child?.pid !== undefined, 10_000, 'soak child startup')
     }
     return this
+  }
+
+  gateNextInitialization(): ControlledAcquisitionGate {
+    if (this.nextInitializationGate) {
+      throw new Error('A controlled voice acquisition gate is already pending')
+    }
+    const gate = new ControlledAcquisitionGate()
+    this.nextInitializationGate = gate
+    return gate
   }
 
   capability(): VoiceBackendCapability {
@@ -349,6 +384,10 @@ class ObservedProductionVoiceBackend implements VoiceBackend {
   maximumOutputQueueBytes = 0
   queueOverflowRejections = 0
   readonly deliveredOutputTypes: string[] = []
+  readonly openAttempts: string[] = []
+  readonly openedSessions: string[] = []
+  readonly cancelledAcquisitions: string[] = []
+  readonly closedSessions: string[] = []
   private openOperations = 0
 
   constructor(private readonly backend: LocalVoiceBackend) {}
@@ -367,6 +406,7 @@ class ObservedProductionVoiceBackend implements VoiceBackend {
 
   async open(options: VoiceBackendSessionOpenOptions): Promise<VoiceBackendSession> {
     this.openOperations += 1
+    this.openAttempts.push(options.streamId)
     let session: VoiceBackendSession
     try {
       session = await this.backend.open({
@@ -379,6 +419,12 @@ class ObservedProductionVoiceBackend implements VoiceBackend {
         },
         observeQueue: (snapshot) => this.observe(snapshot),
       })
+      this.openedSessions.push(options.streamId)
+    } catch (error) {
+      if (options.signal?.aborted) {
+        this.cancelledAcquisitions.push(options.streamId)
+      }
+      throw error
     } finally {
       this.openOperations -= 1
     }
@@ -404,6 +450,7 @@ class ObservedProductionVoiceBackend implements VoiceBackend {
         await session.close(reason)
         if (closed) return
         closed = true
+        this.closedSessions.push(options.streamId)
         this.activeSessions -= 1
       },
     }
@@ -439,8 +486,11 @@ class SoakSocket {
   readonly audioFrameGenerations: number[] = []
   readonly controlTypes: string[] = []
   staleDeliveries = 0
+  serverMessageCount = 0
+  helloCount = 0
   streamId = ''
   currentGeneration = 0
+  connected = false
   closed = false
 
   constructor(private readonly socket: WebSocket) {
@@ -492,6 +542,7 @@ class SoakSocket {
   }
 
   private onMessage(data: RawData, isBinary: boolean): void {
+    this.serverMessageCount += 1
     if (isBinary) {
       const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer)
       const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
@@ -502,7 +553,10 @@ class SoakSocket {
     }
     const control = JSON.parse(data.toString()) as VoiceServerControl
     this.controlTypes.push(control.type)
-    if (control.type === 'hello') this.streamId = control.streamId
+    if (control.type === 'hello') {
+      this.helloCount += 1
+      this.streamId = control.streamId
+    }
     if (control.generation < this.currentGeneration) this.staleDeliveries += 1
     if (control.type === 'audio_end') {
       this.audioEndGenerations.add(control.generation)
@@ -517,15 +571,42 @@ export interface LifecycleCycleResult {
   startupStops: number
   immediateRestarts: number
   cleanupChecks: number
+  oldAcquisitionCancellations: number
+  oldHelloLeakages: number
+  oldStreamLeakages: number
+  replacementHellos: number
+  replacementSessions: number
+  workerCleanupChecks: number
+  gatedStartupRaces: GatedStartupRaceObservation[]
+}
+
+export interface LifecycleCycleObservation {
+  socketConnections: number
+  closedSockets: number
+  backendCleaned: boolean
+}
+
+export interface GatedStartupRaceObservation extends LifecycleCycleObservation {
+  cycle: number
+  oldAcquisitionUnresolvedAtClose: boolean
+  replacementAttemptStartedBeforeOldRelease: boolean
+  oldHelloCount: number
+  oldStreamMessageCount: number
+  oldAcquisitionCancelled: boolean
+  replacementHelloCount: number
+  replacementSessionCount: number
+  workerStarted: boolean
+  workerCleaned: boolean
 }
 
 export async function runLifecycleCycles(
   count: number,
   hooks: {
     startupStopEvery: number
-    stopDuringStartup(): Promise<void>
-    startAndStop(): Promise<void>
-    assertCleanup(): Promise<void>
+    runGatedStartupRace(
+      cycle: number,
+    ): Promise<Omit<GatedStartupRaceObservation, 'cycle'>>
+    startAndStop(): Promise<LifecycleCycleObservation>
   },
 ): Promise<LifecycleCycleResult> {
   const result: LifecycleCycleResult = {
@@ -535,33 +616,75 @@ export async function runLifecycleCycles(
     startupStops: 0,
     immediateRestarts: 0,
     cleanupChecks: 0,
+    oldAcquisitionCancellations: 0,
+    oldHelloLeakages: 0,
+    oldStreamLeakages: 0,
+    replacementHellos: 0,
+    replacementSessions: 0,
+    workerCleanupChecks: 0,
+    gatedStartupRaces: [],
   }
   for (let index = 0; index < count; index += 1) {
     if (index % hooks.startupStopEvery === 0) {
+      let observation: GatedStartupRaceObservation
       try {
-        await hooks.stopDuringStartup()
+        observation = {
+          cycle: index + 1,
+          ...await hooks.runGatedStartupRace(index + 1),
+        }
       } catch (error) {
         throw new Error(
           `Lifecycle cycle ${index + 1} startup stop failed: ${errorText(error)}`,
         )
       }
-      result.socketConnections += 1
-      result.startupStops += 1
-      await hooks.assertCleanup()
-      result.cleanupChecks += 1
-      result.immediateRestarts += 1
+      result.gatedStartupRaces.push(observation)
+      result.socketConnections += observation.socketConnections
+      result.cleanupChecks += observation.closedSockets
+      result.startupStops += Number(observation.oldAcquisitionUnresolvedAtClose)
+      result.immediateRestarts += Number(
+        observation.replacementAttemptStartedBeforeOldRelease,
+      )
+      result.oldAcquisitionCancellations += Number(
+        observation.oldAcquisitionCancelled,
+      )
+      result.oldHelloLeakages += observation.oldHelloCount
+      result.oldStreamLeakages += observation.oldStreamMessageCount
+      result.replacementHellos += observation.replacementHelloCount
+      result.replacementSessions += observation.replacementSessionCount
+      result.workerCleanupChecks += Number(
+        observation.workerStarted && observation.workerCleaned,
+      )
+      result.completed += Number(
+        observation.socketConnections === 2
+        && observation.closedSockets === 2
+        && observation.backendCleaned
+        && observation.oldAcquisitionUnresolvedAtClose
+        && observation.replacementAttemptStartedBeforeOldRelease
+        && observation.oldHelloCount === 0
+        && observation.oldStreamMessageCount === 0
+        && observation.oldAcquisitionCancelled
+        && observation.replacementHelloCount === 1
+        && observation.replacementSessionCount === 1
+        && observation.workerStarted
+        && observation.workerCleaned,
+      )
+      continue
     }
+    let observation: LifecycleCycleObservation
     try {
-      await hooks.startAndStop()
+      observation = await hooks.startAndStop()
     } catch (error) {
       throw new Error(
         `Lifecycle cycle ${index + 1} start/stop failed: ${errorText(error)}`,
       )
     }
-    result.socketConnections += 1
-    await hooks.assertCleanup()
-    result.cleanupChecks += 1
-    result.completed += 1
+    result.socketConnections += observation.socketConnections
+    result.cleanupChecks += observation.closedSockets
+    result.completed += Number(
+      observation.socketConnections === 1
+      && observation.closedSockets === 1
+      && observation.backendCleaned,
+    )
   }
   return result
 }
@@ -680,6 +803,13 @@ async function runSoak(
     startupStops: 0,
     immediateRestarts: 0,
     cleanupChecks: 0,
+    oldAcquisitionCancellations: 0,
+    oldHelloLeakages: 0,
+    oldStreamLeakages: 0,
+    replacementHellos: 0,
+    replacementSessions: 0,
+    workerCleanupChecks: 0,
+    gatedStartupRaces: [],
   }
   let childPidsDuring: number[] = []
   let ownedChildPid: number | undefined
@@ -700,13 +830,9 @@ async function runSoak(
     const baseUrl = `http://127.0.0.1:${address.port}`
     const lifecycleStartedAt = performance.now()
     lifecycle = await runLifecycleCycles(options.rapidStartStop, {
-      startupStopEvery: 25,
-      stopDuringStartup: async () => {
-        const socket = await connectSoakSocket(baseUrl, false)
-        await waitFor(() => backend.busy(), 10_000, 'startup backend reservation')
-        socket.close()
-        await socket.waitForClose()
-      },
+      startupStopEvery: Math.max(1, Math.floor(options.rapidStartStop / 20)),
+      runGatedStartupRace: (cycle) =>
+        runGatedStartupRace(cycle, baseUrl, backend, engine),
       startAndStop: async () => {
         const socket = await connectSoakSocket(baseUrl)
         await socket.control({
@@ -722,13 +848,16 @@ async function runSoak(
           reason: 'Lifecycle cycle complete',
         })
         await socket.waitForClose()
-      },
-      assertCleanup: async () => {
         await waitFor(
           () => !backend.busy() && backend.activeSessions === 0,
           10_000,
           'per-cycle backend cleanup',
         )
+        return {
+          socketConnections: Number(socket.connected),
+          closedSockets: Number(socket.closed),
+          backendCleaned: !backend.busy() && backend.activeSessions === 0,
+        }
       },
     })
     lifecycleElapsedMs = performance.now() - lifecycleStartedAt
@@ -844,8 +973,26 @@ async function runSoak(
     lifecycleCleanupComplete:
       lifecycle.cleanupChecks === lifecycle.socketConnections,
     startupStopRestartCovered:
-      lifecycle.startupStops > 0
+      lifecycle.startupStops >= Math.min(20, options.rapidStartStop)
       && lifecycle.immediateRestarts === lifecycle.startupStops,
+    gatedRaceEvidenceComplete:
+      lifecycle.gatedStartupRaces.length === lifecycle.startupStops
+      && lifecycle.gatedStartupRaces.every((race) =>
+        race.oldAcquisitionUnresolvedAtClose
+        && race.replacementAttemptStartedBeforeOldRelease
+        && race.oldAcquisitionCancelled
+        && race.backendCleaned
+        && race.workerStarted
+        && race.workerCleaned
+        && race.closedSockets === 2),
+    noOldStartupLeakage:
+      lifecycle.oldHelloLeakages === 0
+      && lifecycle.oldStreamLeakages === 0,
+    exactlyOneReplacementPerRace:
+      lifecycle.replacementHellos === lifecycle.gatedStartupRaces.length
+      && lifecycle.replacementSessions === lifecycle.gatedStartupRaces.length,
+    gatedWorkersCleaned:
+      lifecycle.workerCleanupChecks === lifecycle.gatedStartupRaces.length,
     exactManagerSendCount: manager.sends.length === utteranceCount,
     oneSendPerUtterance: new Set(manager.sends).size === utteranceCount,
     inputBacklogMeasured:
@@ -871,7 +1018,7 @@ async function runSoak(
     noUncaughtException: uncaughtExceptions.length === 0,
   }
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     requested: {
       minutes: options.minutes,
@@ -940,6 +1087,7 @@ async function connectSoakSocket(
         socket.once('open', resolve)
         socket.once('error', reject)
       })
+      client.connected = true
       if (waitForHello) await client.waitForHello()
       return client
     } catch (error) {
@@ -952,6 +1100,111 @@ async function connectSoakSocket(
       }
       await delay(10)
     }
+  }
+}
+
+async function runGatedStartupRace(
+  cycle: number,
+  baseUrl: string,
+  backend: ObservedProductionVoiceBackend,
+  engine: ControlledSoakEngine,
+): Promise<Omit<GatedStartupRaceObservation, 'cycle'>> {
+  await backend.stop()
+  await waitFor(
+    () => !backend.busy() && backend.activeSessions === 0,
+    10_000,
+    `gated lifecycle cycle ${cycle} pre-race cleanup`,
+  )
+  const attemptStart = backend.openAttempts.length
+  const openedStart = backend.openedSessions.length
+  const cancelledStart = backend.cancelledAcquisitions.length
+  const gate = engine.gateNextInitialization()
+  let oldSocket: SoakSocket | undefined
+  let replacementSocket: SoakSocket | undefined
+  try {
+    oldSocket = await connectSoakSocket(baseUrl, false)
+    await waitFor(
+      () => gate.started && backend.openAttempts.length === attemptStart + 1,
+      10_000,
+      `gated lifecycle cycle ${cycle} old acquisition`,
+    )
+    const oldStreamId = backend.openAttempts[attemptStart]
+    const oldAcquisitionUnresolvedAtClose =
+      !gate.resolved
+      && !backend.openedSessions.slice(openedStart).includes(oldStreamId)
+
+    oldSocket.close()
+    await oldSocket.waitForClose()
+    await waitFor(
+      () => backend.cancelledAcquisitions.length === cancelledStart + 1,
+      10_000,
+      `gated lifecycle cycle ${cycle} old acquisition cancellation`,
+    )
+
+    replacementSocket = await connectSoakSocket(baseUrl, false)
+    await waitFor(
+      () => backend.openAttempts.length === attemptStart + 2,
+      10_000,
+      `gated lifecycle cycle ${cycle} replacement acquisition`,
+    )
+    const replacementStreamId = backend.openAttempts[attemptStart + 1]
+    const replacementAttemptStartedBeforeOldRelease =
+      !gate.released
+      && !gate.resolved
+      && backend.openedSessions.length === openedStart
+
+    gate.release()
+    await replacementSocket.waitForHello()
+    await replacementSocket.control({
+      type: 'start',
+      generation: 0,
+      language: 'en',
+      defaults: {},
+      answerOnly: false,
+    })
+    await replacementSocket.control({
+      type: 'stop',
+      generation: 0,
+      reason: `Gated lifecycle cycle ${cycle} complete`,
+    })
+    await replacementSocket.waitForClose()
+    await waitFor(
+      () => !backend.busy() && backend.activeSessions === 0,
+      10_000,
+      `gated lifecycle cycle ${cycle} backend cleanup`,
+    )
+    const workerPid = engine.childPid()
+    const workerStarted = workerPid !== undefined
+    const replacementSessionCount = backend.openedSessions
+      .slice(openedStart)
+      .filter((streamId) => streamId === replacementStreamId)
+      .length
+    await backend.stop()
+    const childrenAfterStop = await childPids()
+
+    return {
+      socketConnections:
+        Number(oldSocket.connected) + Number(replacementSocket.connected),
+      closedSockets: Number(oldSocket.closed) + Number(replacementSocket.closed),
+      oldAcquisitionUnresolvedAtClose,
+      replacementAttemptStartedBeforeOldRelease,
+      oldHelloCount: oldSocket.helloCount,
+      oldStreamMessageCount: oldSocket.serverMessageCount,
+      oldAcquisitionCancelled: backend.cancelledAcquisitions
+        .slice(cancelledStart)
+        .includes(oldStreamId),
+      replacementHelloCount: replacementSocket.helloCount,
+      replacementSessionCount,
+      backendCleaned: !backend.busy() && backend.activeSessions === 0,
+      workerStarted,
+      workerCleaned:
+        workerPid !== undefined && !childrenAfterStop.includes(workerPid),
+    }
+  } finally {
+    gate.release()
+    oldSocket?.close()
+    replacementSocket?.close()
+    await backend.stop()
   }
 }
 

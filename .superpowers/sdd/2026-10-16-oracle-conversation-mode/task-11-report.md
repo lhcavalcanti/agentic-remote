@@ -2,10 +2,11 @@
 
 ## Status and scope
 
-All eight Task 11 review findings were corrected from review HEAD
-`a6d451946171f70ba5d95adc19c32b945cb5bc14`. The work stayed in the isolated
-Oracle Conversation worktree. No Graphify operation, push, merge, or deployment
-was performed.
+The original eight Task 11 review findings were corrected from review HEAD
+`a6d451946171f70ba5d95adc19c32b945cb5bc14`. The remaining lifecycle-evidence
+finding at `401a9d3d1eb1e7c8b59128c9610f764c455bfbd8` is also corrected. The work
+stayed in the isolated Oracle Conversation worktree. No Graphify operation,
+push, merge, or deployment was performed.
 
 Task 11 still provides deterministic built-UI browser coverage, the committed
 FLEURS-derived corpus, benchmark JSON/Markdown, a real
@@ -35,6 +36,11 @@ Each finding had a failing regression before its minimal implementation:
    negative test also failed before the cleanup assertion helper existed.
 8. The maintained script, docs, and report scan found the unsupported smaller
    English-model label.
+9. The focused production-route regression failed with WebSocket upgrade
+   `409` after closing a browser while `LocalVoiceBackend` acquisition was
+   unresolved. After adding acquisition cancellation, the stricter pending
+   capability regression failed because the replacement ticket returned `503`.
+   Both failures were observed before their minimal fixes.
 
 Focused green command:
 
@@ -46,6 +52,17 @@ pnpm vitest run playwright-config.test.ts \
 ```
 
 Final result: 4 files, 34 tests passed.
+
+Remaining lifecycle-review green command:
+
+```text
+pnpm vitest run server/oracle-voice-routes.test.ts \
+  server/oracle-voice-coordinator.test.ts \
+  server/oracle-voice-session.test.ts \
+  scripts/oracle-voice-soak.test.ts
+```
+
+Final result: 4 files, 73 tests passed.
 
 ## 1. Isolated E2E builds
 
@@ -133,11 +150,20 @@ native synthesis preemption.
 
 ## 6–7. Lifecycle and production queue soak
 
-The soak retains production `LocalVoiceBackend` and
-`EngineVoiceBackendSession` queue/delivery machinery around a controlled
-engine. Input accounting now charges both queued and engine-in-flight bytes
-against the production limit, and output backlog uses the production delivery
-queue. The focused negative regression proves combined backlog is rejected.
+The soak retains the production route, `OracleVoiceCoordinator`,
+`LocalVoiceBackend`, and `EngineVoiceBackendSession` queue/delivery machinery
+around a controlled engine. Input accounting charges both queued and
+engine-in-flight bytes against the production limit, and output backlog uses
+the production delivery queue. The focused negative regression proves combined
+backlog is rejected.
+
+Every 25th cycle uses an explicit engine-acquisition gate. The old browser
+socket closes while initialization is still unresolved; its abort signal
+cancels and releases only that old reservation. A replacement WebSocket and
+backend-open attempt then start before the gate is released. Releasing the gate
+produces exactly one replacement session and hello. Each race records socket,
+backend, and fixture-worker cleanup from observed state rather than incrementing
+counters in lifecycle hooks.
 
 Before the timed conversation phase, the same command completed 500 actual
 conversation socket/session lifecycle cycles:
@@ -147,10 +173,20 @@ conversation socket/session lifecycle cycles:
 | requested / completed cycles | 500 / 500 |
 | socket connections | 520 |
 | stop during startup / immediate restart | 20 / 20 |
-| per-cycle cleanup checks | 520 |
-| lifecycle elapsed | 502,616 ms |
+| cancelled old acquisitions | 20 |
+| old hello / stream-message leakage | 0 / 0 |
+| replacement hellos / sessions | 20 / 20 |
+| gated worker cleanup checks | 20 |
+| socket cleanup checks | 520 |
+| lifecycle elapsed | 8,028.07 ms |
 
-The timed phase then ran for 1,800,000.05 ms at six turns/minute:
+The gated races occurred on cycles 1, 26, 51, 76, 101, 126, 151, 176, 201,
+226, 251, 276, 301, 326, 351, 376, 401, 426, 451, and 476. All 20 observed the
+old acquisition unresolved at close, the replacement attempt before gate
+release, old cancellation, no old output, one replacement hello/session, two
+closed sockets, a clean backend, and a started-then-cleaned worker.
+
+The timed phase then ran for 1,800,000.09 ms at six turns/minute:
 
 | Soak metric | Result |
 | --- | ---: |
@@ -160,16 +196,16 @@ The timed phase then ran for 1,800,000.05 ms at six turns/minute:
 | maximum output backlog | 18,186 bytes |
 | queue overflow rejections | 0 |
 | backend cancellations / stale emissions / stale client deliveries | 681 / 681 / 0 |
-| initial / peak / final RSS | 155.3 / 392.6 / 159.0 MiB |
-| final-half RSS slope | 0.015 MiB/min |
-| RSS samples | 232 |
+| initial / peak / final RSS | 150.6 / 261.6 / 166.0 MiB |
+| final-half RSS slope | 0.0011 MiB/min |
+| RSS samples | 182 |
 | active backend sessions after stop | 0 |
 | orphan child PIDs | 0 |
 | unhandled rejections / uncaught exceptions | 0 / 0 |
 
 A fixture-owned child PID was observed during the run and absent afterward.
 The negative unit test supplies a surviving PID and proves the child-cleanup
-assertion becomes false. All 19 artifact assertions passed.
+assertion becomes false. All 23 artifact assertions passed.
 
 ## 8. Baseline correction
 
@@ -188,7 +224,8 @@ launches used the development host's extracted ALSA library. WebKit remains
 unrunnable on this host because required GTK/media shared libraries are absent;
 it is not reported as passed or skipped.
 
-The focused suite passed 34/34 tests. Both `pnpm check` and
+The original focused suite passed 34/34 tests; the remaining lifecycle-review
+suite passed 73/73 tests. Both `pnpm check` and
 `NODE_ENV=production pnpm check` passed lint, the complete Vitest suite,
 TypeScript, and the production Vite build. Lint emitted only the repository's
 existing React warnings. Production-bundle isolation and `git diff --check`

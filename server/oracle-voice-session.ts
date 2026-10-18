@@ -100,6 +100,7 @@ export interface VoiceBackendSessionOpenOptions {
   send: (output: VoiceBackendOutput) => Promise<void>
   terminate: (failure: VoiceBackendDisconnect) => void
   observeQueue?: (snapshot: VoiceBackendQueueSnapshot) => void
+  signal?: AbortSignal
 }
 
 export interface VoiceBackendQueueSnapshot {
@@ -770,18 +771,26 @@ export class LocalVoiceBackend implements VoiceBackend {
     if (this.active) {
       throw new VoiceSessionError('Oracle voice backend is already in use', 1013)
     }
+    if (options.signal?.aborted) throw acquisitionCancelled()
     let release!: () => void
     const reserved = new Promise<void>((resolve) => {
       release = resolve
     })
-    this.active = {
+    const reservation: VoiceBackendSession = {
       control: async () => reserved,
       audio: async () => reserved,
       close: async () => release(),
     }
+    this.active = reservation
+    const enginePromise = this.enginePromise ??= this.factory.initialize(this.config)
     try {
-      this.enginePromise ??= this.factory.initialize(this.config)
-      const engine = await this.enginePromise
+      const engine = await waitForAcquisition(
+        enginePromise,
+        options.signal,
+        () => {
+          if (this.active === reservation) this.active = undefined
+        },
+      )
       this.useFactoryCapability = true
       const session = createVoiceBackendSession({
         ...options,
@@ -795,9 +804,11 @@ export class LocalVoiceBackend implements VoiceBackend {
       this.active = session
       return session
     } catch (error) {
-      this.active = undefined
-      this.enginePromise = undefined
-      this.useFactoryCapability = true
+      if (this.active === reservation) this.active = undefined
+      if (!isAcquisitionCancelled(error)) {
+        if (this.enginePromise === enginePromise) this.enginePromise = undefined
+        this.useFactoryCapability = true
+      }
       throw error
     }
   }
@@ -809,6 +820,50 @@ export class LocalVoiceBackend implements VoiceBackend {
     await this.factory.stop()
     this.useFactoryCapability = true
   }
+}
+
+class VoiceBackendAcquisitionCancelled extends VoiceSessionError {}
+
+function acquisitionCancelled(): VoiceBackendAcquisitionCancelled {
+  return new VoiceBackendAcquisitionCancelled(
+    'Oracle voice backend acquisition was cancelled',
+    1001,
+  )
+}
+
+function isAcquisitionCancelled(
+  error: unknown,
+): error is VoiceBackendAcquisitionCancelled {
+  return error instanceof VoiceBackendAcquisitionCancelled
+}
+
+function waitForAcquisition<T>(
+  pending: Promise<T>,
+  signal: AbortSignal | undefined,
+  onAbort: () => void,
+): Promise<T> {
+  if (!signal) return pending
+  if (signal.aborted) {
+    onAbort()
+    return Promise.reject(acquisitionCancelled())
+  }
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      onAbort()
+      reject(acquisitionCancelled())
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    pending.then(
+      (value) => {
+        signal.removeEventListener('abort', abort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', abort)
+        reject(error)
+      },
+    )
+  })
 }
 
 function capabilityFromConfig(config: EnabledOracleVoiceConfig): VoiceBackendCapability {

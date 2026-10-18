@@ -41,6 +41,7 @@ export interface OracleVoiceBackendConnector {
     streamId: string
     output(message: OracleVoiceBackendOutput): Promise<void>
     disconnect(failure: OracleVoiceBackendDisconnect): Promise<void>
+    signal?: AbortSignal
   }): Promise<OracleVoiceBackendConnection>
 }
 
@@ -102,6 +103,7 @@ export class OracleVoiceCoordinator {
   private closing = false
   private closed = false
   private backendFatalReported = false
+  private readonly startAbortController = new AbortController()
 
   constructor(options: OracleVoiceCoordinatorOptions) {
     if (!options.streamId || options.streamId.length > 200) {
@@ -145,6 +147,7 @@ export class OracleVoiceCoordinator {
   close(reason: string): Promise<void> {
     if (this.closePromise) return this.closePromise
     this.closing = true
+    this.startAbortController.abort()
     const start = this.startPromise?.catch(() => undefined) ?? Promise.resolve()
     const pendingOperations = this.operationTail
     this.closePromise = start
@@ -173,6 +176,7 @@ export class OracleVoiceCoordinator {
         output: (message) => this.enqueue(() => this.handleBackendOutput(message)),
         disconnect: (failure) =>
           this.enqueue(() => this.handleBackendDisconnect(failure), true),
+        signal: this.startAbortController.signal,
       })
       this.connection = connection
       const maxAudioSamples = Math.floor(

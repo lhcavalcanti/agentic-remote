@@ -21,8 +21,15 @@ import type { VoiceBackendCapability } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import type { ManagerAgent } from './manager-agent.js'
 import type { ManagerRouteAgent } from './manager-routes.js'
+import {
+  FakeVoiceEngine,
+  type VoiceEngineFactory,
+  type VoiceEngineSession,
+} from './oracle-voice-engine.js'
+import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import { registerOracleVoiceRoutes } from './oracle-voice-routes.js'
 import {
+  LocalVoiceBackend,
   VoiceSessionError,
   type VoiceBackend,
   type VoiceBackendSession,
@@ -36,6 +43,96 @@ const trusted = {
 const testRoots: string[] = []
 const openSockets = new Set<WebSocket>()
 const openApps: Array<Awaited<ReturnType<typeof buildApp>>['app']> = []
+const voiceConfig: EnabledOracleVoiceConfig = {
+  enabled: true,
+  language: 'en',
+  threads: 1,
+  endpointMs: 800,
+  stt: {
+    profile: 'zipformer',
+    modelDirectory: '/not-used/test-stt',
+  },
+  tts: {
+    binary: '/not-used/test-piper',
+    model: '/not-used/test-voice.onnx',
+    config: '/not-used/test-voice.json',
+    sampleRate: 22_050,
+  },
+}
+
+class GatedVoiceEngineFactory implements VoiceEngineFactory {
+  readonly engine = new FakeVoiceEngine()
+  initializeStarted = false
+  initializeResolved = false
+  private releaseInitialize!: () => void
+  private readonly initializeGate = new Promise<void>((resolve) => {
+    this.releaseInitialize = resolve
+  })
+
+  async initialize(): Promise<VoiceEngineSession> {
+    this.initializeStarted = true
+    await this.initializeGate
+    this.initializeResolved = true
+    return this.engine
+  }
+
+  release(): void {
+    this.releaseInitialize()
+  }
+
+  capability(): VoiceBackendCapability {
+    if (!this.initializeResolved) {
+      return {
+        available: false,
+        reason: 'Voice engine initialization is still pending',
+      }
+    }
+    return {
+      available: true,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
+      languages: ['en'],
+      sttProfile: 'zipformer',
+      ttsVoice: 'lessac',
+      resourceClass: 'low',
+    }
+  }
+
+  async stop(): Promise<void> {
+    await this.engine.close()
+  }
+}
+
+class ObservedLocalVoiceBackend extends LocalVoiceBackend {
+  readonly openAttempts: string[] = []
+  readonly opened: string[] = []
+  readonly cancelled: string[] = []
+  readonly closed: string[] = []
+
+  override async open(
+    options: VoiceBackendSessionOpenOptions,
+  ): Promise<VoiceBackendSession> {
+    this.openAttempts.push(options.streamId)
+    try {
+      const session = await super.open(options)
+      this.opened.push(options.streamId)
+      let closed = false
+      return {
+        control: (message) => session.control(message),
+        audio: (frame) => session.audio(frame),
+        close: async (reason) => {
+          await session.close(reason)
+          if (closed) return
+          closed = true
+          this.closed.push(options.streamId)
+        },
+      }
+    } catch (error) {
+      if (options.signal?.aborted) this.cancelled.push(options.streamId)
+      throw error
+    }
+  }
+}
 
 class RouteManager extends EventEmitter {
   readonly start = vi.fn(async () => undefined)
@@ -442,6 +539,60 @@ describe('Oracle voice hub routes', () => {
     )
     await expect(third.first).resolves.toMatchObject({ type: 'hello' })
     await closeSocket(third.socket)
+  })
+
+  it('cancels an unresolved local acquisition and starts its replacement immediately', async () => {
+    const factory = new GatedVoiceEngineFactory()
+    const backend = new ObservedLocalVoiceBackend(factory, voiceConfig)
+    const { app } = await runtime(backend)
+    const endpoint = await listen(app)
+    const oldMessages: VoiceServerControl[] = []
+    const oldTicket = await ticket(app)
+    const old = await connect(
+      `${endpoint}/api/oracle-voice?ticket=${encodeURIComponent(oldTicket)}`,
+    )
+    old.socket.on('message', (data, isBinary) => {
+      if (!isBinary) oldMessages.push(JSON.parse(data.toString()) as VoiceServerControl)
+    })
+    await vi.waitFor(() => {
+      expect(factory.initializeStarted).toBe(true)
+      expect(factory.initializeResolved).toBe(false)
+      expect(backend.openAttempts).toHaveLength(1)
+      expect(backend.opened).toEqual([])
+    })
+
+    await closeSocket(old.socket)
+    expect(factory.initializeResolved).toBe(false)
+    expect(oldMessages).toEqual([])
+
+    const replacementTicket = await ticket(app)
+    let replacement: Awaited<ReturnType<typeof connect>> | undefined
+    try {
+      replacement = await connect(
+        `${endpoint}/api/oracle-voice?ticket=${encodeURIComponent(replacementTicket)}`,
+      )
+      expect(factory.initializeResolved).toBe(false)
+      expect(backend.openAttempts).toHaveLength(2)
+      expect(backend.cancelled).toEqual([backend.openAttempts[0]])
+      expect(backend.opened).toEqual([])
+
+      factory.release()
+      await expect(replacement.first).resolves.toMatchObject({
+        type: 'hello',
+        streamId: backend.openAttempts[1],
+      })
+      expect(oldMessages).toEqual([])
+      expect(backend.opened).toEqual([backend.openAttempts[1]])
+
+      await closeSocket(replacement.socket)
+      await vi.waitFor(() => {
+        expect(backend.closed).toEqual([backend.openAttempts[1]])
+        expect(backend.busy()).toBe(false)
+      })
+    } finally {
+      factory.release()
+      if (replacement) await closeSocket(replacement.socket)
+    }
   })
 
   it('closes an upgraded race with 1013 when the backend becomes busy', async () => {

@@ -65,6 +65,7 @@ interface SelectedVoiceBackend {
   busy: boolean
   connector?: OracleVoiceBackendConnector
   limits: VoiceBackendSessionLimits
+  releasesPendingStart: boolean
 }
 
 interface ActiveConversation {
@@ -163,7 +164,13 @@ export async function registerOracleVoiceRoutes(
         if (active === reservation) active = undefined
       }
       const closeCoordinator = (reason: string) => {
-        reservation.closing ??= coordinator.close(reason).finally(release)
+        if (!reservation.closing) {
+          const closing = coordinator.close(reason)
+          reservation.closing = reservation.selection.releasesPendingStart
+            ? closing
+            : closing.finally(release)
+          if (reservation.selection.releasesPendingStart) release()
+        }
         return reservation.closing
       }
       let pendingInputBytes = 0
@@ -215,13 +222,14 @@ export async function registerOracleVoiceRoutes(
 
   app.addHook('onClose', async () => {
     const conversation = active
-    if (!conversation) return
-    await (
-      conversation.closing
-      ?? conversation.coordinator?.close('Agentic Remote is shutting down')
-      ?? Promise.resolve()
-    )
-    if (active === conversation) active = undefined
+    if (conversation) {
+      await (
+        conversation.closing
+        ?? conversation.coordinator?.close('Agentic Remote is shutting down')
+        ?? Promise.resolve()
+      )
+      if (active === conversation) active = undefined
+    }
   })
 }
 
@@ -280,6 +288,7 @@ function selectBackend(options: OracleVoiceRouteOptions): SelectedVoiceBackend {
       busy: false,
       connector: remoteConnector(options.computers, selected.id),
       limits,
+      releasesPendingStart: false,
     }
   }
 
@@ -302,6 +311,7 @@ function selectBackend(options: OracleVoiceRouteOptions): SelectedVoiceBackend {
     busy: local.busy(),
     connector: localConnector(local, options.identity.info),
     limits,
+    releasesPendingStart: true,
   }
 }
 
@@ -320,6 +330,7 @@ function localConnector(
       )
       const session = await backend.open({
         streamId: options.streamId,
+        signal: options.signal,
         send: (output) => {
           const delivery = relay.accept(output)
           if ('direction' in output) return delivery
@@ -694,6 +705,7 @@ function unavailableSelection(
     },
     busy: false,
     limits,
+    releasesPendingStart: false,
   }
 }
 

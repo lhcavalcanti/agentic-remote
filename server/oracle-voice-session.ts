@@ -95,6 +95,7 @@ export interface VoiceBackend {
 
 interface CreateVoiceBackendSessionOptions extends VoiceBackendSessionOpenOptions {
   engine: VoiceEngineSession
+  languages?: readonly string[]
   limits?: VoiceBackendSessionLimits
   onClosed?: () => void
 }
@@ -138,6 +139,7 @@ export function createVoiceBackendSession(
 class EngineVoiceBackendSession implements VoiceBackendSession {
   private readonly streamId: string
   private readonly engine: VoiceEngineSession
+  private readonly languages: ReadonlySet<string> | undefined
   private readonly limits: VoiceBackendSessionLimits
   private readonly sendOutput: (output: VoiceBackendOutput) => Promise<void>
   private readonly terminate: (code: number, reason: string) => void
@@ -168,6 +170,9 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   constructor(options: CreateVoiceBackendSessionOptions) {
     this.streamId = options.streamId
     this.engine = options.engine
+    this.languages = options.languages
+      ? new Set(options.languages)
+      : undefined
     this.limits = options.limits ?? DEFAULT_VOICE_BACKEND_LIMITS
     validateLimits(this.limits)
     this.sendOutput = options.send
@@ -252,6 +257,12 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       case 'start':
         if (this.started) {
           throw new VoiceSessionError('Voice stream is already started', 1008)
+        }
+        if (this.languages && !this.languages.has(message.language)) {
+          throw new VoiceSessionError(
+            `Voice language "${message.language}" is not supported`,
+            1008,
+          )
         }
         this.started = true
         this.language = message.language
@@ -697,6 +708,7 @@ export class LocalVoiceBackend implements VoiceBackend {
       const session = createVoiceBackendSession({
         ...options,
         engine,
+        languages: [this.config.language],
         limits: this.selectedLimits,
         onClosed: () => {
           if (this.active === session) this.active = undefined

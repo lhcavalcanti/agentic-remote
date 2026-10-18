@@ -39,6 +39,8 @@ import {
 } from './oracle-voice-tickets.js'
 import type { RemoteVoiceClient } from './remote-voice-client.js'
 
+const VOICE_OUTPUT_DRAIN_TIMEOUT_MS = 1_000
+
 export interface OracleVoiceComputerManager {
   listComputers(): ComputerSummary[]
   connectVoice(computerId: string, streamId: string): Promise<RemoteVoiceClient>
@@ -335,7 +337,7 @@ function localConnector(
         audio: (frame) => session.audio(frame),
         close: async (reason) => {
           await session.close(reason)
-          await relay.drain()
+          await drainBackendOutput(relay)
         },
       }
     },
@@ -387,7 +389,7 @@ function remoteConnector(
           client.off('event', output)
           client.off('disconnect', disconnect)
           await client.close(reason)
-          await relay.drain()
+          await drainBackendOutput(relay)
         },
       }
     },
@@ -506,6 +508,20 @@ export function backendOutputRelay(
       return pendingBytes
     },
   }
+}
+
+async function drainBackendOutput(
+  relay: Pick<ReturnType<typeof backendOutputRelay>, 'drain'>,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    relay.drain(),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, VOICE_OUTPUT_DRAIN_TIMEOUT_MS)
+      timer.unref()
+    }),
+  ])
+  if (timer) clearTimeout(timer)
 }
 
 function backendOutputBytes(output: OracleVoiceBackendOutput): number {

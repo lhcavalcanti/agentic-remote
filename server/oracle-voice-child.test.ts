@@ -1019,6 +1019,47 @@ describe('ChildVoiceEngine parent supervision', () => {
       )).toEqual([])
     })
 
+    it('rejects cumulative sherpa VITS callback overflow before delivering any audio', async () => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const first = patternedSamples(22_050 * 8, 0)
+      const second = patternedSamples(22_050 * 4 + 1, first.length)
+      const harness = childHarness({
+        ttsGate: gate,
+        ttsProgressSamples: [first, second],
+        workerConfig: nativeTtsConfig(),
+      })
+      await initializeWorker(harness)
+
+      const synthesis = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'native-cumulative-overflow',
+        input: {
+          streamId: 'native-stream',
+          generation: 16,
+          segmentId: 'native-segment',
+          text: 'Overflow cumulatively.',
+        },
+      })
+      await new Promise((resolve) => setImmediate(resolve))
+      const eventsBeforeGenerationCompleted = workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio' || event.type === 'audio_end')
+      release()
+      await synthesis
+
+      expect(eventsBeforeGenerationCompleted).toEqual([])
+      expect(harness.messages).toContainEqual({
+        type: 'response_error',
+        requestId: 'native-cumulative-overflow',
+        message: expect.stringContaining('playable segment'),
+      })
+      expect(workerEvents(harness.messages).filter(
+        (event) => event.type === 'audio' || event.type === 'audio_end',
+      )).toEqual([])
+    })
+
     it.each([
       ['LJSpeech', 176_469],
       ['Faber', 148_224],
@@ -1136,6 +1177,45 @@ describe('ChildVoiceEngine parent supervision', () => {
       expect(cancellationFinished).toBe(false)
       release()
       await Promise.all([synthesis, cancellation])
+      expect(workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio_end')).toEqual([])
+    })
+
+    it('suppresses sherpa VITS audio_end when cancelled during final frame delivery', async () => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let audioSends = 0
+      const harness = childHarness({
+        workerConfig: nativeTtsConfig(),
+        send: async (message) => {
+          if (message.type !== 'event' || message.event.type !== 'audio') return
+          audioSends += 1
+          await gate
+        },
+      })
+      await initializeWorker(harness)
+      const synthesis = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'native-delivery',
+        input: {
+          streamId: 'native-stream',
+          generation: 17,
+          segmentId: 'native-segment',
+          text: 'Cancel final delivery.',
+        },
+      })
+      await vi.waitFor(() => expect(audioSends).toBe(1))
+      const cancellation = harness.worker.handle({
+        type: 'tts_cancel',
+        requestId: 'native-delivery-cancel',
+        streamId: 'native-stream',
+        generation: 17,
+      })
+      release()
+      await Promise.all([synthesis, cancellation])
+
       expect(workerEvents(harness.messages)
         .filter((event) => event.type === 'audio_end')).toEqual([])
     })

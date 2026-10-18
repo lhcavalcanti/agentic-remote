@@ -159,9 +159,11 @@ sentence-level early playback, not proof of incremental synthesis inside VITS.
 On the pinned sherpa-onnx-node 1.13.8 runtime, both measured packaged voices
 called `onProgress` once with the complete generated sentence at `progress=1`,
 effectively at `generateAsync` completion. The worker therefore chunks that
-complete callback (or fallback result) into protocol-safe PCM frames for
-transport, ordering, cancellation, and backpressure; it does not claim a true
-engine-incremental first-audio path.
+complete callback (or fallback result) only after generation finishes and the
+whole sentence passes the 12-second bound, then emits protocol-safe PCM frames
+for transport, ordering, cancellation, and backpressure. Measured sentence
+audio begins after full local synthesis (711 ms for LJSpeech and 610 ms for
+Faber), not through a true engine-incremental first-audio path.
 
 ## Configuration
 

@@ -15,10 +15,13 @@ hardening is integrated into the same worktree without changing Graphify.
 - Shipped profiles use one resident sherpa-onnx-node 1.13.8 VITS instance in
   the isolated voice child. The external Piper process remains only as a
   manually configured compatibility adapter.
-- Every sherpa callback and fallback result is split without building an array
-  of chunks. Encoded playback frames stay at or below the backend's 32 KiB
-  limit, sequence numbers remain monotonic across callbacks, queue accounting
-  remains bounded, and cancellation/overflow/failure suppresses `audio_end`.
+- Sherpa progress samples are copied into one fixed-capacity 12-second sentence
+  buffer and are not delivered until `generateAsync` completes. The cumulative
+  callback total is validated before any audio escapes; when progress supplied
+  samples, the duplicate `result.samples` buffer is ignored. The validated
+  sentence is then split into encoded playback frames at or below the backend's
+  32 KiB limit with monotonic sequences. Generation/delivery cancellation,
+  overflow, and delivery failure suppress `audio_end`.
 - Worker and browser now share a 12-second maximum playable segment. At
   22,050 Hz that is 264,600 samples, so the measured LJSpeech sentence
   (176,469 samples, 8.003 seconds) and Faber sentence (148,224 samples,
@@ -60,11 +63,14 @@ A warmed two-thread probe used the exact pinned packaged voices and
 | `pt_BR-faber-medium` | 610.061 ms | 6.722 s | 0.091 | one `progress=1` callback with all 148,224 samples, 0.048 ms before resolution |
 
 This meets the `<0.2` synthesis RTF target for these phrases but misses the
-300 ms warm first-audio target. Transport chunking makes the whole-sentence
-buffer protocol-safe; it does not create true engine-incremental synthesis.
-There is no speculative clause splitter: current evidence shows both packaged
-measured sentences fit the coherent 12-second bound. Longer speakable
-sentences fail synthesis explicitly while preserving Oracle's text reply.
+300 ms warm first-audio target. Sentence audio begins only after full local
+synthesis completes: 711 ms for the measured LJSpeech sentence and 610 ms for
+the measured Faber sentence. Transport chunking then makes the validated
+whole-sentence buffer protocol-safe; it does not create true
+engine-incremental synthesis. There is no speculative clause splitter: current
+evidence shows both packaged measured sentences fit the coherent 12-second
+bound. Longer speakable sentences fail synthesis explicitly while preserving
+Oracle's text reply.
 
 ## TDD evidence
 
@@ -158,6 +164,31 @@ frames and zero `audio_end`. Installer fault tests assert that `active` always
 resolves to a complete existing profile, staging and activation links do not
 leak, and concurrent same/conflicting-digest behavior remains covered.
 
+### Remaining Important-finding RED/GREEN
+
+The cumulative-overflow regression used two progress callbacks whose individual
+sizes fit the limit but whose combined size exceeded 12 seconds. Before the
+fix, the first callback's audio frames escaped while `generateAsync` was still
+running:
+
+```text
+pnpm vitest run server/oracle-voice-child.test.ts \
+  -t "rejects cumulative sherpa VITS callback overflow before delivering any audio"
+Test Files 1 failed
+Tests 1 failed | 40 skipped
+```
+
+After buffering and validating the full sentence, the same test passes with
+zero audio and zero `audio_end`. A second regression cancels while the final
+frame delivery is blocked and verifies that cancellation still suppresses
+`audio_end`:
+
+```text
+pnpm vitest run server/oracle-voice-child.test.ts
+Test Files 1 passed
+Tests 42 passed
+```
+
 ## Exact current asset and provenance facts
 
 All network assets are checksum-pinned in
@@ -184,6 +215,38 @@ license, voice provenance, and eSpeak NG runtime-data terms remain separate.
 The installer displays the profile notices before network access.
 
 ## Verification
+
+Remaining-finding focused gate:
+
+```text
+pnpm vitest run server/oracle-voice-child.test.ts \
+  server/oracle-voice-session.test.ts \
+  src/oracle-voice/playback.test.ts \
+  src/oracle-voice/client.test.ts \
+  server/oracle-voice-assets.test.ts \
+  server/oracle-voice-config.test.ts \
+  server/app-build.test.ts \
+  server/promotion-setup.test.ts \
+  server/version-policy.test.ts
+Test Files 9 passed
+Tests 168 passed
+```
+
+Fresh static/build/full gate:
+
+```text
+pnpm exec tsc -b --pretty false
+exit 0
+
+pnpm lint
+exit 0 (repository baseline warnings only)
+
+pnpm build
+exit 0; 4,338 modules transformed
+
+NODE_ENV=production pnpm check
+exit 0; lint, full Vitest suite, and production build completed
+```
 
 Review-fix focused gate:
 
@@ -257,7 +320,8 @@ build: exit 0; 4,338 modules transformed
 
 - True engine-incremental TTS first audio is still unavailable with the
   measured sherpa-onnx-node 1.13.8 VITS callback behavior; the 300 ms target
-  remains unmet.
+  remains unmet. Playback starts only after full sentence synthesis and
+  validation (610/711 ms in the measured packaged-voice probes).
 - One synthesized sentence cannot exceed 12 seconds at its native sample rate.
   Longer sentences are not partially played and currently require a shorter
   Oracle sentence rather than automatic clause splitting.

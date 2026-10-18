@@ -528,16 +528,13 @@ class ResidentVoiceWorker implements VoiceWorker {
       finish,
     }
     this.synthesis = active
-    let sequence = 0
-    let deliveredSamples = 0
-    let scheduledSamples = 0
-    let queuedSamples = 0
     let overflow: Error | undefined
     const maxPlayableSamples = (
       this.requireConfig().tts.sampleRate
       * ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS
     )
-    const maxQueuedSamples = maxPlayableSamples
+    const bufferedAudio = new Float32Array(maxPlayableSamples)
+    let bufferedSamples = 0
     const maxFrameSamples = Math.floor(
       (
         MAX_VOICE_FRAME_BYTES
@@ -545,40 +542,14 @@ class ResidentVoiceWorker implements VoiceWorker {
         - Buffer.byteLength(input.segmentId)
       ) / Int16Array.BYTES_PER_ELEMENT,
     )
-    let delivery = Promise.resolve()
-    const scheduleSamples = (samples: Float32Array): boolean => {
+    const bufferSamples = (samples: Float32Array): boolean => {
       if (overflow || this.isCancelled(active)) return false
-      if (samples.length > maxPlayableSamples - scheduledSamples) {
+      if (samples.length > maxPlayableSamples - bufferedSamples) {
         overflow = new Error('sherpa VITS audio exceeded the playable segment limit')
         return false
       }
-      for (let offset = 0; offset < samples.length; offset += maxFrameSamples) {
-        if (overflow || this.isCancelled(active)) return false
-        const sampleCount = Math.min(maxFrameSamples, samples.length - offset)
-        if (sampleCount > maxQueuedSamples - queuedSamples) {
-          overflow = new Error('sherpa VITS audio exceeded the bounded output queue')
-          return false
-        }
-        const copy = Float32Array.from(samples.subarray(offset, offset + sampleCount))
-        scheduledSamples += copy.length
-        queuedSamples += copy.length
-        const currentSequence = sequence
-        sequence += 1
-        delivery = delivery.then(async () => {
-          queuedSamples -= copy.length
-          if (this.isCancelled(active)) return
-          deliveredSamples += copy.length
-          await this.emit({
-            type: 'audio',
-            streamId: input.streamId,
-            generation: input.generation,
-            segmentId: input.segmentId,
-            sequence: currentSequence,
-            sampleRate: this.requireConfig().tts.sampleRate,
-            samples: float32ToPcm16(copy),
-          })
-        })
-      }
+      bufferedAudio.set(samples, bufferedSamples)
+      bufferedSamples += samples.length
       return true
     }
     try {
@@ -589,17 +560,31 @@ class ResidentVoiceWorker implements VoiceWorker {
         text: input.text,
         sid: speaker,
         speed: 1,
-        onProgress: ({ samples }) => scheduleSamples(samples),
+        onProgress: ({ samples }) => bufferSamples(samples),
       })
-      await delivery
       if (overflow) throw overflow
       if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
-      if (deliveredSamples === 0 && result.samples.length > 0) {
-        scheduleSamples(result.samples)
-        await delivery
+      if (bufferedSamples === 0 && result.samples.length > 0) {
+        bufferSamples(result.samples)
         if (overflow) throw overflow
         if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
       }
+      let sequence = 0
+      for (let offset = 0; offset < bufferedSamples; offset += maxFrameSamples) {
+        if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
+        const end = Math.min(offset + maxFrameSamples, bufferedSamples)
+        await this.emit({
+          type: 'audio',
+          streamId: input.streamId,
+          generation: input.generation,
+          segmentId: input.segmentId,
+          sequence,
+          sampleRate: this.requireConfig().tts.sampleRate,
+          samples: float32ToPcm16(bufferedAudio.subarray(offset, end)),
+        })
+        sequence += 1
+      }
+      if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
       await this.emit({
         type: 'audio_end',
         streamId: input.streamId,

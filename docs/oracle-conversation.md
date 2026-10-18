@@ -123,9 +123,12 @@ hardware promises:
   `generateAsync` resolved. The current engine path is therefore not
   incremental within a sentence and misses the 300 ms warm first-audio target.
 - Conversation can still start a completed Oracle sentence before the full
-  Oracle reply finishes. The worker splits the whole-sentence callback into
-  ordered protocol-safe PCM frames, but that transport chunking is
-  sentence-level early playback, not evidence of true incremental synthesis.
+  Oracle reply finishes. For each sentence, the worker buffers and validates
+  the complete local synthesis result before splitting it into ordered
+  protocol-safe PCM frames. Sentence audio therefore began after 711 ms for the
+  measured LJSpeech phrase and 610 ms for Faber, not incrementally during
+  engine generation. This is sentence-level early playback relative to the
+  Oracle reply, not evidence of true incremental synthesis.
   A single synthesized sentence is bounded to 12 seconds at the voice's native
   sample rate in both the worker and browser. The measured LJSpeech
   (176,469 samples at 22,050 Hz) and Faber (148,224 samples) sentences fit; a

@@ -25,6 +25,17 @@ import {
   waitForProcessCommand,
 } from './tmux-test-helpers.js'
 
+// Counts per-process `/proc/<pid>/stat` reads; every call still reads the real file.
+const procStatReads = vi.hoisted(() => ({ count: 0 }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  const readFile = ((file: Parameters<typeof actual.readFile>[0], ...rest: unknown[]) => {
+    if (typeof file === 'string' && /^\/proc\/\d+\/stat$/.test(file)) procStatReads.count += 1
+    return (actual.readFile as (...args: unknown[]) => unknown)(file, ...rest)
+  }) as typeof actual.readFile
+  return { ...actual, readFile, default: { ...actual, readFile } }
+})
+
 const execFileAsync = promisify(execFile)
 const directories: string[] = []
 const tmuxSessions: string[] = []
@@ -260,6 +271,52 @@ describe('active Copilot processes', () => {
       ),
     ).toBe(false)
     expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(false)
+  })
+
+  it('places candidates in tmux from one process snapshot, not a /proc walk per pane', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    // Several unrelated panes, as a busy hub has.
+    const tmuxSession = `agentic-snapshot-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxSession, 'sleep', '60'])
+    for (let pane = 0; pane < 3; pane += 1) {
+      await execFileAsync('tmux', ['new-window', '-d', '-t', `${tmuxSession}:`, 'sleep', '60'])
+    }
+    // The owned session, in a pane of its own.
+    const sessionId = 'abababab-1234-1234-1234-123456789abc'
+    const executable = path.join(directory, 'copilot-snapshot.cjs')
+    await writeFile(executable, 'setTimeout(() => {}, 60_000)\n')
+    await execFileAsync('tmux', [
+      'new-window', '-d', '-t', `${tmuxSession}:`, '-e', `COPILOT_HOME=${copilotHome}`,
+      process.execPath, executable, '--session-id', sessionId,
+    ])
+    const owner = Number.parseInt((await execFileAsync('tmux', [
+      'list-panes', '-a', '-F', '#{pane_pid} #{pane_start_command}',
+    ])).stdout.split('\n').find((line) => line.includes(sessionId))!, 10)
+    await waitForProcessCommand(owner, [executable, sessionId])
+    // Session-shaped processes outside tmux, such as test fixtures left
+    // running on the host, are candidates that no pane contains.
+    const outside = Array.from({ length: 6 }, (_, index) => spawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 60_000)', '--', '--session-id', `cdcdcdcd-1234-1234-1234-12345678900${index}`],
+      { stdio: 'ignore' },
+    ))
+    try {
+      for (const child of outside) await waitForProcessCommand(child.pid!, ['--session-id'])
+      procStatReads.count = 0
+      const found = await findActiveCopilotProcesses()
+      expect(found.filter((processInfo) => processInfo.sessionId === sessionId))
+        .toEqual([{ pid: owner, sessionId, source: 'argument' }])
+      expect(found.some((processInfo) => processInfo.sessionId.startsWith('cdcdcdcd'))).toBe(false)
+      // Ancestry comes from the process table read once; reads that grew with
+      // candidates x panes x depth made each send wait on hundreds of them.
+      expect(procStatReads.count).toBe(0)
+    } finally {
+      for (const child of outside) child.kill('SIGTERM')
+    }
   })
 
   it('terminates a lock-discovered external Copilot process', async () => {

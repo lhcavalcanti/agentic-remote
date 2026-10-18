@@ -219,6 +219,11 @@ Do not weaken these without an explicit product decision.
   an in-flight write; the snapshot is taken when the write starts, so every
   caller's mutation is still durable when its promise resolves.
 - Avoid adding work proportional to total history to the 750 ms transcript poll.
+- Between polls, a 100 ms check reads only each terminal session's event-log
+  size and time; a change is taken in at once, but no session more than once
+  per 750 ms, so busy sessions cost no more than the poll alone.
+- Process discovery places candidates in tmux from the parents in its single
+  `ps` listing; do not reintroduce per-pane `/proc` ancestry walks.
 
 ## Validating a change
 

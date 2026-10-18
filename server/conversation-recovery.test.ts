@@ -65,6 +65,10 @@ function sdkSession(
 async function recoveryFixture(backend: 'sdk' | 'terminal') {
   const directory = path.resolve(`.issue235-recovery-${randomUUID()}`)
   await mkdir(directory, { recursive: true })
+  // Copilot's own state for these sessions only. Left at the default, the
+  // service discovers the sessions running on this computer and spends the
+  // test reading their logs, which nothing here is about.
+  vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
   const store = new SessionStore(path.join(directory, 'state'))
   await store.initialize()
   await store.create({

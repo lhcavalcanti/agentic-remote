@@ -330,6 +330,13 @@ function isUncertainDelivery(error: unknown): boolean {
   return deliveryUncertaintyFromError(error) === true
 }
 
+// The watcher's pass over every session, and how often a session's event log
+// is checked for something new between passes.
+const TRANSCRIPT_POLL_MS = 750
+const TRANSCRIPT_WAKE_MS = 100
+// How long a message handed to a terminal is watched for in its event log.
+const TRANSCRIPT_ECHO_WAIT_MS = 5_000
+
 const sessionInUseMessage =
   'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
 
@@ -1904,6 +1911,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private discoveryInFlight?: Promise<void>
   private transcriptTimer?: NodeJS.Timeout
   private transcriptInFlight?: Promise<void>
+  private transcriptWakeTimer?: NodeJS.Timeout
+  private transcriptWake?: Promise<void>
+  // One transcript sync per session at a time, whether the watcher or a wake
+  // started it.
+  private readonly transcriptSessionSyncs = new Map<string, Promise<void>>()
+  // When each session last had a changed event log taken in.
+  private readonly transcriptChangesTakenAt = new Map<string, number>()
+  // Sessions just handed a message, and when: their changes are taken in at
+  // once, even inside the watcher's interval, until that message is logged.
+  private readonly awaitedTranscriptEchoes = new Map<string, number>()
   private externalSessionIds = new Set<string>()
   private readonly launchingTerminalSessionIds = new Set<string>()
   private discoveryGeneration = 0
@@ -2239,9 +2256,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }, 10_000)
     this.discoveryTimer.unref()
     this.transcriptTimer = setInterval(() => {
-      void this.refreshTranscripts()
-    }, 750)
+      void this.refreshTranscripts(Date.now())
+    }, TRANSCRIPT_POLL_MS)
     this.transcriptTimer.unref()
+    this.transcriptWakeTimer = setInterval(() => {
+      this.transcriptWake ??= this.wakeChangedTranscripts().finally(() => {
+        this.transcriptWake = undefined
+      })
+    }, TRANSCRIPT_WAKE_MS)
+    this.transcriptWakeTimer.unref()
   }
 
   private async finishStartupRecovery(phases: StartupPhases = silentStartupPhases): Promise<void> {
@@ -2362,6 +2385,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             this.publish(claimed)
             if (terminal) {
               let sent: boolean
+              const handedAt = Date.now()
               try {
                 sent = this.terminalController.sendWhenIdle
                   ? await this.terminalController.sendWhenIdle(sessionId, seed.prompt)
@@ -2374,6 +2398,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                 throw error
               }
               if (!sent) throw new Error('Fresh terminal session did not accept the recovery brief')
+              this.awaitTranscriptEcho(sessionId, handedAt)
               handedOff = true
               this.admissions.markCommitted(sessionId)
               const admitted = await this.store.admitRecoverySeed(
@@ -2478,6 +2503,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       clearInterval(this.transcriptTimer)
       this.transcriptTimer = undefined
     }
+    if (this.transcriptWakeTimer) {
+      clearInterval(this.transcriptWakeTimer)
+      this.transcriptWakeTimer = undefined
+    }
     for (const permission of this.permissions.values()) {
       permission.resolve({ kind: 'user-not-available' })
     }
@@ -2501,6 +2530,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.admissions.wait()
     await Promise.allSettled([...this.pendingAcknowledgements.values()])
     await Promise.allSettled([
+      this.transcriptWake,
+      ...this.transcriptSessionSyncs.values(),
       ...this.sdkQueueWakeups.values(),
       ...this.terminalQueueWakeups.values(),
       ...this.loadingSessions.values(),
@@ -4033,6 +4064,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
+      this.transcriptChangesTakenAt.delete(id)
+      this.awaitedTranscriptEchoes.delete(id)
       this.workspaceVersions.delete(id)
       this.backgroundTaskSyncs.delete(id)
       this.backgroundTaskTracker.remove(id)
@@ -5277,9 +5310,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue: boolean,
     options?: TerminalSendOptions,
   ): Promise<boolean> {
+    const handedAt = Date.now()
     try {
       const sent = await this.terminalController.send(sessionId, content, enqueue, ...(options ? [options] : []))
-      if (sent) this.admissions.markCommitted(sessionId)
+      if (sent) {
+        this.admissions.markCommitted(sessionId)
+        // A message Copilot queues itself is only logged when its turn comes.
+        if (!enqueue) this.awaitTranscriptEcho(sessionId, handedAt)
+      }
       return sent
     } catch (error) {
       if (error && typeof error === 'object' &&
@@ -7809,11 +7847,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return refresh
   }
 
-  refreshTranscripts(): Promise<void> {
+  /**
+   * Takes in every session's latest events. The watcher passes when it
+   * started, so a session a wake took in within its interval waits for the
+   * next pass; a direct call takes everything in now.
+   */
+  refreshTranscripts(passStartedAt?: number): Promise<void> {
     if (this.transcriptInFlight) {
       return this.transcriptInFlight
     }
-    const refresh = this.syncTranscripts()
+    const refresh = this.syncTranscripts(passStartedAt)
       .catch((error: unknown) => {
         this.publishError('', error)
       })
@@ -7824,7 +7867,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return refresh
   }
 
-  private async syncTranscripts(): Promise<void> {
+  private async syncTranscripts(passStartedAt?: number): Promise<void> {
     if (this.stopped) return
     const sessionIds = new Set([
       ...this.externalSessionIds,
@@ -7834,162 +7877,226 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...this.pendingTerminalQueueClaims.keys(),
     ])
     await Promise.all(
-      [...sessionIds].map(async (sessionId) => {
-        if (this.isTerminalRecoveryPending(sessionId)) return
-        const pendingDispatchAt = this.pendingTerminalPromptDispatches.get(sessionId)
-        if (pendingDispatchAt) {
-          const current = this.store.get(sessionId)
-          if (!current || current.suspended || this.deletedSessionIds.has(sessionId)) {
-            this.pendingTerminalPromptDispatches.delete(sessionId)
-          } else {
-            if (!this.admissions.canEnter(sessionId)) return
-            await this.admissions.run(sessionId, async () => {
-              const delivered = await this.persistTerminalPromptDispatch(sessionId, pendingDispatchAt)
-              this.publish(delivered)
-            })
-          }
-        }
-        const retry = this.pendingTerminalQueueClaims.get(sessionId)
-        if (
-          this.pendingTerminalQueueSettlements.has(sessionId) ||
-          (retry && Date.now() >= retry.retryAt)
-        ) {
-          await this.drainTerminalQueue(sessionId)
-        }
-        if (
-          this.stopped ||
-          this.activePrompts.has(sessionId) ||
-          this.deletedSessionIds.has(sessionId) ||
-          !this.store.get(sessionId)
-        ) {
-          return
-        }
-        const observed = this.observeTranscript(sessionId)
-        if (!this.store.isCurrentTranscript(sessionId, observed)) return
-        if (this.externalSessionIds.has(sessionId)) {
-          await this.syncExternalWorkspace(sessionId)
-          await this.syncTerminalUserInput(sessionId)
-          await this.syncTerminalUpdateNotice(sessionId)
-        }
-        const version = await this.sessionEventVersion(sessionId)
-        if (!version || this.eventLogVersions.get(sessionId) === version) {
-          await this.recoverHiddenUserInput(sessionId)
-          return
-        }
-        const events = await this.sessionEventReader(sessionId)
-        if (!this.store.isCurrentTranscript(sessionId, observed)) return
-        const terminalTasks = this.externalSessionIds.has(sessionId)
-          ? backgroundTasksFromEvents(events, { assumeBackground: true })
-          : []
-        if (this.externalSessionIds.has(sessionId)) {
-          this.replaceBackgroundTasks(
-            sessionId,
-            terminalTasks,
-            true,
-          )
-        }
-        const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
-        if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
-          await this.recoverHiddenUserInput(sessionId, events)
-          return
-        }
-        const historyMessages = messagesFromHistory(events)
-        const eventUserInput = pendingUserInputFromEvents(events)
-        const external = this.externalSessionIds.has(sessionId)
-        const watermark = this.liveTranscriptWatermarks.get(sessionId)
-        const lastEventTimestamp = events.at(-1)?.timestamp
-        if (
-          watermark &&
-          (!lastEventTimestamp ||
-            Date.parse(lastEventTimestamp) < Date.parse(watermark))
-        ) {
-          this.eventLogVersions.set(sessionId, version)
-          await this.recoverHiddenUserInput(sessionId, events)
-          return
-        }
-        let status = statusFromEvents(events)
-        const queueDispatchAt = this.store.queueDispatchAt(sessionId)
-        if (queueDispatchAt) {
-          const dispatchTime = Date.parse(queueDispatchAt)
-          const completion = events.some(
-            (event) =>
-              Date.parse(event.timestamp) >= dispatchTime &&
-              isForegroundCompletionEvent(event),
-          )
-          if (completion) {
-            await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
-          } else {
-            status = 'running'
-          }
-        }
-        const activity = historyMessages
-          .findLast(
-            (message) =>
-              message.role === 'activity' &&
-              message.activityStatus === 'running',
-          )
-          ?.content.split('\n', 1)[0]
-        const contextCwd = events.some(
-          (event) =>
-            event.type === 'session.context_changed' &&
-            !eventAgentId(event),
-        )
-        if (
-          this.activePrompts.has(sessionId) ||
-          this.deletedSessionIds.has(sessionId) ||
-          !this.store.get(sessionId)
-        ) {
-          return
-        }
-        const updated = await this.store.replaceTranscript(
-          sessionId,
-          (session) => [
-            ...historyMessages,
-            ...session.messages.filter((message) => message.role === 'notice'),
-          ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-          status,
-          activity,
-          (session) => runtimeInfoFromEvents(events, session.runtime, this.modelPromptLimits),
-          (session) => workingDirectoryFromEvents(events, session.cwd),
-          contextCwd,
-          (session) => {
-            const storedUserInput =
-              !external || session.pendingUserInput?.requestId.startsWith('terminal:')
-                ? session.pendingUserInput
-                : undefined
-            return storedUserInput || eventUserInput || null
-          },
-          queueDispatchAt,
-          observed,
-        )
-        if (!updated || !this.store.isCurrentTranscript(sessionId, observed)) return
-        this.eventLogFingerprints.set(sessionId, fingerprint)
-        this.eventLogVersions.set(sessionId, version)
-        if (this.liveTranscriptWatermarks.get(sessionId) === watermark) {
-          this.liveTranscriptWatermarks.delete(sessionId)
-        }
-        this.publish(updated)
-        const latestCompletionAt = events.findLast(
-          (event) =>
-            // A turn that handed its work to background agents ends before
-            // they do, so the last agent finishing is the completion a prompt
-            // queued behind them is waiting on.
-            isForegroundCompletionEvent(event) ||
-            event.type === 'subagent.completed' ||
-            event.type === 'subagent.failed',
-        )?.timestamp
-        const firstQueuedAt = updated.queuedPrompts?.[0]?.createdAt
-        if (
-          status === 'idle' &&
-          this.externalSessionIds.has(sessionId) &&
-          firstQueuedAt &&
-          latestCompletionAt &&
-          Date.parse(latestCompletionAt) >= Date.parse(firstQueuedAt)
-        ) {
-          await this.drainTerminalQueue(sessionId)
-        }
-      }),
+      [...sessionIds].map((sessionId) => this.syncSessionTranscript(sessionId, passStartedAt)),
     )
+  }
+
+  /**
+   * Takes in a terminal session's newly logged events as soon as they land,
+   * rather than on the watcher's next pass up to an interval later -- which
+   * is most of the wait between sending a message and seeing it. Only the
+   * event log's size and time are read until something changed, and a session
+   * already taken in within the watcher's interval waits for its next pass, so
+   * a busy session is not synced any more often than before.
+   */
+  private async wakeChangedTranscripts(): Promise<void> {
+    if (this.stopped) return
+    const wokeAt = Date.now()
+    try {
+      await Promise.all([...this.externalSessionIds].map(async (sessionId) => {
+        if (this.transcriptSessionSyncs.has(sessionId) || this.transcriptPaced(sessionId, wokeAt)) return
+        const version = await this.sessionEventVersion(sessionId)
+        if (!version || this.eventLogVersions.get(sessionId) === version) return
+        await this.syncSessionTranscript(sessionId, wokeAt)
+      }))
+    } catch (error) {
+      this.publishError('', error)
+    }
+  }
+
+  /**
+   * Whether a session's changes were taken in too recently to take in again
+   * at `at`, unless a message just handed to it is still to be logged.
+   */
+  private transcriptPaced(sessionId: string, at: number): boolean {
+    const handedAt = this.awaitedTranscriptEchoes.get(sessionId)
+    if (handedAt !== undefined) {
+      if (at - handedAt <= TRANSCRIPT_ECHO_WAIT_MS) return false
+      this.awaitedTranscriptEchoes.delete(sessionId)
+    }
+    const takenAt = this.transcriptChangesTakenAt.get(sessionId)
+    return takenAt !== undefined && at - takenAt < TRANSCRIPT_POLL_MS
+  }
+
+  /** Watches for a message handed to a terminal at `handedAt` to be logged. */
+  private awaitTranscriptEcho(sessionId: string, handedAt: number): void {
+    this.awaitedTranscriptEchoes.set(sessionId, handedAt)
+  }
+
+  private syncSessionTranscript(sessionId: string, pacedAt?: number): Promise<void> {
+    const running = this.transcriptSessionSyncs.get(sessionId)
+    if (running) return running
+    const sync = this.syncTranscriptFor(sessionId, pacedAt).finally(() => {
+      if (this.transcriptSessionSyncs.get(sessionId) === sync) {
+        this.transcriptSessionSyncs.delete(sessionId)
+      }
+    })
+    this.transcriptSessionSyncs.set(sessionId, sync)
+    return sync
+  }
+
+  private async syncTranscriptFor(sessionId: string, pacedAt?: number): Promise<void> {
+    if (this.isTerminalRecoveryPending(sessionId)) return
+    const pendingDispatchAt = this.pendingTerminalPromptDispatches.get(sessionId)
+    if (pendingDispatchAt) {
+      const current = this.store.get(sessionId)
+      if (!current || current.suspended || this.deletedSessionIds.has(sessionId)) {
+        this.pendingTerminalPromptDispatches.delete(sessionId)
+      } else {
+        if (!this.admissions.canEnter(sessionId)) return
+        await this.admissions.run(sessionId, async () => {
+          const delivered = await this.persistTerminalPromptDispatch(sessionId, pendingDispatchAt)
+          this.publish(delivered)
+        })
+      }
+    }
+    const retry = this.pendingTerminalQueueClaims.get(sessionId)
+    if (
+      this.pendingTerminalQueueSettlements.has(sessionId) ||
+      (retry && Date.now() >= retry.retryAt)
+    ) {
+      await this.drainTerminalQueue(sessionId)
+    }
+    if (
+      this.stopped ||
+      this.activePrompts.has(sessionId) ||
+      this.deletedSessionIds.has(sessionId) ||
+      !this.store.get(sessionId)
+    ) {
+      return
+    }
+    const observed = this.observeTranscript(sessionId)
+    if (!this.store.isCurrentTranscript(sessionId, observed)) return
+    if (this.externalSessionIds.has(sessionId)) {
+      await this.syncExternalWorkspace(sessionId)
+      await this.syncTerminalUserInput(sessionId)
+      await this.syncTerminalUpdateNotice(sessionId)
+    }
+    const version = await this.sessionEventVersion(sessionId)
+    if (!version || this.eventLogVersions.get(sessionId) === version) {
+      await this.recoverHiddenUserInput(sessionId)
+      return
+    }
+    // A change taken in moments ago by a wake; the next pass takes this in.
+    if (pacedAt !== undefined && this.transcriptPaced(sessionId, pacedAt)) return
+    this.transcriptChangesTakenAt.set(sessionId, pacedAt ?? Date.now())
+    const events = await this.sessionEventReader(sessionId)
+    const handedAt = this.awaitedTranscriptEchoes.get(sessionId)
+    if (handedAt !== undefined && events.some((event) =>
+      event.type === 'user.message' && Date.parse(event.timestamp) >= handedAt)) {
+      this.awaitedTranscriptEchoes.delete(sessionId)
+    }
+    if (!this.store.isCurrentTranscript(sessionId, observed)) return
+    const terminalTasks = this.externalSessionIds.has(sessionId)
+      ? backgroundTasksFromEvents(events, { assumeBackground: true })
+      : []
+    if (this.externalSessionIds.has(sessionId)) {
+      this.replaceBackgroundTasks(
+        sessionId,
+        terminalTasks,
+        true,
+      )
+    }
+    const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
+    if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
+      await this.recoverHiddenUserInput(sessionId, events)
+      return
+    }
+    const historyMessages = messagesFromHistory(events)
+    const eventUserInput = pendingUserInputFromEvents(events)
+    const external = this.externalSessionIds.has(sessionId)
+    const watermark = this.liveTranscriptWatermarks.get(sessionId)
+    const lastEventTimestamp = events.at(-1)?.timestamp
+    if (
+      watermark &&
+      (!lastEventTimestamp ||
+        Date.parse(lastEventTimestamp) < Date.parse(watermark))
+    ) {
+      this.eventLogVersions.set(sessionId, version)
+      await this.recoverHiddenUserInput(sessionId, events)
+      return
+    }
+    let status = statusFromEvents(events)
+    const queueDispatchAt = this.store.queueDispatchAt(sessionId)
+    if (queueDispatchAt) {
+      const dispatchTime = Date.parse(queueDispatchAt)
+      const completion = events.some(
+        (event) =>
+          Date.parse(event.timestamp) >= dispatchTime &&
+          isForegroundCompletionEvent(event),
+      )
+      if (completion) {
+        await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
+      } else {
+        status = 'running'
+      }
+    }
+    const activity = historyMessages
+      .findLast(
+        (message) =>
+          message.role === 'activity' &&
+          message.activityStatus === 'running',
+      )
+      ?.content.split('\n', 1)[0]
+    const contextCwd = events.some(
+      (event) =>
+        event.type === 'session.context_changed' &&
+        !eventAgentId(event),
+    )
+    if (
+      this.activePrompts.has(sessionId) ||
+      this.deletedSessionIds.has(sessionId) ||
+      !this.store.get(sessionId)
+    ) {
+      return
+    }
+    const updated = await this.store.replaceTranscript(
+      sessionId,
+      (session) => [
+        ...historyMessages,
+        ...session.messages.filter((message) => message.role === 'notice'),
+      ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      status,
+      activity,
+      (session) => runtimeInfoFromEvents(events, session.runtime, this.modelPromptLimits),
+      (session) => workingDirectoryFromEvents(events, session.cwd),
+      contextCwd,
+      (session) => {
+        const storedUserInput =
+          !external || session.pendingUserInput?.requestId.startsWith('terminal:')
+            ? session.pendingUserInput
+            : undefined
+        return storedUserInput || eventUserInput || null
+      },
+      queueDispatchAt,
+      observed,
+    )
+    if (!updated || !this.store.isCurrentTranscript(sessionId, observed)) return
+    this.eventLogFingerprints.set(sessionId, fingerprint)
+    this.eventLogVersions.set(sessionId, version)
+    if (this.liveTranscriptWatermarks.get(sessionId) === watermark) {
+      this.liveTranscriptWatermarks.delete(sessionId)
+    }
+    this.publish(updated)
+    const latestCompletionAt = events.findLast(
+      (event) =>
+        // A turn that handed its work to background agents ends before
+        // they do, so the last agent finishing is the completion a prompt
+        // queued behind them is waiting on.
+        isForegroundCompletionEvent(event) ||
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed',
+    )?.timestamp
+    const firstQueuedAt = updated.queuedPrompts?.[0]?.createdAt
+    if (
+      status === 'idle' &&
+      this.externalSessionIds.has(sessionId) &&
+      firstQueuedAt &&
+      latestCompletionAt &&
+      Date.parse(latestCompletionAt) >= Date.parse(firstQueuedAt)
+    ) {
+      await this.drainTerminalQueue(sessionId)
+    }
   }
 
   /**
@@ -9273,12 +9380,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.suspendingSessions.has(sessionId)) {
           throw new Error('The session began suspending before queued delivery; nothing was sent')
         }
+        const handedAt = Date.now()
         const sent = this.terminalController.sendWhenIdle
           ? await this.terminalController.sendWhenIdle(sessionId, next.content)
           : await this.terminalController.send(sessionId, next.content, false)
         if (!sent) {
           throw new Error('External terminal is no longer available')
         }
+        this.awaitTranscriptEcho(sessionId, handedAt)
         outcome = next.command
           ? { kind: 'feedback', command: next.content, before }
           : { kind: 'accepted', startedTurn: true }
@@ -9521,10 +9630,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const dispatchedAt = new Date().toISOString()
     try {
       delivery.submit()
+      const handedAt = Date.now()
       if (!(await this.terminalController.send(sessionId, prompt.content, false))) {
         delivery.refuse()
         throw queueConflict('The owning terminal is no longer available.')
       }
+      this.awaitTranscriptEcho(sessionId, handedAt)
     } catch (error) {
       if (terminalRefused(error)) delivery.refuse()
       throw error

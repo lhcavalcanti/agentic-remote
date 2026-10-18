@@ -558,7 +558,8 @@ export class OracleVoiceClient {
       await this.teardownConnection(CLIENT_FATAL_CLOSE_CODE, failure.message)
       if (this.manuallyStopped || this.terminalFailure) return
       if (
-        failure.code === 'protocol-mismatch'
+        failure.fatal
+        || failure.code === 'protocol-mismatch'
         || (
           failure.dictationFallback
           && failure.code !== 'capability-unavailable'
@@ -759,7 +760,7 @@ export class OracleVoiceClient {
         response.ok
           ? 'Oracle voice returned invalid capabilities'
           : responseMessage(payload, `Oracle voice capabilities failed (${response.status})`),
-        { dictationFallback: true },
+        { fatal: false, dictationFallback: true },
       )
     }
     if (payload.protocol !== ORACLE_VOICE_PROTOCOL) {
@@ -773,7 +774,7 @@ export class OracleVoiceClient {
       throw new OracleVoiceClientError(
         'capability-unavailable',
         payload.reason || 'Conversation mode is unavailable',
-        { dictationFallback: true },
+        { fatal: false, dictationFallback: true },
       )
     }
     return payload
@@ -945,7 +946,7 @@ function parseHello(data: unknown): Extract<VoiceServerControl, { type: 'hello' 
     throw new OracleVoiceClientError(
       'capability-unavailable',
       parsed.capabilities.reason || 'Conversation mode is unavailable',
-      { dictationFallback: true },
+      { fatal: false, dictationFallback: true },
     )
   }
   return parsed

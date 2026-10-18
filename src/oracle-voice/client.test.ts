@@ -123,6 +123,68 @@ describe('OracleVoiceClient', () => {
     expect(client.instance.currentState).toBe('listening')
   })
 
+  it('stops reconnecting when a reconnect socket closes for policy before hello', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+
+    client.sockets[0].serverClose(1006, 'network lost')
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('reconnecting'))
+    await client.advanceReconnect()
+    await vi.waitFor(() => expect(client.sockets).toHaveLength(2))
+
+    client.sockets[1].serverClose(1008, 'Pairing is no longer valid')
+
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('error'))
+    expect(client.errors()).toEqual([
+      expect.objectContaining({
+        code: 'socket-failed',
+        message: 'Pairing is no longer valid',
+        fatal: true,
+      }),
+    ])
+    expect(client.ticketRequests()).toBe(2)
+    expect(client.scheduler.pending()).toBe(0)
+    expect(await client.scheduler.runNext()).toBe(false)
+    expect(client.ticketRequests()).toBe(2)
+    expect(client.captures[0].stop).toHaveBeenCalledOnce()
+    expect(client.playbacks[0].close).toHaveBeenCalledOnce()
+    expect(client.playbacks[1].close).toHaveBeenCalledOnce()
+  })
+
+  it.each([1006, 1011])(
+    'keeps retrying when a reconnect socket closes transiently with %s before hello',
+    async (closeCode) => {
+      const client = harness()
+      await client.connect('stream-1')
+
+      client.sockets[0].serverClose(1006, 'network lost')
+      await vi.waitFor(() => expect(client.instance.currentState).toBe('reconnecting'))
+      await client.advanceReconnect()
+      await vi.waitFor(() => expect(client.sockets).toHaveLength(2))
+
+      client.sockets[1].serverClose(closeCode, 'temporary relay failure')
+
+      await vi.waitFor(() => {
+        expect(client.instance.currentState).toBe('reconnecting')
+        expect(client.errors()).toContainEqual(expect.objectContaining({
+          code: 'socket-failed',
+          message: 'temporary relay failure',
+          fatal: false,
+        }))
+      })
+      expect(client.scheduler.pending()).toBe(1)
+
+      await client.advanceReconnect()
+      await vi.waitFor(() => expect(client.sockets).toHaveLength(3))
+      client.sockets[2].open()
+      client.sockets[2].message(hello('stream-3'))
+      await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
+
+      expect(client.ticketRequests()).toBe(3)
+      expect(client.instance.currentState).toBe('listening')
+    },
+  )
+
   it('keeps reconnecting while the paired voice computer is temporarily unavailable', async () => {
     const client = harness()
     await client.connect('stream-1')

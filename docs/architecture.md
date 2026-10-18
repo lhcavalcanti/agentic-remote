@@ -67,6 +67,17 @@ The hub exposes computer-aware routes under:
 Local requests call the in-process session service. Remote requests are sent to
 the paired node's `/node-api` routes. The node streams its native session events
 over WebSocket; the hub adds computer identity and forwards them to browsers.
+
+A browser that opens `/api/events?patches=1` receives `session.patched` instead
+of a whole `session.upserted` once it has seen a session. A patch carries the
+session without its messages plus `{from, to, keep, count, messages}`: keep the
+first `keep` messages, append `messages`, expect `count` in total. Versions are
+per socket and per session; the first event for a session, and every event to a
+socket without the parameter, is the whole session. A patch that does not apply
+to the browser's copy is dropped and the browser sends one
+`{type: 'session.resync', computerId, sessionId}`; the hub answers with the
+latest publication in full. Node→hub links still carry whole sessions.
+
 Each node advertises provider capabilities. Legacy nodes advertise Copilot only,
 so a hub cannot accidentally create a Claude session on a node that has not
 been upgraded and authenticated.
@@ -157,6 +168,12 @@ during I/O waits for a subsequent write rather than receiving an acknowledgement
 for a snapshot that does not include it. Results are read after installation;
 they may include other mutations committed in the same batch. `flush()` waits
 for outstanding writes and propagates write failure.
+
+Serialization reuses each unchanged session's encoded bytes, keyed by the
+committed session object, and writes the file in pieces split only at JSON
+boundaries. The bytes equal `JSON.stringify` of the state. This relies on
+committed sessions never being mutated in place; tests set
+`AGENTIC_REMOTE_STORE_FREEZE=1` to deep-freeze them and fail on any such write.
 
 Session removal and replacement are separate commit boundaries, both before
 and after the destructive operation. Earlier callers receive their successful

@@ -314,7 +314,7 @@
     "config/agentic-remote-promotion.env.example": "3b93ccf7572bb980b70067dab871f06f58a8ca93d078132cc350c6342af6a2de",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
     "docs/app-spec.md": "5a8baa6d7c320d824123f07a71a0d6df6342c4fd4748f7ebbfbaf4a8e949bbc7",
-    "docs/architecture.md": "03186726ab303a65964ce1fcbd0ae094877e802f197430b940aeda606bbf074b",
+    "docs/architecture.md": "ec9fe00b2fb4d68d9edf719b0fc2be4ea510bfd10362dbeb24c6459a84d58d3c",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
@@ -360,8 +360,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "2cecc2c41040b5ccfc9d2912dc6ecc992735087f6b38a109b630bdeaa9cd39fd",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "9c729b05917e8f720b2d03978cfe5e3036f1bc6a2cd1a7400ec8c25339e740a9",
-    "server/agent-service.ts": "f611e06491316cbf9dd13955be83370e5e8db8a099e7b7d7edad38a1d798af78",
+    "server/agent-service.test.ts": "78dba96fcf670ac1488ca5c83b0894e91c2e445396ddaeff8ca5f7a790ea71f3",
+    "server/agent-service.ts": "19d6d1ac1b4984ef909ab8607d15e8ec1bdb57e7a5504a283742c53aaa5f80e3",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -472,9 +472,9 @@
     "server/session-service.ts": "8598739e2ffaa9b320e674e997fe991faa36582d48a6a5d516ca30b4a6075a29",
     "server/session-store-durability.test.ts": "0ff26c96ab3b0962cd7e177493bca5c69dd9027ec3a082d37d86255959cfb90e",
     "server/session-store-providers.test.ts": "4d307393d32bc146b93eac0df554b2d4e0b6f8ba4facefa9314ef01893b94195",
-    "server/session-store-serialization.test.ts": "f0d80679c9ce77fee44595bef8e350a5aeedf452f51912a0ebf6a2e2b0a74b55",
+    "server/session-store-serialization.test.ts": "71282d420e93f3c58082becfd38e0f5b7698f303412db76eb9c65a2b5853016c",
     "server/session-store.test.ts": "5e8a956965c564aefce60ee31beab59d5b752afa9071963eefc5eca5c318ad2e",
-    "server/session-store.ts": "b3133f1d13492ceb6dbc646889c4c88d90f7bf0dbdb79009066c47ab2cbe0712",
+    "server/session-store.ts": "6834b6b26d8008785c0d4ba5985cbc4a13392a2fc5ced9f3b75e118720b0798b",
     "server/side-question.test.ts": "bb7fe56de6bf5ed357ca35929523244836eecd39fa6abceffeeb1f5a36548ac8",
     "server/side-question.ts": "ff75273c172f073bc9cc7a7cd40d2697ad26041068714e543a84dfbcaa760b8e",
     "server/startup-phases.test.ts": "1c3b5d3130173ec4781b483d24404004602051931ccdd5fc73c8e54ce2b71c5b",
@@ -677,13 +677,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7cf4128f241df40109a96e3e2087bf4bf14e6e1317fd29dcf76a274dab38f548",
+    "GRAPH_REPORT.md": "b843695072dc1d402dbdec0bf95c7fd23e26f4ae7aa20a2b2becd0cb1fd52e4b",
     "communities.json": "7c71619331102dce38537e9558f6a33b31517e6210470ff88246038f55f52b9b",
-    "graph.html": "d19bf4a14b00c3b6fce63dbb7ed03fb0398dbad4ce48c2fe7aee5a86c698760e",
-    "graph.json": "01ea8d9dcf135036d964e731b3d890c90ec3be9483a2fa47a6b1a688d80024ba"
+    "graph.html": "06e0c706a72fef8f1840cd481389f529dab8122a095e5361da798e7eff6110cb",
+    "graph.json": "ef74f38704ee985b388c2ecce68983e8574ff6d6edb407976f698fdc85e54d5f"
   },
   "schema_version": 1,
-  "source_commit": "f1e07904713ad320d774dd2ff0ad078a9eb730a5",
-  "source_fingerprint": "3c5a68e02ba4fe61e3f6a7eaa002acce63ff65ce42b1042eaef1a072cd077e24",
+  "source_commit": "5f630066358fac9591750d814760e105d7860d40",
+  "source_fingerprint": "bb9c9fc5021935150d1bc71775c859624482fc1120b6067da4c00aa74adeebbb",
   "working_tree_changes": []
 }

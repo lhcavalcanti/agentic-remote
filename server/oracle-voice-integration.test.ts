@@ -21,6 +21,7 @@ import type {
   ManagerClientDefaults,
   ManagerEvent,
   ManagerMessage,
+  ManagerSubmissionOptions,
   ManagerSnapshot,
 } from '../shared/manager.js'
 import { buildApp } from './app.js'
@@ -142,7 +143,7 @@ class StoredManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
   private async sendMessage(
     content: string,
     _defaults?: ManagerClientDefaults,
-    options?: { answerOnly?: boolean },
+    options?: ManagerSubmissionOptions,
   ): Promise<ManagerMessage> {
     if (this.failSend) throw this.failSend
     const message: ManagerMessage = {
@@ -884,6 +885,7 @@ describe('Oracle voice cross-layer integration', () => {
   it('streams one local Oracle turn through the same visible manager deltas used for TTS', async () => {
     const root = await testRoot('oracle-voice-real-manager')
     const manager = await createRealManager(root)
+    const send = vi.spyOn(manager.agent, 'send')
     const voice = availableBackend()
     const built = await buildApp({
       dataDirectory: root,
@@ -933,7 +935,7 @@ describe('Oracle voice cross-layer integration', () => {
     sendControl(test.browser, test.streamId, 'start', 7, {
       language: 'en',
       defaults,
-      answerOnly: true,
+      answerOnly: false,
     })
     await vi.waitFor(() => {
       expect(engineCalls(test.engine, 'stt.start')).toEqual([])
@@ -1016,6 +1018,11 @@ describe('Oracle voice cross-layer integration', () => {
     const userMessage = test.manager.store.messages().find(
       (message) => message.role === 'user',
     )!
+    expect(send).toHaveBeenCalledWith(
+      'Run the focused tests.',
+      defaults,
+      { answerOnly: true, source: 'voice' },
+    )
     expect(userMessage).toMatchObject({
       role: 'user',
       content: 'Run the focused tests.',
@@ -1404,7 +1411,7 @@ describe('Oracle voice cross-layer integration', () => {
     sendControl(browser, hello.streamId, 'start', 20, {
       language: 'en',
       defaults,
-      answerOnly: true,
+      answerOnly: false,
     })
     sendControl(browser, hello.streamId, 'speech_confirmed', 21, {
       utteranceId: 'remote-21',
@@ -1466,7 +1473,7 @@ describe('Oracle voice cross-layer integration', () => {
     expect(manager.send).toHaveBeenCalledWith(
       transcriptSentinel,
       defaults,
-      { answerOnly: true },
+      { answerOnly: true, source: 'voice' },
     )
     const user = manager.submitted[0]
     const managerDeltaSentinel = 'paired-manager-tts-4b027dc1.'

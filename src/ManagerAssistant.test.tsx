@@ -829,6 +829,35 @@ describe('ManagerAssistant', () => {
       )).toBeVisible()
     })
 
+    it('keeps Conversation voice Ask-only when the panel default is Delegate', async () => {
+      localStorage.setItem('agentic-remote:oracle-answer-only', 'false')
+      vi.mocked(sendManagerMessage).mockResolvedValue({
+        id: 'typed-delegate',
+        role: 'user',
+        content: 'Typed delegation stays enabled',
+        createdAt: 't',
+        state: 'queued',
+      })
+      setup()
+      await openPanel()
+
+      expect(useOracleConversation).toHaveBeenLastCalledWith(
+        expect.objectContaining({ answerOnly: true }),
+      )
+      expect(screen.getByText(
+        'Conversation voice is Ask-only and cannot delegate. The mode switch still controls typed messages.',
+      )).toBeVisible()
+
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'Typed delegation stays enabled' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(
+        'Typed delegation stays enabled',
+        expect.anything(),
+        { answerOnly: false },
+      ))
+    })
+
     it('restores every failed final delivered by the identity-deduplicating hook', async () => {
       vi.mocked(useOracleConversation).mockReturnValue(conversationState('thinking'))
       setup()

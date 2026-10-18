@@ -1306,6 +1306,18 @@ describe('ManagerAgent', () => {
     expect(sdk.prompts[1]).not.toContain('Ask mode')
   })
 
+  it('forces voice-provenance submissions into Ask mode', async () => {
+    await start()
+
+    const message = await agent!.send(
+      'Ambient speech must not delegate work',
+      undefined,
+      { answerOnly: false, source: 'voice' },
+    )
+
+    expect(message.answerOnly).toBe(true)
+  })
+
   it('steers a session through what it is waiting on, and reaches closed sessions', async () => {
     vi.mocked(hub.readSession).mockImplementation(async (_computerId, id) => id !== 'existing' ? session(id) : session('existing', {
       status: 'waiting',

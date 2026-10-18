@@ -15,6 +15,7 @@ import {
 import type {
   ManagerClientDefaults,
   ManagerMessage,
+  ManagerSubmissionOptions,
   ManagerSnapshot,
 } from '../shared/manager.js'
 import type { VoiceBackendCapability } from '../shared/contracts.js'
@@ -141,7 +142,7 @@ class RouteManager extends EventEmitter {
   readonly send = vi.fn(async (
     content: string,
     _defaults?: ManagerClientDefaults,
-    options?: { answerOnly?: boolean },
+    options?: ManagerSubmissionOptions,
   ): Promise<ManagerMessage> => ({
     id: randomUUID(),
     role: 'user',

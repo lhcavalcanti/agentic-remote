@@ -13,6 +13,26 @@ FLEURS-derived corpus, benchmark JSON/Markdown, a real
 browser/hub/resident-sherpa test, and a real-time soak. This review round makes
 their evidence accurately exercise and describe production behavior.
 
+After that evidence pass, a confirmed security review finding showed that the
+coordinator copied the panel's Delegate selection into finalized voice
+submissions. The correction keeps explicit `source: 'voice'` provenance
+through the coordinator/`ManagerAgent.send` boundary and forces
+`answerOnly: true` at both layers. Local and paired-node finals now share the
+same hub policy; typed/manual Delegate remains unchanged. The UI explicitly
+states that Conversation voice is Ask-only. VAD remains speech detection, not
+speaker authentication.
+
+Security-finding TDD evidence:
+
+- RED: the focused coordinator, real-manager/local integration, paired-node
+  integration, ManagerAgent, and UI command failed 5 tests across 4 files. The
+  observed calls carried `{ answerOnly: false }` without voice provenance, the
+  stored ManagerAgent message was not Ask-only, and the UI hook received the
+  Delegate default.
+- GREEN: the same command passed 5/5 focused tests; the affected
+  security/integration/UI command passed 228/228 tests across 9 files.
+- Full gates: `pnpm check` and `NODE_ENV=production pnpm check` both exited 0.
+
 ## Strict TDD evidence
 
 Each finding had a failing regression before its minimal implementation:

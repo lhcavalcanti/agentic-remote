@@ -25,6 +25,7 @@ import type {
   ManagerClientDefaults,
   ManagerEvent,
   ManagerMessage,
+  ManagerSubmissionOptions,
   ManagerSnapshot,
 } from '../shared/manager.js'
 import { buildApp } from './app.js'
@@ -117,7 +118,7 @@ class SecurityManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
   private async sendMessage(
     content: string,
     _defaults?: ManagerClientDefaults,
-    options?: { answerOnly?: boolean },
+    options?: ManagerSubmissionOptions,
   ): Promise<ManagerMessage> {
     const message: ManagerMessage = {
       id: `stored-${this.send.mock.calls.length}`,
@@ -840,7 +841,7 @@ describe('Oracle voice transport security and privacy', () => {
     expect(runtime.manager.send).toHaveBeenCalledWith(
       transcript,
       {},
-      { answerOnly: true },
+      { answerOnly: true, source: 'voice' },
     )
     await runtime.manager.store.flush()
     await closeSocket(client.socket)

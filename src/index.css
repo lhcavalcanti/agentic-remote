@@ -8144,6 +8144,13 @@ button {
   line-height: 1.35;
 }
 
+.manager-conversation-policy {
+  margin: 0 0 6px;
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .manager-conversation-stop {
   display: inline-flex;
   min-height: 44px;

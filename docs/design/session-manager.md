@@ -334,10 +334,14 @@ profile is configured. `agentic-remote voice-install <profile>` is the only
 model installation path; ordinary setup and startup do not download assets.
 The selected speech computer performs STT and TTS locally without persisting
 raw PCM, synthesized audio, or partial transcripts. Each finalized transcript
-is submitted exactly once through normal `ManagerAgent.send`, persists as the
-normal Oracle user message in conversation history, and goes with the normal
-generated turn context to Oracle's remote Copilot model. No separate voice
-transcript or recording artifact is persisted.
+is submitted exactly once through normal `ManagerAgent.send` with hub-trusted
+voice provenance and forced Ask-only semantics. The panel's Ask/Delegate
+selection applies to typed messages only; it cannot make Conversation voice
+delegate work, steer sessions, answer permission or trust prompts, or approve
+destructive confirmation actions. The message persists as the normal Oracle
+user message in conversation history and goes with the normal generated turn
+context to Oracle's remote Copilot model. No separate voice transcript or
+recording artifact is persisted.
 
 A hub with `AGENTIC_REMOTE_VOICE_COMPUTER` needs only enablement and the paired
 computer selection; it does not validate or load local speech paths. The node

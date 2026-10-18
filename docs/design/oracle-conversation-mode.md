@@ -57,10 +57,21 @@ The selected computer performs STT and TTS locally. Raw PCM, synthesized audio,
 and partial transcripts are never persisted.
 
 Each finalized transcript is submitted exactly once through normal
-`ManagerAgent.send`, persisted as the normal Oracle user message in Oracle
-conversation history, and sent with Oracle context to the remote Copilot
-model. Conversation mode persists no separate voice transcript or recording
-artifact. The UI must not call the complete experience "offline."
+`ManagerAgent.send` with explicit `source: 'voice'` provenance and
+`answerOnly: true`. The hub enforces this for local and paired-node speech,
+regardless of the browser's Ask/Delegate value. Conversation voice therefore
+cannot delegate work, steer sessions, answer permission or trust prompts, or
+approve destructive confirmation actions. Typed/manual Delegate messages keep
+their existing behavior. The finalized text is persisted as the normal Oracle
+user message in Oracle conversation history and sent with Oracle context to
+the remote Copilot model. Conversation mode persists no separate voice
+transcript or recording artifact. The UI states that Conversation voice is
+Ask-only and must not call the complete experience "offline."
+
+VAD confirms speech activity, not speaker identity. Conversation mode does not
+attempt speaker authentication; nearby, replayed, or injected speech can still
+be transcribed. The Ask-only boundary limits that input to non-delegating
+Oracle answers rather than pretending to establish who spoke.
 
 The browser-to-hub socket uses a short-lived, single-use ticket minted by a
 same-origin REST request. Existing Host and Origin policy protects both the

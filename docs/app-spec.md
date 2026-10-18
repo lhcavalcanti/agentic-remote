@@ -476,11 +476,17 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   one authenticated paired node. The selected computer MUST perform STT and
   TTS locally. Conversation mode MUST NOT persist raw PCM, synthesized audio,
   or partial transcripts. Each non-empty finalized transcript MUST be submitted
-  exactly once through the normal `ManagerAgent.send` path, persisted as the
-  normal Oracle user message in Oracle conversation history, and sent with
-  Oracle's generated context to remote Copilot inference. No separate voice
-  transcript or recording artifact may be persisted, and the UI MUST NOT
-  describe the experience as offline.
+  exactly once through the normal `ManagerAgent.send` path with trusted voice
+  provenance and `answerOnly: true`, regardless of the browser's current
+  Ask/Delegate selection. The hub MUST enforce that policy for both hub-local
+  and paired-node speech. A voice final MUST NOT delegate work, steer sessions,
+  answer permission or trust prompts, or authorize destructive confirmation
+  actions. Typed/manual Oracle Delegate behavior remains unchanged. The UI MUST
+  visibly state that Conversation voice is Ask-only and cannot delegate.
+  Finalized text is persisted as the normal Oracle user message in Oracle
+  conversation history and sent with Oracle's generated context to remote
+  Copilot inference. No separate voice transcript or recording artifact may be
+  persisted, and the UI MUST NOT describe the experience as offline.
 - Partials MUST remain display-only. A failed normal-message submission MUST
   restore its final text to the composer. A disconnect MUST discard the current
   utterance rather than replay PCM or a finalized transcript. TTS failure MUST

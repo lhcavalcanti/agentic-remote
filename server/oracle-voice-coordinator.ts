@@ -90,7 +90,6 @@ export class OracleVoiceCoordinator {
   private connection: OracleVoiceBackendConnection | undefined
   private turn: VoiceTurnState | undefined
   private defaults: ManagerClientDefaults | undefined
-  private answerOnly = false
   private currentGeneration: number | undefined
   private activeReplyTo: string | undefined
   private segmenter: SpeakableSegmenter | undefined
@@ -246,7 +245,6 @@ export class OracleVoiceCoordinator {
         this.clientStarted = true
         this.currentGeneration = message.generation
         this.defaults = structuredClone(message.defaults)
-        this.answerOnly = message.answerOnly
         turn.advanceGeneration(message.generation)
         await connection.control(message)
         return
@@ -404,7 +402,7 @@ export class OracleVoiceCoordinator {
       message = await this.manager.send(
         transcript,
         defaults,
-        { answerOnly: this.answerOnly },
+        { answerOnly: true, source: 'voice' },
       )
     } catch (error) {
       await this.returnFinalToComposer(

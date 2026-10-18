@@ -15,7 +15,7 @@
 - Keep `AGENTIC_REMOTE_ORACLE_VOICE=off` as the production default.
 - Keep #398 dictation and upload-based Whisper behavior unchanged and available.
 - Capture and transport 16 kHz mono PCM; never persist raw PCM, synthesized audio, partial transcripts, or a separate voice transcript/recording artifact.
-- Partial STT is display-only; each final utterance is submitted exactly once through normal `ManagerAgent.send`, persists as the normal Oracle user message/history, and is sent to remote Copilot inference.
+- Partial STT is display-only; each final utterance is submitted exactly once through normal `ManagerAgent.send` with trusted voice provenance and forced Ask-only semantics, persists as the normal Oracle user message/history, and is sent to remote Copilot inference.
 - Tentative speech ducks locally; confirmed speech clears TTS and completes Oracle cancellation before final submission.
 - Every asynchronous voice event is scoped by stream ID and generation; stale events are discarded at browser, hub, backend, and worker boundaries.
 - Enforce explicit byte, duration, queue, timeout, and one-active-stream limits.
@@ -723,8 +723,9 @@ export class OracleVoiceCoordinator {
 
 Record the utterance ID before awaiting `ManagerRouteAgent.send`. On confirmed
 speech, await backend TTS cancellation and `ManagerRouteAgent.cancel` with a
-bounded timeout before allowing final submission. Use the same defaults and
-Ask/Delegate selection that the browser sends at stream start.
+bounded timeout before allowing final submission. Use the same browser defaults,
+but submit every final with `{ answerOnly: true, source: 'voice' }`; the hub
+must not trust the browser's Ask/Delegate selection for voice authorization.
 
 - [ ] **Step 5: Write route origin, ticket, busy, and cleanup tests**
 
@@ -1113,7 +1114,11 @@ manager deltas, two TTS segments, ordered audio, final audio-end, and cleanup.
 
 ```ts
 expect(manager.send).toHaveBeenCalledTimes(1)
-expect(manager.send).toHaveBeenCalledWith('Run the focused tests.', defaults, { answerOnly: true })
+expect(manager.send).toHaveBeenCalledWith(
+  'Run the focused tests.',
+  defaults,
+  { answerOnly: true, source: 'voice' },
+)
 expect(browser.audioGenerations()).toEqual([1, 1])
 ```
 

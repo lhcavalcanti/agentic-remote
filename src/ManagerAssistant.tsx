@@ -525,7 +525,7 @@ export function ManagerAssistant({
   })
   const conversation = useOracleConversation({
     defaults,
-    answerOnly,
+    answerOnly: true,
     open,
     onFinalTranscript: returnFinalTranscript,
     onError: announce,
@@ -1160,6 +1160,11 @@ export function ManagerAssistant({
               Stop & transcribe
             </button>
           </div>
+        ) : null}
+        {conversationAvailable ? (
+          <p className="manager-conversation-policy">
+            Conversation voice is Ask-only and cannot delegate. The mode switch still controls typed messages.
+          </p>
         ) : null}
         <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}${
           conversationAvailable ? ' manager-composer__row--conversation' : ''

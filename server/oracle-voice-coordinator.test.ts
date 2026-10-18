@@ -323,6 +323,24 @@ afterEach(() => {
 })
 
 describe('OracleVoiceCoordinator', () => {
+  it('submits Delegate-started voice finals as Ask only with voice provenance', async () => {
+    const test = harness()
+    await test.start(0, false)
+    await test.coordinator.receive(confirm(1, 'delegate-voice'))
+
+    await test.backend.emit(final(
+      1,
+      'delegate-voice',
+      'Do not let nearby speech delegate work.',
+    ))
+
+    expect(test.manager.send).toHaveBeenCalledWith(
+      'Do not let nearby speech delegate work.',
+      defaults,
+      { answerOnly: true, source: 'voice' },
+    )
+  })
+
   it('submits one final once after confirmed interruption cancels Oracle', async () => {
     const running = managerMessage('external', { state: 'running' })
     const test = harness(snapshot({
@@ -354,7 +372,7 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.send).toHaveBeenCalledWith(
       'Please stop and check tests.',
       defaults,
-      { answerOnly: true },
+      { answerOnly: true, source: 'voice' },
     )
 
     finishSend(managerMessage('voice-user'))
@@ -462,7 +480,7 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.send).toHaveBeenCalledWith(
       'Current final',
       defaults,
-      { answerOnly: true },
+      { answerOnly: true, source: 'voice' },
     )
   })
 
@@ -525,7 +543,7 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.send).toHaveBeenCalledWith(
       'Keep this request.',
       defaults,
-      { answerOnly: false },
+      { answerOnly: true, source: 'voice' },
     )
     expect(test.browser).toContainEqual(final(1, 'u1', 'Keep this request.'))
     expect(test.browser).toContainEqual(expect.objectContaining({

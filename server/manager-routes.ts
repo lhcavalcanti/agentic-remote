@@ -6,6 +6,7 @@ import type {
   ManagerClientDefaults,
   ManagerEvent,
   ManagerMessage,
+  ManagerSubmissionOptions,
   ManagerSettingsSnapshot,
   ManagerSnapshot,
   UpdateManagerSettingsInput,
@@ -15,7 +16,7 @@ import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory
 /** What the routes need from the manager agent. */
 export interface ManagerRouteAgent {
   snapshot(): ManagerSnapshot
-  send(content: string, defaults?: ManagerClientDefaults, options?: { answerOnly?: boolean }): Promise<ManagerMessage>
+  send(content: string, defaults?: ManagerClientDefaults, options?: ManagerSubmissionOptions): Promise<ManagerMessage>
   retry(messageId: string): Promise<ManagerMessage>
   removeQueued(messageId: string): Promise<ManagerMessage>
   editQueued(messageId: string, content: string): Promise<ManagerMessage>

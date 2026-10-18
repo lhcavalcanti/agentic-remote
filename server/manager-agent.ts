@@ -18,6 +18,7 @@ import {
   type ManagerClientDefaults,
   type ManagerEvent,
   type ManagerMessage,
+  type ManagerSubmissionOptions,
   type ManagerSettings,
   type ManagerSettingsSnapshot,
   type ManagerSnapshot,
@@ -512,7 +513,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   async send(
     content: string,
     defaults?: ManagerClientDefaults,
-    options: { answerOnly?: boolean } = {},
+    options: ManagerSubmissionOptions = {},
   ): Promise<ManagerMessage> {
     checkContent(content)
     // Read before any await, so an overlapping send cannot change them first.
@@ -523,6 +524,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       })
     }
     const timestamp = this.now().toISOString()
+    const answerOnly = options.answerOnly === true || options.source === 'voice'
     const message: ManagerMessage = {
       id: randomUUID(),
       role: 'user',
@@ -530,7 +532,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       createdAt: timestamp,
       updatedAt: timestamp,
       state: 'queued',
-      ...(options.answerOnly ? { answerOnly: true } : {}),
+      ...(answerOnly ? { answerOnly: true } : {}),
     }
     if (this.structuredMemoryEnabled()) {
       this.messageDefaults.set(message.id, sentWith)

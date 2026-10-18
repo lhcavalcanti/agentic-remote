@@ -91,6 +91,14 @@ export interface ManagerClientDefaults {
   folders?: Record<string, string>
 }
 
+/** Internal provenance used to apply trusted submission policy at the hub. */
+export type ManagerSubmissionSource = 'voice'
+
+export interface ManagerSubmissionOptions {
+  answerOnly?: boolean
+  source?: ManagerSubmissionSource
+}
+
 /** Oracle's own runtime settings, kept on the hub. */
 export interface ManagerSettings {
   /** Unset uses the hub's default: AGENTIC_REMOTE_MANAGER_MODEL, else Copilot's. */

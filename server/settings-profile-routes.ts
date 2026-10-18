@@ -1,13 +1,19 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type { SettingsProfileSnapshot } from '../shared/settings-profile.js'
+import {
+  SETTINGS_DEVICE_ID_MAX_LENGTH,
+  type SettingsProfileSnapshot,
+} from '../shared/settings-profile.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
 
 /** Generous for 32 KB of settings; anything larger is refused before parsing. */
 const SETTINGS_BODY_LIMIT = 64 * 1024
 
+const deviceId = z.string().min(1).max(SETTINGS_DEVICE_ID_MAX_LENGTH).optional()
+
 const updateSchema = z
   .object({
+    deviceId,
     changes: z.record(
       z.string().max(64),
       z.object({ value: z.unknown(), baseRevision: z.number().int().min(0) }).strict(),
@@ -16,7 +22,7 @@ const updateSchema = z
   .strict()
 
 const importSchema = z
-  .object({ values: z.record(z.string().max(64), z.unknown()) })
+  .object({ deviceId, values: z.record(z.string().max(64), z.unknown()) })
   .strict()
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
@@ -63,7 +69,7 @@ export function registerSettingsProfileRoutes(
     const profile = requireStore()
     const input = parse(updateSchema, request.body)
     const before = profile.snapshot().revision
-    const result = await profile.update(input.changes)
+    const result = await profile.update(input.changes, input.deviceId)
     return { settings: announce(before, result.settings), conflicts: result.conflicts }
   })
 
@@ -72,6 +78,6 @@ export function registerSettingsProfileRoutes(
     const profile = requireStore()
     const input = parse(importSchema, request.body)
     const before = profile.snapshot().revision
-    return { settings: announce(before, await profile.import(input.values)) }
+    return { settings: announce(before, await profile.import(input.values, input.deviceId)) }
   })
 }

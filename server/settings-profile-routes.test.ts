@@ -86,6 +86,21 @@ describe('hub settings profile routes', () => {
     await app.close()
   })
 
+  it("passes the device along, so a device's own lost write is not a conflict", async () => {
+    const store = await profileStore()
+    const app = await hub(store)
+    const send = (value: string) => app.inject({
+      method: 'PATCH',
+      url: '/api/settings',
+      headers: local,
+      payload: { deviceId: 'phone-1', changes: { accent: { value, baseRevision: 0 } } },
+    })
+    await send('teal')
+    const retry = await send('rose')
+    expect(retry.json()).toMatchObject({ settings: { values: { accent: 'rose' } }, conflicts: [] })
+    await app.close()
+  })
+
   it('imports only settings that were never chosen', async () => {
     const store = await profileStore()
     await store.update({ accent: { value: 'teal', baseRevision: 0 } })
@@ -113,6 +128,11 @@ describe('hub settings profile routes', () => {
       { method: 'PATCH', payload: { changes: {}, extra: true } },
       { method: 'POST', url: '/api/settings/import', payload: { values: { accent: 4 } } },
       { method: 'POST', url: '/api/settings/import', payload: { values: [] } },
+      {
+        method: 'PATCH',
+        payload: { deviceId: 'x'.repeat(101), changes: { accent: { value: 'ocean', baseRevision: 0 } } },
+      },
+      { method: 'POST', url: '/api/settings/import', payload: { deviceId: '', values: {} } },
     ] as const
     for (const attempt of attempts) {
       const response = await app.inject({

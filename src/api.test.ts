@@ -657,17 +657,20 @@ describe('settings profile requests', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(fetchSettingsProfile()).resolves.toEqual(settings)
     await expect(
-      saveSettingsChanges({ accent: { value: 'rose', baseRevision: 1 } }),
+      saveSettingsChanges({ accent: { value: 'rose', baseRevision: 1 } }, 'device-1'),
     ).resolves.toEqual({ settings, conflicts: ['accent'] })
-    await expect(importSettingsProfile({ sessionSort: 'name' })).resolves.toEqual(settings)
+    await expect(importSettingsProfile({ sessionSort: 'name' }, 'device-1')).resolves.toEqual(settings)
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.cache, init?.body]))
       .toEqual([
         ['/api/settings', undefined, 'no-store', undefined],
         [
           '/api/settings', 'PATCH', 'no-store',
-          JSON.stringify({ changes: { accent: { value: 'rose', baseRevision: 1 } } }),
+          JSON.stringify({ deviceId: 'device-1', changes: { accent: { value: 'rose', baseRevision: 1 } } }),
         ],
-        ['/api/settings/import', 'POST', 'no-store', JSON.stringify({ values: { sessionSort: 'name' } })],
+        [
+          '/api/settings/import', 'POST', 'no-store',
+          JSON.stringify({ deviceId: 'device-1', values: { sessionSort: 'name' } }),
+        ],
       ])
   })
 

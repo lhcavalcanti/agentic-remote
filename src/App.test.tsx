@@ -1537,6 +1537,19 @@ describe('App', () => {
       expect(within(dialog).queryByRole('combobox', { name: 'Oracle response style' })).toBeNull()
     })
 
+    it('shows a change another tab saved without waiting for the hub', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      await act(async () => {})
+      const cache = JSON.parse(localStorage.getItem('agentic-remote:settings-profile') || '{}')
+      localStorage.setItem('agentic-remote:settings-profile', JSON.stringify({
+        ...cache, pending: { accent: { value: 'ember', baseRevision: cache.revision } },
+      }))
+      act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'agentic-remote:settings-profile' })))
+      expect(shell()).toHaveAttribute('data-accent-theme', 'ember')
+    })
+
     it('says which settings follow you and which stay on this device', async () => {
       render(<App />)
       await screen.findByLabelText('Message')
@@ -1785,18 +1798,20 @@ describe('App', () => {
     }
     hubSettings = { revision: 0, values: {}, keyRevisions: {} }
     vi.mocked(fetchSettingsProfile).mockImplementation(async () => hubSettingsSnapshot())
-    vi.mocked(saveSettingsChanges).mockImplementation(async (changes) => {
+    vi.mocked(saveSettingsChanges).mockImplementation(async (changes, deviceId) => {
       const result = applySettingsChanges(
         hubSettings,
         validateSettingsChanges(changes as Record<string, unknown>),
+        deviceId,
       )
       hubSettings = result.record
       return { settings: hubSettingsSnapshot(), conflicts: result.conflicts }
     })
-    vi.mocked(importSettingsProfile).mockImplementation(async (values) => {
+    vi.mocked(importSettingsProfile).mockImplementation(async (values, deviceId) => {
       hubSettings = applySettingsImport(
         hubSettings,
         validateSettingsImport(values as Record<string, unknown>),
+        deviceId,
       )
       return hubSettingsSnapshot()
     })
@@ -15043,12 +15058,12 @@ describe('App', () => {
       target: { value: 'recent' },
     })
     expect(await screen.findByText(
-      'Couldn’t save a setting: Setting sessionSort is not a known sort',
+      'Session sort wasn’t saved: Setting sessionSort is not a known sort',
     )).toBeVisible()
     expect(screen.getByRole('combobox', { name: 'Session order' })).toHaveValue('custom')
     expect(hubSettings.values.sessionSort).toBeUndefined()
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss settings notice' }))
-    expect(screen.queryByText(/Couldn’t save a setting/)).toBeNull()
+    expect(screen.queryByText(/wasn’t saved/)).toBeNull()
   })
 
   it('does not report automatic order reconciliation as a failed user reorder', async () => {
@@ -15513,7 +15528,7 @@ describe('App', () => {
       `computer:${secondComputer.id}`,
     ))
     expect(await screen.findByText(
-      'Couldn’t save a setting: Setting computerOrder lists pc twice',
+      'Computer order wasn’t saved: Setting computerOrder lists pc twice',
     )).toBeVisible()
     expect(computers()).toEqual(before)
     expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')

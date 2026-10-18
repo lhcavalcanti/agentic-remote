@@ -4,6 +4,7 @@ import path from 'node:path'
 import {
   applySettingsChanges,
   applySettingsImport,
+  isSettingsDeviceId,
   isSettingsProfileKey,
   isSettingsRevision,
   settingsValuesFrom,
@@ -76,6 +77,11 @@ export class SettingsProfileStore {
     for (const [key, revision] of Object.entries(parsed.keyRevisions ?? {})) {
       if (isSettingsProfileKey(key) && isSettingsRevision(revision)) keyRevisions[key] = revision
     }
+    // An unknown writer is never this device, so its newer write still conflicts.
+    const keyWriters: NonNullable<SettingsProfileState['keyWriters']> = {}
+    for (const [key, writer] of Object.entries(parsed.keyWriters ?? {})) {
+      if (isSettingsProfileKey(key) && isSettingsDeviceId(writer)) keyWriters[key] = writer
+    }
     this.state = {
       version: STATE_VERSION,
       profileId:
@@ -85,6 +91,7 @@ export class SettingsProfileStore {
       // dropped, not served: every device would otherwise reject it.
       values: settingsValuesFrom(parsed.values),
       keyRevisions,
+      keyWriters,
     }
   }
 
@@ -100,11 +107,11 @@ export class SettingsProfileStore {
    * Applies the changes whose base is current. The whole request is validated
    * first, so a malformed entry cannot leave the others half applied.
    */
-  async update(changes: Record<string, unknown>): Promise<SettingsUpdateResult> {
+  async update(changes: Record<string, unknown>, deviceId?: string): Promise<SettingsUpdateResult> {
     const parsed = validateSettingsChanges(changes)
     let conflicts: SettingsUpdateResult['conflicts'] = []
     const settings = await this.commit((record) => {
-      const result = applySettingsChanges(record, parsed)
+      const result = applySettingsChanges(record, parsed, deviceId)
       conflicts = result.conflicts
       return result.record
     })
@@ -115,9 +122,9 @@ export class SettingsProfileStore {
    * Takes a device's pre-hub settings for every key no device has chosen
    * yet, so the first device to bring a setting wins and later ones adopt it.
    */
-  async import(values: Record<string, unknown>): Promise<SettingsProfileSnapshot> {
+  async import(values: Record<string, unknown>, deviceId?: string): Promise<SettingsProfileSnapshot> {
     const parsed = validateSettingsImport(values)
-    return this.commit((record) => applySettingsImport(record, parsed))
+    return this.commit((record) => applySettingsImport(record, parsed, deviceId))
   }
 
   /**

@@ -265,6 +265,19 @@ export interface SettingsProfileRecord {
    * cannot bring back a value the user deliberately cleared.
    */
   keyRevisions: Partial<Record<SettingsProfileKey, number>>
+  /**
+   * The device that last wrote each key. A device whose own write committed
+   * but whose response was lost retries from an older base; that is its own
+   * change, not another device's, so it must not read as a conflict.
+   */
+  keyWriters?: Partial<Record<SettingsProfileKey, string>>
+}
+
+/** A browser's own ID, so the hub can tell its retries from other devices. */
+export const SETTINGS_DEVICE_ID_MAX_LENGTH = 100
+
+export function isSettingsDeviceId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= SETTINGS_DEVICE_ID_MAX_LENGTH
 }
 
 export interface ValidatedSettingsChange {
@@ -335,14 +348,18 @@ function sizeChecked(record: SettingsProfileRecord): SettingsProfileRecord {
 export function applySettingsChanges(
   record: SettingsProfileRecord,
   changes: ValidatedSettingsChange[],
+  /** Who is writing. Without one, any newer write is another device's. */
+  writer?: string,
 ): { record: SettingsProfileRecord; conflicts: SettingsProfileKey[] } {
   const revision = record.revision + 1
   const values: Record<string, unknown> = { ...record.values }
   const keyRevisions = { ...record.keyRevisions }
+  const keyWriters = { ...record.keyWriters }
   const conflicts: SettingsProfileKey[] = []
   let changed = false
   for (const { key, value, baseRevision } of changes) {
-    if ((keyRevisions[key] ?? 0) > baseRevision) {
+    const newer = (keyRevisions[key] ?? 0) > baseRevision
+    if (newer && (writer === undefined || keyWriters[key] !== writer)) {
       conflicts.push(key)
       continue
     }
@@ -350,11 +367,15 @@ export function applySettingsChanges(
     if (value === null) delete values[key]
     else values[key] = value
     keyRevisions[key] = revision
+    if (writer === undefined) delete keyWriters[key]
+    else keyWriters[key] = writer
     changed = true
   }
   if (!changed) return { record, conflicts }
   return {
-    record: sizeChecked({ revision, values: values as SettingsProfileValues, keyRevisions }),
+    record: sizeChecked({
+      revision, values: values as SettingsProfileValues, keyRevisions, keyWriters,
+    }),
     conflicts,
   }
 }
@@ -363,17 +384,22 @@ export function applySettingsChanges(
 export function applySettingsImport(
   record: SettingsProfileRecord,
   imports: Array<[SettingsProfileKey, unknown]>,
+  writer?: string,
 ): SettingsProfileRecord {
   const revision = record.revision + 1
   const values: Record<string, unknown> = { ...record.values }
   const keyRevisions = { ...record.keyRevisions }
+  const keyWriters = { ...record.keyWriters }
   let changed = false
   for (const [key, value] of imports) {
     if (keyRevisions[key] !== undefined) continue
     values[key] = value
     keyRevisions[key] = revision
+    if (writer !== undefined) keyWriters[key] = writer
     changed = true
   }
   if (!changed) return record
-  return sizeChecked({ revision, values: values as SettingsProfileValues, keyRevisions })
+  return sizeChecked({
+    revision, values: values as SettingsProfileValues, keyRevisions, keyWriters,
+  })
 }

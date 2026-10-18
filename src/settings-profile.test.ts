@@ -62,20 +62,21 @@ class FakeHub {
         this.check('fetch')
         return this.snapshot()
       },
-      update: async (changes) => {
+      update: async (changes, deviceId) => {
         this.check('update')
         const before = this.record.revision
-        const result = applySettingsChanges(this.record, validateSettingsChanges(changes))
+        const result = applySettingsChanges(this.record, validateSettingsChanges(changes), deviceId)
         this.record = result.record
         this.publish(before, device())
         return { settings: this.snapshot(), conflicts: result.conflicts }
       },
-      import: async (values) => {
+      import: async (values, deviceId) => {
         this.check('import')
         const before = this.record.revision
         this.record = applySettingsImport(
           this.record,
           validateSettingsImport(values as Record<string, unknown>),
+          deviceId,
         )
         this.publish(before, device())
         return this.snapshot()
@@ -319,9 +320,122 @@ describe('SettingsProfileClient', () => {
     expect(client.getState()).toMatchObject({
       values: {},
       refused: 'Setting accent is not a known accent',
+      refusedKey: 'accent',
     })
     expect(transport.update).toHaveBeenCalledTimes(1)
     client.stop()
+  })
+
+  it("keeps a newer edit when its earlier write committed but the answer was lost", async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    const real = hub.transport(() => client)
+    let loseNextAnswer = true
+    const client: SettingsProfileClient = new SettingsProfileClient({
+      transport: {
+        ...real,
+        update: async (changes, deviceId) => {
+          const result = await real.update(changes, deviceId)
+          if (loseNextAnswer) {
+            loseNextAnswer = false
+            throw new TypeError('Failed to fetch')
+          }
+          return result
+        },
+      },
+      storage,
+      retryDelaysMs: [1_000],
+    })
+    hub.devices.add(client)
+    await client.sync()
+    client.set('accent', 'teal')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(hub.record.values.accent).toBe('teal')
+    expect(client.getState().status).toBe('offline')
+    // Still offline as far as it knows, the user changes their mind.
+    client.set('accent', 'rose')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(client.getState()).toMatchObject({ status: 'synced', conflicts: [], values: { accent: 'rose' } })
+    expect(hub.record.values.accent).toBe('rose')
+  })
+
+  it('brings the earlier settings the hub can take when one of them is too large', async () => {
+    const huge = Object.fromEntries(
+      Array.from({ length: 64 }, (_, index) => [`pc-${index}`, `/${'x'.repeat(4000)}`]),
+    )
+    const { client } = hub.device(new MemoryStorage(), {
+      accent: 'violet', newSessionFolders: huge, sessionSort: 'name',
+    })
+    await client.sync()
+    expect(hub.record.values).toEqual({ accent: 'violet', sessionSort: 'name' })
+    expect(client.getState()).toMatchObject({
+      values: { accent: 'violet', sessionSort: 'name' },
+      refused: 'Settings would exceed 32 KB',
+      refusedKey: 'newSessionFolders',
+      status: 'synced',
+    })
+    // Nothing is left to offer again on the next sync.
+    hub.calls.length = 0
+    await client.sync()
+    expect(hub.calls).toEqual(['fetch'])
+  })
+
+  it('saves the other changes in a batch when the hub refuses one of them', async () => {
+    const { client } = hub.device()
+    await client.sync()
+    hub.reachable = false
+    client.set('accent', 'teal')
+    client.set('newSessionFolders', Object.fromEntries(
+      Array.from({ length: 64 }, (_, index) => [`pc-${index}`, `/${'x'.repeat(4000)}`]),
+    ))
+    client.set('sessionSort', 'recent')
+    await vi.waitFor(() => expect(client.getState().status).toBe('offline'))
+    hub.reachable = true
+    await client.sync()
+    await vi.waitFor(() => expect(client.getState().status).toBe('synced'))
+    expect(hub.record.values).toEqual({ accent: 'teal', sessionSort: 'recent' })
+    expect(client.getState()).toMatchObject({
+      values: { accent: 'teal', sessionSort: 'recent' },
+      refusedKey: 'newSessionFolders',
+    })
+  })
+
+  it('keeps every tab’s offline edits, even after the tab that made one closes', async () => {
+    const storage = new MemoryStorage()
+    const first = hub.device(storage)
+    const second = hub.device(storage)
+    await Promise.all([first.client.sync(), second.client.sync()])
+    hub.reachable = false
+    first.client.set('accent', 'teal')
+    first.client.stop()
+    hub.devices.delete(first.client)
+    // The second tab has not heard about the first tab's edit when it makes its own.
+    second.client.set('sessionSort', 'name')
+    expect(second.client.getState().values).toEqual({ accent: 'teal', sessionSort: 'name' })
+    await vi.waitFor(() => expect(second.client.getState().status).toBe('offline'))
+    second.client.stop()
+    hub.devices.delete(second.client)
+
+    // A reopened tab starts from both, and sends both once the hub is back.
+    hub.reachable = true
+    const reopened = hub.device(storage)
+    expect(reopened.client.getState().values).toEqual({ accent: 'teal', sessionSort: 'name' })
+    await reopened.client.sync()
+    await vi.waitFor(() => expect(reopened.client.getState().status).toBe('synced'))
+    expect(hub.record.values).toEqual({ accent: 'teal', sessionSort: 'name' })
+    expect(reopened.client.getState().conflicts).toEqual([])
+  })
+
+  it('shows another tab’s change as soon as the shared copy changes', async () => {
+    const storage = new MemoryStorage()
+    const first = hub.device(storage)
+    const second = hub.device(storage)
+    await Promise.all([first.client.sync(), second.client.sync()])
+    hub.devices.delete(second.client)
+    first.client.set('appearance', 'light')
+    expect(second.client.getState().values.appearance).toBeUndefined()
+    second.client.refreshFromStorage()
+    expect(second.client.getState().values.appearance).toBe('light')
   })
 
   it('refuses to record a malformed value locally', async () => {

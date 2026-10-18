@@ -75,17 +75,24 @@ agree on them.
 The hub stores the profile in `<data>/settings-profile.json`:
 
 ```json
-{"version":1,"profileId":"uuid","revision":7,"values":{},"keyRevisions":{}}
+{"version":1,"profileId":"uuid","revision":7,"values":{},"keyRevisions":{},"keyWriters":{}}
 ```
 
 | Request | Effect |
 |---|---|
 | `GET /api/settings` | `{settings: {profileId, revision, values}}` |
-| `PATCH /api/settings` `{changes: {key: {value, baseRevision}}}` | Applies each change. `value: null` resets the key to its default. |
-| `POST /api/settings/import` `{values}` | Fills only keys that were never set, so the first device wins per setting |
+| `PATCH /api/settings` `{deviceId, changes: {key: {value, baseRevision}}}` | Applies each change. `value: null` resets the key to its default. |
+| `POST /api/settings/import` `{deviceId, values}` | Fills only keys that were never set, so the first device wins per setting |
 
-- A change conflicts when `keyRevisions[key] > baseRevision`, meaning another
-  device committed that key after this device last saw the profile.
+- A change conflicts when `keyRevisions[key] > baseRevision` and
+  `keyWriters[key]` is another device, meaning someone else committed that key
+  after this device last saw the profile.
+  - `deviceId` is a random ID each browser keeps in its cache and shares with
+    its tabs.
+  - A device's retry of its own write is therefore not a conflict, even when
+    the first response was lost.
+  - A request without a `deviceId` treats every newer write as another
+    device's.
   - The newer value is kept, and the key is returned in `conflicts`.
   - The browser shows "changed on another device", so nothing is lost
     silently.
@@ -107,7 +114,10 @@ The hub stores the profile in `<data>/settings-profile.json`:
 ## Browser
 
 - **Cache.** `agentic-remote:settings-profile` in `localStorage` holds
-  `{profileId, revision, values, pending}`.
+  `{deviceId, profileId, revision, values, pending}`.
+  - Tabs share it. Every change reads it first and writes it straight back,
+    so one tab never drops another's unsent edit.
+  - The `storage` event shows another tab's change at once.
   - Startup applies it synchronously, so returning devices render the right
     theme at once.
   - It is then reconciled with `GET /api/settings`.
@@ -120,7 +130,9 @@ The hub stores the profile in `<data>/settings-profile.json`:
   "saved on this device".
   - Retries happen on the websocket reconnect, the `online` event and a
     bounded backoff.
-  - A `4xx` response drops the refused edit and reports it.
+  - A `4xx` response to a batch retries its keys one at a time. Only the
+    refused setting is dropped, and the notice names it. Imports work the same
+    way.
 - **Live updates.** `settings.updated` events apply when they are newer than
   the cached revision. A key with a pending local edit keeps showing that edit
   until its request settles.
@@ -160,3 +172,5 @@ The hub stores the profile in `<data>/settings-profile.json`:
   cleared, renders from the OS preference until the profile loads.
 - Keyboard shortcuts stay per device, because modifier keys differ between
   operating systems.
+- `localStorage` has no cross-tab lock. Each change is one synchronous read
+  and write, so only two tabs writing in the same instant can still race.

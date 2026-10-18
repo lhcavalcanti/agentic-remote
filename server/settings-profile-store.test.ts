@@ -84,6 +84,42 @@ describe('SettingsProfileStore', () => {
     expect(computer.settings.revision).toBe(2)
   })
 
+  it("treats a device's retry of its own committed write as its own, not a conflict", async () => {
+    const { store: profile, directory } = await store()
+    // The phone's write commits, but its response never arrives.
+    await profile.update({ accent: { value: 'teal', baseRevision: 0 } }, 'phone')
+    // It retries from the base it last saw, now with a newer choice.
+    const retry = await profile.update({ accent: { value: 'rose', baseRevision: 0 } }, 'phone')
+    expect(retry.conflicts).toEqual([])
+    expect(retry.settings).toMatchObject({ revision: 2, values: { accent: 'rose' } })
+
+    // The writer survives a restart, and another device is still told.
+    const reloaded = new SettingsProfileStore(directory)
+    await reloaded.initialize()
+    const other = await reloaded.update({ accent: { value: 'ember', baseRevision: 0 } }, 'computer')
+    expect(other.conflicts).toEqual(['accent'])
+    const anonymous = await reloaded.update({ accent: { value: 'ember', baseRevision: 0 } })
+    expect(anonymous.conflicts).toEqual(['accent'])
+    expect(reloaded.snapshot().values.accent).toBe('rose')
+  })
+
+  it('keeps a newer write from another device even after this device wrote that key earlier', async () => {
+    const { store: profile } = await store()
+    await profile.update({ accent: { value: 'teal', baseRevision: 0 } }, 'phone')
+    await profile.update({ accent: { value: 'violet', baseRevision: 1 } }, 'computer')
+    const stale = await profile.update({ accent: { value: 'rose', baseRevision: 0 } }, 'phone')
+    expect(stale.conflicts).toEqual(['accent'])
+    expect(stale.settings.values.accent).toBe('violet')
+  })
+
+  it('records the importing device, so its later edit from an old base still lands', async () => {
+    const { store: profile } = await store()
+    await profile.import({ accent: 'teal' }, 'phone')
+    const edit = await profile.update({ accent: { value: 'rose', baseRevision: 0 } }, 'phone')
+    expect(edit.conflicts).toEqual([])
+    expect(edit.settings.values.accent).toBe('rose')
+  })
+
   it('accepts a change made after seeing the other device', async () => {
     const { store: profile } = await store()
     await profile.update({ accent: { value: 'rose', baseRevision: 0 } })

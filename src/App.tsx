@@ -268,6 +268,7 @@ import {
   readLegacySettings,
   resolveAppearance,
   SettingsProfileClient,
+  settingsProfileCacheKey,
   type SettingsCacheStorage,
   type SettingsProfileState,
 } from './settings-profile'
@@ -572,7 +573,10 @@ function settingsNotice(state: SettingsProfileState): string | undefined {
     const names = state.conflicts.map((key) => settingNames[key])
     return `${names.join(', ')} ${names.length === 1 ? 'was' : 'were'} changed on another device first, so this device now uses that choice.`
   }
-  return state.refused ? `Couldn’t save a setting: ${state.refused}` : undefined
+  if (!state.refused) return undefined
+  return state.refusedKey
+    ? `${settingNames[state.refusedKey]} wasn’t saved: ${state.refused}`
+    : `Couldn’t save a setting: ${state.refused}`
 }
 
 function SettingScope({ synced }: { synced: boolean }) {
@@ -7150,9 +7154,17 @@ function App() {
   useEffect(() => {
     settingsClient.start()
     const reconnect = () => void settingsClient.sync()
+    // Another tab changed the shared copy; null means storage was cleared.
+    const otherTab = (event: StorageEvent) => {
+      if (event.key === settingsProfileCacheKey || event.key === null) {
+        settingsClient.refreshFromStorage()
+      }
+    }
     window.addEventListener('online', reconnect)
+    window.addEventListener('storage', otherTab)
     return () => {
       window.removeEventListener('online', reconnect)
+      window.removeEventListener('storage', otherTab)
       settingsClient.stop()
     }
   }, [settingsClient])

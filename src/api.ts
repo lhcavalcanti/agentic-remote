@@ -323,22 +323,24 @@ export async function fetchSettingsProfile(): Promise<SettingsProfileSnapshot> {
 /** Sends this device's edits with the revision each was made from. */
 export async function saveSettingsChanges(
   changes: Partial<Record<SettingsProfileKey, SettingsChange>>,
+  deviceId?: string,
 ): Promise<SettingsUpdateResult> {
   return request<SettingsUpdateResult>('/api/settings', {
     method: 'PATCH',
     cache: 'no-store',
-    body: JSON.stringify({ changes }),
+    body: JSON.stringify({ ...(deviceId ? { deviceId } : {}), changes }),
   })
 }
 
 /** Offers this browser's earlier settings; the hub keeps only unset ones. */
 export async function importSettingsProfile(
   values: SettingsProfileValues,
+  deviceId?: string,
 ): Promise<SettingsProfileSnapshot> {
   const response = await request<{ settings: SettingsProfileSnapshot }>('/api/settings/import', {
     method: 'POST',
     cache: 'no-store',
-    body: JSON.stringify({ values }),
+    body: JSON.stringify({ ...(deviceId ? { deviceId } : {}), values }),
   })
   return response.settings
 }

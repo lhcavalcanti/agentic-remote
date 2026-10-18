@@ -54,7 +54,7 @@ export default defineConfig(({ command }) => {
       // that build omits `act`, so every component test fails. `pnpm start` and
       // the systemd unit both export NODE_ENV=production, so pin it here to keep
       // the test run independent of the ambient environment.
-      env: { NODE_ENV: 'development' },
+      env: { NODE_ENV: 'development', AGENTIC_REMOTE_STORE_FREEZE: '1' },
       // The suite is run one file at a time.
       //
       // Some of it reaches the machine itself rather than a fake: one file

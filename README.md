@@ -499,10 +499,12 @@ printed `AGENTIC_REMOTE_VOICE_*` settings to the protected environment file,
 then separately opt in with `AGENTIC_REMOTE_ORACLE_VOICE=on`.
 
 Speech recognition and synthesis run on the selected hub or paired node. Raw
-audio remains within those trusted computers and is not persisted, but the
-final transcript and Oracle context go to remote Copilot. Browser support
-requires microphone, AudioWorklet, Web Audio, and WebSocket APIs; unsupported
-browsers continue to offer dictation. See
+PCM, synthesized audio, and partial transcripts are not persisted. Each final
+is submitted once as a normal Oracle message, remains in Oracle conversation
+history, and goes with Oracle context to remote Copilot; no separate voice
+transcript or recording artifact is kept. Browser support requires microphone,
+AudioWorklet, Web Audio, and WebSocket APIs; unsupported browsers continue to
+offer dictation. See
 [Oracle Conversation mode](docs/oracle-conversation.md) for paired-node setup,
 measured limitations, removal, and troubleshooting, and
 [voice asset notices](docs/licenses/oracle-voice.md) for LJSpeech, the

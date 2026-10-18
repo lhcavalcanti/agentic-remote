@@ -9,6 +9,7 @@ import {
 import {
   backendOutputRelay,
   sendBrowserOutput,
+  shutdownBackendOutput,
 } from './oracle-voice-routes.js'
 import {
   sendNodeVoiceOutput,
@@ -183,6 +184,87 @@ describe('Oracle voice output delivery', () => {
     await relay.drain()
     expect(delivered).toEqual([expect.objectContaining({ sequence: 0 })])
     expect(relay.pendingBytes()).toBe(0)
+  })
+
+  it('aborts a never-settling delivery, releases queued work, and isolates the next stream', async () => {
+    const invoked: VoiceBackendOutput[] = []
+    const never = new Promise<void>(() => undefined)
+    const relay = backendOutputRelay(
+      (output) => {
+        invoked.push(output)
+        return never
+      },
+      async () => undefined,
+      limits(),
+    )
+    const [first, second] = playbackSequence(2)
+    const firstDelivery = relay.accept(first)
+    const queuedDelivery = relay.accept(second)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(invoked).toEqual([first])
+    expect(relay.pendingBytes()).toBe(outputBytes(first) + outputBytes(second))
+
+    relay.abort(new Error('transport shutdown timed out'))
+
+    await expect(firstDelivery).rejects.toThrow('transport shutdown timed out')
+    await expect(queuedDelivery).rejects.toThrow('transport shutdown timed out')
+    await expect(relay.drain()).resolves.toBeUndefined()
+    expect(relay.pendingBytes()).toBe(0)
+    expect(invoked).toEqual([first])
+
+    const nextDelivered: VoiceBackendOutput[] = []
+    const next = backendOutputRelay(
+      async (output) => {
+        nextDelivered.push(output)
+      },
+      async () => undefined,
+      limits(),
+    )
+    await next.accept(second)
+    await next.drain()
+    expect(nextDelivered).toEqual([second])
+    expect(next.pendingBytes()).toBe(0)
+  })
+
+  it('ignores a late in-flight rejection after relay abort', async () => {
+    let rejectDelivery!: (error: Error) => void
+    const disconnect = vi.fn(async () => undefined)
+    const relay = backendOutputRelay(
+      () => new Promise<void>((_resolve, reject) => {
+        rejectDelivery = reject
+      }),
+      disconnect,
+      limits(),
+    )
+    const delivery = relay.accept(playbackSequence(1)[0])
+    await new Promise((resolve) => setImmediate(resolve))
+
+    relay.abort(new Error('stream replaced'))
+    await expect(delivery).rejects.toThrow('stream replaced')
+    rejectDelivery(new Error('old socket callback'))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(disconnect).not.toHaveBeenCalled()
+    expect(relay.pendingBytes()).toBe(0)
+    await expect(relay.drain()).resolves.toBeUndefined()
+  })
+
+  it('aborts the relay and associated transport when connector drain times out', async () => {
+    const relay = backendOutputRelay(
+      () => new Promise<void>(() => undefined),
+      async () => undefined,
+      limits(),
+    )
+    const delivery = relay.accept(playbackSequence(1)[0])
+    const abortTransport = vi.fn(async () => undefined)
+
+    await shutdownBackendOutput(relay, abortTransport, 5)
+
+    await expect(delivery).rejects.toThrow('Voice backend output shutdown timed out')
+    await expect(relay.drain()).resolves.toBeUndefined()
+    expect(relay.pendingBytes()).toBe(0)
+    expect(abortTransport).toHaveBeenCalledOnce()
   })
 
   it.each([

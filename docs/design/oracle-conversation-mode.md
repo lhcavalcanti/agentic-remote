@@ -48,13 +48,14 @@ and the capability response reports its language and resource class.
 
 The browser captures microphone audio and runs Silero VAD locally. PCM travels
 only to the configured Agentic Remote hub and, when selected, one paired node.
-The selected computer performs STT and TTS locally. Neither raw audio nor
-transcripts are written to disk by Conversation mode.
+The selected computer performs STT and TTS locally. Raw PCM, synthesized audio,
+and partial transcripts are never persisted.
 
-Final text is sent to Oracle through its existing manager-agent API. Oracle's
-Copilot model is remote, so final transcripts and Oracle context leave the
-local network under the existing Copilot trust boundary. The UI must not call
-the complete experience "offline."
+Each finalized transcript is submitted exactly once through normal
+`ManagerAgent.send`, persisted as the normal Oracle user message in Oracle
+conversation history, and sent with Oracle context to the remote Copilot
+model. Conversation mode persists no separate voice transcript or recording
+artifact. The UI must not call the complete experience "offline."
 
 The browser-to-hub socket uses a short-lived, single-use ticket minted by a
 same-origin REST request. Existing Host and Origin policy protects both the
@@ -126,9 +127,11 @@ The coordinator:
 - cancels Oracle before accepting an interrupting final transcript;
 - drops events whose stream or generation is no longer current.
 
-The coordinator never reconstructs audio recordings and never persists voice
-state. A hub restart ends the voice stream explicitly; the browser may
-reconnect as a new stream.
+The coordinator never reconstructs or persists audio recordings, synthesized
+audio, partial transcripts, or a separate finalized-transcript artifact. The
+normal manager send owns finalized-message durability. A hub restart ends the
+voice stream explicitly; the browser may reconnect as a new stream without
+replaying PCM or finalized transcripts.
 
 ### Node voice backend
 

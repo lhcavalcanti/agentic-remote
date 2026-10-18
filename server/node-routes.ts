@@ -328,6 +328,9 @@ export async function registerNodeRoutes(
         '/oracle-voice',
         {
           websocket: true,
+          // The stream identity is carried in the query string and must not
+          // appear in automatic request logs.
+          logLevel: 'silent',
           preValidation: async (request, reply) => {
             if (request.query.protocol !== String(ORACLE_VOICE_PROTOCOL)) {
               return reply.code(400).send({ error: 'Unsupported Oracle voice protocol' })

@@ -337,7 +337,10 @@ function localConnector(
         audio: (frame) => session.audio(frame),
         close: async (reason) => {
           await session.close(reason)
-          await drainBackendOutput(relay)
+          await shutdownBackendOutput(
+            relay,
+            () => session.close('Voice backend output shutdown timed out'),
+          )
         },
       }
     },
@@ -389,7 +392,10 @@ function remoteConnector(
           client.off('event', output)
           client.off('disconnect', disconnect)
           await client.close(reason)
-          await drainBackendOutput(relay)
+          await shutdownBackendOutput(
+            relay,
+            () => client.close('Voice backend output shutdown timed out'),
+          )
         },
       }
     },
@@ -461,23 +467,99 @@ export function backendOutputRelay(
 ): {
   accept(output: OracleVoiceBackendOutput): Promise<void>
   drain(): Promise<void>
+  close(reason?: Error): void
+  abort(reason?: Error): void
   pendingBytes(): number
 } {
+  interface PendingOutput {
+    output?: OracleVoiceBackendOutput
+    bytes: number
+    settled: boolean
+    resolve(): void
+    reject(error: unknown): void
+  }
+
   let pendingBytes = 0
+  let closed = false
   let failed = false
-  let deliveryTail: Promise<void> = Promise.resolve()
+  let inFlight: PendingOutput | undefined
+  const queue: PendingOutput[] = []
+  const drainWaiters = new Set<() => void>()
+
+  const settleDrain = () => {
+    if (inFlight || queue.length > 0) return
+    for (const resolve of drainWaiters) resolve()
+    drainWaiters.clear()
+  }
+  const rejectEntry = (entry: PendingOutput, error: unknown) => {
+    if (entry.settled) return
+    entry.settled = true
+    entry.output = undefined
+    entry.reject(error)
+  }
+  const abort = (
+    reason: Error = new VoiceSessionError('Voice backend output is closed', 1001),
+  ) => {
+    if (closed) return
+    closed = true
+    const pending = [
+      ...(inFlight ? [inFlight] : []),
+      ...queue.splice(0),
+    ]
+    inFlight = undefined
+    pendingBytes = 0
+    for (const entry of pending) rejectEntry(entry, reason)
+    settleDrain()
+  }
   const fail = (error: unknown, closeCode: number) => {
     if (failed) return
     failed = true
+    abort(error instanceof Error ? error : new Error(errorMessage(error, 'Voice backend output failed')))
     void disconnect({
       code: closeCode,
       reason: errorMessage(error, 'Voice backend output failed'),
     }).catch(() => undefined)
   }
+  const pump = () => {
+    if (closed || inFlight) return
+    const entry = queue.shift()
+    if (!entry?.output) {
+      settleDrain()
+      return
+    }
+    inFlight = entry
+    const output = entry.output
+    let delivery: Promise<void>
+    try {
+      delivery = deliver(output)
+    } catch (error) {
+      delivery = Promise.reject(error)
+    }
+    void delivery.then(
+      () => {
+        if (entry.settled) return
+        entry.settled = true
+        entry.output = undefined
+        pendingBytes -= entry.bytes
+        entry.resolve()
+        if (inFlight === entry) inFlight = undefined
+        pump()
+      },
+      (error: unknown) => {
+        if (entry.settled) return
+        entry.settled = true
+        entry.output = undefined
+        pendingBytes -= entry.bytes
+        entry.reject(error)
+        if (inFlight === entry) inFlight = undefined
+        fail(error, error instanceof VoiceSessionError ? error.closeCode : 1011)
+      },
+    )
+  }
   return {
     accept(output) {
       const bytes = backendOutputBytes(output)
-      if (failed) {
+      if (closed) {
         return Promise.reject(new VoiceSessionError('Voice backend output is closed', 1001))
       }
       if (bytes > limits.maxOutputQueueBytes - pendingBytes) {
@@ -486,23 +568,29 @@ export function backendOutputRelay(
         return Promise.reject(error)
       }
       pendingBytes += bytes
-      const delivery = deliveryTail.then(() => {
-        if (failed) {
-          throw new VoiceSessionError('Voice backend output is closed', 1001)
-        }
-        return deliver(output)
+      const delivery = new Promise<void>((resolve, reject) => {
+        queue.push({
+          output,
+          bytes,
+          settled: false,
+          resolve,
+          reject,
+        })
       })
-      deliveryTail = delivery
-        .catch((error: unknown) => {
-          fail(error, error instanceof VoiceSessionError ? error.closeCode : 1011)
-        })
-        .finally(() => {
-          pendingBytes -= bytes
-        })
+      pump()
       return delivery
     },
     drain() {
-      return deliveryTail
+      if (!inFlight && queue.length === 0) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        drainWaiters.add(resolve)
+      })
+    },
+    close(reason) {
+      abort(reason)
+    },
+    abort(reason) {
+      abort(reason)
     },
     pendingBytes() {
       return pendingBytes
@@ -510,18 +598,33 @@ export function backendOutputRelay(
   }
 }
 
-async function drainBackendOutput(
-  relay: Pick<ReturnType<typeof backendOutputRelay>, 'drain'>,
+export async function shutdownBackendOutput(
+  relay: Pick<
+    ReturnType<typeof backendOutputRelay>,
+    'drain' | 'close' | 'abort'
+  >,
+  abortTransport?: () => Promise<void>,
+  timeoutMs = VOICE_OUTPUT_DRAIN_TIMEOUT_MS,
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
   await Promise.race([
     relay.drain(),
     new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, VOICE_OUTPUT_DRAIN_TIMEOUT_MS)
+      timer = setTimeout(() => {
+        timedOut = true
+        resolve()
+      }, timeoutMs)
       timer.unref()
     }),
   ])
   if (timer) clearTimeout(timer)
+  if (timedOut) {
+    relay.abort(new Error('Voice backend output shutdown timed out'))
+    await abortTransport?.().catch(() => undefined)
+    return
+  }
+  relay.close()
 }
 
 function backendOutputBytes(output: OracleVoiceBackendOutput): number {

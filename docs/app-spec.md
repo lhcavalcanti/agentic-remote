@@ -474,15 +474,18 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   startup MUST NOT download models or enable the feature.
 - Conversation microphone PCM MUST travel only to the hub and, when selected,
   one authenticated paired node. The selected computer MUST perform STT and
-  TTS locally. Conversation mode MUST NOT persist raw audio, synthesized audio,
-  partials, or finalized transcripts. Finalized text and Oracle's generated
-  context MUST still be sent through the existing remote Copilot boundary, and
-  the UI MUST NOT describe the experience as offline.
-- Partials MUST remain display-only; each finalized utterance MUST reach Oracle
-  at most once. A failed submission MUST restore its final text to the
-  composer. A disconnect MUST discard the current utterance rather than replay
-  PCM. TTS failure MUST leave the text reply usable, and typed input plus
-  **Dictate to Oracle** MUST remain available.
+  TTS locally. Conversation mode MUST NOT persist raw PCM, synthesized audio,
+  or partial transcripts. Each non-empty finalized transcript MUST be submitted
+  exactly once through the normal `ManagerAgent.send` path, persisted as the
+  normal Oracle user message in Oracle conversation history, and sent with
+  Oracle's generated context to remote Copilot inference. No separate voice
+  transcript or recording artifact may be persisted, and the UI MUST NOT
+  describe the experience as offline.
+- Partials MUST remain display-only. A failed normal-message submission MUST
+  restore its final text to the composer. A disconnect MUST discard the current
+  utterance rather than replay PCM or a finalized transcript. TTS failure MUST
+  leave the text reply usable, and typed input plus **Dictate to Oracle** MUST
+  remain available.
 - Oracle replacement snapshots MAY start TTS for each stable completed
   sentence before the full reply finishes. This sentence-level early playback
   MUST NOT be described as engine-incremental synthesis unless the selected
@@ -1667,6 +1670,8 @@ Persistent state MAY include:
 - Knowledge bookmark metadata
 - The settings profile (§9.3)
 - Paired node registry and encrypted/external secret references
+- Oracle conversation history, including finalized speech submitted as normal
+  Oracle user messages through `ManagerAgent.send`
 
 Persistent state MUST NOT include:
 
@@ -1677,8 +1682,8 @@ Persistent state MUST NOT include:
 - Voice recordings
 - Temporary transcription artifacts
 - Live `.env` files or credentials
-- Conversation-mode PCM, synthesized audio, partial transcripts, or finalized
-  transcript artifacts
+- Conversation-mode PCM, synthesized audio, partial transcripts, or separate
+  voice transcript/recording artifacts
 
 Awaited session mutations MUST become visible only after their state write
 commits. A refused write MUST NOT leave the mutation in memory, subsequent

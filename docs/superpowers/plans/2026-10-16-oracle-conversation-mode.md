@@ -14,8 +14,8 @@
 
 - Keep `AGENTIC_REMOTE_ORACLE_VOICE=off` as the production default.
 - Keep #398 dictation and upload-based Whisper behavior unchanged and available.
-- Capture and transport 16 kHz mono PCM; never persist Conversation-mode raw audio or transcripts.
-- Partial STT is display-only; each final utterance is submitted through `ManagerAgent.send` at most once.
+- Capture and transport 16 kHz mono PCM; never persist raw PCM, synthesized audio, partial transcripts, or a separate voice transcript/recording artifact.
+- Partial STT is display-only; each final utterance is submitted exactly once through normal `ManagerAgent.send`, persists as the normal Oracle user message/history, and is sent to remote Copilot inference.
 - Tentative speech ducks locally; confirmed speech clears TTS and completes Oracle cancellation before final submission.
 - Every asynchronous voice event is scoped by stream ID and generation; stale events are discarded at browser, hub, backend, and worker boundaries.
 - Enforce explicit byte, duration, queue, timeout, and one-active-stream limits.

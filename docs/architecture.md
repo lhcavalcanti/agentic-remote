@@ -62,11 +62,13 @@ therefore needs no hub-local model inventory. The selected node independently
 validates and advertises its local engine. With no selected computer, local
 mode remains strict and invalid paths advertise voice as unavailable.
 
-Raw and synthesized audio stay in memory and on the selected speech computer.
-Only finalized transcript text crosses into `ManagerAgent.send`, after which
-the transcript and generated Oracle context enter remote Copilot's existing
-trust boundary. Partials never enter Oracle. Voice state is not persisted; a
-restart or disconnect ends the stream and stale generations cannot be replayed.
+Raw PCM, synthesized audio, and partial transcripts stay in memory and are
+never persisted. Each finalized transcript crosses exactly once through the
+normal `ManagerAgent.send` path, is persisted as the normal Oracle user message
+in Oracle conversation history, and enters remote Copilot's existing trust
+boundary with the generated Oracle context. No separate voice transcript or
+recording artifact is persisted. A restart or disconnect ends the stream and
+stale audio or finalized transcripts cannot be replayed.
 
 The feature is disabled unless `AGENTIC_REMOTE_ORACLE_VOICE=on`. Setup
 preserves existing voice configuration but downloads nothing. Profiles are

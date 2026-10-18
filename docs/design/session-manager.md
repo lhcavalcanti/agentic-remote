@@ -333,8 +333,11 @@ Conversation mode is off unless `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete
 profile is configured. `agentic-remote voice-install <profile>` is the only
 model installation path; ordinary setup and startup do not download assets.
 The selected speech computer performs STT and TTS locally without persisting
-audio or transcript artifacts. Final transcript text and the normal generated
-turn context still go to Oracle's remote Copilot model.
+raw PCM, synthesized audio, or partial transcripts. Each finalized transcript
+is submitted exactly once through normal `ManagerAgent.send`, persists as the
+normal Oracle user message in conversation history, and goes with the normal
+generated turn context to Oracle's remote Copilot model. No separate voice
+transcript or recording artifact is persisted.
 
 A hub with `AGENTIC_REMOTE_VOICE_COMPUTER` needs only enablement and the paired
 computer selection; it does not validate or load local speech paths. The node

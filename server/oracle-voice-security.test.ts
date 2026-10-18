@@ -788,7 +788,7 @@ describe('Oracle voice transport security and privacy', () => {
     }
   })
 
-  it('keeps transcript, PCM, ticket, and token out of logs and records audio nowhere', async () => {
+  it('persists one normal manager message while keeping voice artifacts and secrets out', async () => {
     const logs: string[] = []
     const runtime = await localRuntime({
       logger: {
@@ -829,7 +829,19 @@ describe('Oracle voice transport security and privacy', () => {
       utteranceId: 'privacy-1',
       text: transcript,
     })
+    runtime.engine.emit({
+      type: 'final',
+      streamId: hello.streamId,
+      generation: 1,
+      utteranceId: 'privacy-1',
+      text: transcript,
+    })
     await vi.waitFor(() => expect(runtime.manager.send).toHaveBeenCalledOnce())
+    expect(runtime.manager.send).toHaveBeenCalledWith(
+      transcript,
+      {},
+      { answerOnly: true },
+    )
     await runtime.manager.store.flush()
     await closeSocket(client.socket)
 

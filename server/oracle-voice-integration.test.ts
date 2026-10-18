@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import http from 'node:http'
-import type { AddressInfo } from 'node:net'
+import type { AddressInfo, Socket } from 'node:net'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +16,7 @@ import {
   type VoiceClientControl,
   type VoiceServerControl,
 } from '../shared/oracle-voice.js'
+import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
   ManagerEvent,
@@ -23,7 +24,15 @@ import type {
   ManagerSnapshot,
 } from '../shared/manager.js'
 import { buildApp } from './app.js'
-import type { ManagerAgent } from './manager-agent.js'
+import {
+  ManagerAgent,
+  type ManagerHub,
+  type ManagerSdkClient,
+  type ManagerSdkEvent,
+  type ManagerSdkSession,
+  type ManagerSdkSessionConfig,
+} from './manager-agent.js'
+import { JournalRecorder } from './manager-journal.js'
 import { ManagerStore } from './manager-store.js'
 import {
   FakeVoiceEngine,
@@ -166,6 +175,68 @@ class StoredManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
   readonly reset = vi.fn(async () => undefined)
 }
 
+class DeterministicManagerSession implements ManagerSdkSession {
+  readonly prompts: string[] = []
+  readonly abort = vi.fn(async () => {
+    this.emit({ type: 'session.idle' })
+  })
+  readonly disconnect = vi.fn(async () => undefined)
+  readonly rpc = {
+    model: {
+      switchTo: vi.fn(async () => undefined),
+    },
+  }
+  readonly disconnected = false
+  private readonly handlers = new Set<(event: ManagerSdkEvent) => void>()
+
+  constructor(
+    readonly sessionId: string,
+    readonly config: Omit<ManagerSdkSessionConfig, 'sessionId'>,
+  ) {}
+
+  on(handler: (event: ManagerSdkEvent) => void): () => void {
+    this.handlers.add(handler)
+    return () => this.handlers.delete(handler)
+  }
+
+  emit(event: ManagerSdkEvent): void {
+    for (const handler of [...this.handlers]) handler(event)
+  }
+
+  async send({ prompt }: { prompt: string }): Promise<string> {
+    this.prompts.push(prompt)
+    return 'deterministic-manager-accepted'
+  }
+}
+
+class DeterministicManagerClient implements ManagerSdkClient {
+  readonly start = vi.fn(async () => undefined)
+  readonly stop = vi.fn(async () => [])
+  readonly deleteSession = vi.fn(async () => undefined)
+  readonly sessions: DeterministicManagerSession[] = []
+  readonly createSession = vi.fn(async (config: ManagerSdkSessionConfig) => {
+    const session = new DeterministicManagerSession(
+      config.sessionId ?? `manager-sdk-${this.sessions.length + 1}`,
+      config,
+    )
+    this.sessions.push(session)
+    return session
+  })
+  readonly resumeSession = vi.fn(async (
+    sessionId: string,
+    config: Omit<ManagerSdkSessionConfig, 'sessionId'>,
+  ) => {
+    const session = new DeterministicManagerSession(sessionId, config)
+    this.sessions.push(session)
+    return session
+  })
+  readonly rpc = {
+    skills: {
+      discover: vi.fn(async () => ({ skills: [] })),
+    },
+  }
+}
+
 interface SocketMessage {
   control?: VoiceServerControl | ManagerEvent
   audio?: VoiceAudioFrame
@@ -241,6 +312,136 @@ class SocketInbox {
   }
 }
 
+interface BrowserCaptureOptions {
+  streamId: string
+  initialGeneration: number
+  sendControl(control: VoiceClientControl): void
+  sendAudio(frame: VoiceAudioFrame): void | Promise<void>
+  onSpeechConfirmed?(generation: number): void
+}
+
+interface BrowserPlaybackOptions {
+  initialGeneration: number
+  maxQueuedSeconds: number
+}
+
+interface BrowserClient {
+  readonly currentState: string
+  readonly currentGeneration: number
+  start(): Promise<void>
+  stop(): Promise<void>
+}
+
+interface BrowserClientConstructor {
+  new(options: {
+    language: string
+    defaults: ManagerClientDefaults
+    answerOnly: boolean
+    dependencies: {
+      fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>
+      createSocket(url: string): BrowserSocket
+      createCapture(options: BrowserCaptureOptions): BrowserCapture
+      createPlayback(options: BrowserPlaybackOptions): BrowserPlayback
+      baseUrl(): URL
+    }
+    onState(state: string): void
+    onError(error: Error & { code: string; fatal: boolean }): void
+    onFinal(event: { text: string }): void
+  }): BrowserClient
+}
+
+class BrowserSocket {
+  readonly CONNECTING = WebSocket.CONNECTING
+  readonly OPEN = WebSocket.OPEN
+  readonly CLOSING = WebSocket.CLOSING
+  readonly CLOSED = WebSocket.CLOSED
+  binaryType: 'blob' | 'arraybuffer' = 'blob'
+  onopen: ((event: object) => void) | null = null
+  onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null
+  onerror: ((event: object) => void) | null = null
+  onclose: ((event: {
+    code: number
+    reason: string
+    wasClean: boolean
+  }) => void) | null = null
+  private readonly socket: WebSocket
+
+  constructor(url: string) {
+    this.socket = new WebSocket(url, {
+      headers: { host: trusted.host },
+      origin: trusted.origin,
+    })
+    sockets.add(this.socket)
+    this.socket.on('open', () => this.onopen?.({}))
+    this.socket.on('message', (data, isBinary) => {
+      const buffer = rawBuffer(data)
+      const payload = isBinary
+        ? buffer.buffer.slice(
+            buffer.byteOffset,
+            buffer.byteOffset + buffer.byteLength,
+          ) as ArrayBuffer
+        : buffer.toString('utf8')
+      this.onmessage?.({ data: payload })
+    })
+    this.socket.on('error', () => this.onerror?.({}))
+    this.socket.on('close', (code, reason) => {
+      sockets.delete(this.socket)
+      this.onclose?.({
+        code,
+        reason: reason.toString(),
+        wasClean: code === 1000,
+      })
+    })
+  }
+
+  get readyState(): number {
+    return this.socket.readyState
+  }
+
+  get bufferedAmount(): number {
+    return this.socket.bufferedAmount
+  }
+
+  send(data: string | ArrayBufferLike | ArrayBufferView): void {
+    if (typeof data === 'string') {
+      this.socket.send(data)
+      return
+    }
+    if (ArrayBuffer.isView(data)) {
+      this.socket.send(Buffer.from(data.buffer, data.byteOffset, data.byteLength))
+      return
+    }
+    if (data instanceof ArrayBuffer) {
+      this.socket.send(Buffer.from(data))
+      return
+    }
+    throw new Error('Unexpected Blob in node Oracle voice integration')
+  }
+
+  close(code?: number, reason?: string): void {
+    this.socket.close(code, reason)
+  }
+}
+
+class BrowserCapture {
+  readonly start = vi.fn(async () => undefined)
+  readonly stop = vi.fn(async () => undefined)
+
+  constructor(readonly options: BrowserCaptureOptions) {}
+}
+
+class BrowserPlayback {
+  readonly start = vi.fn(async () => undefined)
+  readonly enqueue = vi.fn(() => true)
+  readonly tentativeSpeech = vi.fn()
+  readonly restoreAfterMisfire = vi.fn()
+  readonly confirmSpeech = vi.fn(() => true)
+  readonly endSegment = vi.fn()
+  readonly close = vi.fn(async () => undefined)
+
+  constructor(readonly options: BrowserPlaybackOptions) {}
+}
+
 interface ListeningRuntime {
   app: Awaited<ReturnType<typeof buildApp>>['app']
   baseUrl: string
@@ -309,10 +510,104 @@ async function listen(
   }
 }
 
+async function listenAtPort(
+  built: Awaited<ReturnType<typeof buildApp>>,
+  root: string,
+  port: number,
+): Promise<ListeningRuntime> {
+  apps.push(built.app)
+  await built.app.listen({ host: '127.0.0.1', port })
+  return {
+    app: built.app,
+    baseUrl: `http://127.0.0.1:${port}`,
+    wsUrl: `ws://127.0.0.1:${port}`,
+    root,
+  }
+}
+
 async function createManager(root: string): Promise<StoredManager> {
   const store = new ManagerStore(path.join(root, 'oracle-manager'))
   await store.initialize()
   return new StoredManager(store)
+}
+
+function deterministicManagerHub(): ManagerHub {
+  const computer: ComputerSummary = {
+    id: 'hub',
+    name: 'development',
+    isLocal: true,
+    online: true,
+    providers: [{
+      id: 'copilot',
+      name: 'GitHub Copilot',
+      available: true,
+      terminalBacked: true,
+    }],
+  }
+  const managed = (
+    id: string,
+    changes: Partial<ManagedSession> = {},
+  ): ManagedSession => ({
+    id,
+    computerId: computer.id,
+    computerName: computer.name,
+    cwd: '/home/tester/src',
+    title: `Session ${id}`,
+    status: 'idle',
+    updatedAt: '2026-10-18T00:00:00.000Z',
+    isOpen: true,
+    provider: 'copilot',
+    messages: [],
+    ...changes,
+  })
+  return {
+    listComputers: () => [computer],
+    findComputer: (nameOrId) =>
+      [computer].find((entry) => entry.id === nameOrId || entry.name === nameOrId),
+    listSessionsWithAuthority: vi.fn(async () => ({
+      sessions: [],
+      answeredComputerIds: [computer.id],
+    })),
+    listSessions: vi.fn(async () => []),
+    listHistory: vi.fn(async () => []),
+    readSession: vi.fn(async (_computerId, sessionId) => managed(sessionId)),
+    askSession: vi.fn(async () => 'Not used'),
+    validateSessionDirectory: vi.fn(async (_computerId, directory) => directory),
+    createSession: vi.fn(async () => managed('created')),
+    renameSession: vi.fn(async (_computerId, sessionId, input) =>
+      managed(sessionId, { title: input.title })),
+    sendMessage: vi.fn(async (_computerId, sessionId) => managed(sessionId)),
+    replyPermission: vi.fn(async (_computerId, sessionId) => managed(sessionId)),
+    replyUserInput: vi.fn(async (_computerId, sessionId) => managed(sessionId)),
+    activateSession: vi.fn(async (_computerId, sessionId) => managed(sessionId)),
+    resumeSession: vi.fn(async (_computerId, sessionId) => managed(sessionId)),
+    cancel: vi.fn(async () => undefined),
+    deleteSession: vi.fn(async () => undefined),
+  }
+}
+
+async function createRealManager(root: string): Promise<{
+  agent: ManagerAgent
+  store: ManagerStore
+  client: DeterministicManagerClient
+  events: ManagerEvent[]
+}> {
+  const store = new ManagerStore(path.join(root, 'oracle-manager'))
+  await store.initialize()
+  const client = new DeterministicManagerClient()
+  const agent = new ManagerAgent({
+    store,
+    recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+    hub: deterministicManagerHub(),
+    clientFactory: () => client,
+    retryDelaysMs: [0, 0],
+    idleStopMs: 60_000,
+    sessionIdFactory: () => 'deterministic-manager-session',
+    now: () => new Date('2026-10-18T00:00:00.000Z'),
+  })
+  const events: ManagerEvent[] = []
+  agent.on('event', (event) => events.push(structuredClone(event)))
+  return { agent, store, client, events }
 }
 
 async function createLocalHarness(
@@ -587,7 +882,38 @@ afterEach(async () => {
 
 describe('Oracle voice cross-layer integration', () => {
   it('streams one local Oracle turn through the same visible manager deltas used for TTS', async () => {
-    const test = await createLocalHarness()
+    const root = await testRoot('oracle-voice-real-manager')
+    const manager = await createRealManager(root)
+    const voice = availableBackend()
+    const built = await buildApp({
+      dataDirectory: root,
+      logger: false,
+      service: new TestSessionService() as unknown as SessionService,
+      managerAgent: manager.agent,
+      voiceBackend: voice.backend,
+    })
+    const runtime = await listen(built, root)
+    const eventSocket = await openSocket(`${runtime.wsUrl}/api/events`, trusted)
+    const events = new SocketInbox(eventSocket, false)
+    const ticket = await issueTicket(runtime.baseUrl)
+    const { socket: browser, inbox: browserInbox } = await openSocketWithInbox(
+      `${runtime.wsUrl}/api/oracle-voice?ticket=${encodeURIComponent(ticket)}`,
+      trusted,
+    )
+    const hello = await browserInbox.waitForControl<VoiceServerControl>(
+      (message) => message.type === 'hello',
+    )
+    if (hello.type !== 'hello') throw new Error('Expected Oracle voice hello')
+    const test = {
+      ...runtime,
+      backend: voice.backend,
+      engine: voice.engine,
+      events,
+      manager,
+      browser,
+      browserInbox,
+      streamId: hello.streamId,
+    }
     const initialFiles = await fileInventory(test.root)
 
     const capabilities = await requestJson(
@@ -655,7 +981,7 @@ describe('Oracle voice cross-layer integration', () => {
       generation: 8,
       text: 'Run the focused',
     })
-    expect(test.manager.send).not.toHaveBeenCalled()
+    expect(test.manager.store.messages()).toEqual([])
 
     sendControl(test.browser, test.streamId, 'speech_end', 8, {
       utteranceId: 'utterance-8',
@@ -672,16 +998,25 @@ describe('Oracle voice cross-layer integration', () => {
       utteranceId: 'utterance-8',
       text: 'Run the focused tests.',
     })
+    test.engine.emit({
+      type: 'final',
+      streamId: test.streamId,
+      generation: 8,
+      utteranceId: 'utterance-8',
+      text: 'Run the focused tests.',
+    })
 
-    await vi.waitFor(() => expect(test.manager.send).toHaveBeenCalledOnce())
-    expect(test.manager.send).toHaveBeenCalledWith(
-      'Run the focused tests.',
-      defaults,
-      { answerOnly: true },
-    )
-    const userMessage = test.manager.submitted[0]
+    await vi.waitFor(() => {
+      expect(test.manager.client.sessions).toHaveLength(1)
+      expect(test.manager.client.sessions[0].prompts).toHaveLength(1)
+      expect(test.manager.store.messages().filter(
+        (message) => message.role === 'user',
+      )).toHaveLength(1)
+    })
+    const userMessage = test.manager.store.messages().find(
+      (message) => message.role === 'user',
+    )!
     expect(userMessage).toMatchObject({
-      id: 'voice-user-1',
       role: 'user',
       content: 'Run the focused tests.',
       state: 'running',
@@ -689,23 +1024,48 @@ describe('Oracle voice cross-layer integration', () => {
     })
     expect(await test.events.waitForControl<ManagerEvent>(
       (event) => event.type === 'manager.message'
-        && event.message.id === userMessage.id,
-    )).toEqual({
+        && event.message.id === userMessage.id
+        && event.message.state === 'running',
+    )).toMatchObject({
       type: 'manager.message',
-      message: userMessage,
+      message: {
+        id: userMessage.id,
+        role: 'user',
+        content: 'Run the focused tests.',
+        state: 'running',
+      },
     })
+    const liveUserIds = test.events.controls<ManagerEvent>(
+      (event) => event.type === 'manager.message'
+        && event.message.role === 'user',
+    ).flatMap((event) =>
+      event.type === 'manager.message' && event.message.role === 'user'
+        ? [event.message.id]
+        : [])
+    expect(new Set(liveUserIds)).toEqual(new Set([userMessage.id]))
+    expect(test.manager.client.sessions[0].prompts[0]).toContain(
+      '<user_message>\nRun the focused tests.\n</user_message>',
+    )
     expect(test.browserInbox.controls<VoiceServerControl>(
       (message) => message.type === 'final',
     )).toEqual([])
 
     const firstSnapshot = 'First stable sentence.'
-    test.manager.emitDelta('assistant-1', firstSnapshot)
-    expect(await test.events.waitForControl<ManagerEvent>(
+    const sdkSession = test.manager.client.sessions[0]
+    sdkSession.emit({
+      type: 'assistant.message_delta',
+      data: {
+        messageId: 'sdk-assistant-1',
+        deltaContent: firstSnapshot,
+      },
+    })
+    const firstDelta = await test.events.waitForControl<ManagerEvent>(
       (event) => event.type === 'manager.delta'
         && event.content === firstSnapshot,
-    )).toEqual({
+    )
+    expect(firstDelta).toEqual({
       type: 'manager.delta',
-      messageId: 'assistant-1',
+      messageId: expect.any(String),
       content: firstSnapshot,
     })
     await vi.waitFor(() => {
@@ -750,12 +1110,22 @@ describe('Oracle voice cross-layer integration', () => {
 
     const secondSnapshot =
       'First stable sentence. Second stable sentence.'
-    test.manager.emitDelta('assistant-1', secondSnapshot)
-    expect(await test.events.waitForControl<ManagerEvent>(
+    sdkSession.emit({
+      type: 'assistant.message_delta',
+      data: {
+        messageId: 'sdk-assistant-1',
+        deltaContent: ' Second stable sentence.',
+      },
+    })
+    const secondDelta = await test.events.waitForControl<ManagerEvent>(
       (event) => event.type === 'manager.delta'
         && event.content === secondSnapshot,
-    )).toMatchObject({
+    )
+    expect(secondDelta).toMatchObject({
       type: 'manager.delta',
+      messageId: firstDelta.type === 'manager.delta'
+        ? firstDelta.messageId
+        : undefined,
       content: secondSnapshot,
     })
     await vi.waitFor(() => {
@@ -781,18 +1151,34 @@ describe('Oracle voice cross-layer integration', () => {
     })
 
     const finalContent = `${secondSnapshot} Final stored suffix.`
-    const assistant: ManagerMessage = {
-      id: 'assistant-1',
+    sdkSession.emit({
+      type: 'assistant.message',
+      data: {
+        messageId: 'sdk-assistant-1',
+        content: finalContent,
+      },
+    })
+    sdkSession.emit({ type: 'session.idle' })
+    const storedAssistantEvent = await test.events.waitForControl<ManagerEvent>(
+      (event) => event.type === 'manager.message'
+        && event.message.role === 'assistant'
+        && event.message.replyTo === userMessage.id,
+    )
+    if (
+      storedAssistantEvent.type !== 'manager.message'
+      || storedAssistantEvent.message.role !== 'assistant'
+    ) {
+      throw new Error('Expected stored ManagerAgent assistant message')
+    }
+    const assistant = storedAssistantEvent.message
+    expect(assistant).toMatchObject({
+      id: firstDelta.type === 'manager.delta'
+        ? firstDelta.messageId
+        : undefined,
       role: 'assistant',
       replyTo: userMessage.id,
       content: finalContent,
-      createdAt: '2026-10-18T00:00:01.000Z',
-    }
-    await test.manager.emitAssistant(assistant)
-    expect(await test.events.waitForControl<ManagerEvent>(
-      (event) => event.type === 'manager.message'
-        && event.message.id === assistant.id,
-    )).toEqual({ type: 'manager.message', message: assistant })
+    })
     await vi.waitFor(() => {
       expect(engineCalls(test.engine, 'tts.synthesize').map((call) => call.text))
         .toEqual([
@@ -823,14 +1209,32 @@ describe('Oracle voice cross-layer integration', () => {
     const visibleSnapshots = test.events.controls<ManagerEvent>(
       (event) => event.type === 'manager.delta',
     ).flatMap((event) => event.type === 'manager.delta' ? [event.content] : [])
-    expect(visibleSnapshots).toEqual([firstSnapshot, secondSnapshot])
+    expect(visibleSnapshots).toEqual([
+      firstSnapshot,
+      secondSnapshot,
+      finalContent,
+    ])
+    const actualManagerSnapshots = test.manager.events.flatMap((event) =>
+      event.type === 'manager.delta' ? [event.content] : [])
+    expect(visibleSnapshots).toEqual(actualManagerSnapshots)
     const spoken = engineCalls(test.engine, 'tts.synthesize').map((call) => call.text)
     expect(spoken.slice(0, 2)).toEqual([
       'First stable sentence.',
       'Second stable sentence.',
     ])
     expect(spoken.every((text) => finalContent.includes(text))).toBe(true)
-    expect(test.manager.store.messages()).toEqual([userMessage, assistant])
+    await vi.waitFor(() => {
+      expect(test.manager.store.messages()).toEqual([
+        expect.objectContaining({
+          id: userMessage.id,
+          role: 'user',
+          content: 'Run the focused tests.',
+          state: 'done',
+          answerOnly: true,
+        }),
+        assistant,
+      ])
+    })
     expect(test.browserInbox.audio().every(
       (frame) => voiceAudioFrameByteLength(frame) <= 32 * 1024,
     )).toBe(true)
@@ -923,12 +1327,18 @@ describe('Oracle voice cross-layer integration', () => {
   it('relays incrementally through an authenticated paired node without hub-local models', async () => {
     vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
     vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Speech node')
+    const nodeLogs: string[] = []
+    const hubLogs: string[] = []
+    const capturedLogger = (lines: string[]) => ({
+      level: 'trace',
+      stream: { write: (line: string) => lines.push(line) },
+    })
 
     const nodeRoot = await testRoot('oracle-voice-node')
     const nodeVoice = availableBackend()
     const nodeBuilt = await buildApp({
       dataDirectory: nodeRoot,
-      logger: false,
+      logger: capturedLogger(nodeLogs) as unknown as boolean,
       role: 'node',
       service: new TestSessionService() as unknown as SessionService,
       managerAgent: false,
@@ -941,7 +1351,7 @@ describe('Oracle voice cross-layer integration', () => {
     const manager = await createManager(hubRoot)
     const hubBuilt = await buildApp({
       dataDirectory: hubRoot,
-      logger: false,
+      logger: capturedLogger(hubLogs) as unknown as boolean,
       role: 'hub',
       service: new TestSessionService() as unknown as SessionService,
       managerAgent: manager as unknown as ManagerAgent,
@@ -1009,13 +1419,22 @@ describe('Oracle voice cross-layer integration', () => {
       ])
     })
 
-    browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(21, 0))))
+    const pcmSentinel = new Int16Array([29_101, -29_102, 29_103, -29_104])
+    browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(
+      21,
+      0,
+      pcmSentinel,
+    ))))
     await vi.waitFor(() => {
       expect(engineCalls(nodeVoice.engine, 'stt.accept').map((call) => call.sequence))
         .toEqual([0])
     })
     expect(engineCalls(nodeVoice.engine, 'stt.end')).toEqual([])
-    browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(21, 1))))
+    browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(
+      21,
+      1,
+      new Int16Array([29_105, -29_106]),
+    ))))
     await vi.waitFor(() => {
       expect(engineCalls(nodeVoice.engine, 'stt.accept').map((call) => call.sequence))
         .toEqual([0, 1])
@@ -1035,28 +1454,30 @@ describe('Oracle voice cross-layer integration', () => {
       utteranceId: 'remote-21',
     })
     await vi.waitFor(() => expect(engineCalls(nodeVoice.engine, 'stt.end')).toHaveLength(1))
+    const transcriptSentinel = 'paired-final-c8ea17b4'
     nodeVoice.engine.emit({
       type: 'final',
       streamId: hello.streamId,
       generation: 21,
       utteranceId: 'remote-21',
-      text: 'Run on the paired node.',
+      text: transcriptSentinel,
     })
     await vi.waitFor(() => expect(manager.send).toHaveBeenCalledOnce())
     expect(manager.send).toHaveBeenCalledWith(
-      'Run on the paired node.',
+      transcriptSentinel,
       defaults,
       { answerOnly: true },
     )
     const user = manager.submitted[0]
-    manager.emitDelta('remote-assistant', 'Remote reply streams.')
+    const managerDeltaSentinel = 'paired-manager-tts-4b027dc1.'
+    manager.emitDelta('remote-assistant', managerDeltaSentinel)
     await events.waitForControl<ManagerEvent>(
       (event) => event.type === 'manager.delta'
-        && event.content === 'Remote reply streams.',
+        && event.content === managerDeltaSentinel,
     )
     await vi.waitFor(() => {
       expect(engineCalls(nodeVoice.engine, 'tts.synthesize').map((call) => call.text))
-        .toEqual(['Remote reply streams.'])
+        .toEqual([managerDeltaSentinel])
     })
     const speech = engineCalls(nodeVoice.engine, 'tts.synthesize')[0]
     nodeVoice.engine.emit(playback(
@@ -1097,14 +1518,38 @@ describe('Oracle voice cross-layer integration', () => {
       id: 'remote-assistant',
       role: 'assistant',
       replyTo: user.id,
-      content: 'Remote reply streams.',
+      content: managerDeltaSentinel,
       createdAt: '2026-10-18T00:00:02.000Z',
     })
 
     expect(await fileInventory(nodeRoot)).toEqual(nodeFilesBefore)
-    expect(Object.keys(await fileInventory(nodeRoot)).filter(
-      (name) => /\.(?:pcm|wav|webm|ogg|mp3)$/i.test(name),
-    )).toEqual([])
+    const hubFiles = await fileInventory(hubRoot)
+    const nodeFiles = await fileInventory(nodeRoot)
+    for (const files of [hubFiles, nodeFiles]) {
+      expect(Object.keys(files).filter(
+        (name) => /\.(?:pcm|wav|webm|ogg|mp3|m4a)$/i.test(name),
+      )).toEqual([])
+      expect(Object.values(files).some((contents) =>
+        Buffer.from(contents, 'base64').includes(
+          Buffer.from(pcmSentinel.buffer),
+        ))).toBe(false)
+    }
+    const pcmBytes = Buffer.from(pcmSentinel.buffer)
+    const sensitiveLogValues = [
+      transcriptSentinel,
+      managerDeltaSentinel,
+      ticket,
+      hello.streamId,
+      nodeBuilt.identity.token,
+      pcmSentinel.join(','),
+      pcmBytes.toString('hex'),
+      pcmBytes.toString('base64'),
+    ]
+    for (const logs of [hubLogs.join(''), nodeLogs.join('')]) {
+      for (const value of sensitiveLogValues) {
+        expect(logs).not.toContain(value)
+      }
+    }
 
     const disconnected = closeEvent(browser)
     nodeVoice.engine.emit({
@@ -1123,6 +1568,177 @@ describe('Oracle voice cross-layer integration', () => {
     expect(browserClose.code).toBe(1011)
     expect(browserClose.reason).toContain('Node voice worker crashed')
     expect(manager.send).toHaveBeenCalledOnce()
+  })
+
+  it('reconnects the production browser client after a paired node restart without replay', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
+    vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Restartable speech node')
+    const browserClientModule = '../src/oracle-voice/client.js'
+    const { OracleVoiceClient } = await import(browserClientModule) as {
+      OracleVoiceClient: BrowserClientConstructor
+    }
+
+    const nodeRoot = await testRoot('oracle-voice-restart-node')
+    const firstVoice = availableBackend()
+    const firstNodeBuilt = await buildApp({
+      dataDirectory: nodeRoot,
+      logger: false,
+      role: 'node',
+      service: new TestSessionService() as unknown as SessionService,
+      managerAgent: false,
+      voiceBackend: firstVoice.backend,
+    })
+    const firstNode = await listen(firstNodeBuilt, nodeRoot)
+    const nodePort = Number(new URL(firstNode.baseUrl).port)
+    const nodeConnections = new Set<Socket>()
+    firstNode.app.server.on('connection', (socket) => {
+      nodeConnections.add(socket)
+      socket.once('close', () => nodeConnections.delete(socket))
+    })
+
+    const hubRoot = await testRoot('oracle-voice-restart-hub')
+    const manager = await createManager(hubRoot)
+    const hubBuilt = await buildApp({
+      dataDirectory: hubRoot,
+      logger: false,
+      role: 'hub',
+      service: new TestSessionService() as unknown as SessionService,
+      managerAgent: manager as unknown as ManagerAgent,
+    })
+    const hub = await listen(hubBuilt, hubRoot)
+    expect((await requestJson(
+      hub.baseUrl,
+      'POST',
+      '/api/computers',
+      trusted,
+      {
+        baseUrl: firstNode.baseUrl,
+        token: firstNodeBuilt.identity.token,
+        name: 'Restartable speech node',
+      },
+    )).statusCode).toBe(201)
+    await vi.waitFor(async () => {
+      expect((await requestJson(
+        hub.baseUrl,
+        'GET',
+        '/api/oracle-voice/capabilities',
+        trusted,
+      )).body).toMatchObject({ available: true })
+    })
+
+    const captures: BrowserCapture[] = []
+    const playbacks: BrowserPlayback[] = []
+    const states: string[] = []
+    const errors: Array<Error & { code: string; fatal: boolean }> = []
+    const finals: string[] = []
+    let ticketRequests = 0
+    const client = new OracleVoiceClient({
+      language: 'en',
+      defaults,
+      answerOnly: true,
+      dependencies: {
+        fetch: async (input, init) => {
+          const url = new URL(String(input), hub.baseUrl)
+          if (url.pathname.endsWith('/tickets')) ticketRequests += 1
+          const response = await requestJson(
+            hub.baseUrl,
+            init?.method ?? 'GET',
+            `${url.pathname}${url.search}`,
+            trusted,
+          )
+          return new Response(
+            response.body === undefined ? undefined : JSON.stringify(response.body),
+            {
+              status: response.statusCode,
+              headers: { 'content-type': 'application/json' },
+            },
+          )
+        },
+        createSocket: (url) => new BrowserSocket(url),
+        createCapture: (options) => {
+          const capture = new BrowserCapture(options)
+          captures.push(capture)
+          return capture
+        },
+        createPlayback: (options) => {
+          const playback = new BrowserPlayback(options)
+          playbacks.push(playback)
+          return playback
+        },
+        baseUrl: () => new URL(hub.baseUrl),
+      },
+      onState: (state) => states.push(state),
+      onError: (error) => errors.push(error),
+      onFinal: (event) => finals.push(event.text),
+    })
+    await client.start()
+    expect(captures).toHaveLength(1)
+    const firstCapture = captures[0]
+    const firstStreamId = firstCapture.options.streamId
+    const activeGeneration = client.currentGeneration + 1
+    firstCapture.options.onSpeechConfirmed?.(activeGeneration)
+    firstCapture.options.sendControl({
+      type: 'speech_confirmed',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId: firstStreamId,
+      generation: activeGeneration,
+      utteranceId: 'restart-utterance',
+    })
+    await firstCapture.options.sendAudio(microphone(
+      activeGeneration,
+      0,
+      new Int16Array([301, -302, 303, -304]),
+    ))
+    await vi.waitFor(() => {
+      expect(engineCalls(firstVoice.engine, 'stt.accept')).toEqual([
+        expect.objectContaining({ sequence: 0 }),
+      ])
+    })
+    firstVoice.engine.emit({
+      type: 'final',
+      streamId: firstStreamId,
+      generation: activeGeneration,
+      utteranceId: 'restart-utterance',
+      text: 'Submit this restart turn once.',
+    })
+    await vi.waitFor(() => expect(manager.send).toHaveBeenCalledOnce())
+
+    for (const socket of nodeConnections) socket.destroy()
+    await vi.waitFor(() => expect(client.currentState).toBe('reconnecting'), {
+      timeout: 5_000,
+    })
+    await firstNode.app.close()
+
+    const restartedVoice = availableBackend()
+    const restartedNodeBuilt = await buildApp({
+      dataDirectory: nodeRoot,
+      logger: false,
+      role: 'node',
+      service: new TestSessionService() as unknown as SessionService,
+      managerAgent: false,
+      voiceBackend: restartedVoice.backend,
+    })
+    await listenAtPort(restartedNodeBuilt, nodeRoot, nodePort)
+    await vi.waitFor(() => expect(client.currentState).toBe('listening'), {
+      timeout: 8_000,
+      interval: 50,
+    })
+
+    expect(states).toContain('reconnecting')
+    expect(captures).toHaveLength(2)
+    expect(captures[1].options.streamId).not.toBe(firstStreamId)
+    expect(captures[1].options.initialGeneration).toBeGreaterThan(activeGeneration)
+    expect(ticketRequests).toBeGreaterThanOrEqual(2)
+    expect(captures[0].stop).toHaveBeenCalledOnce()
+    expect(engineCalls(restartedVoice.engine, 'stt.accept')).toEqual([])
+    expect(manager.send).toHaveBeenCalledOnce()
+    expect(finals).toEqual([])
+    expect(errors).toContainEqual(expect.objectContaining({
+      code: 'server-error',
+      fatal: false,
+    }))
+    await client.stop()
+    expect(playbacks.at(-1)?.close).toHaveBeenCalledOnce()
   })
 
   it('fails closed when a paired node cannot consume incremental microphone frames', async () => {

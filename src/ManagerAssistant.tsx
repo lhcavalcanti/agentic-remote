@@ -1130,7 +1130,7 @@ export function ManagerAssistant({
                 </p>
               ) : null}
               <p className="manager-conversation-status__privacy">
-                Speech processing stays on your selected computer; Oracle uses remote Copilot.
+                Speech processing stays on your selected computer; Oracle uses remote Copilot. Final messages stay in Oracle history.
               </p>
             </div>
             {conversation.ownsResources ? (

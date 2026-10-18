@@ -386,6 +386,45 @@ describe('ManagerAssistant', () => {
     expect(screen.getByRole('button', { name: 'Ask', pressed: true })).toBeInTheDocument()
   })
 
+  it('renders cumulative real ManagerAgent deltas and replaces them with the stored assistant', async () => {
+    const { emit } = setup({
+      ...empty,
+      status: 'working',
+      messages: [{
+        id: 'voice-user',
+        role: 'user',
+        content: 'Run the focused tests.',
+        createdAt: 't',
+        state: 'running',
+      }],
+    })
+    await openPanel()
+    const messageId = 'real-manager-reply'
+    const snapshots = [
+      'First stable sentence.',
+      'First stable sentence. Second stable sentence.',
+      'First stable sentence. Second stable sentence. Final stored suffix.',
+    ]
+
+    for (const content of snapshots) {
+      emit({ type: 'manager.delta', messageId, content })
+      expect(screen.getByText(content)).toBeInTheDocument()
+    }
+    emit({
+      type: 'manager.message',
+      message: {
+        id: messageId,
+        role: 'assistant',
+        replyTo: 'voice-user',
+        content: snapshots.at(-1)!,
+        createdAt: 't2',
+      },
+    })
+
+    expect(screen.getAllByText(snapshots.at(-1)!)).toHaveLength(1)
+    expect(screen.queryByText(snapshots[1])).not.toBeInTheDocument()
+  })
+
   it('tells the app why Oracle cannot take a message', async () => {
     const onIndicatorChange = vi.fn()
     vi.mocked(getManager).mockRejectedValueOnce(new Error('offline'))
@@ -786,7 +825,7 @@ describe('ManagerAssistant', () => {
       expect(screen.getByText('where is the docs work')).toBeVisible()
       expect(input).toHaveValue('Keep this draft')
       expect(screen.getByText(
-        'Speech processing stays on your selected computer; Oracle uses remote Copilot.',
+        'Speech processing stays on your selected computer; Oracle uses remote Copilot. Final messages stay in Oracle history.',
       )).toBeVisible()
     })
 

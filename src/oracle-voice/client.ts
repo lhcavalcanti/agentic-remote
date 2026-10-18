@@ -557,7 +557,13 @@ export class OracleVoiceClient {
       const failure = clientError(error)
       await this.teardownConnection(CLIENT_FATAL_CLOSE_CODE, failure.message)
       if (this.manuallyStopped || this.terminalFailure) return
-      if (failure.code === 'protocol-mismatch' || failure.dictationFallback) {
+      if (
+        failure.code === 'protocol-mismatch'
+        || (
+          failure.dictationFallback
+          && failure.code !== 'capability-unavailable'
+        )
+      ) {
         this.terminalFailure = true
         this.report(failure)
         this.setState('error')

@@ -9,12 +9,13 @@ unsupported, or fails.
 
 The browser sends 16 kHz mono PCM only to the Agentic Remote hub. Speech
 recognition and synthesis run on the selected hub or paired node. Conversation
-mode does not write PCM, synthesized audio, or transcripts to disk.
+mode never persists raw PCM, synthesized audio, or partial transcripts.
 
-The privacy boundary ends at finalized text: the hub submits that transcript,
-Oracle's generated context, and the conversation to remote GitHub Copilot.
-Conversation mode is therefore local speech processing, not an offline
-assistant.
+The privacy boundary ends at finalized text: the hub submits each final exactly
+once through normal `ManagerAgent.send`. It becomes the normal persisted Oracle
+user message in conversation history and is sent with Oracle context to remote
+GitHub Copilot. No separate voice transcript or recording artifact is kept.
+Conversation mode is therefore local speech processing, not an offline assistant.
 
 For hub-local speech, install and configure a profile on the hub. For speech
 on a paired node, install and enable the profile on the node only. The hub

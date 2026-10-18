@@ -548,10 +548,11 @@ export class OracleVoiceCoordinator {
     failure: OracleVoiceBackendDisconnect,
   ): Promise<void> {
     if (this.closed) return
+    const retryable = retryableBackendDisconnect(failure.code)
     await this.sendError(
       'voice_backend_disconnected',
       failure.reason || 'The selected voice computer disconnected',
-      true,
+      !retryable,
     ).catch(() => undefined)
     this.terminate(failure.code, failure.reason)
     await this.finishClose(failure.reason || 'Voice backend disconnected')
@@ -707,4 +708,8 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function managerStatusIsBusy(status: 'idle' | 'working' | 'recovering' | 'offline'): boolean {
   return status === 'working' || status === 'recovering'
+}
+
+function retryableBackendDisconnect(code: number): boolean {
+  return code === 1001 || code === 1006 || code === 1011
 }

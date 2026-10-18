@@ -123,6 +123,34 @@ describe('OracleVoiceClient', () => {
     expect(client.instance.currentState).toBe('listening')
   })
 
+  it('keeps reconnecting while the paired voice computer is temporarily unavailable', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.capabilityFailures = 1
+
+    client.sockets[0].serverClose(1006, 'paired node lost')
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('reconnecting'))
+    await client.advanceReconnect()
+
+    await vi.waitFor(() => {
+      expect(client.instance.currentState).toBe('reconnecting')
+      expect(client.errors()).toContainEqual(expect.objectContaining({
+        code: 'capability-unavailable',
+        fatal: false,
+      }))
+    })
+    await client.advanceReconnect()
+    await client.openLatest('stream-2')
+
+    expect(client.instance.currentState).toBe('listening')
+    expect(client.startControls(1)).toEqual([
+      expect.objectContaining({
+        streamId: 'stream-2',
+        generation: 2,
+      }),
+    ])
+  })
+
   it('surfaces ticket failure and leaves capture off', async () => {
     const client = harness({ ticketStatus: 503 })
 
@@ -506,6 +534,7 @@ function harness({
   const state = {
     ticketStatus,
     ticketFailures: 0,
+    capabilityFailures: 0,
   }
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://hub.test').pathname
@@ -513,6 +542,14 @@ function harness({
     requests.push(`${method} ${path}`)
     if (path.endsWith('/capabilities')) {
       await capabilitiesReady
+      if (state.capabilityFailures > 0) {
+        state.capabilityFailures -= 1
+        return jsonResponse({
+          ...capabilities,
+          available: false,
+          reason: 'Paired voice computer is offline',
+        })
+      }
       return jsonResponse(capabilities)
     }
     if (path.endsWith('/tickets')) {
@@ -603,6 +640,12 @@ function harness({
     },
     set ticketFailures(value: number) {
       state.ticketFailures = value
+    },
+    get capabilityFailures() {
+      return state.capabilityFailures
+    },
+    set capabilityFailures(value: number) {
+      state.capabilityFailures = value
     },
   }
   return api

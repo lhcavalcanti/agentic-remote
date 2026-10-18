@@ -2,186 +2,181 @@
 
 ## Status
 
-GREEN at approved base `e1a949535b943ea05d1d03c5ccf0fb8cd6db23c5`.
+The Task 10 review findings are addressed on top of
+`dab81efe912dd8822466ecca0e316e8f70cb77f9`.
 
-Created:
+The implementation and focused validation are green. The ordinary full suite
+also passed. A later `NODE_ENV=production pnpm check` run reached one unrelated
+environmental failure in `server/tmux-errors.integration.test.ts`; details are
+recorded under Verification and Concerns.
 
-- `server/oracle-voice-integration.test.ts`
-- `server/oracle-voice-security.test.ts`
+No Graphify refresh, deployment, or production runtime change was made.
 
-Production fixes proved by RED tests:
+## Privacy and persistence contract
 
-- `server/oracle-voice-routes.ts`
-- `server/oracle-voice-session.ts`
+The normative application specification, architecture, design, user guide,
+README, and implementation plan now state the same contract:
+
+- raw PCM, partial transcripts, and synthesized audio are ephemeral and are
+  never persisted;
+- the finalized transcript is submitted exactly once through normal
+  `ManagerAgent.send`;
+- that finalized text is persisted as the normal Oracle user message and
+  conversation history;
+- normal Oracle context, including the finalized text, is sent to remote
+  Copilot inference; and
+- no separate voice transcript or recording artifact is persisted.
+
+The Oracle UI adds the concise durable-history disclosure:
+“Final messages stay in Oracle history.”
+
+`server/oracle-voice-security.test.ts` proves duplicate same-identity final
+delivery results in one manager send, one normal conversation persistence, and
+no voice transcript or audio artifact.
+
+## Retryable paired-node disconnect
+
+Backend disconnect handling now distinguishes transport loss from terminal
+policy and worker failure:
+
+- backend close `1001`, abnormal loss `1006`, and backend internal transport
+  loss `1011` are reported as nonfatal and closed with a browser-reconnectable
+  code;
+- protocol, payload, policy, size, and backpressure closes remain terminal;
+- worker fatal controls remain terminal.
+
+During an existing reconnect cycle, temporary capability unavailability keeps
+the browser in reconnect mode instead of falling back to dictation. Every
+attempt obtains a fresh ticket, stream, and generation. Audio and finalized
+text from the previous stream are never replayed.
+
+The two-app production-client integration test abruptly destroys the paired
+node transport during an active stream, restarts the node on the same address,
+and proves:
+
+- the browser observes `reconnecting`;
+- a fresh stream, generation, and ticket are used once the node returns;
+- old PCM and finalized text are not replayed; and
+- the manager receives no duplicate send.
+
+## Real ManagerAgent and React proof
+
+The local cross-layer integration now uses the production
+`OracleVoiceCoordinator`, production local backend, a real `ManagerAgent`, a
+real `ManagerStore`, and deterministic `ManagerSdkClient`/`ManagerSdkSession`
+fakes.
+
+It drives the real manager lifecycle from queued to running, emits cumulative
+replacement `manager.delta` snapshots, and stores the final assistant message.
+The assertions prove:
+
+- duplicate same-identity final delivery creates one persisted/live user
+  message;
+- `/api/events` snapshots equal the real `ManagerAgent` replacement deltas;
+- TTS segments are derived from those same replacement snapshots; and
+- the stored assistant message uses the same streamed message identity.
+
+`src/ManagerAssistant.test.tsx` subscribes to the corresponding event sequence
+and proves cumulative text renders in the normal transcript before the final
+stored assistant message replaces the live delta.
+
+## Output relay shutdown
+
+`backendOutputRelay` now owns an explicit bounded FIFO queue with at most one
+delivery in flight. It no longer retains work through an unbounded promise
+tail.
+
+`close` and `abort`:
+
+- mark the relay closed;
+- reject queued and in-flight acceptance promises;
+- release queued output references and byte accounting immediately;
+- prevent queued delivery;
+- settle `drain`; and
+- ignore late completion or rejection callbacks from an aborted delivery.
+
+Connector shutdown gives healthy delivery a bounded drain interval. On timeout
+it aborts the relay and retries closure of the associated transport.
+
+The tests cover ordered healthy drain, end-to-end backpressure, a deliberately
+never-settling delivery, late callback isolation, released references and byte
+accounting, prompt shutdown, and an independent fresh stream.
+
+## Paired-node privacy proof
+
+The full authenticated paired turn captures both hub and node loggers and uses
+unique sentinels for:
+
+- microphone PCM;
+- finalized transcript;
+- manager delta and TTS text;
+- ticket;
+- stream identity; and
+- node token.
+
+None appear in either log. No raw PCM or audio file is created on either
+computer. The RED test exposed the stream ID in Fastify's automatic node request
+log; the authenticated node voice WebSocket route now disables that automatic
+request log.
+
+The finalized transcript remains present only through the expected normal
+Oracle conversation persistence path.
 
 ## Strict TDD evidence
 
-### RED 1 — required suites did not exist
+Each finding began with a failing test:
 
-```text
-pnpm vitest run server/oracle-voice-integration.test.ts server/oracle-voice-security.test.ts
-No test files found, exiting with code 1
-```
+1. privacy tests rejected duplicate persistence and separate voice artifacts;
+2. coordinator/client tests rejected terminal handling of transient node loss,
+   followed by the failing real node-restart scenario;
+3. the old self-confirming manager fixture was replaced by assertions that
+   failed until the real ManagerAgent event and store path was connected;
+4. a never-settling delivery proved shutdown could retain queued work, and a
+   late-rejection test proved an aborted relay could still disconnect later;
+5. paired privacy sentinels exposed the node stream ID in automatic logs.
 
-### RED 2 — slow-browser close leaked the active route
-
-The actual listening hub, real browser WebSocket, local backend, and bounded
-output queue reproduced a close that delivered `1013` to the browser but left
-`app.close()` pending. Root cause: connector shutdown awaited an output relay
-drain without a bound after the downstream browser had stopped consuming.
-
-GREEN fix: local and remote connector shutdown now bounds relay draining to one
-second after the backend/client has already been closed. The relay still drains
-normally when delivery is healthy; shutdown cannot remain wedged indefinitely.
-
-### RED 3 — unsupported browser language reached the engine
-
-The actual browser-to-hub WebSocket advertised only `["en"]`, but a
-`start(language: "pt-BR")` remained open instead of failing.
-
-GREEN fix: production `LocalVoiceBackend` supplies its configured language to
-the engine-backed session, which rejects unsupported start languages with
-policy close `1008`. This also protects direct authenticated node WebSockets.
-
-## Exact automated scenario count
-
-`22` Vitest cases:
-
-- `15` integration cases
-  - local full-turn production flow: 1
-  - success/no-echo and failed composer recovery: 1
-  - paired-node full flow: 1
-  - slow paired node/backpressure: 1
-  - disconnect phases (`capture`, `STT`, `manager thinking`, `TTS`,
-    `playback`): 5 parameterized cases
-  - duplicate plus out-of-order PCM: 1
-  - rapid generations `7 -> 8 -> 9` and stale work: 1
-  - worker crash: 1
-  - slow browser/backpressure and shutdown cleanup: 1
-  - Oracle cancel timeout: 1
-  - unavailable/dictation fallback: 1
-- `7` security/privacy cases
-  - Host/Origin/client/ticket binding, one-time use, and 64-ticket cap: 1
-  - missing/invalid/valid node bearer and token-log proof: 1
-  - oversized binary, malformed binary, malformed JSON, forbidden control: 1
-  - bounded control flood: 1
-  - unsupported advertised language: 1
-  - four invalid configuration cases (profile, absolute path, escaping
-    symlink, invalid TTS sample rate): 1 table-driven case
-  - log/filesystem privacy and manager-only transcript persistence: 1
-
-## Integration evidence
-
-### Browser -> local hub
-
-The suite uses a real listening `buildApp`, real Fastify WebSocket upgrade,
-single-use ticket, Host/Origin policy, production coordinator, production local
-backend/session/turn/segmenter/relay, deterministic engine, and a deterministic
-manager backed by the real `ManagerStore`.
-
-It proves:
-
-- capability and no-store ticket response;
-- start at generation 7, confirmed speech at generation 8;
-- ordered 16 kHz PCM sequences `0, 1`;
-- display-only partial and speech-end/final;
-- exactly one
-  `manager.send("Run the focused tests.", defaults, { answerOnly: true })`;
-- the normal user `manager.message` identity seen over `/api/events`;
-- cumulative replacement `manager.delta` snapshots seen over the same
-  `/api/events` WebSocket used by the Oracle UI;
-- TTS inputs `First stable sentence.` and `Second stable sentence.` are derived
-  from those exact visible snapshots, followed only by the stored final suffix
-  `Final stored suffix.`;
-- no independent or hidden response text source exists in the harness;
-- ordered native-rate PCM and `audio_end`, every frame under the advertised
-  limit;
-- successful final is not returned to the composer path;
-- failed manager submission returns the final exactly once for recovery;
-- stop closes normally and releases the backend.
-
-This is the regression for the current UX/API question: model text is visible
-incrementally through normal `manager.delta` events, and the exact same
-cumulative event contents feed the production speakable segmenter/TTS path
-(subject only to the documented Markdown filtering).
-
-### Hub -> paired node
-
-The suite starts two real listening apps, pairs them through `/api/computers`,
-uses the real `RemoteVoiceClient` bearer-authenticated WebSocket, and confirms
-the hub has only remote selection configuration and no local engine factory or
-model paths.
-
-It proves:
-
-- each microphone frame reaches the node engine before the next frame/end;
-- partial/final, one manager submission, manager delta, node TTS, playback
-  frames, and `audio_end` relay incrementally;
-- no recording body/file is created on hub or node;
-- node worker loss produces fatal browser error plus non-normal close without
-  replay or a duplicate manager send;
-- a deliberately stalled node overflows its bounded incremental queue, closes
-  explicitly with `1013`, and never submits a manager message.
-
-### Races and failures
-
-Covered with condition-based waits:
-
-- disconnect during capture, STT, manager thinking, TTS, and playback;
-- duplicate frame suppression and out-of-order rejection;
-- worker fatal error;
-- slow browser and slow node;
-- manager cancellation timeout;
-- rapid `7 -> 8 -> 9`;
-- stale manager delta, stale final, stale TTS, and stale audio rejection;
-- unavailable fallback;
-- exact-once/no duplicate manager messages.
-
-## Security and privacy proof
-
-- Host and Origin are rejected at the real hub boundary.
-- Tickets are origin/address-bound, mismatch attempts are burned, reuse fails,
-  and the oldest of 65 outstanding tickets is evicted.
-- Node WebSocket requires the timing-safe bearer path; missing and invalid
-  tokens fail.
-- Oversized/malformed binary, malformed JSON, browser-originated synthesize,
-  and control flood fail closed.
-- Unsupported language and invalid/escaping model configuration fail closed.
-- Captured hub/node logs do not contain transcript, PCM values, ticket,
-  stream bearer identity, or node token.
-- No `.pcm`, `.wav`, `.webm`, `.ogg`, `.mp3`, or `.m4a` file is created.
-- No file contains the raw PCM byte sequence.
-- The final transcript appears in exactly one persisted file:
-  `oracle-manager/conversation.jsonl`, through the normal manager
-  message/store path.
+The production changes were made only after those failures were observed.
 
 ## Verification
 
 ```text
-Task 10 suites:                 2 files, 22 tests passed
-Ten-iteration loop:            10/10 clean, 220 test executions
-Affected Oracle voice tests:   29 files, 1,137 tests passed
-Typecheck:                     passed
-Lint:                          passed (pre-existing React warnings only)
-Build:                         passed
-Full suite:                    151 passed, 1 skipped files
-                               4,686 passed, 1 skipped tests
-                               1,781.58 seconds
-Production-environment check: `NODE_ENV=production pnpm check` passed
-                               (lint, full suite, and build; exit 0)
+Task 10 suites:                 2 files, 23 tests passed
+Ten-iteration repeat loop:      10/10 clean, 230 test executions
+Affected manager/UI/client:     9 files, 213 tests passed
+Oracle voice suite:             22 files, 369 tests passed
+Relay focused suite:            1 file, 9 tests passed
+TypeScript project build:       passed
+Lint:                           passed (pre-existing React warnings only)
+Production build:               passed
+Ordinary full suite:            151 files passed, 1 skipped
+                                 4,701 tests passed, 1 skipped
 ```
 
-Vitest 5.0.3 rejects the plan's literal `--repeat=10` flag with
-`Unknown option --repeat`. After recording that tool incompatibility, the exact
-two-file command was executed in a fail-fast shell loop ten times; all ten
-iterations passed with no unhandled rejection or leaked-handle warning.
+The ordinary full-suite result was obtained after the substantive review
+changes. The additional late-callback relay regression test was subsequently
+validated by the focused, affected, and Oracle voice suites.
+
+`NODE_ENV=production pnpm check` ran lint successfully and then failed one
+unrelated existing integration test:
+
+```text
+server/tmux-errors.integration.test.ts
+keeps empty and cold-start sessions working through the hub without a tmux server
+```
+
+The test's conservative `/proc` inspection found ambient isolated tmux test
+servers whose socket directories had already disappeared, so it could not
+prove that no tmux server existed. A targeted production-mode retry reproduced
+the same environmental failure. No shared or unowned tmux process was
+terminated. The production build was then run directly and passed.
 
 ## Concerns
 
-- The one-second output-relay drain bound applies only after the backend/client
-  close has begun. It prevents shutdown wedging; it may stop waiting for an
-  already-doomed downstream delivery, whose rejection remains internally
-  observed.
-- Repository lint still reports the existing React hook/ref warnings outside
-  this task. No new Task 10 lint warning remains.
-- Graphify remains intentionally stale for the plan's final Task 12 refresh.
+- Exact `NODE_ENV=production pnpm check` completion remains blocked by ambient
+  stale isolated tmux test servers on the shared development host. This is not
+  caused by the Oracle voice changes; the ordinary full suite passed, all
+  affected production-mode code built, and the targeted failure reproduces
+  independently.
+- Task 11 still owns real browser audio E2E, corpus quality, latency benchmark,
+  and soak evidence.
+- No deployment or production host modification was performed for Task 10.

@@ -170,9 +170,10 @@ they may include other mutations committed in the same batch. `flush()` waits
 for outstanding writes and propagates write failure.
 
 Serialization reuses each unchanged session's encoded bytes, keyed by the
-committed session object, and writes the file in pieces split only at JSON
-boundaries. The bytes equal `JSON.stringify` of the state. This relies on
-committed sessions never being mutated in place; tests set
+committed session object. It writes the file in pieces of at most 1 MiB:
+small pieces are joined, and large sessions are written as uncopied views
+that end on whole characters. The bytes equal `JSON.stringify` of the state.
+This relies on committed sessions never being mutated in place; tests set
 `AGENTIC_REMOTE_STORE_FREEZE=1` to deep-freeze them and fail on any such write.
 
 Session removal and replacement are separate commit boundaries, both before

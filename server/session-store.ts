@@ -199,13 +199,17 @@ export function serializeState(state: StoredState): Buffer {
   return Buffer.concat(serializeStateChunks(state))
 }
 
-// Small pieces are joined into writes of about this size; a large session is
-// written as it is, never copied.
-const WRITE_CHUNK_BYTES = 64 * 1024
+// Small pieces are joined into writes of up to `JOINED_WRITE_BYTES`; a larger
+// one, such as a large session, is written as views of its cached bytes of up
+// to `WRITE_LIMIT_BYTES`, never copied. Views much smaller than that make a
+// large store measurably slower to write, for no benefit.
+const JOINED_WRITE_BYTES = 64 * 1024
+const WRITE_LIMIT_BYTES = 1024 * 1024
 
 /**
- * The same bytes as `serializeState`, in pieces to write one after another,
- * so a large state is never copied into one buffer just to be written.
+ * The same bytes as `serializeState`, in pieces of at most `WRITE_LIMIT_BYTES`
+ * to write one after another, each whole UTF-8, so a large state is never
+ * copied into one buffer just to be written.
  */
 export function serializeStateChunks(state: StoredState): Buffer[] {
   const chunks: Buffer[] = [Buffer.from('{')]
@@ -229,14 +233,22 @@ export function serializeStateChunks(state: StoredState): Buffer[] {
     smallBytes = 0
   }
   for (const chunk of chunks) {
-    if (chunk.length >= WRITE_CHUNK_BYTES) {
+    if (chunk.length >= JOINED_WRITE_BYTES) {
       flush()
-      writes.push(chunk)
+      let start = 0
+      while (chunk.length - start > WRITE_LIMIT_BYTES) {
+        let end = start + WRITE_LIMIT_BYTES
+        // Back off continuation bytes so no character is split.
+        while ((chunk[end] & 0xc0) === 0x80) end -= 1
+        writes.push(chunk.subarray(start, end))
+        start = end
+      }
+      writes.push(chunk.subarray(start))
       continue
     }
+    if (smallBytes + chunk.length > JOINED_WRITE_BYTES) flush()
     small.push(chunk)
     smallBytes += chunk.length
-    if (smallBytes >= WRITE_CHUNK_BYTES) flush()
   }
   flush()
   return writes

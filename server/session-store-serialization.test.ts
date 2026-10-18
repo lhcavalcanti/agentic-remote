@@ -86,26 +86,38 @@ describe('serializeState', () => {
 })
 
 describe('serializeStateChunks', () => {
-  it('writes the same bytes in pieces, joining small sessions and never copying a large one', () => {
+  it('writes the same bytes in whole-character pieces of at most 1 MiB, never copying a large session', () => {
     for (let seed = seedOffset + 1; seed <= seedOffset + 40; seed += 1) {
       const next = random(seed)
       const sessions: Record<string, SessionDetail> = {}
       for (let index = 0; index < Math.floor(next() * 300); index += 1) {
-        const size = next() < 0.1 ? 40_000 + Math.floor(next() * 200_000) : Math.floor(next() * 3_000)
+        const kind = next()
+        const size = kind < 0.02
+          ? 1_000_000 + Math.floor(next() * 2_500_000)
+          : kind < 0.1 ? 40_000 + Math.floor(next() * 200_000) : Math.floor(next() * 3_000)
         sessions[`s${index}`] = session(`s${index}`, 'é\u{1f600}x'.repeat(Math.ceil(size / 4)).slice(0, size))
       }
       const state = { version: 1 as const, sessions, retiredSessionIds: ['gone'] }
       const chunks = serializeStateChunks(state)
       expectBytes(Buffer.concat(chunks), state)
-      // Every piece is whole UTF-8 on its own, so no character is split.
-      for (const chunk of chunks) expect(Buffer.from(chunk.toString('utf8'), 'utf8').equals(chunk)).toBe(true)
-      // A large session is its own piece, the very buffer cached for it.
-      const large = Object.values(sessions).filter((entry) => Buffer.byteLength(JSON.stringify(entry)) >= 64 * 1024)
-      const own = chunks.filter((chunk) => chunk.subarray(0, 6).toString() === '{"id":')
-      expect(own.length).toBe(large.length)
-      const again = serializeStateChunks(state)
-      for (const chunk of own) expect(again.includes(chunk)).toBe(true)
-      expect(chunks.length).toBeLessThanOrEqual(2 * large.length + Math.ceil(Buffer.concat(chunks).length / (64 * 1024)) + 2)
+      for (const chunk of chunks) {
+        expect(chunk.length).toBeGreaterThan(0)
+        expect(chunk.length).toBeLessThanOrEqual(1024 * 1024)
+        // Whole UTF-8 on its own, so no character is split.
+        expect(Buffer.from(chunk.toString('utf8'), 'utf8').equals(chunk)).toBe(true)
+      }
+      // A large session is written as views of the bytes cached for it, so a
+      // second write shares that memory rather than copying it.
+      const largeSessions = Object.values(sessions)
+        .map((entry) => Buffer.byteLength(JSON.stringify(entry)))
+        .filter((bytes) => bytes >= 64 * 1024)
+      const largeBytes = largeSessions.reduce((sum, bytes) => sum + bytes, 0)
+      const again = new Set(serializeStateChunks(state).map((chunk) => chunk.buffer))
+      const shared = chunks.filter((chunk) => again.has(chunk.buffer)).reduce((sum, chunk) => sum + chunk.length, 0)
+      expect(shared).toBeGreaterThanOrEqual(largeBytes)
+      // Few writes: any two neighbouring pieces, bar a large session's last, fill one.
+      const total = Buffer.concat(chunks).length
+      expect(chunks.length).toBeLessThanOrEqual(2 * Math.ceil(total / (64 * 1024)) + largeSessions.length + 2)
     }
   })
 })

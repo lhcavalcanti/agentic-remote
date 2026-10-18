@@ -933,6 +933,34 @@ describe('ClaudeAgentService', () => {
     expect(new Set(asked).size).toBe(asked.length)
   })
 
+  it('runs a queued batch as separate turns, in order, and recognises its retry', async () => {
+    const { directory, service } = await fixture(async function* () {
+      yield* textResult('fixture-session')
+    })
+    const session = await service.createSession(directory, false, true, 'claude')
+    const queued = await service.queueBatch(session.id, {
+      batchId: 'batch-0001', prompts: ['first', 'second', 'third'],
+    })
+    expect(queued.batch).toMatchObject({ id: 'batch-0001', duplicate: false })
+    expect(queued.batch.promptIds).toHaveLength(3)
+
+    await vi.waitFor(() => {
+      const asked = (service.getSession(session.id)?.messages || [])
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content)
+      expect(asked).toEqual(['first', 'second', 'third'])
+    })
+    await vi.waitFor(() => expect(service.getSession(session.id)?.status).toBe('idle'))
+
+    const retry = await service.queueBatch(session.id, {
+      batchId: 'batch-0001', prompts: ['first', 'second', 'third'],
+    })
+    expect(retry.batch).toEqual({ ...queued.batch, duplicate: true })
+    expect(service.getSession(session.id)?.queuedPrompts ?? []).toEqual([])
+    await expect(service.queueBatch(session.id, { batchId: 'batch-0002', prompts: ['/plan'] }))
+      .rejects.toMatchObject({ statusCode: 400 })
+  })
+
   it('refuses a send while the session is being deleted', async () => {
     const { directory, service } = await fixture(async function* () {})
     const session = await service.createSession(directory, false, true, 'claude')

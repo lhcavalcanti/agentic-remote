@@ -37,7 +37,9 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
   SideQuestionExchange,
+  ManagedQueuedBatch,
 } from '../shared/contracts'
+import type { QueueBatchInput } from '../shared/queue-batch'
 import type {
   ManagerClientDefaults,
   ManagerMessage,
@@ -755,6 +757,34 @@ export async function updateQueuedPrompt(
     `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}`,
     { method: 'PATCH', body: JSON.stringify({ content }) },
   )
+}
+
+/**
+ * Queues several prompts in one request, each its own queue item. A failure
+ * whose outcome is unknown carries `uncertainDelivery`; sending the same
+ * `batchId` again is then safe, as the hub admits a batch only once.
+ */
+export async function queueBatch(
+  computerId: string,
+  sessionId: string,
+  input: QueueBatchInput,
+): Promise<ManagedQueuedBatch> {
+  let response: Response
+  try {
+    response = await fetch(`${sessionPath(computerId, sessionId)}/queue/batch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(35_000),
+    })
+  } catch (error) {
+    throw Object.assign(
+      new Error('The hub did not answer, so the batch may or may not be queued.', { cause: error }),
+      { uncertainDelivery: true },
+    )
+  }
+  if (!response.ok) throw await responseError(response)
+  return (await response.json()) as ManagedQueuedBatch
 }
 
 export async function reorderQueuedPrompts(

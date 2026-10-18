@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { QUEUE_BATCH_BODY_LIMIT, validateQueueBatch } from '../shared/queue-batch.js'
 import {
   SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
   SIDE_QUESTION_EARLIER_LIMIT,
@@ -509,6 +510,21 @@ export async function registerNodeRoutes(
             request.params.promptId,
             input.content,
           )
+        },
+      )
+
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/queue/batch',
+        { bodyLimit: QUEUE_BATCH_BODY_LIMIT },
+        async (request, reply) => {
+          const input = validateQueueBatch(request.body)
+          if (!service.queueBatch) {
+            throw Object.assign(new Error('Update this runtime to queue several prompts at once.'), {
+              statusCode: 409, uncertainDelivery: false,
+            })
+          }
+          const result = await service.queueBatch(request.params.sessionId, input)
+          return reply.code(result.batch.duplicate ? 200 : 201).send(result)
         },
       )
 

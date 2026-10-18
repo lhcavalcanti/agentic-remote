@@ -3438,6 +3438,119 @@ button {
   border-bottom: 0;
 }
 
+/* A batch item: which batch it came in with, above its text. */
+.queued-prompt > .queued-prompt__text {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  overflow: visible;
+}
+
+.queued-prompt__text > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.queued-prompt__batch {
+  color: var(--accent-foreground);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.queue-batch-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid var(--accent-border-soft);
+  border-radius: 8px;
+  background: var(--accent-tint);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.queue-batch-notice span {
+  flex: 1;
+  min-width: 0;
+}
+
+.queue-batch {
+  display: grid;
+  gap: 12px;
+}
+
+.queue-batch__list {
+  display: grid;
+  max-height: min(52vh, 520px);
+  gap: 10px;
+  margin: 0;
+  padding: 0 2px 0 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.queue-batch__item {
+  display: grid;
+  grid-template-areas:
+    "label actions"
+    "text text";
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.queue-batch__label {
+  grid-area: label;
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.queue-batch__text {
+  grid-area: text;
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  font: inherit;
+}
+
+.queue-batch__item-actions {
+  display: flex;
+  grid-area: actions;
+  gap: 2px;
+}
+
+.queue-batch__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.queue-batch__footer .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.queue-batch__summary {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.queue-batch__problem {
+  color: var(--muted-strong);
+}
+
 .queued-prompt > span {
   display: -webkit-box;
   overflow: hidden;

@@ -851,6 +851,28 @@ The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
 
+**Queue several prompts** sends up to 50 prompts in one request
+([design](design/queue-batch.md)).
+- **Admission:**
+  - It MUST be all or nothing. Validation MUST happen before any write, and
+    one durable store write MUST append every prompt after the existing FIFO.
+  - A retried `batchId` MUST return the original items and queue nothing new.
+    The same ID with different prompts MUST be refused.
+- **Delivery:**
+  - Each prompt MUST stay its own FIFO item and its own turn. Prompts MUST
+    never be combined into one model prompt.
+  - Items MUST take the app FIFO, never Copilot's in-terminal queue.
+  - Edit, remove, reorder, permission and question gating, and dispatch
+    recovery MUST apply to each item as to any queued prompt.
+- **UI:**
+  - One acknowledgement for the whole batch.
+  - Each item marked with its batch position.
+  - "Nothing was queued" with the reason on refusal.
+  - A locked Retry of the same batch when the outcome is unknown.
+- **Older computers:** a computer whose provider does not advertise
+  `supportsQueueBatch` MUST refuse before anything is sent to it, and the
+  action MUST be hidden there.
+
 An app-queued terminal prompt MUST be durably removed from automatic retry
 before delivery begins. A failed completion write MUST NOT resend the prompt;
 the service MUST retain the delivery outcome and retry only persistence. After
@@ -1463,6 +1485,7 @@ Every material release SHOULD preserve:
 - Previously open tmux sessions restored after a simulated host reboot
 - Active tmux and SDK session discovery
 - Immediate Send, editable Queue, and Stop semantics
+- Queue several prompts: one admission, separate FIFO turns, idempotent retry
 - Phone Enter newline and desktop Enter send
 - Questions and permissions visible and scroll-targeted
 - Task-complete summaries as Agent messages

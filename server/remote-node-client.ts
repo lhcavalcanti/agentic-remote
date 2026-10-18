@@ -32,7 +32,9 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
   SideQuestionExchange,
+  QueuedBatch,
 } from '../shared/contracts.js'
+import type { QueueBatchInput } from '../shared/queue-batch.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
 import { parseSubmissionReceipt } from '../shared/submission-error.js'
@@ -407,6 +409,13 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return this.request<RemovedQueuedPrompt>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}`,
       { method: 'PATCH', body: JSON.stringify({ content }) },
+    )
+  }
+
+  async queueBatch(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch> {
+    return this.request<QueuedBatch>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/batch`,
+      { method: 'POST', body: JSON.stringify(input) },
     )
   }
 

@@ -24,6 +24,7 @@ import type {
   PendingUserInput,
   ProviderRuntimeOptions,
   RemovedQueuedPrompt,
+  QueuedBatch,
   QueuedPromptDispatchResult,
   RuntimeModelOption,
   RuntimeOptions,
@@ -83,6 +84,8 @@ import {
   unavailableSkills,
 } from './session-resources.js'
 import { readClaudeMcp } from './session-resource-transport.js'
+import { validateQueueBatch, type QueueBatchInput } from '../shared/queue-batch.js'
+import { queueBatchDigest, queueBatchItems } from './queue-batch.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 
 const execFileAsync = promisify(execFile)
@@ -332,6 +335,7 @@ export class ClaudeAgentService
         supportsTmuxMigration: false,
         supportsBackgroundTasks: false,
         supportsQueuedPromptDispatch: true,
+        supportsQueueBatch: true,
         supportsSessionResources: true,
         supportsContextRecovery: false,
         unavailableReason: this.available ? undefined : this.unavailableReason,
@@ -924,6 +928,50 @@ export class ClaudeAgentService
       )
     }
     return content
+  }
+
+  /**
+   * Queues several prompts in one admission, each its own queue item, as a
+   * single queued message would be. While a resume is claiming the queue the
+   * batch waits for it, and a retried `batchId` gets the original items back.
+   */
+  async queueBatch(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch> {
+    const batch = validateQueueBatch(input)
+    if (this.stopped) throw queueConflict('The session service is stopping.')
+    let wake = false
+    try {
+      return await this.admissions.run(sessionId, async () => {
+        const stored = this.store.get(sessionId)
+        if (this.deletingSessions.has(sessionId) || !stored) {
+          throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+        }
+        const retry = stored.queueBatches?.some((record) => record.id === batch.batchId)
+        if (!retry && (stored.suspended || this.suspendingSessions.has(sessionId))) {
+          throw Object.assign(new Error('Resume the session before queueing to it. Nothing was queued.'), {
+            statusCode: 409, uncertainDelivery: false,
+          })
+        }
+        const result = await this.store.enqueueBatch(sessionId, {
+          id: batch.batchId,
+          digest: queueBatchDigest(batch.prompts),
+          prompts: queueBatchItems(batch),
+        })
+        if (!result.duplicate) {
+          this.admissions.markCommitted(sessionId)
+          this.publish(result.session)
+          if (!this.admissionClosed.has(sessionId)) {
+            this.drainRequested.add(sessionId)
+            wake = true
+          }
+        }
+        return {
+          session: this.queuedDispatches.view(result.session),
+          batch: { id: batch.batchId, promptIds: result.promptIds, duplicate: result.duplicate },
+        }
+      })
+    } finally {
+      if (wake || this.drainRequested.has(sessionId)) this.wakeQueue(sessionId)
+    }
   }
 
   async reorderQueuedPrompts(

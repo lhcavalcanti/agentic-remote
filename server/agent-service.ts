@@ -38,6 +38,7 @@ import type {
   PendingUserInput,
   ProviderRuntimeOptions,
   QueuedPrompt,
+  QueuedBatch,
   QueuedPromptDispatchResult,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -72,6 +73,8 @@ import {
   QueuedDispatches,
   terminalRefused,
 } from './queued-dispatch.js'
+import { validateQueueBatch, type QueueBatchInput } from '../shared/queue-batch.js'
+import { queueBatchDigest, queueBatchItems } from './queue-batch.js'
 import { queuedSdkPrompt } from './queued-sdk-prompt.js'
 import {
   backgroundTasksFromEvents,
@@ -1981,6 +1984,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsTmuxMigration: true,
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
+        supportsQueueBatch: true,
         supportsSessionResources: true,
         supportsContextRecovery: true,
         supportsSideQuestions: true,
@@ -5374,6 +5378,62 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     return content
+  }
+
+  /**
+   * Queues several prompts in one admission. The batch is validated whole,
+   * appended after the existing queue in one write, and then drained one turn
+   * at a time like any queued prompt; nothing is combined. A retried
+   * `batchId` gets the original items back instead of queueing them twice.
+   */
+  async queueBatch(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch> {
+    const batch = validateQueueBatch(input)
+    try {
+      return await this.admissions.run(sessionId, async () => {
+        if (this.stopped) throw queueConflict('The session service is stopping.')
+        if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+          throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+        }
+        await this.store.readAfterWrites(sessionId)
+        // A retry of a batch already admitted is answered whatever the session
+        // is doing now; refusing it would read as nothing having been queued.
+        const retry = this.store.get(sessionId)?.queueBatches?.some((record) => record.id === batch.batchId)
+        if (!retry) {
+          this.assertTerminalQueueSettled(sessionId)
+          if (this.store.get(sessionId)?.suspended || this.suspendingSessions.has(sessionId)) {
+            throw Object.assign(new Error('Resume the session before queueing to it. Nothing was queued.'), {
+              statusCode: 409, uncertainDelivery: false,
+            })
+          }
+          if (this.admissionClosed.has(sessionId)) {
+            throw Object.assign(new Error('The session is still resuming. Nothing was queued.'), {
+              statusCode: 409, uncertainDelivery: false,
+            })
+          }
+        }
+        return this.serializeQueue(sessionId, async () => {
+          const result = await this.store.enqueueBatch(sessionId, {
+            id: batch.batchId,
+            digest: queueBatchDigest(batch.prompts),
+            prompts: queueBatchItems(batch),
+          })
+          if (!result.duplicate) {
+            this.admissions.markCommitted(sessionId)
+            // Always the app's durable queue, never Copilot's own: each item
+            // stays visible, editable, and safe across a restart.
+            if (this.externalSessionIds.has(sessionId)) this.terminalDrainRequested.add(sessionId)
+            else this.sdkDrainRequested.add(sessionId)
+            this.publish(result.session)
+          }
+          return {
+            session: this.publicSession(result.session),
+            batch: { id: batch.batchId, promptIds: result.promptIds, duplicate: result.duplicate },
+          }
+        })
+      })
+    } finally {
+      this.wakeDeferredQueue(sessionId)
+    }
   }
 
   async reorderQueuedPrompts(

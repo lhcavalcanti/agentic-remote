@@ -13,6 +13,7 @@ import type {
   ActivityKind,
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
+import { QUEUE_BATCH_REMEMBERED } from '../shared/queue-batch.js'
 
 export interface DiscoveredSession {
   id: string
@@ -1130,6 +1131,44 @@ export class SessionStore {
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
       grantTerminalRecovery(session)
+    })
+  }
+
+  /**
+   * Appends a batch after the existing queue in one durable write, or
+   * recognises a batch already admitted. Each prompt stays its own item.
+   */
+  async enqueueBatch(
+    sessionId: string,
+    batch: { id: string; digest: string; prompts: QueuedPrompt[] },
+  ): Promise<{ session: SessionDetail; promptIds: string[]; duplicate: boolean }> {
+    return this.change<{ session: SessionDetail; promptIds: string[]; duplicate: boolean }>((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      const admitted = existing.queueBatches?.find((record) => record.id === batch.id)
+      if (admitted) {
+        if (admitted.digest !== batch.digest) {
+          throw Object.assign(
+            new Error('This batch ID was already used for different prompts. Nothing was queued.'),
+            { statusCode: 409, uncertainDelivery: false },
+          )
+        }
+        return () => ({ session: this.requireSession(sessionId), promptIds: [...admitted.promptIds], duplicate: true })
+      }
+      const session = structuredClone(existing)
+      const promptIds = batch.prompts.map((prompt) => prompt.id)
+      session.queuedPrompts = [...(session.queuedPrompts || []), ...structuredClone(batch.prompts)]
+      session.queuedCount = session.queuedPrompts.length
+      session.queueBatches = [
+        ...(session.queueBatches ?? []),
+        { id: batch.id, digest: batch.digest, promptIds, admittedAt: new Date().toISOString() },
+      ].slice(-QUEUE_BATCH_REMEMBERED)
+      grantTerminalRecovery(session)
+      session.revision = (session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => ({ session: this.requireSession(sessionId), promptIds, duplicate: false })
     })
   }
 

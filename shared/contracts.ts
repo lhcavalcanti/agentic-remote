@@ -1,4 +1,5 @@
 import type { ManagerEvent } from './manager.js'
+import type { QueueBatchReceipt, QueueBatchRecord } from './queue-batch.js'
 
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
@@ -14,6 +15,8 @@ export interface AgentProviderCapability {
   supportsTmuxMigration?: boolean
   supportsBackgroundTasks?: boolean
   supportsQueuedPromptDispatch?: boolean
+  /** Queues several prompts in one request, each its own queue item. */
+  supportsQueueBatch?: boolean
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
   /** Answers side questions about a session without prompting it. */
@@ -167,6 +170,8 @@ export interface QueuedPrompt {
   // A slash command reports what it printed rather than starting a turn, so
   // draining it has to follow the command path and not the prompt one.
   command?: boolean
+  /** The batch this prompt was queued in, and where it stood in it. */
+  batch?: { id: string; index: number; size: number }
 }
 
 export interface QueuedPromptDispatch {
@@ -310,6 +315,8 @@ export interface SessionSummary {
   isOpen?: boolean
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
+  /** The latest admitted batches, so a retried batch is not queued twice. */
+  queueBatches?: QueueBatchRecord[]
   /** A durable dispatch intent. It must never be retried automatically. */
   queuedDispatch?: QueuedPromptDispatch
   /**
@@ -544,6 +551,16 @@ export interface RenameSessionInput {
 export interface RemovedQueuedPrompt {
   session: SessionDetail
   prompt: QueuedPrompt
+}
+
+export interface QueuedBatch {
+  session: SessionDetail
+  batch: QueueBatchReceipt
+}
+
+export interface ManagedQueuedBatch {
+  session: ManagedSession
+  batch: QueueBatchReceipt
 }
 
 export interface PermissionReplyInput {

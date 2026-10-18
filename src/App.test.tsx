@@ -71,6 +71,7 @@ import {
   moveSessionToTmux,
   removeQueuedPrompt,
   reorderQueuedPrompts,
+  queueBatch,
   updateQueuedPrompt,
   renameSession,
   readWorkspaceFile,
@@ -161,6 +162,7 @@ vi.mock('./api', async (importOriginal) => ({
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
   reorderQueuedPrompts: vi.fn(),
+  queueBatch: vi.fn(),
   updateQueuedPrompt: vi.fn(),
   dispatchQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
@@ -1243,6 +1245,101 @@ describe('App', () => {
   afterEach(() => {
     restoreScrollTop?.()
     restoreScrollTop = undefined
+  })
+
+  describe('queueing several prompts at once', () => {
+    const batching = {
+      ...computer,
+      providers: computer.providers!.map((provider) => ({ ...provider, supportsQueueBatch: true })),
+    }
+
+    it('queues them as separate items with one acknowledgement', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(queueBatch).mockImplementation(async (_computerId, _sessionId, input) => ({
+        session: {
+          ...session,
+          queuedCount: input.prompts.length,
+          queuedPrompts: input.prompts.map((content, index) => ({
+            id: `queued-${index}`, content, createdAt: '2026-10-18T00:00:00.000Z',
+            batch: { id: input.batchId, index, size: input.prompts.length },
+          })),
+        },
+        batch: { id: input.batchId, promptIds: input.prompts.map((_, index) => `queued-${index}`), duplicate: false },
+      }))
+      render(<App />)
+      const message = await screen.findByLabelText('Message')
+      fireEvent.change(message, { target: { value: 'Draft the changelog' } })
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      const dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      expect(within(dialog).getByLabelText('Prompt 1')).toHaveValue('Draft the changelog')
+      fireEvent.change(within(dialog).getByLabelText('Prompt 2'), { target: { value: 'Then update the docs' } })
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 2 prompts' }))
+      })
+
+      expect(queueBatch).toHaveBeenCalledTimes(1)
+      expect(queueBatch).toHaveBeenCalledWith(computer.id, session.id, {
+        batchId: expect.stringMatching(/^[a-f0-9]{32}$/),
+        prompts: ['Draft the changelog', 'Then update the docs'],
+      })
+      expect(screen.queryByRole('dialog', { name: 'Queue several prompts' })).toBeNull()
+      const notice = screen.getByText('Queued 2 prompts. Each runs as its own turn, in order.')
+      expect(notice).toBeVisible()
+      expect(notice.closest('[role="status"]')).not.toBeNull()
+      expect(screen.getByLabelText('Message')).toHaveValue('')
+      const queued = within(screen.getByRole('region', { name: 'Queued prompts' }))
+      expect(queued.getByText('Batch 1 of 2')).toBeVisible()
+      expect(queued.getByText('Then update the docs')).toBeVisible()
+      expect(queued.getByText('Batch 2 of 2')).toBeVisible()
+      // Each item keeps its own controls.
+      expect(queued.getByRole('button', { name: 'Edit queued prompt 2' })).toBeEnabled()
+      expect(queued.getByRole('button', { name: 'Remove queued prompt 1' })).toBeEnabled()
+    })
+
+    it('says so when the same batch had already been queued', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(queueBatch).mockImplementation(async (_computerId, _sessionId, input) => ({
+        session,
+        batch: { id: input.batchId, promptIds: ['a'], duplicate: true },
+      }))
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      const dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 1'), { target: { value: 'one' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Remove prompt 2' }))
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 1 prompt' }))
+      })
+      expect(screen.getByText('These prompts were already queued; nothing was added twice.')).toBeVisible()
+    })
+
+    it('keeps the dialog and the prompts when nothing could be queued', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(queueBatch).mockRejectedValue(Object.assign(
+        new Error('Resume the session before queueing to it. Nothing was queued.'),
+        { statusCode: 409, uncertainDelivery: false },
+      ))
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      const dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 1'), { target: { value: 'one' } })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 2'), { target: { value: 'two' } })
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 2 prompts' }))
+      })
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Nothing was queued: Resume the session before queueing to it.')
+      expect(within(dialog).getByLabelText('Prompt 2')).toHaveValue('two')
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByRole('dialog', { name: 'Queue several prompts' })).toBeNull()
+    })
+
+    it('offers it only where the owning computer can batch', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      expect(screen.queryByRole('button', { name: 'Queue several prompts' })).toBeNull()
+    })
   })
 
   it('caps composer growth for iPhone viewport heights', () => {

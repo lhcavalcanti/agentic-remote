@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { QUEUE_BATCH_BODY_LIMIT, validateQueueBatch } from '../shared/queue-batch.js'
 import {
   SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
   SIDE_QUESTION_EARLIER_LIMIT,
@@ -957,6 +958,22 @@ export async function registerHubRoutes(
         request.params.promptId,
         input.content,
       )
+    },
+  )
+
+  // Several prompts, each its own queue item; see docs/design/queue-batch.md.
+  // Checked here first, so a malformed batch never reaches another computer.
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/batch',
+    { bodyLimit: QUEUE_BATCH_BODY_LIMIT },
+    async (request, reply) => {
+      const input = validateQueueBatch(request.body)
+      const result = await manager.queueBatch(
+        request.params.computerId,
+        request.params.sessionId,
+        input,
+      )
+      return reply.code(result.batch.duplicate ? 200 : 201).send(result)
     },
   )
 

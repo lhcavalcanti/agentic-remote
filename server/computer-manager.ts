@@ -32,7 +32,9 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
   SideQuestionExchange,
+  ManagedQueuedBatch,
 } from '../shared/contracts.js'
+import type { QueueBatchInput } from '../shared/queue-batch.js'
 import {
   ComputerRegistry,
   type RegisteredComputer,
@@ -759,6 +761,32 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       session: managedSession(result.session, computer),
       prompt: result.prompt,
     }
+  }
+
+  /**
+   * Queues several prompts on the computer that owns the session. A computer
+   * that cannot is refused before anything is sent to it.
+   */
+  async queueBatch(
+    computerId: string,
+    sessionId: string,
+    input: QueueBatchInput,
+  ): Promise<ManagedQueuedBatch> {
+    const computer = this.requireComputer(computerId)
+    const local = computerId === this.identity.info.id
+    if (
+      (local && !this.localService.queueBatch) ||
+      !computer.providers?.some((provider) => provider.supportsQueueBatch === true)
+    ) {
+      throw Object.assign(
+        new Error(`Update ${computer.name} to queue several prompts at once. Nothing was queued.`),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
+    const result = local
+      ? await this.localService.queueBatch!(sessionId, input)
+      : await this.requireClient(computerId).queueBatch(sessionId, input)
+    return { session: managedSession(result.session, computer), batch: result.batch }
   }
 
   async reorderQueuedPrompts(

@@ -23,7 +23,9 @@ import type {
   SessionMcpServersSnapshot,
   SlashCommand,
   SideQuestionExchange,
+  QueuedBatch,
 } from '../shared/contracts.js'
+import type { QueueBatchInput } from '../shared/queue-batch.js'
 import type { StartupPhases } from './startup-phases.js'
 
 export interface SessionService {
@@ -88,6 +90,8 @@ export interface SessionService {
     promptId: string,
     content: string,
   ): Promise<QueuedPromptDispatchResult>
+  /** Queues several prompts in one admission; see docs/design/queue-batch.md. */
+  queueBatch?(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch>
   sendMessage(
     sessionId: string,
     content: string,

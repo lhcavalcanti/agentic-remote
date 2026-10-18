@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react'
 import ReaderWorkspace from './ReaderWorkspace'
+import { QueueBatchDialog } from './QueueBatchDialog'
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { oracleCommand } from './oracle-command'
@@ -66,6 +67,7 @@ import {
   GripVertical,
   History,
   LoaderCircle,
+  ListOrdered,
   ListPlus,
   Maximize2,
   Menu,
@@ -232,6 +234,7 @@ import {
   moveSessionToTmux,
   removeComputer,
   removeQueuedPrompt,
+  queueBatch,
   reorderQueuedPrompts,
   updateQueuedPrompt,
   dispatchQueuedPrompt,
@@ -4855,7 +4858,14 @@ function SortableQueuedPrompt({
       >
         <GripVertical size={13} />
       </span>
-      <span>{prompt.content}</span>
+      <span className="queued-prompt__text">
+        {prompt.batch ? (
+          <small className="queued-prompt__batch">
+            Batch {prompt.batch.index + 1} of {prompt.batch.size}
+          </small>
+        ) : null}
+        <span>{prompt.content}</span>
+      </span>
       <button
         aria-label={`Edit queued prompt ${index + 1}`}
         className={`icon-button${editing ? ' icon-button--active' : ''}`}
@@ -6686,6 +6696,9 @@ function App() {
     | undefined
   >(undefined)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [queueBatchOpen, setQueueBatchOpen] = useState(false)
+  /** One line acknowledging the last batch, until the queue moves on. */
+  const [queueBatchNotice, setQueueBatchNotice] = useState<{ key: string; text: string }>()
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   // Side questions belong to the session they were asked about and live only
   // as long as this page: they are never part of the conversation.
@@ -11184,6 +11197,7 @@ function App() {
       [runtimeOpen, () => setRuntimeOpen(false)],
       [backgroundTasksOpen, () => setBackgroundTasksOpen(false)],
       [renameOpen, () => setRenameOpen(false)],
+      [queueBatchOpen, () => setQueueBatchOpen(false)],
       [cwdOpen, () => setCwdOpen(false)],
       [workspaceOpen, () => setWorkspaceOpen(false)],
     ]
@@ -15128,6 +15142,19 @@ function App() {
                 ) : null}
               </div>
             ) : null}
+            {queueBatchNotice && queueBatchNotice.key === sessionKey(selected) ? (
+              <p className="queue-batch-notice" role="status">
+                <span>{queueBatchNotice.text}</span>
+                <button
+                  aria-label="Dismiss"
+                  className="icon-button"
+                  onClick={() => setQueueBatchNotice(undefined)}
+                  type="button"
+                >
+                  <X size={13} />
+                </button>
+              </p>
+            ) : null}
             {selected.queuedPrompts?.length ? (
               <section aria-label="Queued prompts" className="queued-prompts">
                 <header>
@@ -15441,6 +15468,19 @@ function App() {
                     <Mic size={17} />
                   </button>
                   <span className="composer-actions__spacer" />
+                  {selectedProviderCapability?.supportsQueueBatch === true &&
+                    selected.suspended !== true && !askingAside && !editingQueuedPromptId ? (
+                    <button
+                      aria-label="Queue several prompts"
+                      className="send-button send-button--queue"
+                      disabled={sending || Boolean(queueActionId) || queuedEditUnconfirmed}
+                      onClick={() => setQueueBatchOpen(true)}
+                      title="Queue several prompts, each its own turn"
+                      type="button"
+                    >
+                      <ListOrdered size={17} />
+                    </button>
+                  ) : null}
                   {selectedQueueAvailable ? (
                     <button
                       aria-label="Queue message"
@@ -15979,6 +16019,30 @@ function App() {
             <X size={16} />
           </button>
         </div>
+      ) : null}
+      {queueBatchOpen && selected ? (
+        <QueueBatchDialog
+          computerName={selected.computerName}
+          initialPrompt={composer}
+          onClose={() => setQueueBatchOpen(false)}
+          onQueue={async (input) => {
+            const key = sessionKey(selected)
+            const result = await queueBatch(selected.computerId, selected.id, input)
+            setSessions((current) => upsertSession(current, result.session))
+            // What was in the message box became the first prompt.
+            if (composer.trim() && input.prompts[0] === composer.trim()) setComposer('')
+            setQueueBatchOpen(false)
+            const count = input.prompts.length
+            setQueueBatchNotice({
+              key,
+              text: result.batch.duplicate
+                ? 'These prompts were already queued; nothing was added twice.'
+                : `Queued ${count} ${count === 1 ? 'prompt' : 'prompts'}. Each runs as its own turn, in order.`,
+            })
+            return result
+          }}
+          sessionTitle={selected.title}
+        />
       ) : null}
       <RenameSessionDialog
         onClose={() => setRenameOpen(false)}

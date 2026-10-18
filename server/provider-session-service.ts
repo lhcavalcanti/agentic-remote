@@ -24,7 +24,9 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
   SideQuestionExchange,
+  QueuedBatch,
 } from '../shared/contracts.js'
+import type { QueueBatchInput } from '../shared/queue-batch.js'
 import type { SessionService } from './session-service.js'
 import {
   readSessionSkills,
@@ -238,6 +240,19 @@ export class ProviderSessionService
       throw Object.assign(new Error('Update the owning runtime to dispatch queued edits.'), { statusCode: 409 })
     }
     return service.dispatchQueuedPrompt(sessionId, promptId, content)
+  }
+
+  queueBatch(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch> {
+    const service = this.serviceFor(sessionId)
+    const provider = service.getSession(sessionId)?.provider || 'copilot'
+    if (!service.queueBatch || !service.providers().some((capability) =>
+      capability.id === provider && capability.supportsQueueBatch === true)) {
+      throw Object.assign(
+        new Error('Update the owning runtime to queue several prompts at once. Nothing was queued.'),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
+    return service.queueBatch(sessionId, input)
   }
 
   updateQueuedPrompt(

@@ -66,6 +66,7 @@ import {
 } from './file-upload-routes.js'
 import {
   readOracleVoiceConfig,
+  readOracleVoiceSelection,
   type OracleVoiceConfig,
 } from './oracle-voice-config.js'
 import type { VoiceEngineFactory } from './oracle-voice-engine.js'
@@ -165,25 +166,31 @@ export async function buildApp(
   }
   const app = Fastify({ logger: options.logger ?? true })
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
+  const voiceSelection = readOracleVoiceSelection()
   let voiceConfig: OracleVoiceConfig = { enabled: false }
   let voiceConfigurationError: string | undefined
   try {
-    voiceConfig = await readOracleVoiceConfig(dataDirectory)
+    voiceConfig = await readOracleVoiceConfig(dataDirectory, process.env, {
+      requireLocal: role === 'node' || !voiceSelection.enabled || !voiceSelection.computerName,
+    })
   } catch (error) {
     voiceConfigurationError = error instanceof Error ? error.message : String(error)
   }
+  const localVoiceConfig = voiceConfig.enabled && 'stt' in voiceConfig
+    ? voiceConfig
+    : undefined
   let voiceEngineFactory = options.voiceEngineFactory
   if (
     !options.voiceBackend
     && !voiceConfigurationError
-    && voiceConfig.enabled
+    && localVoiceConfig
     && !voiceEngineFactory
   ) {
-    voiceEngineFactory = new ChildVoiceEngine(voiceConfig)
+    voiceEngineFactory = new ChildVoiceEngine(localVoiceConfig)
   }
   const voiceService = options.voiceBackend ?? (
-    !voiceConfigurationError && voiceConfig.enabled && voiceEngineFactory
-      ? new LocalVoiceBackend(voiceEngineFactory, voiceConfig)
+    !voiceConfigurationError && localVoiceConfig && voiceEngineFactory
+      ? new LocalVoiceBackend(voiceEngineFactory, localVoiceConfig)
       : undefined
   )
   const voiceCapability: VoiceBackendCapability =
@@ -198,6 +205,11 @@ export async function buildApp(
               available: false,
               reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
             }
+          : !localVoiceConfig
+            ? {
+                available: false,
+                reason: 'Oracle voice uses the configured paired computer; no local engine is loaded.',
+              }
           : voiceEngineFactory?.capability() ?? {
               available: false,
               reason: 'Oracle voice engine is unavailable.',
@@ -388,8 +400,8 @@ export async function buildApp(
         manager: managerAgent,
         managerEvents: managerAgent,
         localBackend: voiceService,
-        ...(voiceConfig.enabled && voiceConfig.computerName
-          ? { selectedComputerName: voiceConfig.computerName }
+        ...(voiceSelection.enabled && voiceSelection.computerName
+          ? { selectedComputerName: voiceSelection.computerName }
           : {}),
         unavailableReason: voiceCapability.available
           ? 'Oracle voice is unavailable.'

@@ -2,12 +2,22 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import type { ForkOptions } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
-import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
+import {
+  ORACLE_VOICE_PROTOCOL,
+  ORACLE_VOICE_SAMPLE_RATE,
+  voiceAudioFrameByteLength,
+  type VoiceAudioFrame,
+  type VoiceClientControl,
+} from '../shared/oracle-voice.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import type {
   VoiceEngineEvent,
   VoiceEngineSession,
 } from './oracle-voice-engine.js'
+import {
+  createVoiceBackendSession,
+  type VoiceBackendOutput,
+} from './oracle-voice-session.js'
 import type {
   VoiceWorkerChildMessage,
   VoiceWorkerParentMessage,
@@ -36,6 +46,76 @@ const config: EnabledOracleVoiceConfig = {
     config: '/models/en_US-lessac-medium.onnx.json',
     sampleRate: 22_050,
   },
+}
+
+function nativeTtsConfig(): EnabledOracleVoiceConfig {
+  return {
+    ...config,
+    tts: {
+      engine: 'sherpa-vits',
+      model: '/models/ljspeech/model.onnx',
+      config: '/models/ljspeech/model.onnx.json',
+      tokens: '/models/ljspeech/tokens.txt',
+      dataDir: '/models/ljspeech/espeak-ng-data',
+      sampleRate: 22_050,
+      speaker: 2,
+    },
+  }
+}
+
+function patternedSamples(length: number, offset: number): Float32Array {
+  const pattern = [-1, -0.5, 0, 0.5, 1] as const
+  return Float32Array.from(
+    { length },
+    (_, index) => pattern[(offset + index) % pattern.length],
+  )
+}
+
+function float32ToExpectedPcm(samples: ArrayLike<number>): Int16Array {
+  return Int16Array.from(
+    { length: samples.length },
+    (_, index) => samples[index] < 0
+      ? Math.round(samples[index] * 32_768)
+      : Math.round(samples[index] * 32_767),
+  )
+}
+
+function joinPcm(chunks: Int16Array[]): Int16Array {
+  const output = new Int16Array(
+    chunks.reduce((total, chunk) => total + chunk.length, 0),
+  )
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.length
+  }
+  return output
+}
+
+function joinFloat32(chunks: Float32Array[]): Float32Array {
+  const output = new Float32Array(
+    chunks.reduce((total, chunk) => total + chunk.length, 0),
+  )
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.length
+  }
+  return output
+}
+
+function backendControl(
+  type: VoiceClientControl['type'],
+  generation: number,
+  extra: Record<string, unknown> = {},
+): VoiceClientControl {
+  return {
+    type,
+    protocol: ORACLE_VOICE_PROTOCOL,
+    streamId: 'backend-stream',
+    generation,
+    ...extra,
+  } as VoiceClientControl
 }
 
 class FakeChildProcess extends EventEmitter {
@@ -193,20 +273,48 @@ describe('ChildVoiceEngine parent supervision', () => {
   function fakeSherpa(
     outputs: string[] = [],
     endpointAfterDecode = Number.POSITIVE_INFINITY,
+    ttsGate?: Promise<void>,
+    ttsProgressSamples: Float32Array[] = [Float32Array.of(-1, 0, 0.5, 1)],
+    ttsResultSamples: Float32Array = ttsProgressSamples.length > 0
+      ? ttsProgressSamples.at(-1)!
+      : Float32Array.of(-1, 0, 0.5, 1),
   ): {
     module: {
       OnlineRecognizer: new (recognizerConfig: object) => object
+      OfflineTts: {
+        createAsync: (config: object) => Promise<{
+          sampleRate: number
+          generateAsync: (request: {
+            text: string
+            sid: number
+            speed: number
+            onProgress?: (chunk: { samples: Float32Array }) => boolean | number | void
+          }) => Promise<{ samples: Float32Array; sampleRate: number }>
+        }>
+      }
     }
     recognizers: Array<{
       config: object
       streams: FakeSherpaStream[]
       decodeCount: number
     }>
+    ttsConfigs: object[]
+    ttsRequests: Array<{
+      text: string
+      sid: number
+      speed: number
+    }>
   } {
     const recognizers: Array<{
       config: object
       streams: FakeSherpaStream[]
       decodeCount: number
+    }> = []
+    const ttsConfigs: object[] = []
+    const ttsRequests: Array<{
+      text: string
+      sid: number
+      speed: number
     }> = []
     class OnlineRecognizer {
       readonly streams: FakeSherpaStream[] = []
@@ -263,9 +371,36 @@ describe('ChildVoiceEngine parent supervision', () => {
         stream.reset += 1
       }
     }
+    const OfflineTts = {
+      createAsync: async (ttsConfig: object) => {
+        ttsConfigs.push(ttsConfig)
+        return {
+          sampleRate: 22_050,
+          generateAsync: async (request: {
+            text: string
+            sid: number
+            speed: number
+            onProgress?: (chunk: { samples: Float32Array }) => boolean | number | void
+          }) => {
+            ttsRequests.push({
+              text: request.text,
+              sid: request.sid,
+              speed: request.speed,
+            })
+            for (const samples of ttsProgressSamples) {
+              if (request.onProgress?.({ samples }) === false) break
+            }
+            await ttsGate
+            return { samples: ttsResultSamples, sampleRate: 22_050 }
+          },
+        }
+      },
+    }
     return {
-      module: { OnlineRecognizer },
+      module: { OnlineRecognizer, OfflineTts },
       recognizers,
+      ttsConfigs,
+      ttsRequests,
     }
   }
 
@@ -316,6 +451,9 @@ describe('ChildVoiceEngine parent supervision', () => {
     piperShutdownTimeoutMs?: number
     maxCancellationStreams?: number
     workerConfig?: EnabledOracleVoiceConfig
+    ttsGate?: Promise<void>
+    ttsProgressSamples?: Float32Array[]
+    ttsResultSamples?: Float32Array
   } = {}): {
     worker: ReturnType<typeof createVoiceWorker>
     messages: VoiceWorkerChildMessage[]
@@ -325,7 +463,13 @@ describe('ChildVoiceEngine parent supervision', () => {
     workerConfig: EnabledOracleVoiceConfig
   } {
     const messages: VoiceWorkerChildMessage[] = []
-    const sherpa = fakeSherpa(options.outputs, options.endpointAfterDecode)
+    const sherpa = fakeSherpa(
+      options.outputs,
+      options.endpointAfterDecode,
+      options.ttsGate,
+      options.ttsProgressSamples,
+      options.ttsResultSamples,
+    )
     const pipers: FakePiperProcess[] = []
     const spawnCalls: Array<{ binary: string; args: string[] }> = []
     const workerConfig = options.workerConfig ?? config
@@ -704,7 +848,312 @@ describe('ChildVoiceEngine parent supervision', () => {
   })
 
   describe('Piper TTS worker', () => {
+    it('keeps a sherpa VITS voice resident and streams bounded PCM without spawning Piper', async () => {
+      const harness = childHarness({
+        workerConfig: {
+          ...config,
+          tts: {
+            engine: 'sherpa-vits',
+            model: '/models/ljspeech/model.onnx',
+            config: '/models/ljspeech/model.onnx.json',
+            tokens: '/models/ljspeech/tokens.txt',
+            dataDir: '/models/ljspeech/espeak-ng-data',
+            sampleRate: 22_050,
+            speaker: 2,
+          },
+        },
+      })
+      await initializeWorker(harness)
+
+      await harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'native-synthesize',
+        input: {
+          streamId: 'native-stream',
+          generation: 3,
+          segmentId: 'native-segment',
+          text: 'Verified LJSpeech smoke.',
+        },
+      })
+
+      expect(harness.spawnCalls).toEqual([])
+      expect(harness.sherpa.ttsConfigs).toEqual([{
+        model: {
+          vits: {
+            model: '/models/ljspeech/model.onnx',
+            tokens: '/models/ljspeech/tokens.txt',
+            dataDir: '/models/ljspeech/espeak-ng-data',
+          },
+        },
+        maxNumSentences: 1,
+        numThreads: config.threads,
+        provider: 'cpu',
+      }])
+      expect(harness.sherpa.ttsRequests).toEqual([{
+        text: 'Verified LJSpeech smoke.',
+        sid: 2,
+        speed: 1,
+      }])
+      const events = workerEvents(harness.messages)
+      expect(events.filter((event) => event.type === 'audio'), JSON.stringify(harness.messages))
+        .toEqual([
+        expect.objectContaining({
+          streamId: 'native-stream',
+          generation: 3,
+          segmentId: 'native-segment',
+          sequence: 0,
+          sampleRate: 22_050,
+          samples: Int16Array.of(-32_768, 0, 16_384, 32_767),
+        }),
+      ])
+      expect(events.at(-1)).toEqual({
+        type: 'audio_end',
+        streamId: 'native-stream',
+        generation: 3,
+        segmentId: 'native-segment',
+      })
+    })
+
+    it('splits multi-second sherpa VITS callbacks into ordered protocol-safe PCM frames', async () => {
+      const first = patternedSamples(22_050 * 2 + 137, 0)
+      const second = patternedSamples(22_050 * 2 + 251, first.length)
+      const harness = childHarness({
+        ttsProgressSamples: [first, second],
+        workerConfig: nativeTtsConfig(),
+      })
+      await initializeWorker(harness)
+
+      await harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'native-multi-callback',
+        input: {
+          streamId: 'native-stream',
+          generation: 13,
+          segmentId: 'native-segment',
+          text: 'Several seconds of callback audio.',
+        },
+      })
+
+      const audio = workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio')
+      expect(audio.length).toBeGreaterThan(2)
+      expect(audio.map((event) => event.sequence))
+        .toEqual(audio.map((_, index) => index))
+      expect(audio.every((event) => voiceAudioFrameByteLength({
+        direction: 'playback',
+        generation: event.generation,
+        segmentId: event.segmentId,
+        sequence: event.sequence,
+        sampleRate: event.sampleRate,
+        samples: event.samples,
+      }) <= 32 * 1024)).toBe(true)
+      expect(joinPcm(audio.map((event) => event.samples)))
+        .toEqual(float32ToExpectedPcm(joinFloat32([first, second])))
+      expect(workerEvents(harness.messages).at(-1)?.type).toBe('audio_end')
+    })
+
+    it('splits a multi-second sherpa VITS fallback result when progress emits no audio', async () => {
+      const samples = patternedSamples(22_050 * 3 + 503, 0)
+      const harness = childHarness({
+        ttsProgressSamples: [],
+        ttsResultSamples: samples,
+        workerConfig: nativeTtsConfig(),
+      })
+      await initializeWorker(harness)
+
+      await harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'native-fallback',
+        input: {
+          streamId: 'native-stream',
+          generation: 14,
+          segmentId: 'native-segment',
+          text: 'Several seconds of fallback audio.',
+        },
+      })
+
+      const audio = workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio')
+      expect(audio.length).toBeGreaterThan(1)
+      expect(audio.map((event) => event.sequence))
+        .toEqual(audio.map((_, index) => index))
+      expect(audio.every((event) => voiceAudioFrameByteLength({
+        direction: 'playback',
+        generation: event.generation,
+        segmentId: event.segmentId,
+        sequence: event.sequence,
+        sampleRate: event.sampleRate,
+        samples: event.samples,
+      }) <= 32 * 1024)).toBe(true)
+      expect(joinPcm(audio.map((event) => event.samples)))
+        .toEqual(float32ToExpectedPcm(samples))
+      expect(workerEvents(harness.messages).at(-1)?.type).toBe('audio_end')
+    })
+
+    it('stops scheduling sherpa VITS chunks on bounded-queue overflow without audio_end', async () => {
+      let releaseFirstAudio!: () => void
+      const firstAudioDelivered = new Promise<void>((resolve) => {
+        releaseFirstAudio = resolve
+      })
+      let audioSends = 0
+      const samples = patternedSamples(22_050 * 9, 0)
+      const harness = childHarness({
+        ttsProgressSamples: [samples],
+        workerConfig: nativeTtsConfig(),
+        send: async (message) => {
+          if (message.type === 'event' && message.event.type === 'audio') {
+            audioSends += 1
+            if (audioSends === 1) await firstAudioDelivered
+          }
+        },
+      })
+      await initializeWorker(harness)
+
+      const synthesis = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'native-overflow',
+        input: {
+          streamId: 'native-stream',
+          generation: 15,
+          segmentId: 'native-segment',
+          text: 'Overflow safely.',
+        },
+      })
+      await vi.waitFor(() => expect(audioSends).toBe(1))
+      releaseFirstAudio()
+      await synthesis
+
+      expect(harness.messages).toContainEqual({
+        type: 'response_error',
+        requestId: 'native-overflow',
+        message: expect.stringContaining('bounded output queue'),
+      })
+      expect(workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio_end')).toEqual([])
+      expect(joinPcm(workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio')
+        .map((event) => event.samples)).length)
+        .toBeLessThanOrEqual(22_050 * 8)
+    })
+
+    it('streams realistic resident VITS output through EngineVoiceBackendSession', async () => {
+      const samples = patternedSamples(22_050 * 4 + 97, 0)
+      const child = new InProcessVoiceChild()
+      const sherpa = fakeSherpa([], Number.POSITIVE_INFINITY, undefined, [samples])
+      const worker = createVoiceWorker({
+        sherpa: sherpa.module,
+        spawnPiper: () => new FakePiperProcess(),
+        send: async (message) => {
+          child.emit('message', message)
+        },
+        heartbeatIntervalMs: 0,
+      })
+      child.handleMessage = (message) => worker.handle(message)
+      const engine = new ChildVoiceEngine({
+        fork: () => child,
+        startupTimeoutMs: 100,
+        operationTimeoutMs: 5_000,
+        heartbeatTimeoutMs: 10_000,
+        shutdownTimeoutMs: 10,
+        maxPendingRequests: 8,
+      })
+      const engineSession = await engine.initialize(nativeTtsConfig())
+      const sent: VoiceBackendOutput[] = []
+      const backend = createVoiceBackendSession({
+        streamId: 'backend-stream',
+        engine: engineSession,
+        limits: {
+          maxFrameBytes: 32 * 1024,
+          maxQueueBytes: 22_050 * 2 * 8,
+          maxUtteranceMs: 30_000,
+          idleTimeoutMs: 30_000,
+        },
+        send: async (output) => {
+          sent.push(output)
+        },
+        terminate: () => undefined,
+      })
+      await backend.control(backendControl('start', 21, { language: 'en' }))
+      await backend.control(backendControl('synthesize', 21, {
+        segmentId: 'backend-segment',
+        text: 'Four seconds of exact resident audio.',
+      }))
+
+      await vi.waitFor(() => {
+        expect(sent.some((output) => 'type' in output && output.type === 'audio_end'))
+          .toBe(true)
+      })
+      const frames = sent.filter(
+        (output): output is VoiceAudioFrame => 'direction' in output,
+      )
+      expect(frames.length).toBeGreaterThan(1)
+      expect(frames.every((frame) => voiceAudioFrameByteLength(frame) <= 32 * 1024))
+        .toBe(true)
+      expect(frames.map((frame) => frame.sequence))
+        .toEqual(frames.map((_, index) => index))
+      expect(joinPcm(frames.map((frame) => frame.samples)))
+        .toEqual(float32ToExpectedPcm(samples))
+      expect(sent.at(-1)).toMatchObject({
+        type: 'audio_end',
+        generation: 21,
+        segmentId: 'backend-segment',
+      })
+
+      await backend.close('test complete')
+    })
+
+    it('waits for cancelled sherpa VITS generation before accepting another segment', async () => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const harness = childHarness({
+        ttsGate: gate,
+        workerConfig: {
+          ...config,
+          tts: {
+            engine: 'sherpa-vits',
+            model: '/models/ljspeech/model.onnx',
+            config: '/models/ljspeech/model.onnx.json',
+            tokens: '/models/ljspeech/tokens.txt',
+            dataDir: '/models/ljspeech/espeak-ng-data',
+            sampleRate: 22_050,
+          },
+        },
+      })
+      await initializeWorker(harness)
+      const synthesis = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'native-synthesis',
+        input: {
+          streamId: 'native-stream',
+          generation: 4,
+          segmentId: 'native-segment',
+          text: 'Cancel this.',
+        },
+      })
+      await new Promise((resolve) => setImmediate(resolve))
+      let cancellationFinished = false
+      const cancellation = harness.worker.handle({
+        type: 'tts_cancel',
+        requestId: 'native-cancel',
+        streamId: 'native-stream',
+        generation: 4,
+      }).then(() => {
+        cancellationFinished = true
+      })
+
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(cancellationFinished).toBe(false)
+      release()
+      await Promise.all([synthesis, cancellation])
+      expect(workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio_end')).toEqual([])
+    })
+
     it('frames one segment on stdin and emits even PCM16 chunks at the native rate', async () => {
+      const piperConfig = config.tts
+      if (!('binary' in piperConfig)) throw new Error('expected external Piper fixture')
       const harness = childHarness({
         workerConfig: {
           ...config,
@@ -728,12 +1177,12 @@ describe('ChildVoiceEngine parent supervision', () => {
       const piper = harness.pipers[0]
 
       expect(harness.spawnCalls).toEqual([{
-        binary: config.tts.binary,
+        binary: piperConfig.binary,
         args: [
           '--model',
-          config.tts.model,
+          piperConfig.model,
           '--config',
-          config.tts.config,
+          piperConfig.config,
           '--output-raw',
           '--speaker',
           '3',

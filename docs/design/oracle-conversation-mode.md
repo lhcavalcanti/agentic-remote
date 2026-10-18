@@ -34,8 +34,9 @@ They are implementation evidence, not promises for other hardware.
 | sherpa Zipformer English 20M int8 | 0.40 s for 11 s audio; 0.036 RTF | 99 MiB | Fast English profile, subject to corpus quality gate |
 | sherpa x-asr zh/en punctuation int8 | 1.10 s for 11 s audio; 0.10 RTF | 275 MiB | Quality reference, not a streaming profile |
 | sherpa Nemotron 3.5 multilingual 0.6B int8, 4 threads | 6.39 s compute for 11 s audio; 0.58 RTF | 986 MiB | Explicit multilingual quality profile, not the low-resource default |
-| Piper 1.8 Lessac medium | 131 ms first chunk; 0.029 RTF | 239 MiB | Preferred external streaming TTS sidecar |
+| Piper 1.8 en_US-ljspeech-medium | 131 ms first chunk; 0.029 RTF | 239 MiB | Historical Python-API benchmark; not the shipped resident sherpa VITS path |
 | sherpa Kitten nano int8, 4 threads | 508-680 ms first audio for short segments; 0.29-0.64 RTF | 168-192 MiB | Permissive fallback, misses the latency target |
+| sherpa-onnx-node 1.13.8 VITS, warmed, 2 threads | LJSpeech: 711 ms for 8.00 s audio, 0.089 RTF; Faber: 610 ms for 6.72 s audio, 0.091 RTF | Not isolated in this probe | One `progress=1` callback containing the whole sentence, only 0.069/0.048 ms before `generateAsync` resolved; not engine-incremental and misses the 300 ms first-audio target |
 
 Nemotron 3.5 accurately transcribed the English benchmark, supports 40
 locales including `pt-BR`, and emits punctuation, but does not meet the
@@ -147,9 +148,20 @@ transcripts, and runs one TTS generation at a time. Its parent enforces:
 - explicit unavailable/error events when configuration or models fail.
 
 The first implementation supports sherpa-onnx streaming transducer models for
-STT and an external Piper process for raw PCM TTS. Engine interfaces stay
-small enough to use deterministic fakes in tests. Piper is never linked,
-bundled, or downloaded implicitly.
+STT. Explicitly installed profiles use resident sherpa-onnx VITS for TTS, while
+the original external-Piper adapter remains compatible with manually supplied
+configuration. Engine interfaces stay small enough to use deterministic fakes;
+no runtime or model is downloaded implicitly.
+
+Oracle's replacement reply is segmented at stable completed sentences, so one
+sentence can begin synthesis before the full Oracle reply is complete. That is
+sentence-level early playback, not proof of incremental synthesis inside VITS.
+On the pinned sherpa-onnx-node 1.13.8 runtime, both measured packaged voices
+called `onProgress` once with the complete generated sentence at `progress=1`,
+effectively at `generateAsync` completion. The worker therefore chunks that
+complete callback (or fallback result) into protocol-safe PCM frames for
+transport, ordering, cancellation, and backpressure; it does not claim a true
+engine-incremental first-audio path.
 
 ## Configuration
 
@@ -166,20 +178,29 @@ Conversation mode is unavailable unless
 | `AGENTIC_REMOTE_VOICE_LANGUAGE` | model-supported language, such as `en`, `pt-BR`, or `auto` |
 | `AGENTIC_REMOTE_VOICE_THREADS` | bounded CPU thread count |
 | `AGENTIC_REMOTE_VOICE_ENDPOINT_MS` | trailing-silence endpoint target |
-| `AGENTIC_REMOTE_VOICE_TTS_BIN` | Piper executable path |
-| `AGENTIC_REMOTE_VOICE_TTS_MODEL` | Piper ONNX voice path |
-| `AGENTIC_REMOTE_VOICE_TTS_CONFIG` | Piper voice JSON path |
+| `AGENTIC_REMOTE_VOICE_TTS_ENGINE` | `sherpa-vits` for shipped profiles; omitted for the legacy external-Piper adapter |
+| `AGENTIC_REMOTE_VOICE_TTS_BIN` | external Piper executable path; not used by shipped sherpa VITS profiles |
+| `AGENTIC_REMOTE_VOICE_TTS_MODEL` | Piper-compatible ONNX voice path |
+| `AGENTIC_REMOTE_VOICE_TTS_CONFIG` | Piper-compatible voice JSON path |
+| `AGENTIC_REMOTE_VOICE_TTS_TOKENS` | sherpa VITS token file |
+| `AGENTIC_REMOTE_VOICE_TTS_DATA_DIR` | sherpa VITS eSpeak NG data directory |
 | `AGENTIC_REMOTE_VOICE_TTS_SPEAKER` | optional speaker ID |
 
 Paths are resolved with `realpath`, must be regular files or directories of
 the expected type, and are never accepted from browser messages. Startup
 reports missing or invalid assets without taking down the rest of the app.
+When a hub selects a paired computer, it parses enablement/selection without
+requiring those local paths; the node validates its own local profile. With no
+selection, the hub validates local paths strictly.
 
 An explicit `agentic-remote voice-install <profile>` command may install a
-documented profile into the data directory. It prints licenses and sizes,
-downloads pinned HTTPS URLs, verifies SHA-256 before extraction, stages into a
-temporary directory, and atomically activates only a complete profile. Setup
-and server startup never download models.
+documented profile into the data directory. It prints notices before network
+access, bounds HTTPS downloads to exact pinned sizes with explicit
+timeouts/retries, verifies SHA-256 plus archive entry/expanded limits, rejects
+all archive types except regular files/directories, validates the final tree,
+and publishes under a per-profile lock. The research-only pt-BR profile also
+requires `--accept-research-only`. Setup and server startup never download
+models.
 
 ## Turn and interruption semantics
 
@@ -265,7 +286,7 @@ barge-in, rapid interruption, mobile layout, reconnect, and dictation
 switching.
 
 A real-engine development-host run must exercise microphone-equivalent PCM
-through the hub coordinator, local worker, Oracle event stream, Piper, and
+through the hub coordinator, local worker, Oracle event stream, local VITS, and
 browser-equivalent playback handling, including one interruption. The corpus
 records English and Brazilian Portuguese quality, latency, RTF, CPU, and RSS.
 A 30-minute simulated stream checks bounded memory, duplicates, orphan
@@ -280,18 +301,25 @@ Targets on the development CPU are:
 - bounded memory with no upward soak trend.
 
 Profiles that miss a target remain explicit alternatives and are reported with
-their measurements. They are not relabeled as passing.
+their measurements. They are not relabeled as passing. The shipped resident
+VITS path currently misses the warm 300 ms first-audio target even though its
+whole-sentence synthesis RTF is below 0.2; sentence segmentation reduces delay
+relative to waiting for Oracle's entire reply but does not satisfy the unmet
+engine-incremental target.
 
 ## Licensing and distribution
 
 - sherpa-onnx runtime: Apache-2.0; model licenses are profile-specific.
 - Silero VAD model: MIT; `@ricky0123/vad-web`: ISC; ONNX Runtime Web: MIT.
-- Piper engine: GPL-3.0 because it incorporates eSpeak NG. Agentic Remote runs
-  an operator-installed executable as a separate process and does not bundle
-  it. Anyone distributing a release with Piper included must satisfy GPL
-  source and notice obligations.
-- Piper voice models have independent dataset/model licenses. Each installable
-  profile lists and installs its license notice.
+- Shipped VITS archives run through sherpa-onnx and include eSpeak NG data.
+  Archive/runtime/model terms remain distinct; each installable profile lists
+  and installs its notices. The optional legacy external Piper adapter has its
+  own runtime terms.
+- Piper-compatible voice models have independent dataset/base-model terms.
+  LJSpeech's pinned model card states public-domain data and training from
+  scratch. Faber states that it is fine-tuned from Lessac, whose upstream terms
+  are research-only, so that profile requires explicit acknowledgement and is
+  not presented as generally permissive.
 - Nemotron 3.5 model: NVIDIA Open Model License; the exact model notice is
   shown before explicit installation.
 

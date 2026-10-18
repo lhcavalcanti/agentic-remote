@@ -34,6 +34,8 @@ async function fixture() {
       sample_rate: 22_050,
     },
   }))
+  await mkdir(path.join(dataDirectory, 'models', 'espeak-ng-data'), { recursive: true })
+  await writeFile(path.join(dataDirectory, 'models', 'tokens.txt'), 'a 1\n')
   return dataDirectory
 }
 
@@ -91,6 +93,50 @@ describe('readOracleVoiceConfig', () => {
         speaker: 2,
       },
     })
+  })
+
+  it('parses a paired-computer selection without requiring hub-local engine paths', async () => {
+    const config = await readOracleVoiceConfig('/does/not/exist', {
+      AGENTIC_REMOTE_ORACLE_VOICE: 'on',
+      AGENTIC_REMOTE_VOICE_COMPUTER: 'Speech node',
+    }, { requireLocal: false })
+
+    expect(config).toEqual({
+      enabled: true,
+      computerName: 'Speech node',
+    })
+  })
+
+  it('validates a resident sherpa VITS voice without an external Piper binary', async () => {
+    const dataDirectory = await fixture()
+    const config = await readOracleVoiceConfig(dataDirectory, enabledEnv({
+      AGENTIC_REMOTE_VOICE_TTS_ENGINE: 'sherpa-vits',
+      AGENTIC_REMOTE_VOICE_TTS_BIN: undefined,
+      AGENTIC_REMOTE_VOICE_TTS_TOKENS: 'models/tokens.txt',
+      AGENTIC_REMOTE_VOICE_TTS_DATA_DIR: 'models/espeak-ng-data',
+    }))
+
+    expect(config).toMatchObject({
+      enabled: true,
+      tts: {
+        engine: 'sherpa-vits',
+        model: path.join(dataDirectory, 'models', 'voice.onnx'),
+        config: path.join(dataDirectory, 'models', 'voice.json'),
+        tokens: path.join(dataDirectory, 'models', 'tokens.txt'),
+        dataDir: path.join(dataDirectory, 'models', 'espeak-ng-data'),
+        sampleRate: 22_050,
+        speaker: 2,
+      },
+    })
+  })
+
+  it('still requires local engine paths when the selected process is a node', async () => {
+    await expect(readOracleVoiceConfig('/does/not/exist', {
+      AGENTIC_REMOTE_ORACLE_VOICE: 'on',
+      AGENTIC_REMOTE_VOICE_COMPUTER: 'Ignored on a node',
+    }, { requireLocal: true })).rejects.toThrow(
+      'AGENTIC_REMOTE_VOICE_STT_PROFILE is required',
+    )
   })
 
   it.each([

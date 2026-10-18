@@ -8,6 +8,24 @@ import {
 
 export type OracleVoiceSttProfile = 'zipformer' | 'nemotron'
 
+export interface ExternalPiperVoiceConfig {
+  binary: string
+  model: string
+  config: string
+  sampleRate: number
+  speaker?: number
+}
+
+export interface SherpaVitsVoiceConfig {
+  engine: 'sherpa-vits'
+  model: string
+  config: string
+  tokens: string
+  dataDir: string
+  sampleRate: number
+  speaker?: number
+}
+
 export interface EnabledOracleVoiceConfig {
   enabled: true
   computerName?: string
@@ -18,25 +36,45 @@ export interface EnabledOracleVoiceConfig {
     profile: OracleVoiceSttProfile
     modelDirectory: string
   }
-  tts: {
-    binary: string
-    model: string
-    config: string
-    sampleRate: number
-    speaker?: number
-  }
+  tts: ExternalPiperVoiceConfig | SherpaVitsVoiceConfig
+}
+
+export interface RemoteOracleVoiceConfig {
+  enabled: true
+  computerName: string
 }
 
 export type OracleVoiceConfig =
   | { enabled: false }
   | EnabledOracleVoiceConfig
+  | RemoteOracleVoiceConfig
+
+export interface ReadOracleVoiceConfigOptions {
+  requireLocal?: boolean
+}
+
+export function readOracleVoiceSelection(
+  env: NodeJS.ProcessEnv = process.env,
+): { enabled: false } | { enabled: true; computerName?: string } {
+  if (env.AGENTIC_REMOTE_ORACLE_VOICE !== 'on') {
+    return { enabled: false }
+  }
+  const computerName = optionalValue(env, 'AGENTIC_REMOTE_VOICE_COMPUTER')
+  return {
+    enabled: true,
+    ...(computerName ? { computerName } : {}),
+  }
+}
 
 export async function readOracleVoiceConfig(
   dataDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
+  options: ReadOracleVoiceConfigOptions = {},
 ): Promise<OracleVoiceConfig> {
-  if (env.AGENTIC_REMOTE_ORACLE_VOICE !== 'on') {
-    return { enabled: false }
+  const selection = readOracleVoiceSelection(env)
+  if (!selection.enabled) return selection
+  if (options.requireLocal === false && selection.computerName) {
+    return { enabled: true, computerName: selection.computerName }
   }
 
   const profile = requiredValue(env, 'AGENTIC_REMOTE_VOICE_STT_PROFILE')
@@ -56,7 +94,6 @@ export async function readOracleVoiceConfig(
   )
   await validateModelDirectory(modelDirectory)
 
-  const computerName = optionalValue(env, 'AGENTIC_REMOTE_VOICE_COMPUTER')
   const speakerValue = optionalValue(env, 'AGENTIC_REMOTE_VOICE_TTS_SPEAKER')
   const ttsConfig = await canonicalPath(
     dataDirectory,
@@ -64,9 +101,54 @@ export async function readOracleVoiceConfig(
     'AGENTIC_REMOTE_VOICE_TTS_CONFIG',
     'file',
   )
+  const speaker = speakerValue === undefined
+    ? {}
+    : { speaker: nonNegativeInteger('AGENTIC_REMOTE_VOICE_TTS_SPEAKER', speakerValue) }
+  const tts = env.AGENTIC_REMOTE_VOICE_TTS_ENGINE === 'sherpa-vits'
+    ? {
+        engine: 'sherpa-vits' as const,
+        model: await canonicalPath(
+          dataDirectory,
+          env,
+          'AGENTIC_REMOTE_VOICE_TTS_MODEL',
+          'file',
+        ),
+        config: ttsConfig,
+        tokens: await canonicalPath(
+          dataDirectory,
+          env,
+          'AGENTIC_REMOTE_VOICE_TTS_TOKENS',
+          'file',
+        ),
+        dataDir: await canonicalPath(
+          dataDirectory,
+          env,
+          'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR',
+          'directory',
+        ),
+        sampleRate: await readPiperSampleRate(ttsConfig),
+        ...speaker,
+      }
+    : {
+        binary: await canonicalPath(
+          dataDirectory,
+          env,
+          'AGENTIC_REMOTE_VOICE_TTS_BIN',
+          'file',
+        ),
+        model: await canonicalPath(
+          dataDirectory,
+          env,
+          'AGENTIC_REMOTE_VOICE_TTS_MODEL',
+          'file',
+        ),
+        config: ttsConfig,
+        sampleRate: await readPiperSampleRate(ttsConfig),
+        ...speaker,
+      }
   return {
     enabled: true,
-    ...(computerName ? { computerName } : {}),
+    ...(selection.computerName ? { computerName: selection.computerName } : {}),
     language,
     threads: boundedInteger(env, 'AGENTIC_REMOTE_VOICE_THREADS', 1, 16),
     endpointMs: boundedInteger(env, 'AGENTIC_REMOTE_VOICE_ENDPOINT_MS', 300, 3000),
@@ -74,25 +156,7 @@ export async function readOracleVoiceConfig(
       profile,
       modelDirectory,
     },
-    tts: {
-      binary: await canonicalPath(
-        dataDirectory,
-        env,
-        'AGENTIC_REMOTE_VOICE_TTS_BIN',
-        'file',
-      ),
-      model: await canonicalPath(
-        dataDirectory,
-        env,
-        'AGENTIC_REMOTE_VOICE_TTS_MODEL',
-        'file',
-      ),
-      config: ttsConfig,
-      sampleRate: await readPiperSampleRate(ttsConfig),
-      ...(speakerValue === undefined
-        ? {}
-        : { speaker: nonNegativeInteger('AGENTIC_REMOTE_VOICE_TTS_SPEAKER', speakerValue) }),
-    },
+    tts,
   }
 }
 

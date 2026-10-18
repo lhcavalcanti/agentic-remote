@@ -41,4 +41,36 @@ declare module 'sherpa-onnx-node' {
     getResult(stream: OnlineStream): { text: string }
     reset(stream: OnlineStream): void
   }
+
+  export interface OfflineTtsConfig {
+    model: {
+      vits: {
+        model: string
+        tokens: string
+        dataDir: string
+      }
+    }
+    maxNumSentences: number
+    numThreads: number
+    provider: string
+  }
+
+  export interface GeneratedAudio {
+    samples: Float32Array
+    sampleRate: number
+  }
+
+  export class OfflineTts {
+    readonly sampleRate: number
+    static createAsync(config: OfflineTtsConfig): Promise<OfflineTts>
+    generateAsync(input: {
+      text: string
+      sid: number
+      speed: number
+      onProgress?: (chunk: {
+        samples: Float32Array
+        progress: number
+      }) => number | boolean | void
+    }): Promise<GeneratedAudio>
+  }
 }

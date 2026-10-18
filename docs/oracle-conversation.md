@@ -17,11 +17,13 @@ Conversation mode is therefore local speech processing, not an offline
 assistant.
 
 For hub-local speech, install and configure a profile on the hub. For speech
-on a paired node, the current configuration loader requires a valid installed
-profile on both the hub and node; enable it on both, and set
-`AGENTIC_REMOTE_VOICE_COMPUTER` to the paired computer's name on the hub only.
-The node remains headless and its voice WebSocket uses the existing pairing
-token.
+on a paired node, install and enable the profile on the node only. The hub
+needs `AGENTIC_REMOTE_ORACLE_VOICE=on` plus
+`AGENTIC_REMOTE_VOICE_COMPUTER=<paired name>`; it does not need local model
+paths. The selected node independently validates and advertises its local
+engine. Missing/offline/incapable selections fail explicitly rather than
+falling back silently. The node remains headless and its voice WebSocket uses
+the existing pairing token.
 
 ## Install
 
@@ -30,15 +32,19 @@ needs the profile:
 
 ```bash
 agentic-remote voice-install fast-en
-# or
-agentic-remote voice-install multilingual-quality
+# Research-only Faber/Lessac ancestry:
+agentic-remote voice-install multilingual-quality --accept-research-only
 ```
 
-The command prints licenses before downloading, verifies every byte count and
-SHA-256, rejects unsafe archive paths, writes `NOTICES.txt`, and atomically
-activates a versioned profile under
-`<data>/models/oracle-voice/`. A failed or interrupted install removes its
-staging directory and leaves the prior active profile unchanged.
+The command prints licenses before any network access. Downloads permit HTTPS
+for the initial request and every redirect, use explicit connection/total
+timeouts and three attempts, and stop at the exact pinned byte count even for a
+streaming response. The installer verifies SHA-256, archive expanded bytes and
+entry counts, rejects traversal/sparse/link/FIFO/device entries, extracts only
+regular files/directories, and validates the complete staged tree. Publication
+is serialized per profile and rechecks the installed digest while locked. A
+failed, conflicting, or interrupted install cleans staging and leaves the prior
+active profile unchanged.
 
 Copy the printed `AGENTIC_REMOTE_VOICE_*` assignments into
 `~/.config/agentic-remote/environment`, then explicitly add:
@@ -47,11 +53,15 @@ Copy the printed `AGENTIC_REMOTE_VOICE_*` assignments into
 AGENTIC_REMOTE_ORACLE_VOICE=on
 ```
 
-For a paired node, also add this on the hub:
+For a paired node, the hub environment needs only:
 
 ```text
+AGENTIC_REMOTE_ORACLE_VOICE=on
 AGENTIC_REMOTE_VOICE_COMPUTER=worker-node
 ```
+
+Do not copy the node's local model paths to the hub. On the node, use the
+installer's complete printed configuration and enable voice locally.
 
 Run `agentic-remote setup` or restart the service after editing the protected
 environment file. `setup` preserves existing voice values with mode `0600`;
@@ -61,12 +71,15 @@ it never downloads a model, selects a profile, or enables Conversation mode.
 
 | Profile | Installed inputs | Configured language | Download |
 | --- | --- | --- | ---: |
-| `fast-en` | sherpa-onnx Zipformer English 20M int8; Piper standalone CLI; Lessac medium | `en` | 217,553,797 bytes |
-| `multilingual-quality` | sherpa-onnx Nemotron 3.5 0.6B 160 ms int8; Piper standalone CLI; Faber medium | `pt-BR` | 564,939,974 bytes |
+| `fast-en` | sherpa-onnx Zipformer English 20M int8; resident sherpa VITS; Piper `en_US-ljspeech-medium` | `en` | 195,057,566 bytes |
+| `multilingual-quality` | sherpa-onnx Nemotron 3.5 0.6B 160 ms int8; resident sherpa VITS; Faber medium (**research-only ancestry**) | `pt-BR` | 542,456,707 bytes |
 
 `multilingual-quality` names the STT model's multilingual capability. Its
 shipped TTS voice is specifically Brazilian Portuguese, so the generated
 configuration uses `pt-BR`, not automatic language selection.
+Faber is fine-tuned from the research-only Lessac base voice. The installer
+therefore refuses network access without `--accept-research-only`; the profile
+does not imply general commercial suitability.
 
 The pinned runtime assets currently support Linux x86-64. Other server
 platforms may use manually supplied compatible assets, but the installer
@@ -97,13 +110,25 @@ hardware promises:
 - Nemotron 3.5 160 ms int8 with four threads used 6.39 seconds of compute
   (0.58 RTF, about 986 MiB peak RSS) and reproduced that English clip with
   punctuation. It misses the design's `<0.2` CPU RTF target.
-- Piper 1.8 with Lessac measured a 131 ms median first chunk, 0.029 RTF, and
-  about 239 MiB peak RSS through the Python API. The shipped profile uses the
-  compatible standalone `2023.11.14-2` CLI, so those numbers are not a claim
-  about the installed profile.
-- The pinned standalone CLI successfully synthesized English Lessac and pt-BR
-  Faber smoke phrases. No Portuguese ASR corpus, perceptual quality study,
-  browser end-to-end latency, barge-in timing, or soak result exists yet.
+- The earlier Piper 1.8 Python-API benchmark used
+  `en_US-ljspeech-medium`, not Lessac: 131 ms median first chunk, 0.029 RTF,
+  and about 239 MiB peak RSS. Shipped profiles now use resident sherpa VITS
+  with k2-fsa-packaged archives, so those figures are historical context, not
+  measured performance for the installed path.
+- A warmed two-thread sherpa-onnx-node 1.13.8 probe of the exact pinned VITS
+  archives measured 711 ms to generate 8.00 seconds of LJSpeech audio
+  (0.089 RTF) and 610 ms for 6.72 seconds of Faber audio (0.091 RTF).
+  Each voice invoked `onProgress` exactly once, with `progress=1` and the
+  complete sentence buffer, only 0.069 ms and 0.048 ms before
+  `generateAsync` resolved. The current engine path is therefore not
+  incremental within a sentence and misses the 300 ms warm first-audio target.
+- Conversation can still start a completed Oracle sentence before the full
+  Oracle reply finishes. The worker splits the whole-sentence callback into
+  ordered protocol-safe PCM frames, but that transport chunking is
+  sentence-level early playback, not evidence of true incremental synthesis.
+  No Portuguese ASR corpus, perceptual quality study, browser end-to-end
+  latency, barge-in timing, isolated resident-worker RSS, or soak result exists
+  yet.
 
 Task 11 owns real browser/profile measurements. Until then, do not describe
 either profile as meeting a general quality or latency target.
@@ -129,10 +154,14 @@ version is idempotent and reactivates it without downloading again.
   `multilingual-quality`.
 - Size/checksum/extraction failure: retry after checking network and disk
   space; the prior active profile remains selected.
+- Research-only acknowledgement required: review the printed Faber/Lessac
+  ancestry, then rerun with `--accept-research-only` only if appropriate for
+  the intended use.
 - `Oracle voice configuration is invalid`: compare the environment file with
   the installer's printed paths and confirm the active symlink still exists.
-- Paired computer offline or unavailable: restore that node or clear
-  `AGENTIC_REMOTE_VOICE_COMPUTER` to use the hub's local configured profile.
+- Paired computer missing/offline/unavailable: restore the selected node. Clear
+  `AGENTIC_REMOTE_VOICE_COMPUTER` only when the hub itself has a complete local
+  profile; local mode never accepts missing paths.
 - Unsupported browser or denied microphone: use **Dictate to Oracle** or type.
 - Speech works but no audio plays: Oracle text remains authoritative; inspect
   `agentic-remote logs` for a constant-style voice error, never transcript

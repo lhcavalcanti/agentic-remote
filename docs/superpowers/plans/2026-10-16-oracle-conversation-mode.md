@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a disabled-by-default, local realtime voice conversation path for Oracle with streaming STT, streamed TTS, exact-once turns, and barge-in.
+**Goal:** Build a disabled-by-default, local realtime voice conversation path for Oracle with streaming STT, sentence-segmented and protocol-chunked TTS, exact-once turns, and barge-in. True engine-incremental TTS remains a measured target rather than a claim.
 
 **Architecture:** The browser runs Silero VAD and sends bounded 16 kHz PCM over a ticketed hub WebSocket. A hub coordinator submits final transcripts once to the existing manager agent, segments Oracle's replacement text stream, and relays speech work to a local or paired-node backend whose native engines run in an isolated resident child process. Stream, generation, utterance, and sequence identifiers reject stale work across cancellation and reconnect.
 
@@ -1038,8 +1038,11 @@ and `setup` performs no voice download.
 
 Include:
 
-- `fast-en`: measured small streaming sherpa model plus Piper Lessac;
-- `multilingual-quality`: Nemotron 3.5 160 ms int8 plus configured TTS voice;
+- `fast-en`: measured small streaming sherpa model plus the pinned
+  from-scratch LJSpeech VITS voice;
+- `multilingual-quality`: Nemotron 3.5 160 ms int8 plus Faber, explicitly
+  research-only because its model card records Lessac ancestry and requiring
+  noninteractive acknowledgement before network access;
 - no automatic/default profile.
 
 Record exact upstream notices and the GPL implications of Piper/eSpeak.

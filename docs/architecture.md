@@ -57,6 +57,10 @@ single-use-ticket WebSocket on the hub. The hub either uses its local voice
 backend or relays the stream over the authenticated node API to the paired
 computer named by `AGENTIC_REMOTE_VOICE_COMPUTER`. Both roles isolate native
 STT/TTS in a child process; the node never receives Oracle's manager state.
+The hub parses that selection before local engine paths: a remote selection
+therefore needs no hub-local model inventory. The selected node independently
+validates and advertises its local engine. With no selected computer, local
+mode remains strict and invalid paths advertise voice as unavailable.
 
 Raw and synthesized audio stay in memory and on the selected speech computer.
 Only finalized transcript text crosses into `ManagerAgent.send`, after which
@@ -67,8 +71,11 @@ restart or disconnect ends the stream and stale generations cannot be replayed.
 The feature is disabled unless `AGENTIC_REMOTE_ORACLE_VOICE=on`. Setup
 preserves existing voice configuration but downloads nothing. Profiles are
 installed only by `agentic-remote voice-install <profile>`, with pinned
-verification and atomic activation. Current shipped assets are Linux x86-64;
-browser requirements and measured limits are documented in
+compressed/expanded limits, regular-file/directory-only extraction,
+per-profile publication locking, and atomic activation. The pt-BR profile is
+research-only and requires `--accept-research-only` before network access.
+Current shipped assets are Linux x86-64; browser requirements and measured
+limits are documented in
 [Oracle Conversation mode](oracle-conversation.md).
 
 ## Transport and authentication

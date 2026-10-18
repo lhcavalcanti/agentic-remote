@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseAppVersion } from '../shared/app-version.js'
 import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
 import { buildApp } from './app.js'
+import type { ManagerAgent } from './manager-agent.js'
 import { FakeVoiceEngineFactory } from './oracle-voice-engine.js'
 
 const directories: string[] = []
@@ -81,6 +83,22 @@ describe('Oracle voice app construction', () => {
     return directory
   }
 
+  function availableManager(): ManagerAgent {
+    return Object.assign(new EventEmitter(), {
+      start: async () => undefined,
+      stop: async () => undefined,
+      cancel: async () => undefined,
+      hiddenSessionIds: () => [],
+      snapshot: () => ({
+        available: true,
+        status: 'idle',
+        messages: [],
+        queued: 0,
+        managedSessions: [],
+      }),
+    }) as unknown as ManagerAgent
+  }
+
   it('keeps voice disabled unless explicitly enabled without starting an injected engine', async () => {
     vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'off')
     const factory = new FakeVoiceEngineFactory(undefined, {
@@ -96,7 +114,7 @@ describe('Oracle voice app construction', () => {
     const runtime = await buildApp({
       dataDirectory: await dataDirectory(),
       logger: false,
-      managerAgent: false,
+      managerAgent: availableManager(),
       transcriptionService,
       voiceEngineFactory: factory,
     })
@@ -147,7 +165,7 @@ describe('Oracle voice app construction', () => {
     const runtime = await buildApp({
       dataDirectory: directory,
       logger: false,
-      managerAgent: false,
+      managerAgent: availableManager(),
       transcriptionService,
       voiceEngineFactory: factory,
     })
@@ -183,7 +201,7 @@ describe('Oracle voice app construction', () => {
     const runtime = await buildApp({
       dataDirectory: await dataDirectory(),
       logger: false,
-      managerAgent: false,
+      managerAgent: availableManager(),
       transcriptionService,
     })
     apps.push(runtime.app)
@@ -204,5 +222,80 @@ describe('Oracle voice app construction', () => {
       headers,
     })).statusCode)
       .not.toBe(404)
+  })
+
+  it('routes an enabled hub to a paired voice computer without local model paths', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
+    vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Speech node')
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.test')
+    const runtime = await buildApp({
+      dataDirectory: await dataDirectory(),
+      logger: false,
+      managerAgent: availableManager(),
+      transcriptionService,
+    })
+    apps.push(runtime.app)
+    vi.spyOn(runtime.manager!, 'listComputers').mockReturnValue([
+      {
+        id: 'hub',
+        name: 'Hub',
+        isLocal: true,
+        online: true,
+      },
+      {
+        id: 'speech-node',
+        name: 'Speech node',
+        isLocal: false,
+        online: true,
+        voice: {
+          available: true,
+          sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+          playbackSampleRate: 22_050,
+          languages: ['en'],
+          sttProfile: 'zipformer',
+          ttsVoice: 'ljspeech',
+          resourceClass: 'low',
+        },
+      },
+    ])
+
+    expect(runtime.voiceConfig).toEqual({
+      enabled: true,
+      computerName: 'Speech node',
+    })
+    const capability = await runtime.app.inject({
+      url: '/api/oracle-voice/capabilities',
+      headers: { host: 'hub.test', origin: 'https://hub.test' },
+    })
+    expect(capability.statusCode).toBe(200)
+    expect(capability.json()).toMatchObject({
+      available: true,
+      computerId: 'speech-node',
+      computerName: 'Speech node',
+      ttsVoice: 'ljspeech',
+    })
+  })
+
+  it('reports an explicit unavailable capability for a missing selected computer', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
+    vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Missing node')
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.test')
+    const runtime = await buildApp({
+      dataDirectory: await dataDirectory(),
+      logger: false,
+      managerAgent: availableManager(),
+      transcriptionService,
+    })
+    apps.push(runtime.app)
+
+    const capability = await runtime.app.inject({
+      url: '/api/oracle-voice/capabilities',
+      headers: { host: 'hub.test', origin: 'https://hub.test' },
+    })
+    expect(capability.statusCode).toBe(200)
+    expect(capability.json()).toMatchObject({
+      available: false,
+      reason: 'Configured voice computer "Missing node" is not paired.',
+    })
   })
 })

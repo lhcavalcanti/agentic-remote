@@ -488,13 +488,15 @@ downloads speech models:
 
 ```bash
 agentic-remote voice-install fast-en
-# or: agentic-remote voice-install multilingual-quality
+# Research-only pt-BR ancestry requires an explicit acknowledgement:
+agentic-remote voice-install multilingual-quality --accept-research-only
 ```
 
-The installer verifies pinned sizes and SHA-256 values, activates only a
-complete version, and prints the exact `AGENTIC_REMOTE_VOICE_*` settings. Add
-those settings to the protected environment file, then separately opt in with
-`AGENTIC_REMOTE_ORACLE_VOICE=on`.
+The installer prints notices before network access, enforces HTTPS-only bounded
+downloads, verifies compressed and expanded archive metadata plus SHA-256,
+rejects special archive entries, and serializes atomic publication. Add the
+printed `AGENTIC_REMOTE_VOICE_*` settings to the protected environment file,
+then separately opt in with `AGENTIC_REMOTE_ORACLE_VOICE=on`.
 
 Speech recognition and synthesis run on the selected hub or paired node. Raw
 audio remains within those trusted computers and is not persisted, but the
@@ -503,8 +505,8 @@ requires microphone, AudioWorklet, Web Audio, and WebSocket APIs; unsupported
 browsers continue to offer dictation. See
 [Oracle Conversation mode](docs/oracle-conversation.md) for paired-node setup,
 measured limitations, removal, and troubleshooting, and
-[voice asset notices](docs/licenses/oracle-voice.md) for the Lessac,
-OpenMDW, Piper, GPL/eSpeak, and voice-data terms.
+[voice asset notices](docs/licenses/oracle-voice.md) for LJSpeech, the
+research-only Faber/Lessac ancestry, OpenMDW, GPL/eSpeak, and model terms.
 
 ## Documentation
 

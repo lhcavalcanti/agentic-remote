@@ -483,16 +483,42 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   composer. A disconnect MUST discard the current utterance rather than replay
   PCM. TTS failure MUST leave the text reply usable, and typed input plus
   **Dictate to Oracle** MUST remain available.
+- Oracle replacement snapshots MAY start TTS for each stable completed
+  sentence before the full reply finishes. This sentence-level early playback
+  MUST NOT be described as engine-incremental synthesis unless the selected
+  engine has measured evidence that it emits audio before finishing that
+  sentence. Every engine callback or fallback result MUST be split into
+  monotonic PCM frames that fit the advertised maximum encoded frame size;
+  cancellation, output overflow, or delivery failure MUST stop further frames
+  and MUST NOT emit `audio_end`.
 - Conversation mode MUST require microphone permission, `getUserMedia`,
   `AudioWorklet`, Web Audio playback, and WebSocket support. If a required
   browser primitive is unavailable, it MUST refuse to start and offer
   dictation instead of using a deprecated capture fallback.
+- Enablement and the selected speech computer MUST be parsed independently
+  from local engine paths. A hub selecting a paired node MUST NOT require local
+  STT/TTS assets; the selected node MUST validate its own complete local engine
+  configuration. Hub-local mode MUST remain strict. A missing, offline, or
+  incapable selected computer MUST advertise an explicit unavailable reason
+  and MUST NOT silently fall back to another computer.
 - Voice installation MUST stage below
   `<data>/models/oracle-voice/.staging-*`, show applicable licenses before any
-  download, verify pinned HTTPS URL metadata, byte size, and SHA-256 before
-  extraction or use, reject archive traversal, remove partial staging, and
-  atomically activate only a complete version. Failure MUST leave the prior
-  active profile unchanged. Existing `AGENTIC_REMOTE_ORACLE_VOICE` and
+  download, permit HTTPS for initial and redirected requests only, enforce the
+  exact pinned byte count while streaming with bounded timeout/retry behavior,
+  and verify SHA-256 before extraction or use. Every archive MUST pin expanded
+  bytes and entry count. The manifest compression type MUST select the exact
+  streaming decoder, and extraction MUST process one header at a time without
+  materializing the complete member list. It MUST abort before extracting an
+  entry that would exceed either pin and reject compression mismatch, corrupt
+  streams, traversal, duplicate paths, path-type conflicts, sparse files,
+  links, devices, FIFOs, and every type except regular files/directories. The
+  final staged tree MUST be revalidated for containment, type, count, and bytes.
+  Publication MUST serialize per profile, recheck installed content while
+  locked, clean failed/conflicting staging, and atomically activate only a
+  confirmed complete version. Failure MUST leave the prior active profile
+  unchanged. A research-only profile MUST print its full notices and require
+  explicit noninteractive acknowledgement before network access. Existing
+  `AGENTIC_REMOTE_ORACLE_VOICE` and
   `AGENTIC_REMOTE_VOICE_*` values MUST survive setup in the mode-`0600`
   environment file without being printed.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process

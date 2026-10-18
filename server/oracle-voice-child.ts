@@ -5,7 +5,10 @@ import {
 import path from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
+import {
+  ORACLE_VOICE_SAMPLE_RATE,
+  VOICE_AUDIO_HEADER_BYTES,
+} from '../shared/oracle-voice.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import type {
   VoiceEndUtterance,
@@ -27,6 +30,7 @@ const DEFAULT_MAX_UTTERANCE_SAMPLES = ORACLE_VOICE_SAMPLE_RATE * 30
 const DEFAULT_PIPER_SHUTDOWN_TIMEOUT_MS = VOICE_PIPER_SHUTDOWN_TIMEOUT_MS
 const DEFAULT_MAX_CANCELLATION_STREAMS = VOICE_MAX_CANCELLATION_STREAMS
 const MAX_PIPER_STDERR_BYTES = 4_096
+const MAX_VOICE_FRAME_BYTES = 32 * 1024
 
 interface SherpaStream {
   acceptWaveform(input: {
@@ -46,8 +50,27 @@ interface SherpaRecognizer {
   reset(stream: SherpaStream): void
 }
 
+interface SherpaTts {
+  sampleRate: number
+  generateAsync(input: {
+    text: string
+    sid: number
+    speed: number
+    onProgress?: (chunk: {
+      samples: Float32Array
+      progress: number
+    }) => number | boolean | void
+  }): Promise<{
+    samples: Float32Array
+    sampleRate: number
+  }>
+}
+
 interface SherpaModule {
   OnlineRecognizer: new (config: object) => object
+  OfflineTts?: {
+    createAsync(config: object): Promise<SherpaTts>
+  }
 }
 
 export interface PiperProcess {
@@ -91,16 +114,28 @@ interface ActiveUtterance {
   cancelled: boolean
 }
 
-interface ActiveSynthesis {
+interface ActiveSynthesisIdentity {
   streamId: string
   generation: number
   segmentId: string
+  cancelled: boolean
+}
+
+interface ActivePiperSynthesis extends ActiveSynthesisIdentity {
+  kind: 'piper'
   process: PiperProcess
   exit: Promise<PiperExitResult>
   exited: boolean
-  cancelled: boolean
   termination?: Promise<void>
 }
+
+interface ActiveNativeSynthesis extends ActiveSynthesisIdentity {
+  kind: 'sherpa-vits'
+  completion: Promise<void>
+  finish(): void
+}
+
+type ActiveSynthesis = ActivePiperSynthesis | ActiveNativeSynthesis
 
 interface PiperExitResult {
   code: number | null
@@ -126,6 +161,7 @@ export function createVoiceWorker(
 class ResidentVoiceWorker implements VoiceWorker {
   private config: EnabledOracleVoiceConfig | undefined
   private recognizer: SherpaRecognizer | undefined
+  private tts: SherpaTts | undefined
   private utterance: ActiveUtterance | undefined
   private synthesis: ActiveSynthesis | undefined
   private readonly cancelledThroughGeneration = new Map<string, number>()
@@ -172,7 +208,11 @@ class ResidentVoiceWorker implements VoiceWorker {
     if (this.synthesis) {
       const active = this.synthesis
       active.cancelled = true
-      await this.terminatePiper(active)
+      if (active.kind === 'piper') {
+        await this.terminatePiper(active)
+      } else {
+        await active.completion
+      }
       if (this.synthesis === active) this.synthesis = undefined
     }
   }
@@ -235,6 +275,28 @@ class ResidentVoiceWorker implements VoiceWorker {
       rule2MinTrailingSilence: config.endpointMs / 1_000,
       rule3MinUtteranceLength: 30,
     }) as SherpaRecognizer
+    if ('engine' in config.tts && config.tts.engine === 'sherpa-vits') {
+      const OfflineTts = this.options.sherpa.OfflineTts
+      if (!OfflineTts) throw new Error('sherpa-onnx OfflineTts is unavailable')
+      this.tts = await OfflineTts.createAsync({
+        model: {
+          vits: {
+            model: config.tts.model,
+            tokens: config.tts.tokens,
+            dataDir: config.tts.dataDir,
+          },
+        },
+        maxNumSentences: 1,
+        numThreads: config.threads,
+        provider: 'cpu',
+      })
+      if (this.tts.sampleRate !== config.tts.sampleRate) {
+        throw new Error(
+          `sherpa VITS sample rate mismatch: expected ${config.tts.sampleRate}, `
+          + `got ${this.tts.sampleRate}`,
+        )
+      }
+    }
     this.config = config
     if (this.options.heartbeatIntervalMs > 0) {
       this.heartbeatTimer = setInterval(() => {
@@ -379,22 +441,28 @@ class ResidentVoiceWorker implements VoiceWorker {
 
   private async synthesize(input: VoiceSynthesisRequest): Promise<void> {
     const config = this.requireConfig()
+    const ttsConfig = config.tts
     if (this.isCancelled(input)) {
       throw new Error('TTS generation is cancelled')
     }
-    if (this.synthesis) throw new Error('Piper synthesis is already active')
+    if (this.synthesis) throw new Error('TTS synthesis is already active')
+    if (!('binary' in ttsConfig)) {
+      await this.synthesizeWithSherpa(input, ttsConfig.speaker ?? 0)
+      return
+    }
     const args = [
       '--model',
-      config.tts.model,
+      ttsConfig.model,
       '--config',
-      config.tts.config,
+      ttsConfig.config,
       '--output-raw',
-      ...(config.tts.speaker === undefined
+      ...(ttsConfig.speaker === undefined
         ? []
-        : ['--speaker', String(config.tts.speaker)]),
+        : ['--speaker', String(ttsConfig.speaker)]),
     ]
-    const piper = this.options.spawnPiper(config.tts.binary, args)
-    const active: ActiveSynthesis = {
+    const piper = this.options.spawnPiper(ttsConfig.binary, args)
+    const active: ActivePiperSynthesis = {
+      kind: 'piper',
       streamId: input.streamId,
       generation: input.generation,
       segmentId: input.segmentId,
@@ -439,8 +507,102 @@ class ResidentVoiceWorker implements VoiceWorker {
     }
   }
 
+  private async synthesizeWithSherpa(
+    input: VoiceSynthesisRequest,
+    speaker: number,
+  ): Promise<void> {
+    const tts = this.tts
+    if (!tts) throw new Error('sherpa VITS is not initialized')
+    let finish!: () => void
+    const completion = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const active: ActiveNativeSynthesis = {
+      kind: 'sherpa-vits',
+      streamId: input.streamId,
+      generation: input.generation,
+      segmentId: input.segmentId,
+      cancelled: false,
+      completion,
+      finish,
+    }
+    this.synthesis = active
+    let sequence = 0
+    let deliveredSamples = 0
+    let queuedSamples = 0
+    let overflow = false
+    const maxQueuedSamples = this.requireConfig().tts.sampleRate * 8
+    const maxFrameSamples = Math.floor(
+      (
+        MAX_VOICE_FRAME_BYTES
+        - VOICE_AUDIO_HEADER_BYTES
+        - Buffer.byteLength(input.segmentId)
+      ) / Int16Array.BYTES_PER_ELEMENT,
+    )
+    let delivery = Promise.resolve()
+    const scheduleSamples = (samples: Float32Array): boolean => {
+      if (overflow || this.isCancelled(active)) return false
+      for (let offset = 0; offset < samples.length; offset += maxFrameSamples) {
+        if (overflow || this.isCancelled(active)) return false
+        const sampleCount = Math.min(maxFrameSamples, samples.length - offset)
+        if (sampleCount > maxQueuedSamples - queuedSamples) {
+          overflow = true
+          return false
+        }
+        const copy = Float32Array.from(samples.subarray(offset, offset + sampleCount))
+        queuedSamples += copy.length
+        const currentSequence = sequence
+        sequence += 1
+        delivery = delivery.then(async () => {
+          queuedSamples -= copy.length
+          if (this.isCancelled(active)) return
+          deliveredSamples += copy.length
+          await this.emit({
+            type: 'audio',
+            streamId: input.streamId,
+            generation: input.generation,
+            segmentId: input.segmentId,
+            sequence: currentSequence,
+            sampleRate: this.requireConfig().tts.sampleRate,
+            samples: float32ToPcm16(copy),
+          })
+        })
+      }
+      return true
+    }
+    try {
+      if (maxFrameSamples <= 0) {
+        throw new Error('sherpa VITS segment identity exceeds the audio frame limit')
+      }
+      const result = await tts.generateAsync({
+        text: input.text,
+        sid: speaker,
+        speed: 1,
+        onProgress: ({ samples }) => scheduleSamples(samples),
+      })
+      await delivery
+      if (overflow) throw new Error('sherpa VITS audio exceeded the bounded output queue')
+      if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
+      if (deliveredSamples === 0 && result.samples.length > 0) {
+        scheduleSamples(result.samples)
+        await delivery
+        if (overflow) throw new Error('sherpa VITS audio exceeded the bounded output queue')
+        if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
+      }
+      await this.emit({
+        type: 'audio_end',
+        streamId: input.streamId,
+        generation: input.generation,
+        segmentId: input.segmentId,
+      })
+    } finally {
+      active.finish()
+      if (this.synthesis === active) this.synthesis = undefined
+    }
+  }
+
   private async streamPiperAudio(
-    active: ActiveSynthesis,
+    active: ActivePiperSynthesis,
     stdout: Readable,
   ): Promise<void> {
     let sequence = 0
@@ -483,7 +645,11 @@ class ResidentVoiceWorker implements VoiceWorker {
     const active = this.synthesis
     if (!active || !matchesCancelled(active, input)) return
     active.cancelled = true
-    await this.terminatePiper(active)
+    if (active.kind === 'piper') {
+      await this.terminatePiper(active)
+    } else {
+      await active.completion
+    }
     if (this.synthesis === active) this.synthesis = undefined
   }
 
@@ -540,13 +706,13 @@ class ResidentVoiceWorker implements VoiceWorker {
       || input.generation <= (this.cancelledThroughGeneration.get(input.streamId) ?? -1)
   }
 
-  private terminatePiper(active: ActiveSynthesis): Promise<void> {
+  private terminatePiper(active: ActivePiperSynthesis): Promise<void> {
     if (active.termination) return active.termination
     active.termination = this.terminatePiperProcess(active)
     return active.termination
   }
 
-  private async terminatePiperProcess(active: ActiveSynthesis): Promise<void> {
+  private async terminatePiperProcess(active: ActivePiperSynthesis): Promise<void> {
     if (active.exited) return
     active.process.kill('SIGTERM')
     if (await waitForActivePiperExit(active, this.options.piperShutdownTimeoutMs)) return
@@ -569,6 +735,17 @@ function pcm16ToFloat32(samples: Int16Array): Float32Array {
     converted[index] = samples[index] / 32_768
   }
   return converted
+}
+
+function float32ToPcm16(samples: Float32Array): Int16Array {
+  const output = new Int16Array(samples.length)
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]))
+    output[index] = sample < 0
+      ? Math.round(sample * 32_768)
+      : Math.round(sample * 32_767)
+  }
+  return output
 }
 
 function sherpaProfile(config: EnabledOracleVoiceConfig): {
@@ -611,7 +788,7 @@ function waitForPiperExit(piper: PiperProcess): Promise<PiperExitResult> {
 }
 
 function waitForActivePiperExit(
-  active: ActiveSynthesis,
+  active: ActivePiperSynthesis,
   timeoutMs: number,
 ): Promise<boolean> {
   if (active.exited) return Promise.resolve(true)

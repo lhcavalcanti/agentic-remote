@@ -336,6 +336,13 @@ The selected speech computer performs STT and TTS locally without persisting
 audio or transcript artifacts. Final transcript text and the normal generated
 turn context still go to Oracle's remote Copilot model.
 
+A hub with `AGENTIC_REMOTE_VOICE_COMPUTER` needs only enablement and the paired
+computer selection; it does not validate or load local speech paths. The node
+advertises availability only after validating its own local profile. Local hub
+mode still requires every configured path. The retained pt-BR Faber profile is
+explicitly research-only and installation requires
+`--accept-research-only`.
+
 One stream per hub is supported initially. Local VAD can duck playback, but
 the server owns endpoint and finalization decisions. Confirmed interruption
 advances generation, cancels Oracle and TTS, and rejects stale STT, deltas, and

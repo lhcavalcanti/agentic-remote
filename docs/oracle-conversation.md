@@ -126,6 +126,11 @@ hardware promises:
   Oracle reply finishes. The worker splits the whole-sentence callback into
   ordered protocol-safe PCM frames, but that transport chunking is
   sentence-level early playback, not evidence of true incremental synthesis.
+  A single synthesized sentence is bounded to 12 seconds at the voice's native
+  sample rate in both the worker and browser. The measured LJSpeech
+  (176,469 samples at 22,050 Hz) and Faber (148,224 samples) sentences fit; a
+  longer whole-sentence callback fails explicitly before any of that callback
+  is queued. Oracle text remains available when synthesis fails.
   No Portuguese ASR corpus, perceptual quality study, browser end-to-end
   latency, barge-in timing, isolated resident-worker RSS, or soak result exists
   yet.

@@ -426,6 +426,7 @@ async function installerFixture(options: {
   return {
     root,
     data,
+    env,
     profile,
     writeManifest,
     run,
@@ -895,7 +896,62 @@ describe('agentic-remote voice-install', () => {
       .toBe(false)
   })
 
-  it('removes a newly published profile when activation cannot be confirmed', async () => {
+  it.each([
+    ['exit', 'before-final-rename', 'fixture-1', false],
+    ['term', 'before-final-rename', 'fixture-1', false],
+    ['exit', 'after-final-rename', 'fixture-1', false],
+    ['term', 'after-final-rename', 'fixture-1', false],
+    ['exit', 'before-active-replace', 'fixture-1', true],
+    ['term', 'before-active-replace', 'fixture-1', true],
+    ['exit', 'after-active-replace', 'fixture-2', true],
+    ['term', 'after-active-replace', 'fixture-2', true],
+  ] as const)(
+    'keeps a complete active profile on %s at %s',
+    async (action, stage, activeVersion, retainsPublishedVersion) => {
+      const fixture = await installerFixture()
+      const installed = await fixture.run()
+      expect(installed, installed.stderr).toMatchObject({ code: 0 })
+      const nextProfile = {
+        ...fixture.profile,
+        version: 'fixture-2',
+      }
+      await fixture.writeManifest(nextProfile)
+
+      const result = await fixture.run('fixture', [], {
+        ...fixture.env,
+        AGENTIC_REMOTE_VOICE_INSTALL_FAULT: `${action}:${stage}`,
+      })
+
+      expect(result.code).not.toBe(0)
+      const root = path.join(fixture.data, 'models', 'oracle-voice')
+      const active = path.join(root, 'active', 'fixture')
+      const activeTarget = path.resolve(path.dirname(active), await readlink(active))
+      expect(activeTarget).toBe(path.join(
+        root,
+        'profiles',
+        'fixture',
+        activeVersion,
+      ))
+      expect((await stat(activeTarget)).isDirectory()).toBe(true)
+      expect(await readFile(path.join(activeTarget, 'PROFILE.json'), 'utf8'))
+        .toContain(`"version": "${activeVersion}"`)
+      expect(await readFile(path.join(activeTarget, '.profile-sha256'), 'utf8'))
+        .toMatch(/^[a-f0-9]{64}\n$/)
+      const published = path.join(root, 'profiles', 'fixture', 'fixture-2')
+      if (retainsPublishedVersion) {
+        expect((await stat(published)).isDirectory()).toBe(true)
+      } else {
+        await expect(stat(published)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+      expect((await readdir(root)).some((entry) => entry.startsWith('.staging-')))
+        .toBe(false)
+      expect((await readdir(path.join(root, 'active'))).filter(
+        (entry) => entry.startsWith('.fixture.current.'),
+      )).toEqual([])
+    },
+  )
+
+  it('retains a validated published profile when activation cannot start', async () => {
     const fixture = await installerFixture()
     const activeRoot = path.join(
       fixture.data,
@@ -909,13 +965,16 @@ describe('agentic-remote voice-install', () => {
     const result = await fixture.run()
 
     expect(result.code).not.toBe(0)
-    await expect(stat(path.join(
+    const published = path.join(
       fixture.data,
       'models',
       'oracle-voice',
       'profiles',
       'fixture',
       'fixture-1',
-    ))).rejects.toMatchObject({ code: 'ENOENT' })
+    )
+    expect((await stat(published)).isDirectory()).toBe(true)
+    expect(await readFile(path.join(published, '.profile-sha256'), 'utf8'))
+      .toMatch(/^[a-f0-9]{64}\n$/)
   })
 })

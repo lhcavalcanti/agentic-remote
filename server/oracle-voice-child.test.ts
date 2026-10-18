@@ -990,26 +990,15 @@ describe('ChildVoiceEngine parent supervision', () => {
       expect(workerEvents(harness.messages).at(-1)?.type).toBe('audio_end')
     })
 
-    it('stops scheduling sherpa VITS chunks on bounded-queue overflow without audio_end', async () => {
-      let releaseFirstAudio!: () => void
-      const firstAudioDelivered = new Promise<void>((resolve) => {
-        releaseFirstAudio = resolve
-      })
-      let audioSends = 0
-      const samples = patternedSamples(22_050 * 9, 0)
+    it('rejects a synchronous sherpa VITS callback above the playable segment limit before audio', async () => {
+      const samples = patternedSamples(22_050 * 12 + 1, 0)
       const harness = childHarness({
         ttsProgressSamples: [samples],
         workerConfig: nativeTtsConfig(),
-        send: async (message) => {
-          if (message.type === 'event' && message.event.type === 'audio') {
-            audioSends += 1
-            if (audioSends === 1) await firstAudioDelivered
-          }
-        },
       })
       await initializeWorker(harness)
 
-      const synthesis = harness.worker.handle({
+      await harness.worker.handle({
         type: 'tts_synthesize',
         requestId: 'native-overflow',
         input: {
@@ -1019,25 +1008,25 @@ describe('ChildVoiceEngine parent supervision', () => {
           text: 'Overflow safely.',
         },
       })
-      await vi.waitFor(() => expect(audioSends).toBe(1))
-      releaseFirstAudio()
-      await synthesis
 
       expect(harness.messages).toContainEqual({
         type: 'response_error',
         requestId: 'native-overflow',
-        message: expect.stringContaining('bounded output queue'),
+        message: expect.stringContaining('playable segment'),
       })
-      expect(workerEvents(harness.messages)
-        .filter((event) => event.type === 'audio_end')).toEqual([])
-      expect(joinPcm(workerEvents(harness.messages)
-        .filter((event) => event.type === 'audio')
-        .map((event) => event.samples)).length)
-        .toBeLessThanOrEqual(22_050 * 8)
+      expect(workerEvents(harness.messages).filter(
+        (event) => event.type === 'audio' || event.type === 'audio_end',
+      )).toEqual([])
     })
 
-    it('streams realistic resident VITS output through EngineVoiceBackendSession', async () => {
-      const samples = patternedSamples(22_050 * 4 + 97, 0)
+    it.each([
+      ['LJSpeech', 176_469],
+      ['Faber', 148_224],
+    ])('streams measured %s VITS output through EngineVoiceBackendSession', async (
+      voice,
+      sampleCount,
+    ) => {
+      const samples = patternedSamples(sampleCount, 0)
       const child = new InProcessVoiceChild()
       const sherpa = fakeSherpa([], Number.POSITIVE_INFINITY, undefined, [samples])
       const worker = createVoiceWorker({
@@ -1064,7 +1053,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         engine: engineSession,
         limits: {
           maxFrameBytes: 32 * 1024,
-          maxQueueBytes: 22_050 * 2 * 8,
+          maxQueueBytes: 64_000,
           maxUtteranceMs: 30_000,
           idleTimeoutMs: 30_000,
         },
@@ -1076,7 +1065,7 @@ describe('ChildVoiceEngine parent supervision', () => {
       await backend.control(backendControl('start', 21, { language: 'en' }))
       await backend.control(backendControl('synthesize', 21, {
         segmentId: 'backend-segment',
-        text: 'Four seconds of exact resident audio.',
+        text: `Measured ${voice} resident audio.`,
       }))
 
       await vi.waitFor(() => {

@@ -79,6 +79,7 @@ describe('OracleVoiceClient', () => {
     expect(client.captures[0].start).toHaveBeenCalledAfter(
       client.playbacks[0].start,
     )
+    expect(client.playbacks[0].options.maxQueuedSeconds).toBe(12)
   })
 
   it('does not report listening until microphone capture is actually ready', async () => {

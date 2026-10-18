@@ -13,6 +13,7 @@ readonly ENV_FILE="$CONFIG_DIR/environment"
 readonly COMMAND_LINK="$HOME/.local/bin/agentic-remote"
 readonly VOICE_PROFILE_MANIFEST="$REPO_ROOT/config/oracle-voice-profiles.json"
 VOICE_INSTALL_CLEANUP_PATH=""
+VOICE_INSTALL_CLEANUP_LINK=""
 
 usage() {
   cat <<'EOF'
@@ -605,12 +606,41 @@ activate_voice_profile() {
   mkdir -p "$active_root"
   [[ ! -e "$active_root/$profile_id" || -L "$active_root/$profile_id" ]] ||
     die "voice active path is not a symbolic link: $active_root/$profile_id"
+  VOICE_INSTALL_CLEANUP_LINK="$temporary_link"
   rm -f -- "$temporary_link"
   ln -s "../profiles/$profile_id/$version" "$temporary_link"
+  voice_install_fault before-active-replace
   if ! mv -Tf "$temporary_link" "$active_root/$profile_id"; then
     rm -f -- "$temporary_link"
     die "could not activate voice profile: $profile_id $version"
   fi
+  voice_install_fault after-active-replace
+  VOICE_INSTALL_CLEANUP_LINK=""
+}
+
+voice_install_fault() {
+  local stage="$1"
+  case "${AGENTIC_REMOTE_VOICE_INSTALL_FAULT:-}" in
+    "exit:$stage")
+      exit 97
+      ;;
+    "term:$stage")
+      kill -TERM "$BASHPID"
+      ;;
+  esac
+}
+
+cleanup_voice_install() {
+  local result=$?
+  trap - EXIT
+  if [[ -n "$VOICE_INSTALL_CLEANUP_LINK" ]]; then
+    rm -f -- "$VOICE_INSTALL_CLEANUP_LINK"
+  fi
+  if [[ -n "$VOICE_INSTALL_CLEANUP_PATH" &&
+    ( -e "$VOICE_INSTALL_CLEANUP_PATH" || -L "$VOICE_INSTALL_CLEANUP_PATH" ) ]]; then
+    rm -rf -- "$VOICE_INSTALL_CLEANUP_PATH"
+  fi
+  exit "$result"
 }
 
 print_voice_configuration() {
@@ -699,6 +729,7 @@ voice_install() {
   final_directory="$profiles_root/$version"
   marker="$final_directory/.profile-sha256"
   mkdir -p "$profiles_root" "$voice_root/locks"
+  trap cleanup_voice_install EXIT
 
   local lock_file="$voice_root/locks/$profile_id.lock"
   local lock_fd
@@ -714,6 +745,7 @@ voice_install() {
     [[ "$(readlink -f -- "$voice_root/active/$profile_id")" == "$final_directory" ]] ||
       die "voice profile activation could not be confirmed: $profile_id $version"
     flock -u "$lock_fd"
+    trap - EXIT
     printf 'Voice profile %s %s is already installed.\n' "$profile_id" "$version"
     print_voice_configuration "$profile_id"
     return
@@ -730,13 +762,6 @@ voice_install() {
   done
   [[ -n "$staging" ]] || die "could not create voice installation staging directory"
   VOICE_INSTALL_CLEANUP_PATH="$staging"
-  cleanup_voice_staging() {
-    if [[ -n "$VOICE_INSTALL_CLEANUP_PATH" &&
-      ( -e "$VOICE_INSTALL_CLEANUP_PATH" || -L "$VOICE_INSTALL_CLEANUP_PATH" ) ]]; then
-      rm -rf -- "$VOICE_INSTALL_CLEANUP_PATH"
-    fi
-  }
-  trap cleanup_voice_staging EXIT
   mkdir -p "$staging/.downloads"
 
   local asset_id destination url expected_bytes expected_sha archive
@@ -803,14 +828,16 @@ voice_install() {
     return
   fi
 
+  voice_install_fault before-final-rename
   mv -T -- "$staging" "$final_directory"
   VOICE_INSTALL_CLEANUP_PATH="$final_directory"
+  voice_install_fault after-final-rename
   [[ -f "$marker" && "$(cat "$marker")" == "$profile_digest" ]] ||
     die "voice profile publication marker could not be confirmed: $profile_id $version"
+  VOICE_INSTALL_CLEANUP_PATH=""
   activate_voice_profile "$voice_root" "$profile_id" "$version"
   [[ "$(readlink -f -- "$voice_root/active/$profile_id")" == "$final_directory" ]] ||
     die "voice profile activation could not be confirmed: $profile_id $version"
-  VOICE_INSTALL_CLEANUP_PATH=""
   trap - EXIT
 
   printf 'Installed and activated voice profile %s %s.\n' "$profile_id" "$version"

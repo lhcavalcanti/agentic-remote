@@ -1,6 +1,8 @@
-import type { VoiceAudioFrame } from '../../shared/oracle-voice'
+import {
+  ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS,
+  type VoiceAudioFrame,
+} from '../../shared/oracle-voice'
 
-const DEFAULT_MAX_QUEUED_SECONDS = 8
 const TENTATIVE_GAIN = 0.12
 const TENTATIVE_RAMP_SECONDS = 0.02
 const MISFIRE_RAMP_SECONDS = 0.08
@@ -14,7 +16,9 @@ export class VoicePlaybackSequenceError extends Error {
 }
 
 export class VoicePlaybackQueueError extends Error {
-  constructor(message = 'Voice playback queue exceeds eight seconds') {
+  constructor(
+    message = `Voice playback queue exceeds ${ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS} seconds`,
+  ) {
     super(message)
     this.name = 'VoicePlaybackQueueError'
   }
@@ -49,7 +53,8 @@ export class VoicePlayback {
 
   constructor(options: VoicePlaybackOptions) {
     validateGeneration(options.initialGeneration)
-    const maxQueuedSeconds = options.maxQueuedSeconds ?? DEFAULT_MAX_QUEUED_SECONDS
+    const maxQueuedSeconds = options.maxQueuedSeconds
+      ?? ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS
     if (!Number.isFinite(maxQueuedSeconds) || maxQueuedSeconds <= 0) {
       throw new RangeError('maxQueuedSeconds must be positive')
     }

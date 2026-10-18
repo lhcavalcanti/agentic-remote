@@ -19,12 +19,29 @@ hardening is integrated into the same worktree without changing Graphify.
   of chunks. Encoded playback frames stay at or below the backend's 32 KiB
   limit, sequence numbers remain monotonic across callbacks, queue accounting
   remains bounded, and cancellation/overflow/failure suppresses `audio_end`.
+- Worker and browser now share a 12-second maximum playable segment. At
+  22,050 Hz that is 264,600 samples, so the measured LJSpeech sentence
+  (176,469 samples, 8.003 seconds) and Faber sentence (148,224 samples,
+  6.722 seconds) pass end to end. A synchronous whole-sentence callback above
+  the limit is rejected before any audio frame or `audio_end` is emitted.
+  Protocol backpressure remains separate and unchanged: frames are at most
+  32 KiB, the default backend/coordinator queue is 64,000 bytes, browser
+  WebSocket buffering uses that advertised queue limit, and playback still
+  caps scheduled sources at 512.
 - Archive decoding is selected exactly from the manifest (`r|gz` or `r|bz2`).
   Headers are consumed one at a time; the installer rejects an entry before
   extraction when its count or declared expanded size would cross a pin.
   Compression mismatch, corrupt streams, sparse files, links, special entries,
   unsafe/duplicate paths, and path-type conflicts fail closed. Failed staging
   is removed and the prior active profile remains unchanged.
+- Voice profile cleanup is publication-state aware. Staging or an unactivated
+  final directory remains cleanup-owned through final rename and marker
+  validation. Before the atomic active-symlink replacement, final-directory
+  cleanup is disarmed while the EXIT trap remains responsible for a temporary
+  activation link. Exit or SIGTERM before replacement leaves the previous
+  complete profile active; exit or SIGTERM after replacement retains the new
+  complete target. Deterministic tests cover both fault types before and after
+  final rename and symlink replacement.
 
 ## Resident VITS deviation and measurement
 
@@ -45,6 +62,9 @@ A warmed two-thread probe used the exact pinned packaged voices and
 This meets the `<0.2` synthesis RTF target for these phrases but misses the
 300 ms warm first-audio target. Transport chunking makes the whole-sentence
 buffer protocol-safe; it does not create true engine-incremental synthesis.
+There is no speculative clause splitter: current evidence shows both packaged
+measured sentences fit the coherent 12-second bound. Longer speakable
+sentences fail synthesis explicitly while preserving Oracle's text reply.
 
 ## TDD evidence
 
@@ -99,6 +119,45 @@ most 32 KiB and ordered, reconstructs exact PCM length/content, and observes
 `audio_end`. Overflow and cancellation tests verify no terminal event follows
 failure.
 
+### Remaining Important-finding RED/GREEN
+
+The final review regressions failed before these fixes:
+
+```text
+server/oracle-voice-child.test.ts:
+2 failed | 1 passed
+- 176,469-sample LJSpeech output never reached audio_end
+- a synchronous over-limit callback emitted partial audio
+
+src/oracle-voice/playback.test.ts + src/oracle-voice/client.test.ts:
+2 failed
+- measured LJSpeech exceeded the eight-second browser bound
+- the client did not establish a shared playable-segment bound
+
+server/oracle-voice-assets.test.ts:
+8 failed
+- exit and SIGTERM fault injection at four publication stages was ignored
+```
+
+After implementation:
+
+```text
+pnpm vitest run server/oracle-voice-child.test.ts \
+  server/oracle-voice-session.test.ts \
+  src/oracle-voice/playback.test.ts \
+  src/oracle-voice/client.test.ts \
+  server/oracle-voice-assets.test.ts
+Test Files 5 passed
+Tests 121 passed
+```
+
+The measured LJSpeech and Faber cases reconstruct every sample in order through
+the worker, child/parent engine, `EngineVoiceBackendSession`, protocol-safe
+frames, and browser playback. The over-limit callback produces zero audio
+frames and zero `audio_end`. Installer fault tests assert that `active` always
+resolves to a complete existing profile, staging and activation links do not
+leak, and concurrent same/conflicting-digest behavior remains covered.
+
 ## Exact current asset and provenance facts
 
 All network assets are checksum-pinned in
@@ -126,7 +185,42 @@ The installer displays the profile notices before network access.
 
 ## Verification
 
-Final focused gate:
+Review-fix focused gate:
+
+```text
+pnpm vitest run server/oracle-voice-child.test.ts \
+  server/oracle-voice-session.test.ts \
+  src/oracle-voice/playback.test.ts \
+  src/oracle-voice/client.test.ts \
+  server/oracle-voice-assets.test.ts
+Test Files 5 passed
+Tests 121 passed
+```
+
+All Task 9 packaging/version tests:
+
+```text
+pnpm vitest run server/oracle-voice-assets.test.ts \
+  server/promotion-setup.test.ts \
+  server/version-policy.test.ts
+Test Files 3 passed
+Tests 46 passed
+```
+
+Static and build gates:
+
+```text
+pnpm exec tsc -b --pretty false
+exit 0
+
+pnpm lint
+exit 0 (repository baseline warnings only)
+
+pnpm build
+exit 0; 4,338 modules transformed
+```
+
+The broader prior Task 9 focused gate also remains recorded:
 
 ```text
 pnpm vitest run server/oracle-voice-child.test.ts \
@@ -138,15 +232,6 @@ pnpm vitest run server/oracle-voice-child.test.ts \
   server/version-policy.test.ts
 Test Files 7 passed
 Tests 125 passed
-
-pnpm exec tsc -b --pretty false
-exit 0
-
-pnpm lint
-exit 0 (repository baseline warnings only)
-
-pnpm build
-exit 0; 4,338 modules transformed
 ```
 
 Full suite:
@@ -154,8 +239,18 @@ Full suite:
 ```text
 pnpm test
 Test Files 147 passed | 1 skipped
-Tests 4635 passed | 1 skipped
-Duration 1796.26 s
+Tests 4645 passed | 1 skipped
+Duration 1800.62 s
+```
+
+Production-environment aggregate gate:
+
+```text
+NODE_ENV=production pnpm check
+lint: exit 0 (repository baseline warnings only)
+Test Files 147 passed | 1 skipped
+Tests 4645 passed | 1 skipped
+build: exit 0; 4,338 modules transformed
 ```
 
 ## Remaining concerns
@@ -163,6 +258,9 @@ Duration 1796.26 s
 - True engine-incremental TTS first audio is still unavailable with the
   measured sherpa-onnx-node 1.13.8 VITS callback behavior; the 300 ms target
   remains unmet.
+- One synthesized sentence cannot exceed 12 seconds at its native sample rate.
+  Longer sentences are not partially played and currently require a shorter
+  Oracle sentence rather than automatic clause splitting.
 - Nemotron measured 0.58 CPU RTF on the development host, missing the `<0.2`
   STT target. The fast English sample missed initial words.
 - No Portuguese ASR corpus, perceptual voice-quality study, browser

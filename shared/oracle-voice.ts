@@ -4,6 +4,7 @@ export const ORACLE_VOICE_PROTOCOL = 2 as const
 export const ORACLE_VOICE_SAMPLE_RATE = 16_000 as const
 export const ORACLE_VOICE_MIN_PCM_SAMPLE_RATE = 8_000
 export const ORACLE_VOICE_MAX_PCM_SAMPLE_RATE = 192_000
+export const ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS = 12
 export const VOICE_AUDIO_HEADER_BYTES = 24
 
 const MAGIC = [0x41, 0x52, 0x56, 0x43] as const

@@ -37,15 +37,27 @@ describe('VoicePlayback', () => {
     expect(playback.enqueue(audio(2, 'segment-b', 0))).toBe(true)
   })
 
-  it('caps future scheduled audio at eight seconds without adding the rejected source', () => {
+  it.each([
+    ['LJSpeech', 176_469],
+    ['Faber', 148_224],
+  ])('accepts the measured %s sentence and caps future audio at twelve seconds', (
+    _voice,
+    sampleCount,
+  ) => {
     const playback = harness()
-    const longFrame = audio(2, 'segment-a', 0, 8_000, 64_000)
+    const frames = splitAudio(2, 'segment-a', 22_050, sampleCount)
 
-    expect(playback.enqueue(longFrame)).toBe(true)
-    expect(playback.instance.queuedSeconds).toBe(8)
-    expect(() => playback.enqueue(audio(2, 'segment-a', 1, 8_000, 1)))
+    for (const frame of frames) expect(playback.enqueue(frame)).toBe(true)
+    expect(playback.instance.queuedSeconds).toBeCloseTo(sampleCount / 22_050)
+    expect(() => playback.enqueue(audio(
+      2,
+      'segment-a',
+      frames.length,
+      22_050,
+      12 * 22_050 - sampleCount + 1,
+    )))
       .toThrow(VoicePlaybackQueueError)
-    expect(playback.sources).toHaveLength(1)
+    expect(playback.sources).toHaveLength(frames.length)
   })
 
   it('caps the number of scheduled sources even when frames are tiny', () => {
@@ -270,4 +282,24 @@ function audio(
       (_, index) => index % 2 === 0 ? -32768 : 32767,
     ),
   }
+}
+
+function splitAudio(
+  generation: number,
+  segmentId: string,
+  sampleRate: number,
+  sampleCount: number,
+): VoiceAudioFrame[] {
+  const maxFrameSamples = 16_000
+  const frames: VoiceAudioFrame[] = []
+  for (let offset = 0; offset < sampleCount; offset += maxFrameSamples) {
+    frames.push(audio(
+      generation,
+      segmentId,
+      frames.length,
+      sampleRate,
+      Math.min(maxFrameSamples, sampleCount - offset),
+    ))
+  }
+  return frames
 }

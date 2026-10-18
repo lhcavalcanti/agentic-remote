@@ -1,5 +1,6 @@
 import type { ManagerClientDefaults } from '../../shared/manager'
 import {
+  ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS,
   ORACLE_VOICE_PROTOCOL,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
@@ -717,6 +718,7 @@ export class OracleVoiceClient {
     try {
       const playback = this.dependencies.createPlayback({
         initialGeneration: this.generation,
+        maxQueuedSeconds: ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS,
       })
       this.playback = playback
       return playback.start().catch((error: unknown) => {

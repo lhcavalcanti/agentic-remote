@@ -6,6 +6,7 @@ import path from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import {
+  ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS,
   ORACLE_VOICE_SAMPLE_RATE,
   VOICE_AUDIO_HEADER_BYTES,
 } from '../shared/oracle-voice.js'
@@ -529,9 +530,14 @@ class ResidentVoiceWorker implements VoiceWorker {
     this.synthesis = active
     let sequence = 0
     let deliveredSamples = 0
+    let scheduledSamples = 0
     let queuedSamples = 0
-    let overflow = false
-    const maxQueuedSamples = this.requireConfig().tts.sampleRate * 8
+    let overflow: Error | undefined
+    const maxPlayableSamples = (
+      this.requireConfig().tts.sampleRate
+      * ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS
+    )
+    const maxQueuedSamples = maxPlayableSamples
     const maxFrameSamples = Math.floor(
       (
         MAX_VOICE_FRAME_BYTES
@@ -542,14 +548,19 @@ class ResidentVoiceWorker implements VoiceWorker {
     let delivery = Promise.resolve()
     const scheduleSamples = (samples: Float32Array): boolean => {
       if (overflow || this.isCancelled(active)) return false
+      if (samples.length > maxPlayableSamples - scheduledSamples) {
+        overflow = new Error('sherpa VITS audio exceeded the playable segment limit')
+        return false
+      }
       for (let offset = 0; offset < samples.length; offset += maxFrameSamples) {
         if (overflow || this.isCancelled(active)) return false
         const sampleCount = Math.min(maxFrameSamples, samples.length - offset)
         if (sampleCount > maxQueuedSamples - queuedSamples) {
-          overflow = true
+          overflow = new Error('sherpa VITS audio exceeded the bounded output queue')
           return false
         }
         const copy = Float32Array.from(samples.subarray(offset, offset + sampleCount))
+        scheduledSamples += copy.length
         queuedSamples += copy.length
         const currentSequence = sequence
         sequence += 1
@@ -581,12 +592,12 @@ class ResidentVoiceWorker implements VoiceWorker {
         onProgress: ({ samples }) => scheduleSamples(samples),
       })
       await delivery
-      if (overflow) throw new Error('sherpa VITS audio exceeded the bounded output queue')
+      if (overflow) throw overflow
       if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
       if (deliveredSamples === 0 && result.samples.length > 0) {
         scheduleSamples(result.samples)
         await delivery
-        if (overflow) throw new Error('sherpa VITS audio exceeded the bounded output queue')
+        if (overflow) throw overflow
         if (this.isCancelled(active)) throw new Error('TTS generation is cancelled')
       }
       await this.emit({

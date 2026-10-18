@@ -91,8 +91,14 @@ refuses to pretend a shipped profile supports them.
 Conversation mode requires microphone permission, `getUserMedia`,
 `AudioWorklet`, Web Audio playback, and WebSocket support. It refuses to start
 when those primitives are unavailable and directs the user to dictation.
-Cross-browser and installed-PWA evidence is pending Task 11; current unit tests
-do not establish a Safari, Firefox, or device support matrix.
+
+The deterministic built-UI test passes in repository Playwright Chromium and
+Firefox, including touch at 390×844. Chromium and Firefox need the development
+host's extracted `libasound.so.2` workaround. The downloaded Playwright WebKit
+binary cannot launch on this host because GTK 4, Graphene, GStreamer, Flite,
+Soup, media-codec, and related shared libraries are absent. No system packages
+were installed and WebKit is not reported as passed. Installed-PWA and physical
+Safari/device testing remain open.
 
 Only finalized STT text is submitted to Oracle. Partials are display-only. A
 disconnect discards the current utterance rather than replaying audio. If an
@@ -103,44 +109,48 @@ per hub.
 ## Evidence and limitations
 
 Measurements below are from the six-core development Xeon W-2235 and are not
-hardware promises:
+hardware promises. The committed FLEURS corpus and
+`scripts/oracle-voice-benchmark.ts` reproduce this table; medians exclude
+silence and missing partials, WER is the mean of clean fixtures, and peak RSS
+is the maximum resident child value:
 
-- Zipformer English 20M int8 used 0.40 seconds of compute for an 11-second JFK
-  clip (0.036 RTF, about 99 MiB peak RSS). Its single output missed the
-  beginning of the sentence, so this is speed evidence, not a quality claim.
-- Nemotron 3.5 160 ms int8 with four threads used 6.39 seconds of compute
-  (0.58 RTF, about 986 MiB peak RSS) and reproduced that English clip with
-  punctuation. It misses the design's `<0.2` CPU RTF target.
-- The earlier Piper 1.8 Python-API benchmark used
-  `en_US-ljspeech-medium`, not Lessac: 131 ms median first chunk, 0.029 RTF,
-  and about 239 MiB peak RSS. Shipped profiles now use resident sherpa VITS
-  with k2-fsa-packaged archives, so those figures are historical context, not
-  measured performance for the installed path.
-- A warmed two-thread sherpa-onnx-node 1.13.8 probe of the exact pinned VITS
-  archives measured 711 ms to generate 8.00 seconds of LJSpeech audio
-  (0.089 RTF) and 610 ms for 6.72 seconds of Faber audio (0.091 RTF).
-  Each voice invoked `onProgress` exactly once, with `progress=1` and the
-  complete sentence buffer, only 0.069 ms and 0.048 ms before
-  `generateAsync` resolved. The current engine path is therefore not
-  incremental within a sentence and misses the 300 ms warm first-audio target.
-- Conversation can still start a completed Oracle sentence before the full
-  Oracle reply finishes. For each sentence, the worker buffers and validates
-  the complete local synthesis result before splitting it into ordered
-  protocol-safe PCM frames. Sentence audio therefore began after 711 ms for the
-  measured LJSpeech phrase and 610 ms for Faber, not incrementally during
-  engine generation. This is sentence-level early playback relative to the
-  Oracle reply, not evidence of true incremental synthesis.
-  A single synthesized sentence is bounded to 12 seconds at the voice's native
-  sample rate in both the worker and browser. The measured LJSpeech
-  (176,469 samples at 22,050 Hz) and Faber (148,224 samples) sentences fit; a
-  longer whole-sentence callback fails explicitly before any of that callback
-  is queued. Oracle text remains available when synthesis fails.
-  No Portuguese ASR corpus, perceptual quality study, browser end-to-end
-  latency, barge-in timing, isolated resident-worker RSS, or soak result exists
-  yet.
+| Profile/language | Clean WER | First partial median | STT RTF median | TTS first audio median | TTS RTF median | Peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fast-en` / en | 0.958 | 102 ms (1/5 fixtures emitted a partial) | 0.027 | 288 ms | 0.094 | 407 MiB |
+| `multilingual-quality` / en | 0.704 | 872 ms (4/5 emitted) | 0.511 | 318 ms | 0.092 | 1,254 MiB |
+| `multilingual-quality` / pt-BR | 0.045 | 699 ms | 0.687 | 299 ms | 0.083 | 1,212 MiB |
 
-Task 11 owns real browser/profile measurements. Until then, do not describe
-either profile as meeting a general quality or latency target.
+The prior Whisper tiny baseline remains 0.72 RTF and about 885 MiB RSS.
+Zipformer is fast but failed the FLEURS quality gate, returning an empty result
+on four of five English non-silence cases. Nemotron established useful
+Brazilian Portuguese evidence on one anonymous male speaker, including 0.000
+WER on the long clean clip, but its CPU RTF and memory miss the `<0.2` and
+low-resource targets. The corpus cannot establish multi-speaker Portuguese or
+perceptual TTS quality.
+
+The real browser/hub/WebSocket/resident-child run used the session-only NASA
+JFK clip, Zipformer, and resident LJSpeech VITS. It measured 1,446 ms to first
+partial, 96 ms from explicit speech end to final, 0.198 STT RTF, 224 ms from
+manager delta to first audio, 0.108 TTS RTF, 289 MiB peak worker RSS, and 77.0%
+sustained worker CPU.
+Barge-in stopped queued playback, cancelled generation 1, submitted the second
+utterance exactly once, and delivered zero old-generation audio afterward.
+The first-partial target therefore missed; finalization, warm short-sentence
+TTS, and RTF targets passed in that run.
+
+The required real-time soak passed 30 minutes at six turns/minute after 500
+rapid start/stop races: 680/680 unique manager sends, 500 cancellations and
+stale backend emissions, zero stale client deliveries, a 640-byte maximum
+input queue against the 64,000-byte limit, no orphan child/socket or unhandled
+error, and a final-half RSS slope of 0.091 MiB/minute. RSS was 152 MiB initially,
+169 MiB peak, and 128 MiB after cleanup.
+
+Resident VITS still invokes progress only with the complete sentence, so it is
+not engine-incremental within a sentence. The worker validates that complete
+result before splitting it into protocol-safe frames. A sentence remains
+bounded to 12 seconds at the native voice sample rate and fails explicitly
+before playback when the bound is exceeded. Oracle text remains available when
+synthesis fails.
 
 ## Remove or replace
 

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
@@ -147,6 +148,7 @@ const packageVersion = JSON.parse(
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
   const buildId = command === 'build' ? randomUUID() : packageVersion.version
+  const oracleVoiceE2eBuild = process.env.AGENTIC_REMOTE_E2E_BUILD === '1'
   return {
     define: {
       __APP_VERSION__: JSON.stringify(packageVersion.version),
@@ -175,6 +177,16 @@ export default defineConfig(({ command, mode }) => {
         },
       },
     ],
+    resolve: oracleVoiceE2eBuild
+      ? {
+          alias: [{
+            find: /^@ricky0123\/vad-web$/,
+            replacement: fileURLToPath(
+              new URL('./e2e/fixtures/fake-vad.ts', import.meta.url),
+            ),
+          }],
+        }
+      : undefined,
     build: {
       assetsInlineLimit(filePath) {
         return oracleVoiceAssetNames.has(filePath.split(/[\\/]/).at(-1) ?? '')
@@ -206,6 +218,7 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     test: {
+      exclude: [...configDefaults.exclude, 'e2e/**'],
       // React resolves to its production CJS build when NODE_ENV=production, and
       // that build omits `act`, so every component test fails. `pnpm start` and
       // the systemd unit both export NODE_ENV=production, so pin it here to keep

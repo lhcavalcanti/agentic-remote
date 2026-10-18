@@ -55,6 +55,9 @@ export default defineConfig(({ command }) => {
       // the systemd unit both export NODE_ENV=production, so pin it here to keep
       // the test run independent of the ambient environment.
       env: { NODE_ENV: 'development', AGENTIC_REMOTE_STORE_FREEZE: '1' },
+      // Stylesheets stay stubbed so components render as before, except an
+      // explicit `?raw` read, which theme tests use to check the real tokens.
+      css: { include: [/\.css\?raw$/] },
       // The suite is run one file at a time.
       //
       // Some of it reaches the machine itself rather than a fake: one file

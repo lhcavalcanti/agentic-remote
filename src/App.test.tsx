@@ -28,6 +28,15 @@ import type {
 } from '../shared/contracts'
 import App from './App'
 import {
+  applySettingsChanges,
+  applySettingsImport,
+  validateSettingsChanges,
+  validateSettingsImport,
+  type SettingsProfileRecord,
+  type SettingsProfileSnapshot,
+  type SettingsProfileValues,
+} from '../shared/settings-profile'
+import {
   getManager,
   sendManagerMessage,
   activateSession,
@@ -55,6 +64,9 @@ import {
   saveSessionVisibility,
   saveSessionOrderLane,
   bootstrapSessionOrder,
+  fetchSettingsProfile,
+  saveSettingsChanges,
+  importSettingsProfile,
   listDirectories,
   listHistory,
   listKnowledgeRoots,
@@ -93,6 +105,33 @@ type DndProps = ComponentProps<typeof import('@dnd-kit/core').DndContext>
 const dragHandlers = vi.hoisted(() =>
   new Map<string, NonNullable<DndProps['onDragEnd']>>(),
 )
+/** The hub's settings profile the api mocks read and commit with the real rules. */
+let hubSettings: SettingsProfileRecord = { revision: 0, values: {}, keyRevisions: {} }
+const hubSettingsId = 'test-profile'
+
+function hubSettingsSnapshot(): SettingsProfileSnapshot {
+  return {
+    profileId: hubSettingsId,
+    revision: hubSettings.revision,
+    values: structuredClone(hubSettings.values),
+  }
+}
+
+/** Seeds the hub as if another device had already chosen these. */
+function seedHubSettings(values: SettingsProfileValues) {
+  hubSettings = applySettingsImport(
+    hubSettings,
+    validateSettingsImport(values as Record<string, unknown>),
+  )
+}
+
+/** What this device shows for a setting: its unsent edit, else what it last saw. */
+function savedSetting<K extends keyof SettingsProfileValues>(key: K): SettingsProfileValues[K] {
+  const cache = JSON.parse(localStorage.getItem('agentic-remote:settings-profile') || 'null')
+  if (cache?.pending?.[key]) return cache.pending[key].value ?? undefined
+  return cache?.values?.[key] ?? cache?.imports?.[key]
+}
+
 /** The hub-owned custom session order the api mocks read and commit against. */
 let hubSessionOrder: {
   revision: number
@@ -157,6 +196,9 @@ vi.mock('./api', async (importOriginal) => ({
   saveSessionVisibility: vi.fn(),
   saveSessionOrderLane: vi.fn(),
   bootstrapSessionOrder: vi.fn(),
+  fetchSettingsProfile: vi.fn(),
+  saveSettingsChanges: vi.fn(),
+  importSettingsProfile: vi.fn(),
   listBackgroundTasks: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
@@ -1251,44 +1293,268 @@ describe('App', () => {
     expect(composerMaximumHeight(false, 430)).toBe(180)
   })
 
-  it('keeps the chosen reading appearance independent from the tab accent', async () => {
-    const rendered = render(<App />)
-    await screen.findByLabelText('Message')
-    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-    expect(await screen.findByRole('radio', { name: 'Graphite appearance' })).toBeChecked()
-    fireEvent.click(screen.getByRole('radio', { name: 'Ocean accent' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'Light appearance' }))
-    expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'light')
-    expect(document.querySelector('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
-    expect(document.documentElement).toHaveAttribute('data-appearance', 'light')
-    expect(JSON.parse(localStorage.getItem('agentic-remote:appearance') || 'null')).toBe('light')
-    rendered.unmount()
-    render(<App />)
-    await screen.findByLabelText('Message')
-    expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'light')
-    expect(document.querySelector('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
-  })
+  describe('settings that follow you between devices', () => {
+    const shell = () => document.querySelector('.app-shell')
+    let restoreMatchMedia: (() => void) | undefined
 
-  it('keeps the previous appearance and reports an unavailable preference store', async () => {
-    render(<App />)
-    await screen.findByLabelText('Message')
-    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-    const light = await screen.findByRole('radio', { name: 'Light appearance' })
-    const original = Storage.prototype.setItem
-    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
-      this: Storage, key: string, value: string,
-    ) {
-      if (key === 'agentic-remote:appearance') throw new Error('Storage unavailable')
-      original.call(this, key, value)
+    afterEach(() => {
+      restoreMatchMedia?.()
+      restoreMatchMedia = undefined
     })
-    try {
-      fireEvent.click(light)
-      expect(screen.getByText('Could not save appearance: Storage unavailable')).toBeVisible()
-      expect(screen.getByRole('radio', { name: 'Graphite appearance' })).toBeChecked()
-      expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'graphite')
-    } finally {
-      save.mockRestore()
+
+    /** A device whose OS light/dark preference the test can change. */
+    function deviceScheme(light: boolean) {
+      const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
+      const listeners = new Set<() => void>()
+      let prefersLight = light
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        value: (query: string) => ({
+          get matches() {
+            return query === '(prefers-color-scheme: light)' ? prefersLight : false
+          },
+          media: query,
+          onchange: null,
+          addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+          removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+          addListener: () => undefined,
+          removeListener: () => undefined,
+          dispatchEvent: () => false,
+        }),
+      })
+      restoreMatchMedia = () => {
+        if (original) Object.defineProperty(window, 'matchMedia', original)
+        else Reflect.deleteProperty(window, 'matchMedia')
+      }
+      return (next: boolean) => {
+        prefersLight = next
+        act(() => listeners.forEach((listener) => listener()))
+      }
     }
+
+    it('keeps an explicit appearance and accent on the hub and across a reopened tab', async () => {
+      const rendered = render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      expect(await screen.findByRole('radio', { name: 'System appearance' })).toBeChecked()
+      fireEvent.click(screen.getByRole('radio', { name: 'Ocean accent' }))
+      fireEvent.click(screen.getByRole('radio', { name: 'Light appearance' }))
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(shell()).toHaveAttribute('data-accent-theme', 'ocean')
+      expect(document.documentElement).toHaveAttribute('data-appearance', 'light')
+      await waitFor(() =>
+        expect(hubSettings.values).toEqual({ accent: 'ocean', appearance: 'light' }))
+      expect(await screen.findByText('Saved on this hub.')).toBeVisible()
+      // Nothing is kept per tab any more.
+      expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBeNull()
+      rendered.unmount()
+
+      // A closed and reopened tab paints from this device's copy before the
+      // hub answers.
+      sessionStorage.clear()
+      vi.mocked(fetchSettingsProfile).mockImplementation(() => new Promise(() => {}))
+      render(<App />)
+      await screen.findByLabelText('Message')
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(shell()).toHaveAttribute('data-accent-theme', 'ocean')
+    })
+
+    it('follows the device’s light or dark setting until a choice is made', async () => {
+      const setDeviceLight = deviceScheme(true)
+      render(<App />)
+      await screen.findByLabelText('Message')
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      setDeviceLight(false)
+      expect(shell()).toHaveAttribute('data-appearance', 'graphite')
+
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      fireEvent.click(await screen.findByRole('radio', { name: 'Graphite appearance' }))
+      setDeviceLight(true)
+      // A choice is a choice: the device's setting no longer moves it.
+      expect(shell()).toHaveAttribute('data-appearance', 'graphite')
+      await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'graphite' }))
+
+      fireEvent.click(screen.getByRole('radio', { name: 'System appearance' }))
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'system' }))
+    })
+
+    it('loads the hub’s settings on a device that has none, as after signing back in', async () => {
+      seedHubSettings({ accent: 'teal', appearance: 'light', sessionSort: 'name' })
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(shell()).toHaveAttribute('data-accent-theme', 'teal'))
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(screen.getByRole('combobox', { name: 'Session order' })).toHaveValue('name')
+      expect(importSettingsProfile).not.toHaveBeenCalled()
+    })
+
+    it('applies a change made on another device as it arrives', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'settings.updated',
+          settings: {
+            profileId: hubSettingsId,
+            revision: 4,
+            values: { accent: 'rose', appearance: 'light', statusline: { model: false } },
+          },
+        }),
+      } as MessageEvent))
+      expect(shell()).toHaveAttribute('data-accent-theme', 'rose')
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+    })
+
+    it('tells you when another device changed a setting first', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      await act(async () => {})
+      // Another device commits while this one has not heard about it.
+      hubSettings = applySettingsChanges(
+        hubSettings,
+        validateSettingsChanges({ accent: { value: 'violet', baseRevision: 0 } }),
+      ).record
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      fireEvent.click(await screen.findByRole('radio', { name: 'Teal accent' }))
+      expect(await screen.findByText(
+        'Accent was changed on another device first, so this device now uses that choice.',
+      )).toBeVisible()
+      expect(shell()).toHaveAttribute('data-accent-theme', 'violet')
+      expect(hubSettings.values.accent).toBe('violet')
+    })
+
+    it('keeps changes while the hub is unreachable and sends them on reconnect', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      await act(async () => {})
+      vi.mocked(saveSettingsChanges).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      fireEvent.click(await screen.findByRole('radio', { name: 'Light appearance' }))
+      expect(await screen.findByText(
+        'The hub can’t be reached. Changes are kept on this device and sync when it’s back.',
+      )).toBeVisible()
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      expect(hubSettings.values).toEqual({})
+
+      await act(async () => { MockWebSocket.instances.at(-1)?.onopen?.() })
+      await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'light' }))
+      expect(await screen.findByText('Saved on this hub.')).toBeVisible()
+    })
+
+    it('keeps saving to the hub when this browser cannot keep a copy', async () => {
+      const original = Storage.prototype.setItem
+      const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+        this: Storage, key: string, value: string,
+      ) {
+        if (key === 'agentic-remote:settings-profile') throw new Error('Storage unavailable')
+        original.call(this, key, value)
+      })
+      try {
+        render(<App />)
+        await screen.findByLabelText('Message')
+        fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+        fireEvent.click(await screen.findByRole('radio', { name: 'Light appearance' }))
+        expect(shell()).toHaveAttribute('data-appearance', 'light')
+        await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'light' }))
+        expect(await screen.findByText(
+          'Saved on this hub. This browser can’t keep a copy, so settings load from the hub each time.',
+        )).toBeVisible()
+      } finally {
+        save.mockRestore()
+      }
+    })
+
+    it('brings this browser’s earlier settings to the hub once', async () => {
+      localStorage.setItem('agentic-remote:appearance', JSON.stringify('light'))
+      localStorage.setItem('agentic-remote:session-sort', JSON.stringify('name'))
+      sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
+      const rendered = render(<App />)
+      await screen.findByLabelText('Message')
+      expect(shell()).toHaveAttribute('data-accent-theme', 'rose')
+      expect(shell()).toHaveAttribute('data-appearance', 'light')
+      await waitFor(() => expect(hubSettings.values).toEqual({
+        appearance: 'light', accent: 'rose', sessionSort: 'name',
+      }))
+      expect(importSettingsProfile).toHaveBeenCalledTimes(1)
+      rendered.unmount()
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalledTimes(2))
+      expect(importSettingsProfile).toHaveBeenCalledTimes(1)
+    })
+
+    it('chooses how much Oracle writes, for every device on the hub', async () => {
+      vi.mocked(getManager).mockResolvedValue({
+        available: true, status: 'idle', messages: [], queued: 0, managedSessions: [], settings: {},
+      })
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      const style = await within(dialog).findByRole('combobox', { name: 'Oracle response style' })
+      // Unset answers Balanced, as Oracle always has.
+      expect(style).toHaveValue('balanced')
+      expect(within(style).getAllByRole('option').map((option) => option.textContent))
+        .toEqual(['Concise', 'Balanced', 'Detailed'])
+      const section = style.closest('section')!
+      expect(section.querySelector('.settings-scope')).toHaveTextContent('Synced')
+      expect(section).toHaveTextContent(
+        'Every style keeps errors, uncertainty, what Oracle did, and anything waiting for you.',
+      )
+      // Oracle's own model and folder settings are not touched by this.
+      const { updateManagerSettings } = await import('./api')
+
+      fireEvent.change(style, { target: { value: 'concise' } })
+      expect(style).toHaveValue('concise')
+      await waitFor(() => expect(hubSettings.values).toEqual({ oracleResponseStyle: 'concise' }))
+      expect(updateManagerSettings).not.toHaveBeenCalled()
+
+      // Another device's choice arrives live.
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'settings.updated',
+          settings: { profileId: hubSettingsId, revision: 9, values: { oracleResponseStyle: 'detailed' } },
+        }),
+      } as MessageEvent))
+      expect(style).toHaveValue('detailed')
+    })
+
+    it('leaves out the response style when Oracle is off on this hub', async () => {
+      vi.mocked(getManager).mockResolvedValue({
+        available: false,
+        unavailableReason: 'Oracle is turned off on this hub (AGENTIC_REMOTE_MANAGER=off).',
+        status: 'offline', messages: [], queued: 0, managedSessions: [],
+      })
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      expect(await within(dialog).findAllByText(/Oracle is turned off on this hub/)).not.toHaveLength(0)
+      expect(within(dialog).queryByRole('combobox', { name: 'Oracle response style' })).toBeNull()
+    })
+
+    it('says which settings follow you and which stay on this device', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      const sync = within(dialog).getByRole('heading', { name: 'Settings sync' }).closest('section')!
+      expect(sync).toHaveTextContent(
+        'Appearance, accent, status line, new-session models and folders, session sort, computer order, and Oracle\'s response style follow you to every device that opens this hub.',
+      )
+      expect(sync).toHaveTextContent('Keyboard shortcuts, panel widths, and drafts stay on this device.')
+      const scope = (heading: string) =>
+        within(dialog).getByRole('heading', { name: heading })
+          .closest('.app-settings-section__title')?.querySelector('.settings-scope')
+      expect(scope('Appearance')).toHaveTextContent('Synced')
+      expect(scope('Status line')).toHaveTextContent('Synced')
+      expect(scope('New sessions')).toHaveTextContent('Synced')
+      expect(scope('Keyboard shortcuts')).toHaveTextContent('This device')
+    })
   })
 
   it('tracks the visual viewport at normal and keyboard-open sizes', async () => {
@@ -1517,6 +1783,23 @@ describe('App', () => {
       showSuspended: true,
       order: {},
     }
+    hubSettings = { revision: 0, values: {}, keyRevisions: {} }
+    vi.mocked(fetchSettingsProfile).mockImplementation(async () => hubSettingsSnapshot())
+    vi.mocked(saveSettingsChanges).mockImplementation(async (changes) => {
+      const result = applySettingsChanges(
+        hubSettings,
+        validateSettingsChanges(changes as Record<string, unknown>),
+      )
+      hubSettings = result.record
+      return { settings: hubSettingsSnapshot(), conflicts: result.conflicts }
+    })
+    vi.mocked(importSettingsProfile).mockImplementation(async (values) => {
+      hubSettings = applySettingsImport(
+        hubSettings,
+        validateSettingsImport(values as Record<string, unknown>),
+      )
+      return hubSettingsSnapshot()
+    })
     vi.mocked(fetchSessionOrder).mockImplementation(async () =>
       structuredClone(hubSessionOrder),
     )
@@ -3090,7 +3373,7 @@ describe('App', () => {
     }
   })
 
-  it('keeps an accent choice within the current browser tab', async () => {
+  it('keeps the fixed Relay icon whichever accent is chosen', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
@@ -3107,8 +3390,8 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
 
     expect(shell).toHaveAttribute('data-accent-theme', 'violet')
-    expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
-    expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
+    expect(savedSetting('accent')).toBe('violet')
+    expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBeNull()
     expect(icon()).toBe(initialIcon)
     expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
@@ -3199,7 +3482,7 @@ describe('App', () => {
     })
     expect(screen.getByLabelText('GitHub Copilot default agent mode')).toHaveValue('autopilot')
     expect(
-      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+      (savedSetting('newSessionRuntimes') ?? {}),
     ).toMatchObject({ copilot: { model: '', mode: 'autopilot' }, claude: { mode: 'plan' } })
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
@@ -3286,7 +3569,7 @@ describe('App', () => {
       { target: { value: 'low' } },
     )
     expect(
-      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+      (savedSetting('newSessionRuntimes') ?? {}),
     ).toEqual({
       copilot: {
         model: 'fixture-model',
@@ -3402,26 +3685,10 @@ describe('App', () => {
     expect(screen.getAllByRole('option', { name: 'Provider default' })).toHaveLength(
       2,
     )
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          localStorage.getItem('agentic-remote:default-models') || '{}',
-        ),
-      ).toEqual({
-        copilot: {
-          model: '',
-          reasoningEffort: '',
-          contextTier: 'default',
-          mode: '',
-        },
-        claude: {
-          model: '',
-          reasoningEffort: '',
-          contextTier: 'default',
-          mode: '',
-        },
-      }),
-    )
+    // Opening settings chooses nothing: provider defaults stay unset everywhere.
+    await waitFor(() => expect(getProviderRuntimeOptions).toHaveBeenCalled())
+    expect(savedSetting('newSessionRuntimes')).toBeUndefined()
+    expect(saveSettingsChanges).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
@@ -3508,7 +3775,7 @@ describe('App', () => {
       'copilot',
     )
     expect(
-      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+      (savedSetting('newSessionRuntimes') ?? {}),
     ).toEqual({
       copilot: {
         model: 'node-model',
@@ -3569,7 +3836,7 @@ describe('App', () => {
       'copilot',
     )
     expect(
-      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+      (savedSetting('newSessionRuntimes') ?? {}),
     ).toEqual({
       copilot: {
         model: 'node-model',
@@ -3612,7 +3879,7 @@ describe('App', () => {
     // Assuming the provider is absent must not be strong enough to retire the
     // saved model: the computer was simply never asked.
     expect(
-      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}')
+      (savedSetting('newSessionRuntimes') ?? {})
         .claude,
     ).toEqual({
       model: 'node-claude-model',
@@ -3658,7 +3925,7 @@ describe('App', () => {
       }),
     )
     expect(
-      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+      (savedSetting('newSessionRuntimes') ?? {}),
     ).toEqual({
       copilot: {
         model: 'removed-model',
@@ -3713,9 +3980,7 @@ describe('App', () => {
     )
     await waitFor(() =>
       expect(
-        JSON.parse(
-          localStorage.getItem('agentic-remote:default-session-folders') || '{}',
-        ),
+        { version: 1, folders: savedSetting('newSessionFolders') ?? {} },
       ).toEqual({
         version: 1,
         folders: { [computer.id]: '~/src' },
@@ -3764,9 +4029,7 @@ describe('App', () => {
       await screen.findByText('Sessions are restricted to the user home directory'),
     ).toBeInTheDocument()
     expect(
-      JSON.parse(
-        localStorage.getItem('agentic-remote:default-session-folders') || '{}',
-      ),
+      { version: 1, folders: savedSetting('newSessionFolders') ?? {} },
     ).toEqual({ version: 1, folders: {} })
   })
 
@@ -14719,7 +14982,7 @@ describe('App', () => {
     })
     expect(titles()).toEqual(['Alpha', 'Mike', 'Zulu'])
     expect(draft).toHaveValue('Keep this draft')
-    expect(JSON.parse(localStorage.getItem('agentic-remote:session-sort') || 'null')).toBe('name')
+    expect(savedSetting('sessionSort')).toBe('name')
     expect(JSON.parse(localStorage.getItem('agentic-remote:session-order') || '{}')[computer.id])
       .toEqual(order)
     fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
@@ -14768,29 +15031,24 @@ describe('App', () => {
     await waitFor(() => expect(window.location.search).toContain('session=visible-last'))
   })
 
-  it('reports a refused sort preference without claiming the order was saved', async () => {
+  it('reports a refused sort preference and returns to the saved one', async () => {
     render(<App />)
     await screen.findByLabelText('Message')
+    await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open')
-    const original = Storage.prototype.setItem
-    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
-      this: Storage, key: string, value: string,
-    ) {
-      if (key === 'agentic-remote:session-sort') throw new Error('Storage unavailable')
-      original.call(this, key, value)
+    vi.mocked(saveSettingsChanges).mockRejectedValueOnce(
+      Object.assign(new Error('Setting sessionSort is not a known sort'), { statusCode: 400 }),
+    )
+    fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
+      target: { value: 'recent' },
     })
-    try {
-      fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
-        target: { value: 'recent' },
-      })
-      expect(within(screen.getByRole('main'))
-        .getByText('Could not save the session order: Storage unavailable')).toBeVisible()
-      expect(screen.getByRole('combobox', { name: 'Session order' })).toHaveValue('custom')
-      expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
-    } finally {
-      save.mockRestore()
-    }
+    expect(await screen.findByText(
+      'Couldn’t save a setting: Setting sessionSort is not a known sort',
+    )).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Session order' })).toHaveValue('custom')
+    expect(hubSettings.values.sessionSort).toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss settings notice' }))
+    expect(screen.queryByText(/Couldn’t save a setting/)).toBeNull()
   })
 
   it('does not report automatic order reconciliation as a failed user reorder', async () => {
@@ -15241,30 +15499,25 @@ describe('App', () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     render(<App />)
     fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
+    await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    const key = 'agentic-remote:computer-order'
-    const persisted = localStorage.getItem(key)
-    const original = Storage.prototype.setItem
-    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
-      this: Storage, storageKey: string, value: string,
-    ) {
-      if (storageKey === key) throw new Error('Storage unavailable')
-      original.call(this, storageKey, value)
-    })
-    try {
-      act(() => finishReorder(
-        'session-navigation',
-        `computer:${computer.id}`,
-        `computer:${secondComputer.id}`,
-      ))
-      expect(within(screen.getByRole('main'))
-        .getByText('Could not save the computer order: Storage unavailable')).toBeVisible()
-      expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
-      expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
-      expect(localStorage.getItem(key)).toBe(persisted)
-    } finally {
-      save.mockRestore()
-    }
+    const computers = () => [...document.querySelectorAll('.computer-session-groups > *')]
+      .map((element) => element.textContent?.includes(secondComputer.name) ? 'second' : 'first')
+    const before = computers()
+    vi.mocked(saveSettingsChanges).mockRejectedValueOnce(
+      Object.assign(new Error('Setting computerOrder lists pc twice'), { statusCode: 400 }),
+    )
+    await act(async () => finishReorder(
+      'session-navigation',
+      `computer:${computer.id}`,
+      `computer:${secondComputer.id}`,
+    ))
+    expect(await screen.findByText(
+      'Couldn’t save a setting: Setting computerOrder lists pc twice',
+    )).toBeVisible()
+    expect(computers()).toEqual(before)
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
+    expect(hubSettings.values.computerOrder).toBeUndefined()
   })
 
   it('restores the acknowledged session order when the hub refuses the write', async () => {
@@ -17569,7 +17822,7 @@ describe('App', () => {
     const shortcuts = await screen.findByRole('heading', {
       name: 'Keyboard shortcuts',
     })
-    const list = shortcuts.parentElement?.querySelector('.shortcut-list')
+    const list = shortcuts.closest('section')?.querySelector('.shortcut-list')
     expect(list).toHaveTextContent('Next session')
     expect(list).toHaveTextContent('Open or close knowledge')
     expect(list).toHaveTextContent('Expand or minimize knowledge')

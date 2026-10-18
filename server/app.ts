@@ -34,6 +34,7 @@ import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
 import { SessionOrderStore } from './session-order-store.js'
+import { SettingsProfileStore } from './settings-profile-store.js'
 import type { SessionService } from './session-service.js'
 import {
   LocalTranscriptionService,
@@ -70,6 +71,7 @@ export interface BuildAppOptions {
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  settingsProfileStore?: SettingsProfileStore
   /**
    * The session manager agent. Built on a hub with the built-in session
    * service unless false or turned off with AGENTIC_REMOTE_MANAGER=off.
@@ -110,6 +112,7 @@ export async function buildApp(
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  settingsProfileStore?: SettingsProfileStore
   managerAgent?: ManagerAgent
 }> {
   const role = options.role ?? 'hub'
@@ -205,6 +208,7 @@ export async function buildApp(
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
   let sessionOrderStore: SessionOrderStore | undefined
+  let settingsProfileStore: SettingsProfileStore | undefined
   let managerAgent: ManagerAgent | undefined
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
@@ -225,6 +229,8 @@ export async function buildApp(
     // Hub-only: a node serves no UI, so it has no ordering to remember.
     sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
     await sessionOrderStore.initialize()
+    settingsProfileStore = options.settingsProfileStore ?? new SettingsProfileStore(dataDirectory)
+    await settingsProfileStore.initialize()
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
@@ -258,6 +264,8 @@ export async function buildApp(
         excludeFromDiscovery: (ids) => agent.excludeFromDiscovery(ids),
         model: managerSettings.model,
         reasoningEffort: managerSettings.reasoningEffort,
+        // The synced settings profile on this same hub, read per turn.
+        responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
       })
       // Before the session service starts, so its first discovery already
       // leaves the manager's own conversations out.
@@ -271,6 +279,7 @@ export async function buildApp(
       sessionKnowledgeStore,
       sessionOrderStore,
       managerAgent,
+      settingsProfileStore,
     )
     await registerManagerRoutes(app, managerAgent, managerUnavailable)
     await registerPushRoutes(app, pushService)
@@ -357,6 +366,7 @@ export async function buildApp(
     knowledgeStore,
     sessionKnowledgeStore,
     sessionOrderStore,
+    settingsProfileStore,
     managerAgent,
   }
 }

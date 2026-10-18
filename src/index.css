@@ -4302,7 +4302,7 @@ button {
 
 .appearance-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
   margin: 0 0 16px;
@@ -4357,6 +4357,43 @@ button {
   box-shadow: 0 0 0 1px #a5b0bf;
 }
 
+/* Half of each, because System is whichever the device asks for. */
+.appearance-option[data-appearance='system'] .appearance-option__preview {
+  border-left-color: #12171d;
+  background: linear-gradient(135deg, #202731 0 50%, #ffffff 50% 100%);
+  box-shadow: 0 0 0 1px #a5b0bf;
+}
+
+/* Sections that belong together share one cell of a settings group. */
+.app-settings-stack {
+  display: grid;
+  min-width: 0;
+}
+
+/* A heading with what a setting follows: you, or this device. */
+.app-settings-section__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.settings-scope {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 550;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.settings-scope--synced {
+  border-color: var(--accent-border-strong);
+  color: var(--accent-foreground);
+}
+
 .accent-theme-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4365,6 +4402,7 @@ button {
 }
 
 .accent-theme-option {
+  position: relative;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -4388,8 +4426,15 @@ button {
   background: var(--accent-tint);
 }
 
+/* The radio fills its own option. Placed anywhere else, a tap on an option at
+   the edge of the phone dialog focused a radio out of view, and the browser
+   scrolled the whole app shell to reveal it, leaving the screen blank. */
 .accent-theme-option input {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
 }

@@ -13,6 +13,7 @@ import type {
   WorkspaceListing,
 } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
+import type { SettingsProfileSnapshot } from '../shared/settings-profile.js'
 import {
   joinKnowledgeRelativePath,
   normalizeKnowledgeRelativePath,
@@ -23,6 +24,8 @@ import { KnowledgeStore } from './knowledge-store.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
+import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
+import type { SettingsProfileStore } from './settings-profile-store.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 
@@ -377,12 +380,14 @@ export async function registerHubRoutes(
   sessionKnowledge?: SessionKnowledgeStore,
   sessionOrder?: SessionOrderStore,
   managerEvents?: ManagerEventSource,
+  settingsProfile?: SettingsProfileStore,
 ): Promise<void> {
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
   // order is still persisted and returned; only the push to other clients is
   // skipped, which is what a client's own response already told it.
   let publishOrder: (snapshot: SessionOrderSnapshot) => void = () => {}
+  let publishSettings: (settings: SettingsProfileSnapshot) => void = () => {}
   const requireSessionOrder = (): SessionOrderStore => {
     if (!sessionOrder) {
       throw Object.assign(new Error('Session order is not available'), {
@@ -710,6 +715,8 @@ export async function registerHubRoutes(
       sessionOrder: await commitOrder((store) => store.bootstrap(input.order)),
     }
   })
+
+  registerSettingsProfileRoutes(app, settingsProfile, (settings) => publishSettings(settings))
 
   app.post<{ Params: { computerId: string } }>(
     '/api/computers/:computerId/sessions',
@@ -1130,6 +1137,7 @@ export async function registerHubRoutes(
   managerEvents?.on('event', broadcast)
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
+  publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
   /**
    * Keeps the saved order in step with session identity, which is the part a
    * browser cannot be trusted to do: a client that is closed, filtered, or

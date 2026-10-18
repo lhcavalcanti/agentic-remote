@@ -10,6 +10,7 @@ import type {
   SendMessageInput,
   UserInputReplyInput,
 } from '../shared/contracts.js'
+import type { OracleResponseStyle } from '../shared/settings-profile.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
   MANAGER_SNAPSHOT_MESSAGES,
@@ -138,6 +139,8 @@ export interface ManagerAgentOptions {
   earlyIdleMs?: number
   sessionIdFactory?: () => string
   now?: () => Date
+  /** The user's response style, read as each turn's prompt is built. */
+  responseStyle?: () => OracleResponseStyle | undefined
 }
 
 class TurnError extends Error {
@@ -235,6 +238,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly excludeFromDiscovery: (ids: string[]) => void
   private readonly model?: string
   private readonly reasoningEffort?: RuntimeReasoningEffort
+  private readonly responseStyle: () => OracleResponseStyle | undefined
   private readonly turnTimeoutMs: number
   private readonly retryDelaysMs: number[]
   private readonly idleStopMs: number
@@ -280,6 +284,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.excludeFromDiscovery = options.excludeFromDiscovery ?? (() => undefined)
     this.model = options.model
     this.reasoningEffort = options.reasoningEffort
+    this.responseStyle = options.responseStyle ?? (() => undefined)
     this.turnTimeoutMs = options.turnTimeoutMs ?? 15 * 60 * 1000
     this.retryDelaysMs = options.retryDelaysMs ?? [1000, 4000]
     this.idleStopMs = options.idleStopMs ?? 10 * 60 * 1000
@@ -978,6 +983,14 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       sessionFolders: this.store.state().sessionFolders,
       ...(showIndex && !this.needsBrief ? { memoryIndex: index } : {}),
       notes,
+      // A preference must never stop an answer; unreadable answers Balanced.
+      responseStyle: (() => {
+        try {
+          return this.responseStyle()
+        } catch {
+          return undefined
+        }
+      })(),
     })
     if (this.needsBrief) {
       context = `${recoveryBrief({

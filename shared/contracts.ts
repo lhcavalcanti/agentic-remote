@@ -184,7 +184,10 @@ export interface QueuedPromptDispatch {
   startedAt: string
   state: 'dispatching' | 'uncertain'
   message?: string
-  /** The provider took it; only the queue's record of that failed. Never retried. */
+  /**
+   * Recorded with an unconfirmed outcome: whether the provider confirmed it.
+   * Only an explicit `false` may be retried in place.
+   */
   accepted?: boolean
   original?: QueuedPrompt
   originalIndex?: number

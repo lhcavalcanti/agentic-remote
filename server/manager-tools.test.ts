@@ -36,6 +36,7 @@ describe('manager tools', () => {
   let activities: ManagerToolActivity[]
   let tools: Map<string, ManagerTool>
   let answerOnly: boolean
+  let currentMessage: string | undefined
   let oracleFolders: Record<string, string>
 
   const call = async (name: string, args: unknown) => {
@@ -48,6 +49,7 @@ describe('manager tools', () => {
     root = await mkdtemp(path.join(tmpdir(), 'manager-tools-'))
     activities = []
     answerOnly = false
+    currentMessage = 'message-1'
     oracleFolders = {}
     const created = session('new1', { cwd: '/home/me/src/web' })
     host = {
@@ -78,6 +80,7 @@ describe('manager tools', () => {
       markManaged: vi.fn(async () => undefined),
       registry: () => ({}),
       answerOnly: () => answerOnly,
+      currentMessageId: () => currentMessage,
       sessionFolders: () => oracleFolders,
       setSessionFolder: vi.fn(async (computerId: string, folder?: string) => {
         if (folder === '~/missing') throw new Error('Folder does not exist')
@@ -432,16 +435,13 @@ describe('manager tools', () => {
       sessionId: 'def67890', prompts: ['Write the migration', 'Then run the tests', 'Then open a PR'],
     }))
     expect(host.queueBatch).toHaveBeenCalledExactlyOnceWith('hub', 'def67890-bbbb', {
-      batchId: expect.stringMatching(/^oracle-[a-f0-9]{32}$/),
+      batchId: expect.stringMatching(/^oracle-[a-f0-9]{48}$/),
       prompts: ['Write the migration', 'Then run the tests', 'Then open a PR'],
     })
     expect(host.sendMessage).not.toHaveBeenCalled()
     expect(result).toContain('Queued 3 prompts')
+    expect(result).not.toContain('held')
     expect(activities.at(-1)).toMatchObject({ tool: 'queue_prompts', content: 'Queued 3 prompts on "Session def67890-bbbb"' })
-
-    // A closed session is reopened and a suspended one resumed first, as for send_to_session.
-    await call('queue_prompts', { sessionId: 'old99999', prompts: ['Pick this back up', 'Then summarise'] })
-    expect(host.reopenSession).toHaveBeenCalledWith('hub', 'old99999-cccc')
 
     for (const prompts of [[], ['ok', ' '], Array.from({ length: 51 }, () => 'p')]) {
       expect(await call('queue_prompts', { sessionId: 'def67890', prompts })).toMatchObject({ resultType: 'failure' })
@@ -451,12 +451,89 @@ describe('manager tools', () => {
     )
     expect(JSON.stringify(await call('queue_prompts', { sessionId: 'def67890', prompts: ['x'] })))
       .toContain('Nothing was queued')
-    vi.mocked(host.listSessions).mockResolvedValue([session('abc12345-aaaa', { suspended: true })])
-    await call('queue_prompts', { sessionId: 'abc12345', prompts: ['Carry on'] })
-    expect(host.resumeSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
     answerOnly = true
-    expect(await call('queue_prompts', { sessionId: 'abc12345', prompts: ['x'] })).toMatchObject({ resultType: 'failure' })
-    expect(host.queueBatch).toHaveBeenCalledTimes(4)
+    expect(await call('queue_prompts', { sessionId: 'def67890', prompts: ['x'] })).toMatchObject({ resultType: 'failure' })
+    expect(host.queueBatch).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses one batch ID for every retry of the same answer, and a new one for a new message', async () => {
+    const queue = host.queueBatch as never as ReturnType<typeof vi.fn>
+    await call('queue_prompts', { sessionId: 'def67890', prompts: ['one', 'two'] })
+    // Oracle retried the same answer after the node's reply was lost.
+    queue.mockImplementationOnce(async (_computerId: string, id: string, input: { batchId: string }) => ({
+      session: session(id), batch: { id: input.batchId, promptIds: ['item-0', 'item-1'], duplicate: true },
+    }))
+    const retried = String(await call('queue_prompts', { sessionId: 'def67890', prompts: ['one', 'two'] }))
+    expect(retried).toContain('were already queued')
+    currentMessage = 'message-2'
+    await call('queue_prompts', { sessionId: 'def67890', prompts: ['one', 'two'] })
+    await call('queue_prompts', { sessionId: 'def67890', prompts: ['one', 'two', 'three'] })
+    const ids = queue.mock.calls.map((call) => (call[2] as { batchId: string }).batchId)
+    expect(ids[0]).toBe(ids[1])
+    expect(new Set(ids).size).toBe(3)
+  })
+
+  it('reopens a closed session, answers its folder trust when it appears, and says what else holds the batch', async () => {
+    const trust = {
+      requestId: 'trust-1',
+      title: 'Trust folder for this session: /home/me/src/old',
+      kind: 'terminal',
+      choiceCount: 3,
+      options: [
+        { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' as const },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' as const },
+      ],
+    }
+    const queued = (id: string) => session(id, {
+      cwd: '/home/me/src/old', status: 'idle',
+      queuedPrompts: [{ id: 'item-0', content: 'Pick this back up', createdAt: 't', batch: { id: 'any', index: 0, size: 1 } }],
+    })
+    let reads = 0
+    vi.mocked(host.readSession).mockImplementation(async (_computerId: string, id: string) => {
+      reads += 1
+      // The prompt shows up a moment after the reopen, then goes once answered.
+      if (reads === 3) return { ...queued(id), status: 'waiting' as const, pendingPermission: trust }
+      if (reads < 3) return queued(id)
+      return session(id, { status: 'running' })
+    })
+    vi.mocked(host.queueBatch as never as (...args: unknown[]) => Promise<unknown>).mockImplementation(
+      async (_computerId: unknown, id: unknown, input: unknown) => {
+        const { batchId } = input as { batchId: string }
+        vi.mocked(host.readSession).mockImplementation(async (_c: string, sid: string) => {
+          reads += 1
+          const base = queued(sid)
+          const items = base.queuedPrompts!.map((prompt) => ({ ...prompt, batch: { id: batchId, index: 0, size: 1 } }))
+          if (reads === 3) return { ...base, queuedPrompts: items, status: 'waiting' as const, pendingPermission: trust }
+          if (reads < 3) return { ...base, queuedPrompts: items }
+          return session(sid, { status: 'running' })
+        })
+        return { session: session(id as string), batch: { id: batchId, promptIds: ['item-0'], duplicate: false } }
+      },
+    )
+    const result = String(await call('queue_prompts', { sessionId: 'old99999', prompts: ['Pick this back up'] }))
+    expect(host.reopenSession).toHaveBeenCalledWith('hub', 'old99999-cccc')
+    expect(host.replyPermission).toHaveBeenCalledWith('hub', 'old99999-cccc', 'trust-1', 'terminal:allow')
+    expect(result).toContain('Queued 1 prompt')
+    expect(result).not.toContain('held')
+
+    // Anything else it waits on is reported rather than claimed as done.
+    vi.mocked(host.listSessions).mockResolvedValue([session('abc12345-aaaa', { suspended: true })])
+    vi.mocked(host.queueBatch as never as (...args: unknown[]) => Promise<unknown>).mockImplementation(
+      async (_computerId: unknown, id: unknown, input: unknown) => {
+        const { batchId } = input as { batchId: string }
+        vi.mocked(host.readSession).mockResolvedValue(session(id as string, {
+          status: 'waiting',
+          queuedPrompts: [{ id: 'item-0', content: 'Carry on', createdAt: 't', batch: { id: batchId, index: 0, size: 1 } }],
+          pendingUserInput: { requestId: 'q-1', question: 'Which branch?', choices: ['main'], allowFreeform: true },
+        }))
+        return { session: session(id as string), batch: { id: batchId, promptIds: ['item-0'], duplicate: false } }
+      },
+    )
+    const held = String(await call('queue_prompts', { sessionId: 'abc12345', prompts: ['Carry on'] }))
+    expect(host.resumeSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
+    expect(held).toContain('It is held')
+    expect(held).toContain('Which branch?')
+    expect(held).toContain('answer_session')
   })
 
   it('only asks the user to close a session and never closes one itself', async () => {

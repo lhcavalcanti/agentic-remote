@@ -294,12 +294,12 @@ describe('AgentService.queueBatch', () => {
       .rejects.toMatchObject({ statusCode: 409 })
   })
 
-  it('retries a claim a restart left mid-dispatch, but never one the provider accepted', async () => {
+  it('retries only an outcome recorded as not accepted, never one a restart interrupted or the provider took', async () => {
     const { service, session, id } = await setup()
     await service.sendMessage(id, 'running turn')
     const plant = async (claim: { state: 'dispatching' | 'uncertain'; accepted?: boolean }) => {
       const attemptId = randomUUID()
-      const original = { id: randomUUID(), content: `held ${claim.state}`, createdAt: new Date().toISOString() }
+      const original = { id: randomUUID(), content: `held ${claim.state} ${claim.accepted}`, createdAt: new Date().toISOString() }
       await service.store.update(id, (stored) => {
         stored.queuedDispatch = {
           attemptId, promptId: original.id, content: original.content, startedAt: original.createdAt,
@@ -308,18 +308,22 @@ describe('AgentService.queueBatch', () => {
       })
       return { attemptId, promptId: original.id }
     }
-    // Stored as dispatching, but no attempt is live: the view shows it unconfirmed.
+    // Stored as dispatching with no live attempt: shown as unconfirmed, but
+    // whether the provider took it was never recorded.
     const interrupted = await plant({ state: 'dispatching' })
     expect(service.getSession(id)?.queuedDispatch?.state).toBe('uncertain')
-    const retried = await service.retryQueuedDispatch(id, interrupted.promptId, interrupted.attemptId)
-    expect(retried.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['held dispatching'])
-
-    session.finishTurn()
-    await settle(() => session.sent.includes('held dispatching'), 'the retried item')
+    await expect(service.retryQueuedDispatch(id, interrupted.promptId, interrupted.attemptId))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/never recorded/) })
     const accepted = await plant({ state: 'uncertain', accepted: true })
     await expect(service.retryQueuedDispatch(id, accepted.promptId, accepted.attemptId))
       .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/accepted/) })
     expect(service.store.get(id)?.queuedDispatch?.attemptId).toBe(accepted.attemptId)
+
+    const refused = await plant({ state: 'uncertain', accepted: false })
+    const retried = await service.retryQueuedDispatch(id, refused.promptId, refused.attemptId)
+    expect(retried.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['held uncertain false'])
+    session.finishTurn()
+    await settle(() => session.sent.includes('held uncertain false'), 'the retried item')
   })
 
   it('delivers a long prompt exactly as written', async () => {

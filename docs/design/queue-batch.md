@@ -105,8 +105,11 @@ Admission is all or nothing. Delivery is per item:
 - **Unconfirmed** (it may have arrived): the queue holds, and nothing behind
   it moves. After checking the provider, the user picks one of two buttons:
   - **Retry here** puts the item back where it was, and the drain carries on
-    in order.
-  - **Discard unconfirmed queue item** drops it.
+    in order. It is offered only when the outcome was recorded with the
+    provider not having confirmed it (`accepted: false`).
+  - **Discard unconfirmed queue item** drops it. This is the only option when
+    the provider accepted the item, or when a restart or a failed write left
+    no record of whether it did.
 - Either way its neighbours stay as they were.
 
 `POST …/queue/:promptId/retry {acknowledgesDispatch}` names the unconfirmed
@@ -116,7 +119,7 @@ attempt it answers, so a stale retry is refused with `409`.
 
 **Queue several** (composer actions) opens a dialog.
 - One field per prompt, with Add, Remove, Move up, and Move down. The
-  composer's text moves into the first field.
+  composer's text, with collapsed pastes expanded, moves into the first field.
 - The submit button reads **Queue N prompts**. The dialog belongs to the
   session it was opened from and cannot be closed while a batch is being sent.
 - **On success:** one acknowledgement, "Queued N prompts". The composer is
@@ -129,14 +132,25 @@ attempt it answers, so a stale retry is refused with `409`.
   the prompts lock, and **Retry** resends the same `batchId`, which cannot queue
   them twice. The batch is kept for that session in this tab's
   `sessionStorage`, at most 20, so closing the dialog or reloading the page
-  brings it back locked.
+  brings it back locked. It follows a session that recovery replaces; the
+  replacement keeps the queue and its batch records, so the retry is
+  recognised there.
+- Responses are ordered against session removals like any other, so a late
+  answer cannot bring back a removed session.
 
 Each queued item shows **Batch k of N**. The existing queue controls and
 dispatch states apply to each item.
 
 **Oracle** has `queue_prompts`. It takes a session and a list of prompts,
-reopens a closed session or resumes a suspended one first, answers a
-folder-trust prompt, and queues the list as one batch.
+reopens a closed session or resumes a suspended one first, and queues the list
+as one batch.
+- The batch ID is derived from the Oracle message being answered, the target
+  session, and the prompts. A retried answer reuses it and cannot queue the
+  list twice; a later message can queue the same list again.
+- After reopening or resuming, it watches until the batch moves, for up to
+  10 seconds, and answers a folder-trust prompt that appears.
+- Whatever else holds the batch, a permission or a question, is reported back
+  to Oracle rather than claimed as done.
 
 ## Capability and rollout
 

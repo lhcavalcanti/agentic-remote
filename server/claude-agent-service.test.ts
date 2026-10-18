@@ -1009,7 +1009,7 @@ describe('ClaudeAgentService', () => {
       stored.queuedPrompts = rest
       stored.queuedDispatch = {
         attemptId, promptId: head.id, content: head.content, startedAt: head.createdAt,
-        state: 'uncertain', original: head, originalIndex: 0,
+        state: 'uncertain', accepted: false, original: head, originalIndex: 0,
       }
     })
     resuming.admissionClosed.delete(session.id)

@@ -1416,6 +1416,67 @@ describe('App', () => {
       expect(sessionStorage.getItem('agentic-remote:queue-batch-unsettled')).toBeNull()
     })
 
+    it('takes a collapsed paste into the batch as its full text, not its label', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(queueBatch).mockImplementation(async (_computerId, _sessionId, input) => ({
+        session, batch: { id: input.batchId, promptIds: ['a', 'b'], duplicate: false },
+      }))
+      const pasted = Array.from({ length: 21 }, (_, index) => `pasted line ${index + 1}`).join('\n')
+      render(<App />)
+      const message = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+      fireEvent.change(message, { target: { value: 'Before  after' } })
+      message.setSelectionRange(7, 7)
+      fireEvent.paste(message, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? pasted : '') } })
+      expect(message).toHaveValue('Before [Paste #1 - 21 lines] after')
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      const dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      expect(within(dialog).getByLabelText('Prompt 1')).toHaveValue(`Before ${pasted} after`)
+      fireEvent.change(within(dialog).getByLabelText('Prompt 2'), { target: { value: 'two' } })
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 2 prompts' }))
+      })
+      expect(vi.mocked(queueBatch).mock.calls[0][2].prompts[0]).toBe(`Before ${pasted} after`)
+      expect(screen.getByLabelText('Message')).toHaveValue('')
+    })
+
+    it('follows a session that recovery replaced, so its unconfirmed batch is retried there with the same ID', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      const replacement = { ...session, id: 'replacement-session', replacedSessionIds: [session.id] }
+      vi.mocked(queueBatch)
+        .mockRejectedValueOnce(Object.assign(new Error('The hub did not answer.'), { uncertainDelivery: true }))
+        .mockImplementationOnce(async (_computerId, _sessionId, input) => ({
+          session: replacement, batch: { id: input.batchId, promptIds: ['a', 'b'], duplicate: true },
+        }))
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      let dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 1'), { target: { value: 'one' } })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 2'), { target: { value: 'two' } })
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 2 prompts' }))
+      })
+      fireEvent.keyDown(window, { key: 'Escape' })
+
+      vi.mocked(getSession).mockResolvedValue(replacement)
+      await act(async () => {
+        for (const event of [
+          { type: 'session.removed', computerId: session.computerId, sessionId: session.id, replacedBy: replacement.id },
+          { type: 'session.upserted', session: replacement },
+        ]) MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+      })
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      expect(within(dialog).getByLabelText('Prompt 2')).toHaveAttribute('readonly')
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }))
+      })
+      const [sent, retried] = vi.mocked(queueBatch).mock.calls
+      expect(retried[1]).toBe(replacement.id)
+      expect(retried[2]).toEqual(sent[2])
+      expect(sessionStorage.getItem('agentic-remote:queue-batch-unsettled')).toBeNull()
+    })
+
     it('clears the composer once its text is queued, wherever it was moved', async () => {
       vi.mocked(listComputers).mockResolvedValue([batching])
       vi.mocked(queueBatch).mockImplementation(async (_computerId, _sessionId, input) => ({
@@ -1451,7 +1512,7 @@ describe('App', () => {
         queuedDispatch: {
           attemptId: 'attempt-1', promptId: 'prompt-1', content: 'first',
           startedAt: '2026-10-18T00:00:00.000Z', state: 'uncertain' as const,
-          message: 'Delivery could not be confirmed.',
+          message: 'Delivery could not be confirmed.', accepted: false,
         },
       }
       vi.mocked(listComputers).mockResolvedValue([retrying])
@@ -1488,17 +1549,20 @@ describe('App', () => {
       expect(screen.queryByRole('button', { name: 'Retry here' })).toBeNull()
       view.unmount()
 
-      // Nor for an item the provider is known to have taken.
-      const accepted = { ...held, queuedDispatch: { ...held.queuedDispatch, accepted: true } }
+      // Nor for an item the provider took, or whose outcome was never recorded.
       vi.mocked(listComputers).mockResolvedValue([{
         ...computer,
         providers: computer.providers!.map((provider) => ({ ...provider, supportsQueueBatch: true, supportsQueueRetry: true })),
       }])
-      vi.mocked(listSessions).mockResolvedValue([accepted])
-      vi.mocked(getSession).mockResolvedValue(accepted)
-      render(<App />)
-      await screen.findByRole('button', { name: 'Discard unconfirmed queue item' })
-      expect(screen.queryByRole('button', { name: 'Retry here' })).toBeNull()
+      for (const accepted of [true, undefined]) {
+        const taken = { ...held, queuedDispatch: { ...held.queuedDispatch, accepted } }
+        vi.mocked(listSessions).mockResolvedValue([taken])
+        vi.mocked(getSession).mockResolvedValue(taken)
+        const shown = render(<App />)
+        await screen.findByRole('button', { name: 'Discard unconfirmed queue item' })
+        expect(screen.queryByRole('button', { name: 'Retry here' })).toBeNull()
+        shown.unmount()
+      }
     })
 
     it.each([

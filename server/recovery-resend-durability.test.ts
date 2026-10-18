@@ -1687,7 +1687,7 @@ describe('Review 5125727881 runtime boundaries', () => {
       await service.store.update(sessionId, (session) => {
         session.queuedDispatch = {
           attemptId, promptId: original.id, content: original.content, startedAt: originalToken,
-          state: 'uncertain', original, originalIndex: 0,
+          state: 'uncertain', accepted: false, original, originalIndex: 0,
         }
       })
       return service.retryQueuedDispatch(sessionId, original.id, attemptId)

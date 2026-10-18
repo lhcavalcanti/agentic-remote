@@ -223,7 +223,7 @@ describe('queue batch routes', () => {
         session.queuedPrompts = rest
         session.queuedDispatch = {
           attemptId, promptId: head.id, content: head.content, startedAt: head.createdAt,
-          state: 'uncertain', original: head, originalIndex: 0,
+          state: 'uncertain', accepted: false, original: head, originalIndex: 0,
         }
       })
       return { attemptId, promptId: batch.promptIds[0] }

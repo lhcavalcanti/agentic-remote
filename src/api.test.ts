@@ -141,6 +141,15 @@ describe('API request headers', () => {
       .rejects.toMatchObject({ uncertainDelivery: true })
   })
 
+  it('remembers when a batch response was asked for, so a removed session is not brought back', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      session: { id: 'session', computerId: 'computer', title: 'x' },
+      batch: { id: 'batch-0001', promptIds: ['a'], duplicate: false },
+    }, { status: 201 })))
+    const result = await queueBatch('computer', 'session', { batchId: 'batch-0001', prompts: ['one'] })
+    expect(sessionResponseStartedAt(result.session)).toBe(currentSessionEventSequence())
+  })
+
   it('treats a batch refusal without an explicit flag as nothing queued', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Conflict' }, { status: 409 })))
     await expect(queueBatch('computer', 'session', { batchId: 'batch-0001', prompts: ['one'] }))

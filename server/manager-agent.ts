@@ -724,6 +724,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       },
       registry: () => this.store.registry(),
       answerOnly: () => this.currentAnswerOnly,
+      currentMessageId: () => this.currentReplyTo,
       sessionFolders: () => ({ ...this.store.state().sessionFolders }),
       setSessionFolder: async (computerId, folder) =>
         (await this.updateSettings({ sessionFolders: { [computerId]: folder ?? null } })).sessionFolders?.[computerId],

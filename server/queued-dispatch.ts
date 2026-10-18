@@ -214,16 +214,18 @@ export class QueuedDispatches {
     acknowledgesDispatch: string,
   ): Promise<SessionDetail> {
     const claim = this.store.get(sessionId)?.queuedDispatch
-    // Unconfirmed as the view shows it: a claim no live attempt owns, which
-    // includes one a restart interrupted mid-dispatch.
     if (
       !claim || this.running.has(sessionId) || this.active.get(sessionId) === claim.attemptId ||
       claim.promptId !== promptId || claim.attemptId !== acknowledgesDispatch
     ) {
       throw queueConflict('That queue item is no longer unconfirmed. Read the queue again.')
     }
-    if (claim.accepted) {
-      throw queueConflict('The provider accepted this item, so it cannot be sent again. Discard it instead.')
+    // Only an outcome recorded as not accepted. A claim a restart interrupted,
+    // or whose outcome could not be written, may have been taken.
+    if (claim.state !== 'uncertain' || claim.accepted !== false) {
+      throw queueConflict(claim.accepted
+        ? 'The provider accepted this item, so it cannot be sent again. Discard it instead.'
+        : 'Whether the provider took this item was never recorded, so it cannot be retried here. Check the provider, then discard it.')
     }
     const result = await this.store.update(sessionId, (session) => {
       const current = session.queuedDispatch
@@ -485,7 +487,7 @@ export class QueuedDispatches {
             }
             session.queuedDispatch.state = 'uncertain'
             session.queuedDispatch.message = message
-            if (delivery.accepted) session.queuedDispatch.accepted = true
+            session.queuedDispatch.accepted = delivery.accepted
           })
         } catch (recordError) {
           message += ` Recording the outcome also failed: ${errorMessage(recordError)}.`

@@ -783,6 +783,7 @@ export async function queueBatch(
   sessionId: string,
   input: QueueBatchInput,
 ): Promise<ManagedQueuedBatch> {
+  const startedAtSequence = currentSessionEventSequence()
   let response: Response
   try {
     response = await fetch(`${sessionPath(computerId, sessionId)}/queue/batch`, {
@@ -799,7 +800,9 @@ export async function queueBatch(
   }
   if (!response.ok) throw await responseError(response, definiteDispatchRefusals)
   try {
-    return (await response.json()) as ManagedQueuedBatch
+    // Remembered like any session response, so one answered after the session
+    // was removed cannot bring it back.
+    return rememberSessionResponse((await response.json()) as ManagedQueuedBatch, startedAtSequence)
   } catch (error) {
     // Admitted, but the answer was lost on the way back.
     throw Object.assign(

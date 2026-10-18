@@ -868,7 +868,8 @@ required to be individually editable.
   - Edit, remove, reorder, permission and question gating, and dispatch
     recovery MUST apply to each item as to any queued prompt.
   - An item whose delivery is unconfirmed MUST hold the queue. The user MAY
-    retry it in its original place, naming that attempt, or discard it.
+    discard it. The user MAY retry it in its original place, naming that
+    attempt, only when its outcome was durably recorded as not accepted.
   - A draining queue MUST NOT raise a completion notification per item.
 - **UI:**
   - One acknowledgement for the whole batch.
@@ -878,7 +879,8 @@ required to be individually editable.
     dialog or reloading the tab MUST NOT lose that batch's ID, and the dialog
     MUST NOT close while a batch is being sent.
 - **Oracle:** `queue_prompts` MUST queue through the same admission, after
-  reopening or resuming the session as `send_to_session` does.
+  reopening or resuming the session as `send_to_session` does. Its batch ID
+  MUST be the same for every retry of one answer.
 - **Older computers:** a computer whose provider does not advertise
   `supportsQueueBatch` (or `supportsQueueRetry`) MUST refuse before anything
   is sent to it, and the action MUST be hidden there.

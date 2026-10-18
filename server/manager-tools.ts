@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type {
   AgentMode,
@@ -57,6 +58,8 @@ export interface ManagerToolHost {
   registry(): ManagerRegistry
   /** The message being answered was asked in Ask mode, so no session may be acted on. */
   answerOnly(): boolean
+  /** The message being answered, kept across that answer's retries. */
+  currentMessageId(): string | undefined
   /** Where Oracle starts new sessions, by computer ID. */
   sessionFolders(): Record<string, string>
   /** Validates and keeps the folder, or returns the computer to its default; gives back what was kept. */
@@ -565,6 +568,7 @@ export function createManagerTools(
       }),
       async ({ sessionId, computer, prompts }) => {
         let session = await resolveSession(sessionId, computer, { history: true })
+        const woken = session.isOpen === false || session.suspended === true
         if (session.isOpen === false) {
           session = { ...session, ...(await host.reopenSession(session.computerId, session.id)), title: session.title }
           onActivity({ tool: 'queue_prompts', content: `Reopened "${session.title}"`, sessionRefs: [ref(session)] })
@@ -572,13 +576,36 @@ export function createManagerTools(
           session = { ...session, ...(await host.resumeSession(session.computerId, session.id)), title: session.title }
           onActivity({ tool: 'queue_prompts', content: `Resumed "${session.title}"`, sessionRefs: [ref(session)] })
         }
-        await trustFolder(session)
-        const batchId = `oracle-${[...globalThis.crypto.getRandomValues(new Uint8Array(16))]
-          .map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+        // The same for every retry of the message being answered, so a retry
+        // after a lost answer is recognised instead of queued again. A later
+        // message may queue the same list again.
+        const message = host.currentMessageId()
+        const batchId = `oracle-${message
+          ? createHash('sha256').update(JSON.stringify([message, session.computerId, session.id, prompts])).digest('hex').slice(0, 48)
+          : randomUUID().replaceAll('-', '')}`
         const { batch } = await host.queueBatch(session.computerId, session.id, { batchId, prompts })
         const count = `${prompts.length} ${prompts.length === 1 ? 'prompt' : 'prompts'}`
-        onActivity({ tool: 'queue_prompts', content: `Queued ${count} on "${session.title}"`, sessionRefs: [ref(session)] })
-        return `Queued ${count} on ${link(session)} (${batch.promptIds.length} queue items); each runs as its own turn, in order.`
+        onActivity({
+          tool: 'queue_prompts',
+          content: batch.duplicate ? `"${session.title}" already had these ${count}` : `Queued ${count} on "${session.title}"`,
+          sessionRefs: [ref(session)],
+        })
+        // A session just reopened or resumed may raise its folder-trust prompt
+        // a moment later. Watch until the batch moves, answering that prompt,
+        // and report anything else it is left waiting on.
+        const deadline = Date.now() + (woken ? trustWaitMs : 0)
+        let detail: ManagedSession | undefined
+        for (;;) {
+          await trustFolder(session)
+          detail = await host.readSession(session.computerId, session.id).catch(() => undefined)
+          const moving = !detail || detail.status === 'running' ||
+            !detail.queuedPrompts?.some((prompt) => prompt.batch?.id === batchId)
+          if (moving || Date.now() >= deadline) break
+          await delay(pollMs)
+        }
+        const waiting = detail ? pendingRequests(detail) : []
+        return `${batch.duplicate ? `These ${count} were already queued on` : `Queued ${count} on`} ${link(session)}; each runs as its own turn, in order.${
+          waiting.length ? ` It is held: ${waiting.join(' ')} Answer it with answer_session.` : ''}`
       },
       { actsOnSessions: true }
     ),

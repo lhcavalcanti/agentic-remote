@@ -6710,6 +6710,7 @@ function App() {
     title: string
     computerName: string
     seed: string
+    unsettled?: { storedKey: string; batch: UnsettledQueueBatch }
   }>()
   /**
    * Batches whose outcome is unknown, per session, kept for this tab across a
@@ -10205,16 +10206,42 @@ function App() {
     )
   }
 
+  /**
+   * The message box as it would be sent: collapsed pastes expanded. Empty
+   * when a paste's content is missing, so its label is never queued.
+   */
+  function composerSubmissionText(key: string): string {
+    const draft = composerDraftsRef.current[key]
+    if (!draft || draft.unresolvedPastes?.length) return ''
+    return expandComposerPastes(draft.text, activeComposerPastes(draft.text, draft.pastes)).trim()
+  }
+
+  /**
+   * The unconfirmed batch for a session, under its own key or that of a
+   * session it replaced: the replacement keeps the queue and its batch record,
+   * so retrying the same ID there cannot queue it twice.
+   */
+  function unsettledQueueBatchFor(key: string): { storedKey: string; batch: UnsettledQueueBatch } | undefined {
+    const own = queueBatchUnsettled[key]
+    if (own) return { storedKey: key, batch: own }
+    for (const [storedKey, batch] of Object.entries(queueBatchUnsettled)) {
+      if (followReplacementsRef.current(storedKey) === key) return { storedKey, batch }
+    }
+    return undefined
+  }
+
   function openQueueBatch() {
     if (!selected) return
     const key = sessionKey(selected)
+    const unsettled = unsettledQueueBatchFor(key)
     setQueueBatchTarget({
       key,
       computerId: selected.computerId,
       sessionId: selected.id,
       title: selected.title,
       computerName: selected.computerName,
-      seed: queueBatchUnsettled[key]?.seed ?? composer.trim(),
+      seed: unsettled?.batch.seed ?? composerSubmissionText(key),
+      unsettled,
     })
   }
 
@@ -15202,7 +15229,7 @@ function App() {
                 {selected.queuedDispatch?.state === 'uncertain' ? (
                   <div className="queued-edit-banner__actions">
                     {selectedProviderCapability?.supportsQueueRetry === true &&
-                      selected.queuedDispatch.accepted !== true ? (
+                      selected.queuedDispatch.accepted === false ? (
                       <button
                         className="queued-edit-banner__save"
                         disabled={Boolean(queueActionId) || sending}
@@ -16110,10 +16137,12 @@ function App() {
           onClose={closeQueueBatch}
           onQueue={async (input) => {
             const target = queueBatchTarget
-            const seed = queueBatchUnsettled[target.key]?.seed ?? target.seed
+            const seed = target.seed
             const settle = (unsettled?: UnsettledQueueBatch) =>
               setQueueBatchUnsettled((current) => {
                 const next = { ...current }
+                // Moves to this session's key if it was kept for one it replaced.
+                if (target.unsettled) delete next[target.unsettled.storedKey]
                 if (unsettled) next[target.key] = unsettled
                 else delete next[target.key]
                 return next
@@ -16126,7 +16155,7 @@ function App() {
               // The composer's text moved into the dialog, so it is cleared
               // however it was edited, moved or removed there.
               const draftKey = followReplacementsRef.current(target.key)
-              if (seed && (composerDraftsRef.current[draftKey]?.text ?? '').trim() === seed) {
+              if (seed && composerSubmissionText(draftKey) === seed) {
                 setComposerForKey(draftKey, '')
               }
               setQueueBatchTarget(undefined)
@@ -16147,7 +16176,7 @@ function App() {
             }
           }}
           sessionTitle={queueBatchTarget.title}
-          unsettled={queueBatchUnsettled[queueBatchTarget.key]?.input}
+          unsettled={queueBatchTarget.unsettled?.batch.input}
         />
       ) : null}
       <RenameSessionDialog

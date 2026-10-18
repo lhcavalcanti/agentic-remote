@@ -426,6 +426,49 @@ describe('SettingsProfileClient', () => {
     expect(reopened.client.getState().conflicts).toEqual([])
   })
 
+  it('keeps the newer edit when two tabs change one setting and the older request lands last', async () => {
+    const storage = new MemoryStorage()
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    let holdNext = true
+    const tab = (hold: boolean) => {
+      const real = hub.transport(() => client)
+      const client: SettingsProfileClient = new SettingsProfileClient({
+        transport: {
+          ...real,
+          update: async (changes, deviceId) => {
+            // The first tab's request is slow to reach the hub.
+            if (hold && holdNext) {
+              holdNext = false
+              await held
+            }
+            return real.update(changes, deviceId)
+          },
+        },
+        storage,
+      })
+      hub.devices.add(client)
+      return client
+    }
+    const first = tab(true)
+    const second = tab(false)
+    await Promise.all([first.sync(), second.sync()])
+    first.set('accent', 'teal')
+    await vi.waitFor(() => expect(first.getState().status).toBe('saving'))
+    second.set('accent', 'rose')
+    await vi.waitFor(() => expect(hub.record.values.accent).toBe('rose'))
+    release()
+    await vi.waitFor(() => {
+      expect(first.getState().status).toBe('synced')
+      expect(second.getState().status).toBe('synced')
+    })
+    expect(hub.record.values.accent).toBe('rose')
+    first.refreshFromStorage()
+    for (const client of [first, second]) {
+      expect(client.getState()).toMatchObject({ values: { accent: 'rose' }, conflicts: [] })
+    }
+  })
+
   it('shows another tab’s change as soon as the shared copy changes', async () => {
     const storage = new MemoryStorage()
     const first = hub.device(storage)

@@ -82,6 +82,10 @@ export class SettingsProfileStore {
     for (const [key, writer] of Object.entries(parsed.keyWriters ?? {})) {
       if (isSettingsProfileKey(key) && isSettingsDeviceId(writer)) keyWriters[key] = writer
     }
+    const keySeqs: NonNullable<SettingsProfileState['keySeqs']> = {}
+    for (const [key, seq] of Object.entries(parsed.keySeqs ?? {})) {
+      if (isSettingsProfileKey(key) && isSettingsRevision(seq)) keySeqs[key] = seq
+    }
     this.state = {
       version: STATE_VERSION,
       profileId:
@@ -92,6 +96,7 @@ export class SettingsProfileStore {
       values: settingsValuesFrom(parsed.values),
       keyRevisions,
       keyWriters,
+      keySeqs,
     }
   }
 

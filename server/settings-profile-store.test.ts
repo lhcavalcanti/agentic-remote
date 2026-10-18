@@ -103,6 +103,26 @@ describe('SettingsProfileStore', () => {
     expect(reloaded.snapshot().values.accent).toBe('rose')
   })
 
+  it("keeps a device's newer edit when its older one, from another tab, arrives later", async () => {
+    const { store: profile, directory } = await store()
+    // Two tabs of one browser: rose (edit 2) overtakes teal (edit 1).
+    await profile.update({ accent: { value: 'rose', baseRevision: 0, seq: 2 } }, 'phone')
+    const late = await profile.update({ accent: { value: 'teal', baseRevision: 0, seq: 1 } }, 'phone')
+    expect(late.conflicts).toEqual([])
+    expect(late.settings).toMatchObject({ revision: 1, values: { accent: 'rose' } })
+
+    // The order survives a restart; a later edit from the same tab still lands.
+    const reloaded = new SettingsProfileStore(directory)
+    await reloaded.initialize()
+    const repeat = await reloaded.update({ accent: { value: 'teal', baseRevision: 1, seq: 2 } }, 'phone')
+    expect(repeat.settings.values.accent).toBe('rose')
+    const newer = await reloaded.update({ accent: { value: 'teal', baseRevision: 1, seq: 3 } }, 'phone')
+    expect(newer.settings.values.accent).toBe('teal')
+    // Edit numbers are this device's own: another device is judged by revision.
+    const other = await reloaded.update({ accent: { value: 'ember', baseRevision: 2, seq: 1 } }, 'computer')
+    expect(other.settings.values.accent).toBe('ember')
+  })
+
   it('keeps a newer write from another device even after this device wrote that key earlier', async () => {
     const { store: profile } = await store()
     await profile.update({ accent: { value: 'teal', baseRevision: 0 } }, 'phone')
@@ -162,7 +182,7 @@ describe('SettingsProfileStore', () => {
 
   it('refuses unknown keys and malformed values without applying any of the request', async () => {
     const { store: profile } = await store()
-    const cases: Array<Record<string, { value: unknown; baseRevision: number }>> = [
+    const cases: Array<Record<string, { value: unknown; baseRevision: number; seq?: number }>> = [
       { theme: { value: 'light', baseRevision: 0 } },
       { appearance: { value: 'neon', baseRevision: 0 } },
       { accent: { value: 7, baseRevision: 0 } },
@@ -188,6 +208,8 @@ describe('SettingsProfileStore', () => {
       },
       { accent: { value: 'ocean', baseRevision: -1 } },
       { accent: { value: 'ocean', baseRevision: 1.5 } },
+      { accent: { value: 'ocean', baseRevision: 0, seq: -1 } },
+      { accent: { value: 'ocean', baseRevision: 0, seq: 0.5 } },
     ]
     for (const changes of cases) {
       expect(

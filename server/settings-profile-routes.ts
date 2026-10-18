@@ -16,7 +16,11 @@ const updateSchema = z
     deviceId,
     changes: z.record(
       z.string().max(64),
-      z.object({ value: z.unknown(), baseRevision: z.number().int().min(0) }).strict(),
+      z.object({
+        value: z.unknown(),
+        baseRevision: z.number().int().min(0),
+        seq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+      }).strict(),
     ),
   })
   .strict()

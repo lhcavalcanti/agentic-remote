@@ -75,13 +75,13 @@ agree on them.
 The hub stores the profile in `<data>/settings-profile.json`:
 
 ```json
-{"version":1,"profileId":"uuid","revision":7,"values":{},"keyRevisions":{},"keyWriters":{}}
+{"version":1,"profileId":"uuid","revision":7,"values":{},"keyRevisions":{},"keyWriters":{},"keySeqs":{}}
 ```
 
 | Request | Effect |
 |---|---|
 | `GET /api/settings` | `{settings: {profileId, revision, values}}` |
-| `PATCH /api/settings` `{deviceId, changes: {key: {value, baseRevision}}}` | Applies each change. `value: null` resets the key to its default. |
+| `PATCH /api/settings` `{deviceId, changes: {key: {value, baseRevision, seq}}}` | Applies each change. `value: null` resets the key to its default. |
 | `POST /api/settings/import` `{deviceId, values}` | Fills only keys that were never set, so the first device wins per setting |
 
 - A change conflicts when `keyRevisions[key] > baseRevision` and
@@ -93,6 +93,10 @@ The hub stores the profile in `<data>/settings-profile.json`:
     the first response was lost.
   - A request without a `deviceId` treats every newer write as another
     device's.
+- `seq` is the device's own edit number, shared by its tabs. The hub keeps
+  each key's latest `seq` with its writer and ignores an older or repeated
+  edit from that same device, so a late request from one tab cannot replace a
+  newer edit from another.
   - The newer value is kept, and the key is returned in `conflicts`.
   - The browser shows "changed on another device", so nothing is lost
     silently.
@@ -114,7 +118,7 @@ The hub stores the profile in `<data>/settings-profile.json`:
 ## Browser
 
 - **Cache.** `agentic-remote:settings-profile` in `localStorage` holds
-  `{deviceId, profileId, revision, values, pending}`.
+  `{deviceId, nextSeq, profileId, revision, values, pending}`.
   - Tabs share it. Every change reads it first and writes it straight back,
     so one tab never drops another's unsent edit.
   - The `storage` event shows another tab's change at once.

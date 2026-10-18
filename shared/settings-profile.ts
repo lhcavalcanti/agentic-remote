@@ -85,6 +85,11 @@ export interface SettingsChange {
   value: unknown
   /** The profile revision this device had seen when the change was made. */
   baseRevision: number
+  /**
+   * The device's own edit counter. Tabs share a device ID, so this is what
+   * keeps an older edit that arrives late from replacing a newer one.
+   */
+  seq?: number
 }
 
 export interface SettingsUpdateResult {
@@ -271,6 +276,8 @@ export interface SettingsProfileRecord {
    * change, not another device's, so it must not read as a conflict.
    */
   keyWriters?: Partial<Record<SettingsProfileKey, string>>
+  /** The writer's `seq` for each key, compared only with that same writer. */
+  keySeqs?: Partial<Record<SettingsProfileKey, number>>
 }
 
 /** A browser's own ID, so the hub can tell its retries from other devices. */
@@ -285,6 +292,7 @@ export interface ValidatedSettingsChange {
   /** `null` resets the key to its default. */
   value: unknown
   baseRevision: number
+  seq?: number
 }
 
 export function isSettingsRevision(value: unknown): value is number {
@@ -303,13 +311,17 @@ export function validateSettingsChanges(
     if (!isRecord(change) || !isSettingsRevision(change.baseRevision)) {
       throw new SettingsRequestError(`Setting ${key} needs the revision it was changed from`, 400)
     }
+    if (change.seq !== undefined && !isSettingsRevision(change.seq)) {
+      throw new SettingsRequestError(`Setting ${key} has an invalid edit number`, 400)
+    }
+    const seq = change.seq === undefined ? {} : { seq: change.seq }
     if (change.value === null) {
-      parsed.push({ key, value: null, baseRevision: change.baseRevision })
+      parsed.push({ key, value: null, baseRevision: change.baseRevision, ...seq })
       continue
     }
     const result = parseSettingValue(key, change.value)
     if (!result.ok) throw new SettingsRequestError(result.error, 400)
-    parsed.push({ key, value: result.value, baseRevision: change.baseRevision })
+    parsed.push({ key, value: result.value, baseRevision: change.baseRevision, ...seq })
   }
   return parsed
 }
@@ -355,26 +367,33 @@ export function applySettingsChanges(
   const values: Record<string, unknown> = { ...record.values }
   const keyRevisions = { ...record.keyRevisions }
   const keyWriters = { ...record.keyWriters }
+  const keySeqs = { ...record.keySeqs }
   const conflicts: SettingsProfileKey[] = []
   let changed = false
-  for (const { key, value, baseRevision } of changes) {
-    const newer = (keyRevisions[key] ?? 0) > baseRevision
-    if (newer && (writer === undefined || keyWriters[key] !== writer)) {
+  for (const { key, value, baseRevision, seq } of changes) {
+    const sameWriter = writer !== undefined && keyWriters[key] === writer
+    if ((keyRevisions[key] ?? 0) > baseRevision && !sameWriter) {
       conflicts.push(key)
       continue
     }
+    // This device already wrote a later edit of its own: this one is older,
+    // delivered late, and the newer value stands.
+    const recorded = keySeqs[key]
+    if (sameWriter && seq !== undefined && recorded !== undefined && seq <= recorded) continue
     if (value === null ? !(key in values) : sameSettingValue(values[key], value)) continue
     if (value === null) delete values[key]
     else values[key] = value
     keyRevisions[key] = revision
     if (writer === undefined) delete keyWriters[key]
     else keyWriters[key] = writer
+    if (writer !== undefined && seq !== undefined) keySeqs[key] = seq
+    else delete keySeqs[key]
     changed = true
   }
   if (!changed) return { record, conflicts }
   return {
     record: sizeChecked({
-      revision, values: values as SettingsProfileValues, keyRevisions, keyWriters,
+      revision, values: values as SettingsProfileValues, keyRevisions, keyWriters, keySeqs,
     }),
     conflicts,
   }
@@ -390,16 +409,18 @@ export function applySettingsImport(
   const values: Record<string, unknown> = { ...record.values }
   const keyRevisions = { ...record.keyRevisions }
   const keyWriters = { ...record.keyWriters }
+  const keySeqs = { ...record.keySeqs }
   let changed = false
   for (const [key, value] of imports) {
     if (keyRevisions[key] !== undefined) continue
     values[key] = value
     keyRevisions[key] = revision
     if (writer !== undefined) keyWriters[key] = writer
+    delete keySeqs[key]
     changed = true
   }
   if (!changed) return record
   return sizeChecked({
-    revision, values: values as SettingsProfileValues, keyRevisions, keyWriters,
+    revision, values: values as SettingsProfileValues, keyRevisions, keyWriters, keySeqs,
   })
 }

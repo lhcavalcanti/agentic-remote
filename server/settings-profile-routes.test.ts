@@ -133,6 +133,7 @@ describe('hub settings profile routes', () => {
         payload: { deviceId: 'x'.repeat(101), changes: { accent: { value: 'ocean', baseRevision: 0 } } },
       },
       { method: 'POST', url: '/api/settings/import', payload: { deviceId: '', values: {} } },
+      { method: 'PATCH', payload: { changes: { accent: { value: 'ocean', baseRevision: 0, seq: -1 } } } },
     ] as const
     for (const attempt of attempts) {
       const response = await app.inject({

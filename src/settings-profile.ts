@@ -1,5 +1,6 @@
 import {
   isSettingsDeviceId,
+  isSettingsRevision,
   parseSettingValue,
   sameSettingValue,
   settingsProfileKeys,
@@ -54,13 +55,16 @@ export interface SettingsProfileState {
   deviceCopy: boolean
 }
 
-type PendingChange = { value: unknown; baseRevision: number }
+/** `seq` orders this device's own edits, across its tabs. */
+type PendingChange = { value: unknown; baseRevision: number; seq?: number }
 type Pending = Partial<Record<SettingsProfileKey, PendingChange>>
 
 interface CachedProfile {
   version: 1
   /** This browser's ID, shared by its tabs. */
   deviceId?: string
+  /** The next edit number, shared by the tabs so their edits stay in order. */
+  nextSeq?: number
   profileId?: string
   revision: number
   values: SettingsProfileValues
@@ -88,6 +92,7 @@ function samePending(left: PendingChange | undefined, right: PendingChange | und
   return Boolean(
     left && right &&
     left.baseRevision === right.baseRevision &&
+    left.seq === right.seq &&
     sameSettingValue(left.value, right.value),
   )
 }
@@ -115,12 +120,13 @@ function pendingFrom(value: unknown): Pending {
     if (typeof baseRevision !== 'number' || !Number.isInteger(baseRevision) || baseRevision < 0) {
       continue
     }
+    const seq = isSettingsRevision(change.seq) ? { seq: change.seq } : {}
     if (change.value === null) {
-      pending[key] = { value: null, baseRevision }
+      pending[key] = { value: null, baseRevision, ...seq }
       continue
     }
     const parsed = parseSettingValue(key, change.value)
-    if (parsed.ok) pending[key] = { value: parsed.value, baseRevision }
+    if (parsed.ok) pending[key] = { value: parsed.value, baseRevision, ...seq }
   }
   return pending
 }
@@ -134,6 +140,7 @@ function cacheFrom(raw: string | null): CachedProfile | undefined {
     return {
       version: 1,
       deviceId: isSettingsDeviceId(parsed.deviceId) ? parsed.deviceId : undefined,
+      nextSeq: isSettingsRevision(parsed.nextSeq) ? parsed.nextSeq : undefined,
       profileId: typeof parsed.profileId === 'string' ? parsed.profileId : undefined,
       revision:
         typeof parsed.revision === 'number' && Number.isInteger(parsed.revision)
@@ -169,6 +176,7 @@ export class SettingsProfileClient {
   private pending: Pending = {}
   private imports?: SettingsProfileValues
   private readonly deviceId: string
+  private nextSeq = 1
   private ready = false
   private unreachable = false
   private flushing = false
@@ -229,7 +237,9 @@ export class SettingsProfileClient {
       this.pending[key] = {
         value: next,
         baseRevision: existing ? existing.baseRevision : Math.max(this.revision, 0),
+        seq: this.nextSeq,
       }
+      this.nextSeq += 1
       this.refused = undefined
       changed = true
     })
@@ -427,6 +437,8 @@ export class SettingsProfileClient {
     this.confirmed = cache.values
     this.pending = cache.pending
     this.imports = cache.imports
+    // Never step back: an edit number this tab already used must not repeat.
+    this.nextSeq = Math.max(this.nextSeq, cache.nextSeq ?? 1)
   }
 
   private readCache(): CachedProfile | undefined {
@@ -484,6 +496,7 @@ export class SettingsProfileClient {
     const cache: CachedProfile = {
       version: 1,
       deviceId: this.deviceId,
+      nextSeq: this.nextSeq,
       ...(this.profileId ? { profileId: this.profileId } : {}),
       revision: this.revision,
       values: this.confirmed,

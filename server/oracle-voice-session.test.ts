@@ -208,7 +208,7 @@ describe('VoiceBackendSession', () => {
     expect(tooLong.engine.calls.some((call) => call.type === 'stt.accept')).toBe(false)
   })
 
-  it('bounds queued microphone audio to two seconds without blocking enqueue on the worker', async () => {
+  it('measures queued plus in-flight microphone audio and rejects excess backlog', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -219,7 +219,20 @@ describe('VoiceBackendSession', () => {
         await super.accept(input)
       }
     }
-    const { engine, session } = harness(new BlockingEngine(), { maxQueueBytes: 256 })
+    const engine = new BlockingEngine()
+    const queueSnapshots: Array<{
+      queuedInputBytes: number
+      pendingInputBytes: number
+      queuedOutputBytes: number
+    }> = []
+    const session = createVoiceBackendSession({
+      streamId,
+      engine,
+      limits: { ...limits, maxQueueBytes: 512 },
+      send: async () => undefined,
+      terminate: () => undefined,
+      observeQueue: (snapshot) => queueSnapshots.push(snapshot),
+    })
     await beginUtterance(session)
 
     await session.audio(frame(2, 0, 128))
@@ -228,6 +241,8 @@ describe('VoiceBackendSession', () => {
       closeCode: 1013,
     })
     expect(engine.calls.some((call) => call.type === 'stt.accept')).toBe(false)
+    expect(Math.max(...queueSnapshots.map((snapshot) =>
+      snapshot.queuedInputBytes + snapshot.pendingInputBytes))).toBe(512)
 
     release()
   })

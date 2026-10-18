@@ -34,9 +34,13 @@ export interface VoiceBenchmarkRow {
   transcript: string
   expectedTranscript: string
   wer: BenchmarkMetric
-  firstPartialMs: BenchmarkMetric
-  finalAfterSpeechMs: BenchmarkMetric
-  sttRtf: BenchmarkMetric
+  realtimeFirstPartialMs: BenchmarkMetric
+  realtimeEndpointFinalMs: BenchmarkMetric
+  sttComputeRtf: BenchmarkMetric
+  sttConsumedAudioMs: BenchmarkMetric
+  sttEndpointCount: number
+  sttLatencyMode: 'real-time-paced'
+  sttComputeMode: 'unpaced-full-fixture'
   ttsFirstAudioMs: BenchmarkMetric
   ttsRtf: BenchmarkMetric
   peakRssMiB: BenchmarkMetric
@@ -44,7 +48,7 @@ export interface VoiceBenchmarkRow {
 }
 
 export interface VoiceBenchmarkReport {
-  schemaVersion: 1
+  schemaVersion: 2
   generatedAt: string
   host: {
     platform: string
@@ -100,7 +104,7 @@ interface TtsAssets {
   modelName: string
 }
 
-interface WaveData {
+export interface WaveData {
   channels: number
   sampleRate: number
   samples: Int16Array
@@ -208,8 +212,8 @@ export function formatBenchmarkMarkdown(report: VoiceBenchmarkReport): string {
     `Generated ${report.generatedAt} on ${report.host.platform}/${report.host.arch} `
       + `(${report.host.cpuCount} logical CPUs).`,
     '',
-    '| Profile | Fixture | Language | WER | First partial ms | Final after speech ms | STT RTF | TTS first audio ms | TTS RTF | Peak RSS MiB | Sustained CPU % |',
-    '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| Profile | Fixture | Language | WER | Real-time first partial ms | Real-time endpoint final ms | STT compute RTF | Consumed audio ms | Endpoints | TTS first audio ms | TTS RTF | Peak RSS MiB | Sustained compute CPU % |',
+    '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
   ]
   for (const row of report.rows) {
     lines.push([
@@ -217,9 +221,11 @@ export function formatBenchmarkMarkdown(report: VoiceBenchmarkReport): string {
       row.fixture,
       row.language,
       formatMetric(row.wer),
-      formatMetric(row.firstPartialMs),
-      formatMetric(row.finalAfterSpeechMs),
-      formatMetric(row.sttRtf),
+      formatMetric(row.realtimeFirstPartialMs),
+      formatMetric(row.realtimeEndpointFinalMs),
+      formatMetric(row.sttComputeRtf),
+      formatMetric(row.sttConsumedAudioMs),
+      String(row.sttEndpointCount),
       formatMetric(row.ttsFirstAudioMs),
       formatMetric(row.ttsRtf),
       formatMetric(row.peakRssMiB),
@@ -305,7 +311,7 @@ async function main(): Promise<void> {
   }
 
   const report: VoiceBenchmarkReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     host: {
       platform: process.platform,
@@ -319,7 +325,7 @@ async function main(): Promise<void> {
     })),
     rows,
     baselines: [{
-      name: 'Whisper tiny.en prior',
+      name: 'Whisper small prior',
       note: 'Earlier controlled measurement: 7.96 s processing for 11 s audio',
       sttRtf: derived(0.72),
       peakRssMiB: derived(885),
@@ -390,30 +396,45 @@ async function benchmarkFixture(
 ): Promise<VoiceBenchmarkRow> {
   const streamId = `${profileName}-${fixture.language}`
   const utteranceId = `${generation}-${fixture.fixture}`
-  const processStart = await readProcessSample(pid)
-  let peakRssBytes = processStart?.rssBytes
+  let peakRssBytes = (await readProcessSample(pid))?.rssBytes
   const rssTimer = setInterval(() => {
     void readProcessSample(pid).then((sample) => {
       if (sample) peakRssBytes = Math.max(peakRssBytes ?? 0, sample.rssBytes)
     })
   }, 20)
   rssTimer.unref?.()
-  const wallStartedAt = performance.now()
   try {
-    const stt = await measureStt(
+    const computeProcessStart = await readProcessSample(pid)
+    const computeStartedAt = performance.now()
+    const sttCompute = await measureSttPass(
       session,
       streamId,
-      generation,
-      utteranceId,
+      generation * 3,
+      `${utteranceId}-compute`,
       fixture.language === 'und' ? 'en' : fixture.language,
       wave,
+      { paced: false },
+    )
+    const computeCompletedAt = performance.now()
+    const computeProcessEnd = await readProcessSample(pid)
+    if (computeProcessEnd) {
+      peakRssBytes = Math.max(peakRssBytes ?? 0, computeProcessEnd.rssBytes)
+    }
+    const sttLatency = await measureSttPass(
+      session,
+      streamId,
+      generation * 3 + 1,
+      `${utteranceId}-latency`,
+      fixture.language === 'und' ? 'en' : fixture.language,
+      wave,
+      { paced: true },
     )
     const ttsText = firstTtsSegment(fixture.expectedTranscript)
     const tts = ttsText.length > 0
       ? await measureTts(
           session,
           streamId,
-          generation,
+          generation * 3 + 2,
           `${generation}-tts`,
           ttsText,
           ttsSampleRate,
@@ -421,20 +442,28 @@ async function benchmarkFixture(
       : undefined
     const processEnd = await readProcessSample(pid)
     if (processEnd) peakRssBytes = Math.max(peakRssBytes ?? 0, processEnd.rssBytes)
-    const wallSeconds = Math.max((performance.now() - wallStartedAt) / 1_000, 0.001)
-    const cpuPercent = processStart && processEnd
-      ? (processEnd.cpuTicks - processStart.cpuTicks) / ticksPerSecond / wallSeconds * 100
+    const computeWallSeconds = Math.max(
+      (computeCompletedAt - computeStartedAt) / 1_000,
+      0.001,
+    )
+    const cpuPercent = computeProcessStart && computeProcessEnd
+      ? (computeProcessEnd.cpuTicks - computeProcessStart.cpuTicks)
+        / ticksPerSecond / computeWallSeconds * 100
       : undefined
     return {
       profile: profileName,
       fixture: fixture.fixture,
       language: fixture.language,
-      transcript: stt.transcript,
+      transcript: sttCompute.transcript,
       expectedTranscript: fixture.expectedTranscript,
-      wer: measured(wordErrorRate(fixture.expectedTranscript, stt.transcript)),
-      firstPartialMs: maybeMeasured(stt.firstPartialMs),
-      finalAfterSpeechMs: measured(stt.finalAfterSpeechMs),
-      sttRtf: measured(stt.elapsedMs / wave.durationMs),
+      wer: measured(wordErrorRate(fixture.expectedTranscript, sttCompute.transcript)),
+      realtimeFirstPartialMs: maybeMeasured(sttLatency.firstPartialMs),
+      realtimeEndpointFinalMs: measured(sttLatency.finalAfterSpeechMs),
+      sttComputeRtf: measured(sttCompute.elapsedMs / sttCompute.consumedAudioMs),
+      sttConsumedAudioMs: measured(sttCompute.consumedAudioMs),
+      sttEndpointCount: sttCompute.endpointCount,
+      sttLatencyMode: 'real-time-paced',
+      sttComputeMode: 'unpaced-full-fixture',
       ttsFirstAudioMs: tts ? maybeMeasured(tts.firstAudioMs) : missing(),
       ttsRtf: tts ? maybeMeasured(tts.rtf) : missing(),
       peakRssMiB: peakRssBytes === undefined
@@ -447,24 +476,43 @@ async function benchmarkFixture(
   }
 }
 
-async function measureStt(
+export async function measureSttPass(
   session: VoiceEngineSession,
   streamId: string,
   generation: number,
   utteranceId: string,
   language: string,
   wave: WaveData,
+  options: {
+    paced: boolean
+    now?: () => number
+    sleep?: (milliseconds: number) => Promise<void>
+  },
 ): Promise<{
   transcript: string
   firstPartialMs?: number
   finalAfterSpeechMs: number
   elapsedMs: number
+  consumedAudioMs: number
+  endpointCount: number
+  endpointLatenciesMs: number[]
+  latencyMode: 'real-time-paced' | 'unpaced-compute'
 }> {
-  const final = deferred<string>()
+  const now = options.now ?? performance.now.bind(performance)
+  const sleep = options.sleep ?? delay
+  const transcripts: string[] = []
+  const endpointLatenciesMs: number[] = []
   let startedAt = 0
-  let speechEndedAt: number | undefined
+  let speechStartedAt: number | undefined
+  let lastAudioAt = 0
   let firstPartialMs: number | undefined
-  let finalAt: number | undefined
+  let finalAfterSpeechMs = 0
+  let activeUtteranceId = utteranceId
+  let activeFinal = deferred<{ text: string; at: number }>()
+  let completedFinal: { text: string; at: number } | undefined
+  let activeFinalRecorded = false
+  let endpointCount = 0
+  let sequence = 0
   const unsubscribe = session.onEvent((event: VoiceEngineEvent) => {
     if (
       !('generation' in event)
@@ -472,45 +520,126 @@ async function measureStt(
       || event.generation !== generation
     ) return
     if (event.type === 'partial') {
-      firstPartialMs ??= performance.now() - startedAt
-    } else if (event.type === 'final' && event.utteranceId === utteranceId) {
-      finalAt = performance.now()
-      final.resolve(event.text)
+      const latencyStartedAt = options.paced ? speechStartedAt : startedAt
+      if (latencyStartedAt !== undefined) {
+        firstPartialMs ??= now() - latencyStartedAt
+      }
+    } else if (event.type === 'final' && event.utteranceId === activeUtteranceId) {
+      completedFinal = { text: event.text, at: now() }
+      activeFinal.resolve(completedFinal)
     } else if (event.type === 'fatal_error') {
-      final.reject(new Error(event.message))
+      activeFinal.reject(new Error(event.message))
     }
   })
+  const startEndpoint = async () => {
+    activeUtteranceId = endpointCount === 0
+      ? utteranceId
+      : `${utteranceId}-endpoint-${endpointCount + 1}`
+    activeFinal = deferred()
+    completedFinal = undefined
+    activeFinalRecorded = false
+    sequence = 0
+    await session.stt.start({
+      streamId,
+      generation,
+      utteranceId: activeUtteranceId,
+      language,
+    })
+  }
+  const recordEndpoint = (result: { text: string; at: number }) => {
+    if (result.text.trim().length > 0) transcripts.push(result.text.trim())
+    endpointCount += 1
+    endpointLatenciesMs.push(Math.max(0, result.at - lastAudioAt))
+    finalAfterSpeechMs = Math.max(...endpointLatenciesMs)
+  }
   try {
-    startedAt = performance.now()
-    await session.stt.start({ streamId, generation, utteranceId, language })
-    for (let offset = 0, sequence = 0; offset < wave.samples.length; sequence += 1) {
+    startedAt = now()
+    const speechStartSample = findSpeechStartSample(wave.samples, wave.sampleRate)
+    if (options.paced && speechStartSample !== undefined) {
+      speechStartedAt = startedAt + speechStartSample / wave.sampleRate * 1_000
+    }
+    await startEndpoint()
+    let consumedSamples = 0
+    for (let offset = 0; offset < wave.samples.length;) {
       const end = Math.min(wave.samples.length, offset + FRAME_SAMPLES)
+      if (options.paced) {
+        const targetAt = startedAt + end / wave.sampleRate * 1_000
+        const waitMs = targetAt - now()
+        if (waitMs > 0) await sleep(waitMs)
+      }
+      lastAudioAt = now()
       await session.stt.accept({
         direction: 'microphone',
         streamId,
         generation,
-        utteranceId,
+        utteranceId: activeUtteranceId,
         sequence,
         sampleRate: ORACLE_VOICE_SAMPLE_RATE,
         samples: wave.samples.subarray(offset, end),
       })
+      consumedSamples += end - offset
       offset = end
-      if (finalAt !== undefined) break
+      sequence += 1
+      if (completedFinal) {
+        recordEndpoint(completedFinal)
+        activeFinalRecorded = true
+        if (offset < wave.samples.length) await startEndpoint()
+      }
     }
-    speechEndedAt = performance.now()
-    if (finalAt === undefined) {
-      await session.stt.end({ streamId, generation, utteranceId })
+    if (!activeFinalRecorded) {
+      lastAudioAt = now()
+      if (!completedFinal) {
+        await session.stt.end({
+          streamId,
+          generation,
+          utteranceId: activeUtteranceId,
+        })
+        completedFinal = await activeFinal.promise
+      }
+      recordEndpoint(completedFinal)
     }
-    const transcript = await final.promise
-    const completedAt = finalAt ?? performance.now()
+    const completedAt = completedFinal?.at ?? now()
     return {
-      transcript,
+      transcript: transcripts.join(' '),
       firstPartialMs,
-      finalAfterSpeechMs: Math.max(0, completedAt - speechEndedAt),
+      finalAfterSpeechMs,
       elapsedMs: completedAt - startedAt,
+      consumedAudioMs: consumedSamples / wave.sampleRate * 1_000,
+      endpointCount,
+      endpointLatenciesMs,
+      latencyMode: options.paced ? 'real-time-paced' : 'unpaced-compute',
     }
   } finally {
     unsubscribe()
+  }
+
+  function findSpeechStartSample(
+    samples: Int16Array,
+    sampleRate: number,
+  ): number | undefined {
+    const windowSamples = Math.max(1, Math.round(sampleRate * 0.02))
+    const windows: Array<{ offset: number; rms: number }> = []
+    let minimumRms = Number.POSITIVE_INFINITY
+    let maximumRms = 0
+    for (let offset = 0; offset < samples.length; offset += windowSamples) {
+      const end = Math.min(samples.length, offset + windowSamples)
+      let energy = 0
+      for (let index = offset; index < end; index += 1) {
+        energy += samples[index] * samples[index]
+      }
+      const rms = Math.sqrt(energy / Math.max(1, end - offset))
+      windows.push({ offset, rms })
+      minimumRms = Math.min(minimumRms, rms)
+      maximumRms = Math.max(maximumRms, rms)
+    }
+    if (maximumRms < 1) return undefined
+    const threshold = minimumRms + (maximumRms - minimumRms) * 0.2
+    let consecutive = 0
+    for (const window of windows) {
+      consecutive = window.rms >= threshold ? consecutive + 1 : 0
+      if (consecutive === 2) return Math.max(0, window.offset - windowSamples)
+    }
+    return undefined
   }
 }
 
@@ -796,6 +925,10 @@ function deferred<T>(): {
     reject = rejectPromise
   })
   return { promise, resolve, reject }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function isMainModule(): boolean {

@@ -1,4 +1,5 @@
-import { EventEmitter } from 'node:events'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { EventEmitter, once } from 'node:events'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -7,10 +8,23 @@ import WebSocket, { type RawData } from 'ws'
 import { buildApp } from '../server/app.js'
 import {
   DEFAULT_VOICE_BACKEND_LIMITS,
+  LocalVoiceBackend,
   type VoiceBackend,
+  type VoiceBackendQueueSnapshot,
   type VoiceBackendSession,
   type VoiceBackendSessionOpenOptions,
 } from '../server/oracle-voice-session.js'
+import type { EnabledOracleVoiceConfig } from '../server/oracle-voice-config.js'
+import type {
+  VoiceEngineEvent,
+  VoiceEngineFactory,
+  VoiceEngineSession,
+  VoiceEndUtterance,
+  VoiceGenerationIdentity,
+  VoiceStartUtterance,
+  VoiceSynthesisRequest,
+  VoiceUtteranceAudioFrame,
+} from '../server/oracle-voice-engine.js'
 import type { VoiceBackendCapability } from '../shared/contracts.js'
 import type {
   ManagerEvent,
@@ -40,7 +54,7 @@ interface RssSample {
 }
 
 interface SoakReport {
-  schemaVersion: 1
+  schemaVersion: 2
   generatedAt: string
   requested: {
     minutes: number
@@ -48,6 +62,8 @@ interface SoakReport {
     rapidStartStop: number
   }
   elapsedMs: number
+  lifecycleElapsedMs: number
+  lifecycle: LifecycleCycleResult
   utteranceCount: number
   managerSendCount: number
   uniqueManagerSendCount: number
@@ -56,11 +72,17 @@ interface SoakReport {
   staleBackendEmissions: number
   staleClientDeliveries: number
   maximumInputQueueBytes: number
+  maximumPendingInputBytes: number
+  maximumInputBacklogBytes: number
+  maximumOutputQueueBytes: number
+  queueOverflowRejections: number
   queueLimitBytes: number
   activeBackendSessionsAfterStop: number
   socketClosed: boolean
   childPidsBefore: number[]
+  childPidsDuring: number[]
   childPidsAfter: number[]
+  ownedChildPid?: number
   orphanChildPids: number[]
   rssSamples: RssSample[]
   finalRssSlopeMiBPerMinute: number
@@ -72,6 +94,25 @@ interface SoakReport {
 
 interface TicketResponse {
   ticket: string
+}
+
+const SOAK_VOICE_CONFIG: EnabledOracleVoiceConfig = {
+  enabled: true,
+  language: 'en',
+  threads: 1,
+  endpointMs: 800,
+  stt: {
+    profile: 'zipformer',
+    modelDirectory: '/controlled-soak/stt',
+  },
+  tts: {
+    engine: 'sherpa-vits',
+    model: '/controlled-soak/tts.onnx',
+    config: '/controlled-soak/tts.onnx.json',
+    tokens: '/controlled-soak/tokens.txt',
+    dataDir: '/controlled-soak/espeak-ng-data',
+    sampleRate: 22_050,
+  },
 }
 
 class SoakSessionService extends EventEmitter {
@@ -180,11 +221,72 @@ class SoakManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
   }
 }
 
-class SoakVoiceBackend implements VoiceBackend {
-  activeSessions = 0
+class ControlledSoakEngine implements VoiceEngineFactory, VoiceEngineSession {
+  readonly stt = {
+    start: async (input: VoiceStartUtterance) => {
+      this.activeUtterance = input
+    },
+    accept: async (_frame: VoiceUtteranceAudioFrame) => {
+      await delay(15)
+    },
+    end: async (input: VoiceEndUtterance) => {
+      this.emit({
+        type: 'partial',
+        ...input,
+        text: `soak utterance ${input.generation}`,
+      })
+      this.emit({
+        type: 'final',
+        ...input,
+        text: `soak utterance ${input.generation}`,
+      })
+      this.activeUtterance = undefined
+    },
+    cancel: async (input: VoiceGenerationIdentity) => {
+      await this.cancelGeneration(input)
+    },
+    close: async () => undefined,
+  }
+  readonly tts = {
+    synthesize: async (input: VoiceSynthesisRequest) => {
+      this.ttsSyntheses += 1
+      queueMicrotask(() => {
+        for (let sequence = 0; sequence < 4; sequence += 1) {
+          this.audioFrames += 1
+          this.emit({
+            type: 'audio',
+            ...input,
+            sequence,
+            sampleRate: 22_050,
+            samples: new Int16Array(2_205).fill(400 + sequence),
+          })
+        }
+        this.emit({ type: 'audio_end', ...input })
+      })
+    },
+    cancel: async (input: VoiceGenerationIdentity) => {
+      await this.cancelGeneration(input)
+    },
+    close: async () => undefined,
+  }
   cancellations = 0
   staleEmissions = 0
-  maximumInputQueueBytes = 0
+  ttsSyntheses = 0
+  audioFrames = 0
+  private readonly listeners = new Set<(event: VoiceEngineEvent) => void>()
+  private child: ChildProcess | undefined
+  private activeUtterance: VoiceStartUtterance | undefined
+
+  async initialize(_config: EnabledOracleVoiceConfig): Promise<VoiceEngineSession> {
+    if (!this.child) {
+      this.child = spawn(process.execPath, [
+        '-e',
+        'setInterval(() => undefined, 1000)',
+      ], { stdio: 'ignore' })
+      await waitFor(() => this.child?.pid !== undefined, 10_000, 'soak child startup')
+    }
+    return this
+  }
 
   capability(): VoiceBackendCapability {
     return {
@@ -192,126 +294,114 @@ class SoakVoiceBackend implements VoiceBackend {
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
       playbackSampleRate: 22_050,
       languages: ['en'],
-      sttProfile: 'soak-deterministic',
-      ttsVoice: 'soak-deterministic',
+      sttProfile: 'controlled-soak-engine',
+      ttsVoice: 'controlled-soak-engine',
       resourceClass: 'low',
     }
   }
 
-  limits() {
-    return DEFAULT_VOICE_BACKEND_LIMITS
+  onEvent(listener: (event: VoiceEngineEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
   }
 
-  busy(): boolean {
-    return this.activeSessions > 0
+  async cancelGeneration(input: VoiceGenerationIdentity): Promise<void> {
+    this.cancellations += 1
+    this.activeUtterance = undefined
+    queueMicrotask(() => {
+      this.staleEmissions += 1
+      this.emit({
+        type: 'partial',
+        ...input,
+        utteranceId: `stale-${input.generation}`,
+        text: 'stale output',
+      })
+    })
+  }
+
+  async close(): Promise<void> {}
+
+  childPid(): number | undefined {
+    return this.child?.pid
+  }
+
+  async stop(): Promise<void> {
+    const child = this.child
+    this.child = undefined
+    if (child?.pid && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit')
+      child.kill('SIGTERM')
+      await exited
+    }
+    this.listeners.clear()
+  }
+
+  private emit(event: VoiceEngineEvent): void {
+    for (const listener of this.listeners) listener(event)
+  }
+}
+
+class ObservedProductionVoiceBackend implements VoiceBackend {
+  activeSessions = 0
+  maximumInputQueueBytes = 0
+  maximumPendingInputBytes = 0
+  maximumInputBacklogBytes = 0
+  maximumOutputQueueBytes = 0
+  queueOverflowRejections = 0
+  readonly deliveredOutputTypes: string[] = []
+  private openOperations = 0
+
+  constructor(private readonly backend: LocalVoiceBackend) {}
+
+  capability() {
+    return this.backend.capability()
+  }
+
+  limits() {
+    return this.backend.limits()
+  }
+
+  busy() {
+    return this.openOperations > 0 || this.backend.busy()
   }
 
   async open(options: VoiceBackendSessionOpenOptions): Promise<VoiceBackendSession> {
+    this.openOperations += 1
+    let session: VoiceBackendSession
+    try {
+      session = await this.backend.open({
+        ...options,
+        send: async (output) => {
+          this.deliveredOutputTypes.push(
+            'direction' in output ? output.direction : output.type,
+          )
+          await options.send(output)
+        },
+        observeQueue: (snapshot) => this.observe(snapshot),
+      })
+    } finally {
+      this.openOperations -= 1
+    }
     this.activeSessions += 1
-    let generation = 0
-    let utteranceId = ''
     let closed = false
     return {
-      control: async (message) => {
-        if (closed) return
-        switch (message.type) {
-          case 'start':
-            generation = message.generation
-            await options.send(serverState(options.streamId, generation, 'ready'))
-            return
-          case 'speech_tentative':
-          case 'heartbeat':
-            return
-          case 'speech_confirmed':
-            generation = message.generation
-            utteranceId = message.utteranceId
-            await options.send(serverState(options.streamId, generation, 'listening'))
-            return
-          case 'speech_end':
-            queueMicrotask(() => {
-              void sendTranscript(options, generation, utteranceId)
-            })
-            return
-          case 'cancel': {
-            this.cancellations += 1
-            const staleGeneration = message.generation
-            queueMicrotask(() => {
-              this.staleEmissions += 1
-              void options.send({
-                type: 'partial',
-                protocol: ORACLE_VOICE_PROTOCOL,
-                streamId: options.streamId,
-                generation: staleGeneration,
-                utteranceId: `stale-${staleGeneration}`,
-                text: 'stale output',
-              }).catch(() => undefined)
-            })
-            return
+      control: (message) => session.control(message),
+      audio: async (frame) => {
+        try {
+          await session.audio(frame)
+        } catch (error) {
+          if (
+            error instanceof Error
+            && 'closeCode' in error
+            && error.closeCode === 1013
+          ) {
+            this.queueOverflowRejections += 1
           }
-          case 'synthesize': {
-            queueMicrotask(() => {
-              void sendSynthesis(options, message)
-            })
-            return
-          }
-
-          async function sendTranscript(
-            options: VoiceBackendSessionOpenOptions,
-            generation: number,
-            utteranceId: string,
-          ): Promise<void> {
-            await options.send({
-              type: 'partial',
-              protocol: ORACLE_VOICE_PROTOCOL,
-              streamId: options.streamId,
-              generation,
-              utteranceId,
-              text: `soak utterance ${generation}`,
-            })
-            await options.send({
-              type: 'final',
-              protocol: ORACLE_VOICE_PROTOCOL,
-              streamId: options.streamId,
-              generation,
-              utteranceId,
-              text: `soak utterance ${generation}`,
-            })
-          }
-
-          async function sendSynthesis(
-            options: VoiceBackendSessionOpenOptions,
-            message: Extract<VoiceClientControl, { type: 'synthesize' }>,
-          ): Promise<void> {
-            await options.send(serverState(options.streamId, message.generation, 'speaking'))
-            await options.send({
-              direction: 'playback',
-              generation: message.generation,
-              segmentId: message.segmentId,
-              sequence: 0,
-              sampleRate: 22_050,
-              samples: new Int16Array(2_205).fill(400),
-            })
-            await options.send({
-              type: 'audio_end',
-              protocol: ORACLE_VOICE_PROTOCOL,
-              streamId: options.streamId,
-              generation: message.generation,
-              segmentId: message.segmentId,
-            })
-          }
-          case 'stop':
-            queueMicrotask(() => {
-              void options.send(
-                serverState(options.streamId, generation, 'stopped'),
-              ).catch(() => undefined)
-            })
+          throw error
         }
       },
-      audio: async (frame) => {
-        const bytes = frame.samples.byteLength
-        this.maximumInputQueueBytes = Math.max(this.maximumInputQueueBytes, bytes)
-      },
-      close: async () => {
+      close: async (reason) => {
+        await session.close(reason)
         if (closed) return
         closed = true
         this.activeSessions -= 1
@@ -320,12 +410,34 @@ class SoakVoiceBackend implements VoiceBackend {
   }
 
   async stop(): Promise<void> {
+    await this.backend.stop()
     this.activeSessions = 0
+  }
+
+  private observe(snapshot: VoiceBackendQueueSnapshot): void {
+    this.maximumInputQueueBytes = Math.max(
+      this.maximumInputQueueBytes,
+      snapshot.queuedInputBytes,
+    )
+    this.maximumPendingInputBytes = Math.max(
+      this.maximumPendingInputBytes,
+      snapshot.pendingInputBytes,
+    )
+    this.maximumInputBacklogBytes = Math.max(
+      this.maximumInputBacklogBytes,
+      snapshot.queuedInputBytes + snapshot.pendingInputBytes,
+    )
+    this.maximumOutputQueueBytes = Math.max(
+      this.maximumOutputQueueBytes,
+      snapshot.queuedOutputBytes,
+    )
   }
 }
 
 class SoakSocket {
   readonly audioEndGenerations = new Set<number>()
+  readonly audioFrameGenerations: number[] = []
+  readonly controlTypes: string[] = []
   staleDeliveries = 0
   streamId = ''
   currentGeneration = 0
@@ -384,16 +496,84 @@ class SoakSocket {
       const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer)
       const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
       const frame = decodeVoiceAudioFrame(payload)
+      this.audioFrameGenerations.push(frame.generation)
       if (frame.generation < this.currentGeneration) this.staleDeliveries += 1
       return
     }
     const control = JSON.parse(data.toString()) as VoiceServerControl
+    this.controlTypes.push(control.type)
     if (control.type === 'hello') this.streamId = control.streamId
     if (control.generation < this.currentGeneration) this.staleDeliveries += 1
     if (control.type === 'audio_end') {
       this.audioEndGenerations.add(control.generation)
     }
   }
+}
+
+export interface LifecycleCycleResult {
+  requested: number
+  completed: number
+  socketConnections: number
+  startupStops: number
+  immediateRestarts: number
+  cleanupChecks: number
+}
+
+export async function runLifecycleCycles(
+  count: number,
+  hooks: {
+    startupStopEvery: number
+    stopDuringStartup(): Promise<void>
+    startAndStop(): Promise<void>
+    assertCleanup(): Promise<void>
+  },
+): Promise<LifecycleCycleResult> {
+  const result: LifecycleCycleResult = {
+    requested: count,
+    completed: 0,
+    socketConnections: 0,
+    startupStops: 0,
+    immediateRestarts: 0,
+    cleanupChecks: 0,
+  }
+  for (let index = 0; index < count; index += 1) {
+    if (index % hooks.startupStopEvery === 0) {
+      try {
+        await hooks.stopDuringStartup()
+      } catch (error) {
+        throw new Error(
+          `Lifecycle cycle ${index + 1} startup stop failed: ${errorText(error)}`,
+        )
+      }
+      result.socketConnections += 1
+      result.startupStops += 1
+      await hooks.assertCleanup()
+      result.cleanupChecks += 1
+      result.immediateRestarts += 1
+    }
+    try {
+      await hooks.startAndStop()
+    } catch (error) {
+      throw new Error(
+        `Lifecycle cycle ${index + 1} start/stop failed: ${errorText(error)}`,
+      )
+    }
+    result.socketConnections += 1
+    await hooks.assertCleanup()
+    result.cleanupChecks += 1
+    result.completed += 1
+  }
+  return result
+}
+
+export function childCleanupPassed(
+  ownedChildPid: number | undefined,
+  childPidsDuring: readonly number[],
+  childPidsAfter: readonly number[],
+): boolean {
+  return ownedChildPid !== undefined
+    && childPidsDuring.includes(ownedChildPid)
+    && !childPidsAfter.includes(ownedChildPid)
 }
 
 export function parseSoakOptions(args: string[]): SoakOptions {
@@ -466,7 +646,10 @@ async function runSoak(
   await rm(dataDirectory, { recursive: true, force: true })
   const childPidsBefore = await childPids()
   const manager = new SoakManager()
-  const backend = new SoakVoiceBackend()
+  const engine = new ControlledSoakEngine()
+  const backend = new ObservedProductionVoiceBackend(
+    new LocalVoiceBackend(engine, SOAK_VOICE_CONFIG),
+  )
   const service = new SoakSessionService()
   const transcriptionService = { async initialize() {}, async stop() {} }
   const previousAllowedOrigins = process.env.AGENTIC_REMOTE_ALLOWED_ORIGINS
@@ -489,6 +672,17 @@ async function runSoak(
   })
   let soakSocket: SoakSocket | undefined
   let elapsedMs = 0
+  let lifecycleElapsedMs = 0
+  let lifecycle: LifecycleCycleResult = {
+    requested: options.rapidStartStop,
+    completed: 0,
+    socketConnections: 0,
+    startupStops: 0,
+    immediateRestarts: 0,
+    cleanupChecks: 0,
+  }
+  let childPidsDuring: number[] = []
+  let ownedChildPid: number | undefined
   const rssSamples: RssSample[] = []
   const startedAt = performance.now()
   const rssTimer = setInterval(() => {
@@ -503,7 +697,49 @@ async function runSoak(
     await built.app.listen({ host: '127.0.0.1', port: 0 })
     const address = built.app.server.address()
     if (!address || typeof address === 'string') throw new Error('Soak server did not bind TCP')
-    soakSocket = await connectSoakSocket(`http://127.0.0.1:${address.port}`)
+    const baseUrl = `http://127.0.0.1:${address.port}`
+    const lifecycleStartedAt = performance.now()
+    lifecycle = await runLifecycleCycles(options.rapidStartStop, {
+      startupStopEvery: 25,
+      stopDuringStartup: async () => {
+        const socket = await connectSoakSocket(baseUrl, false)
+        await waitFor(() => backend.busy(), 10_000, 'startup backend reservation')
+        socket.close()
+        await socket.waitForClose()
+      },
+      startAndStop: async () => {
+        const socket = await connectSoakSocket(baseUrl)
+        await socket.control({
+          type: 'start',
+          generation: 0,
+          language: 'en',
+          defaults: {},
+          answerOnly: false,
+        })
+        await socket.control({
+          type: 'stop',
+          generation: 0,
+          reason: 'Lifecycle cycle complete',
+        })
+        await socket.waitForClose()
+      },
+      assertCleanup: async () => {
+        await waitFor(
+          () => !backend.busy() && backend.activeSessions === 0,
+          10_000,
+          'per-cycle backend cleanup',
+        )
+      },
+    })
+    lifecycleElapsedMs = performance.now() - lifecycleStartedAt
+    childPidsDuring = await childPids()
+    ownedChildPid = engine.childPid()
+    console.log(
+      `Oracle voice soak completed ${lifecycle.completed} lifecycle cycles `
+        + `(${lifecycle.startupStops} startup stops)`,
+    )
+
+    soakSocket = await connectSoakSocket(baseUrl)
     console.log('Oracle voice soak connected')
     await soakSocket.control({
       type: 'start',
@@ -515,28 +751,6 @@ async function runSoak(
 
     let generation = 0
     const frame = new Int16Array(320).fill(500)
-    for (let index = 0; index < options.rapidStartStop; index += 1) {
-      generation += 1
-      soakSocket.currentGeneration = generation
-      await soakSocket.control({
-        type: 'speech_confirmed',
-        generation,
-        utteranceId: `race-${generation}`,
-      })
-      await soakSocket.audio(generation, 0, frame)
-      await soakSocket.control({
-        type: 'speech_end',
-        generation,
-        utteranceId: `race-${generation}`,
-      })
-      await waitFor(
-        () => manager.sends.length === index + 1,
-        10_000,
-        `race manager send ${index + 1}`,
-      )
-    }
-    console.log(`Oracle voice soak completed ${options.rapidStartStop} rapid races`)
-
     const turnCount = Math.round(options.minutes * options.turnsPerMinute)
     const soakStartedAt = performance.now()
     const turnIntervalMs = 60_000 / options.turnsPerMinute
@@ -549,20 +763,32 @@ async function runSoak(
         generation,
         utteranceId: `soak-${generation}`,
       })
-      await soakSocket.audio(generation, 0, frame)
+      for (let sequence = 0; sequence < 8; sequence += 1) {
+        await soakSocket.audio(generation, sequence, frame)
+      }
       await soakSocket.control({
         type: 'speech_end',
         generation,
         utteranceId: `soak-${generation}`,
       })
-      const expectedSends = options.rapidStartStop + index + 1
+      const expectedSends = index + 1
       await waitFor(
         () => manager.sends.length === expectedSends,
         10_000,
         `soak manager send ${index + 1}`,
       )
       manager.respond(`Soak response ${index + 1}.`)
-      await soakSocket.waitForAudioEnd(generation)
+      try {
+        await soakSocket.waitForAudioEnd(generation)
+      } catch (error) {
+        throw new Error(
+          `${errorText(error)}; controlled engine syntheses=${engine.ttsSyntheses}, `
+            + `audio frames=${engine.audioFrames}; client controls=`
+            + `${soakSocket.controlTypes.join(',')}; client audio generations=`
+            + `${soakSocket.audioFrameGenerations.join(',')}; backend outputs=`
+            + `${backend.deliveredOutputTypes.join(',')}`,
+        )
+      }
     }
     await waitUntil(soakStartedAt + options.minutes * 60_000)
     elapsedMs = performance.now() - soakStartedAt
@@ -608,26 +834,44 @@ async function runSoak(
 
   const childPidsAfter = await childPids()
   const orphanChildPids = childPidsAfter.filter((pid) => !childPidsBefore.includes(pid))
-  const utteranceCount = options.rapidStartStop
-    + Math.round(options.minutes * options.turnsPerMinute)
+  const utteranceCount = Math.round(options.minutes * options.turnsPerMinute)
   const finalSamples = rssSamples.filter((sample) =>
     sample.elapsedMs >= rssSamples.at(-1)!.elapsedMs / 2)
   const finalRssSlopeMiBPerMinute = linearSlopePerMinute(finalSamples)
   const assertions = {
     realElapsedDuration: elapsedMs >= options.minutes * 60_000,
+    lifecycleCyclesComplete: lifecycle.completed === options.rapidStartStop,
+    lifecycleCleanupComplete:
+      lifecycle.cleanupChecks === lifecycle.socketConnections,
+    startupStopRestartCovered:
+      lifecycle.startupStops > 0
+      && lifecycle.immediateRestarts === lifecycle.startupStops,
     exactManagerSendCount: manager.sends.length === utteranceCount,
     oneSendPerUtterance: new Set(manager.sends).size === utteranceCount,
-    boundedQueue: backend.maximumInputQueueBytes <= DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
+    inputBacklogMeasured:
+      backend.maximumInputBacklogBytes > 320 * Int16Array.BYTES_PER_ELEMENT,
+    boundedQueue:
+      backend.maximumInputBacklogBytes <= DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
+    outputBacklogMeasured: backend.maximumOutputQueueBytes > 0,
+    boundedOutputQueue:
+      backend.maximumOutputQueueBytes
+        <= DEFAULT_VOICE_BACKEND_LIMITS.maxOutputQueueBytes,
+    noQueueOverflow: backend.queueOverflowRejections === 0,
     staleOutputRejected: soakSocket?.staleDeliveries === 0,
     noActiveBackendSession: backend.activeSessions === 0,
     socketClosed: soakSocket?.closed === true,
+    ownedChildCleaned: childCleanupPassed(
+      ownedChildPid,
+      childPidsDuring,
+      childPidsAfter,
+    ),
     noOrphanChildPid: orphanChildPids.length === 0,
     boundedFinalRssSlope: finalRssSlopeMiBPerMinute < 1,
     noUnhandledRejection: unhandledRejections.length === 0,
     noUncaughtException: uncaughtExceptions.length === 0,
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     requested: {
       minutes: options.minutes,
@@ -635,19 +879,27 @@ async function runSoak(
       rapidStartStop: options.rapidStartStop,
     },
     elapsedMs,
+    lifecycleElapsedMs,
+    lifecycle,
     utteranceCount,
     managerSendCount: manager.sends.length,
     uniqueManagerSendCount: new Set(manager.sends).size,
     managerCancellationCount: manager.cancellations,
-    backendCancellationCount: backend.cancellations,
-    staleBackendEmissions: backend.staleEmissions,
+    backendCancellationCount: engine.cancellations,
+    staleBackendEmissions: engine.staleEmissions,
     staleClientDeliveries: soakSocket?.staleDeliveries ?? -1,
     maximumInputQueueBytes: backend.maximumInputQueueBytes,
+    maximumPendingInputBytes: backend.maximumPendingInputBytes,
+    maximumInputBacklogBytes: backend.maximumInputBacklogBytes,
+    maximumOutputQueueBytes: backend.maximumOutputQueueBytes,
+    queueOverflowRejections: backend.queueOverflowRejections,
     queueLimitBytes: DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
     activeBackendSessionsAfterStop: backend.activeSessions,
     socketClosed: soakSocket?.closed ?? false,
     childPidsBefore,
+    childPidsDuring,
     childPidsAfter,
+    ...(ownedChildPid === undefined ? {} : { ownedChildPid }),
     orphanChildPids,
     rssSamples,
     finalRssSlopeMiBPerMinute,
@@ -658,45 +910,48 @@ async function runSoak(
   }
 }
 
-async function connectSoakSocket(baseUrl: string): Promise<SoakSocket> {
-  const response = await fetch(`${baseUrl}/api/oracle-voice/tickets`, {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      connection: 'close',
-      origin: baseUrl,
-    },
-  })
-  const ticket = await response.json() as TicketResponse
-  if (!response.ok || !ticket.ticket) {
-    throw new Error(
-      `Voice soak ticket failed (${response.status}): ${JSON.stringify(ticket)}`,
-    )
-  }
-  const url = new URL('/api/oracle-voice', baseUrl)
-  url.protocol = 'ws:'
-  url.searchParams.set('ticket', ticket.ticket)
-  const socket = new WebSocket(url, { origin: baseUrl })
-  const client = new SoakSocket(socket)
-  await new Promise<void>((resolve, reject) => {
-    socket.once('open', resolve)
-    socket.once('error', reject)
-  })
-  await client.waitForHello()
-  return client
-}
-
-function serverState(
-  streamId: string,
-  generation: number,
-  state: Extract<VoiceServerControl, { type: 'state' }>['state'],
-): VoiceServerControl {
-  return {
-    type: 'state',
-    protocol: ORACLE_VOICE_PROTOCOL,
-    streamId,
-    generation,
-    state,
+async function connectSoakSocket(
+  baseUrl: string,
+  waitForHello = true,
+): Promise<SoakSocket> {
+  const deadline = performance.now() + 10_000
+  while (true) {
+    const response = await fetch(`${baseUrl}/api/oracle-voice/tickets`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        connection: 'close',
+        origin: baseUrl,
+      },
+    })
+    const ticket = await response.json() as TicketResponse
+    if (!response.ok || !ticket.ticket) {
+      throw new Error(
+        `Voice soak ticket failed (${response.status}): ${JSON.stringify(ticket)}`,
+      )
+    }
+    const url = new URL('/api/oracle-voice', baseUrl)
+    url.protocol = 'ws:'
+    url.searchParams.set('ticket', ticket.ticket)
+    const socket = new WebSocket(url, { origin: baseUrl })
+    const client = new SoakSocket(socket)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', resolve)
+        socket.once('error', reject)
+      })
+      if (waitForHello) await client.waitForHello()
+      return client
+    } catch (error) {
+      socket.close()
+      if (
+        performance.now() >= deadline
+        || !errorText(error).includes('409')
+      ) {
+        throw error
+      }
+      await delay(10)
+    }
   }
 }
 

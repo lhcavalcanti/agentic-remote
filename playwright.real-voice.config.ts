@@ -16,7 +16,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'AGENTIC_REMOTE_E2E_BUILD=1 pnpm build && AGENTIC_REMOTE_RELEASE_DIR=$PWD/dist AGENTIC_REMOTE_ALLOWED_ORIGINS=http://127.0.0.1:4396 pnpm tsx e2e/fixtures/real-voice.ts --serve --port 4396',
+    command: 'pnpm exec tsc -b && AGENTIC_REMOTE_E2E_BUILD=1 pnpm exec vite build --outDir test-results/oracle-conversation-real-dist-e2e --emptyOutDir && AGENTIC_REMOTE_RELEASE_DIR=$PWD/test-results/oracle-conversation-real-dist-e2e AGENTIC_REMOTE_ALLOWED_ORIGINS=http://127.0.0.1:4396 pnpm tsx e2e/fixtures/real-voice.ts --serve --port 4396',
     url: 'http://127.0.0.1:4396/health',
     reuseExistingServer: false,
     timeout: 180_000,

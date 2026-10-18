@@ -1,257 +1,208 @@
-# Task 11 — Browser E2E, Corpus, Benchmark, Real Engine, and Soak
+# Task 11 — Review fixes and corrected evidence
 
-## Status
+## Status and scope
 
-Task 11 was implemented from approved HEAD
-`0111cec94671e94f095dd99431641f1d213524f1` without Graphify, reviewers,
-merge, or deployment.
+All eight Task 11 review findings were corrected from review HEAD
+`a6d451946171f70ba5d95adc19c32b945cb5bc14`. The work stayed in the isolated
+Oracle Conversation worktree. No Graphify operation, push, merge, or deployment
+was performed.
 
-The repository now contains deterministic built-UI browser coverage, a compact
-redistributable English/Brazilian Portuguese corpus, measured JSON/Markdown
-benchmark tooling, a real browser/hub/resident-sherpa transport test, and a
-real-time WebSocket soak harness. Raw benchmark, real-engine, and soak artifacts
-remain in the session workspace.
+Task 11 still provides deterministic built-UI browser coverage, the committed
+FLEURS-derived corpus, benchmark JSON/Markdown, a real
+browser/hub/resident-sherpa test, and a real-time soak. This review round makes
+their evidence accurately exercise and describe production behavior.
 
-## Strict TDD and debugging evidence
+## Strict TDD evidence
 
-- `e2e/oracle-conversation.test.ts` was run before its fixture existed and
-  failed on the missing test seam.
-- `scripts/oracle-voice-benchmark.test.ts` failed because the benchmark module
-  did not exist, then passed after implementation.
-- `scripts/oracle-voice-soak.test.ts` failed because the soak module did not
-  exist, then passed after implementation.
-- The real-engine browser test first failed on its missing server fixture.
-- A final real-engine requirement check failed because sustained worker CPU was
-  absent from the artifact, then passed after `/proc` tick instrumentation.
-- The first full `pnpm check` passed 153 Vitest files and then exposed that the
-  two Playwright `*.test.ts` files were also being collected by Vitest. The
-  repository test configuration now extends Vitest's default exclusions with
-  `e2e/**`; the complete final Vitest suite then passed.
-- Browser/server failures were isolated rather than hidden: exact VAD aliasing,
-  stale release selection, origin policy, fake recorder EventTarget behavior,
-  protocol frame sizing, coordinator reentrancy, endpointing, and host browser
-  library failures were reproduced and corrected or recorded.
-- The soak smoke test exposed origin binding, a missed WebSocket hello, backend
-  callback reentrancy, and upgraded-socket shutdown ordering before the
-  required run was started.
+Each finding had a failing regression before its minimal implementation:
 
-## Deterministic browser E2E
+1. `playwright-config.test.ts` failed both configurations because they built
+   and served ordinary `dist`.
+2. Benchmark tests failed because a recognizer endpoint ended the fixture,
+   later audio was not processed, endpoint latency evidence was absent, and a
+   new endpoint did not reset sequence numbering.
+3. The pacing test observed no initial 80 ms capture wait, and the report-label
+   test found throughput values presented as streaming latency. A low-amplitude
+   English onset regression also failed.
+4. The deterministic browser test reported a cancelled later synthesis request
+   as played even though its source had never started.
+5. The real-engine test had no generation-tagged browser scheduling or
+   server-audio observations from which to derive post-interruption starts.
+6. Soak lifecycle tests failed because the harness had no repeated
+   socket/session lifecycle runner or startup-stop/immediate-restart evidence.
+7. The production-session regression showed that a 6-byte in-flight frame plus
+   a 4-byte queued frame incorrectly passed an 8-byte limit. The child-cleanup
+   negative test also failed before the cleanup assertion helper existed.
+8. The maintained script, docs, and report scan found the unsupported smaller
+   English-model label.
 
-The test exercises the built React UI, `ManagerAssistant`,
-`useOracleConversation`, `OracleVoiceClient`, ticket route, browser WebSocket,
-coordinator, and backend transport. Test-only seams are limited to:
-
-- an exact-match Vite alias for `@ricky0123/vad-web` only when
-  `AGENTIC_REMOTE_E2E_BUILD=1`;
-- browser MediaStream, AudioContext/AudioWorklet, VAD, MediaRecorder, and audio
-  output fakes in `e2e/fixtures`; and
-- injected fake manager/backend instances through existing `buildApp` seams.
-
-The test proves permission denial and recovery, keyboard focus and touch,
-start/stop, visible partial text, one normal Oracle user message per final
-without composer echo, visibly replacing manager deltas, TTS from those same
-deltas, multiple turns, barge-in, three rapid interruptions, stale generation
-rejection, reconnect with a fresh stream and no replay, 390×844 layout,
-privacy text, and switching back to dictation.
-
-### Browser matrix
-
-| Project | Result | Exact support/failure |
-| --- | --- | --- |
-| Chromium | PASS, 1 test, 2.5 s | Needed the existing extracted `libasound.so.2` through `LD_LIBRARY_PATH`; without it launch failed. |
-| Firefox | PASS, 1 test, 3.9 s | Repository Playwright browser was downloaded; used the same extracted ALSA library. |
-| WebKit | NOT RUNNABLE | Repository Playwright WebKit downloaded, but launch failed before test execution because the host lacks GTK 4, Graphene, GStreamer codec/audio/video libraries, Flite voices, Soup 3, Manette, Enchant, Secret, Hyphen, GLES, x264, WebP/AVIF/JPEG, and HarfBuzz ICU shared libraries. No system packages were installed. |
-
-Commands:
+Focused green command:
 
 ```text
-LD_LIBRARY_PATH=... pnpm playwright test e2e/oracle-conversation.test.ts --project=chromium
-pnpm playwright test e2e/oracle-conversation.test.ts --project=firefox
-pnpm exec playwright install firefox webkit
-LD_LIBRARY_PATH=... pnpm playwright test e2e/oracle-conversation.test.ts --project=firefox
-LD_LIBRARY_PATH=... pnpm playwright test e2e/oracle-conversation.test.ts --project=webkit
+pnpm vitest run playwright-config.test.ts \
+  scripts/oracle-voice-benchmark.test.ts \
+  scripts/oracle-voice-soak.test.ts \
+  server/oracle-voice-session.test.ts
 ```
 
-The first Firefox command recorded the absent browser executable. WebKit is
-not counted as skipped or passed.
+Final result: 4 files, 34 tests passed.
 
-## Corpus and provenance
+## 1. Isolated E2E builds
 
-`fixtures/voice` is 1,781,571 bytes and contains nine 16 kHz mono PCM16 WAV
-fixtures plus metadata. Four source utterances come from Google FLEURS,
-CC-BY-4.0:
+Both Playwright configurations run TypeScript and Vite directly into ignored
+test outputs:
 
-- dataset: <https://huggingface.co/datasets/google/fleurs>
-- authors: Alexis Conneau, Min Ma, Simran Khanuja, Yu Zhang, Vera Axelrod,
-  Siddharth Dalmia, Jason Riesa, Clara Rivera, and Ankur Bapna
-- paper: <https://arxiv.org/abs/2205.12446>
-- license: <https://creativecommons.org/licenses/by/4.0/>
+- `test-results/oracle-conversation-dist-e2e`
+- `test-results/oracle-conversation-real-dist-e2e`
 
-The manifest records exact source archive members, metadata URLs, transcripts,
-language, anonymous speaker description, derivation, duration, tags, and
-SHA-256. Derived fixtures add deterministic pink/white noise, an English
-two-speaker foreground/interferer mix, a spoken restart, and generated silence.
-No private recording, generated Faber/Lessac audio, or nonredistributable model
-output is committed.
+Their servers set `AGENTIC_REMOTE_RELEASE_DIR` to those directories. An
+ordinary production build was hashed before and after deterministic browser
+execution with the same digest,
+`25f83620ec8839775c76504db13c60d4a2db53cf3e4d7ac0c06dbc05dd500c18`.
+Searches of production `dist` found no `__oracleVoiceE2E`,
+`deterministic-e2e`, or `fake-vad` seam.
 
-English has distinct anonymous female and male speakers. The selected FLEURS
-`pt_br` development split reports all 386 clips as male, so multi-speaker
-Brazilian Portuguese quality is not claimed.
+## 2–3. Corrected benchmark semantics
 
-## Benchmark
+The benchmark now consumes each WAV completely. Every recognizer endpoint
+contributes a final transcript, then the remaining frames continue through a
+fresh utterance whose sequence starts at zero. WER scores the aggregate final
+transcript. Consumed duration and endpoint count are explicit.
 
-The full command produced 16 measured rows:
+STT evidence is split into:
 
-```text
-pnpm tsx scripts/oracle-voice-benchmark.ts \
-  --fast-stt-dir <Zipformer directory> \
-  --multilingual-stt-dir <Nemotron directory> \
-  --tts-en-dir <resident LJSpeech VITS directory> \
-  --tts-pt-dir <resident Faber VITS directory> \
-  --output-json <session>/oracle-voice-benchmark.json \
-  --output-markdown <session>/oracle-voice-benchmark.md
-```
+- a `real-time-paced` latency pass, where each 80 ms captured frame becomes
+  available only at the end of its real-time interval and first partial is
+  measured from adaptive detected speech onset; and
+- an `unpaced-full-fixture` compute pass for STT RTF and worker CPU.
 
-Medians below exclude silence and missing partials. WER is the mean of clean
-fixtures; RSS is the maximum resident child value.
+Endpoint-final latency is measured from the triggering accepted frame or
+explicit end request and retains early endpoint latency instead of clamping it
+to zero. The JSON schema is version 2 and the Markdown labels these modes
+honestly.
 
-| Profile/language | Clean WER | First partial | STT RTF | TTS first audio | TTS RTF | Peak RSS |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `fast-en` / en | 0.958 | 102 ms; only 1/5 emitted | 0.027 | 288 ms | 0.094 | 407 MiB |
-| `multilingual-quality` / en | 0.704 | 872 ms; 4/5 emitted | 0.511 | 318 ms | 0.092 | 1,254 MiB |
-| `multilingual-quality` / pt-BR | 0.045 | 699 ms | 0.687 | 299 ms | 0.083 | 1,212 MiB |
-| prior Whisper tiny.en | not re-scored | missing | 0.720 derived | missing | missing | 885 MiB derived |
+Corrected aggregate results:
 
-All JSON/Markdown metrics carry `measured`, `derived`, or `missing` basis
-labels. CPU percent is derived from measured worker `/proc` ticks and wall
-time. Fixture checksums, WAV structure, duration, and normalized references are
-validated before model startup.
+| Profile/language | Clean WER | Real-time first partial | Endpoint final | STT compute RTF | TTS first audio | TTS RTF | Peak RSS | Endpoints | Consumed audio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fast-en` / en | 0.917 | 1,650 ms | 21 ms | 0.040 | 283 ms | 0.090 | 411 MiB | 13 | 29,370 ms |
+| `multilingual-quality` / en | 0.517 | 965 ms | 577 ms | 0.757 | 286 ms | 0.086 | 1,246 MiB | 11 | 29,370 ms |
+| `multilingual-quality` / pt-BR | 0.045 | 724 ms | 421 ms | 0.735 | 304 ms | 0.085 | 1,205 MiB | 6 | 23,940 ms |
+| Whisper small prior | not re-scored | missing | missing | 0.720 derived | missing | missing | 885 MiB derived | — | 11,000 ms prior fixture |
 
-The quality gate is not met generally:
+The English quality and first-partial gates still fail. The compact pt-BR
+quality result remains single-speaker evidence, not a general quality claim.
 
-- Zipformer was fast but returned an empty result on four of five English
-  non-silence cases.
-- Nemotron's clean pt-BR WER was 0.045, including 0.000 on the long clean clip,
-  but this is one anonymous male speaker and not a general Portuguese claim.
-- Nemotron missed the `<0.2` CPU RTF target and exceeded the Whisper memory
-  baseline.
-- Warm resident TTS RTF passed. Fast English and pt-BR median first audio met
-  300 ms; multilingual English missed at 318 ms.
+## 4. Genuine playback attribution
 
-## Real browser/hub/resident-engine proof
+The fake backend assigns every synthesis request a unique PCM signature.
+Browser audio instrumentation records the signature only when its corresponding
+source actually starts. `playedText()` maps those observed signatures back to
+synthesis text and deduplicates multiple protocol frames.
 
-Command: `pnpm playwright test --config playwright.real-voice.config.ts` with
-the normal production voice environment set to the session Zipformer and
-resident LJSpeech VITS assets, endpointing at 3,000 ms to keep the long pause in
-the JFK source inside one explicit utterance.
+The regression schedules one response behind a controlled 1.5-second start
+delay, cancels it before playback, then produces a later response. The
+cancelled text is not reported as played; the later text appears only after its
+own signed audio source starts. The visible UI delta, TTS request, and playback
+claim therefore refer to the same response.
 
-Result: Chromium PASS, 1 test, 9.0 s (18.6 s including build/server).
+## 5. Real interruption proof
 
-The path used the built browser UI, ticket and hub WebSocket protocol,
-production coordinator/local backend, resident child, real sherpa streaming
-STT, real resident sherpa VITS PCM, and a deterministic fake Oracle manager
-only. It proved:
+The real-engine run used the production coordinator, local backend, resident
+sherpa Zipformer, and resident sherpa VITS. A controlled 1.5-second browser
+slow-consumer delay created pending delivery/playback without replacing or
+faking the engine.
 
-- first utterance became exactly one normal manager submission and visible
-  user message;
-- the visible manager replacement delta was the text sent to real VITS;
-- second confirmed speech began while browser playback was active;
-- generation 1 was cancelled and browser queued playback stopped;
-- a second utterance submitted normally; and
-- zero engine or browser old-generation audio starts occurred afterward.
+- Generation 1 emitted 3 real audio frames and 1 `audio_end`.
+- All 3 generation-1 browser sources were scheduled and pending at barge-in.
+- Cancellation stopped all 3 pending starts.
+- Generation 1 emitted 0 server audio frames after cancellation.
+- Generation 2 emitted 3 frames and 1 `audio_end`; its first source actually
+  started.
+- `oldAudioStartsAfterInterruption` was derived from recorded generation and
+  timestamp observations through test completion and was `0`.
 
-Measured artifact:
+Measured results were 1,140.2 ms first partial, 87.6 ms final after explicit
+speech end, 0.173 STT RTF, 174.2 ms TTS first audio, 0.093 TTS RTF, 296.1 MiB
+peak worker RSS, 69.5% sustained worker CPU, and 2 manager sends / 1
+cancellation.
 
-| Metric | Result |
+Limitation: resident VITS completed and emitted its sentence before barge-in.
+This run accurately proves cancellation of pending real delivery/playback, not
+native synthesis preemption.
+
+## 6–7. Lifecycle and production queue soak
+
+The soak retains production `LocalVoiceBackend` and
+`EngineVoiceBackendSession` queue/delivery machinery around a controlled
+engine. Input accounting now charges both queued and engine-in-flight bytes
+against the production limit, and output backlog uses the production delivery
+queue. The focused negative regression proves combined backlog is rejected.
+
+Before the timed conversation phase, the same command completed 500 actual
+conversation socket/session lifecycle cycles:
+
+| Lifecycle metric | Result |
 | --- | ---: |
-| first partial | 1,446.2 ms |
-| final after explicit speech end | 96.3 ms |
-| STT RTF | 0.198 |
-| manager delta to first audio | 223.6 ms |
-| TTS RTF | 0.108 |
-| peak child RSS | 288.5 MiB |
-| sustained child CPU | 77.0% |
-| manager sends / cancellations | 2 / 1 |
-| old audio after cancellation | 0 |
+| requested / completed cycles | 500 / 500 |
+| socket connections | 520 |
+| stop during startup / immediate restart | 20 / 20 |
+| per-cycle cleanup checks | 520 |
+| lifecycle elapsed | 502,616 ms |
 
-The first-partial target missed. Finalization, short warm TTS first audio, both
-RTF targets, memory boundedness, and interruption correctness passed in this
-run. The session-only JFK WAV had SHA-256
-`59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e`.
-It was not committed because an independent primary-source provenance URL was
-not established during Task 11.
+The timed phase then ran for 1,800,000.05 ms at six turns/minute:
 
-## Soak
-
-The required command writes raw evidence only to:
-
-`/home/lcavalcanti/.copilot/session-state/5453f433-54c9-4c50-95bb-92097e6807ff/files/oracle-voice-soak.json`
-
-The harness uses a real Fastify hub, ticket exchange, WebSocket protocol,
-coordinator, manager event stream, protocol PCM, speech start/end, manager
-delta/TTS path, and real elapsed time. Its deterministic injected backend
-emits stale output after every cancellation so the coordinator/client boundary
-must reject it. RSS is sampled every 10 seconds and the final-half linear slope
-is calculated in MiB/minute.
-
-Command:
-
-```text
-pnpm tsx scripts/oracle-voice-soak.ts \
-  --minutes 30 --turns-per-minute 6 --rapid-start-stop 500 \
-  --output <session>/oracle-voice-soak.json
-```
-
-Result: PASS after 1,800,000.95 ms of timed conversation.
-
-| Metric | Result |
+| Soak metric | Result |
 | --- | ---: |
-| utterances / manager sends / unique sends | 680 / 680 / 680 |
-| manager / backend cancellations | 500 / 500 |
-| stale backend emissions / client deliveries | 500 / 0 |
-| maximum queue / limit | 640 / 64,000 bytes |
-| initial / peak / final RSS | 152.0 / 169.4 / 127.5 MiB |
-| final-half RSS slope | 0.091 MiB/min |
-| RSS samples | 182 |
+| utterances / manager sends / unique sends | 180 / 180 / 180 |
+| queued / pending / total input backlog | 4,480 / 640 / 5,120 bytes |
+| input queue limit | 64,000 bytes |
+| maximum output backlog | 18,186 bytes |
+| queue overflow rejections | 0 |
+| backend cancellations / stale emissions / stale client deliveries | 681 / 681 / 0 |
+| initial / peak / final RSS | 155.3 / 392.6 / 159.0 MiB |
+| final-half RSS slope | 0.015 MiB/min |
+| RSS samples | 232 |
 | active backend sessions after stop | 0 |
 | orphan child PIDs | 0 |
 | unhandled rejections / uncaught exceptions | 0 / 0 |
 
-All eleven assertions passed, including real elapsed duration, exact and unique
-manager sends, bounded queue and RSS slope, stale rejection, closed socket,
-backend cleanup, child cleanup, and empty asynchronous error lists.
+A fixture-owned child PID was observed during the run and absent afterward.
+The negative unit test supplies a surviving PID and proves the child-cleanup
+assertion becomes false. All 19 artifact assertions passed.
 
-## Verification
+## 8. Baseline correction
 
-```text
-All Oracle voice/Task 11 tests:  17 files, 254 tests passed
-Full Vitest suite:               151 passed, 1 skipped file
-                                 4,702 passed, 1 skipped test
-Deterministic Chromium project:  3 passed, including Oracle Conversation
-Deterministic Firefox:          1 passed
-Deterministic WebKit:           host libraries missing; no test executed
-Real-engine Chromium:           1 passed
-Lint:                           passed; pre-existing React warnings only
-TypeScript + production build:  passed
-```
+The only maintained prior baseline is now `Whisper small`: 0.720 derived STT
+RTF and 885 MiB derived peak RSS from the prior 11-second fixture. It was not
+re-scored and no first-partial, endpoint-final, or TTS values were fabricated.
+The benchmark script, generated artifacts, user documentation, design, and
+this report use that label.
 
-Final commands included `pnpm test`, `pnpm lint`, `pnpm build`, the targeted
-17-file Oracle voice Vitest command, both supported deterministic browser
-projects, the real-engine Playwright configuration, the 16-row benchmark, and
-the required 30-minute soak. The ordinary production bundle contains no
-`__oracleVoiceE2E` or deterministic-test marker.
+## Browser and verification evidence
 
-## Limitations and concerns
+Deterministic Chromium and Firefox each passed the built-UI conversation test
+(1 test in 12.1 seconds and 1 test in 13.1 seconds). Real-engine Chromium
+passed its 1 test in 18.1 seconds with the generation evidence above. Browser
+launches used the development host's extracted ALSA library. WebKit remains
+unrunnable on this host because required GTK/media shared libraries are absent;
+it is not reported as passed or skipped.
 
-- WebKit is an explicit host dependency blocker, not a passing or skipped
-  browser family.
-- The current resident VITS callback completes a whole sentence before the
-  worker emits protocol frames; it is sentence-level early playback, not
-  engine-incremental audio.
-- Synthesis is capped at 12 seconds per sentence.
-- General English quality is not established for either measured profile.
-- Brazilian Portuguese evidence is compact and single-speaker.
-- Faber remains research-only ancestry; no Faber-derived audio is committed.
-- The real JFK source stayed session-only because primary-source URL
-  provenance was not independently completed.
+The focused suite passed 34/34 tests. Both `pnpm check` and
+`NODE_ENV=production pnpm check` passed lint, the complete Vitest suite,
+TypeScript, and the production Vite build. Lint emitted only the repository's
+existing React warnings. Production-bundle isolation and `git diff --check`
+also passed.
+
+## Remaining concerns
+
+- English STT quality and real-time first-partial targets are not met.
+- The pt-BR corpus is compact and single-speaker.
+- Resident VITS is sentence-complete rather than engine-incremental and remains
+  bounded to 12 seconds per sentence.
+- Native synthesis preemption is not established; pending real
+  delivery/playback cancellation is.
+- WebKit and physical Safari/device coverage remain host/device blockers.
+- The JFK real-engine fixture remains session-only because independent
+  primary-source provenance was not established.
 - No merge or deployment was performed.

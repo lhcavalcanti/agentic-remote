@@ -40,6 +40,7 @@ interface FakeVoiceState {
   audioFrames: number
   managerSends: string[]
   synthesizedTexts: string[]
+  synthesizedSegments: Array<{ text: string; signature: number }>
   cancellations: number
   currentGeneration: number
 }
@@ -197,9 +198,11 @@ class FakeVoiceBackend implements VoiceBackend {
   private readonly pendingFinals: ActiveBackendSession[] = []
   private readonly sessions = new Map<string, ActiveBackendSession>()
   readonly synthesizedTexts: string[] = []
+  readonly synthesizedSegments: Array<{ text: string; signature: number }> = []
   streamStarts = 0
   audioFrames = 0
   currentGeneration = 0
+  private synthesisSequence = 0
 
   capability(): VoiceBackendCapability {
     return {
@@ -292,9 +295,11 @@ class FakeVoiceBackend implements VoiceBackend {
     this.utterances.length = 0
     this.pendingFinals.length = 0
     this.synthesizedTexts.length = 0
+    this.synthesizedSegments.length = 0
     this.streamStarts = 0
     this.audioFrames = 0
     this.currentGeneration = 0
+    this.synthesisSequence = 0
   }
 
   activeStreams(): number {
@@ -332,12 +337,16 @@ class FakeVoiceBackend implements VoiceBackend {
       case 'cancel':
         return
       case 'synthesize':
+        {
+        const signature = 1_000 + (++this.synthesisSequence)
         this.synthesizedTexts.push(message.text)
+        this.synthesizedSegments.push({ text: message.text, signature })
         await active.send(serverState(active, 'speaking'))
         queueMicrotask(() => {
-          void this.sendPlayback(active, message).catch(() => undefined)
+          void this.sendPlayback(active, message, signature).catch(() => undefined)
         })
         return
+        }
       case 'stop':
         await active.send(serverState(active, 'stopped'))
     }
@@ -383,10 +392,9 @@ class FakeVoiceBackend implements VoiceBackend {
   private async sendPlayback(
     active: ActiveBackendSession,
     message: Extract<VoiceClientControl, { type: 'synthesize' }>,
+    signature: number,
   ): Promise<void> {
-    const samples = new Int16Array(44_100).fill(
-      500 + (this.synthesizedTexts.length % 10),
-    )
+    const samples = new Int16Array(44_100).fill(signature)
     let sequence = 0
     for (let offset = 0; offset < samples.length; offset += 8_000) {
       await active.send({
@@ -489,7 +497,13 @@ export class FakeVoiceController {
       this.serverState(),
       this.browserState(),
     ])
-    return server.synthesizedTexts.slice(0, browser.audioStarts)
+    const textBySignature = new Map(
+      server.synthesizedSegments.map(({ text, signature }) => [signature, text]),
+    )
+    return [...new Set(browser.playedSignatures)].flatMap((signature) => {
+      const text = textBySignature.get(signature)
+      return text === undefined ? [] : [text]
+    })
   }
 
   async snapshot(): Promise<FakeVoiceState & {
@@ -508,10 +522,15 @@ export class FakeVoiceController {
     return response.json() as Promise<FakeVoiceState>
   }
 
-  private async browserState(): Promise<{ audioStarts: number; audioStops: number }> {
+  private async browserState(): Promise<{
+    audioStarts: number
+    audioStops: number
+    playedSignatures: number[]
+  }> {
     return this.page.evaluate(() => ({
       audioStarts: window.__oracleVoiceE2E.audioStarts.length,
       audioStops: window.__oracleVoiceE2E.audioStops,
+      playedSignatures: [...window.__oracleVoiceE2E.playedSignatures],
     }))
   }
 
@@ -550,18 +569,57 @@ export async function installFakeBrowserVoice(page: Page): Promise<void> {
       buffer: FakeAudioBuffer | null = null
       onended: (() => void) | null = null
       private timer: ReturnType<typeof setTimeout> | undefined
+      private pendingId: number | undefined
+      constructor(private readonly context: FakeAudioContext) {}
       connect() {}
       disconnect() {}
-      start() {
+      start(when = 0) {
         const duration = this.buffer
           ? Math.max(25, this.buffer.length / this.buffer.sampleRate * 1_000)
           : 25
-        window.__oracleVoiceE2E.audioStarts.push(performance.now())
-        this.timer = setTimeout(() => this.onended?.(), duration)
+        const generation = window.__oracleVoiceE2E.incomingPlaybackGeneration ?? -1
+        const id = ++window.__oracleVoiceE2E.audioScheduleSequence
+        const signature = this.buffer
+          ? Math.round(this.buffer.samples[0] * 32_768)
+          : 0
+        const scheduledAt = performance.now()
+        const schedulingDelay = Math.max(
+          0,
+          when * 1_000 - (performance.now() - this.context.startedAt),
+        )
+        const record = { id, generation, signature, at: scheduledAt }
+        window.__oracleVoiceE2E.audioScheduleRecords.push(record)
+        window.__oracleVoiceE2E.pendingAudioStarts.push(record)
+        this.pendingId = id
+        this.timer = setTimeout(() => {
+          this.pendingId = undefined
+          window.__oracleVoiceE2E.pendingAudioStarts =
+            window.__oracleVoiceE2E.pendingAudioStarts.filter(
+              (pending) => pending.id !== id,
+            )
+          const at = performance.now()
+          window.__oracleVoiceE2E.audioStarts.push(at)
+          window.__oracleVoiceE2E.audioStartRecords.push({
+            id,
+            generation,
+            signature,
+            at,
+          })
+          window.__oracleVoiceE2E.playedSignatures.push(signature)
+          this.timer = setTimeout(() => this.onended?.(), duration)
+        }, schedulingDelay + window.__oracleVoiceE2E.playbackStartDelayMs)
       }
       stop() {
         if (this.timer !== undefined) clearTimeout(this.timer)
         this.timer = undefined
+        if (this.pendingId !== undefined) {
+          const id = this.pendingId
+          window.__oracleVoiceE2E.pendingAudioStarts =
+            window.__oracleVoiceE2E.pendingAudioStarts.filter(
+              (pending) => pending.id !== id,
+            )
+          this.pendingId = undefined
+        }
         window.__oracleVoiceE2E.audioStops += 1
       }
     }
@@ -600,7 +658,7 @@ export async function installFakeBrowserVoice(page: Page): Promise<void> {
         return new FakeAudioBuffer(length, sampleRate)
       }
       createBufferSource() {
-        return new FakeSource()
+        return new FakeSource(this)
       }
     }
     class FakeMediaRecorder {
@@ -638,8 +696,39 @@ export async function installFakeBrowserVoice(page: Page): Promise<void> {
       permission: 'granted',
       audioStarts: [],
       audioStops: 0,
+      playedSignatures: [],
+      audioScheduleSequence: 0,
+      audioScheduleRecords: [],
+      pendingAudioStarts: [],
+      audioStartRecords: [],
+      playbackStartDelayMs: 0,
       trackStops: 0,
     }
+    const NativeWebSocket = window.WebSocket
+    class ObservedWebSocket extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols)
+        this.addEventListener('message', (event) => {
+          if (!(event.data instanceof ArrayBuffer) || event.data.byteLength < 24) {
+            return
+          }
+          const view = new DataView(event.data)
+          if (
+            view.getUint8(0) !== 0x41
+            || view.getUint8(1) !== 0x52
+            || view.getUint8(2) !== 0x56
+            || view.getUint8(3) !== 0x43
+            || view.getUint8(5) !== 1
+          ) return
+          window.__oracleVoiceE2E.incomingPlaybackGeneration =
+            view.getUint32(8, true)
+        })
+      }
+    }
+    Object.defineProperty(window, 'WebSocket', {
+      configurable: true,
+      value: ObservedWebSocket,
+    })
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
@@ -683,6 +772,28 @@ declare global {
       }
       audioStarts: number[]
       audioStops: number
+      playedSignatures: number[]
+      incomingPlaybackGeneration?: number
+      audioScheduleSequence: number
+      audioScheduleRecords: Array<{
+        id: number
+        generation: number
+        signature: number
+        at: number
+      }>
+      pendingAudioStarts: Array<{
+        id: number
+        generation: number
+        signature: number
+        at: number
+      }>
+      audioStartRecords: Array<{
+        id: number
+        generation: number
+        signature: number
+        at: number
+      }>
+      playbackStartDelayMs: number
       trackStops: number
     }
     webkitAudioContext?: typeof AudioContext
@@ -763,6 +874,7 @@ async function startFixtureServer(port: number): Promise<void> {
     audioFrames: voice.audioFrames,
     managerSends: [...manager.sends],
     synthesizedTexts: [...voice.synthesizedTexts],
+    synthesizedSegments: [...voice.synthesizedSegments],
     cancellations: manager.cancellations,
     currentGeneration: voice.currentGeneration,
   }))

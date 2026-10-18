@@ -110,17 +110,20 @@ per hub.
 
 Measurements below are from the six-core development Xeon W-2235 and are not
 hardware promises. The committed FLEURS corpus and
-`scripts/oracle-voice-benchmark.ts` reproduce this table; medians exclude
-silence and missing partials, WER is the mean of clean fixtures, and peak RSS
-is the maximum resident child value:
+`scripts/oracle-voice-benchmark.ts` reproduce this table. STT quality and
+compute RTF consume each complete fixture and aggregate every recognizer
+endpoint. Latency is measured in a separate real-time-paced pass from detected
+speech onset; each 80 ms frame becomes available only at the end of its
+real-time interval. Medians exclude silence and missing partials, WER is the
+mean of clean fixtures, and peak RSS is the maximum resident child value:
 
-| Profile/language | Clean WER | First partial median | STT RTF median | TTS first audio median | TTS RTF median | Peak RSS |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `fast-en` / en | 0.958 | 102 ms (1/5 fixtures emitted a partial) | 0.027 | 288 ms | 0.094 | 407 MiB |
-| `multilingual-quality` / en | 0.704 | 872 ms (4/5 emitted) | 0.511 | 318 ms | 0.092 | 1,254 MiB |
-| `multilingual-quality` / pt-BR | 0.045 | 699 ms | 0.687 | 299 ms | 0.083 | 1,212 MiB |
+| Profile/language | Clean WER | Real-time first partial | Endpoint final | STT compute RTF | TTS first audio | TTS RTF | Peak RSS | Endpoints | Consumed audio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fast-en` / en | 0.917 | 1,650 ms | 21 ms | 0.040 | 283 ms | 0.090 | 411 MiB | 13 | 29,370 ms |
+| `multilingual-quality` / en | 0.517 | 965 ms | 577 ms | 0.757 | 286 ms | 0.086 | 1,246 MiB | 11 | 29,370 ms |
+| `multilingual-quality` / pt-BR | 0.045 | 724 ms | 421 ms | 0.735 | 304 ms | 0.085 | 1,205 MiB | 6 | 23,940 ms |
 
-The prior Whisper tiny baseline remains 0.72 RTF and about 885 MiB RSS.
+The prior Whisper small baseline remains 0.72 RTF and about 885 MiB RSS.
 Zipformer is fast but failed the FLEURS quality gate, returning an empty result
 on four of five English non-silence cases. Nemotron established useful
 Brazilian Portuguese evidence on one anonymous male speaker, including 0.000
@@ -129,21 +132,37 @@ low-resource targets. The corpus cannot establish multi-speaker Portuguese or
 perceptual TTS quality.
 
 The real browser/hub/WebSocket/resident-child run used the session-only NASA
-JFK clip, Zipformer, and resident LJSpeech VITS. It measured 1,446 ms to first
-partial, 96 ms from explicit speech end to final, 0.198 STT RTF, 224 ms from
-manager delta to first audio, 0.108 TTS RTF, 289 MiB peak worker RSS, and 77.0%
+JFK clip, Zipformer, and resident LJSpeech VITS. It measured 1,140 ms to first
+partial, 88 ms from explicit speech end to final, 0.173 STT RTF, 174 ms from
+manager delta to first audio, 0.093 TTS RTF, 296 MiB peak worker RSS, and 69.5%
 sustained worker CPU.
-Barge-in stopped queued playback, cancelled generation 1, submitted the second
-utterance exactly once, and delivered zero old-generation audio afterward.
-The first-partial target therefore missed; finalization, warm short-sentence
-TTS, and RTF targets passed in that run.
+Barge-in occurred with three generation-1 browser sources scheduled but held by
+a controlled 1.5-second slow-consumer delay. Resident VITS had already emitted
+all three real audio frames and `audio_end`, so the run proves pending
+delivery/playback cancellation rather than native synthesis preemption.
+Generation 1 was cancelled, all three pending starts were stopped, generation 2
+scheduled three real frames and started playback, and observed old-generation
+starts after interruption remained zero through test completion. The
+first-partial target therefore missed; finalization, warm short-sentence TTS,
+and RTF targets passed in that run.
 
 The required real-time soak passed 30 minutes at six turns/minute after 500
-rapid start/stop races: 680/680 unique manager sends, 500 cancellations and
-stale backend emissions, zero stale client deliveries, a 640-byte maximum
-input queue against the 64,000-byte limit, no orphan child/socket or unhandled
-error, and a final-half RSS slope of 0.091 MiB/minute. RSS was 152 MiB initially,
-169 MiB peak, and 128 MiB after cleanup.
+actual conversation WebSocket/session lifecycle cycles. Those cycles opened
+520 sockets, included 20 stops during startup with immediate restart, and
+completed 520 backend/socket cleanup checks in 502,616 ms. The timed phase then
+sent 180/180 unique manager submissions in 1,800,000.05 ms.
+
+The soak retained production `LocalVoiceBackend` and
+`EngineVoiceBackendSession` around a controlled engine. It measured 4,480
+queued input bytes, 640 pending/in-flight input bytes, 5,120 total input
+backlog against the 64,000-byte limit, and 18,186 queued output bytes, with no
+overflow. It observed 681 cancellation-triggered stale backend emissions and
+zero stale client deliveries. A fixture-owned child PID was observed during
+the run and absent afterward. RSS across 232 samples was 155.3 MiB initially,
+392.6 MiB peak during lifecycle cycling, and 159.0 MiB finally; the final-half
+slope was 0.015 MiB/minute. All 19 assertions passed, including zero active
+backend sessions, orphan child PIDs, unhandled rejections, or uncaught
+exceptions after stop.
 
 Resident VITS still invokes progress only with the complete sentence, so it is
 not engine-incremental within a sentence. The worker validates that complete

@@ -37,9 +37,9 @@ They are implementation evidence, not promises for other hardware.
 | Piper 1.8 en_US-ljspeech-medium | 131 ms first chunk; 0.029 RTF | 239 MiB | Historical Python-API benchmark; not the shipped resident sherpa VITS path |
 | sherpa Kitten nano int8, 4 threads | 508-680 ms first audio for short segments; 0.29-0.64 RTF | 168-192 MiB | Permissive fallback, misses the latency target |
 | sherpa-onnx-node 1.13.8 VITS, warmed, 2 threads | LJSpeech: 711 ms for 8.00 s audio, 0.089 RTF; Faber: 610 ms for 6.72 s audio, 0.091 RTF | Not isolated in this probe | One `progress=1` callback containing the whole sentence, only 0.069/0.048 ms before `generateAsync` resolved; not engine-incremental and misses the 300 ms first-audio target |
-| Task 11 `fast-en`, English FLEURS corpus | 0.027 median STT RTF; 0.958 clean WER; 288 ms median resident-VITS first audio | 407 MiB | Meets speed, fails the corpus quality gate |
-| Task 11 `multilingual-quality`, English FLEURS corpus | 0.511 median STT RTF; 0.704 clean WER; 318 ms median resident-VITS first audio | 1,254 MiB | Neither quality nor CPU/resource target is established |
-| Task 11 `multilingual-quality`, pt-BR FLEURS corpus | 0.687 median STT RTF; 0.045 clean WER; 299 ms median resident-VITS first audio | 1,212 MiB | Useful single-speaker evidence; misses the CPU target |
+| Task 11 `fast-en`, English FLEURS corpus | 0.040 full-fixture compute RTF; 0.917 clean WER; 1,650 ms real-time first partial; 283 ms median resident-VITS first audio | 411 MiB | Meets compute speed, fails the corpus quality and streaming-latency gates |
+| Task 11 `multilingual-quality`, English FLEURS corpus | 0.757 full-fixture compute RTF; 0.517 clean WER; 965 ms real-time first partial; 286 ms median resident-VITS first audio | 1,246 MiB | Neither quality nor CPU/resource target is established |
+| Task 11 `multilingual-quality`, pt-BR FLEURS corpus | 0.735 full-fixture compute RTF; 0.045 clean WER; 724 ms real-time first partial; 304 ms median resident-VITS first audio | 1,205 MiB | Useful single-speaker evidence; misses the CPU and streaming-latency targets |
 
 Nemotron 3.5 accurately transcribed the earlier JFK English benchmark, supports
 40 locales including `pt-BR`, and emits punctuation. Task 11 showed that result

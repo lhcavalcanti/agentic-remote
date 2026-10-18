@@ -99,6 +99,13 @@ export interface VoiceBackendSessionOpenOptions {
   streamId: string
   send: (output: VoiceBackendOutput) => Promise<void>
   terminate: (failure: VoiceBackendDisconnect) => void
+  observeQueue?: (snapshot: VoiceBackendQueueSnapshot) => void
+}
+
+export interface VoiceBackendQueueSnapshot {
+  queuedInputBytes: number
+  pendingInputBytes: number
+  queuedOutputBytes: number
 }
 
 export interface VoiceBackend {
@@ -159,6 +166,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private readonly limits: VoiceBackendSessionLimits
   private readonly sendOutput: (output: VoiceBackendOutput) => Promise<void>
   private readonly terminate: (failure: VoiceBackendDisconnect) => void
+  private readonly observeQueue: (snapshot: VoiceBackendQueueSnapshot) => void
   private readonly onClosed: () => void
   private readonly unsubscribe: () => void
   private readonly audioQueue: QueuedAudio[] = []
@@ -168,6 +176,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private closePromise: Promise<void> | undefined
   private idleTimer: Timer | undefined
   private queuedAudioBytes = 0
+  private pendingAudioBytes = 0
   private queuedOutputBytes = 0
   private drainingAudio = false
   private drainingOutput = false
@@ -193,8 +202,10 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     validateLimits(this.limits)
     this.sendOutput = options.send
     this.terminate = options.terminate
+    this.observeQueue = options.observeQueue ?? (() => undefined)
     this.onClosed = options.onClosed ?? (() => undefined)
     this.unsubscribe = this.engine.onEvent((event) => this.handleEngineEvent(event))
+    this.reportQueue()
     this.armIdleTimeout()
   }
 
@@ -239,7 +250,11 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         throw new VoiceSessionError('Voice utterance duration limit exceeded', 1008)
       }
       const bytes = frame.samples.byteLength
-      if (bytes > this.limits.maxQueueBytes - this.queuedAudioBytes) {
+      if (
+        bytes > this.limits.maxQueueBytes
+          - this.queuedAudioBytes
+          - this.pendingAudioBytes
+      ) {
         throw new VoiceSessionError('Voice input queue is full', 1013)
       }
 
@@ -251,6 +266,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         utterance: { ...utterance },
         bytes,
       })
+      this.reportQueue()
       this.startAudioDrain()
     } catch (error) {
       const failure = asSessionError(error)
@@ -424,12 +440,19 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       while (!this.closed && this.audioQueue.length > 0) {
         const queued = this.audioQueue.shift()!
         this.queuedAudioBytes -= queued.bytes
-        if (!sameUtterance(this.activeUtterance, queued.utterance)) continue
-        await this.engine.stt.accept({
-          ...queued.frame,
-          streamId: this.streamId,
-          utteranceId: queued.utterance.utteranceId,
-        })
+        this.pendingAudioBytes += queued.bytes
+        this.reportQueue()
+        try {
+          if (!sameUtterance(this.activeUtterance, queued.utterance)) continue
+          await this.engine.stt.accept({
+            ...queued.frame,
+            streamId: this.streamId,
+            utteranceId: queued.utterance.utteranceId,
+          })
+        } finally {
+          this.pendingAudioBytes -= queued.bytes
+          this.reportQueue()
+        }
       }
     } catch (error) {
       await this.fail(asSessionError(error, 1011), 'internal')
@@ -543,6 +566,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     const queued = new Promise<void>((resolve, reject) => {
       this.outputQueue.push({ output, bytes, resolve, reject })
     })
+    this.reportQueue()
     this.startOutputDrain()
     return queued
   }
@@ -567,6 +591,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
           return
         } finally {
           this.queuedOutputBytes -= queued.bytes
+          this.reportQueue()
         }
       }
     } finally {
@@ -663,12 +688,26 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private clearAudioQueue(): void {
     this.audioQueue.length = 0
     this.queuedAudioBytes = 0
+    this.reportQueue()
   }
 
   private clearOutputQueue(): void {
     for (const queued of this.outputQueue.splice(0)) {
       this.queuedOutputBytes -= queued.bytes
       queued.resolve()
+    }
+    this.reportQueue()
+  }
+
+  private reportQueue(): void {
+    try {
+      this.observeQueue({
+        queuedInputBytes: this.queuedAudioBytes,
+        pendingInputBytes: this.pendingAudioBytes,
+        queuedOutputBytes: this.queuedOutputBytes,
+      })
+    } catch {
+      // Queue observation is diagnostic and must not affect the voice session.
     }
   }
 

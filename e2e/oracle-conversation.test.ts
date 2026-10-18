@@ -59,9 +59,15 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
     'Which one needs attention?',
   ])
 
-  await voice.oracleDelta('The build session needs attention.')
-  await expect.poll(() => voice.playedText()).toContain(
-    'The build session needs attention.',
+  await page.evaluate(() => {
+    window.__oracleVoiceE2E.playbackStartDelayMs = 1_500
+  })
+  await voice.oracleDelta('This synthesis is cancelled before playback.')
+  await expect.poll(async () => (await voice.snapshot()).synthesizedTexts).toContain(
+    'This synthesis is cancelled before playback.',
+  )
+  expect(await voice.playedText()).not.toContain(
+    'This synthesis is cancelled before playback.',
   )
   await expect(page.getByText('Speaking', { exact: true })).toBeVisible()
 
@@ -73,8 +79,14 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   )
   await voice.endSpeech()
   await voice.releaseFinal()
+  await page.evaluate(() => {
+    window.__oracleVoiceE2E.playbackStartDelayMs = 0
+  })
   await voice.oracleDelta('Summary one is obsolete.')
   await expect.poll(() => voice.playedText()).toContain('Summary one is obsolete.')
+  expect(await voice.playedText()).not.toContain(
+    'This synthesis is cancelled before playback.',
+  )
   const staleGeneration = await voice.currentGeneration()
 
   for (const [index, transcript] of [

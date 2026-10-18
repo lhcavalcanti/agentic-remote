@@ -40,6 +40,12 @@ interface RealMetrics {
   sustainedCpuPercent?: number
   cancellationGeneration?: number
   audioAfterCancellation: number
+  generations: Record<string, {
+    audioFrames: number
+    audioEndEvents: number
+    audioAfterCancellation: number
+    cancelled: boolean
+  }>
   fatalError?: string
 }
 
@@ -62,7 +68,10 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
   private cpuStartTicks: number | undefined
   private cpuStartedAt: number | undefined
   private ticksPerSecond = 100
-  private readonly result: RealMetrics = { audioAfterCancellation: 0 }
+  private readonly result: RealMetrics = {
+    audioAfterCancellation: 0,
+    generations: {},
+  }
 
   async initialize(config: EnabledOracleVoiceConfig): Promise<VoiceEngineSession> {
     if (this.session) return this.session
@@ -133,7 +142,15 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
   }
 
   metrics(): RealMetrics {
-    return { ...this.result }
+    return {
+      ...this.result,
+      generations: Object.fromEntries(
+        Object.entries(this.result.generations).map(([generation, value]) => [
+          generation,
+          { ...value },
+        ]),
+      ),
+    }
   }
 
   resetMetrics(): void {
@@ -145,6 +162,7 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
       delete this.result[key]
     }
     this.result.audioAfterCancellation = 0
+    this.result.generations = {}
   }
 
   private observeEvent(event: VoiceEngineEvent): void {
@@ -166,9 +184,12 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
         ? 0
         : Math.max(0, now - generation.speechEndedAt)
     } else if (event.type === 'audio') {
+      const observation = this.generationObservation(event.generation)
+      observation.audioFrames += 1
       const cancellation = this.cancelledAt.get(event.generation)
       if (cancellation !== undefined && now >= cancellation) {
         this.result.audioAfterCancellation += 1
+        observation.audioAfterCancellation += 1
       }
       generation.ttsSamples += event.samples.length
       generation.ttsSampleRate = event.sampleRate
@@ -180,6 +201,7 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
       && generation.ttsStartedAt !== undefined
       && generation.ttsSampleRate
     ) {
+      this.generationObservation(event.generation).audioEndEvents += 1
       const audioDurationMs = generation.ttsSamples / generation.ttsSampleRate * 1_000
       this.result.ttsRtf ??= audioDurationMs > 0
         ? (now - generation.ttsStartedAt) / audioDurationMs
@@ -190,6 +212,7 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
   private recordCancellation(input: VoiceGenerationIdentity): void {
     this.cancelledAt.set(input.generation, performance.now())
     this.result.cancellationGeneration = input.generation
+    this.generationObservation(input.generation).cancelled = true
   }
 
   private generation(id: number): GenerationMetrics {
@@ -198,6 +221,16 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
     const created: GenerationMetrics = { sttSamples: 0, ttsSamples: 0 }
     this.generations.set(id, created)
     return created
+  }
+
+  private generationObservation(generation: number) {
+    const key = String(generation)
+    return this.result.generations[key] ??= {
+      audioFrames: 0,
+      audioEndEvents: 0,
+      audioAfterCancellation: 0,
+      cancelled: false,
+    }
   }
 
   private async armProcessSampler(): Promise<void> {

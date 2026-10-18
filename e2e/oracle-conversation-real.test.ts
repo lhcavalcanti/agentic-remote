@@ -18,6 +18,12 @@ interface RealVoiceState {
     sustainedCpuPercent?: number
     cancellationGeneration?: number
     audioAfterCancellation: number
+    generations: Record<string, {
+      audioFrames: number
+      audioEndEvents: number
+      audioAfterCancellation: number
+      cancelled: boolean
+    }>
     fatalError?: string
   }
 }
@@ -60,6 +66,9 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   expect(Date.now() - firstStartedAt).toBeLessThan(30_000)
 
   const browserBeforeTts = await browserAudioState(page)
+  await page.evaluate(() => {
+    window.__oracleVoiceE2E.playbackStartDelayMs = 1_500
+  })
   await post(page, '/__e2e/manager/delta', {
     content: 'The verified systems are healthy.',
   })
@@ -73,16 +82,31 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   expect((await realState(page)).metrics.fatalError).toBeUndefined()
   await expect.poll(async () => (await browserAudioState(page)).starts, {
     timeout: 30_000,
-  }).toBeGreaterThan(browserBeforeTts.starts)
+  }).toBe(browserBeforeTts.starts)
+  await expect.poll(async () => (
+    await browserAudioState(page)
+  ).scheduled.filter(({ generation }) => generation === 1).length, {
+    timeout: 30_000,
+  }).toBeGreaterThan(0)
+  await expect.poll(async () => (
+    await browserAudioState(page)
+  ).pending.filter(({ generation }) => generation === 1).length).toBeGreaterThan(0)
+  const pendingState = await realState(page)
+  expect(pendingState.metrics.generations['1']?.audioFrames).toBeGreaterThan(0)
+  expect(pendingState.metrics.generations['1']?.audioEndEvents).toBeGreaterThan(0)
   await expect(page.getByText('Speaking', { exact: true })).toBeVisible()
 
-  await page.evaluate(() => window.__oracleVoiceE2E.vad?.beginSpeech())
+  const interruptionAt = await page.evaluate(async () => {
+    const at = performance.now()
+    await window.__oracleVoiceE2E.vad?.beginSpeech()
+    return at
+  })
   await expect.poll(async () => (await browserAudioState(page)).stops).toBeGreaterThan(
     browserBeforeTts.stops,
   )
-  const startsAfterInterruption = (await browserAudioState(page)).starts
-  await page.waitForTimeout(500)
-  expect((await browserAudioState(page)).starts).toBe(startsAfterInterruption)
+  await expect.poll(async () => (
+    await browserAudioState(page)
+  ).pending.filter(({ generation }) => generation === 1).length).toBe(0)
 
   await page.evaluate(
     (audio) => window.__oracleVoiceE2E.vad?.pushAudio(audio),
@@ -92,8 +116,20 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   await expect.poll(async () => (await realState(page)).managerSends.length, {
     timeout: 30_000,
   }).toBe(2)
+  await post(page, '/__e2e/manager/delta', {
+    content: 'The replacement generation is audible.',
+  })
+  await expect.poll(async () => (
+    await browserAudioState(page)
+  ).started.filter(({ generation }) => generation === 2).length, {
+    timeout: 30_000,
+  }).toBeGreaterThan(0)
 
   const finalState = await realState(page)
+  const finalBrowserState = await browserAudioState(page)
+  const oldAudioStartsAfterInterruption = finalBrowserState.started.filter(
+    ({ at, generation }) => generation === 1 && at >= interruptionAt,
+  ).length
   expect(finalState.workerAlive).toBe(true)
   expect(finalState.workerPid).toBeGreaterThan(0)
   expect(finalState.managerCancellations).toBeGreaterThanOrEqual(1)
@@ -106,6 +142,9 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   expect(typeof finalState.metrics.sustainedCpuPercent).toBe('number')
   expect(typeof finalState.metrics.cancellationGeneration).toBe('number')
   expect(finalState.metrics.audioAfterCancellation).toBe(0)
+  expect(finalState.metrics.generations['1']?.cancelled).toBe(true)
+  expect(finalState.metrics.generations['1']?.audioAfterCancellation).toBe(0)
+  expect(oldAudioStartsAfterInterruption).toBe(0)
   const outputPath = process.env.AGENTIC_REMOTE_REAL_E2E_OUTPUT
   if (outputPath) {
     await writeFile(outputPath, `${JSON.stringify({
@@ -115,8 +154,9 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
       workerPid: finalState.workerPid,
       workerAlive: finalState.workerAlive,
       metrics: finalState.metrics,
-      browserAudio: await browserAudioState(page),
-      oldAudioStartsAfterInterruption: 0,
+      browserAudio: finalBrowserState,
+      interruptionAt,
+      oldAudioStartsAfterInterruption,
     }, null, 2)}\n`, 'utf8')
   }
 })
@@ -129,10 +169,19 @@ async function realState(page: Parameters<typeof browserAudioState>[0]): Promise
 
 async function browserAudioState(
   page: import('@playwright/test').Page,
-): Promise<{ starts: number; stops: number }> {
+): Promise<{
+  starts: number
+  stops: number
+  scheduled: Array<{ id: number; generation: number; signature: number; at: number }>
+  pending: Array<{ id: number; generation: number; signature: number; at: number }>
+  started: Array<{ id: number; generation: number; signature: number; at: number }>
+}> {
   return page.evaluate(() => ({
     starts: window.__oracleVoiceE2E.audioStarts.length,
     stops: window.__oracleVoiceE2E.audioStops,
+    scheduled: [...window.__oracleVoiceE2E.audioScheduleRecords],
+    pending: [...window.__oracleVoiceE2E.pendingAudioStarts],
+    started: [...window.__oracleVoiceE2E.audioStartRecords],
   }))
 }
 

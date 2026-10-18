@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  childCleanupPassed,
   linearSlopePerMinute,
   parseSoakOptions,
+  runLifecycleCycles,
 } from './oracle-voice-soak.js'
 
 describe('Oracle voice soak tooling', () => {
@@ -25,5 +27,37 @@ describe('Oracle voice soak tooling', () => {
       { elapsedMs: 120_000, rssMiB: 101 },
     ])).toBeCloseTo(0.5)
     expect(linearSlopePerMinute([{ elapsedMs: 0, rssMiB: 100 }])).toBe(0)
+  })
+
+  it('runs real lifecycle cycles with startup stops and immediate restarts', async () => {
+    const events: string[] = []
+    const result = await runLifecycleCycles(5, {
+      startupStopEvery: 2,
+      stopDuringStartup: async () => {
+        events.push('startup-stop')
+      },
+      startAndStop: async () => {
+        events.push('start-stop')
+      },
+      assertCleanup: async () => {
+        events.push('cleanup')
+      },
+    })
+
+    expect(result).toEqual({
+      requested: 5,
+      completed: 5,
+      socketConnections: 8,
+      startupStops: 3,
+      immediateRestarts: 3,
+      cleanupChecks: 8,
+    })
+    expect(events.filter((event) => event === 'cleanup')).toHaveLength(8)
+  })
+
+  it('fails child cleanup evidence while the fixture-owned process remains', () => {
+    expect(childCleanupPassed(123, [123], [])).toBe(true)
+    expect(childCleanupPassed(123, [123], [123])).toBe(false)
+    expect(childCleanupPassed(123, [], [])).toBe(false)
   })
 })

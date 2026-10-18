@@ -858,22 +858,30 @@ required to be individually editable.
     one durable store write MUST append every prompt after the existing FIFO.
   - A retried `batchId` MUST return the original items and queue nothing new.
     The same ID with different prompts MUST be refused.
+  - A closed, suspended, resuming, or not-yet-connected terminal session MUST
+    be refused before any write. Queued work MUST NOT reopen a runtime or
+    attach an SDK owner to a terminal session.
 - **Delivery:**
   - Each prompt MUST stay its own FIFO item and its own turn. Prompts MUST
     never be combined into one model prompt.
   - Items MUST take the app FIFO, never Copilot's in-terminal queue.
   - Edit, remove, reorder, permission and question gating, and dispatch
     recovery MUST apply to each item as to any queued prompt.
+  - An item whose delivery is unconfirmed MUST hold the queue. The user MAY
+    retry it in its original place, naming that attempt, or discard it.
+  - A draining queue MUST NOT raise a completion notification per item.
 - **UI:**
   - One acknowledgement for the whole batch.
   - Each item marked with its batch position.
   - "Nothing was queued" with the reason on refusal.
   - A locked Retry of the same batch when the outcome is unknown. Closing the
-    dialog MUST NOT lose that batch's ID, and it MUST NOT close while a batch
-    is being sent.
+    dialog or reloading the tab MUST NOT lose that batch's ID, and the dialog
+    MUST NOT close while a batch is being sent.
+- **Oracle:** `queue_prompts` MUST queue through the same admission, after
+  reopening or resuming the session as `send_to_session` does.
 - **Older computers:** a computer whose provider does not advertise
-  `supportsQueueBatch` MUST refuse before anything is sent to it, and the
-  action MUST be hidden there.
+  `supportsQueueBatch` (or `supportsQueueRetry`) MUST refuse before anything
+  is sent to it, and the action MUST be hidden there.
 
 An app-queued terminal prompt MUST be durably removed from automatic retry
 before delivery begins. A failed completion write MUST NOT resend the prompt;
@@ -1487,7 +1495,8 @@ Every material release SHOULD preserve:
 - Previously open tmux sessions restored after a simulated host reboot
 - Active tmux and SDK session discovery
 - Immediate Send, editable Queue, and Stop semantics
-- Queue several prompts: one admission, separate FIFO turns, idempotent retry
+- Queue several prompts: one admission, separate FIFO turns, idempotent retry,
+  every session state, Oracle, and retry of an unconfirmed item in place
 - Phone Enter newline and desktop Enter send
 - Questions and permissions visible and scroll-targeted
 - Task-complete summaries as Agent messages

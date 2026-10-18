@@ -204,6 +204,47 @@ export class QueuedDispatches {
     return this.running.has(sessionId)
   }
 
+  /**
+   * Puts an unconfirmed item back where it was, once the user has checked the
+   * provider did not receive it. The drain then takes it again in its turn.
+   */
+  async requeue(
+    sessionId: string,
+    promptId: string,
+    acknowledgesDispatch: string,
+  ): Promise<SessionDetail> {
+    const claim = this.store.get(sessionId)?.queuedDispatch
+    // Unconfirmed as the view shows it: a claim no live attempt owns, which
+    // includes one a restart interrupted mid-dispatch.
+    if (
+      !claim || this.running.has(sessionId) || this.active.get(sessionId) === claim.attemptId ||
+      claim.promptId !== promptId || claim.attemptId !== acknowledgesDispatch
+    ) {
+      throw queueConflict('That queue item is no longer unconfirmed. Read the queue again.')
+    }
+    if (claim.accepted) {
+      throw queueConflict('The provider accepted this item, so it cannot be sent again. Discard it instead.')
+    }
+    const result = await this.store.update(sessionId, (session) => {
+      const current = session.queuedDispatch
+      if (current?.attemptId !== claim.attemptId) {
+        throw queueConflict('The queued dispatch changed. Read the queue again.')
+      }
+      const original = current.original || {
+        id: current.promptId, content: current.content,
+        createdAt: current.startedAt, ...(current.command ? { command: true } : {}),
+      }
+      const queue = (session.queuedPrompts || []).filter((prompt) => prompt.id !== original.id)
+      queue.splice(Math.max(0, Math.min(current.originalIndex ?? 0, queue.length)), 0, original)
+      session.queuedPrompts = queue
+      session.queuedCount = queue.length
+      if (ownsDispatchRecovery(session)) session.failedPrompt = undefined
+      session.queuedDispatch = undefined
+    })
+    this.publish(result)
+    return result
+  }
+
   async discard(
     sessionId: string,
     promptId: string,
@@ -444,6 +485,7 @@ export class QueuedDispatches {
             }
             session.queuedDispatch.state = 'uncertain'
             session.queuedDispatch.message = message
+            if (delivery.accepted) session.queuedDispatch.accepted = true
           })
         } catch (recordError) {
           message += ` Recording the outcome also failed: ${errorMessage(recordError)}.`

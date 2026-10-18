@@ -125,6 +125,10 @@ const discardQueuedDispatchSchema = z.object({
   acknowledgesDispatch: z.string().uuid().optional(),
 })
 
+const retryQueuedDispatchSchema = z.object({
+  acknowledgesDispatch: z.string().uuid(),
+})
+
 const reorderQueueSchema = z.object({
   order: z.array(z.string().min(1)),
 })
@@ -932,6 +936,22 @@ export async function registerHubRoutes(
         request.params.promptId,
         input.acknowledgesDispatch,
       )
+    },
+  )
+
+  // Only after the user has checked the provider did not receive the item.
+  app.post<{ Params: SessionParams & { promptId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId/retry',
+    async (request) => {
+      const input = retryQueuedDispatchSchema.parse(request.body)
+      return {
+        session: await manager.retryQueuedDispatch(
+          request.params.computerId,
+          request.params.sessionId,
+          request.params.promptId,
+          input.acknowledgesDispatch,
+        ),
+      }
     },
   )
 

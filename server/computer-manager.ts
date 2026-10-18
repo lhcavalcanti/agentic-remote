@@ -789,6 +789,27 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return { session: managedSession(result.session, computer), batch: result.batch }
   }
 
+  /** Puts an unconfirmed queue item back in its place, on the computer that owns it. */
+  async retryQueuedDispatch(
+    computerId: string,
+    sessionId: string,
+    promptId: string,
+    acknowledgesDispatch: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const local = computerId === this.identity.info.id
+    if (
+      (local && !this.localService.retryQueuedDispatch) ||
+      !computer.providers?.some((provider) => provider.supportsQueueRetry === true)
+    ) {
+      throw Object.assign(new Error(`Update ${computer.name} to retry a queue item in place.`), { statusCode: 409 })
+    }
+    const session = local
+      ? await this.localService.retryQueuedDispatch!(sessionId, promptId, acknowledgesDispatch)
+      : await this.requireClient(computerId).retryQueuedDispatch(sessionId, promptId, acknowledgesDispatch)
+    return managedSession(session, computer)
+  }
+
   async reorderQueuedPrompts(
     computerId: string,
     sessionId: string,

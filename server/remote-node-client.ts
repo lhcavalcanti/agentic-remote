@@ -412,6 +412,13 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  async retryQueuedDispatch(sessionId: string, promptId: string, acknowledgesDispatch: string): Promise<SessionDetail> {
+    return this.request<SessionDetail>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}/retry`,
+      { method: 'POST', body: JSON.stringify({ acknowledgesDispatch }) },
+    )
+  }
+
   async queueBatch(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch> {
     return this.request<QueuedBatch>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/batch`,

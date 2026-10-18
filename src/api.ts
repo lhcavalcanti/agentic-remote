@@ -666,6 +666,20 @@ export async function removeQueuedPrompt(
   )
 }
 
+/** Puts an unconfirmed queue item back in its place, once it is known not to have arrived. */
+export async function retryQueuedDispatch(
+  computerId: string,
+  sessionId: string,
+  promptId: string,
+  acknowledgesDispatch: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}/retry`,
+    { method: 'POST', body: JSON.stringify({ acknowledgesDispatch }) },
+  )
+  return response.session
+}
+
 export async function dispatchQueuedPrompt(
   computerId: string,
   sessionId: string,

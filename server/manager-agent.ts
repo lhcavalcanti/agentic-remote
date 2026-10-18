@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type {
   ComputerSummary,
   CreateSessionInput,
+  ManagedQueuedBatch,
   ManagedSession,
   PermissionReplyInput,
   RenameSessionInput,
@@ -10,6 +11,7 @@ import type {
   SendMessageInput,
   UserInputReplyInput,
 } from '../shared/contracts.js'
+import type { QueueBatchInput } from '../shared/queue-batch.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
   MANAGER_SNAPSHOT_MESSAGES,
@@ -53,6 +55,7 @@ export interface ManagerHub {
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, input: RenameSessionInput): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, input: SendMessageInput): Promise<ManagedSession>
+  queueBatch(computerId: string, sessionId: string, input: QueueBatchInput): Promise<ManagedQueuedBatch>
   replyPermission(computerId: string, sessionId: string, requestId: string, input: PermissionReplyInput): Promise<ManagedSession>
   replyUserInput(computerId: string, sessionId: string, requestId: string, input: UserInputReplyInput): Promise<ManagedSession>
   /** Opens a closed session again. */
@@ -705,6 +708,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       renameSession: (computerId, sessionId, title) => hub.renameSession(computerId, sessionId, { title }),
       sendMessage: (computerId, sessionId, content) =>
         hub.sendMessage(computerId, sessionId, { content, enqueue: true }),
+      queueBatch: (computerId, sessionId, input) => hub.queueBatch(computerId, sessionId, input),
       replyPermission: (computerId, sessionId, requestId, optionId) =>
         hub.replyPermission(computerId, sessionId, requestId, { optionId }),
       replyUserInput: (computerId, sessionId, requestId, input) =>

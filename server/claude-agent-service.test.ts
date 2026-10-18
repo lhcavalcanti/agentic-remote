@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -977,6 +978,50 @@ describe('ClaudeAgentService', () => {
     resuming.admissionClosed.delete(session.id)
     const queued = await service.queueBatch(session.id, { batchId: 'batch-resume', prompts: ['first', 'second'] })
     expect(queued.batch.duplicate).toBe(false)
+  })
+
+  it('refuses a batch for a closed session rather than reopening it', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    await service.store.setOpen(session.id, false, true)
+    await expect(service.queueBatch(session.id, { batchId: 'batch-closed', prompts: ['first'] }))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false, message: expect.stringMatching(/Reopen/) })
+    expect(service.getSession(session.id)?.queuedPrompts ?? []).toEqual([])
+  })
+
+  it('retries an unconfirmed batch item in its place and runs the rest after it', async () => {
+    const { directory, service } = await fixture(async function* () {
+      yield* textResult('fixture-session')
+    })
+    const session = await service.createSession(directory, false, true, 'claude')
+    const resuming = service as unknown as { admissionClosed: Set<string> }
+    // Held, so the head can be marked unconfirmed before anything drains it.
+    resuming.admissionClosed.add(session.id)
+    await service.store.enqueueBatch(session.id, {
+      id: 'batch-retry', digest: 'digest', prompts: [
+        { id: 'one', content: 'first', createdAt: new Date().toISOString(), batch: { id: 'batch-retry', index: 0, size: 2 } },
+        { id: 'two', content: 'second', createdAt: new Date().toISOString(), batch: { id: 'batch-retry', index: 1, size: 2 } },
+      ],
+    })
+    const attemptId = randomUUID()
+    await service.store.update(session.id, (stored) => {
+      const [head, ...rest] = stored.queuedPrompts!
+      stored.queuedPrompts = rest
+      stored.queuedDispatch = {
+        attemptId, promptId: head.id, content: head.content, startedAt: head.createdAt,
+        state: 'uncertain', original: head, originalIndex: 0,
+      }
+    })
+    resuming.admissionClosed.delete(session.id)
+
+    const retried = await service.retryQueuedDispatch(session.id, 'one', attemptId)
+    expect(retried.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['first', 'second'])
+    await vi.waitFor(() => {
+      const asked = (service.getSession(session.id)?.messages || [])
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content)
+      expect(asked).toEqual(['first', 'second'])
+    })
   })
 
   it('marks a refusal while stopping as nothing queued', async () => {

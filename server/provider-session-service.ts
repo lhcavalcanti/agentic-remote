@@ -255,6 +255,16 @@ export class ProviderSessionService
     return service.queueBatch(sessionId, input)
   }
 
+  retryQueuedDispatch(sessionId: string, promptId: string, acknowledgesDispatch: string): Promise<SessionDetail> {
+    const service = this.serviceFor(sessionId)
+    const provider = service.getSession(sessionId)?.provider || 'copilot'
+    if (!service.retryQueuedDispatch || !service.providers().some((capability) =>
+      capability.id === provider && capability.supportsQueueRetry === true)) {
+      throw Object.assign(new Error('Update the owning runtime to retry a queue item in place.'), { statusCode: 409 })
+    }
+    return service.retryQueuedDispatch(sessionId, promptId, acknowledgesDispatch)
+  }
+
   updateQueuedPrompt(
     sessionId: string,
     promptId: string,

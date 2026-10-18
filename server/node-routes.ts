@@ -73,6 +73,10 @@ const discardQueuedDispatchSchema = z.object({
   acknowledgesDispatch: z.string().uuid().optional(),
 })
 
+const retryQueuedDispatchSchema = z.object({
+  acknowledgesDispatch: z.string().uuid(),
+})
+
 const reorderQueueSchema = z.object({
   order: z.array(z.string().min(1)),
 })
@@ -510,6 +514,17 @@ export async function registerNodeRoutes(
             request.params.promptId,
             input.content,
           )
+        },
+      )
+
+      node.post<{ Params: { sessionId: string; promptId: string } }>(
+        '/sessions/:sessionId/queue/:promptId/retry',
+        async (request) => {
+          const input = retryQueuedDispatchSchema.parse(request.body)
+          if (!service.retryQueuedDispatch) {
+            throw Object.assign(new Error('Update this runtime to retry a queue item in place.'), { statusCode: 409 })
+          }
+          return service.retryQueuedDispatch(request.params.sessionId, request.params.promptId, input.acknowledgesDispatch)
         },
       )
 

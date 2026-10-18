@@ -10,6 +10,11 @@ import {
 } from 'react'
 import ReaderWorkspace from './ReaderWorkspace'
 import { QueueBatchDialog } from './QueueBatchDialog'
+import {
+  readUnsettledQueueBatches,
+  writeUnsettledQueueBatches,
+  type UnsettledQueueBatch,
+} from './queue-batch-unsettled'
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { oracleCommand } from './oracle-command'
@@ -17,7 +22,6 @@ import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
-import type { QueueBatchInput } from '../shared/queue-batch'
 import type {
   CSSProperties,
   ChangeEvent,
@@ -236,6 +240,7 @@ import {
   removeComputer,
   removeQueuedPrompt,
   queueBatch,
+  retryQueuedDispatch,
   reorderQueuedPrompts,
   updateQueuedPrompt,
   dispatchQueuedPrompt,
@@ -6707,15 +6712,24 @@ function App() {
     seed: string
   }>()
   /**
-   * Batches whose outcome is unknown, per session. Reopening the dialog brings
-   * the same ID back, so a retry cannot queue them twice.
+   * Batches whose outcome is unknown, per session, kept for this tab across a
+   * reload. Reopening the dialog brings the same ID back, so a retry cannot
+   * queue them twice.
    */
-  const [queueBatchUnsettled, setQueueBatchUnsettled] = useState<
-    Record<string, { input: QueueBatchInput; seed: string }>
-  >({})
+  const [queueBatchUnsettled, setQueueBatchUnsettled] = useState(readUnsettledQueueBatches)
+  useEffect(() => writeUnsettledQueueBatches(queueBatchUnsettled), [queueBatchUnsettled])
   const queueBatchSending = useRef(false)
   /** One line acknowledging the last batch, until the queue moves on. */
-  const [queueBatchNotice, setQueueBatchNotice] = useState<{ key: string; text: string }>()
+  const [queueBatchNotice, setQueueBatchNotice] = useState<{ key: string; batchId: string; text: string }>()
+  const queueBatchNoticeSeen = useRef<string | undefined>(undefined)
+  // The acknowledgement goes once every item of its batch has left the queue.
+  useEffect(() => {
+    if (!queueBatchNotice) return
+    const owner = sessions.find((candidate) => sessionKey(candidate) === queueBatchNotice.key)
+    const waiting = owner?.queuedPrompts?.some((prompt) => prompt.batch?.id === queueBatchNotice.batchId)
+    if (waiting) queueBatchNoticeSeen.current = queueBatchNotice.batchId
+    else if (owner && queueBatchNoticeSeen.current === queueBatchNotice.batchId) setQueueBatchNotice(undefined)
+  }, [queueBatchNotice, sessions])
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   // Side questions belong to the session they were asked about and live only
   // as long as this page: they are never part of the conversation.
@@ -13554,6 +13568,26 @@ function App() {
   }
 
 
+  /** Back in its place in the queue, once the user has checked it never arrived. */
+  async function retryUnconfirmedQueueItem() {
+    const claim = selected?.queuedDispatch
+    if (!selected || !claim || claim.state !== 'uncertain' || queueActionId) return
+    if (!window.confirm(
+      'Retry only if the provider shows this prompt never arrived. It goes back to its place in the queue and is sent again in turn.',
+    )) return
+    const target = selected
+    setQueueActionId(claim.promptId)
+    setError(undefined)
+    try {
+      const session = await retryQueuedDispatch(target.computerId, target.id, claim.promptId, claim.attemptId)
+      if (stillListed(session)) setSessions((current) => upsertSession(current, session))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setQueueActionId(undefined)
+    }
+  }
+
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
     if (!selected || queueActionId) {
       return
@@ -15166,14 +15200,27 @@ function App() {
                     'Queued delivery is pending or unconfirmed. Do not send the rewrite again until you have checked the provider.'}
                 </span>
                 {selected.queuedDispatch?.state === 'uncertain' ? (
-                  <button
-                    className="queued-edit-banner__save"
-                    disabled={Boolean(queueActionId) || sending}
-                    onClick={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
-                    type="button"
-                  >
-                    Discard unconfirmed queue item
-                  </button>
+                  <div className="queued-edit-banner__actions">
+                    {selectedProviderCapability?.supportsQueueRetry === true &&
+                      selected.queuedDispatch.accepted !== true ? (
+                      <button
+                        className="queued-edit-banner__save"
+                        disabled={Boolean(queueActionId) || sending}
+                        onClick={() => void retryUnconfirmedQueueItem()}
+                        type="button"
+                      >
+                        Retry here
+                      </button>
+                    ) : null}
+                    <button
+                      className="queued-edit-banner__save"
+                      disabled={Boolean(queueActionId) || sending}
+                      onClick={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
+                      type="button"
+                    >
+                      Discard unconfirmed queue item
+                    </button>
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -16064,7 +16111,7 @@ function App() {
           onQueue={async (input) => {
             const target = queueBatchTarget
             const seed = queueBatchUnsettled[target.key]?.seed ?? target.seed
-            const settle = (unsettled?: { input: QueueBatchInput; seed: string }) =>
+            const settle = (unsettled?: UnsettledQueueBatch) =>
               setQueueBatchUnsettled((current) => {
                 const next = { ...current }
                 if (unsettled) next[target.key] = unsettled
@@ -16086,6 +16133,7 @@ function App() {
               const count = input.prompts.length
               setQueueBatchNotice({
                 key: target.key,
+                batchId: input.batchId,
                 text: result.batch.duplicate
                   ? 'These prompts were already queued; nothing was added twice.'
                   : `Queued ${count} ${count === 1 ? 'prompt' : 'prompts'}. Each runs as its own turn, in order.`,

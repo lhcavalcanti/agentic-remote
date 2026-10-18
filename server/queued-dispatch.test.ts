@@ -519,9 +519,13 @@ describe('Queued dispatch claims', () => {
     expect(result?.session?.failedPrompt).toBeUndefined()
     expect(await persisted(directory)).toMatchObject({
       queuedPrompts: [prompt('first'), prompt('last')],
-      queuedDispatch: { state: 'uncertain', original: prompt('middle') },
+      queuedDispatch: { state: 'uncertain', original: prompt('middle'), accepted: true },
       failedPrompt: { content: target.content, uncertain: true },
     })
+    // The provider has it, so it can be discarded but never sent again.
+    const claim = store.get('session')!.queuedDispatch!
+    await expect(claims.requeue('session', claim.promptId, claim.attemptId))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/accepted/) })
   })
 
   it('projects uncertainty even when the outcome-error write also fails', async () => {

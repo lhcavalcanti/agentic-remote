@@ -1681,6 +1681,17 @@ describe('Review 5125727881 runtime boundaries', () => {
       })
       return service.updateQueuedPrompt(sessionId, 'editable', 'Updated draft')
     },
+    retryQueuedDispatch: async ({ service }) => {
+      const attemptId = randomUUID()
+      const original = { id: 'unconfirmed', content: 'Retry in place', createdAt: originalToken }
+      await service.store.update(sessionId, (session) => {
+        session.queuedDispatch = {
+          attemptId, promptId: original.id, content: original.content, startedAt: originalToken,
+          state: 'uncertain', original, originalIndex: 0,
+        }
+      })
+      return service.retryQueuedDispatch(sessionId, original.id, attemptId)
+    },
     reorderQueuedPrompts: async ({ service }) => {
       await service.store.enqueuePrompt(sessionId, {
         id: 'first', content: 'First queued draft', createdAt: originalToken,

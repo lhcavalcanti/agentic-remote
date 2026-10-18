@@ -162,6 +162,10 @@ describe('ManagerAgent', () => {
       }),
       renameSession: vi.fn(async (_computerId: string, id: string, input: { title: string }) => session(id, { title: input.title })),
       sendMessage: vi.fn(async (_computerId: string, id: string) => session(id)),
+      queueBatch: vi.fn(async (_computerId: string, id: string, input: { batchId: string; prompts: string[] }) => ({
+        session: session(id),
+        batch: { id: input.batchId, promptIds: input.prompts.map((_, index) => `item-${index}`), duplicate: false },
+      })),
       replyPermission: vi.fn(async (_computerId: string, id: string) => session(id)),
       replyUserInput: vi.fn(async (_computerId: string, id: string) => session(id)),
       activateSession: vi.fn(async (_computerId: string, id: string) => session(id)),

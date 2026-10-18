@@ -1985,6 +1985,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
         supportsQueueBatch: true,
+        supportsQueueRetry: true,
         supportsSessionResources: true,
         supportsContextRecovery: true,
         supportsSideQuestions: true,
@@ -5318,6 +5319,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }))
   }
 
+  /** Puts an unconfirmed queue item back in its place; see QueuedDispatches.requeue. */
+  async retryQueuedDispatch(
+    sessionId: string,
+    promptId: string,
+    acknowledgesDispatch: string,
+  ): Promise<SessionDetail> {
+    if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
+    try {
+      return await this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+        const session = await this.queuedDispatches.requeue(sessionId, promptId, acknowledgesDispatch)
+        if (this.externalSessionIds.has(sessionId) || this.store.backend(sessionId) === 'terminal') {
+          this.terminalDrainRequested.add(sessionId)
+        } else {
+          this.sdkDrainRequested.add(sessionId)
+        }
+        return this.publicSession(session)
+      }))
+    } finally {
+      this.wakeDeferredQueue(sessionId)
+    }
+  }
+
   async updateQueuedPrompt(
     sessionId: string,
     promptId: string,
@@ -5396,17 +5419,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
           throw Object.assign(new Error('Session not found'), { statusCode: 404 })
         }
-        await this.store.readAfterWrites(sessionId)
+        const stored = await this.store.readAfterWrites(sessionId)
+        // The stored backend as well as discovery: a tmux session discovery
+        // has not reached yet must never be drained as an SDK session.
+        const terminal = this.externalSessionIds.has(sessionId) || this.store.backend(sessionId) === 'terminal'
         // A retry of a batch already admitted is answered whatever the session
         // is doing now; refusing it would read as nothing having been queued.
-        const retry = this.store.get(sessionId)?.queueBatches?.some((record) => record.id === batch.batchId)
+        const retry = stored.queueBatches?.some((record) => record.id === batch.batchId)
         if (!retry) {
+          // Queued work never reopens a runtime on its own.
+          if (stored.isOpen === false) throw queueConflict('Reopen the session before queueing to it.')
           this.assertTerminalQueueSettled(sessionId)
-          if (this.store.get(sessionId)?.suspended || this.suspendingSessions.has(sessionId)) {
+          if (stored.suspended || this.suspendingSessions.has(sessionId)) {
             throw queueConflict('Resume the session before queueing to it.')
           }
           if (this.admissionClosed.has(sessionId)) {
             throw queueConflict('The session is still resuming.')
+          }
+          if (terminal && !this.externalSessionIds.has(sessionId)) {
+            throw queueConflict('The session’s terminal is not connected yet; try again in a moment.')
           }
         }
         return this.serializeQueue(sessionId, async () => {
@@ -5420,7 +5451,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             this.admissions.markCommitted(sessionId)
             // Always the app's durable queue, never Copilot's own: each item
             // stays visible, editable, and safe across a restart.
-            if (this.externalSessionIds.has(sessionId)) this.terminalDrainRequested.add(sessionId)
+            if (terminal) this.terminalDrainRequested.add(sessionId)
             else this.sdkDrainRequested.add(sessionId)
             this.publish(result.session)
           }

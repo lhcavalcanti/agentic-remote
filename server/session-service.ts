@@ -92,6 +92,7 @@ export interface SessionService {
   ): Promise<QueuedPromptDispatchResult>
   /** Queues several prompts in one admission; see docs/design/queue-batch.md. */
   queueBatch?(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch>
+  retryQueuedDispatch?(sessionId: string, promptId: string, acknowledgesDispatch: string): Promise<SessionDetail>
   sendMessage(
     sessionId: string,
     content: string,

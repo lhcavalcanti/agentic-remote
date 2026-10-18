@@ -32,7 +32,11 @@ class TurnSession implements CopilotSessionLike {
     return () => this.handlers.delete(handler)
   }
 
+  /** Prompts whose next send fails before Copilot accepts them. */
+  readonly refuse = new Set<string>()
+
   async send({ prompt }: { prompt: string; mode: 'immediate' }) {
+    if (this.refuse.delete(prompt)) throw new Error('Copilot refused the prompt')
     this.sent.push(prompt)
     this.open.push(() => {
       for (const handler of [...this.handlers]) {
@@ -255,6 +259,67 @@ describe('AgentService.queueBatch', () => {
     await settle(() => session.sent.length === 3, 'third dispatch')
     expect(session.sent).toEqual(['running turn', 'second, rewritten', 'third'])
     session.finishTurn()
+  })
+
+  it('stops at an item whose delivery is unconfirmed, leaves its neighbours alone, and retries it in place', async () => {
+    const { service, session, id } = await setup()
+    await service.sendMessage(id, 'running turn')
+    await service.queueBatch(id, { batchId: 'batch-fail-1', prompts: ['first', 'second', 'third'] })
+    session.refuse.add('second')
+    session.finishTurn()
+    await settle(() => session.sent.includes('first'), 'first')
+    session.finishTurn()
+    await settle(() => Boolean(service.store.get(id)?.failedPrompt), 'the failure')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Never retried on its own, and nothing behind it overtakes it.
+    expect(session.sent).toEqual(['running turn', 'first'])
+    expect(service.store.get(id)?.failedPrompt).toMatchObject({ content: 'second' })
+    expect(queueOf(service, id)).toEqual(['third'])
+
+    // Retried where it was, once the user has checked it was not delivered.
+    const dispatch = service.store.get(id)!.queuedDispatch!
+    await expect(service.retryQueuedDispatch(id, dispatch.promptId, 'some-other-attempt'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    const retried = await service.retryQueuedDispatch(id, dispatch.promptId, dispatch.attemptId)
+    expect(retried.queuedPrompts?.map((prompt) => [prompt.content, prompt.batch?.index])).toEqual([['second', 1], ['third', 2]])
+    expect(retried.queuedDispatch).toBeUndefined()
+    expect(retried.failedPrompt).toBeUndefined()
+    await settle(() => session.sent.includes('second'), 'the retry')
+    session.finishTurn()
+    await settle(() => session.sent.includes('third'), 'third')
+    session.finishTurn()
+    expect(session.sent).toEqual(['running turn', 'first', 'second', 'third'])
+    expect(queueOf(service, id)).toEqual([])
+    await expect(service.retryQueuedDispatch(id, dispatch.promptId, dispatch.attemptId))
+      .rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('retries a claim a restart left mid-dispatch, but never one the provider accepted', async () => {
+    const { service, session, id } = await setup()
+    await service.sendMessage(id, 'running turn')
+    const plant = async (claim: { state: 'dispatching' | 'uncertain'; accepted?: boolean }) => {
+      const attemptId = randomUUID()
+      const original = { id: randomUUID(), content: `held ${claim.state}`, createdAt: new Date().toISOString() }
+      await service.store.update(id, (stored) => {
+        stored.queuedDispatch = {
+          attemptId, promptId: original.id, content: original.content, startedAt: original.createdAt,
+          originalIndex: 0, original, ...claim,
+        }
+      })
+      return { attemptId, promptId: original.id }
+    }
+    // Stored as dispatching, but no attempt is live: the view shows it unconfirmed.
+    const interrupted = await plant({ state: 'dispatching' })
+    expect(service.getSession(id)?.queuedDispatch?.state).toBe('uncertain')
+    const retried = await service.retryQueuedDispatch(id, interrupted.promptId, interrupted.attemptId)
+    expect(retried.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['held dispatching'])
+
+    session.finishTurn()
+    await settle(() => session.sent.includes('held dispatching'), 'the retried item')
+    const accepted = await plant({ state: 'uncertain', accepted: true })
+    await expect(service.retryQueuedDispatch(id, accepted.promptId, accepted.attemptId))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/accepted/) })
+    expect(service.store.get(id)?.queuedDispatch?.attemptId).toBe(accepted.attemptId)
   })
 
   it('delivers a long prompt exactly as written', async () => {

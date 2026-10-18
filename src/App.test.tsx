@@ -72,6 +72,7 @@ import {
   removeQueuedPrompt,
   reorderQueuedPrompts,
   queueBatch,
+  retryQueuedDispatch,
   updateQueuedPrompt,
   renameSession,
   readWorkspaceFile,
@@ -163,6 +164,7 @@ vi.mock('./api', async (importOriginal) => ({
   removeQueuedPrompt: vi.fn(),
   reorderQueuedPrompts: vi.fn(),
   queueBatch: vi.fn(),
+  retryQueuedDispatch: vi.fn(),
   updateQueuedPrompt: vi.fn(),
   dispatchQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
@@ -1294,6 +1296,14 @@ describe('App', () => {
       // Each item keeps its own controls.
       expect(queued.getByRole('button', { name: 'Edit queued prompt 2' })).toBeEnabled()
       expect(queued.getByRole('button', { name: 'Remove queued prompt 1' })).toBeEnabled()
+
+      // The acknowledgement goes once the batch has run.
+      await act(async () => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session: { ...session, queuedCount: 0, queuedPrompts: [] } }),
+        } as MessageEvent)
+      })
+      await waitFor(() => expect(screen.queryByText('Queued 2 prompts. Each runs as its own turn, in order.')).toBeNull())
     })
 
     it('says so when the same batch had already been queued', async () => {
@@ -1375,6 +1385,37 @@ describe('App', () => {
       expect(screen.getByLabelText('Message')).toHaveValue('')
     })
 
+    it('keeps an unconfirmed batch across a reload, so its retry cannot queue it twice', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(queueBatch)
+        .mockRejectedValueOnce(Object.assign(new Error('The hub did not answer.'), { uncertainDelivery: true }))
+        .mockImplementationOnce(async (_computerId, _sessionId, input) => ({
+          session, batch: { id: input.batchId, promptIds: ['a', 'b'], duplicate: true },
+        }))
+      const first = render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      let dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 1'), { target: { value: 'one' } })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 2'), { target: { value: 'two' } })
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 2 prompts' }))
+      })
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Couldn’t confirm')
+      first.unmount()
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      expect(within(dialog).getByLabelText('Prompt 2')).toHaveValue('two')
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }))
+      })
+      const [sent, retried] = vi.mocked(queueBatch).mock.calls
+      expect(retried[2]).toEqual(sent[2])
+      expect(sessionStorage.getItem('agentic-remote:queue-batch-unsettled')).toBeNull()
+    })
+
     it('clears the composer once its text is queued, wherever it was moved', async () => {
       vi.mocked(listComputers).mockResolvedValue([batching])
       vi.mocked(queueBatch).mockImplementation(async (_computerId, _sessionId, input) => ({
@@ -1394,6 +1435,93 @@ describe('App', () => {
       })
       expect(vi.mocked(queueBatch).mock.calls[0][2].prompts).toEqual(['First this', 'Draft the changelog, briefly'])
       expect(screen.getByLabelText('Message')).toHaveValue('')
+    })
+
+    it('retries an unconfirmed item in its place only after the user confirms it never arrived', async () => {
+      const retrying = {
+        ...computer,
+        providers: computer.providers!.map((provider) => ({ ...provider, supportsQueueBatch: true, supportsQueueRetry: true })),
+      }
+      const head = { id: 'prompt-1', content: 'first', createdAt: '2026-10-18T00:00:00.000Z', batch: { id: 'b', index: 0, size: 2 } }
+      const second = { id: 'prompt-2', content: 'second', createdAt: '2026-10-18T00:00:00.000Z', batch: { id: 'b', index: 1, size: 2 } }
+      const held = {
+        ...session,
+        queuedCount: 2,
+        queuedPrompts: [head, second],
+        queuedDispatch: {
+          attemptId: 'attempt-1', promptId: 'prompt-1', content: 'first',
+          startedAt: '2026-10-18T00:00:00.000Z', state: 'uncertain' as const,
+          message: 'Delivery could not be confirmed.',
+        },
+      }
+      vi.mocked(listComputers).mockResolvedValue([retrying])
+      vi.mocked(listSessions).mockResolvedValue([held])
+      vi.mocked(getSession).mockResolvedValue(held)
+      vi.mocked(retryQueuedDispatch).mockResolvedValue({ ...held, queuedDispatch: undefined })
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+      render(<App />)
+      const retry = await screen.findByRole('button', { name: 'Retry here' })
+      fireEvent.click(retry)
+      expect(retryQueuedDispatch).not.toHaveBeenCalled()
+      await act(async () => {
+        fireEvent.click(retry)
+      })
+      expect(confirm).toHaveBeenCalledTimes(2)
+      expect(retryQueuedDispatch).toHaveBeenCalledExactlyOnceWith(computer.id, session.id, 'prompt-1', 'attempt-1')
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry here' })).toBeNull())
+      expect(screen.getByRole('button', { name: 'Queue several prompts' })).toBeEnabled()
+    })
+
+    it('does not offer Retry here where the computer cannot, or the provider already took the item', async () => {
+      const held = {
+        ...session,
+        queuedDispatch: {
+          attemptId: 'attempt-1', promptId: 'prompt-1', content: 'first',
+          startedAt: '2026-10-18T00:00:00.000Z', state: 'uncertain' as const,
+        },
+      }
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(listSessions).mockResolvedValue([held])
+      vi.mocked(getSession).mockResolvedValue(held)
+      const view = render(<App />)
+      await screen.findByRole('button', { name: 'Discard unconfirmed queue item' })
+      expect(screen.queryByRole('button', { name: 'Retry here' })).toBeNull()
+      view.unmount()
+
+      // Nor for an item the provider is known to have taken.
+      const accepted = { ...held, queuedDispatch: { ...held.queuedDispatch, accepted: true } }
+      vi.mocked(listComputers).mockResolvedValue([{
+        ...computer,
+        providers: computer.providers!.map((provider) => ({ ...provider, supportsQueueBatch: true, supportsQueueRetry: true })),
+      }])
+      vi.mocked(listSessions).mockResolvedValue([accepted])
+      vi.mocked(getSession).mockResolvedValue(accepted)
+      render(<App />)
+      await screen.findByRole('button', { name: 'Discard unconfirmed queue item' })
+      expect(screen.queryByRole('button', { name: 'Retry here' })).toBeNull()
+    })
+
+    it.each([
+      ['idle', {}, true],
+      ['running', { status: 'running' as const }, true],
+      ['waiting on a permission', {
+        status: 'waiting' as const,
+        pendingPermission: { requestId: 'p', title: 'Run tests', options: [{ optionId: 'a', name: 'Allow', kind: 'allow_once' as const }] },
+      }, true],
+      ['waiting on a question', {
+        status: 'waiting' as const,
+        pendingUserInput: { requestId: 'q', question: 'Which branch?', choices: ['main'], allowFreeform: true },
+      }, true],
+      ['in tmux', { executionMode: 'tmux' as const }, true],
+      ['suspended', { suspended: true }, false],
+    ])('offers it for a session that is %s: %s', async (_state, change, offered) => {
+      const target = { ...session, ...change }
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(listSessions).mockResolvedValue([target])
+      vi.mocked(getSession).mockResolvedValue(target)
+      render(<App />)
+      await screen.findByText('Hello agent')
+      await waitFor(() => expect(Boolean(screen.queryByRole('button', { name: 'Queue several prompts' }))).toBe(offered))
     })
 
     it('offers it only where the owning computer can batch', async () => {

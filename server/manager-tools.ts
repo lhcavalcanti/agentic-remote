@@ -4,6 +4,7 @@ import type {
   AgentProvider,
   ComputerSummary,
   CreateSessionInput,
+  ManagedQueuedBatch,
   ManagedSession,
   PendingPermission,
   RuntimeReasoningEffort,
@@ -11,6 +12,11 @@ import type {
   UserInputReplyInput,
 } from '../shared/contracts.js'
 import type { ManagerClientDefaults, ManagerSessionRef } from '../shared/manager.js'
+import {
+  QUEUE_BATCH_MAX_PROMPT_LENGTH,
+  QUEUE_BATCH_MAX_PROMPTS,
+  type QueueBatchInput,
+} from '../shared/queue-batch.js'
 import { rosterLine } from './manager-context.js'
 import { ManagerMemoryError, type ManagerMemory } from './manager-memory.js'
 import { registryKey, type ManagerRegistry } from './manager-store.js'
@@ -33,6 +39,8 @@ export interface ManagerToolHost {
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, title: string): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, content: string): Promise<ManagedSession>
+  /** Several prompts as separate queue items, admitted together; see docs/design/queue-batch.md. */
+  queueBatch(computerId: string, sessionId: string, input: QueueBatchInput): Promise<ManagedQueuedBatch>
   /** Answers a permission request, such as folder trust, with one of its options. */
   replyPermission(computerId: string, sessionId: string, requestId: string, optionId: string): Promise<ManagedSession>
   /** Answers a question or form the session is waiting on. */
@@ -544,6 +552,33 @@ export function createManagerTools(
         await deliver(session, message)
         onActivity({ tool: 'send_to_session', content: `Sent a message to "${session.title}"`, sessionRefs: [ref(session)] })
         return `Sent to ${link(session)}${session.status === 'running' ? ' (it was busy, so the message is queued)' : ''}.`
+      },
+      { actsOnSessions: true }
+    ),
+    define(
+      'queue_prompts',
+      `Queue several prompts on one session in a single step, when the work is a sequence. Each prompt runs as its own turn, in this order, after anything already queued; they are never combined. Up to ${QUEUE_BATCH_MAX_PROMPTS}. A closed session is reopened and a suspended one resumed first, and a folder-trust prompt is answered.`,
+      z.object({
+        sessionId: sessionIdField,
+        computer: computerField.optional(),
+        prompts: z.array(z.string().trim().min(1).max(QUEUE_BATCH_MAX_PROMPT_LENGTH)).min(1).max(QUEUE_BATCH_MAX_PROMPTS),
+      }),
+      async ({ sessionId, computer, prompts }) => {
+        let session = await resolveSession(sessionId, computer, { history: true })
+        if (session.isOpen === false) {
+          session = { ...session, ...(await host.reopenSession(session.computerId, session.id)), title: session.title }
+          onActivity({ tool: 'queue_prompts', content: `Reopened "${session.title}"`, sessionRefs: [ref(session)] })
+        } else if (session.suspended) {
+          session = { ...session, ...(await host.resumeSession(session.computerId, session.id)), title: session.title }
+          onActivity({ tool: 'queue_prompts', content: `Resumed "${session.title}"`, sessionRefs: [ref(session)] })
+        }
+        await trustFolder(session)
+        const batchId = `oracle-${[...globalThis.crypto.getRandomValues(new Uint8Array(16))]
+          .map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+        const { batch } = await host.queueBatch(session.computerId, session.id, { batchId, prompts })
+        const count = `${prompts.length} ${prompts.length === 1 ? 'prompt' : 'prompts'}`
+        onActivity({ tool: 'queue_prompts', content: `Queued ${count} on "${session.title}"`, sessionRefs: [ref(session)] })
+        return `Queued ${count} on ${link(session)} (${batch.promptIds.length} queue items); each runs as its own turn, in order.`
       },
       { actsOnSessions: true }
     ),

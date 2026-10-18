@@ -64,6 +64,10 @@ describe('manager tools', () => {
       createSession: vi.fn(async () => created),
       renameSession: vi.fn(async (_computerId: string, id: string, title: string) => session(id, { title })),
       sendMessage: vi.fn(async (_computerId: string, id: string) => session(id)),
+      queueBatch: vi.fn(async (_computerId: string, id: string, input: { batchId: string; prompts: string[] }) => ({
+        session: session(id, { queuedCount: input.prompts.length }),
+        batch: { id: input.batchId, promptIds: input.prompts.map((_, index) => `item-${index}`), duplicate: false },
+      })),
       replyPermission: vi.fn(async (_computerId: string, id: string) => session(id)),
       replyUserInput: vi.fn(async (_computerId: string, id: string) => session(id)),
       reopenSession: vi.fn(async (_computerId: string, id: string) => session(id)),
@@ -98,7 +102,7 @@ describe('manager tools', () => {
     expect([...tools.keys()].sort()).toEqual([
       'answer_session', 'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
       'list_computers', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
-      'memory_list', 'memory_read', 'memory_write', 'rename_session', 'send_to_session',
+      'memory_list', 'memory_read', 'memory_write', 'queue_prompts', 'rename_session', 'send_to_session',
       'set_session_folder',
     ])
     for (const tool of tools.values()) {
@@ -421,6 +425,38 @@ describe('manager tools', () => {
     await call('send_to_session', { sessionId: 'abc12345', message: 'Carry on.' })
     expect(host.resumeSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
     expect(host.sendMessage).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'Carry on.')
+  })
+
+  it('queues several prompts on any session in one step, each its own turn', async () => {
+    const result = String(await call('queue_prompts', {
+      sessionId: 'def67890', prompts: ['Write the migration', 'Then run the tests', 'Then open a PR'],
+    }))
+    expect(host.queueBatch).toHaveBeenCalledExactlyOnceWith('hub', 'def67890-bbbb', {
+      batchId: expect.stringMatching(/^oracle-[a-f0-9]{32}$/),
+      prompts: ['Write the migration', 'Then run the tests', 'Then open a PR'],
+    })
+    expect(host.sendMessage).not.toHaveBeenCalled()
+    expect(result).toContain('Queued 3 prompts')
+    expect(activities.at(-1)).toMatchObject({ tool: 'queue_prompts', content: 'Queued 3 prompts on "Session def67890-bbbb"' })
+
+    // A closed session is reopened and a suspended one resumed first, as for send_to_session.
+    await call('queue_prompts', { sessionId: 'old99999', prompts: ['Pick this back up', 'Then summarise'] })
+    expect(host.reopenSession).toHaveBeenCalledWith('hub', 'old99999-cccc')
+
+    for (const prompts of [[], ['ok', ' '], Array.from({ length: 51 }, () => 'p')]) {
+      expect(await call('queue_prompts', { sessionId: 'def67890', prompts })).toMatchObject({ resultType: 'failure' })
+    }
+    vi.mocked(host.queueBatch as never as (...args: unknown[]) => Promise<unknown>).mockRejectedValueOnce(
+      Object.assign(new Error('Resume the session before queueing to it. Nothing was queued.'), { statusCode: 409 }),
+    )
+    expect(JSON.stringify(await call('queue_prompts', { sessionId: 'def67890', prompts: ['x'] })))
+      .toContain('Nothing was queued')
+    vi.mocked(host.listSessions).mockResolvedValue([session('abc12345-aaaa', { suspended: true })])
+    await call('queue_prompts', { sessionId: 'abc12345', prompts: ['Carry on'] })
+    expect(host.resumeSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
+    answerOnly = true
+    expect(await call('queue_prompts', { sessionId: 'abc12345', prompts: ['x'] })).toMatchObject({ resultType: 'failure' })
+    expect(host.queueBatch).toHaveBeenCalledTimes(4)
   })
 
   it('only asks the user to close a session and never closes one itself', async () => {

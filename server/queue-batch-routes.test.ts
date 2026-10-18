@@ -212,4 +212,91 @@ describe('queue batch routes', () => {
     expect(response.json().error).toBe('Update older-node to queue several prompts at once. Nothing was queued.')
     expect(forwarded).not.toHaveBeenCalled()
   })
+
+  describe('retrying an unconfirmed item in place', () => {
+    /** The head of a two-item batch was handed over, but its outcome is unknown. */
+    async function unconfirmed(target: Awaited<ReturnType<typeof runtime>>) {
+      const { batch } = await target.agent.queueBatch(target.sessionId, { batchId: 'batch-retry', prompts: ['first', 'second'] })
+      const attemptId = randomUUID()
+      await target.agent.store.update(target.sessionId, (session) => {
+        const [head, ...rest] = session.queuedPrompts!
+        session.queuedPrompts = rest
+        session.queuedDispatch = {
+          attemptId, promptId: head.id, content: head.content, startedAt: head.createdAt,
+          state: 'uncertain', original: head, originalIndex: 0,
+        }
+      })
+      return { attemptId, promptId: batch.promptIds[0] }
+    }
+
+    async function pair(hub: Awaited<ReturnType<typeof runtime>>, node: Awaited<ReturnType<typeof runtime>>, name: string) {
+      await node.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = node.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      await hub.app.inject({
+        method: 'POST', url: '/api/computers', headers: local,
+        payload: { baseUrl: `http://127.0.0.1:${address.port}`, token: node.identity.token, name },
+      })
+      await vi.waitFor(async () => {
+        const computers = (await hub.app.inject({ url: '/api/computers', headers: local })).json().computers as Array<{
+          id: string; providers?: Array<{ id: string }>
+        }>
+        expect(computers.find((computer) => computer.id === node.identity.info.id)?.providers
+          ?.map((provider) => provider.id)).toContain('claude')
+      }, { timeout: 5_000 })
+    }
+
+    it('puts it back where it was, only for the attempt the user checked', async () => {
+      const hub = await runtime('hub')
+      const { attemptId, promptId } = await unconfirmed(hub)
+      const url = `/api/computers/${hub.identity.info.id}/sessions/${hub.sessionId}/queue/${promptId}/retry`
+      expect((await hub.app.inject({ method: 'POST', url, headers: local, payload: {} })).statusCode).toBe(400)
+      const stale = await hub.app.inject({ method: 'POST', url, headers: local, payload: { acknowledgesDispatch: randomUUID() } })
+      expect(stale.statusCode).toBe(409)
+      const foreign = await hub.app.inject({
+        method: 'POST', url, headers: { host: 'localhost:4317', origin: 'https://evil.example' },
+        payload: { acknowledgesDispatch: attemptId },
+      })
+      expect(foreign.statusCode).toBe(403)
+
+      const retried = await hub.app.inject({ method: 'POST', url, headers: local, payload: { acknowledgesDispatch: attemptId } })
+      expect(retried.statusCode, retried.body).toBe(200)
+      expect(retried.json().session.queuedPrompts.map((prompt: { content: string }) => prompt.content)).toEqual(['first', 'second'])
+      expect(retried.json().session.queuedDispatch).toBeUndefined()
+      expect((await hub.app.inject({ method: 'POST', url, headers: local, payload: { acknowledgesDispatch: attemptId } })).statusCode)
+        .toBe(409)
+    })
+
+    it('forwards it to the computer that owns the session', async () => {
+      const hub = await runtime('hub')
+      const node = await runtime('node')
+      await pair(hub, node, 'remote')
+      const { attemptId, promptId } = await unconfirmed(node)
+      const response = await hub.app.inject({
+        method: 'POST', headers: local,
+        url: `/api/computers/${node.identity.info.id}/sessions/${node.sessionId}/queue/${promptId}/retry`,
+        payload: { acknowledgesDispatch: attemptId },
+      })
+      expect(response.statusCode, response.body).toBe(200)
+      expect(response.json().session).toMatchObject({ computerId: node.identity.info.id, queuedCount: 2 })
+      expect(node.agent.store.get(node.sessionId)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['first', 'second'])
+    })
+
+    it('refuses a computer too old to retry in place, without sending it there', async () => {
+      const hub = await runtime('hub')
+      const node = await runtime('node')
+      const older = node.service.providers().map(({ supportsQueueRetry: _retry, ...provider }) => provider)
+      vi.spyOn(node.service, 'providers').mockReturnValue(older)
+      const forwarded = vi.spyOn(node.service, 'retryQueuedDispatch')
+      await pair(hub, node, 'older-node')
+      const response = await hub.app.inject({
+        method: 'POST', headers: local,
+        url: `/api/computers/${node.identity.info.id}/sessions/${node.sessionId}/queue/prompt/retry`,
+        payload: { acknowledgesDispatch: randomUUID() },
+      })
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error).toBe('Update older-node to retry a queue item in place.')
+      expect(forwarded).not.toHaveBeenCalled()
+    })
+  })
 })

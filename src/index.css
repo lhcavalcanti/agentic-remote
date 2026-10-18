@@ -3429,6 +3429,13 @@ button {
   cursor: pointer;
 }
 
+.queued-edit-banner__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .queued-edit-banner__save:disabled {
   opacity: 0.45;
   cursor: not-allowed;

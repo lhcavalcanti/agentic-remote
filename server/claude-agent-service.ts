@@ -336,6 +336,7 @@ export class ClaudeAgentService
         supportsBackgroundTasks: false,
         supportsQueuedPromptDispatch: true,
         supportsQueueBatch: true,
+        supportsQueueRetry: true,
         supportsSessionResources: true,
         supportsContextRecovery: false,
         unavailableReason: this.available ? undefined : this.unavailableReason,
@@ -891,6 +892,24 @@ export class ClaudeAgentService
     }))
   }
 
+  /** Puts an unconfirmed queue item back in its place; see QueuedDispatches.requeue. */
+  async retryQueuedDispatch(
+    sessionId: string,
+    promptId: string,
+    acknowledgesDispatch: string,
+  ): Promise<SessionDetail> {
+    if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
+    try {
+      return await this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+        const session = await this.queuedDispatches.requeue(sessionId, promptId, acknowledgesDispatch)
+        if (!this.admissionClosed.has(sessionId)) this.drainRequested.add(sessionId)
+        return this.queuedDispatches.view(session)
+      }))
+    } finally {
+      if (this.drainRequested.has(sessionId)) this.wakeQueue(sessionId)
+    }
+  }
+
   async updateQueuedPrompt(
     sessionId: string,
     promptId: string,
@@ -950,6 +969,8 @@ export class ClaudeAgentService
         // A retry of a batch already admitted is answered whatever the session
         // is doing now; refusing it would read as nothing having been queued.
         const retry = stored.queueBatches?.some((record) => record.id === batch.batchId)
+        // Queued work never reopens a runtime on its own.
+        if (!retry && stored.isOpen === false) throw queueConflict('Reopen the session before queueing to it.')
         if (!retry && (stored.suspended || this.suspendingSessions.has(sessionId))) {
           throw queueConflict('Resume the session before queueing to it.')
         }

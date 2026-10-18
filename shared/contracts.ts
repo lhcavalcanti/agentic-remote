@@ -17,6 +17,8 @@ export interface AgentProviderCapability {
   supportsQueuedPromptDispatch?: boolean
   /** Queues several prompts in one request, each its own queue item. */
   supportsQueueBatch?: boolean
+  /** Puts a queue item whose delivery is unconfirmed back in its place. */
+  supportsQueueRetry?: boolean
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
   /** Answers side questions about a session without prompting it. */
@@ -182,6 +184,8 @@ export interface QueuedPromptDispatch {
   startedAt: string
   state: 'dispatching' | 'uncertain'
   message?: string
+  /** The provider took it; only the queue's record of that failed. Never retried. */
+  accepted?: boolean
   original?: QueuedPrompt
   originalIndex?: number
   recoveryFailedAt?: string

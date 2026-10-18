@@ -1095,6 +1095,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         limits: {
           maxFrameBytes: 32 * 1024,
           maxQueueBytes: 64_000,
+          maxOutputQueueBytes: 589_824,
           maxUtteranceMs: 30_000,
           idleTimeoutMs: 30_000,
         },

@@ -31,6 +31,7 @@ import {
   VoiceSessionError,
   type VoiceBackend,
   type VoiceBackendSessionLimits,
+  voiceOutputDeliveryByteLimit,
 } from './oracle-voice-session.js'
 import {
   VoiceTicketStore,
@@ -262,7 +263,13 @@ function selectBackend(options: OracleVoiceRouteOptions): SelectedVoiceBackend {
         selected.id,
       )
     }
-    const limits = DEFAULT_VOICE_BACKEND_LIMITS
+    const limits = {
+      ...DEFAULT_VOICE_BACKEND_LIMITS,
+      maxOutputQueueBytes: voiceOutputDeliveryByteLimit(
+        selected.voice.playbackSampleRate,
+        DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes,
+      ),
+    }
     return {
       capability: availableCapabilities(selected, selected.voice, limits),
       busy: false,
@@ -308,7 +315,12 @@ function localConnector(
       )
       const session = await backend.open({
         streamId: options.streamId,
-        send: relay.accept,
+        send: (output) => {
+          const delivery = relay.accept(output)
+          if ('direction' in output) return delivery
+          void delivery.catch(() => undefined)
+          return Promise.resolve()
+        },
         terminate: (code, reason) => {
           void options.disconnect({ code, reason }).catch(() => undefined)
         },
@@ -342,6 +354,10 @@ function remoteConnector(
         options.disconnect,
         {
           ...client.capabilities.limits,
+          maxOutputQueueBytes: voiceOutputDeliveryByteLimit(
+            client.capabilities.playbackSampleRate,
+            client.capabilities.limits.maxFrameBytes,
+          ),
           idleTimeoutMs: DEFAULT_VOICE_BACKEND_LIMITS.idleTimeoutMs,
         },
       )
@@ -404,7 +420,7 @@ async function receiveBrowserMessage(
   await coordinator.receive(parsed)
 }
 
-function sendBrowserOutput(
+export function sendBrowserOutput(
   socket: WebSocket,
   output: OracleVoiceBackendOutput,
   limits: VoiceBackendSessionLimits,
@@ -436,13 +452,14 @@ function sendBrowserOutput(
   })
 }
 
-function backendOutputRelay(
+export function backendOutputRelay(
   deliver: (output: OracleVoiceBackendOutput) => Promise<void>,
   disconnect: (failure: OracleVoiceBackendDisconnect) => Promise<void>,
   limits: VoiceBackendSessionLimits,
 ): {
   accept(output: OracleVoiceBackendOutput): Promise<void>
   drain(): Promise<void>
+  pendingBytes(): number
 } {
   let pendingBytes = 0
   let failed = false
@@ -461,13 +478,18 @@ function backendOutputRelay(
       if (failed) {
         return Promise.reject(new VoiceSessionError('Voice backend output is closed', 1001))
       }
-      if (bytes > limits.maxQueueBytes - pendingBytes) {
+      if (bytes > limits.maxOutputQueueBytes - pendingBytes) {
         const error = new VoiceSessionError('Voice backend output queue is full', 1013)
         fail(error, error.closeCode)
         return Promise.reject(error)
       }
       pendingBytes += bytes
-      const delivery = deliveryTail.then(() => deliver(output))
+      const delivery = deliveryTail.then(() => {
+        if (failed) {
+          throw new VoiceSessionError('Voice backend output is closed', 1001)
+        }
+        return deliver(output)
+      })
       deliveryTail = delivery
         .catch((error: unknown) => {
           fail(error, error instanceof VoiceSessionError ? error.closeCode : 1011)
@@ -475,10 +497,13 @@ function backendOutputRelay(
         .finally(() => {
           pendingBytes -= bytes
         })
-      return Promise.resolve()
+      return delivery
     },
     drain() {
       return deliveryTail
+    },
+    pendingBytes() {
+      return pendingBytes
     },
   }
 }

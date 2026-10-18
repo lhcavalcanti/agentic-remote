@@ -94,6 +94,7 @@ class RouteVoiceBackend implements VoiceBackend {
     return {
       maxFrameBytes: 32 * 1024,
       maxQueueBytes: 64 * 1024,
+      maxOutputQueueBytes: 589_824,
       maxUtteranceMs: 30_000,
       idleTimeoutMs: 30_000,
     }
@@ -333,6 +334,11 @@ describe('Oracle voice hub routes', () => {
       computerName: 'Speech node',
       ttsVoice: 'exact-match',
     })
+    expect(response.json().limits).toEqual({
+      maxFrameBytes: 32 * 1024,
+      maxQueueBytes: 64_000,
+      maxUtteranceMs: 30_000,
+    })
   })
 
   it('never includes the bearer ticket in automatic request logs', async () => {
@@ -481,6 +487,7 @@ describe('Oracle voice hub routes', () => {
     vi.spyOn(backend, 'limits').mockReturnValue({
       maxFrameBytes: 512,
       maxQueueBytes: 1_024,
+      maxOutputQueueBytes: 589_824,
       maxUtteranceMs: 30_000,
       idleTimeoutMs: 30_000,
     })

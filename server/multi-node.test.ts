@@ -865,7 +865,8 @@ describe('multi-node hub', () => {
         validUrl,
         `Bearer ${worker.identity.token}`,
       )
-      expect(await nextVoiceControl(socket)).toMatchObject({
+      const hello = await nextVoiceControl(socket)
+      expect(hello).toMatchObject({
         type: 'hello',
         protocol: ORACLE_VOICE_PROTOCOL,
         streamId: 'voice-one',
@@ -877,6 +878,12 @@ describe('multi-node hub', () => {
           sampleRate: ORACLE_VOICE_SAMPLE_RATE,
           playbackSampleRate: 22_050,
         },
+      })
+      if (hello.type !== 'hello') throw new Error('Expected node voice hello')
+      expect(hello.capabilities.limits).toEqual({
+        maxFrameBytes: 32 * 1024,
+        maxQueueBytes: 64_000,
+        maxUtteranceMs: 30_000,
       })
       await expect(openNodeVoiceSocket(
         `${endpoint}?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-two`,
@@ -969,6 +976,7 @@ describe('multi-node hub', () => {
       limits: () => ({
         maxFrameBytes: 32 * 1024,
         maxQueueBytes: 64 * 1024,
+        maxOutputQueueBytes: 589_824,
         maxUtteranceMs: 30_000,
         idleTimeoutMs: 30_000,
       }),

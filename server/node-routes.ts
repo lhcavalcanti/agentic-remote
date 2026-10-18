@@ -234,7 +234,7 @@ async function receiveNodeVoiceMessage(
   await session.control(parsed)
 }
 
-function sendNodeVoiceOutput(
+export function sendNodeVoiceOutput(
   socket: WebSocket,
   output: VoiceBackendOutput,
   limits: VoiceBackendSessionLimits,

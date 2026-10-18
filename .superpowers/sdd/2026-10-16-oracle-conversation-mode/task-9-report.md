@@ -15,6 +15,12 @@ hardening is integrated into the same worktree without changing Graphify.
 - Shipped profiles use one resident sherpa-onnx-node 1.13.8 VITS instance in
   the isolated voice child. The external Piper process remains only as a
   manually configured compatibility adapter.
+- The child now normalizes the real `sherpa-onnx-node@1.13.8` ESM/CJS bridge
+  one constructor at a time. `OnlineRecognizer` may come from the named or
+  default export and `OfflineTts` may independently come from either location.
+  Missing constructors fail startup with an explicit export-specific error.
+  The pinned package integration test covers its actual shape: named
+  `OnlineRecognizer`, with `OfflineTts` on the default export.
 - Sherpa progress samples are copied into one fixed-capacity 12-second sentence
   buffer and are not delivered until `generateAsync` completes. The cumulative
   callback total is validated before any audio escapes; when progress supplied
@@ -27,10 +33,22 @@ hardening is integrated into the same worktree without changing Graphify.
   (176,469 samples, 8.003 seconds) and Faber sentence (148,224 samples,
   6.722 seconds) pass end to end. A synchronous whole-sentence callback above
   the limit is rejected before any audio frame or `audio_end` is emitted.
-  Protocol backpressure remains separate and unchanged: frames are at most
-  32 KiB, the default backend/coordinator queue is 64,000 bytes, browser
-  WebSocket buffering uses that advertised queue limit, and playback still
-  caps scheduled sources at 512.
+  Protocol backpressure remains separate: frames are at most 32 KiB and the
+  advertised microphone/control transport queue and each browser/node
+  WebSocket `bufferedAmount` check remain 64,000 bytes. Playback delivery now
+  has a distinct internal bound. At the shipped 22,050 Hz capability it is
+  exactly 589,824 bytes; the conservative default for the maximum accepted
+  192,000 Hz playback rate is 4,685,824 bytes. The formula reserves full
+  32 KiB frames for 12 seconds of 16-bit PCM using a 24-byte header plus a
+  256-byte internal segment-identity allowance, plus one full frame for
+  control/framing overhead. This bound protects `EngineVoiceBackendSession`
+  and both local and paired-node hub relays without increasing browser/client
+  microphone limits. Playback still caps scheduled sources at 512.
+- Local playback-frame relay acceptance returns the actual downstream delivery
+  promise so browser backpressure reaches the engine output queue. Control
+  delivery remains asynchronously serialized to avoid re-entering the
+  coordinator operation that caused it. Paired-node EventEmitter output is
+  protected by the bounded hub relay, since an emitter cannot await delivery.
 - Archive decoding is selected exactly from the manifest (`r|gz` or `r|bz2`).
   Headers are consumed one at a time; the installer rejects an entry before
   extraction when its count or declared expanded size would cross a pin.
@@ -189,6 +207,58 @@ Test Files 1 passed
 Tests 42 passed
 ```
 
+### Final production-finding RED/GREEN
+
+The pinned-package import-shape regression initially failed all four cases
+because no normalizer existed:
+
+```text
+pnpm vitest run server/oracle-voice-sherpa-import.test.ts
+Test Files 1 failed
+Tests 4 failed
+```
+
+After constructor-by-constructor named/default normalization:
+
+```text
+pnpm vitest run server/oracle-voice-sherpa-import.test.ts \
+  server/oracle-voice-child.test.ts
+Test Files 2 passed
+Tests 46 passed
+```
+
+The delivery-bound regressions initially failed because the output session
+still used the 64 KB microphone queue and the hub relay did not expose the
+required bounded-delivery behavior:
+
+```text
+pnpm vitest run server/oracle-voice-session.test.ts
+Test Files 1 failed
+Tests 5 failed | 14 passed
+
+pnpm vitest run server/oracle-voice-output-delivery.test.ts
+Test Files 1 failed
+Tests 6 failed
+```
+
+After adding the distinct output bound and bounded relay:
+
+```text
+pnpm vitest run server/oracle-voice-output-delivery.test.ts \
+  server/oracle-voice-session.test.ts
+Test Files 2 passed
+Tests 25 passed
+```
+
+The tests block the first playback delivery, enqueue the complete measured
+LJSpeech and Faber frame sequences, assert exact order and byte accounting,
+and observe no `1013`. A sequence exceeding the 12-second delivery allocation
+fails closed at `1013` without pending bytes crossing the bound. Browser and
+node `bufferedAmount` tests independently prove the transport limit remains
+64 KB. Capability responses continue to serialize only `maxFrameBytes`,
+`maxQueueBytes`, and `maxUtteranceMs`; the internal output limit is not exposed
+as a client-controlled transport allowance.
+
 ## Exact current asset and provenance facts
 
 All network assets are checksum-pinned in
@@ -215,6 +285,34 @@ license, voice provenance, and eSpeak NG runtime-data terms remain separate.
 The installer displays the profile notices before network access.
 
 ## Verification
+
+Final production-findings focused gate:
+
+```text
+pnpm vitest run server/oracle-voice-sherpa-import.test.ts \
+  server/oracle-voice-child.test.ts \
+  server/oracle-voice-session.test.ts \
+  server/oracle-voice-output-delivery.test.ts \
+  server/oracle-voice-routes.test.ts \
+  server/remote-voice-client.test.ts \
+  server/multi-node.test.ts \
+  server/oracle-voice-coordinator.test.ts \
+  src/oracle-voice/playback.test.ts \
+  src/oracle-voice/client.test.ts \
+  server/oracle-voice-assets.test.ts \
+  server/oracle-voice-config.test.ts \
+  server/app-build.test.ts \
+  server/promotion-setup.test.ts \
+  server/version-policy.test.ts
+Test Files 15 passed
+Tests 305 passed
+```
+
+The actual installed `sherpa-onnx-node@1.13.8` package is dynamically imported
+by the focused integration test. The development account did not have either
+pinned VITS profile installed under the documented model root, so this final
+pass could not additionally initialize the real resident voice without
+downloading assets.
 
 Remaining-finding focused gate:
 
@@ -301,9 +399,7 @@ Full suite:
 
 ```text
 pnpm test
-Test Files 147 passed | 1 skipped
-Tests 4645 passed | 1 skipped
-Duration 1800.62 s
+exit 0; full suite completed
 ```
 
 Production-environment aggregate gate:
@@ -311,8 +407,7 @@ Production-environment aggregate gate:
 ```text
 NODE_ENV=production pnpm check
 lint: exit 0 (repository baseline warnings only)
-Test Files 147 passed | 1 skipped
-Tests 4645 passed | 1 skipped
+full Vitest suite: exit 0
 build: exit 0; 4,338 modules transformed
 ```
 
@@ -330,6 +425,9 @@ build: exit 0; 4,338 modules transformed
 - No Portuguese ASR corpus, perceptual voice-quality study, browser
   end-to-end latency/barge-in result, isolated resident-worker RSS result, or
   30-minute soak exists yet.
+- The real package export shape is integration-tested, but the final pass could
+  not instantiate a pinned resident VITS model because no voice profile was
+  installed on the development account.
 - `multilingual-quality` remains research-only because Faber descends from
   Lessac; asset redistribution must separately satisfy OpenMDW, GPL/eSpeak NG,
   and model/provenance obligations.

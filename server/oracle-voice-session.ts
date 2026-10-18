@@ -1,7 +1,10 @@
 import path from 'node:path'
 import {
+  ORACLE_VOICE_MAX_PCM_SAMPLE_RATE,
+  ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS,
   ORACLE_VOICE_PROTOCOL,
   ORACLE_VOICE_SAMPLE_RATE,
+  VOICE_AUDIO_HEADER_BYTES,
   isVoicePlaybackSampleRate,
   voiceAudioFrameByteLength,
   type VoiceAudioFrame,
@@ -19,15 +22,48 @@ import type {
 export interface VoiceBackendSessionLimits {
   maxFrameBytes: number
   maxQueueBytes: number
+  maxOutputQueueBytes: number
   maxUtteranceMs: number
   idleTimeoutMs: number
 }
 
+const MAX_INTERNAL_SEGMENT_ID_BYTES = 256
+
 export const DEFAULT_VOICE_BACKEND_LIMITS: VoiceBackendSessionLimits = {
   maxFrameBytes: 32 * 1024,
   maxQueueBytes: ORACLE_VOICE_SAMPLE_RATE * 2 * 2,
+  maxOutputQueueBytes: voiceOutputDeliveryByteLimit(
+    ORACLE_VOICE_MAX_PCM_SAMPLE_RATE,
+    32 * 1024,
+  ),
   maxUtteranceMs: 30_000,
   idleTimeoutMs: 30_000,
+}
+
+export function voiceOutputDeliveryByteLimit(
+  playbackSampleRate: number,
+  maxFrameBytes: number,
+): number {
+  if (!isVoicePlaybackSampleRate(playbackSampleRate)) {
+    throw new RangeError('playbackSampleRate must be an accepted playback sample rate')
+  }
+  if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes <= 0) {
+    throw new RangeError('maxFrameBytes must be a positive safe integer')
+  }
+  const maximumFrameOverhead = VOICE_AUDIO_HEADER_BYTES + MAX_INTERNAL_SEGMENT_ID_BYTES
+  const maximumPcmBytesPerFrame = Math.floor(
+    (maxFrameBytes - maximumFrameOverhead) / Int16Array.BYTES_PER_ELEMENT,
+  ) * Int16Array.BYTES_PER_ELEMENT
+  if (maximumPcmBytesPerFrame <= 0) {
+    throw new RangeError('maxFrameBytes is too small for playback audio')
+  }
+  const maximumPcmBytes = (
+    playbackSampleRate
+    * ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS
+    * Int16Array.BYTES_PER_ELEMENT
+  )
+  const playbackFrames = Math.ceil(maximumPcmBytes / maximumPcmBytesPerFrame)
+  return (playbackFrames + 1) * maxFrameBytes
 }
 
 export type VoiceBackendOutput = VoiceServerControl | VoiceAudioFrame
@@ -460,7 +496,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private enqueueOutput(output: VoiceBackendOutput): Promise<void> {
     if (this.closed) return Promise.resolve()
     const bytes = outputBytes(output)
-    if (bytes > this.limits.maxQueueBytes - this.queuedOutputBytes) {
+    if (bytes > this.limits.maxOutputQueueBytes - this.queuedOutputBytes) {
       const error = new VoiceSessionError('Voice output queue is full', 1013)
       void this.fail(error)
       return Promise.reject(error)
@@ -613,10 +649,17 @@ export class LocalVoiceBackend implements VoiceBackend {
   constructor(
     private readonly factory: VoiceEngineFactory,
     private readonly config: EnabledOracleVoiceConfig,
-    limits: VoiceBackendSessionLimits = DEFAULT_VOICE_BACKEND_LIMITS,
+    limits?: VoiceBackendSessionLimits,
   ) {
-    validateLimits(limits)
-    this.selectedLimits = { ...limits }
+    const selectedLimits = limits ?? {
+      ...DEFAULT_VOICE_BACKEND_LIMITS,
+      maxOutputQueueBytes: voiceOutputDeliveryByteLimit(
+        config.tts.sampleRate,
+        DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes,
+      ),
+    }
+    validateLimits(selectedLimits)
+    this.selectedLimits = { ...selectedLimits }
     this.advertisedCapability = capabilityFromConfig(config)
   }
 

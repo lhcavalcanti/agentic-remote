@@ -15,17 +15,20 @@ import {
 } from './oracle-voice-engine.js'
 import type { EnabledOracleVoiceConfig } from './oracle-voice-config.js'
 import {
+  DEFAULT_VOICE_BACKEND_LIMITS,
   LocalVoiceBackend,
   VoiceSessionError,
   createVoiceBackendSession,
   type VoiceBackendOutput,
   type VoiceBackendSessionLimits,
+  voiceOutputDeliveryByteLimit,
 } from './oracle-voice-session.js'
 
 const streamId = 'voice-stream'
 const limits: VoiceBackendSessionLimits = {
   maxFrameBytes: 4096,
   maxQueueBytes: ORACLE_VOICE_SAMPLE_RATE * 2 * 2,
+  maxOutputQueueBytes: 128 * 1024,
   maxUtteranceMs: 30_000,
   idleTimeoutMs: 30_000,
 }
@@ -75,6 +78,51 @@ function frame(
   }
 }
 
+function measuredPlaybackEvents(
+  sampleCount: number,
+  sampleRate = 22_050,
+  generation = 2,
+  segmentId = 'segment-2',
+): Array<
+  | Extract<VoiceEngineEvent, { type: 'audio' }>
+  | Extract<VoiceEngineEvent, { type: 'audio_end' }>
+> {
+  const maxSamples = Math.floor(
+    (32 * 1024 - VOICE_AUDIO_HEADER_BYTES - Buffer.byteLength(segmentId))
+      / Int16Array.BYTES_PER_ELEMENT,
+  )
+  const events: Array<
+    | Extract<VoiceEngineEvent, { type: 'audio' }>
+    | Extract<VoiceEngineEvent, { type: 'audio_end' }>
+  > = []
+  let emitted = 0
+  let sequence = 0
+  while (emitted < sampleCount) {
+    const count = Math.min(maxSamples, sampleCount - emitted)
+    events.push({
+      type: 'audio',
+      streamId,
+      generation,
+      segmentId,
+      sequence,
+      sampleRate,
+      samples: Int16Array.from(
+        { length: count },
+        (_, index) => (emitted + index) % 32_767,
+      ),
+    })
+    emitted += count
+    sequence += 1
+  }
+  events.push({
+    type: 'audio_end',
+    streamId,
+    generation,
+    segmentId,
+  })
+  return events
+}
+
 function harness(
   engine = new FakeVoiceEngine(),
   overrides: Partial<VoiceBackendSessionLimits> = {},
@@ -107,6 +155,14 @@ async function beginUtterance(
 }
 
 describe('VoiceBackendSession', () => {
+  it('sizes internal playback delivery independently from the 64KB transport queue', () => {
+    expect(voiceOutputDeliveryByteLimit(22_050, 32 * 1024)).toBe(589_824)
+    expect(DEFAULT_VOICE_BACKEND_LIMITS).toMatchObject({
+      maxQueueBytes: 64_000,
+      maxOutputQueueBytes: 4_685_824,
+    })
+  })
+
   it('closes on a skipped sequence before passing that audio to the engine', async () => {
     const { engine, session, terminated } = harness()
     await beginUtterance(session)
@@ -453,7 +509,10 @@ describe('VoiceBackendSession', () => {
     const maxQueueBytes = Buffer.byteLength(JSON.stringify(partial)) + playbackBytes - 1
     const { engine, sent, session, terminated } = harness(
       new FakeVoiceEngine(),
-      { maxQueueBytes },
+      {
+        maxQueueBytes: 1_000_000,
+        maxOutputQueueBytes: maxQueueBytes,
+      },
       async () => {
         if (blockOutput) await gate
       },
@@ -492,6 +551,99 @@ describe('VoiceBackendSession', () => {
     })
     expect(sent.some((entry) => 'direction' in entry)).toBe(false)
     release()
+  })
+
+  it.each([
+    ['LJSpeech', 176_469],
+    ['Faber', 148_224],
+  ])('delivers the full measured %s multi-frame sequence behind a blocked first frame', async (
+    _voice,
+    sampleCount,
+  ) => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let blockPlayback = false
+    const delivered: VoiceBackendOutput[] = []
+    const { engine, session, terminated } = harness(
+      new FakeVoiceEngine(),
+      {
+        maxFrameBytes: 32 * 1024,
+        maxQueueBytes: 64 * 1024,
+        maxOutputQueueBytes: voiceOutputDeliveryByteLimit(22_050, 32 * 1024),
+      },
+      async (output) => {
+        if (blockPlayback && 'direction' in output) await gate
+        delivered.push(output)
+      },
+    )
+    await session.control(control('start', 2, { language: 'en' }))
+    await session.control(control('synthesize', 2, {
+      segmentId: 'segment-2',
+      text: 'Measured resident VITS sentence.',
+    }))
+    blockPlayback = true
+    const events = measuredPlaybackEvents(sampleCount)
+
+    for (const event of events) engine.emit(event)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(terminated).toEqual([])
+    release()
+    await vi.waitFor(() => {
+      expect(delivered.at(-1)).toMatchObject({ type: 'audio_end' })
+    })
+    expect(terminated).toEqual([])
+    expect(delivered.filter((output) =>
+      'direction' in output || ('type' in output && output.type === 'audio_end'),
+    )).toEqual(events.map((event) => event.type === 'audio'
+      ? {
+          direction: 'playback',
+          generation: event.generation,
+          segmentId: event.segmentId,
+          sequence: event.sequence,
+          sampleRate: event.sampleRate,
+          samples: event.samples,
+        }
+      : {
+          type: 'audio_end',
+          protocol: ORACLE_VOICE_PROTOCOL,
+          streamId,
+          generation: event.generation,
+          segmentId: event.segmentId,
+        }))
+  })
+
+  it('fails closed when blocked playback exceeds the 12-second delivery allocation', async () => {
+    const gate = new Promise<void>(() => undefined)
+    const { engine, session, terminated } = harness(
+      new FakeVoiceEngine(),
+      {
+        maxFrameBytes: 32 * 1024,
+        maxQueueBytes: 64 * 1024,
+        maxOutputQueueBytes: voiceOutputDeliveryByteLimit(22_050, 32 * 1024),
+      },
+      async (output) => {
+        if ('direction' in output) await gate
+      },
+    )
+    await session.control(control('start', 2, { language: 'en' }))
+    await session.control(control('synthesize', 2, {
+      segmentId: 'segment-2',
+      text: 'Exceed the bounded playback allocation.',
+    }))
+
+    for (const event of measuredPlaybackEvents(22_050 * 15)) {
+      engine.emit(event)
+      if (terminated.length > 0) break
+    }
+
+    await vi.waitFor(() => {
+      expect(terminated).toEqual([
+        { code: 1013, reason: 'Voice output queue is full' },
+      ])
+    })
   })
 
   it('closes the transport after stop cleanup without cleaning up twice', async () => {

@@ -33,6 +33,51 @@ Security-finding TDD evidence:
   security/integration/UI command passed 228/228 tests across 9 files.
 - Full gates: `pnpm check` and `NODE_ENV=production pnpm check` both exited 0.
 
+Two further confirmed findings at `88e6fb6ac02c03f5d0e29bd5c6bccd4f256f60a2`
+showed that `source: 'voice'` still disappeared when `ManagerAgent` built the
+normal persisted message, and that collapsing voice into ordinary Ask left
+Oracle memory/settings plus future manager tools outside a fail-closed voice
+boundary. The same collapse also placed voice text in the ordinary trusted
+user-message and recovery-brief pathways.
+
+The corrected schema persists immutable `ManagerMessage.source` as `typed` or
+`voice`; historical messages without the field normalize to typed semantics.
+`ManagerStore` preserves the first source for a user-message ID across queued
+edits, updates, retries, restart recovery, and compaction. Manager events use
+that normal message shape, so local and paired-node finals retain the same
+provenance while remaining exactly one visible Oracle user message.
+
+The manager tool handler now classifies an explicit read/query allowlist and
+treats every other current or unknown tool as a mutation. Voice can list/read
+computers, sessions, skills, and memory and use `ask_session`; it cannot change
+sessions, answer permissions/trust/questions, request destructive
+confirmation, change the session folder, or write/append/delete memory. Typed
+Ask keeps its intentional memory/settings behavior and typed Delegate remains
+unchanged.
+
+Voice text is XML-escaped inside
+`<untrusted_voice_transcript acoustic_identity="unverified">`, the system and
+turn context say it is acoustic content rather than instructions, and recovery
+briefs omit the voice message plus linked activities/replies. The panel warns
+before Start and while active that speaker identity is not verified, nearby or
+replayed audio may be submitted, Ask can read session information, and
+finalized text is sent to remote Copilot.
+
+Second security-finding TDD evidence:
+
+- RED: the first focused run reported 9 expected failures and 169 passes across
+  6 files. Failures showed missing persisted/event provenance, downgrade on
+  update, mutable voice memory/settings, no fail-closed unknown-tool
+  classification, an ordinary trusted prompt/recovery brief, missing warning
+  text, and missing local persisted provenance. A dedicated delimiter-injection
+  regression also failed 1 test with 12 skipped.
+- GREEN: the same six-file set passed 178/178 tests. The requested
+  manager/store/tools/context/coordinator/security/integration/routes/UI set
+  then passed 246/246 tests across 10 files.
+- Full gates: 3,418 non-skipped tests are discovered across 230 files.
+  `pnpm check` and `NODE_ENV=production pnpm check` both exited 0. Oxlint
+  continued to print only the repository's pre-existing React warnings.
+
 ## Strict TDD evidence
 
 Each finding had a failing regression before its minimal implementation:

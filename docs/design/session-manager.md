@@ -338,10 +338,27 @@ is submitted exactly once through normal `ManagerAgent.send` with hub-trusted
 voice provenance and forced Ask-only semantics. The panel's Ask/Delegate
 selection applies to typed messages only; it cannot make Conversation voice
 delegate work, steer sessions, answer permission or trust prompts, or approve
-destructive confirmation actions. The message persists as the normal Oracle
-user message in conversation history and goes with the normal generated turn
-context to Oracle's remote Copilot model. No separate voice transcript or
-recording artifact is persisted.
+destructive confirmation actions.
+
+The normal persisted `ManagerMessage` stores immutable `source: 'voice'`;
+historical user messages without a source load as typed. The store preserves
+the first source for a message ID across queued edits, retries, event updates,
+restart recovery, and compaction. At the manager tool handler, a centralized
+read-only allowlist permits voice to inspect computers, sessions, skills, and
+memory and to ask read-only side questions. Every other current or future tool
+fails closed for voice, including memory changes and `set_session_folder`.
+Typed Ask keeps its intentional memory/settings behavior and typed Delegate
+remains unchanged.
+
+The current transcript is escaped and delimited as acoustically untrusted in
+the model prompt. It cannot be promoted into memory or settings, and a fresh
+runtime's recovery brief excludes the voice message and its linked exchange.
+The message still appears as exactly one normal Oracle user message in visible
+history and goes with the generated current-turn context to Oracle's remote
+Copilot model. No separate voice transcript or recording artifact is
+persisted. The panel warns both before Start and while active that speaker
+identity is unverified, nearby or replayed audio may be submitted, Ask can read
+session information, and finalized text is sent to remote Copilot.
 
 A hub with `AGENTIC_REMOTE_VOICE_COMPUTER` needs only enablement and the paired
 computer selection; it does not validate or load local speech paths. The node

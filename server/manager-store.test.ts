@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ManagerMessage } from '../shared/manager.js'
 import { ManagerStore } from './manager-store.js'
 
 describe('ManagerStore', () => {
@@ -49,6 +50,41 @@ describe('ManagerStore', () => {
       ['a', 'done'],
       ['b', undefined],
     ])
+  })
+
+  it('keeps persisted voice provenance immutable across reloads and legacy updates', async () => {
+    const store = await open()
+    const voice = {
+      id: 'voice',
+      role: 'user',
+      content: 'What is running?',
+      createdAt: 't1',
+      state: 'queued',
+      source: 'voice',
+    } as ManagerMessage
+    await store.upsertMessage(voice)
+    await store.upsertMessage({
+      ...voice,
+      content: 'What is running now?',
+      source: undefined,
+    } as ManagerMessage)
+    await store.flush()
+
+    const reopened = await open()
+    expect(reopened.message('voice')).toMatchObject({
+      content: 'What is running now?',
+      source: 'voice',
+    })
+
+    await reopened.upsertMessage({
+      ...reopened.message('voice')!,
+      source: 'typed',
+      state: 'failed',
+    } as ManagerMessage)
+    expect(reopened.message('voice')).toMatchObject({
+      source: 'voice',
+      state: 'failed',
+    })
   })
 
   it('compacts the conversation log and keeps only the newest messages', async () => {

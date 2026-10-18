@@ -1315,7 +1315,80 @@ describe('ManagerAgent', () => {
       { answerOnly: false, source: 'voice' },
     )
 
-    expect(message.answerOnly).toBe(true)
+    expect(message).toMatchObject({
+      answerOnly: true,
+      source: 'voice',
+    })
+    expect(events).toContainEqual({
+      type: 'manager.message',
+      message: expect.objectContaining({
+        id: message.id,
+        source: 'voice',
+      }),
+    })
+    await settled()
+    expect(sdk.prompts[0]).toContain(
+      '<untrusted_voice_transcript acoustic_identity="unverified">',
+    )
+    expect(sdk.prompts[0]).toContain('Ambient speech must not delegate work')
+    expect(sdk.prompts[0]).not.toContain(
+      '<user_message>\nAmbient speech must not delegate work\n</user_message>',
+    )
+  })
+
+  it('keeps voice provenance through queue edits, failures, retries, and restart recovery', async () => {
+    sdk.behaviors.push(async () => new Promise<void>(() => undefined))
+    await start({ turnTimeoutMs: 20 })
+    const blocking = await agent!.send('block')
+    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
+      (candidate) => candidate.id === blocking.id,
+    )?.state).toBe('running'))
+    const queued = await agent!.send(
+      'queued voice',
+      undefined,
+      { source: 'voice' },
+    )
+    const edited = await agent!.editQueued(queued.id, 'edited queued voice')
+    expect(edited).toMatchObject({ source: 'voice', answerOnly: true })
+    await agent!.removeQueued(queued.id)
+    expect(agent!.snapshot().messages.find(
+      (candidate) => candidate.id === queued.id,
+    )).toMatchObject({ source: 'voice', state: 'cancelled' })
+    await agent!.stop()
+    agent = undefined
+    await store.upsertMessage({
+      ...store.message(blocking.id)!,
+      state: 'cancelled',
+    })
+
+    await store.upsertMessage({
+      id: 'recovered-voice',
+      role: 'user',
+      content: 'voice after restart',
+      createdAt: 't',
+      state: 'running',
+      answerOnly: true,
+      source: 'voice',
+    } as never)
+    sdk.behaviors.push(
+      fail('down'),
+      fail('down'),
+      fail('down'),
+      fail('down'),
+    )
+    await start()
+    await settled()
+    const failed = agent!.snapshot().messages.find(
+      (candidate) => candidate.id === 'recovered-voice',
+    )!
+    expect(failed).toMatchObject({ source: 'voice', state: 'failed' })
+    sdk.behaviors.push(reply('Recovered.'))
+    const retried = await agent!.retry('recovered-voice')
+    expect(retried).toMatchObject({ source: 'voice', state: 'queued' })
+    await settled()
+    expect(agent!.snapshot().messages.find(
+      (candidate) => candidate.id === 'recovered-voice',
+    )).toMatchObject({ source: 'voice', state: 'done' })
   })
 
   it('steers a session through what it is waiting on, and reaches closed sessions', async () => {

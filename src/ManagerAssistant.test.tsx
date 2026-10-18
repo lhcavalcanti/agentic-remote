@@ -858,6 +858,30 @@ describe('ManagerAssistant', () => {
       ))
     })
 
+    it('warns before start and while active that voice has no verified speaker boundary', async () => {
+      const warning = 'Speaker identity is not verified. Nearby or replayed audio may be submitted. Ask can read session information. Finalized text is sent to remote Copilot.'
+      setup()
+      await openPanel()
+
+      expect(screen.getByRole('note', {
+        name: 'Conversation security notice',
+      })).toHaveTextContent(warning)
+      expect(screen.getByRole('button', {
+        name: 'Start conversation',
+      })).toBeVisible()
+
+      cleanup()
+      vi.mocked(useOracleConversation).mockReturnValue(
+        conversationState('listening'),
+      )
+      setup()
+      await openPanel()
+
+      expect(screen.getByRole('group', {
+        name: 'Conversation status',
+      })).toHaveTextContent(warning)
+    })
+
     it('restores every failed final delivered by the identity-deduplicating hook', async () => {
       vi.mocked(useOracleConversation).mockReturnValue(conversationState('thinking'))
       setup()

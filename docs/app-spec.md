@@ -478,15 +478,32 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   or partial transcripts. Each non-empty finalized transcript MUST be submitted
   exactly once through the normal `ManagerAgent.send` path with trusted voice
   provenance and `answerOnly: true`, regardless of the browser's current
-  Ask/Delegate selection. The hub MUST enforce that policy for both hub-local
-  and paired-node speech. A voice final MUST NOT delegate work, steer sessions,
-  answer permission or trust prompts, or authorize destructive confirmation
-  actions. Typed/manual Oracle Delegate behavior remains unchanged. The UI MUST
-  visibly state that Conversation voice is Ask-only and cannot delegate.
-  Finalized text is persisted as the normal Oracle user message in Oracle
-  conversation history and sent with Oracle's generated context to remote
+  Ask/Delegate selection. That provenance MUST remain immutable on the normal
+  persisted `ManagerMessage` through queueing, events, edits, retries, restart
+  recovery, and compaction; historical messages without provenance MUST retain
+  typed/manual semantics. The hub MUST enforce the same policy for hub-local
+  and paired-node speech.
+- A voice final MUST be read-only at the manager tool-handler boundary. It MAY
+  use explicitly classified read/query tools needed to answer, including
+  session reads and side questions, but MUST NOT delegate or steer sessions,
+  answer permissions, trust prompts, or questions, request destructive
+  confirmation, change the Oracle session folder, or write, append, or delete
+  Oracle memory. Tools not explicitly classified as read-only MUST fail closed
+  for voice. Typed Ask and typed Delegate policy MUST remain unchanged.
+- The model prompt MUST delimit the current finalized transcript as
+  acoustically untrusted, with speaker identity unverified. Voice text MUST NOT
+  be promoted into Oracle memory, settings, trusted instructions, or recovery
+  briefs, and recovery MUST omit the voice exchange linked to that message.
+  This is a provenance and authorization boundary, not speaker authentication.
+  Finalized text remains exactly one visible normal Oracle user message in
+  conversation history and is sent with Oracle's generated context to remote
   Copilot inference. No separate voice transcript or recording artifact may be
-  persisted, and the UI MUST NOT describe the experience as offline.
+  persisted.
+- Before Conversation starts and while it is active, the UI MUST visibly state
+  that speaker identity is not verified, nearby or replayed audio may be
+  submitted, Ask can read session information, and finalized text is sent to
+  remote Copilot. It MUST also state that Conversation voice is Ask-only and
+  MUST NOT describe the complete experience as offline.
 - Partials MUST remain display-only. A failed normal-message submission MUST
   restore its final text to the composer. A disconnect MUST discard the current
   utterance rather than replay PCM or a finalized transcript. TTS failure MUST

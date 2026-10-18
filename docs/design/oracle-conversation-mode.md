@@ -62,16 +62,42 @@ Each finalized transcript is submitted exactly once through normal
 regardless of the browser's Ask/Delegate value. Conversation voice therefore
 cannot delegate work, steer sessions, answer permission or trust prompts, or
 approve destructive confirmation actions. Typed/manual Delegate messages keep
-their existing behavior. The finalized text is persisted as the normal Oracle
-user message in Oracle conversation history and sent with Oracle context to
+their existing behavior.
+
+`ManagerMessage.source` is the durable authority for that decision. New user
+messages persist either `typed` or `voice`; old records without `source` load
+as typed. `ManagerStore` keeps the first trusted source for a message ID, so
+queue edits, retry, event emission, restart recovery, and log compaction cannot
+downgrade a voice message. The finalized text remains exactly one normal
+Oracle user message in conversation history and is sent with Oracle context to
 the remote Copilot model. Conversation mode persists no separate voice
-transcript or recording artifact. The UI states that Conversation voice is
-Ask-only and must not call the complete experience "offline."
+transcript or recording artifact.
+
+The manager tool handler applies a centralized fail-closed policy. Voice may
+call only the explicit read/query allowlist (`list_computers`, `list_sessions`,
+`get_session`, `ask_session`, `list_skills`, `memory_list`, and
+`memory_read`). Every other existing or newly added tool is classified as a
+mutation until reviewed, so session actions, permission/trust answers,
+destructive confirmation, memory writes, and `set_session_folder` are rejected
+before argument parsing or side effects. Typed Ask retains its existing
+session-action restriction while keeping its intentional memory/settings
+behavior; typed Delegate is unchanged.
+
+The current voice text is XML-escaped and placed in an
+`<untrusted_voice_transcript acoustic_identity="unverified">` block with a
+system-level rule that it is acoustic content to answer, not trusted
+instructions. Voice turns cannot write memory/settings, and recovery briefs
+omit the voice message plus activities and replies linked to it. This keeps a
+later typed Delegate turn from inheriting voice text as authoritative
+instructions while preserving the visible conversation.
 
 VAD confirms speech activity, not speaker identity. Conversation mode does not
 attempt speaker authentication; nearby, replayed, or injected speech can still
 be transcribed. The Ask-only boundary limits that input to non-delegating
-Oracle answers rather than pretending to establish who spoke.
+Oracle answers rather than pretending to establish who spoke. The panel repeats
+this limitation before Start and in the active status: identity is unverified,
+nearby or replayed audio may be submitted, Ask can read session information,
+and finalized text goes to remote Copilot.
 
 The browser-to-hub socket uses a short-lived, single-use ticket minted by a
 same-origin REST request. Existing Host and Origin policy protects both the

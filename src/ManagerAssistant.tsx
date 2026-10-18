@@ -1132,6 +1132,9 @@ export function ManagerAssistant({
               <p className="manager-conversation-status__privacy">
                 Speech processing stays on your selected computer; Oracle uses remote Copilot. Final messages stay in Oracle history.
               </p>
+              <p className="manager-conversation-security">
+                Speaker identity is not verified. Nearby or replayed audio may be submitted. Ask can read session information. Finalized text is sent to remote Copilot.
+              </p>
             </div>
             {conversation.ownsResources ? (
               <button
@@ -1161,10 +1164,19 @@ export function ManagerAssistant({
             </button>
           </div>
         ) : null}
-        {conversationAvailable ? (
-          <p className="manager-conversation-policy">
-            Conversation voice is Ask-only and cannot delegate. The mode switch still controls typed messages.
-          </p>
+        {conversationAvailable && !conversationActive ? (
+          <div
+            aria-label="Conversation security notice"
+            className="manager-conversation-policy"
+            role="note"
+          >
+            <p>
+              Speaker identity is not verified. Nearby or replayed audio may be submitted. Ask can read session information. Finalized text is sent to remote Copilot.
+            </p>
+            <p>
+              Conversation voice is Ask-only and cannot delegate. The mode switch still controls typed messages.
+            </p>
+          </div>
         ) : null}
         <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}${
           conversationAvailable ? ' manager-composer__row--conversation' : ''

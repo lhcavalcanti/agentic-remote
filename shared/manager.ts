@@ -17,6 +17,9 @@ export type ManagerStatus = 'idle' | 'working' | 'recovering' | 'offline'
 
 export type ManagerMessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
+/** Trusted hub-side provenance for a user message. */
+export type ManagerMessageSource = 'typed' | 'voice'
+
 /** Delivery state of a message you sent the manager. */
 export type ManagerMessageState =
   | 'queued'
@@ -61,6 +64,11 @@ export interface ManagerMessage {
    */
   answerOnly?: boolean
   /**
+   * Immutable provenance assigned at the trusted submission boundary. Older
+   * persisted user messages without it are treated as typed.
+   */
+  readonly source?: ManagerMessageSource
+  /**
    * When Oracle first started on it. From then on it is no longer the user's
    * to edit, even if a restart or Retry puts it back in the queue.
    */
@@ -92,7 +100,7 @@ export interface ManagerClientDefaults {
 }
 
 /** Internal provenance used to apply trusted submission policy at the hub. */
-export type ManagerSubmissionSource = 'voice'
+export type ManagerSubmissionSource = ManagerMessageSource
 
 export interface ManagerSubmissionOptions {
   answerOnly?: boolean

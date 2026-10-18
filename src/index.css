@@ -8144,11 +8144,26 @@ button {
   line-height: 1.35;
 }
 
+.manager-conversation-security {
+  margin: 4px 0 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .manager-conversation-policy {
   margin: 0 0 6px;
   color: var(--muted-strong);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.manager-conversation-policy p {
+  margin: 0;
+}
+
+.manager-conversation-policy p + p {
+  margin-top: 3px;
 }
 
 .manager-conversation-stop {

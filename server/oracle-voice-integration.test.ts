@@ -153,6 +153,7 @@ class StoredManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
       createdAt: '2026-10-18T00:00:00.000Z',
       state: 'running',
       ...(options?.answerOnly ? { answerOnly: true } : {}),
+      ...(options?.source ? { source: options.source } : {}),
     }
     await this.store.upsertMessage(message)
     this.submitted.push(message)
@@ -1028,6 +1029,7 @@ describe('Oracle voice cross-layer integration', () => {
       content: 'Run the focused tests.',
       state: 'running',
       answerOnly: true,
+      source: 'voice',
     })
     expect(await test.events.waitForControl<ManagerEvent>(
       (event) => event.type === 'manager.message'
@@ -1040,6 +1042,7 @@ describe('Oracle voice cross-layer integration', () => {
         role: 'user',
         content: 'Run the focused tests.',
         state: 'running',
+        source: 'voice',
       },
     })
     const liveUserIds = test.events.controls<ManagerEvent>(
@@ -1051,8 +1054,17 @@ describe('Oracle voice cross-layer integration', () => {
         : [])
     expect(new Set(liveUserIds)).toEqual(new Set([userMessage.id]))
     expect(test.manager.client.sessions[0].prompts[0]).toContain(
-      '<user_message>\nRun the focused tests.\n</user_message>',
+      '<untrusted_voice_transcript acoustic_identity="unverified">\nRun the focused tests.\n</untrusted_voice_transcript>',
     )
+    const reopened = new ManagerStore(path.join(
+      test.root,
+      'oracle-manager',
+    ))
+    await reopened.initialize()
+    expect(reopened.message(userMessage.id)).toMatchObject({
+      source: 'voice',
+      answerOnly: true,
+    })
     expect(test.browserInbox.controls<VoiceServerControl>(
       (message) => message.type === 'final',
     )).toEqual([])
@@ -1476,6 +1488,20 @@ describe('Oracle voice cross-layer integration', () => {
       { answerOnly: true, source: 'voice' },
     )
     const user = manager.submitted[0]
+    expect(user).toMatchObject({
+      content: transcriptSentinel,
+      source: 'voice',
+      answerOnly: true,
+    })
+    const reopenedHubManager = new ManagerStore(path.join(
+      hubRoot,
+      'oracle-manager',
+    ))
+    await reopenedHubManager.initialize()
+    expect(reopenedHubManager.message(user.id)).toMatchObject({
+      source: 'voice',
+      answerOnly: true,
+    })
     const managerDeltaSentinel = 'paired-manager-tts-4b027dc1.'
     manager.emitDelta('remote-assistant', managerDeltaSentinel)
     await events.waitForControl<ManagerEvent>(

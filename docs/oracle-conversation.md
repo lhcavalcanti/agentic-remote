@@ -17,9 +17,15 @@ Ask-only behavior. This hub policy is the same for local speech and speech
 processed on a paired node, and it does not change when the panel is set to
 Delegate. Conversation voice cannot delegate work, steer sessions, answer
 permission or trust prompts, or approve destructive confirmation actions.
-Typed/manual Delegate messages are unchanged. The final becomes the normal
-persisted Oracle user message in conversation history and is sent with Oracle
-context to remote GitHub Copilot. No separate voice transcript or recording
+It also cannot change Oracle memory or its default session folders. Typed Ask
+keeps its existing memory/settings behavior, and typed/manual Delegate messages
+are unchanged.
+
+The final becomes exactly one normal persisted Oracle user message in
+conversation history and is sent with Oracle context to remote GitHub Copilot.
+Its immutable `source: 'voice'` survives queueing, edits, retries, events,
+restart recovery, and storage compaction. Existing historical messages without
+source retain typed/manual behavior. No separate voice transcript or recording
 artifact is kept. Conversation mode is therefore local speech processing, not
 an offline assistant.
 
@@ -114,10 +120,17 @@ per hub.
 
 Silero VAD detects speech activity; it does not authenticate a speaker.
 Nearby, replayed, or injected speech can be transcribed. Agentic Remote does
-not add a partial speaker-authentication claim: the safety boundary is that
-every Conversation final is Ask-only. Use typed/manual Oracle input for
-delegation and the dedicated UI controls for permission, trust, or destructive
-confirmations.
+not add a partial speaker-authentication claim. Before Start and while active,
+the panel warns that identity is unverified, nearby or replayed audio may be
+submitted, Ask can read session information, and finalized text is sent to
+remote Copilot.
+
+The safety boundary is provenance plus authorization: the model receives the
+current final in an escaped, acoustically-untrusted delimiter; the manager
+tool handler allows only explicitly classified reads and fails closed for
+unknown tools; voice cannot update memory/settings; and recovery briefs omit
+the voice exchange. Use typed/manual Oracle input for delegation and the
+dedicated UI controls for permission, trust, or destructive confirmations.
 
 ## Evidence and limitations
 

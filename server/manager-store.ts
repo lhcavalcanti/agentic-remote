@@ -2,7 +2,12 @@ import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { AgentProvider, SessionStatus } from '../shared/contracts.js'
-import type { ManagerClientDefaults, ManagerMessage, ManagerSettings } from '../shared/manager.js'
+import type {
+  ManagerClientDefaults,
+  ManagerMessage,
+  ManagerMessageSource,
+  ManagerSettings,
+} from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
 
 export type SessionOrigin = 'manager' | 'user' | 'discovered'
@@ -97,6 +102,24 @@ const emptyState = (): ManagerState => ({
   acknowledgedJournalSeq: 0,
 })
 
+function messageSource(source: unknown): ManagerMessageSource {
+  return source === 'voice' ? 'voice' : 'typed'
+}
+
+function storedMessage(
+  message: ManagerMessage,
+  previous?: ManagerMessage,
+): ManagerMessage {
+  const stored = structuredClone(message)
+  if (stored.role !== 'user') return stored
+  return {
+    ...stored,
+    source: previous?.role === 'user'
+      ? messageSource(previous.source)
+      : messageSource(stored.source),
+  }
+}
+
 export function registryKey(computerId: string, sessionId: string): string {
   return `${computerId}:${sessionId}`
 }
@@ -145,7 +168,12 @@ export class ManagerStore {
     const conversationLines = await this.readLines<ManagerMessage>('conversation.jsonl')
     this.conversationLines = conversationLines.length
     for (const message of conversationLines) {
-      if (typeof message?.id === 'string') this.conversation.set(message.id, message)
+      if (typeof message?.id === 'string') {
+        this.conversation.set(
+          message.id,
+          storedMessage(message, this.conversation.get(message.id)),
+        )
+      }
     }
     this.trimConversation()
 
@@ -176,7 +204,7 @@ export class ManagerStore {
   }
 
   upsertMessage(message: ManagerMessage): Promise<void> {
-    const stored = structuredClone(message)
+    const stored = storedMessage(message, this.conversation.get(message.id))
     this.conversation.set(stored.id, stored)
     this.trimConversation()
     this.conversationLines += 1

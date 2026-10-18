@@ -11,6 +11,7 @@ import {
   type ManagerToolActivity,
   type ManagerToolHost,
 } from './manager-tools.js'
+import * as managerToolsModule from './manager-tools.js'
 
 const computers: ComputerSummary[] = [
   {
@@ -37,6 +38,7 @@ describe('manager tools', () => {
   let activities: ManagerToolActivity[]
   let tools: Map<string, ManagerTool>
   let answerOnly: boolean
+  let source: 'typed' | 'voice'
   let oracleFolders: Record<string, string>
 
   const call = async (name: string, args: unknown, toolCallId = 't') => {
@@ -49,6 +51,7 @@ describe('manager tools', () => {
     root = await mkdtemp(path.join(tmpdir(), 'manager-tools-'))
     activities = []
     answerOnly = false
+    source = 'typed'
     oracleFolders = {}
     const created = session('new1', { cwd: '/home/me/src/web' })
     host = {
@@ -75,6 +78,7 @@ describe('manager tools', () => {
       markManaged: vi.fn(async () => undefined),
       registry: () => ({}),
       answerOnly: () => answerOnly,
+      messageSource: () => source,
       sessionFolders: () => oracleFolders,
       setSessionFolder: vi.fn(async (computerId: string, folder?: string) => {
         if (folder === '~/missing') throw new Error('Folder does not exist')
@@ -212,6 +216,7 @@ describe('manager tools', () => {
 
   it('changes where Oracle starts sessions when the user asks, even in Ask only', async () => {
     answerOnly = true
+    source = 'typed'
     expect(String(await call('set_session_folder', { computer: 'development', folder: '~/src/app' })))
       .toContain('/home/me/src/app')
     expect(host.setSessionFolder).toHaveBeenLastCalledWith('hub', '~/src/app')
@@ -594,6 +599,7 @@ describe('manager tools', () => {
 
   it('never acts on a session while answering an Ask only message, but still reads and asks', async () => {
     answerOnly = true
+    source = 'typed'
     for (const [name, args] of [
       ['create_session', { title: 'X', prompt: 'Y' }],
       ['send_to_session', { sessionId: 'abc12345', message: 'hi' }],
@@ -621,6 +627,87 @@ describe('manager tools', () => {
       .toBe('It fixed the bug and opened PR #12.')
     await call('memory_write', { path: 'MEMORY.md', content: '# Index' })
     expect(await call('memory_read', { path: 'MEMORY.md' })).toBe('# Index')
+  })
+
+  it('fails closed at the handler for every voice mutation class but permits read-only queries', async () => {
+    await host.memory.write('MEMORY.md', '# Trusted')
+    source = 'voice'
+    answerOnly = true
+    vi.mocked(host.readSession).mockResolvedValue(session('abc12345-aaaa', {
+      status: 'waiting',
+      pendingPermission: {
+        requestId: 'perm-1',
+        title: 'Run npm publish',
+        kind: 'shell',
+        options: [
+          { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
+        ],
+      },
+    }))
+
+    for (const [name, args] of [
+      ['create_session', { title: 'X', prompt: 'Y' }],
+      ['set_session_folder', { folder: '~/src/voice' }],
+      ['send_to_session', { sessionId: 'abc12345', message: 'hi' }],
+      ['rename_session', { sessionId: 'abc12345', title: 'New' }],
+      ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
+      ['cancel_session', { sessionId: 'abc12345' }],
+      ['close_session', { sessionId: 'abc12345' }],
+      ['memory_write', { path: 'MEMORY.md', content: '# Replaced' }],
+      ['memory_append', { path: 'MEMORY.md', content: '\n- planted' }],
+      ['memory_delete', { path: 'MEMORY.md' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('voice')
+    }
+
+    expect(host.createSession).not.toHaveBeenCalled()
+    expect(host.setSessionFolder).not.toHaveBeenCalled()
+    expect(host.sendMessage).not.toHaveBeenCalled()
+    expect(host.renameSession).not.toHaveBeenCalled()
+    expect(host.replyPermission).not.toHaveBeenCalled()
+    expect(host.replyUserInput).not.toHaveBeenCalled()
+    expect(host.cancel).not.toHaveBeenCalled()
+    expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
+    expect(await host.memory.read('MEMORY.md')).toBe('# Trusted')
+    expect(oracleFolders).toEqual({})
+    expect(activities).toEqual([])
+
+    expect(String(await call('list_computers', {}))).toContain('development')
+    expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('get_session', { sessionId: 'abc12345' })))
+      .toContain('Run npm publish')
+    expect(await call('ask_session', {
+      sessionId: 'abc12345',
+      question: 'What did you find?',
+    })).toBe('It fixed the bug and opened PR #12.')
+    expect(String(await call('list_skills', {}))).toContain('brainstorming')
+    expect(String(await call('memory_list', {}))).toContain('MEMORY.md')
+    expect(await call('memory_read', { path: 'MEMORY.md' })).toBe('# Trusted')
+  })
+
+  it('classifies unknown future tools as mutations so voice fails closed', () => {
+    const classify = (
+      managerToolsModule as typeof managerToolsModule & {
+        managerToolMutability?: (name: string) => string
+      }
+    ).managerToolMutability
+    expect(classify).toBeTypeOf('function')
+    expect(classify?.('future_state_mutator')).toBe('mutation')
+    expect(classify?.('list_sessions')).toBe('read')
+  })
+
+  it('leaves typed Delegate mutations unchanged', async () => {
+    source = 'typed'
+    answerOnly = false
+    expect(String(await call('create_session', {
+      title: 'Typed work',
+      prompt: 'Do the typed task.',
+    }))).toContain('Started')
+    expect(host.createSession).toHaveBeenCalledOnce()
+    expect(host.sendMessage).toHaveBeenCalledOnce()
   })
 
   it('lists computers, sessions, and skills', async () => {

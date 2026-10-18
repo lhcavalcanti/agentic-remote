@@ -783,8 +783,16 @@ export async function queueBatch(
       { uncertainDelivery: true },
     )
   }
-  if (!response.ok) throw await responseError(response)
-  return (await response.json()) as ManagedQueuedBatch
+  if (!response.ok) throw await responseError(response, definiteDispatchRefusals)
+  try {
+    return (await response.json()) as ManagedQueuedBatch
+  } catch (error) {
+    // Admitted, but the answer was lost on the way back.
+    throw Object.assign(
+      new Error('The hub’s answer was cut off, so the batch may or may not be queued.', { cause: error }),
+      { uncertainDelivery: true },
+    )
+  }
 }
 
 export async function reorderQueuedPrompts(

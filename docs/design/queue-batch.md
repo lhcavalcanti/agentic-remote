@@ -84,15 +84,20 @@ Delivery after admission is the existing drain:
 ## UI
 
 **Queue several** (composer actions) opens a dialog.
-- One field per prompt, with Add, Remove, Move up, and Move down. It starts
-  with what is in the composer.
-- The submit button reads **Queue N prompts**.
-- **On success:** one acknowledgement, "Queued N prompts", and the composer is
-  cleared.
+- One field per prompt, with Add, Remove, Move up, and Move down. The
+  composer's text moves into the first field.
+- The submit button reads **Queue N prompts**. The dialog belongs to the
+  session it was opened from and cannot be closed while a batch is being sent.
+- **On success:** one acknowledgement, "Queued N prompts". The composer is
+  cleared if its text was taken, however that field was edited, moved, or
+  removed.
 - **On refusal:** "Nothing was queued", with the reason. The prompts stay in
-  the dialog.
-- **On an unconfirmed result:** the prompts lock, and **Retry** resends the
-  same `batchId`, which cannot queue them twice.
+  the dialog. The server marks every refusal raised before the write
+  `uncertainDelivery: false`.
+- **On an unconfirmed result**, including a success whose answer was cut off:
+  the prompts lock, and **Retry** resends the same `batchId`, which cannot queue
+  them twice. Closing keeps the batch for that session in this tab, and
+  reopening brings it back locked.
 
 Each queued item shows **Batch k of N**. The existing queue controls and
 dispatch states apply to each item.

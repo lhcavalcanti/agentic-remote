@@ -17,3 +17,18 @@ export function queueBatchItems(batch: QueueBatchInput): QueuedPrompt[] {
     batch: { id: batch.batchId, index, size: batch.prompts.length },
   }))
 }
+
+/**
+ * Marks a refusal raised before the batch was written. Nothing was queued, so
+ * the client may edit and resend instead of being held to a retry.
+ */
+export function nothingQueued(error: unknown): Error {
+  const refusal = error instanceof Error ? error : new Error(String(error))
+  if (!/Nothing was queued/.test(refusal.message)) {
+    refusal.message = `${refusal.message.replace(/\.?$/, '.')} Nothing was queued.`
+  }
+  return Object.assign(refusal, {
+    statusCode: (Reflect.get(refusal, 'statusCode') as number | undefined) ?? 409,
+    uncertainDelivery: false,
+  })
+}

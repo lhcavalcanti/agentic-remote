@@ -85,7 +85,7 @@ import {
 } from './session-resources.js'
 import { readClaudeMcp } from './session-resource-transport.js'
 import { validateQueueBatch, type QueueBatchInput } from '../shared/queue-batch.js'
-import { queueBatchDigest, queueBatchItems } from './queue-batch.js'
+import { nothingQueued, queueBatchDigest, queueBatchItems } from './queue-batch.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 
 const execFileAsync = promisify(execFile)
@@ -937,20 +937,26 @@ export class ClaudeAgentService
    */
   async queueBatch(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch> {
     const batch = validateQueueBatch(input)
-    if (this.stopped) throw queueConflict('The session service is stopping.')
+    // Everything refused before the write is definite: nothing was queued.
+    let writing = false
     let wake = false
     try {
       return await this.admissions.run(sessionId, async () => {
+        if (this.stopped) throw queueConflict('The session service is stopping.')
         const stored = this.store.get(sessionId)
         if (this.deletingSessions.has(sessionId) || !stored) {
           throw Object.assign(new Error('Session not found'), { statusCode: 404 })
         }
+        // A retry of a batch already admitted is answered whatever the session
+        // is doing now; refusing it would read as nothing having been queued.
         const retry = stored.queueBatches?.some((record) => record.id === batch.batchId)
         if (!retry && (stored.suspended || this.suspendingSessions.has(sessionId))) {
-          throw Object.assign(new Error('Resume the session before queueing to it. Nothing was queued.'), {
-            statusCode: 409, uncertainDelivery: false,
-          })
+          throw queueConflict('Resume the session before queueing to it.')
         }
+        if (!retry && this.admissionClosed.has(sessionId)) {
+          throw queueConflict('The session is still resuming.')
+        }
+        writing = true
         const result = await this.store.enqueueBatch(sessionId, {
           id: batch.batchId,
           digest: queueBatchDigest(batch.prompts),
@@ -959,6 +965,7 @@ export class ClaudeAgentService
         if (!result.duplicate) {
           this.admissions.markCommitted(sessionId)
           this.publish(result.session)
+          // A resume that began meanwhile drains the queue itself once ready.
           if (!this.admissionClosed.has(sessionId)) {
             this.drainRequested.add(sessionId)
             wake = true
@@ -969,6 +976,8 @@ export class ClaudeAgentService
           batch: { id: batch.batchId, promptIds: result.promptIds, duplicate: result.duplicate },
         }
       })
+    } catch (error) {
+      throw writing ? error : nothingQueued(error)
     } finally {
       if (wake || this.drainRequested.has(sessionId)) this.wakeQueue(sessionId)
     }

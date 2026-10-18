@@ -868,7 +868,9 @@ required to be individually editable.
   - One acknowledgement for the whole batch.
   - Each item marked with its batch position.
   - "Nothing was queued" with the reason on refusal.
-  - A locked Retry of the same batch when the outcome is unknown.
+  - A locked Retry of the same batch when the outcome is unknown. Closing the
+    dialog MUST NOT lose that batch's ID, and it MUST NOT close while a batch
+    is being sent.
 - **Older computers:** a computer whose provider does not advertise
   `supportsQueueBatch` MUST refuse before anything is sent to it, and the
   action MUST be hidden there.

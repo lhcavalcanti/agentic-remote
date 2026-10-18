@@ -1335,6 +1335,67 @@ describe('App', () => {
       expect(screen.queryByRole('dialog', { name: 'Queue several prompts' })).toBeNull()
     })
 
+    it('brings an unconfirmed batch back with its ID, and stays open while it is sent', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      let fail!: (error: unknown) => void
+      vi.mocked(queueBatch)
+        .mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
+        .mockImplementationOnce(async (_computerId, _sessionId, input) => ({
+          session,
+          batch: { id: input.batchId, promptIds: ['a', 'b'], duplicate: true },
+        }))
+      render(<App />)
+      const message = await screen.findByLabelText('Message')
+      fireEvent.change(message, { target: { value: 'Draft the changelog' } })
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      let dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 2'), { target: { value: 'two' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 2 prompts' }))
+      // Its answer has to land in this dialog, so it cannot be closed meanwhile.
+      fireEvent.keyDown(window, { key: 'Escape' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /close/i }))
+      expect(screen.getByRole('dialog', { name: 'Queue several prompts' })).toBe(dialog)
+      await act(async () => {
+        fail(Object.assign(new Error('The hub did not answer.'), { uncertainDelivery: true }))
+      })
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Couldn’t confirm the batch reached')
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByRole('dialog', { name: 'Queue several prompts' })).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Queue several prompts' }))
+      dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      expect(within(dialog).getByLabelText('Prompt 1')).toHaveValue('Draft the changelog')
+      expect(within(dialog).getByLabelText('Prompt 2')).toHaveAttribute('readonly')
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }))
+      })
+      const [first, retry] = vi.mocked(queueBatch).mock.calls
+      expect(retry[2]).toEqual(first[2])
+      expect(screen.getByText('These prompts were already queued; nothing was added twice.')).toBeVisible()
+      expect(screen.getByLabelText('Message')).toHaveValue('')
+    })
+
+    it('clears the composer once its text is queued, wherever it was moved', async () => {
+      vi.mocked(listComputers).mockResolvedValue([batching])
+      vi.mocked(queueBatch).mockImplementation(async (_computerId, _sessionId, input) => ({
+        session,
+        batch: { id: input.batchId, promptIds: ['a', 'b'], duplicate: false },
+      }))
+      render(<App />)
+      const message = await screen.findByLabelText('Message')
+      fireEvent.change(message, { target: { value: 'Draft the changelog' } })
+      fireEvent.click(await screen.findByRole('button', { name: 'Queue several prompts' }))
+      const dialog = screen.getByRole('dialog', { name: 'Queue several prompts' })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 1'), { target: { value: 'Draft the changelog, briefly' } })
+      fireEvent.change(within(dialog).getByLabelText('Prompt 2'), { target: { value: 'First this' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Move prompt 1 down' }))
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Queue 2 prompts' }))
+      })
+      expect(vi.mocked(queueBatch).mock.calls[0][2].prompts).toEqual(['First this', 'Draft the changelog, briefly'])
+      expect(screen.getByLabelText('Message')).toHaveValue('')
+    })
+
     it('offers it only where the owning computer can batch', async () => {
       render(<App />)
       await screen.findByLabelText('Message')

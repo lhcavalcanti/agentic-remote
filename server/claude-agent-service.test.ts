@@ -961,6 +961,34 @@ describe('ClaudeAgentService', () => {
       .rejects.toMatchObject({ statusCode: 400 })
   })
 
+  it('refuses a batch while the session is resuming, writing nothing', async () => {
+    const { directory, service } = await fixture(async function* () {
+      yield* textResult('fixture-session')
+    })
+    const session = await service.createSession(directory, false, true, 'claude')
+    const resuming = service as unknown as { admissionClosed: Set<string> }
+    resuming.admissionClosed.add(session.id)
+
+    await expect(service.queueBatch(session.id, { batchId: 'batch-resume', prompts: ['first', 'second'] }))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    expect(service.getSession(session.id)?.queuedPrompts ?? []).toEqual([])
+    expect(service.getSession(session.id)?.queueBatches ?? []).toEqual([])
+
+    resuming.admissionClosed.delete(session.id)
+    const queued = await service.queueBatch(session.id, { batchId: 'batch-resume', prompts: ['first', 'second'] })
+    expect(queued.batch.duplicate).toBe(false)
+  })
+
+  it('marks a refusal while stopping as nothing queued', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    ;(service as unknown as { stopped: boolean }).stopped = true
+
+    await expect(service.queueBatch(session.id, { batchId: 'batch-stopping', prompts: ['first'] }))
+      .rejects.toMatchObject({ uncertainDelivery: false, message: expect.stringMatching(/Nothing was queued/) })
+    ;(service as unknown as { stopped: boolean }).stopped = false
+  })
+
   it('refuses a send while the session is being deleted', async () => {
     const { directory, service } = await fixture(async function* () {})
     const session = await service.createSession(directory, false, true, 'claude')

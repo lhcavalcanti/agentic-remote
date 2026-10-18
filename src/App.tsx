@@ -17,6 +17,7 @@ import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
+import type { QueueBatchInput } from '../shared/queue-batch'
 import type {
   CSSProperties,
   ChangeEvent,
@@ -6696,7 +6697,23 @@ function App() {
     | undefined
   >(undefined)
   const [renameOpen, setRenameOpen] = useState(false)
-  const [queueBatchOpen, setQueueBatchOpen] = useState(false)
+  /** The session the batch dialog is for, and what it took from the composer. */
+  const [queueBatchTarget, setQueueBatchTarget] = useState<{
+    key: string
+    computerId: string
+    sessionId: string
+    title: string
+    computerName: string
+    seed: string
+  }>()
+  /**
+   * Batches whose outcome is unknown, per session. Reopening the dialog brings
+   * the same ID back, so a retry cannot queue them twice.
+   */
+  const [queueBatchUnsettled, setQueueBatchUnsettled] = useState<
+    Record<string, { input: QueueBatchInput; seed: string }>
+  >({})
+  const queueBatchSending = useRef(false)
   /** One line acknowledging the last batch, until the queue moves on. */
   const [queueBatchNotice, setQueueBatchNotice] = useState<{ key: string; text: string }>()
   const [runtimeOpen, setRuntimeOpen] = useState(false)
@@ -10174,6 +10191,24 @@ function App() {
     )
   }
 
+  function openQueueBatch() {
+    if (!selected) return
+    const key = sessionKey(selected)
+    setQueueBatchTarget({
+      key,
+      computerId: selected.computerId,
+      sessionId: selected.id,
+      title: selected.title,
+      computerName: selected.computerName,
+      seed: queueBatchUnsettled[key]?.seed ?? composer.trim(),
+    })
+  }
+
+  /** Not while a batch is on its way: its answer has to land in this dialog. */
+  function closeQueueBatch() {
+    if (!queueBatchSending.current) setQueueBatchTarget(undefined)
+  }
+
   function setComposer(value: string) {
     if (!selectedKey) {
       return
@@ -11197,7 +11232,7 @@ function App() {
       [runtimeOpen, () => setRuntimeOpen(false)],
       [backgroundTasksOpen, () => setBackgroundTasksOpen(false)],
       [renameOpen, () => setRenameOpen(false)],
-      [queueBatchOpen, () => setQueueBatchOpen(false)],
+      [Boolean(queueBatchTarget), closeQueueBatch],
       [cwdOpen, () => setCwdOpen(false)],
       [workspaceOpen, () => setWorkspaceOpen(false)],
     ]
@@ -15474,7 +15509,7 @@ function App() {
                       aria-label="Queue several prompts"
                       className="send-button send-button--queue"
                       disabled={sending || Boolean(queueActionId) || queuedEditUnconfirmed}
-                      onClick={() => setQueueBatchOpen(true)}
+                      onClick={openQueueBatch}
                       title="Queue several prompts, each its own turn"
                       type="button"
                     >
@@ -16020,28 +16055,51 @@ function App() {
           </button>
         </div>
       ) : null}
-      {queueBatchOpen && selected ? (
+      {queueBatchTarget ? (
         <QueueBatchDialog
-          computerName={selected.computerName}
-          initialPrompt={composer}
-          onClose={() => setQueueBatchOpen(false)}
+          computerName={queueBatchTarget.computerName}
+          initialPrompt={queueBatchTarget.seed}
+          key={queueBatchTarget.key}
+          onClose={closeQueueBatch}
           onQueue={async (input) => {
-            const key = sessionKey(selected)
-            const result = await queueBatch(selected.computerId, selected.id, input)
-            setSessions((current) => upsertSession(current, result.session))
-            // What was in the message box became the first prompt.
-            if (composer.trim() && input.prompts[0] === composer.trim()) setComposer('')
-            setQueueBatchOpen(false)
-            const count = input.prompts.length
-            setQueueBatchNotice({
-              key,
-              text: result.batch.duplicate
-                ? 'These prompts were already queued; nothing was added twice.'
-                : `Queued ${count} ${count === 1 ? 'prompt' : 'prompts'}. Each runs as its own turn, in order.`,
-            })
-            return result
+            const target = queueBatchTarget
+            const seed = queueBatchUnsettled[target.key]?.seed ?? target.seed
+            const settle = (unsettled?: { input: QueueBatchInput; seed: string }) =>
+              setQueueBatchUnsettled((current) => {
+                const next = { ...current }
+                if (unsettled) next[target.key] = unsettled
+                else delete next[target.key]
+                return next
+              })
+            queueBatchSending.current = true
+            try {
+              const result = await queueBatch(target.computerId, target.sessionId, input)
+              settle()
+              setSessions((current) => upsertSession(current, result.session))
+              // The composer's text moved into the dialog, so it is cleared
+              // however it was edited, moved or removed there.
+              const draftKey = followReplacementsRef.current(target.key)
+              if (seed && (composerDraftsRef.current[draftKey]?.text ?? '').trim() === seed) {
+                setComposerForKey(draftKey, '')
+              }
+              setQueueBatchTarget(undefined)
+              const count = input.prompts.length
+              setQueueBatchNotice({
+                key: target.key,
+                text: result.batch.duplicate
+                  ? 'These prompts were already queued; nothing was added twice.'
+                  : `Queued ${count} ${count === 1 ? 'prompt' : 'prompts'}. Each runs as its own turn, in order.`,
+              })
+              return result
+            } catch (error) {
+              settle((error as { uncertainDelivery?: unknown }).uncertainDelivery === true ? { input, seed } : undefined)
+              throw error
+            } finally {
+              queueBatchSending.current = false
+            }
           }}
-          sessionTitle={selected.title}
+          sessionTitle={queueBatchTarget.title}
+          unsettled={queueBatchUnsettled[queueBatchTarget.key]?.input}
         />
       ) : null}
       <RenameSessionDialog

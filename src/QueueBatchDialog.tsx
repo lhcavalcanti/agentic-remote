@@ -18,10 +18,14 @@ function newBatchId(): string {
 let nextRow = 0
 const row = (text = '') => ({ key: (nextRow += 1), text })
 
+const unconfirmed = (computerName: string) =>
+  `Couldn’t confirm the batch reached ${computerName}. Retry sends the same batch, so it can’t be queued twice.`
+
 /**
  * Writes several prompts to queue at once. Each stays its own queue item and
  * its own turn; the dialog never joins them. One batch ID is kept for the
- * life of the dialog, so retrying an unconfirmed send cannot queue it twice.
+ * life of the dialog, and an unconfirmed batch comes back as `unsettled`
+ * when it is reopened, so retrying cannot queue it twice.
  */
 export function QueueBatchDialog({
   sessionTitle,
@@ -29,6 +33,7 @@ export function QueueBatchDialog({
   initialPrompt,
   onClose,
   onQueue,
+  unsettled,
 }: {
   sessionTitle: string
   computerName: string
@@ -36,11 +41,14 @@ export function QueueBatchDialog({
   onClose: () => void
   /** Resolves once the hub admitted the batch. */
   onQueue: (input: QueueBatchInput) => Promise<ManagedQueuedBatch>
+  /** A batch sent earlier whose outcome is unknown; it can only be retried as is. */
+  unsettled?: QueueBatchInput
 }) {
-  const [rows, setRows] = useState(() => [row(initialPrompt.trim()), row()])
-  const [batchId] = useState(newBatchId)
-  const [state, setState] = useState<'editing' | 'sending' | 'uncertain'>('editing')
-  const [error, setError] = useState<string>()
+  const [rows, setRows] = useState(() =>
+    unsettled ? unsettled.prompts.map((text) => row(text)) : [row(initialPrompt.trim()), row()])
+  const [batchId] = useState(() => unsettled?.batchId ?? newBatchId())
+  const [state, setState] = useState<'editing' | 'sending' | 'uncertain'>(unsettled ? 'uncertain' : 'editing')
+  const [error, setError] = useState(() => (unsettled ? unconfirmed(computerName) : undefined))
   const locked = state !== 'editing'
   const prompts = rows.map((entry) => entry.text)
   let problem: string | undefined
@@ -77,9 +85,7 @@ export function QueueBatchDialog({
         // Its outcome is unknown, so the prompts must stay exactly as sent
         // for a retry to be recognised rather than queued a second time.
         setState('uncertain')
-        setError(
-          `Couldn’t confirm the batch reached ${computerName}. Retry sends the same batch, so it can’t be queued twice.`,
-        )
+        setError(unconfirmed(computerName))
         return
       }
       setState('editing')

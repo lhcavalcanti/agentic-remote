@@ -74,7 +74,7 @@ import {
   terminalRefused,
 } from './queued-dispatch.js'
 import { validateQueueBatch, type QueueBatchInput } from '../shared/queue-batch.js'
-import { queueBatchDigest, queueBatchItems } from './queue-batch.js'
+import { nothingQueued, queueBatchDigest, queueBatchItems } from './queue-batch.js'
 import { queuedSdkPrompt } from './queued-sdk-prompt.js'
 import {
   backgroundTasksFromEvents,
@@ -5388,6 +5388,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    */
   async queueBatch(sessionId: string, input: QueueBatchInput): Promise<QueuedBatch> {
     const batch = validateQueueBatch(input)
+    // Everything refused before the write is definite: nothing was queued.
+    let writing = false
     try {
       return await this.admissions.run(sessionId, async () => {
         if (this.stopped) throw queueConflict('The session service is stopping.')
@@ -5401,17 +5403,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (!retry) {
           this.assertTerminalQueueSettled(sessionId)
           if (this.store.get(sessionId)?.suspended || this.suspendingSessions.has(sessionId)) {
-            throw Object.assign(new Error('Resume the session before queueing to it. Nothing was queued.'), {
-              statusCode: 409, uncertainDelivery: false,
-            })
+            throw queueConflict('Resume the session before queueing to it.')
           }
           if (this.admissionClosed.has(sessionId)) {
-            throw Object.assign(new Error('The session is still resuming. Nothing was queued.'), {
-              statusCode: 409, uncertainDelivery: false,
-            })
+            throw queueConflict('The session is still resuming.')
           }
         }
         return this.serializeQueue(sessionId, async () => {
+          writing = true
           const result = await this.store.enqueueBatch(sessionId, {
             id: batch.batchId,
             digest: queueBatchDigest(batch.prompts),
@@ -5431,6 +5430,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
         })
       })
+    } catch (error) {
+      throw writing ? error : nothingQueued(error)
     } finally {
       this.wakeDeferredQueue(sessionId)
     }

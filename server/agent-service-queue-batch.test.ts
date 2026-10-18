@@ -178,7 +178,24 @@ describe('AgentService.queueBatch', () => {
       .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Nothing was queued/) })
     expect(queueOf(service, id)).toEqual([])
     await expect(service.queueBatch('missing', { batchId: 'batch-0004', prompts: ['ok'] }))
-      .rejects.toMatchObject({ statusCode: 404 })
+      .rejects.toMatchObject({ statusCode: 404, uncertainDelivery: false })
+  })
+
+  it('reports a refusal before the write as nothing queued, so the prompts can be edited', async () => {
+    const { service, id } = await setup()
+    await service.sendMessage(id, 'running turn')
+    // A terminal prompt still awaiting confirmation of its delivery.
+    const pending = (service as unknown as { pendingTerminalPromptDispatches: Map<string, string> })
+      .pendingTerminalPromptDispatches
+    pending.set(id, 'dispatch')
+    await expect(service.queueBatch(id, { batchId: 'batch-terminal', prompts: ['ok'] }))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    pending.delete(id)
+    expect(queueOf(service, id)).toEqual([])
+
+    await service.stop()
+    await expect(service.queueBatch(id, { batchId: 'batch-stopped', prompts: ['ok'] }))
+      .rejects.toMatchObject({ uncertainDelivery: false, message: expect.stringMatching(/Nothing was queued/) })
   })
 
   it('holds the batch while a permission is pending, and carries on once it is answered', async () => {

@@ -13,6 +13,7 @@ import {
   listSessionListing,
   listSessionMcpServers,
   listSessionSkills,
+  queueBatch,
   removeQueuedPrompt,
   readKnowledgeFile,
   sendMessage,
@@ -132,6 +133,18 @@ describe('API request headers', () => {
     }, { status })))
     await expect(sendMessage('computer', 'session', { content: 'hello' }))
       .rejects.toMatchObject({ statusCode: status, uncertainDelivery })
+  })
+
+  it('treats a batch whose admitted answer was cut off as possibly queued', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"session":{"id":', { status: 201 })))
+    await expect(queueBatch('computer', 'session', { batchId: 'batch-0001', prompts: ['one'] }))
+      .rejects.toMatchObject({ uncertainDelivery: true })
+  })
+
+  it('treats a batch refusal without an explicit flag as nothing queued', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Conflict' }, { status: 409 })))
+    await expect(queueBatch('computer', 'session', { batchId: 'batch-0001', prompts: ['one'] }))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
   })
 
   it('preserves a typed terminal draft conflict from HTTP errors', async () => {

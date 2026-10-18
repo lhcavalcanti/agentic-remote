@@ -123,6 +123,23 @@ describe('SettingsProfileStore', () => {
     expect(other.settings.values.accent).toBe('ember')
   })
 
+  it("keeps a device's newer choice of the current value when its older edit lands later", async () => {
+    for (const firstWriter of ['phone', 'computer']) {
+      const { store: profile, directory } = await store()
+      await profile.update({ accent: { value: 'rose', baseRevision: 0, seq: 1 } }, firstWriter)
+      // Tab 2 chooses rose again (edit 3) while tab 1's teal (edit 2) is slow.
+      const again = await profile.update({ accent: { value: 'rose', baseRevision: 1, seq: 3 } }, 'phone')
+      // No value changed, so no revision and no news.
+      expect(again).toMatchObject({ settings: { revision: 1 }, conflicts: [] })
+
+      const reloaded = new SettingsProfileStore(directory)
+      await reloaded.initialize()
+      const late = await reloaded.update({ accent: { value: 'teal', baseRevision: 1, seq: 2 } }, 'phone')
+      expect(late.settings, firstWriter).toMatchObject({ revision: 1, values: { accent: 'rose' } })
+      expect(late.conflicts).toEqual([])
+    }
+  })
+
   it('keeps a newer write from another device even after this device wrote that key earlier', async () => {
     const { store: profile } = await store()
     await profile.update({ accent: { value: 'teal', baseRevision: 0 } }, 'phone')

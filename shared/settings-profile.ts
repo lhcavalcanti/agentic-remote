@@ -370,6 +370,13 @@ export function applySettingsChanges(
   const keySeqs = { ...record.keySeqs }
   const conflicts: SettingsProfileKey[] = []
   let changed = false
+  let owned = false
+  const own = (key: SettingsProfileKey, seq: number | undefined) => {
+    if (writer === undefined) delete keyWriters[key]
+    else keyWriters[key] = writer
+    if (writer !== undefined && seq !== undefined) keySeqs[key] = seq
+    else delete keySeqs[key]
+  }
   for (const { key, value, baseRevision, seq } of changes) {
     const sameWriter = writer !== undefined && keyWriters[key] === writer
     if ((keyRevisions[key] ?? 0) > baseRevision && !sameWriter) {
@@ -380,17 +387,24 @@ export function applySettingsChanges(
     // delivered late, and the newer value stands.
     const recorded = keySeqs[key]
     if (sameWriter && seq !== undefined && recorded !== undefined && seq <= recorded) continue
-    if (value === null ? !(key in values) : sameSettingValue(values[key], value)) continue
+    if (value === null ? !(key in values) : sameSettingValue(values[key], value)) {
+      // Choosing the value already there is still this device's latest edit,
+      // so an older edit of its own delivered later must not undo it. It
+      // changes no value, so the revision stays and nobody is told.
+      if (writer !== undefined && (keyWriters[key] !== writer || keySeqs[key] !== seq)) {
+        own(key, seq)
+        owned = true
+      }
+      continue
+    }
     if (value === null) delete values[key]
     else values[key] = value
     keyRevisions[key] = revision
-    if (writer === undefined) delete keyWriters[key]
-    else keyWriters[key] = writer
-    if (writer !== undefined && seq !== undefined) keySeqs[key] = seq
-    else delete keySeqs[key]
+    own(key, seq)
     changed = true
   }
-  if (!changed) return { record, conflicts }
+  if (!changed && !owned) return { record, conflicts }
+  if (!changed) return { record: { ...record, keyWriters, keySeqs }, conflicts }
   return {
     record: sizeChecked({
       revision, values: values as SettingsProfileValues, keyRevisions, keyWriters, keySeqs,

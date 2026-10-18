@@ -93,10 +93,13 @@ The hub stores the profile in `<data>/settings-profile.json`:
     the first response was lost.
   - A request without a `deviceId` treats every newer write as another
     device's.
-- `seq` is the device's own edit number, shared by its tabs. The hub keeps
-  each key's latest `seq` with its writer and ignores an older or repeated
-  edit from that same device, so a late request from one tab cannot replace a
-  newer edit from another.
+- `seq` is the device's own edit number: the edit's time, and at least one
+  more than the last number in the shared copy.
+  - The hub keeps each key's latest `seq` with its writer and ignores an older
+    or repeated edit from that same device. A late request from one tab
+    therefore cannot replace a newer edit from another.
+  - An edit that picks the value already there still records its device and
+    `seq`, without a new revision or a broadcast.
   - The newer value is kept, and the key is returned in `conflicts`.
   - The browser shows "changed on another device", so nothing is lost
     silently.

@@ -426,7 +426,15 @@ describe('SettingsProfileClient', () => {
     expect(reopened.client.getState().conflicts).toEqual([])
   })
 
-  it('keeps the newer edit when two tabs change one setting and the older request lands last', async () => {
+  it.each([
+    ['a new value', undefined],
+    ['the value the hub already has', 'rose'],
+  ] as const)('keeps the newer edit when two tabs change one setting to %s and the older request lands last', async (_case, already) => {
+    if (already) {
+      hub.record = applySettingsChanges(
+        hub.record, validateSettingsChanges({ accent: { value: already, baseRevision: 0 } }),
+      ).record
+    }
     const storage = new MemoryStorage()
     let release!: () => void
     const held = new Promise<void>((resolve) => { release = resolve })

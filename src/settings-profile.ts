@@ -234,12 +234,16 @@ export class SettingsProfileClient {
       const existing = this.pending[key]
       // A second edit to a key not yet sent still answers to the revision the
       // first one was made from: nothing newer has been seen for it.
+      // Edit numbers follow the clock, which every tab of this browser
+      // shares, so a copy that failed to save cannot reuse a number the hub
+      // has already seen.
+      const seq = Math.max(Date.now(), this.nextSeq)
       this.pending[key] = {
         value: next,
         baseRevision: existing ? existing.baseRevision : Math.max(this.revision, 0),
-        seq: this.nextSeq,
+        seq,
       }
-      this.nextSeq += 1
+      this.nextSeq = seq + 1
       this.refused = undefined
       changed = true
     })

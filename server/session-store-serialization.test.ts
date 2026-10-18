@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -117,6 +117,38 @@ describe('session store serialization', () => {
     const state = committed(store) as { sessions: Record<string, unknown> }
     expect(Object.isFrozen(state.sessions.frozen)).toBe(true)
     expect(() => store.get('frozen')!.messages.push(session('x').messages[0])).not.toThrow()
+  })
+
+  it('keeps the last committed file when a write fails or a crash leaves a partial one behind', async () => {
+    const { root, store } = await open()
+    const statePath = path.join(root, 'state.json')
+    await store.create(session('a', 'x'.repeat(200_000)), { backend: 'terminal' })
+    await store.create(session('b'), { backend: 'sdk' })
+    await store.flush()
+    const before = await readFile(statePath)
+
+    await mkdir(`${statePath}.tmp`)
+    await expect(store.update('a', (draft) => { draft.title = 'never written' })).rejects.toThrow()
+    expect((await readFile(statePath)).equals(before)).toBe(true)
+    expect(store.get('a')!.title).toBe('a')
+
+    await rm(`${statePath}.tmp`, { recursive: true })
+    await store.update('b', (draft) => { draft.title = 'written' })
+    await store.flush()
+    const written = await readFile(statePath, 'utf8')
+    expect(written).toBe(JSON.stringify(committed(store)))
+    expect(written).not.toContain('never written')
+    await store.close()
+
+    // A crash part-way through the next write leaves only its temporary file.
+    await writeFile(`${statePath}.tmp`, Buffer.concat([before.subarray(0, 100_000), Buffer.from('\u0000garbage')]))
+    const { store: reopened } = await open(root)
+    expect(reopened.list().map((entry) => [entry.id, entry.title]).sort()).toEqual([['a', 'a'], ['b', 'written']])
+    await reopened.update('a', (draft) => { draft.title = 'after crash' })
+    await reopened.flush()
+    expect(await readFile(statePath, 'utf8')).toBe(JSON.stringify(committed(reopened)))
+    await expect(readFile(`${statePath}.tmp`)).rejects.toThrow()
+    await reopened.close()
   })
 
   it('writes exactly the committed state and restores it after random operations', async () => {

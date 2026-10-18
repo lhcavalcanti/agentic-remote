@@ -5170,7 +5170,12 @@ describe('AgentService deletion', () => {
     }
   })
 
-  it('never takes in a session again within the watcher’s interval of a wake', async () => {
+  it.each([
+    // Taking a costly session in keeps the watcher's pace.
+    { label: 'a costly session within the watcher’s interval', cost: 100, minimum: 750, maximum: Infinity },
+    // A cheap one is seen again within a wake or two, never on every wake.
+    { label: 'a cheap session within a wake', cost: 0, minimum: 100, maximum: 750 },
+  ])('never takes in $label of a wake', async ({ cost, minimum, maximum }) => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -5188,6 +5193,8 @@ describe('AgentService deletion', () => {
       async () => undefined,
       async () => {
         reads.push(Date.now())
+        // Real time: what a take-in costs is measured, not faked.
+        if (cost) await new Promise((resolve) => setTimeout(resolve, cost))
         return events
       },
       async () => `events-${events.length}`,
@@ -5201,7 +5208,7 @@ describe('AgentService deletion', () => {
     }
     const step = async (ms: number) => {
       await vi.advanceTimersByTimeAsync(ms)
-      await new Promise((resolve) => setTimeout(resolve, 30))
+      await new Promise((resolve) => setTimeout(resolve, 30 + cost))
     }
     try {
       await service.start()
@@ -5218,7 +5225,8 @@ describe('AgentService deletion', () => {
       await step(300)
       await step(300)
       expect(reads.length).toBe(2)
-      expect(reads[1] - reads[0]).toBeGreaterThanOrEqual(750)
+      expect(reads[1] - reads[0]).toBeGreaterThanOrEqual(minimum)
+      expect(reads[1] - reads[0]).toBeLessThan(maximum)
       expect(store.get(sessionId)?.messages.some((message) => message.content.includes('true'))).toBe(true)
     } finally {
       await service.stop()
@@ -5278,7 +5286,13 @@ describe('AgentService deletion', () => {
     }
   })
 
-  it('takes in a busy terminal session no more often than the transcript watcher', async () => {
+  it.each([
+    // The watcher alone reads it about three times here; a wake that took in
+    // every change would read it some twenty more.
+    { label: 'a costly busy terminal session no more often than the transcript watcher', cost: 100, fewest: 1, most: 7 },
+    // Cheap enough to follow at the wake's pace, but no faster than that.
+    { label: 'a cheap busy terminal session no more often than its wake', cost: 0, fewest: 8, most: 24 },
+  ])('takes in $label', async ({ cost, fewest, most }) => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -5293,6 +5307,7 @@ describe('AgentService deletion', () => {
       async () => undefined,
       async () => {
         reads += 1
+        if (cost) await new Promise((resolve) => setTimeout(resolve, cost))
         return events
       },
       async () => `events-${events.length}`,
@@ -5315,9 +5330,8 @@ describe('AgentService deletion', () => {
         await vi.advanceTimersByTimeAsync(50)
         await new Promise((resolve) => setTimeout(resolve, 5))
       }
-      // The watcher alone reads it about three times here; a wake that took in
-      // every change would read it some twenty more.
-      expect(reads).toBeLessThanOrEqual(7)
+      expect(reads).toBeGreaterThanOrEqual(fewest)
+      expect(reads).toBeLessThanOrEqual(most)
     } finally {
       await service.stop()
       vi.useRealTimers()

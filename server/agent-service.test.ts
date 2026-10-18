@@ -5234,6 +5234,56 @@ describe('AgentService deletion', () => {
     }
   })
 
+  it('forgets what taking a session in cost once it is deleted, even part-way through a read', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot'))
+    const sessionId = randomUUID()
+    let events = JSON.parse(JSON.stringify([
+      { type: 'user.message', id: 'user-1', parentId: null, timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'build it' } },
+    ])) as SessionEvent[]
+    let discovered = true
+    let reads = 0
+    let gate: Promise<void> | undefined
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => discovered
+        ? [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }]
+        : [],
+      async () => undefined,
+      async () => {
+        reads += 1
+        await gate
+        return events
+      },
+      async () => `events-${events.length}`,
+      { has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    const costs = service['transcriptTakeInCosts']
+    try {
+      await service.start()
+      await service.refreshTranscripts()
+      expect(costs.has(sessionId)).toBe(true)
+
+      let release!: () => void
+      gate = new Promise((resolve) => { release = resolve })
+      events = [...events, { ...events[0], id: 'user-2', data: { content: 'and test it' } } as SessionEvent]
+      const before = reads
+      const refreshing = service.refreshTranscripts()
+      await vi.waitFor(() => expect(reads).toBeGreaterThan(before))
+      discovered = false
+      const deleting = service.deleteSession(sessionId)
+      release()
+      await Promise.all([deleting, refreshing])
+      expect(costs.has(sessionId)).toBe(false)
+    } finally {
+      gate = undefined
+      await service.stop()
+    }
+  })
+
   it('waits for a transcript wake that is still running when it stops', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))

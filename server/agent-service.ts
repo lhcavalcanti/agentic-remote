@@ -6769,6 +6769,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.pendingTerminalQueueClaims.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
+      this.transcriptTakeInCosts.delete(sessionId)
       this.backgroundTaskSyncs.delete(sessionId)
       this.backgroundTaskTracker.remove(sessionId)
       this.liveActivityEvents.delete(sessionId)
@@ -8009,10 +8010,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       await this.takeInTranscript(sessionId, observed, version, takeIn)
     } finally {
-      this.transcriptTakeInCosts.set(
-        sessionId,
-        (takeIn.endedAt ?? performance.now()) - takeIn.startedAt,
-      )
+      // Not for a session deleted while it was being read.
+      if (this.store.get(sessionId)) {
+        this.transcriptTakeInCosts.set(
+          sessionId,
+          (takeIn.endedAt ?? performance.now()) - takeIn.startedAt,
+        )
+      }
     }
   }
 

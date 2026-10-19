@@ -339,7 +339,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "17f3951213ccee0d20db5bf2ef49bed3c353b29472a9d80ad43a38403c30a087",
     "index.html": "e0d2f884b7b7eb4f07ec876ea370cae926bb02512ab30cfe47d3cb0dd62b87f3",
-    "package.json": "19533b5435b82d8fcd19534c199b15b1afc35e79880f6697234d3f967c60a081",
+    "package.json": "87f82b69807936ee2e0a844cd5bc322c36b6fe258365e63823abf37fb5569251",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -513,10 +513,10 @@
     "shared/side-question.ts": "026d2e3fae18f5348da782057d669400bb67ed91b7623fe3975c1f2d788ea855",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "b4a615e6be0afaa75fd0cd3a8339d900708d1d94e7bb2931c9790685c239212f",
+    "shell/README.md": "1e4c39cf60bbcbedd8387506f9c8e6b946c733e423e5e053de195c42098c62d0",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "06fd53026cd54bdbea31cb2939dab9c62550b1e53e436dcc0e8ca4d22a97874b",
-    "shell/src-tauri/Cargo.toml": "74de92f83765eb3680fba7c26490f618a9bc7e34dc8f87c8fb9f0b368152ca11",
+    "shell/package.json": "50426879613e35da09b6bcd3180d74f0b750a8f5117f5a43919b11af8cf4ce6a",
+    "shell/src-tauri/Cargo.toml": "c92795ec084a66ec92a5652a62675da887c20b6e98bb074f1dba40535fac782e",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -524,7 +524,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "9985cfa4a223fc734f79b4bfac2f383428589e09408b15e7cafe47bf83c249cb",
+    "shell/src-tauri/tauri.conf.json": "43d836d5b16ecf473baf9a34a4160f11ee5f95a9cf3a99188e96dfe22a8e9323",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -677,13 +677,19 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b843695072dc1d402dbdec0bf95c7fd23e26f4ae7aa20a2b2becd0cb1fd52e4b",
+    "GRAPH_REPORT.md": "deb8f51e476d6c2a089c9b9ee9f5f181d6e154d48d00294be2a5d6cafacd5ecd",
     "communities.json": "7c71619331102dce38537e9558f6a33b31517e6210470ff88246038f55f52b9b",
-    "graph.html": "06e0c706a72fef8f1840cd481389f529dab8122a095e5361da798e7eff6110cb",
-    "graph.json": "ef74f38704ee985b388c2ecce68983e8574ff6d6edb407976f698fdc85e54d5f"
+    "graph.html": "989b01645e0d34808ca1cc0b0cad4d0f92fb0b7aa7fd59c926aa924a00dc7113",
+    "graph.json": "b9460b62bdea16d851d5f0f37454df6c102dd1f235723e30f548687fd68247c1"
   },
   "schema_version": 1,
-  "source_commit": "5f630066358fac9591750d814760e105d7860d40",
-  "source_fingerprint": "bb9c9fc5021935150d1bc71775c859624482fc1120b6067da4c00aa74adeebbb",
-  "working_tree_changes": []
+  "source_commit": "7932f84b18fffe4554d4c3b0a90b9a3e2687bc0f",
+  "source_fingerprint": "f2eded4796d94bd1cd2e979e412345472175c250a180671f2102ab22d495342f",
+  "working_tree_changes": [
+    "package.json",
+    "shell/README.md",
+    "shell/package.json",
+    "shell/src-tauri/Cargo.toml",
+    "shell/src-tauri/tauri.conf.json"
+  ]
 }

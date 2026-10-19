@@ -39,6 +39,7 @@ import {
 } from './computer-registry.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
+import { RemoteNodeRequestError } from './remote-node-errors.js'
 import type { SessionService } from './session-service.js'
 import {
   readSessionSkills,
@@ -246,7 +247,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       }),
     )
     return {
-      sessions: [...local, ...remote.flat()].sort((left, right) =>
+      sessions: [...local, ...remote.flat()].filter((session) => session.isOpen !== false).sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
       ),
       answeredComputerIds: answered,
@@ -698,6 +699,24 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return managedSession(session, computer)
   }
 
+  async configureRetention(
+    computerId: string,
+    sessionId: string,
+    input: import('../shared/contracts.js').SessionRetention,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    let session: SessionDetail
+    if (computerId === this.identity.info.id) {
+      if (!this.localService.configureRetention) {
+        throw Object.assign(new Error('Session retention is not supported by this computer'), { statusCode: 409 })
+      }
+      session = await this.localService.configureRetention(sessionId, input)
+    } else {
+      session = await this.requireClient(computerId).configureRetention(sessionId, input)
+    }
+    return managedSession(session, computer)
+  }
+
   async removeQueuedPrompt(
     computerId: string,
     sessionId: string,
@@ -1094,6 +1113,24 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         const merged = new Map(
           sessions.map((session) => [session.id, managedSession(session, computer)]),
         )
+        const previous = this.sessionCache.get(computer.id) ?? []
+        const supportsRetention = client.providers.some((provider) => provider.supportsSessionRetention === true)
+        for (const session of previous) {
+          if (merged.has(session.id) || read.changes.has(session.id)) continue
+          if (session.archivedAt && !supportsRetention) {
+            merged.set(session.id, session)
+          } else if (supportsRetention) {
+            try {
+              const retained = await client.getSession(session.id, { passive: true })
+              merged.set(session.id, managedSession(retained, computer))
+            } catch (error) {
+              if (!(error instanceof RemoteNodeRequestError && error.statusCode === 404)) throw error
+            }
+          }
+        }
+        if (this.clients.get(computer.id) !== client || this.sessionReads.get(computer.id) !== read) {
+          return { sessions: this.sessionCache.get(computer.id) ?? [], previous: [], authoritative: false, token }
+        }
         // Reconcile in-flight events without erasing deletions. An explicitly
         // newer snapshot revision still wins over an earlier event.
         for (const [id, session] of read.changes) {
@@ -1105,7 +1142,6 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             merged.delete(id)
           }
         }
-        const previous = this.sessionCache.get(computer.id) ?? []
         const latest = [...merged.values()]
         this.sessionCache.set(computer.id, latest)
         this.snapshotTokens.set(computer.id, token)

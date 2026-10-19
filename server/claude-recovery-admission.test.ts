@@ -41,7 +41,7 @@ async function enqueue(store: SessionStore, content: string) {
   })
 }
 
-async function fixture(recovered: boolean, tail: boolean) {
+async function fixture(recovered: boolean, tail: boolean, reopen = true) {
   const directory = path.resolve('graphify/.cache', `claude-recovery-${randomUUID()}`)
   await mkdir(directory, { recursive: true })
   const initial = await createStore(directory)
@@ -53,7 +53,9 @@ async function fixture(recovered: boolean, tail: boolean) {
   }
   const store = new SessionStore(directory)
   await store.initialize()
-  return connect(directory, store)
+  const runtime = await connect(directory, store)
+  if (recovered && reopen) await runtime.combined.activateSession(id)
+  return runtime
 }
 
 async function connect(directory: string, store: SessionStore) {
@@ -129,6 +131,22 @@ afterEach(async () => {
 })
 
 describe('Claude recovered draft admission', () => {
+  it('requires explicit reopen before claiming an interrupted recovery without consuming its token', async () => {
+    const runtime = await fixture(true, true, false)
+    const before = await runtime.persisted()
+    await expect(runtime.combined.sendMessage(id, 'A', false, runtime.token))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await runtime.persisted()).toEqual(before)
+    expect(runtime.calls).toEqual([])
+    await runtime.combined.activateSession(id)
+    expect(runtime.calls).toEqual([])
+    await runtime.combined.sendMessage(id, 'A', false, runtime.token)
+    await vi.waitFor(() => expect(runtime.calls).toEqual(['B', 'A']))
+    await idle(runtime)
+    await expect(runtime.combined.sendMessage(id, 'A', false, runtime.token))
+      .rejects.toMatchObject({ statusCode: 409 })
+  })
+
   it.each([false, true])('consumes a recovered token once through ProviderSessionService (queued tail: %s)', async (tail) => {
     const { store, claude, combined, calls, token } = await fixture(true, tail)
     expect(token).toBeDefined()

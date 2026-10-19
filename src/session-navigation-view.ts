@@ -35,7 +35,7 @@ export function sessionNavigationView(
 ): SessionNavigationView {
   const counts = { all: 0, attention: 0, working: 0, suspended: 0 }
   const groups = computers.map((computer) => {
-    const sessions = sessionsByComputer.get(computer.id) || []
+    const sessions = (sessionsByComputer.get(computer.id) || []).filter((session) => session.isOpen !== false)
     const classified = sessions.map((session) => ({
       session,
       state: sessionPresentation(

@@ -838,6 +838,7 @@ describe('Durable recovery resend ownership', () => {
     await expect(reloaded.sendMessage('replacement', context.submitted, false, originalToken))
       .rejects.toMatchObject({ statusCode: 409 })
     expect(context.pastes).toEqual([])
+    await reloaded.activateSession('replacement')
     const decision = await prepareDecision(context, reloaded, retry.failedAt!, 'replacement')
     await reloaded.sendMessage('replacement', context.submitted, false, decision)
     expect(context.pastes).toEqual([context.submitted])
@@ -1635,6 +1636,7 @@ describe('Review 5125727881 runtime boundaries', () => {
     getSession: async ({ service }) => service.getSession(sessionId),
     openSession: async ({ service }) => service.openSession(sessionId),
     activateSession: async ({ service }) => service.activateSession(sessionId),
+    configureRetention: async ({ service }) => service.configureRetention(sessionId, { pinned: true }),
     createSession: async ({ service, directory }, snapshot) => {
       service['createSdkSession'] = async () => snapshot
       return service.createSession(directory, false)

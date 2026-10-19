@@ -1,0 +1,74 @@
+# Session retention
+
+Open **Session actions > Session retention** on a computer advertising retention
+support. Settings belong to that session on its owning computer, not the browser.
+
+| Setting | Behavior |
+| --- | --- |
+| Never (default) | Keep managed records reviewable regardless of overnight inactivity or process loss |
+| Keep for review | Protect the record from implicit archival on every device |
+| After 7 / 30 / 90 days | Archive eligible inactive records from the active roster; reopen from session history |
+
+The API accepts `{ "pinned": false, "idleDays": 30 }` at
+`PUT /api/computers/:computerId/sessions/:sessionId/retention`. Omitting `idleDays`
+disables archival; accepted values are whole days from 1 through 3650. Unknown
+fields and invalid values are rejected. There is no global idle-process TTL.
+
+Age is elapsed time since the conversation's last activity or explicit Reopen,
+whichever is later, not local midnight, a calendar date, or process shutdown.
+Reopen starts a fresh retention interval without changing conversation order.
+An already-old eligible
+record can archive on the next pass: Copilot discovery runs every 10 seconds;
+Claude checks every 60 seconds, and both reconcile at startup. Archival requires
+no live provider owner and an idle or intentionally suspended state. Queues,
+unconfirmed dispatches, questions, permissions, failures, context recovery, and
+review pins prevent it. A previously running/waiting interrupted turn is not
+reclassified as idle just because its process disappeared.
+
+Archival is not Delete or Close. It never terminates a live process, removes
+history, deletes a folder/worktree, or erases resumability. Explicit Close and
+Delete retain their existing destructive semantics and confirmations. Default
+retention does not start a process for every retained record. Existing safe
+startup recovery may restore an owned terminal; ordinary discovery does not
+respawn a missing one. Failed recovery leaves a visible interruption.
+
+**Interrupted** means the provider owner disappeared or an SDK turn outlived the
+hub runtime. Read the saved conversation, then use **Reopen session**. Terminal
+reopen resumes the same ID and waits for readiness before dispatching preserved
+FIFO work. SDK reopen does not retry the interrupted turn or automatically
+release its queue; explicitly continue after reviewing its result. Expired
+questions/approvals remain visible but cannot invoke dead callbacks. Copilot
+supports **Recover conversation**; Claude can continue with a new prompt.
+
+Lifecycle upserts carry interruption/archive metadata to all connected clients,
+including patched connections. Retention-capable nodes include archival metadata
+in authenticated snapshots, so reconnect distinguishes retained history from
+explicit deletion without fetching each archived transcript. Metadata-only lifecycle logs identify the
+session, transition, and UTC detection time; they contain no prompts or provider
+credentials. Concurrent lifecycle changes invalidate stale discovery; retention
+is decided against the current durable record, not a previously read snapshot.
+
+## Investigated development incident
+
+On 2026-10-19, several development providers shut down together around
+**05:40:53 UTC**. A separate smoke script's teardown invoked `tmux kill-server`
+with an alternate `TMUX_TMPDIR` but inherited `TMUX`. A read-only socket probe
+confirmed that inherited `TMUX` still selected the shared server. Script teardown
+and graceful provider shutdown logs correlate at that instant. The hub had
+started at 05:31:54 UTC and did not restart at the shutdown; no matching kernel
+OOM entry was found. The performance session's **06:52:50 UTC** event was a
+resume, not evidence of a 06:52 cleanup schedule.
+
+Agentic Remote's subsequent 10-second discovery reconciled missing terminal
+processes to closed roster entries despite their retained managed-open intent.
+History and provider state survived, but active rows disappeared and unfinished
+transcripts could still report Running. Retention now preserves these records
+and reports process loss explicitly. Oracle's separate ten-minute idle stop and
+the two-minute side-question runtime stop do not close ordinary sessions.
+
+No hub retention setting can prevent an unrelated script from killing a shared
+tmux server. Sandbox scripts must clear inherited `TMUX` on **every** command,
+including teardown, and target only their verified owned socket/server. Tests
+should use `isolatedTmuxEnv` and `stopIsolatedTmuxServer` from
+`server/tmux-test-helpers.ts`; changing `TMUX_TMPDIR` alone is insufficient.
+The external incident script is outside this repository and was not changed.

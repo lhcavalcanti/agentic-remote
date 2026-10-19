@@ -38,6 +38,7 @@ import {
   recoverConversation,
   createSession,
   configureRuntime,
+  configureRetention,
   deleteSession,
   dispatchQueuedPrompt,
   executeCommand,
@@ -193,6 +194,7 @@ vi.mock('./api', async (importOriginal) => ({
   restartSession: vi.fn(),
   resumeSession: vi.fn(),
   suspendSession: vi.fn(),
+  configureRetention: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
   executeCommand: vi.fn(),
@@ -7349,6 +7351,75 @@ describe('App', () => {
     expect(executeCommand).not.toHaveBeenCalled()
     },
   )
+
+  it('keeps interrupted history readable and requires explicit same-ID reopen before writing', async () => {
+    const interrupted = {
+      ...session, status: 'error' as const,
+      interruption: { detectedAt: '2026-10-19T06:52:00Z', previousStatus: 'running' as const },
+    }
+    vi.mocked(listSessions).mockResolvedValue([interrupted])
+    vi.mocked(getSession).mockResolvedValue(interrupted)
+    vi.mocked(activateSession).mockResolvedValue(session)
+    render(<App />)
+    expect(await screen.findByText('Hello agent')).toBeInTheDocument()
+    expect(screen.getByLabelText('Message')).toBeDisabled()
+    expect(listCommands).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen session' }))
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeEnabled())
+    expect(activateSession).toHaveBeenCalledWith('computer-1', 'session-1')
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('removes an archived row without deleting the selected transcript or draft', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(activateSession).mockResolvedValue(session)
+    render(<App />)
+    const composer = await screen.findByLabelText('Message')
+    fireEvent.change(composer, { target: { value: 'Draft for tomorrow' } })
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, isOpen: false, archivedAt: '2026-10-19T06:52:00Z' },
+        }),
+      } as MessageEvent)
+    })
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+    expect(composer).toHaveValue('Draft for tomorrow')
+    expect(composer).toBeDisabled()
+    const archived = { ...session, isOpen: false, archivedAt: '2026-10-19T06:52:00Z' }
+    vi.mocked(getSession).mockResolvedValue(archived)
+    vi.mocked(listSessionListing).mockResolvedValue({ sessions: [], answeredComputerIds: [computer.id] })
+    const beforeRefresh = vi.mocked(listSessionListing).mock.calls.length
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(beforeRefresh + 1))
+    await waitFor(() => expect(getSession).toHaveBeenLastCalledWith(computer.id, session.id))
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+    expect(composer).toHaveValue('Draft for tomorrow')
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen session' }))
+    await waitFor(() => expect(composer).toBeEnabled())
+    expect(composer).toHaveValue('Draft for tomorrow')
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('saves retention on the owning computer and closes the retention dialog with Escape', async () => {
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...computer, providers: computer.providers?.map((provider) => ({ ...provider, supportsSessionRetention: true })),
+    }])
+    vi.mocked(configureRetention).mockResolvedValue({ ...session, retention: { pinned: true } })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session retention' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Session retention' })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Keep for review' }))
+    await waitFor(() => expect(within(dialog).getByRole('checkbox')).toBeChecked())
+    expect(configureRetention).toHaveBeenCalledWith('computer-1', 'session-1', { pinned: true })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Session retention' })).toBeNull())
+  })
 
   it('keeps a suspended conversation readable and closed to writing', async () => {
     // Suspending stops the process, not the conversation: the history and the

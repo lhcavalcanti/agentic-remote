@@ -479,13 +479,14 @@ describe('SessionStore', () => {
       pendingPermission: { requestId: 'sdk-request', stale: true },
     })
     expect(restarted.get('terminal-waiting')).toMatchObject({
-      status: 'idle',
-      pendingPermission: undefined,
+      status: 'error',
+      pendingPermission: { requestId: 'terminal-permission:1' },
+      interruption: { previousStatus: 'waiting' },
     })
     expect(restarted.get('claude-waiting')).toMatchObject({
-      status: 'idle',
-      pendingPermission: undefined,
-      pendingUserInput: undefined,
+      status: 'error',
+      pendingPermission: { requestId: 'claude-request', stale: true },
+      pendingUserInput: { requestId: 'claude-input', stale: true },
     })
     const persisted = JSON.parse(
       await readFile(path.join(directory, 'state.json'), 'utf8'),
@@ -1169,7 +1170,7 @@ describe('SessionStore', () => {
     })
   })
 
-  it('keeps managed SDK sessions open but closes missing terminal sessions', async () => {
+  it('keeps managed SDK and missing terminal records open independently of their process', async () => {
     const { directory, store } = await createStore()
     await store.create(
       {
@@ -1204,7 +1205,8 @@ describe('SessionStore', () => {
       isOpen: true,
     })
     expect(reloaded.get('managed-terminal-session')).toMatchObject({
-      isOpen: false,
+      isOpen: true,
+      interruption: expect.any(Object),
     })
     expect(reloaded.get('managed-sdk-session')).not.toHaveProperty('managedOpen')
   })

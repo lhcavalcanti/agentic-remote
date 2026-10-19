@@ -16,6 +16,7 @@ export interface AgentProviderCapability {
   supportsQueuedPromptDispatch?: boolean
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
+  supportsSessionRetention?: boolean
   /** Answers side questions about a session without prompting it. */
   supportsSideQuestions?: boolean
   unavailableReason?: string
@@ -298,6 +299,11 @@ export interface ConfigureRuntimeInput {
   mode?: AgentMode
 }
 
+export interface SessionRetention {
+  pinned: boolean
+  idleDays?: number
+}
+
 export interface SessionSummary {
   id: string
   revision?: number
@@ -308,6 +314,10 @@ export interface SessionSummary {
   updatedAt: string
   status: SessionStatus
   isOpen?: boolean
+  retention?: SessionRetention
+  retentionLastUsedAt?: string
+  interruption?: { detectedAt: string; previousStatus: SessionStatus }
+  archivedAt?: string
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
   /** A durable dispatch intent. It must never be retried automatically. */

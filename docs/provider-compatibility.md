@@ -30,6 +30,7 @@ history is not transferred between providers.
 | tmux and SSH attachment | Supported for terminal-backed sessions | Not supported | Copilot-only |
 | External session discovery | Copilot SDK and active process discovery | Agentic Remote-created sessions only | Copilot-only |
 | Rename, clear, delete | Supported | Supported | Compatible |
+| Review pin and opt-in record archival | Supported | Supported | Owning-computer persistence; requires advertised retention capability |
 | File upload and workspace browsing | Shared implementation | Shared implementation | Compatible |
 | Knowledge, transcription, push, PWA | Shared implementation | Shared implementation | Compatible |
 | Hub/node routing | Supported when node advertises Copilot | Supported when node advertises authenticated Claude | Compatible and capability-gated |
@@ -116,6 +117,9 @@ history is not transferred between providers.
   recoverable because their callbacks no longer exist. Replies receive `409`
   rather than claiming the old callback resumed. Terminal-backed prompts keep
   their live-terminal recovery behavior.
+- Provider ownership and record retention are separate. Missing managed
+  terminals remain interrupted and reviewable; interrupted SDK turns require
+  explicit continuation. See [Session retention](session-retention.md).
 
 ## Risks and follow-up work
 

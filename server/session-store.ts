@@ -10,9 +10,11 @@ import type {
   SessionRuntimeInfo,
   SessionRecoveryReason,
   SessionStatus,
+  SessionRetention,
   ActivityKind,
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
+import { canArchiveSession, sessionRetentionSchema } from './session-retention.js'
 
 export interface DiscoveredSession {
   id: string
@@ -314,6 +316,10 @@ function cloneSession(session: StoredSession): SessionDetail {
     detail.failedPrompt = undefined
   }
   if (ownsRecoverySeedFailure(session)) detail.failedPrompt = undefined
+  if (detail.interruption) {
+    detail.status = 'error'
+    detail.activity = 'Session process stopped. History and queued work are retained. Reopen to continue.'
+  }
   if (recoverySeed?.state === 'failed') {
     detail.status = 'error'
     detail.activity = recoverySeed.error ||
@@ -352,6 +358,7 @@ export class SessionStore {
 
   constructor(
     directory = resolveDataDirectory(),
+    private readonly now: () => number = Date.now,
   ) {
     this.directory = directory
     this.statePath = path.join(directory, 'state.json')
@@ -390,6 +397,17 @@ export class SessionStore {
     const legacyRetirements: string[] = []
     let staleSdkInteractionMarked = false
     for (const session of Object.values(loaded.sessions)) {
+      if (session.retention !== undefined && !sessionRetentionSchema.safeParse(session.retention).success) {
+        throw new Error('Invalid session retention metadata')
+      }
+      if (session.retentionLastUsedAt !== undefined && !Number.isFinite(Date.parse(session.retentionLastUsedAt))) {
+        throw new Error('Invalid session retention activity timestamp')
+      }
+      if (session.interruption !== undefined && (
+        !session.interruption || typeof session.interruption !== 'object' ||
+        !Number.isFinite(Date.parse(session.interruption.detectedAt)) ||
+        !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus)
+      )) throw new Error('Invalid session interruption metadata')
       if (session.replacedSessionIds !== undefined) {
         if (!isSessionIdList(session.replacedSessionIds)) {
           throw new Error('Invalid session retirement metadata')
@@ -406,12 +424,22 @@ export class SessionStore {
         throw new Error('Invalid recovery claim metadata')
       }
       session.provider ??= 'copilot'
-      session.isOpen = session.managedOpen === true
+      session.isOpen = session.managedOpen === true || (session.isOpen === true && Boolean(
+        session.retention?.pinned || session.queuedPrompts?.length || session.pendingPermission ||
+        session.pendingUserInput || session.failedPrompt || session.recoverySeed ||
+        session.queuedDispatch || session.terminalQueueDispatch || session.sdkQueueAdmission,
+      ))
+      if (session.managedOpen && !session.interruption &&
+          (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) {
+        session.interruption = {
+          detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+        }
+        staleSdkInteractionMarked = true
+      }
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
       session.queuedPromptReservation = undefined
       const staleSdkInteraction =
-        session.provider === 'copilot' &&
         session.backend === 'sdk' &&
         Boolean(session.pendingPermission || session.pendingUserInput)
       if (staleSdkInteraction) {
@@ -420,7 +448,7 @@ export class SessionStore {
         session.status = 'error'
         session.activity = 'Provider interaction expired. Recover the conversation to continue.'
         staleSdkInteractionMarked = true
-      } else {
+      } else if (session.backend !== 'terminal') {
         session.pendingUserInput = undefined
       }
       const resend = session.recoveryResend
@@ -491,8 +519,10 @@ export class SessionStore {
       } else if (!staleSdkInteraction && !session.recoverySeed && session.status !== 'idle') {
         session.status = 'idle'
         session.activity = undefined
-        session.pendingPermission = undefined
-        session.pendingUserInput = undefined
+        if (session.backend !== 'terminal') {
+          session.pendingPermission = undefined
+          session.pendingUserInput = undefined
+        }
       }
       for (const message of session.messages) {
         message.streaming = false
@@ -527,11 +557,14 @@ export class SessionStore {
    * Each listed session's identity and open state, in `list()` order, without
    * copying its history, for work that runs on every discovery cycle.
    */
-  discoveryIndex(): { id: string; isOpen: boolean }[] {
+  discoveryIndex(): { id: string; isOpen: boolean; revision: number; interruptedAt?: string; archivedAt?: string }[] {
     return Object.values(this.state.sessions)
       .filter((session) => !this.isRetiredSession(session.id))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((session) => ({ id: session.id, isOpen: session.isOpen === true }))
+      .map((session) => ({
+        id: session.id, isOpen: session.isOpen === true, revision: session.revision ?? 0,
+        interruptedAt: session.interruption?.detectedAt, archivedAt: session.archivedAt,
+      }))
   }
 
   /** A listed session's title, without copying its history. */
@@ -795,18 +828,37 @@ export class SessionStore {
       if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
-        const isOpen =
-          active.has(session.id) ||
+        const present = active.has(session.id)
+        const protectedRecord = Boolean(session.retention?.pinned ||
+          session.queuedPrompts?.length || session.pendingPermission || session.pendingUserInput ||
+          session.failedPrompt || session.recoverySeed || session.queuedDispatch ||
+          session.terminalQueueDispatch || session.sdkQueueAdmission || session.queuedPromptReservation)
+        const archive = !present && !protectedRecord && canArchiveSession(session, this.now())
+        const isOpen = !archive && (
+          present ||
           // A suspended session has nothing running by design. Reading that as
           // closed would hide it from the list, and the only way back to it is
           // the button on the session itself.
-          session.suspended === true ||
-          (session.managedOpen === true && session.backend !== 'terminal')
-        if (session.isOpen === isOpen) continue
+          (session.suspended === true && !session.archivedAt) ||
+          session.managedOpen === true ||
+          (session.isOpen === true && protectedRecord))
+        const interruption = present ? undefined
+          : isOpen && session.backend === 'terminal' && !session.suspended
+            ? session.interruption ?? {
+              detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+            }
+            : session.interruption
+        const stalePermission = Boolean(interruption && session.pendingPermission && !session.pendingPermission.stale)
+        const staleInput = Boolean(interruption && session.pendingUserInput && !session.pendingUserInput.stale)
+        if (session.isOpen === isOpen && session.interruption === interruption && !stalePermission && !staleInput) continue
         state.sessions[session.id] = {
           ...session,
           revision: (session.revision ?? 0) + 1,
           isOpen,
+          interruption,
+          pendingPermission: stalePermission ? { ...session.pendingPermission!, stale: true } : session.pendingPermission,
+          pendingUserInput: staleInput ? { ...session.pendingUserInput!, stale: true } : session.pendingUserInput,
+          ...(archive ? { managedOpen: false, archivedAt: new Date(this.now()).toISOString() } : {}),
         }
       }
       return () => undefined
@@ -825,7 +877,7 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          if (session.backend === 'terminal' && session.isOpen === true) {
+          if (session.backend === 'terminal' && session.isOpen === true && !session.interruption) {
             continue
           }
           // Observed presence only. Any Copilot process in a tmux pane is
@@ -837,6 +889,8 @@ export class SessionStore {
             revision: (session.revision ?? 0) + 1,
             backend: 'terminal',
             isOpen: true,
+            interruption: undefined,
+            archivedAt: undefined,
           }
         } else if (
           !session.backend &&
@@ -890,10 +944,40 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.isOpen = isOpen
+      if (isOpen) {
+        session.retentionLastUsedAt = new Date(this.now()).toISOString()
+        if (session.interruption && (session.backend === 'sdk' ||
+            session.pendingPermission?.stale || session.pendingUserInput?.stale)) {
+          session.status = 'error'
+          session.activity = 'Previous provider runtime stopped. Send a new prompt or recover to continue.'
+        }
+        session.interruption = undefined
+        session.archivedAt = undefined
+      }
       if (managedOpen) {
         session.managedOpen = isOpen
       }
     })
+  }
+
+  async configureRetention(sessionId: string, input: SessionRetention): Promise<SessionDetail> {
+    const retention = sessionRetentionSchema.parse(input)
+    return this.mutate(sessionId, (session) => {
+      session.retention = retention
+    })
+  }
+
+  async markInterrupted(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.interruption ??= {
+        detectedAt: new Date(this.now()).toISOString(),
+        previousStatus: session.status,
+      }
+      if (session.pendingPermission) session.pendingPermission.stale = true
+      if (session.pendingUserInput) session.pendingUserInput.stale = true
+    }, (session) => !session.interruption ||
+      Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
+      Boolean(session.pendingUserInput && !session.pendingUserInput.stale))
   }
 
   async setSuspended(
@@ -910,6 +994,7 @@ export class SessionStore {
       session.isOpen = true
       grantTerminalRecovery(session)
       session.status = 'idle'
+      session.interruption = undefined
       session.activity = undefined
       session.pendingPermission = undefined
       session.pendingUserInput = undefined
@@ -1063,6 +1148,8 @@ export class SessionStore {
         messages: [],
         status: 'idle',
         isOpen: true,
+        interruption: undefined,
+        archivedAt: undefined,
         activity: undefined,
         pendingPermission: undefined,
         pendingUserInput: undefined,
@@ -1172,6 +1259,8 @@ export class SessionStore {
         messages: [],
         status: 'idle',
         isOpen: true,
+        interruption: undefined,
+        archivedAt: undefined,
         activity: undefined,
         pendingPermission: undefined,
         pendingUserInput: undefined,
@@ -1284,6 +1373,11 @@ export class SessionStore {
         (Date.parse(session.lastClaimedRecovery || '') || 0) + 1,
       )
       const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
+      if (session.interruption || session.archivedAt) {
+        throw Object.assign(new Error('Reopen the interrupted session before sending. Nothing was sent.'), {
+          statusCode: 409, uncertainDelivery: false,
+        })
+      }
       if (session.suspended) {
         throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409, uncertainDelivery: false })
       }

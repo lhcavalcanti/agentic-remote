@@ -374,7 +374,9 @@ describe('Persisted native queue startup', () => {
     expect((await native.receipt()).pastes).toEqual([])
     expect(runtime.creates).not.toHaveBeenCalled()
     expect(runtime.sdk.resumeSession).not.toHaveBeenCalled()
-    expect(runtime.store.get(native.id)?.isOpen).toBe(false)
+    expect(runtime.store.get(native.id)).toMatchObject({
+      isOpen: true, status: 'error', interruption: { previousStatus: 'idle' },
+    })
     expect((await native.persisted()).queuedPrompts).toHaveLength(1)
     expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
   }, 30_000)

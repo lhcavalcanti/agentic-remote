@@ -128,8 +128,24 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Reopen MUST serialize with other lifecycle changes and MUST NOT create a
   duplicate provider owner. Preserved queued work MUST resume in FIFO order only
   after the same-ID owner is ready. If saved provider state is unavailable or
-  corrupt, the session MUST remain closed with its history, metadata, and queue
-  unchanged, and the failure MUST be shown explicitly.
+  corrupt, the session MUST remain recoverable with its history, metadata, and
+  queue unchanged, and the failure MUST be shown explicitly.
+- Managed session records MUST remain visible by default when their provider
+  process disappears, including after overnight inactivity. Process loss MUST
+  appear as interrupted/recoverable rather than Working or a silent close.
+- Session retention MUST be persisted on the owning computer and broadcast to
+  connected devices. A user MAY pin a session for review or opt into elapsed-age
+  archival; default retention MUST be unlimited for records, not live processes.
+- Implicit archival MUST require an absent provider owner, an idle or
+  intentionally suspended session, and the configured elapsed age. It MUST NOT
+  affect running/waiting work, pending questions/permissions, queued or uncertain
+  delivery, failed/recovering work, or review pins. It MUST NOT delete provider
+  history, metadata, files, worktrees, or saved resumability.
+- Restart recovery MUST retain queues without replaying uncertain admissions.
+  Missing terminal owners and interrupted SDK turns MUST remain reviewable;
+  expired callbacks MUST NOT become answerable by merely reopening a record.
+  Explicit Close/Delete MUST retain their existing user-confirmed semantics.
+  See [Session retention](session-retention.md) for settings and cleanup cadence.
 - An open new-session dialog MUST preserve user choices across computer status
   updates. If its computer becomes unavailable, it MUST select an available
   computer when one returns and require a new compatible historical selection.

@@ -94,7 +94,7 @@ export function sessionPresentation(
         ? 'waiting'
         : session.queuedDispatch?.state === 'uncertain'
           ? 'unconfirmed'
-          : session.status === 'error' || session.failedPrompt
+          : session.status === 'error' || session.failedPrompt || session.interruption
             ? 'error'
             : session.suspended
               ? 'suspended'
@@ -108,7 +108,7 @@ export function sessionPresentation(
   )
   return {
     state: online ? state : 'offline',
-    label: stateLabels[online ? state : 'offline'],
+    label: online && state === 'error' && session.interruption ? 'Interrupted' : stateLabels[online ? state : 'offline'],
     description: online
       ? stateLabels[state]
       : `Computer offline. Last known state: ${stateLabels[state].toLowerCase()}.`,

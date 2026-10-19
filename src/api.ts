@@ -823,6 +823,18 @@ export async function recoverConversation(
   return response.session
 }
 
+export async function configureRetention(
+  computerId: string,
+  sessionId: string,
+  input: import('../shared/contracts').SessionRetention,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/retention`,
+    { method: 'PUT', body: JSON.stringify(input) },
+  )
+  return response.session
+}
+
 export async function suspendSession(
   computerId: string,
   sessionId: string,

@@ -117,6 +117,7 @@ async function fixture(
     getSessionInfo,
     queryCalls,
     renameSession,
+    sdk,
     service,
   }
 }
@@ -157,6 +158,72 @@ async function waitForIdle(
 }
 
 describe('ClaudeAgentService', () => {
+  it.each([false, true])('continues a restarted FIFO only after explicit input, including expired callbacks (%s)', async (withQuestion) => {
+    let id = ''
+    const f = await fixture(async function* () {
+      for (const message of textResult(id)) yield message
+    })
+    const created = await f.service.createSession(f.directory)
+    id = created.id
+    await f.service.store.update(id, (session) => {
+      session.status = withQuestion ? 'waiting' : 'running'
+      session.queuedPrompts = ['first', 'second'].map((content) => ({
+        id: content, content, createdAt: '2026-10-18T00:00:00Z',
+      }))
+      if (withQuestion) session.pendingUserInput = {
+        requestId: 'expired', question: 'Review changes?', choices: [], allowFreeform: true,
+      }
+    })
+    await f.service.stop()
+    const restarted = new ClaudeAgentService(
+      new SessionStore(path.join(f.directory, 'state')), '/bin/true', f.sdk,
+      async () => ({ loggedIn: true }),
+    )
+    services.add(restarted)
+    await restarted.start()
+    expect(restarted.getSession(id)?.interruption).toBeDefined()
+    const queries = f.queryCalls.length
+    await restarted.activateSession(id)
+    expect(f.queryCalls).toHaveLength(queries)
+    expect(restarted.getSession(id)?.queuedPrompts).toHaveLength(2)
+    if (withQuestion) expect(restarted.getSession(id)?.pendingUserInput).toMatchObject({ stale: true })
+    await restarted.sendMessage(id, 'Explicit continuation')
+    await vi.waitFor(() => {
+      expect(restarted.getSession(id)?.queuedPrompts).toEqual([])
+      expect(restarted.getSession(id)?.status).toBe('idle')
+    })
+    expect(restarted.getSession(id)?.messages.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual(['first', 'second', 'Explicit continuation'])
+  })
+
+  it('checks retention every minute and stops the cleanup timer before shutdown', async () => {
+    vi.useFakeTimers()
+    try {
+      const f = await fixture(async function* () {})
+      const refresh = vi.spyOn(f.service.store, 'syncOpen')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(refresh).toHaveBeenCalledOnce()
+      await f.service.stop()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(refresh).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('archives opted-in inactive records without deleting provider history', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.configureRetention(created.id, { pinned: false, idleDays: 7 })
+    await f.service.store.update(created.id, (session) => {
+      session.updatedAt = '2026-01-01T00:00:00Z'
+    })
+    await f.service['refreshRetention']()
+    expect(f.service.listSessions()).toEqual([])
+    expect(f.service.listHistory()).toContainEqual(expect.objectContaining({ id: created.id, isOpen: false }))
+    expect(f.deleteSession).not.toHaveBeenCalled()
+  })
+
   it('waits for all fixture services to close before removing any directory', async () => {
     const first = await fixture(async function* () {})
     const second = await fixture(async function* () {})

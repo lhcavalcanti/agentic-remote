@@ -34,6 +34,7 @@ import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { RemoteNodeClient } from './remote-node-client.js'
+import { RemoteNodeRequestError } from './remote-node-errors.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 import type {
@@ -257,10 +258,22 @@ class FakeSessionService extends EventEmitter implements SessionService {
     if (!session) {
       throw new Error('Session not found')
     }
+
     return {
       current: session.runtime || {},
       models: (await this.providerRuntimeOptions('copilot')).models,
     }
+  }
+
+  async configureRetention(
+    id: string,
+    retention: import('../shared/contracts.js').SessionRetention,
+  ): Promise<SessionDetail> {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error('Session not found')
+    session.retention = structuredClone(retention)
+    this.emitEvent({ type: 'session.upserted', session })
+    return structuredClone(session)
   }
 
   async providerRuntimeOptions(
@@ -660,6 +673,39 @@ afterEach(async () => {
 })
 
 describe('multi-node hub', () => {
+  it('includes archived metadata only in an explicitly requested authenticated node snapshot', async () => {
+    const archived = {
+      ...session('archived', 'Saved for history'), isOpen: false, archivedAt: '2026-10-19T06:52:00Z',
+    }
+    const service = new FakeSessionService(
+      session('active', 'Active'), archived,
+      { ...session('closed', 'Explicitly closed'), isOpen: false },
+    )
+    const node = await buildApp({
+      dataDirectory: await temporaryDirectory('retention-node-snapshot'),
+      logger: false, role: 'node', service,
+    })
+    try {
+      const headers = { authorization: `Bearer ${node.identity.token}` }
+      const active = await node.app.inject({ method: 'GET', url: '/node-api/sessions', headers })
+      expect(active.json().sessions.map((entry: SessionDetail) => entry.id)).toEqual(['active'])
+      const snapshot = await node.app.inject({
+        method: 'GET', url: '/node-api/sessions?includeArchived=1', headers,
+      })
+      expect(snapshot.statusCode).toBe(200)
+      expect(snapshot.json().sessions.map((entry: SessionDetail) => entry.id)).toEqual(['active', 'archived'])
+      expect(snapshot.json().sessions.every((entry: SessionDetail) => entry.messages.length === 0)).toBe(true)
+      expect((await node.app.inject({
+        method: 'GET', url: '/node-api/sessions?includeArchived=invalid', headers,
+      })).statusCode).toBe(400)
+      expect((await node.app.inject({
+        method: 'GET', url: '/node-api/sessions?includeArchived=1',
+      })).statusCode).toBe(401)
+    } finally {
+      await node.app.close()
+    }
+  })
+
   beforeEach(() => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
   })
@@ -1422,6 +1468,39 @@ describe('multi-node hub', () => {
         title: 'Renamed remote',
         computerName: 'worker-node',
       })
+      const retained = await hub.app.inject({
+        method: 'PUT',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/retention`,
+        payload: { pinned: true, idleDays: 30 },
+      })
+      expect(retained.statusCode, retained.body).toBe(200)
+      expect(retained.json().session).toMatchObject({
+        computerId: remoteComputerId, retention: { pinned: true, idleDays: 30 },
+      })
+      expect(remoteService.getSession('remote-session')?.retention).toEqual({ pinned: true, idleDays: 30 })
+      expect(localService.getSession('local-session')?.retention).toBeUndefined()
+      await vi.waitFor(() => {
+        for (const device of [plainUpserts, rebuiltUpserts]) {
+          expect(device).toContainEqual(expect.objectContaining({
+            type: 'session.upserted',
+            session: expect.objectContaining({
+              computerId: remoteComputerId, id: 'remote-session',
+              retention: { pinned: true, idleDays: 30 },
+            }),
+          }))
+        }
+      })
+      const invalidRetention = await hub.app.inject({
+        method: 'PUT',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/retention`,
+        payload: { pinned: false, idleDays: 0 },
+      })
+      expect(invalidRetention.statusCode).toBe(400)
+      expect(remoteService.getSession('remote-session')?.retention?.pinned).toBe(true)
+      expect((await remote.app.inject({
+        method: 'PUT', url: '/node-api/sessions/remote-session/retention',
+        payload: { pinned: false },
+      })).statusCode).toBe(401)
       const removedQueue = await hub.app.inject({
         method: 'DELETE',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session/queue/remote-queue`,
@@ -2089,6 +2168,63 @@ function taskSnapshot(running: boolean): BackgroundTaskSnapshot {
 }
 
 describe('remote snapshot consistency', () => {
+  it('removes an archived cache entry explicitly deleted while the node was disconnected', async () => {
+    const { manager, client, computer, managed, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSessionRetention: true,
+    }])
+    manager['sessionCache'].set(computer.id, [managed({
+      ...session('deleted', 'Previously archived'), isOpen: false, archivedAt: '2026-10-19T06:52:00Z',
+    })])
+    vi.spyOn(client, 'listSessions').mockResolvedValue([])
+    vi.spyOn(client, 'getSession').mockRejectedValue(new RemoteNodeRequestError('Session not found', 404))
+    await manager['resyncRemoteComputer'](computer, client)
+    expect(events).toContainEqual({ type: 'session.removed', computerId: computer.id, sessionId: 'deleted' })
+    expect(manager['sessionCache'].get(computer.id)).toEqual([])
+    manager.stop()
+  })
+
+  it.each([true, false])('distinguishes archival from deletion on node reconnect, including missed upserts (%s)', async (sawArchive) => {
+    const { manager, client, computer, managed, events } = await remoteSnapshotFixture()
+    const archived = {
+      ...session('kept', 'Retained history'), revision: 2, isOpen: false,
+      archivedAt: '2026-10-19T06:52:00Z',
+    }
+    vi.spyOn(client, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSessionRetention: true,
+    }])
+    manager['sessionCache'].set(computer.id, [managed(sawArchive ? archived : { ...archived, revision: 1, isOpen: true, archivedAt: undefined })])
+    vi.spyOn(client, 'listSessions').mockResolvedValue([])
+    vi.spyOn(client, 'getSession').mockResolvedValue(archived)
+    await manager['resyncRemoteComputer'](computer, client)
+    expect(events.some((event) => event.type === 'session.removed')).toBe(false)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', session: expect.objectContaining({ isOpen: false, archivedAt: archived.archivedAt }),
+    }))
+    manager.stop()
+  })
+
+  it('does not resurrect an archived record from an in-flight or offline roster snapshot', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted',
+      session: { ...session('kept', 'Retained history'), revision: 2, isOpen: false, archivedAt: '2026-10-19T06:52:00Z' },
+    })
+    response.resolve([{ ...session('kept', 'Old active roster'), revision: 1, isOpen: true }])
+    expect((await listing).sessions).toEqual([])
+    vi.mocked(client.listSessions).mockRejectedValue(new Error('Offline'))
+    expect((await manager.listSessionsWithAuthority()).sessions).toEqual([])
+    expect(events).toEqual([expect.objectContaining({
+      type: 'session.upserted', session: expect.objectContaining({ isOpen: false }),
+    })])
+    expect(manager['sessionCache'].get(computer.id)?.[0]).toMatchObject({ id: 'kept', isOpen: false })
+    manager.stop()
+  })
+
   it('reconciles live session events received while a listing is in flight', async () => {
     const { manager, client, computer, managed } = await remoteSnapshotFixture()
     const response = deferred<SessionDetail[]>()

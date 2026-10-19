@@ -23,6 +23,13 @@ const last: ManagedSession = {
 const grouped = new Map([['one', [first, hidden]], ['two', [last]]])
 
 describe('shared session navigation view', () => {
+  it('hides archived records from every roster count without treating them as deleted', () => {
+    const archived = { ...hidden, isOpen: false, archivedAt: '2026-10-19T06:52:00Z' }
+    const view = sessionNavigationView(computers, new Map([['one', [first, archived]]]), {}, '', 'all')
+    expect(view.visible).toEqual([first])
+    expect(view.counts.all).toBe(1)
+  })
+
   it('uses the same filtered sequence for rows and both directions of navigation', () => {
     const view = sessionNavigationView(computers, grouped, {}, 'visible', 'all')
     expect(view.visible).toEqual(view.groups.flatMap((group) => group.sessions))

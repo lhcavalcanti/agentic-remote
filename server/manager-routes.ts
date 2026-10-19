@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager.js'
+import { MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES } from '../shared/manager-structured-memory.js'
 import type {
   ManagerClientDefaults,
   ManagerMessage,
@@ -110,7 +111,7 @@ export async function registerManagerRoutes(
     }
   const requireStructuredStore = () => {
     const status = structuredStatus()
-    if (!structuredMemory?.store) {
+    if (!structuredMemory?.store || status.availability !== 'ready') {
       const reason = status.mode === 'off'
         ? 'Oracle structured memory is turned off on this hub.'
         : status.lastError ?? 'Oracle structured memory is unavailable.'
@@ -168,7 +169,10 @@ export async function registerManagerRoutes(
     )
   })
 
-  app.post('/api/manager/structured-memory/import', async (request, reply) => {
+  app.post('/api/manager/structured-memory/import', {
+    // The export travels as a JSON string, so escaping can at most double it.
+    bodyLimit: MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES * 2 + 64 * 1024,
+  }, async (request, reply) => {
     const { requestId, data } = structuredImportSchema.parse(
       request.body ?? {},
     )

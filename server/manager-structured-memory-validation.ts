@@ -279,10 +279,12 @@ const credentialAssignmentPattern =
   /\b(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret)\s*[:=]\s*[^\s,;]{6,}/i
 const credentialUrlPattern = /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^@\s/]+@/i
 const sensitivePathPattern =
-  /(?:^|[/\\~])\.(?:ssh|aws|gnupg|env)(?:[/\\]|$)|(?:^|[/\\])(?:keychains?|credential(?:s| stores?)?|browser profiles?|login data)(?:[/\\]|$)/i
+  /(?:^|[\s/\\~'"`(=:])\.(?:ssh|aws|gnupg|env(?:\.[\w-]+)*)(?=$|[\s/\\'"`),;:.!?])|(?:^|[/\\])(?:keychains?|credential(?:s| stores?)?|browser profiles?|login data)(?:[/\\]|$)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|[\w-]\.(?:pem|p12|pfx)\b/i
 const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
 const phonePattern = /(?:^|\D)(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]\d{3}[\s.-]\d{4}(?:\D|$)/
 const governmentIdPattern = /\b\d{3}-\d{2}-\d{4}\b/
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function stringsIn(value: unknown): string[] {
   const strings: string[] = []
@@ -357,7 +359,9 @@ function hasHighEntropySecret(value: string): boolean {
 }
 
 function looksLikePaymentCard(value: string): boolean {
-  const candidates = value.match(/(?:\d[ -]?){13,19}/g) ?? []
+  // A digit run inside a longer token, such as a digest, is not a card number.
+  const candidates =
+    value.match(/(?<![A-Za-z0-9])(?:\d[ -]?){12,18}\d(?![A-Za-z0-9])/g) ?? []
   return candidates.some((candidate) => {
     const digits = candidate.replace(/\D/g, '')
     if (digits.length < 13 || digits.length > 19) return false
@@ -393,7 +397,8 @@ function validateRawSafety(input: unknown): void {
 }
 
 function validatePrivateContent(input: unknown): void {
-  const strings = stringsIn(input)
+  // A canonical UUID cannot carry free text, but its digits can resemble a card.
+  const strings = stringsIn(input).filter((value) => !uuidPattern.test(value))
   if (strings.some((value) =>
     tokenPrefixPattern.test(value) ||
     bearerPattern.test(value) ||
@@ -431,21 +436,44 @@ function selectedFields(
   )
 }
 
+const mutationPrivateFields = [
+  'requestId',
+  'canonicalKey',
+  'content',
+  'scope',
+  'sourceSession',
+  'sourceManagerMessageId',
+]
+
+/** Every free-text field of persisted state; IDs, digests, and timestamps are format-checked instead. */
 function persistedPrivateContent(input: unknown): unknown {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
   const state = input as {
     records?: unknown
     tombstones?: unknown
+    audit?: unknown
+    appliedRequests?: unknown
   }
+  const each = (entries: unknown, select: (entry: unknown) => unknown) =>
+    Array.isArray(entries) ? entries.map(select) : entries
   return {
-    records: Array.isArray(state.records)
-      ? state.records.map((record) =>
-          selectedFields(record, ['canonicalKey', 'content', 'scope']))
-      : state.records,
-    tombstones: Array.isArray(state.tombstones)
-      ? state.tombstones.map((tombstone) =>
-          selectedFields(tombstone, ['canonicalKey', 'scope']))
-      : state.tombstones,
+    records: each(state.records, (record) => ({
+      ...selectedFields(record, ['canonicalKey', 'content', 'scope']),
+      provenance: selectedFields(
+        (record as { provenance?: unknown } | null)?.provenance,
+        ['requestId', 'sourceSession', 'sourceManagerMessageId'],
+      ),
+    })),
+    tombstones: each(state.tombstones, (tombstone) =>
+      selectedFields(tombstone, [
+        'canonicalKey',
+        'scope',
+        'requestId',
+        'sourceManagerMessageId',
+      ])),
+    audit: each(state.audit, (entry) => selectedFields(entry, ['requestId'])),
+    appliedRequests: each(state.appliedRequests, (entry) =>
+      selectedFields(entry, ['requestId'])),
   }
 }
 
@@ -472,7 +500,7 @@ export function validateStructuredMemoryRemember(
   return validateWithSchema(
     input,
     rememberSchema,
-    selectedFields(input, ['canonicalKey', 'content', 'scope']),
+    selectedFields(input, mutationPrivateFields),
   )
 }
 
@@ -482,14 +510,18 @@ export function validateStructuredMemoryCorrect(
   return validateWithSchema(
     input,
     correctSchema,
-    selectedFields(input, ['canonicalKey', 'content', 'scope']),
+    selectedFields(input, mutationPrivateFields),
   )
 }
 
 export function validateStructuredMemoryForget(
   input: unknown,
 ): ManagerStructuredMemoryForgetInput {
-  return validateWithSchema(input, forgetSchema, {})
+  return validateWithSchema(
+    input,
+    forgetSchema,
+    selectedFields(input, ['requestId', 'sourceManagerMessageId']),
+  )
 }
 
 export function validateStructuredMemorySearch(
@@ -605,7 +637,6 @@ export function validateStructuredMemoryImport(
   const request = validateWithSchema(
     { requestId },
     z.object({ requestId: requestIdSchema }).strict(),
-    {},
   )
   return {
     requestId: request.requestId,

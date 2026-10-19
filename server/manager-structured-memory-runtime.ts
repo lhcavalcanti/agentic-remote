@@ -41,11 +41,12 @@ export class ManagerStructuredMemoryRuntime {
     if (this.mode === 'off') {
       return { mode: this.mode, availability: 'disabled' }
     }
-    if (!this.store) {
+    const failure = this.store?.failureReason()
+    if (!this.store || failure) {
       return {
         mode: this.mode,
         availability: 'unavailable',
-        lastError: this.unavailableReason ??
+        lastError: failure ?? this.unavailableReason ??
           'Structured memory is unavailable.',
       }
     }

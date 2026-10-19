@@ -312,6 +312,77 @@ describe('manager routes', () => {
     expect(conflicting.json().error).toContain('empty store')
   })
 
+  it('round-trips an export larger than the default request body limit', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'on')
+    const sentence = 'Keep the deployment checklist short and readable for everyone. '
+    const records = Array.from({ length: 700 }, (_, index) => ({
+      schemaVersion: 1,
+      id: `aaaaaaaa-aaaa-4aaa-8aaa-${index.toString(16).padStart(12, '0')}`,
+      kind: 'fact',
+      canonicalKey: `deployment note ${index}`,
+      content: sentence.repeat(28).trim(),
+      scope: { type: 'user' },
+      provenance: {
+        origin: 'direct-user',
+        requestId: `remember-${index}`,
+        sourceDigest: 'a'.repeat(64),
+      },
+      authority: 'direct-user',
+      confidence: 1,
+      createdAt: '2026-10-16T12:00:00.000Z',
+      updatedAt: '2026-10-16T12:00:00.000Z',
+    }))
+    const data = JSON.stringify({
+      version: 1,
+      revision: 1,
+      records,
+      tombstones: [],
+      audit: [],
+      appliedRequests: [],
+    })
+    expect(Buffer.byteLength(data)).toBeGreaterThan(1024 * 1024)
+
+    const first = await build()
+    const imported = await first.app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/import',
+      headers: trusted,
+      payload: { requestId: 'import-large-1', data },
+    })
+    expect(imported.statusCode).toBe(201)
+    const exported = await first.app.inject({
+      url: '/api/manager/structured-memory/export',
+      headers: trusted,
+    })
+    expect(exported.statusCode).toBe(200)
+    expect(Buffer.byteLength(exported.body)).toBeGreaterThan(1024 * 1024)
+    await first.app.close()
+    runtime = undefined
+
+    await rm(directory, { recursive: true, force: true })
+    directory = await mkdtemp(path.join(tmpdir(), 'agentic-manager-routes-'))
+    const second = await build()
+    const restored = await second.app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/import',
+      headers: trusted,
+      payload: { requestId: 'import-large-2', data: exported.body },
+    })
+    expect(restored.statusCode).toBe(201)
+    expect(second.managerStructuredMemory.status()).toMatchObject({
+      availability: 'ready',
+      records: 700,
+    })
+
+    const untrusted = await second.app.inject({
+      method: 'POST',
+      url: '/api/manager/structured-memory/import',
+      headers: { host: 'hub.example.test', origin: 'https://attacker.example.test' },
+      payload: { requestId: 'import-large-3', data: exported.body },
+    })
+    expect(untrusted.statusCode).toBe(403)
+  })
+
   it('keeps Oracle available when structured memory is corrupt', async () => {
     vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'on')
     await mkdir(path.join(directory, 'manager'), { recursive: true })

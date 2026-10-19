@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
 import {
   mkdir,
   lstat,
   open,
-  readFile,
   rename,
   rm,
 } from 'node:fs/promises'
@@ -111,6 +111,7 @@ export class ManagerStructuredMemoryStore {
   private serialized: string | null = null
   private commits: Promise<void> = Promise.resolve()
   private initialized = false
+  private failure?: ManagerStructuredMemoryRecoveryError
 
   constructor(
     private readonly directory: string,
@@ -139,6 +140,7 @@ export class ManagerStructuredMemoryStore {
     try {
       serialized = await this.readStateFile(this.statePath, 'primary')
     } catch (error) {
+      if (error instanceof ManagerStructuredMemoryRecoveryError) throw error
       if (!isMissing(error)) {
         throw new ManagerStructuredMemoryRecoveryError(
           'Structured memory could not read its primary state; no files were changed.',
@@ -151,6 +153,9 @@ export class ManagerStructuredMemoryStore {
         if (isMissing(backupError)) {
           this.initialized = true
           return
+        }
+        if (backupError instanceof ManagerStructuredMemoryRecoveryError) {
+          throw backupError
         }
         throw new ManagerStructuredMemoryRecoveryError(
           'Structured memory could not read its backup state; no files were changed.',
@@ -185,11 +190,6 @@ export class ManagerStructuredMemoryStore {
       return
     }
 
-    if (Buffer.byteLength(serialized) > MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES) {
-      throw new ManagerStructuredMemoryRecoveryError(
-        'Structured memory primary state exceeds the supported size; no files were changed.',
-      )
-    }
     try {
       this.state = validateStructuredMemoryState(JSON.parse(serialized))
       this.searchIndex = createStructuredMemorySearchIndex(this.state)
@@ -203,6 +203,11 @@ export class ManagerStructuredMemoryStore {
     }
   }
 
+  /**
+   * Reads one state file without following links. A readable-by-others file
+   * owned by this process's user is tightened to 0600 first; one owned by
+   * anyone else, or larger than the store limit, is refused unread.
+   */
   private async readStateFile(
     filePath: string,
     label: 'primary' | 'backup',
@@ -211,7 +216,59 @@ export class ManagerStructuredMemoryStore {
     if (metadata.isSymbolicLink() || !metadata.isFile()) {
       throw new Error(`Structured memory ${label} state is not a regular file`)
     }
-    return readFile(filePath, 'utf8')
+    const handle = await open(
+      filePath,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    )
+    try {
+      const opened = await handle.stat()
+      if (
+        !opened.isFile() ||
+        opened.ino !== metadata.ino ||
+        opened.dev !== metadata.dev
+      ) {
+        throw new Error(`Structured memory ${label} state changed while opening`)
+      }
+      if (opened.size > MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES) {
+        throw new ManagerStructuredMemoryRecoveryError(
+          `Structured memory ${label} state exceeds the supported size; no files were changed.`,
+        )
+      }
+      if ((opened.mode & 0o077) !== 0) {
+        const uid = process.getuid?.()
+        if (uid !== undefined && opened.uid !== uid) {
+          throw new ManagerStructuredMemoryRecoveryError(
+            `Structured memory ${label} state is accessible to other users and not owned by the hub; no files were changed.`,
+          )
+        }
+        await handle.chmod(0o600)
+      }
+      const buffer = Buffer.alloc(opened.size + 1)
+      let length = 0
+      for (;;) {
+        const { bytesRead } = await handle.read(
+          buffer,
+          length,
+          buffer.length - length,
+          length,
+        )
+        if (bytesRead === 0) break
+        length += bytesRead
+        if (length > opened.size) {
+          throw new ManagerStructuredMemoryRecoveryError(
+            `Structured memory ${label} state changed while reading; no files were changed.`,
+          )
+        }
+      }
+      return buffer.toString('utf8', 0, length)
+    } finally {
+      await handle.close()
+    }
+  }
+
+  /** Why structured memory stopped accepting work after an unrecoverable write. */
+  failureReason(): string | undefined {
+    return this.failure?.message
   }
 
   snapshot(): ManagerStructuredMemoryState {
@@ -354,6 +411,7 @@ export class ManagerStructuredMemoryStore {
           404,
         )
       }
+      this.requireUserWritableScope(previous.scope.type)
       if (
         previous.supersededById ||
         state.tombstones.some(({ recordId }) => recordId === previous.id)
@@ -438,6 +496,7 @@ export class ManagerStructuredMemoryStore {
           404,
         )
       }
+      this.requireUserWritableScope(record.scope.type)
       const existing = state.tombstones.find(
         ({ recordId }) => recordId === record.id,
       )
@@ -626,6 +685,7 @@ export class ManagerStructuredMemoryStore {
   ): Promise<T> {
     this.requireInitialized()
     const task = this.commits.then(async () => {
+      this.requireInitialized()
       const next = structuredClone(this.state)
       const result = await mutate(next)
       validateStructuredMemoryState(next)
@@ -675,10 +735,13 @@ export class ManagerStructuredMemoryStore {
         try {
           await this.restorePrimary(previousSerialized)
         } catch (recoveryError) {
-          throw new ManagerStructuredMemoryRecoveryError(
-            'Structured memory could not roll back an incomplete publication.',
+          // Disk state is now uncertain, so refuse all further work until a
+          // restart revalidates the files.
+          this.failure = new ManagerStructuredMemoryRecoveryError(
+            'Structured memory could not roll back an incomplete publication and is unavailable until the hub restarts.',
             new AggregateError([error, recoveryError]),
           )
+          throw this.failure
         }
       }
       if ((error as { statusCode?: unknown }).statusCode === 507) throw error
@@ -774,6 +837,9 @@ export class ManagerStructuredMemoryStore {
   }
 
   private requireInitialized(): void {
+    if (this.failure) {
+      throw new ManagerStructuredMemoryRecoveryError(this.failure.message)
+    }
     if (!this.initialized) {
       throw new Error('Structured memory store is not initialized')
     }

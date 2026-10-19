@@ -4,6 +4,7 @@ import {
   ManagerStructuredMemoryValidationError,
   validateStructuredMemoryCorrect,
   validateStructuredMemoryForget,
+  validateStructuredMemoryImport,
   validateStructuredMemoryRemember,
   validateStructuredMemorySearch,
   validateStructuredMemoryState,
@@ -377,5 +378,181 @@ describe('structured memory validation', () => {
       audit: [],
       appliedRequests: [],
     })).toThrow(expect.objectContaining({ reason: 'malformed' }))
+  })
+
+  it.each([
+    ['.env.production'],
+    ['/srv/app/.env.local'],
+    ['Deploy reads .env.production at boot.'],
+    ['~/.env'],
+    ['C:\\app\\.env.development'],
+    ['"./.env.staging"'],
+    ['/home/alice/.ssh/id_ed25519'],
+    ['Copy id_rsa to the server.'],
+    ['/etc/ssl/private/server.pem'],
+    ['~/.aws/credentials'],
+  ])('rejects the sensitive path %s', (content) => {
+    expect(() =>
+      validateStructuredMemoryRemember(safeRemember(content)),
+    ).toThrow(expect.objectContaining({ reason: 'sensitive_path' }))
+  })
+
+  it.each([
+    ['Prefer environment files over hard-coded values.'],
+    ['Read the port from process.env.PORT.'],
+    ['Keep pull request comments concise.'],
+  ])('accepts benign text mentioning environments: %s', (content) => {
+    expect(validateStructuredMemoryRemember(safeRemember(content)).content)
+      .toBe(content)
+  })
+
+  const privateValues = [
+    ['secret', `ghp_${'A'.repeat(36)}`],
+    ['personal_data', 'alice@example.com'],
+    ['sensitive_path', '/srv/app/.env.production'],
+  ] as const
+
+  it.each(privateValues)(
+    'rejects %s in mutation metadata before persistence',
+    (reason, value) => {
+      expect(() => validateStructuredMemoryRemember({
+        ...safeRemember(),
+        requestId: value,
+      })).toThrow(expect.objectContaining({ reason }))
+      expect(() => validateStructuredMemoryRemember({
+        ...safeRemember(),
+        sourceManagerMessageId: value,
+      })).toThrow(expect.objectContaining({ reason }))
+      expect(() => validateStructuredMemoryRemember({
+        ...safeRemember(),
+        sourceSession: { computerId: 'hub', sessionId: value },
+      })).toThrow(expect.objectContaining({ reason }))
+      expect(() => validateStructuredMemoryCorrect({
+        ...safeRemember(),
+        recordId: '11111111-1111-4111-8111-111111111111',
+        requestId: value,
+      })).toThrow(expect.objectContaining({ reason }))
+      expect(() => validateStructuredMemoryForget({
+        requestId: value,
+        recordId: '11111111-1111-4111-8111-111111111111',
+      })).toThrow(expect.objectContaining({ reason }))
+      expect(() => validateStructuredMemoryForget({
+        requestId: 'forget-1',
+        recordId: '11111111-1111-4111-8111-111111111111',
+        sourceManagerMessageId: value,
+      })).toThrow(expect.objectContaining({ reason }))
+    },
+  )
+
+  describe('import privacy', () => {
+    const forgotten = {
+      schemaVersion: 1 as const,
+      id: '11111111-1111-4111-8111-111111111111',
+      kind: 'preference' as const,
+      canonicalKey: 'pull request style',
+      content: 'Keep pull request comments concise.',
+      scope: { type: 'user' as const },
+      provenance: {
+        origin: 'direct-user' as const,
+        requestId: 'remember-1',
+        sourceDigest: 'a'.repeat(64),
+        sourceManagerMessageId: 'manager-message-1',
+        sourceSession: { computerId: 'hub', sessionId: 'session-1' },
+      },
+      authority: 'direct-user' as const,
+      confidence: 1,
+      createdAt: '2026-10-16T12:00:00.000Z',
+      updatedAt: '2026-10-16T12:00:00.000Z',
+    }
+    const baseState = () => ({
+      version: 1 as const,
+      revision: 2,
+      records: [structuredClone(forgotten)],
+      tombstones: [{
+        schemaVersion: 1 as const,
+        recordId: forgotten.id,
+        scope: forgotten.scope,
+        canonicalKey: forgotten.canonicalKey,
+        contentDigest: createHash('sha256')
+          .update(JSON.stringify(forgotten.content))
+          .digest('hex'),
+        sourceDigest: forgotten.provenance.sourceDigest,
+        requestId: 'forget-1',
+        deletedAt: '2026-10-16T12:01:00.000Z',
+        sourceManagerMessageId: 'manager-message-2',
+      }],
+      audit: [{
+        id: '33333333-3333-4333-8333-333333333333',
+        operation: 'forget' as const,
+        requestId: 'forget-1',
+        recordId: forgotten.id,
+        occurredAt: '2026-10-16T12:01:00.000Z',
+        outcome: 'applied' as const,
+      }],
+      appliedRequests: [{
+        requestId: 'forget-1',
+        operation: 'forget' as const,
+        recordId: forgotten.id,
+        revision: 2,
+        appliedAt: '2026-10-16T12:01:00.000Z',
+      }],
+    })
+    type ImportState = ReturnType<typeof baseState>
+    const fields: Array<[string, (state: ImportState, value: string) => void]> = [
+      ['record provenance request ID', (state, value) => {
+        state.records[0].provenance.requestId = value
+      }],
+      ['record provenance manager message ID', (state, value) => {
+        state.records[0].provenance.sourceManagerMessageId = value
+      }],
+      ['record provenance source computer', (state, value) => {
+        state.records[0].provenance.sourceSession.computerId = value
+      }],
+      ['record provenance source session', (state, value) => {
+        state.records[0].provenance.sourceSession.sessionId = value
+      }],
+      ['tombstone request ID', (state, value) => {
+        state.tombstones[0].requestId = value
+      }],
+      ['tombstone manager message ID', (state, value) => {
+        state.tombstones[0].sourceManagerMessageId = value
+      }],
+      ['audit request ID', (state, value) => {
+        state.audit[0].requestId = value
+      }],
+      ['applied request ID', (state, value) => {
+        state.appliedRequests[0].requestId = value
+      }],
+    ]
+
+    it('accepts a clean state including UUID metadata that resembles a card', () => {
+      const state = baseState()
+      state.records[0].provenance.sourceManagerMessageId =
+        'aaaaaaaa-aaaa-4aaa-8123-100000000003'
+      expect(validateStructuredMemoryImport('import-1', state).state)
+        .toEqual(state)
+    })
+
+    it.each(fields.flatMap(([label, apply]) =>
+      privateValues.map(([reason, value]) => [label, reason, value, apply] as const)))(
+      'rejects %s containing %s',
+      (_label, reason, value, apply) => {
+        const state = baseState()
+        apply(state, value)
+        try {
+          validateStructuredMemoryImport('import-1', state)
+          throw new Error('Expected import validation to fail')
+        } catch (error) {
+          expect(error).toMatchObject({ reason })
+          expect(JSON.stringify(error)).not.toContain(value)
+          expect(String(error)).not.toContain(value)
+        }
+      },
+    )
+
+    it.each(privateValues)('rejects an import request ID containing %s', (reason, value) => {
+      expect(() => validateStructuredMemoryImport(value, baseState()))
+        .toThrow(expect.objectContaining({ reason }))
+    })
   })
 })

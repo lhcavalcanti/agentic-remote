@@ -41,4 +41,47 @@ describe('structured memory intent', () => {
   ] as const)('rejects implicit or negated intent: %s', (message, operation) => {
     expect(hasExplicitStructuredMemoryIntent(message, operation)).toBe(false)
   })
+
+  const apostrophes = [
+    "'",
+    '\u2018',
+    '\u2019',
+    '\u201B',
+    '\u02BC',
+    '\u2032',
+    '\uFF07',
+    '`',
+    '\u00B4',
+  ]
+  const negations = [
+    ...apostrophes.flatMap((apostrophe) => [
+      `don${apostrophe}t`,
+      `Don${apostrophe}t`,
+      `DON${apostrophe}T`,
+    ]),
+    'dont',
+    'do not',
+    'Do  not',
+    'do\u00A0not',
+    'never',
+    'Never',
+    'don\u200Bt',
+  ]
+  const requests = [
+    ['remember', 'remember that my build token is private.'],
+    ['remember', 'save this preference in memory.'],
+    ['remember', 'store this decision in long-term memory.'],
+    ['remember', 'keep this fact in memory.'],
+    ['remember', 'ever remember that I like tabs.'],
+    ['correct', 'update the remembered preference.'],
+    ['forget', 'delete that memory.'],
+  ] as const
+  it.each(negations.flatMap((negation) =>
+    requests.map(([operation, request]) =>
+      [`${negation} ${request}`, operation] as const)))(
+    'rejects negated intent across apostrophe variants: %s',
+    (message, operation) => {
+      expect(hasExplicitStructuredMemoryIntent(message, operation)).toBe(false)
+    },
+  )
 })

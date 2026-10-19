@@ -7,12 +7,17 @@ import {
   rm,
   stat,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { MANAGER_STRUCTURED_MEMORY_MAX_AUDIT_ENTRIES } from '../shared/manager-structured-memory.js'
+import {
+  MANAGER_STRUCTURED_MEMORY_MAX_AUDIT_ENTRIES,
+  MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES,
+} from '../shared/manager-structured-memory.js'
+import { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 
 describe('ManagerStructuredMemoryStore', () => {
@@ -502,5 +507,179 @@ describe('ManagerStructuredMemoryStore', () => {
       scopes: [{ type: 'user' }],
       at: '2026-10-16T12:00:00.000Z',
     }).records).toEqual([])
+  })
+
+  async function openWithPolicyGlobal() {
+    const store = await open()
+    await store.importState('import-policy', JSON.stringify({
+      version: 1,
+      revision: 1,
+      records: [{
+        schemaVersion: 1,
+        id: '11111111-1111-4111-8111-111111111111',
+        kind: 'procedure',
+        canonicalKey: 'review policy',
+        content: 'Require a current review before merge.',
+        scope: { type: 'global' },
+        provenance: {
+          origin: 'policy',
+          requestId: 'policy-1',
+          sourceDigest: 'a'.repeat(64),
+        },
+        authority: 'policy-authorized',
+        confidence: 1,
+        createdAt: '2026-10-16T12:00:00.000Z',
+        updatedAt: '2026-10-16T12:00:00.000Z',
+      }],
+      tombstones: [],
+      audit: [],
+      appliedRequests: [],
+    }))
+    return store
+  }
+
+  it('refuses a direct-user correction that supersedes a global policy record', async () => {
+    const store = await openWithPolicyGlobal()
+    const before = store.snapshot()
+    await expect(store.correct({
+      requestId: 'correct-global',
+      recordId: '11111111-1111-4111-8111-111111111111',
+      kind: 'procedure',
+      canonicalKey: 'review policy',
+      content: 'Merge without review.',
+      scope: { type: 'user' },
+    })).rejects.toMatchObject({
+      statusCode: 403,
+      message: expect.stringContaining('policy-authorized'),
+    })
+    expect(store.snapshot()).toEqual(before)
+  })
+
+  it('refuses a direct-user forget of a global policy record', async () => {
+    const store = await openWithPolicyGlobal()
+    const before = store.snapshot()
+    await expect(store.forget({
+      requestId: 'forget-global',
+      recordId: '11111111-1111-4111-8111-111111111111',
+    })).rejects.toMatchObject({
+      statusCode: 403,
+      message: expect.stringContaining('policy-authorized'),
+    })
+    expect(store.snapshot()).toEqual(before)
+  })
+
+  it('tightens a group-readable primary to owner-only before loading it', async () => {
+    const store = await open()
+    await store.remember(rememberInput('remember-1'))
+    const primary = path.join(root, 'manager', 'structured-memory.json')
+    await chmod(primary, 0o644)
+
+    const reopened = await open()
+
+    expect(reopened.snapshot().records).toHaveLength(1)
+    expect((await stat(primary)).mode & 0o777).toBe(0o600)
+  })
+
+  it('tightens a world-readable backup before restoring from it', async () => {
+    const store = await open()
+    await store.remember(rememberInput('remember-1'))
+    await store.remember({
+      ...rememberInput('remember-2', 'Prefer squash merges.'),
+      canonicalKey: 'merge strategy',
+    })
+    const directory = path.join(root, 'manager')
+    const backup = path.join(directory, 'structured-memory.backup.json')
+    await chmod(backup, 0o644)
+    await rm(path.join(directory, 'structured-memory.json'))
+
+    const recovered = await open()
+
+    expect(recovered.snapshot().revision).toBe(1)
+    expect((await stat(backup)).mode & 0o777).toBe(0o600)
+    expect((await stat(path.join(directory, 'structured-memory.json'))).mode & 0o777)
+      .toBe(0o600)
+  })
+
+  it.each([
+    ['primary', 'structured-memory.json'],
+    ['backup', 'structured-memory.backup.json'],
+  ])('refuses an oversized %s before reading it', async (label, name) => {
+    const directory = path.join(root, 'manager')
+    await mkdir(directory, { mode: 0o700 })
+    const file = path.join(directory, name)
+    await writeFile(file, '', { mode: 0o600 })
+    await truncate(file, MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES + 1)
+    const store = new ManagerStructuredMemoryStore(directory, { now })
+
+    await expect(store.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+      message: expect.stringContaining(`${label} state exceeds the supported size`),
+    })
+    expect((await stat(file)).size).toBe(MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES + 1)
+    expect((await readdir(directory)).sort()).toEqual([name])
+  })
+
+  it('becomes unavailable when publication and rollback both fail', async () => {
+    const directory = path.join(root, 'manager')
+    let syncCalls = 0
+    let failSync = true
+    const store = new ManagerStructuredMemoryStore(directory, {
+      now,
+      syncDirectory: async () => {
+        syncCalls += 1
+        if (failSync && syncCalls >= 3) {
+          throw Object.assign(new Error('Injected directory sync refusal'), {
+            code: 'EIO',
+          })
+        }
+      },
+    })
+    await store.initialize()
+    await store.remember(rememberInput('remember-1'))
+    const runtime = new ManagerStructuredMemoryRuntime('on', store)
+
+    await expect(store.remember({
+      ...rememberInput('remember-2', 'Prefer squash merges.'),
+      canonicalKey: 'merge strategy',
+    })).rejects.toMatchObject({
+      statusCode: 503,
+      message: expect.stringContaining('roll back'),
+    })
+
+    failSync = false
+    const onDisk = await readFile(
+      path.join(directory, 'structured-memory.json'),
+      'utf8',
+    )
+    await expect(async () => store.remember({
+      ...rememberInput('remember-3', 'Prefer rebase merges.'),
+      canonicalKey: 'rebase strategy',
+    })).rejects.toMatchObject({ statusCode: 503 })
+    await expect(async () => store.importState('import-1', JSON.stringify({
+      version: 1,
+      revision: 0,
+      records: [],
+      tombstones: [],
+      audit: [],
+      appliedRequests: [],
+    }))).rejects.toMatchObject({ statusCode: 503 })
+    await expect(async () => store.forget({
+      requestId: 'forget-1',
+      recordId: '11111111-1111-4111-8111-111111111111',
+    })).rejects.toMatchObject({ statusCode: 503 })
+    expect(() => store.snapshot()).toThrow(expect.objectContaining({ statusCode: 503 }))
+    expect(() => store.search({ query: 'merge', scopes: [{ type: 'user' }] }))
+      .toThrow(expect.objectContaining({ statusCode: 503 }))
+    expect(() => store.exportState()).toThrow(expect.objectContaining({ statusCode: 503 }))
+    expect(await readFile(
+      path.join(directory, 'structured-memory.json'),
+      'utf8',
+    )).toBe(onDisk)
+    expect(runtime.status()).toMatchObject({
+      mode: 'on',
+      availability: 'unavailable',
+      lastError: expect.stringContaining('roll back'),
+    })
+    expect(JSON.stringify(runtime.status())).not.toContain('squash')
   })
 })

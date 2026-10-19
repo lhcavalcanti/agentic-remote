@@ -289,6 +289,14 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private processing?: Promise<void>
   /** Set when Stop arrives between recovery attempts, when no turn is running. */
   private cancelledMessageId?: string
+  /** The defaults each waiting message was sent with, while structured memory is enabled. */
+  private readonly messageDefaults = new Map<string, ManagerClientDefaults | undefined>()
+  /** Structured-memory scopes and authority fixed when the current turn started. */
+  private turnStructuredMemory?: {
+    messageId: string
+    content: string
+    scopes: ManagerStructuredMemoryScope[]
+  }
 
   constructor(options: ManagerAgentOptions) {
     super()
@@ -522,6 +530,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       state: 'queued',
       ...(options.answerOnly ? { answerOnly: true } : {}),
     }
+    if (this.structuredMemoryEnabled()) {
+      this.messageDefaults.set(message.id, this.store.state().defaults)
+    }
     await this.updateMessage(message)
     this.publishStatus()
     void this.pump()
@@ -572,6 +583,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }
     const next: ManagerMessage = { ...message, state: 'cancelled', updatedAt: this.now().toISOString() }
     await this.updateMessage(next)
+    this.messageDefaults.delete(messageId)
     this.publishStatus()
     return next
   }
@@ -752,19 +764,18 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       setSessionFolder: async (computerId, folder) =>
         (await this.updateSettings({ sessionFolders: { [computerId]: folder ?? null } })).sessionFolders?.[computerId],
       memory: this.store.memory,
-      ...(this.structuredMemory?.store
+      // Shadow must look exactly like off to the model, so only on exposes tools.
+      ...(this.structuredMemory?.mode === 'on' && this.structuredMemory.store
         ? {
             structuredMemory: this.structuredMemory.store,
-            structuredMemoryScopes: () => this.structuredMemoryScopes(),
+            structuredMemoryScopes: () =>
+              this.currentTurnStructuredMemory()?.scopes ?? [],
             authorizeStructuredMemory: (
               operation: 'remember' | 'correct' | 'forget',
             ) => {
-              const sourceManagerMessageId = this.currentReplyTo
-              const message = sourceManagerMessageId
-                ? this.store.messages().find(
-                    ({ id, role }) =>
-                      id === sourceManagerMessageId && role === 'user',
-                  )
+              const turn = this.currentTurnStructuredMemory()
+              const message = turn
+                ? { id: turn.messageId, content: turn.content }
                 : undefined
               return {
                 allowed: Boolean(
@@ -784,12 +795,26 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }
   }
 
-  private structuredMemoryScopes(): ManagerStructuredMemoryScope[] {
+  private structuredMemoryEnabled(): boolean {
+    return Boolean(
+      this.structuredMemory &&
+        this.structuredMemory.mode !== 'off' &&
+        this.structuredMemory.store,
+    )
+  }
+
+  private currentTurnStructuredMemory() {
+    const turn = this.turnStructuredMemory
+    return turn && turn.messageId === this.currentReplyTo ? turn : undefined
+  }
+
+  private structuredMemoryScopes(
+    defaults: ManagerClientDefaults | undefined,
+  ): ManagerStructuredMemoryScope[] {
     const scopes: ManagerStructuredMemoryScope[] = [
       { type: 'global' },
       { type: 'user' },
     ]
-    const defaults = this.store.state().defaults
     const computerId = defaults?.computerId
     if (!computerId || !this.hub.findComputer(computerId)) return scopes
     scopes.push({ type: 'computer', computerId })
@@ -882,6 +907,17 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const cancelled = () => this.cancelledMessageId === message.id
     this.currentReplyTo = message.id
     this.currentAnswerOnly = message.answerOnly === true
+    if (this.structuredMemoryEnabled()) {
+      const defaults = this.messageDefaults.has(message.id)
+        ? this.messageDefaults.get(message.id)
+        : this.store.state().defaults
+      this.messageDefaults.delete(message.id)
+      this.turnStructuredMemory = {
+        messageId: message.id,
+        content: message.content,
+        scopes: this.structuredMemoryScopes(defaults),
+      }
+    }
     this.cancelledMessageId = undefined
     this.streaming = undefined
     const interrupted = (this.store.state().interruptions ?? {})[message.id] !== undefined
@@ -1081,7 +1117,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         const formatted = formatStructuredMemoryContext(
           structuredMemory.store.search({
             query: message.content,
-            scopes: this.structuredMemoryScopes(),
+            scopes: this.currentTurnStructuredMemory()?.scopes ??
+              this.structuredMemoryScopes(this.store.state().defaults),
             at: this.now().toISOString(),
           }),
         )
@@ -1412,10 +1449,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       workingDirectory: `${this.store.directory}/workspace`,
       systemMessage: {
         mode: 'append',
-        content: this.structuredMemory?.mode === 'off' ||
-            !this.structuredMemory
-          ? MANAGER_SYSTEM_PROMPT
-          : `${MANAGER_SYSTEM_PROMPT}\n\n${MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT}`,
+        content: this.structuredMemory?.mode === 'on'
+          ? `${MANAGER_SYSTEM_PROMPT}\n\n${MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT}`
+          : MANAGER_SYSTEM_PROMPT,
       },
       tools: this.tools,
       availableTools: this.tools.map((tool) => tool.name),

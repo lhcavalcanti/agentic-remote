@@ -10,14 +10,18 @@ export function hasExplicitStructuredMemoryIntent(
   message: string,
   operation: StructuredMemoryMutationOperation,
 ): boolean {
+  // Apostrophe look-alikes are folded before NFKC, which decomposes some of them.
   const normalized = message
+    .replace(/[\u00AD\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/[`\u00B4\u02B9\u02BC\u2018\u2019\u201A\u201B\u2032\uFF07]/g, "'")
     .normalize('NFKC')
     .replace(/\s+/g, ' ')
     .trim()
     .toLocaleLowerCase('en-US')
   if (!normalized) return false
 
-  if (/\b(?:do not|don't|dont|never)\s+(?:remember|save|store|keep|correct|update|replace|change|supersede|forget|delete|remove)\b/
+  // Up to two words may sit between the negation and the verb ("don't ever remember").
+  if (/\b(?:do not|don't|dont|never)(?: [\w']+){0,2} (?:remember|save|store|keep|correct|update|replace|change|supersede|forget|delete|remove)\b/
     .test(normalized)) {
     return false
   }

@@ -873,6 +873,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       content: activity.content,
       createdAt: timestamp,
       tool: activity.tool,
+      ...(this.currentMessageSource === 'voice' ? { source: 'voice' as const } : {}),
       ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
       ...(activity.sessionRefs?.length ? { sessionRefs: activity.sessionRefs } : {}),
     }).catch((error: unknown) => console.warn('Could not record manager activity:', error))
@@ -890,6 +891,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         this.processing = this.process(next).catch((error: unknown) => this.failUnexpectedly(next, error))
         await this.processing
         this.processing = undefined
+        if (next.source === 'voice') await this.retireSession()
       }
       if (this.status !== 'offline') this.setStatus('idle')
       this.scheduleIdleStop()
@@ -1028,6 +1030,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         content: turn.text.trim(),
         createdAt: this.now().toISOString(),
         replyTo: message.id,
+        ...(this.currentMessageSource === 'voice' ? { source: 'voice' as const } : {}),
       })
     }
     this.streaming = undefined
@@ -1053,6 +1056,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         content: `${partial}\n\n_(stopped)_`,
         createdAt: this.now().toISOString(),
         replyTo: message.id,
+        ...(this.currentMessageSource === 'voice' ? { source: 'voice' as const } : {}),
       })
     }
     const stored = this.store.message(message.id) ?? message

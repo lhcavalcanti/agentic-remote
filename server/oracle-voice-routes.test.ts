@@ -596,6 +596,75 @@ describe('Oracle voice hub routes', () => {
     }
   })
 
+  it('aborts an unresolved paired-node connection when the browser disconnects', async () => {
+    let connectSignal: AbortSignal | undefined
+    let connectStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      connectStarted = resolve
+    })
+    const connectVoice = vi.fn(
+      async (
+        _computerId: string,
+        _streamId: string,
+        signal?: AbortSignal,
+      ): Promise<never> => {
+        connectSignal = signal
+        connectStarted()
+        return new Promise((_, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('paired voice test fallback')),
+            250,
+          )
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(new Error('paired voice connection aborted'))
+          }, { once: true })
+        })
+      },
+    )
+    const app = Fastify({ logger: false })
+    openApps.push(app as unknown as Awaited<ReturnType<typeof buildApp>>['app'])
+    await app.register(fastifyWebsocket)
+    const manager = new RouteManager()
+    await registerOracleVoiceRoutes(app, {
+      identity: {
+        info: { id: 'hub', name: 'Hub', version: '1.17.0' },
+      },
+      computers: {
+        listComputers: () => [{
+          id: 'speech-node',
+          name: 'Speech node',
+          isLocal: false,
+          online: true,
+          voice: {
+            available: true,
+            sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+            playbackSampleRate: 22_050,
+            languages: ['en'],
+            sttProfile: 'zipformer',
+            ttsVoice: 'lessac',
+            resourceClass: 'low',
+          },
+        }],
+        connectVoice,
+      },
+      manager: manager as unknown as ManagerRouteAgent,
+      managerEvents: manager,
+      selectedComputerName: 'Speech node',
+      unavailableReason: 'Voice unavailable',
+    })
+    const endpoint = await listen(app as Awaited<ReturnType<typeof buildApp>>['app'])
+    const issued = await ticket(app as Awaited<ReturnType<typeof buildApp>>['app'])
+    const connected = await connect(
+      `${endpoint}/api/oracle-voice?ticket=${encodeURIComponent(issued)}`,
+    )
+    await started
+
+    await closeSocket(connected.socket)
+
+    await vi.waitFor(() => expect(connectSignal?.aborted).toBe(true))
+  })
+
   it('closes an upgraded race with 1013 when the backend becomes busy', async () => {
     const backend = new RouteVoiceBackend()
     vi.spyOn(backend, 'busy').mockReturnValue(false)

@@ -786,10 +786,13 @@ function rememberCancellation(
     !cancelledThroughGeneration.has(input.streamId)
     && cancelledThroughGeneration.size >= maximumStreams
   ) {
-    throw new Error('voice cancellation stream limit exceeded')
+    const oldest = cancelledThroughGeneration.keys().next().value
+    if (oldest !== undefined) cancelledThroughGeneration.delete(oldest)
   }
+  const previous = cancelledThroughGeneration.get(input.streamId) ?? -1
+  cancelledThroughGeneration.delete(input.streamId)
   cancelledThroughGeneration.set(
     input.streamId,
-    Math.max(cancelledThroughGeneration.get(input.streamId) ?? -1, input.generation),
+    Math.max(previous, input.generation),
   )
 }

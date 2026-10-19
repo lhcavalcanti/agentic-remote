@@ -702,6 +702,7 @@ export async function installFakeBrowserVoice(page: Page): Promise<void> {
       pendingAudioStarts: [],
       audioStartRecords: [],
       playbackStartDelayMs: 0,
+      vadFrameDelayMs: 0,
       trackStops: 0,
     }
     const NativeWebSocket = window.WebSocket
@@ -794,6 +795,7 @@ declare global {
         at: number
       }>
       playbackStartDelayMs: number
+      vadFrameDelayMs: number
       trackStops: number
     }
     webkitAudioContext?: typeof AudioContext

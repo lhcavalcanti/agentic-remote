@@ -879,7 +879,9 @@ describe('ManagerAssistant', () => {
 
       expect(screen.getByRole('group', {
         name: 'Conversation status',
-      })).toHaveTextContent(warning)
+      })).toHaveTextContent(
+        'Speaker identity is not verified. Nearby or replayed audio may be submitted. Conversation is Ask-only and can read session information. Finalized text is sent to remote Copilot.',
+      )
     })
 
     it('restores every failed final delivered by the identity-deduplicating hook', async () => {
@@ -949,7 +951,7 @@ describe('ManagerAssistant', () => {
     })
 
     it('locks the active mode while Conversation owns resources, then makes it switchable', async () => {
-      localStorage.setItem('agentic-remote:oracle-answer-only', 'true')
+      localStorage.setItem('agentic-remote:oracle-answer-only', 'false')
       let current = conversationState('listening', { ownsResources: true })
       vi.mocked(useOracleConversation).mockImplementation(() => current)
       const view = setup()
@@ -960,7 +962,8 @@ describe('ManagerAssistant', () => {
       expect(ask).toBeDisabled()
       expect(ask).toHaveAttribute('aria-pressed', 'true')
       expect(delegate).toBeDisabled()
-      expect(screen.getByText('Ask is locked while Conversation is active')).toBeVisible()
+      expect(delegate).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByText('Conversation enforces Ask; typed messages remain Delegate after stop')).toBeVisible()
       fireEvent.click(delegate)
       expect(delegate).toHaveAttribute('aria-pressed', 'false')
       expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeDisabled()

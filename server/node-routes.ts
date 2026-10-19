@@ -213,9 +213,14 @@ async function receiveNodeVoiceMessage(
   streamId: string,
   data: WebSocket.RawData,
   isBinary: boolean,
+  limits: VoiceBackendSessionLimits,
 ): Promise<void> {
   if (isBinary) {
-    const frame = decodeVoiceAudioFrame(exactArrayBuffer(data))
+    const buffer = rawDataBuffer(data)
+    if (buffer.byteLength > limits.maxFrameBytes) {
+      throw new VoiceSessionError('Node voice frame is too large', 1009)
+    }
+    const frame = decodeVoiceAudioFrame(exactArrayBuffer(buffer))
     if (frame.direction !== 'microphone') {
       throw new VoiceSessionError('Node voice clients may send microphone audio only', 1008)
     }
@@ -375,7 +380,13 @@ export async function registerNodeRoutes(
               socket.close(1008, 'Oracle voice backend is not ready')
               return
             }
-            void receiveNodeVoiceMessage(session, streamId, data, isBinary).catch(
+            void receiveNodeVoiceMessage(
+              session,
+              streamId,
+              data,
+              isBinary,
+              voiceLimits,
+            ).catch(
               (error: unknown) => closeVoiceSocket(socket, error),
             )
           })

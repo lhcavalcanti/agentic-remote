@@ -1336,6 +1336,31 @@ describe('ManagerAgent', () => {
     )
   })
 
+  it('retires a voice-contaminated SDK conversation before the next typed turn', async () => {
+    sdk.behaviors.push(
+      reply('Voice answer.'),
+      async (fakeSession) => {
+        await fakeSession.tool('create_session')({
+          title: 'Typed work',
+          prompt: 'Start trusted typed work',
+        })
+        reply('Started.')(fakeSession, '')
+      },
+    )
+    await start()
+
+    await agent!.send('Untrusted nearby speech', undefined, { source: 'voice' })
+    await settled()
+    await agent!.send('Now start the typed work')
+    await settled()
+
+    expect(sdk.clients[0].createSession).toHaveBeenCalledTimes(2)
+    expect(sdk.clients[0].deleteSession).toHaveBeenCalledTimes(1)
+    expect(hub.createSession).toHaveBeenCalledTimes(1)
+    expect(sdk.prompts[1]).not.toContain('Untrusted nearby speech')
+    expect(sdk.prompts[1]).not.toContain('Voice answer.')
+  })
+
   it('keeps voice provenance through queue edits, failures, retries, and restart recovery', async () => {
     sdk.behaviors.push(async () => new Promise<void>(() => undefined))
     await start({ turnTimeoutMs: 20 })

@@ -16,7 +16,7 @@ export interface VoiceFinalTranscript {
 
 export interface VoiceFrameAcceptance {
   accepted: boolean
-  reason?: 'duplicate' | 'stale-generation'
+  reason?: 'duplicate' | 'stale-generation' | 'finalized'
 }
 
 interface VoiceTurnStateOptions {
@@ -72,6 +72,9 @@ export class VoiceTurnState {
     if (frame.generation < this.generation) {
       return { accepted: false, reason: 'stale-generation' }
     }
+    if (this.phase === 'finalized') {
+      return { accepted: false, reason: 'finalized' }
+    }
     if (this.phase !== 'listening' && this.phase !== 'endpoint-pending') {
       throw new Error('speech is not confirmed')
     }
@@ -99,6 +102,7 @@ export class VoiceTurnState {
     if (utteranceId !== this.utteranceId) {
       throw new Error('speech end does not match the active utterance')
     }
+    if (this.phase === 'finalized') return
     if (this.phase === 'listening') {
       this.phase = 'endpoint-pending'
     }
@@ -152,6 +156,7 @@ export class VoiceTurnState {
       throw new Error('generation must increase by one')
     }
     this.generation = generation
+    this.submittedUtteranceIds.clear()
     this.utteranceId = undefined
     this.phase = 'cancelled'
     this.nextSequence = 0

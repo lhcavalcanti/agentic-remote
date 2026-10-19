@@ -167,6 +167,7 @@ export class OracleVoiceClient {
   private manuallyStopped = true
   private terminalFailure = false
   private hasStarted = false
+  private lastAcknowledgedHeartbeat: number | undefined
 
   constructor(options: OracleVoiceClientOptions) {
     if (!options.language.trim()) throw new Error('Oracle voice language is required')
@@ -289,6 +290,7 @@ export class OracleVoiceClient {
     const hello = await this.waitForHello(socket, epoch)
     this.requireEpoch(epoch)
     this.streamId = hello.streamId
+    this.lastAcknowledgedHeartbeat = undefined
     this.capabilities = hello.capabilities
     this.sendControl({
       type: 'start',
@@ -497,6 +499,15 @@ export class OracleVoiceClient {
         this.setState('error')
         return
       case 'heartbeat':
+        if (control.timestamp === this.lastAcknowledgedHeartbeat) return
+        this.lastAcknowledgedHeartbeat = control.timestamp
+        this.sendControl({
+          type: 'heartbeat',
+          protocol: ORACLE_VOICE_PROTOCOL,
+          streamId: this.streamId,
+          generation: this.generation,
+          timestamp: control.timestamp,
+        })
         return
       case 'hello':
         throw new OracleVoiceClientError(
@@ -862,6 +873,7 @@ export class OracleVoiceClient {
 
   private detachSocket(socket: OracleVoiceSocket | undefined): void {
     if (!socket) return
+    this.lastAcknowledgedHeartbeat = undefined
     socket.onopen = null
     socket.onmessage = null
     socket.onerror = null

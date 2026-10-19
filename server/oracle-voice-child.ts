@@ -179,13 +179,6 @@ class ResidentVoiceWorker implements VoiceWorker {
         requestId: message.requestId,
       })
     } catch (error) {
-      if (error instanceof CancellationStreamLimitError) {
-        try {
-          await this.close()
-        } catch {
-          // The worker is still closed even if an owned Piper resists SIGKILL.
-        }
-      }
       await this.options.send({
         type: 'response_error',
         requestId: message.requestId,
@@ -603,6 +596,19 @@ class ResidentVoiceWorker implements VoiceWorker {
   ): Promise<void> {
     let sequence = 0
     let carry = Buffer.alloc(0)
+    let emittedSamples = 0
+    const sampleRate = this.requireConfig().tts.sampleRate
+    const maxPlayableSamples = sampleRate * ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS
+    const maxFrameSamples = Math.floor(
+      (
+        MAX_VOICE_FRAME_BYTES
+        - VOICE_AUDIO_HEADER_BYTES
+        - Buffer.byteLength(active.segmentId)
+      ) / Int16Array.BYTES_PER_ELEMENT,
+    )
+    if (maxFrameSamples <= 0) {
+      throw new Error('Piper segment identity exceeds the audio frame limit')
+    }
     for await (const rawChunk of stdout) {
       const chunk = Buffer.isBuffer(rawChunk)
         ? rawChunk
@@ -616,20 +622,28 @@ class ResidentVoiceWorker implements VoiceWorker {
         : Buffer.from(combined.subarray(evenLength))
       if (evenLength === 0) continue
       if (this.isCancelled(active)) continue
-      const samples = new Int16Array(evenLength / 2)
-      for (let offset = 0; offset < evenLength; offset += 2) {
-        samples[offset / 2] = combined.readInt16LE(offset)
+      const chunkSamples = evenLength / Int16Array.BYTES_PER_ELEMENT
+      if (chunkSamples > maxPlayableSamples - emittedSamples) {
+        throw new Error('Piper output exceeds the playable segment limit')
       }
-      await this.emit({
-        type: 'audio',
-        streamId: active.streamId,
-        generation: active.generation,
-        segmentId: active.segmentId,
-        sequence,
-        sampleRate: this.requireConfig().tts.sampleRate,
-        samples,
-      })
-      sequence += 1
+      for (let offset = 0; offset < chunkSamples; offset += maxFrameSamples) {
+        const frameSamples = Math.min(maxFrameSamples, chunkSamples - offset)
+        const samples = new Int16Array(frameSamples)
+        for (let index = 0; index < frameSamples; index += 1) {
+          samples[index] = combined.readInt16LE((offset + index) * 2)
+        }
+        await this.emit({
+          type: 'audio',
+          streamId: active.streamId,
+          generation: active.generation,
+          segmentId: active.segmentId,
+          sequence,
+          sampleRate,
+          samples,
+        })
+        emittedSamples += frameSamples
+        sequence += 1
+      }
     }
     if (carry.length > 0 && !this.isCancelled(active)) {
       throw new Error('Piper emitted an incomplete PCM16 sample')
@@ -684,14 +698,14 @@ class ResidentVoiceWorker implements VoiceWorker {
       !this.cancelledThroughGeneration.has(input.streamId)
       && this.cancelledThroughGeneration.size >= this.options.maxCancellationStreams
     ) {
-      throw new CancellationStreamLimitError()
+      const oldest = this.cancelledThroughGeneration.keys().next().value
+      if (oldest !== undefined) this.cancelledThroughGeneration.delete(oldest)
     }
+    const previous = this.cancelledThroughGeneration.get(input.streamId) ?? -1
+    this.cancelledThroughGeneration.delete(input.streamId)
     this.cancelledThroughGeneration.set(
       input.streamId,
-      Math.max(
-        this.cancelledThroughGeneration.get(input.streamId) ?? -1,
-        input.generation,
-      ),
+      Math.max(previous, input.generation),
     )
   }
 
@@ -716,12 +730,6 @@ class ResidentVoiceWorker implements VoiceWorker {
     if (!await waitForActivePiperExit(active, this.options.piperShutdownTimeoutMs)) {
       throw new Error('Piper did not exit after SIGKILL')
     }
-  }
-}
-
-class CancellationStreamLimitError extends Error {
-  constructor() {
-    super('voice cancellation stream limit exceeded')
   }
 }
 

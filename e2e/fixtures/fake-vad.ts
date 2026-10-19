@@ -1,5 +1,6 @@
 interface FakeVadWindow extends Window {
   __oracleVoiceE2E?: {
+    vadFrameDelayMs?: number
     vad?: {
       beginSpeech(): Promise<void>
       pushAudio(samples: number[]): Promise<void>
@@ -41,7 +42,10 @@ export const MicVAD = {
             { isSpeech: 0.99, notSpeech: 0.01 },
             input.slice(offset, offset + 1_280),
           )
-          await new Promise((resolve) => setTimeout(resolve, 0))
+          await new Promise((resolve) => setTimeout(
+            resolve,
+            target.__oracleVoiceE2E?.vadFrameDelayMs ?? 0,
+          ))
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
       },

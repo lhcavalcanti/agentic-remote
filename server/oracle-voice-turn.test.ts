@@ -29,10 +29,12 @@ describe('VoiceTurnState', () => {
     expect(() => turn.acceptFrame(frame(3, 2))).toThrow('out of order')
   })
 
-  it('makes final submission IDs durable for the stream lifetime', () => {
+  it('deduplicates within one generation without retaining every stream turn', () => {
     const turn = new VoiceTurnState()
     expect(turn.rememberSubmission('utterance-a')).toBe(true)
     expect(turn.rememberSubmission('utterance-a')).toBe(false)
+    turn.advanceGeneration(1)
+    expect(turn.rememberSubmission('utterance-a')).toBe(true)
   })
 
   it('caps accepted utterance audio samples', () => {
@@ -71,6 +73,11 @@ describe('VoiceTurnState', () => {
       utteranceId: 'utterance-b',
       transcript: 'Server endpoint',
     })
+    expect(turn.acceptFrame(frame(13, 0))).toEqual({
+      accepted: false,
+      reason: 'finalized',
+    })
+    expect(() => turn.hintSpeechEnd(13, 'utterance-b')).not.toThrow()
   })
 
   it('drops frames and endpoint hints from obsolete generations', () => {

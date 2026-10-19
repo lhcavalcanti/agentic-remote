@@ -752,7 +752,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         .filter((event) => event.type === 'final')).toEqual([])
     })
 
-    it('fails closed at the cancellation stream limit without forgetting prior streams', async () => {
+    it('bounds cancellation history by evicting the oldest inactive stream', async () => {
       const harness = childHarness({ maxCancellationStreams: 2 })
       await initializeWorker(harness)
       for (const [streamId, requestId] of [
@@ -768,25 +768,11 @@ describe('ChildVoiceEngine parent supervision', () => {
         })
       }
 
+      expect(harness.messages.filter((message) =>
+        message.type === 'response_error')).toEqual([])
       expect(harness.messages).toContainEqual({
-        type: 'response_error',
+        type: 'response',
         requestId: 'cancel-c',
-        message: expect.stringContaining('cancellation stream limit'),
-      })
-      await harness.worker.handle({
-        type: 'stt_start',
-        requestId: 'stale-a',
-        input: {
-          streamId: 'stream-a',
-          generation: 1,
-          utteranceId: 'stale-a',
-          language: 'en',
-        },
-      })
-      expect(harness.messages.at(-1)).toEqual({
-        type: 'response_error',
-        requestId: 'stale-a',
-        message: expect.stringContaining('closed'),
       })
       expect(workerEvents(harness.messages)
         .filter((event) => 'generation' in event)).toEqual([])
@@ -1289,6 +1275,67 @@ describe('ChildVoiceEngine parent supervision', () => {
       })
     })
 
+    it('splits large Piper chunks into protocol-sized audio frames', async () => {
+      const harness = childHarness()
+      await initializeWorker(harness)
+      const synthesis = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'synthesize-large-chunk',
+        input: {
+          streamId: 'stream-large',
+          generation: 6,
+          segmentId: 'segment-large',
+          text: 'Bound the frames.',
+        },
+      })
+      const piper = harness.pipers[0]
+      piper.stdout.write(Buffer.alloc(40_000))
+      piper.finish()
+      await synthesis
+
+      const audioEvents = workerEvents(harness.messages)
+        .filter((event) => event.type === 'audio')
+      expect(audioEvents.length).toBeGreaterThan(1)
+      expect(audioEvents.every((event) =>
+        voiceAudioFrameByteLength({
+          direction: 'playback',
+          generation: event.generation,
+          segmentId: event.segmentId,
+          sequence: event.sequence,
+          sampleRate: event.sampleRate,
+          samples: event.samples,
+        }) <= 32 * 1024)).toBe(true)
+    })
+
+    it('rejects Piper output longer than the playable segment limit', async () => {
+      const harness = childHarness()
+      await initializeWorker(harness)
+      const synthesis = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'synthesize-too-long',
+        input: {
+          streamId: 'stream-too-long',
+          generation: 7,
+          segmentId: 'segment-too-long',
+          text: 'Do not emit unbounded audio.',
+        },
+      })
+      const piper = harness.pipers[0]
+      piper.stdout.write(Buffer.alloc((22_050 * 12 + 1) * 2))
+      piper.finish()
+      await synthesis
+
+      expect(harness.messages).toContainEqual({
+        type: 'response_error',
+        requestId: 'synthesize-too-long',
+        message: expect.stringContaining('playable segment limit'),
+      })
+      expect(workerEvents(harness.messages).filter(
+        (event) => event.type === 'audio_end'
+          && event.segmentId === 'segment-too-long',
+      )).toEqual([])
+    })
+
     it('reports non-zero Piper exit with bounded stderr', async () => {
       const harness = childHarness()
       await initializeWorker(harness)
@@ -1781,10 +1828,43 @@ describe('ChildVoiceEngine parent supervision', () => {
     }])
   })
 
-  it('terminates the worker at the parent cancellation stream limit', async () => {
+  it('never lowers the parent cancellation watermark for the same stream', async () => {
+    const { child, engine } = parentHarness()
+    const session = await initialize(engine, child)
+    const events: VoiceEngineEvent[] = []
+    session.onEvent((event) => events.push(event))
+    for (const generation of [4, 2]) {
+      const cancellation = session.cancelGeneration({
+        streamId: 'stream-stable',
+        generation,
+      })
+      for (const request of child.sent.slice(-2)) child.respond(request)
+      await cancellation
+    }
+    const starting = session.stt.start({
+      streamId: 'stream-stable',
+      generation: 3,
+      utteranceId: 'stale',
+      language: 'en',
+    })
+    child.respond(child.sent.at(-1))
+    await starting
+
+    child.emitEvent({
+      type: 'partial',
+      streamId: 'stream-stable',
+      generation: 3,
+      utteranceId: 'stale',
+      text: 'must stay cancelled',
+    })
+
+    expect(events).toEqual([])
+  })
+
+  it('keeps the parent worker live by evicting old cancellation streams', async () => {
     const { child, engine } = parentHarness({ maxCancellationStreams: 2 })
     const session = await initialize(engine, child)
-    for (const streamId of ['stream-a', 'stream-b']) {
+    for (const streamId of ['stream-a', 'stream-b', 'stream-c']) {
       const cancellation = session.cancelGeneration({
         streamId,
         generation: 1,
@@ -1794,14 +1874,10 @@ describe('ChildVoiceEngine parent supervision', () => {
       await cancellation
     }
 
-    await expect(session.cancelGeneration({
-      streamId: 'stream-c',
-      generation: 1,
-    })).rejects.toThrow('cancellation stream limit')
     expect(child.sent.filter((message) =>
       (message.type === 'stt_cancel' || message.type === 'tts_cancel')
-      && message.streamId === 'stream-c')).toEqual([])
-    expect(child.signals).toContain('SIGTERM')
+      && message.streamId === 'stream-c')).toHaveLength(2)
+    expect(child.signals).not.toContain('SIGTERM')
   })
 
   it('rejects delayed same-generation audio outside the active stream and utterance', async () => {

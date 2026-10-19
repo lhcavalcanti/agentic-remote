@@ -270,7 +270,7 @@ export function recoveryBrief(input: { memoryIndex?: string; messages: ManagerMe
   for (const message of [...input.messages].reverse()) {
     if (message.role === 'notice') continue
     if (
-      (message.role === 'user' && message.source === 'voice')
+      message.source === 'voice'
       || (message.replyTo && voiceMessageIds.has(message.replyTo))
     ) continue
     if (message.role === 'user') {

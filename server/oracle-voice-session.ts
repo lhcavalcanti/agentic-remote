@@ -238,6 +238,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         throw new VoiceSessionError('Voice audio frame is too large', 1009)
       }
       const utterance = this.requireUtterance(frame.generation)
+      if (this.finalForwarded) return
       if (this.utteranceEnded) {
         throw new VoiceSessionError('Voice utterance has already ended', 1008)
       }
@@ -314,7 +315,9 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         if (this.generation !== undefined && message.generation < this.generation) {
           throw new VoiceSessionError('Voice generation is stale', 1008)
         }
-        if (this.activeUtterance) {
+        if (this.activeUtterance && this.finalForwarded) {
+          this.activeUtterance = undefined
+        } else if (this.activeUtterance) {
           throw new VoiceSessionError('A voice utterance is already active', 1008)
         }
         if (this.generation !== undefined && message.generation > this.generation) {
@@ -348,6 +351,11 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       }
       case 'speech_end': {
         const utterance = this.requireUtterance(message.generation, message.utteranceId)
+        if (this.finalForwarded) {
+          this.utteranceEnded = true
+          this.activeUtterance = undefined
+          return
+        }
         if (this.utteranceEnded) {
           throw new VoiceSessionError('Voice utterance has already ended', 1008)
         }
@@ -498,7 +506,6 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       ) return
       if (event.type === 'final') {
         this.finalForwarded = true
-        this.activeUtterance = undefined
         this.clearAudioQueue()
       }
       void this.sendControl({

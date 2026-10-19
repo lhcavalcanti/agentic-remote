@@ -952,6 +952,44 @@ describe('multi-node hub', () => {
     }
   })
 
+  it('rejects an oversized node microphone frame before decoding it', async () => {
+    const backend = voiceBackend()
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-voice-oversized'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      voiceBackend: backend,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = worker.app.server.address() as AddressInfo
+    const socket = await openNodeVoiceSocket(
+      `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+        + `?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-oversized`,
+      `Bearer ${worker.identity.token}`,
+    )
+    try {
+      const hello = await nextVoiceControl(socket)
+      if (hello.type !== 'hello') throw new Error('Expected node voice hello')
+      const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+        socket.once('close', (code, reason) => {
+          resolve({ code, reason: reason.toString() })
+        })
+      })
+
+      socket.send(Buffer.alloc(hello.capabilities.limits.maxFrameBytes + 1))
+
+      await expect(closed).resolves.toEqual({
+        code: 1009,
+        reason: 'Node voice frame is too large',
+      })
+    } finally {
+      socket.close()
+      await worker.app.close()
+      await backend.stop()
+    }
+  })
+
   it('closes a voice session that finishes opening after its socket disconnects', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {

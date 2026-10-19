@@ -30,6 +30,7 @@ export interface RemoteVoiceClientOptions {
   connectTimeoutMs?: number
   maxBufferedBytes?: number
   registrationSignal?: AbortSignal
+  signal?: AbortSignal
 }
 
 interface RemoteVoiceClientEvents {
@@ -139,6 +140,15 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
         'registration',
       ))
     }
+    if (options.signal?.aborted) {
+      return Promise.reject(new RemoteVoiceDisconnectError(
+        'Paired node voice connection was cancelled',
+        1001,
+        '',
+        false,
+        'transport',
+      ))
+    }
     const connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
     if (!Number.isSafeInteger(connectTimeoutMs) || connectTimeoutMs <= 0) {
       return Promise.reject(new RangeError('connectTimeoutMs must be a positive safe integer'))
@@ -163,10 +173,15 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
       let opened = false
       const registrationSignal = options.registrationSignal
       let registrationAbort: (() => void) | undefined
+      const signal = options.signal
+      let abort: (() => void) | undefined
       const cleanup = () => {
         clearTimeout(timer)
         if (registrationSignal && registrationAbort) {
           registrationSignal.removeEventListener('abort', registrationAbort)
+        }
+        if (signal && abort) {
+          signal.removeEventListener('abort', abort)
         }
       }
       const timer = setTimeout(() => {
@@ -201,6 +216,17 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
           once: true,
         })
         if (registrationSignal.aborted) registrationAbort()
+      }
+      if (signal) {
+        abort = () => finishError(new RemoteVoiceDisconnectError(
+          'Paired node voice connection was cancelled',
+          1001,
+          '',
+          false,
+          'transport',
+        ))
+        signal.addEventListener('abort', abort, { once: true })
+        if (signal.aborted) abort()
       }
       socket.once('open', () => {
         opened = true

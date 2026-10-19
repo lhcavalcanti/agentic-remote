@@ -2207,8 +2207,18 @@ describe('Oracle voice cross-layer integration', () => {
       defaults,
       answerOnly: true,
     })
-    timeout.manager.emitStatus('working')
-    await new Promise<void>((resolve) => setImmediate(resolve))
+    sendControl(timeout.browser, timeout.streamId, 'speech_confirmed', 51, {
+      utteranceId: 'timeout-51',
+    })
+    await vi.waitFor(() => expect(engineCalls(timeout.engine, 'stt.start')).toHaveLength(1))
+    timeout.engine.emit({
+      type: 'final',
+      streamId: timeout.streamId,
+      generation: 51,
+      utteranceId: 'timeout-51',
+      text: 'Start a voice-owned manager turn.',
+    })
+    await vi.waitFor(() => expect(timeout.manager.send).toHaveBeenCalledOnce())
     let releaseCancel!: () => void
     timeout.manager.cancel.mockImplementationOnce(
       () => new Promise<void>((resolve) => {
@@ -2217,8 +2227,8 @@ describe('Oracle voice cross-layer integration', () => {
     )
     vi.useFakeTimers()
     const timeoutClose = closeEvent(timeout.browser)
-    sendControl(timeout.browser, timeout.streamId, 'speech_confirmed', 51, {
-      utteranceId: 'timeout-51',
+    sendControl(timeout.browser, timeout.streamId, 'speech_confirmed', 52, {
+      utteranceId: 'timeout-52',
     })
     await vi.waitFor(() => expect(timeout.manager.cancel).toHaveBeenCalledOnce())
     await vi.advanceTimersByTimeAsync(5_001)
@@ -2231,7 +2241,7 @@ describe('Oracle voice cross-layer integration', () => {
         && message.code === 'oracle_cancel_timeout',
     )
     expect((await timeoutClose).code).toBe(1011)
-    expect(timeout.manager.send).not.toHaveBeenCalled()
+    expect(timeout.manager.send).toHaveBeenCalledOnce()
     await vi.waitFor(() => expect(timeout.backend.busy()).toBe(false))
     const eventClosed = closeEvent(timeout.events.socket)
     timeout.events.socket.terminate()

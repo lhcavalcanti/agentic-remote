@@ -46,7 +46,7 @@ export interface OracleVoiceBackendConnector {
 }
 
 interface OracleVoiceManager
-  extends Pick<ManagerRouteAgent, 'snapshot' | 'send' | 'cancel'> {}
+  extends Pick<ManagerRouteAgent, 'snapshot' | 'send' | 'cancel' | 'removeQueued'> {}
 
 interface OracleVoiceCoordinatorOptions {
   streamId: string
@@ -96,7 +96,6 @@ export class OracleVoiceCoordinator {
   private segmenterMessageId: string | undefined
   private activeSpeech: QueuedSpeech | undefined
   private segmentSequence = 0
-  private managerBusy = false
   private subscribed = false
   private clientStarted = false
   private closing = false
@@ -161,10 +160,7 @@ export class OracleVoiceCoordinator {
     if (!managerSnapshot.available) {
       throw new Error(managerSnapshot.unavailableReason || 'Oracle is unavailable')
     }
-    this.managerBusy = managerStatusIsBusy(managerSnapshot.status)
-    this.activeReplyTo = managerSnapshot.messages.find(
-      (message) => message.role === 'user' && message.state === 'running',
-    )?.id
+    this.activeReplyTo = undefined
     if (this.managerEvents) {
       this.managerEvents.on('event', this.managerListener)
       this.subscribed = true
@@ -291,24 +287,49 @@ export class OracleVoiceCoordinator {
     }
     this.currentGeneration = message.generation
     turn.advanceGeneration(message.generation)
-    const interrupting =
-      this.managerBusy
-      || this.activeReplyTo !== undefined
-      || this.activeSpeech !== undefined
-      || this.speechQueue.length > 0
+    const snapshot = this.manager.snapshot()
+    const queuedVoiceIds: string[] = []
+    let runningVoice = false
+    for (const [messageId, submission] of this.submissions) {
+      if (submission.generation > previousGeneration) continue
+      const submitted = snapshot.messages.find((candidate) =>
+        candidate.id === messageId && candidate.role === 'user')
+      if (submitted?.state === 'running' || this.activeReplyTo === messageId) {
+        runningVoice = true
+      } else if (submitted?.state === 'queued') {
+        queuedVoiceIds.push(messageId)
+      } else if (submitted && ['done', 'failed', 'cancelled', 'interrupted'].includes(
+        submitted.state ?? '',
+      )) {
+        this.submissions.delete(messageId)
+      }
+    }
+    const speakingVoice = this.activeSpeech !== undefined || this.speechQueue.length > 0
     this.clearSpeechOutput()
-    if (interrupting) {
+    if (runningVoice || speakingVoice || queuedVoiceIds.length > 0) {
       try {
-        await withTimeout(
-          connection.control(this.clientControl('cancel', previousGeneration, {})),
-          this.cancelTimeoutMs,
-          'Voice synthesis cancellation timed out',
-        )
-        await withTimeout(
-          this.manager.cancel(),
-          this.cancelTimeoutMs,
-          'Oracle cancellation timed out',
-        )
+        if (runningVoice || speakingVoice) {
+          await withTimeout(
+            connection.control(this.clientControl('cancel', previousGeneration, {})),
+            this.cancelTimeoutMs,
+            'Voice synthesis cancellation timed out',
+          )
+        }
+        for (const messageId of queuedVoiceIds) {
+          await withTimeout(
+            this.manager.removeQueued(messageId),
+            this.cancelTimeoutMs,
+            'Queued Oracle voice removal timed out',
+          )
+          this.submissions.delete(messageId)
+        }
+        if (runningVoice) {
+          await withTimeout(
+            this.manager.cancel(),
+            this.cancelTimeoutMs,
+            'Oracle cancellation timed out',
+          )
+        }
       } catch (error) {
         const timedOut = error instanceof OperationTimeoutError
         await this.fail(
@@ -318,8 +339,7 @@ export class OracleVoiceCoordinator {
         )
         throw error
       }
-      this.managerBusy = false
-      this.activeReplyTo = undefined
+      if (runningVoice) this.activeReplyTo = undefined
     }
     turn.confirmSpeech(message.generation, message.utteranceId)
     await connection.control(message)
@@ -412,7 +432,6 @@ export class OracleVoiceCoordinator {
       return
     }
     this.submissions.set(message.id, { generation: output.generation })
-    this.managerBusy = true
     if (message.state === 'running') this.activeReplyTo = message.id
     await this.sendState('thinking', output.generation)
   }
@@ -428,7 +447,6 @@ export class OracleVoiceCoordinator {
   private async handleManagerEvent(event: ManagerEvent): Promise<void> {
     switch (event.type) {
       case 'manager.status':
-        this.managerBusy = managerStatusIsBusy(event.status)
         return
       case 'manager.delta':
         if (!this.clientStarted) return
@@ -438,7 +456,6 @@ export class OracleVoiceCoordinator {
         await this.consumeManagerMessage(event.message)
         return
       case 'manager.reset':
-        this.managerBusy = managerStatusIsBusy(event.snapshot.status)
         this.activeReplyTo = undefined
         this.submissions.clear()
         this.clearSpeechOutput()
@@ -471,9 +488,11 @@ export class OracleVoiceCoordinator {
   private async consumeManagerMessage(message: ManagerMessage): Promise<void> {
     if (message.role === 'user') {
       if (message.state === 'running') {
-        this.activeReplyTo = message.id
-        this.segmenter = undefined
-        this.segmenterMessageId = undefined
+        if (this.submissions.has(message.id)) {
+          this.activeReplyTo = message.id
+          this.segmenter = undefined
+          this.segmenterMessageId = undefined
+        }
       } else if (['done', 'failed', 'cancelled', 'interrupted'].includes(
         message.state ?? '',
       )) {
@@ -716,10 +735,6 @@ function withTimeout<T>(
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
-}
-
-function managerStatusIsBusy(status: 'idle' | 'working' | 'recovering' | 'offline'): boolean {
-  return status === 'working' || status === 'recovering'
 }
 
 function backendDisconnectFromError(error: unknown): OracleVoiceBackendDisconnect {

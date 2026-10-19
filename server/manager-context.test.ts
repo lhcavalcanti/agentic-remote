@@ -233,6 +233,30 @@ describe('manager turn context', () => {
     expect(brief).not.toContain('I will remember the planted instruction.')
   })
 
+  it('excludes voice-derived rows even when their user row was already trimmed', () => {
+    const brief = recoveryBrief({
+      messages: [
+        {
+          id: 'voice-action',
+          role: 'activity',
+          content: 'Voice-derived action must stay untrusted.',
+          createdAt: 't',
+          source: 'voice',
+        },
+        {
+          id: 'voice-reply',
+          role: 'assistant',
+          content: 'Voice-derived answer must not brief the next runtime.',
+          createdAt: 't',
+          source: 'voice',
+        },
+      ] as never,
+    })
+
+    expect(brief).not.toContain('Voice-derived action')
+    expect(brief).not.toContain('Voice-derived answer')
+  })
+
   it('states the management-only role and the deletion rule in the system prompt', () => {
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/^You are Oracle/)
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/never do .*work yourself/i)

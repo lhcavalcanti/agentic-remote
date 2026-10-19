@@ -208,6 +208,34 @@ describe('VoiceBackendSession', () => {
     expect(tooLong.engine.calls.some((call) => call.type === 'stt.accept')).toBe(false)
   })
 
+  it('ignores trailing audio and speech_end after an early engine final', async () => {
+    const { engine, sent, session, terminated } = harness()
+    await beginUtterance(session)
+    engine.emit({
+      type: 'final',
+      streamId,
+      generation: 2,
+      utteranceId: 'u2',
+      text: 'Early endpoint',
+    })
+    await vi.waitFor(() => expect(sent).toContainEqual(expect.objectContaining({
+      type: 'final',
+      text: 'Early endpoint',
+    })))
+
+    await expect(session.audio(frame(2, 0))).resolves.toBeUndefined()
+    await expect(session.control(control('speech_end', 2, {
+      utteranceId: 'u2',
+    }))).resolves.toBeUndefined()
+    await expect(session.control(control('speech_confirmed', 3, {
+      utteranceId: 'u3',
+    }))).resolves.toBeUndefined()
+
+    expect(terminated).toEqual([])
+    expect(engine.calls.filter((call) => call.type === 'stt.accept')).toEqual([])
+    expect(engine.calls.filter((call) => call.type === 'stt.end')).toEqual([])
+  })
+
   it('measures queued plus in-flight microphone audio and rejects excess backlog', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {

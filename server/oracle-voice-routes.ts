@@ -46,7 +46,11 @@ const VOICE_OUTPUT_DRAIN_TIMEOUT_MS = 1_000
 
 export interface OracleVoiceComputerManager {
   listComputers(): ComputerSummary[]
-  connectVoice(computerId: string, streamId: string): Promise<RemoteVoiceClient>
+  connectVoice(
+    computerId: string,
+    streamId: string,
+    signal?: AbortSignal,
+  ): Promise<RemoteVoiceClient>
 }
 
 export interface OracleVoiceRouteOptions {
@@ -367,7 +371,11 @@ function remoteConnector(
 ): OracleVoiceBackendConnector {
   return {
     async connect(options): Promise<OracleVoiceBackendConnection> {
-      const client = await computers.connectVoice(computerId, options.streamId)
+      const client = await computers.connectVoice(
+        computerId,
+        options.streamId,
+        options.signal,
+      )
       const relay = backendOutputRelay(
         options.output,
         options.disconnect,

@@ -850,6 +850,28 @@ describe('agentic-remote voice-install', () => {
     expect(result.stdout).toContain('already installed')
   })
 
+  it('refuses to reactivate an installed profile whose contents changed', async () => {
+    const fixture = await installerFixture()
+    const installed = await fixture.run()
+    expect(installed, installed.stderr).toMatchObject({ code: 0 })
+    const model = path.join(
+      fixture.data,
+      'models',
+      'oracle-voice',
+      'profiles',
+      'fixture',
+      'fixture-1',
+      'stt-model',
+      'voice.onnx',
+    )
+    await writeFile(model, 'bad-model!!\n')
+
+    const result = await fixture.run()
+
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain('integrity check failed')
+  })
+
   it('serializes concurrent same-digest publication without nesting or staging leaks', async () => {
     const fixture = await installerFixture()
 

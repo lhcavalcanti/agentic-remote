@@ -599,6 +599,46 @@ if expanded != expected_bytes:
 PY
 }
 
+voice_profile_tree_digest() {
+  local profile_root="$1"
+  python3 - "$profile_root" <<'PY'
+import hashlib
+from pathlib import Path
+import stat
+import sys
+
+root = Path(sys.argv[1]).resolve()
+digest = hashlib.sha256()
+excluded = {".profile-sha256", ".profile-tree-sha256"}
+
+def fail(message):
+    raise SystemExit(f"agentic-remote: {message}")
+
+for candidate in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()):
+    relative = candidate.relative_to(root).as_posix()
+    if relative in excluded:
+        continue
+    metadata = candidate.lstat()
+    if stat.S_ISLNK(metadata.st_mode):
+        fail(f"voice profile contains a symbolic link: {candidate}")
+    if stat.S_ISDIR(metadata.st_mode):
+        kind = b"directory"
+    elif stat.S_ISREG(metadata.st_mode):
+        kind = b"file"
+    else:
+        fail(f"voice profile contains a special entry: {candidate}")
+    digest.update(kind + b"\0")
+    digest.update(relative.encode("utf-8") + b"\0")
+    digest.update(f"{stat.S_IMODE(metadata.st_mode):o}".encode("ascii") + b"\0")
+    if kind == b"file":
+        digest.update(str(metadata.st_size).encode("ascii") + b"\0")
+        with candidate.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+print(digest.hexdigest())
+PY
+}
+
 activate_voice_profile() {
   local voice_root="$1" profile_id="$2" version="$3"
   local active_root="$voice_root/active"
@@ -721,13 +761,14 @@ voice_install() {
     die "voice profile $profile_id is research-only; rerun with --accept-research-only after reviewing the notices"
   fi
 
-  local data_directory voice_root profiles_root final_directory marker
+  local data_directory voice_root profiles_root final_directory marker tree_marker
   data_directory="${AGENTIC_REMOTE_DATA_DIR:-$(config_value AGENTIC_REMOTE_DATA_DIR)}"
   data_directory="${data_directory:-$HOME/.agentic-remote}"
   voice_root="$data_directory/models/oracle-voice"
   profiles_root="$voice_root/profiles/$profile_id"
   final_directory="$profiles_root/$version"
   marker="$final_directory/.profile-sha256"
+  tree_marker="$final_directory/.profile-tree-sha256"
   mkdir -p "$profiles_root" "$voice_root/locks"
   trap cleanup_voice_install EXIT
 
@@ -741,6 +782,10 @@ voice_install() {
       die "voice profile version path is not a directory: $profile_id $version"
     [[ -f "$marker" && ! -L "$marker" && "$(cat "$marker")" == "$profile_digest" ]] ||
       die "voice profile version already exists with different contents: $profile_id $version"
+    [[ -f "$tree_marker" && ! -L "$tree_marker" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
+    [[ "$(voice_profile_tree_digest "$final_directory")" == "$(cat "$tree_marker")" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
     activate_voice_profile "$voice_root" "$profile_id" "$version"
     [[ "$(readlink -f -- "$voice_root/active/$profile_id")" == "$final_directory" ]] ||
       die "voice profile activation could not be confirmed: $profile_id $version"
@@ -807,6 +852,7 @@ voice_install() {
     "$profile_entry_count"
   printf '%s\n' "$notices" >"$staging/NOTICES.txt"
   voice_manifest_query "$profile_id" profile-json >"$staging/PROFILE.json"
+  voice_profile_tree_digest "$staging" >"$staging/.profile-tree-sha256"
   printf '%s\n' "$profile_digest" >"$staging/.profile-sha256"
 
   flock -w 600 "$lock_fd" ||
@@ -834,6 +880,9 @@ voice_install() {
   voice_install_fault after-final-rename
   [[ -f "$marker" && "$(cat "$marker")" == "$profile_digest" ]] ||
     die "voice profile publication marker could not be confirmed: $profile_id $version"
+  [[ -f "$tree_marker" &&
+    "$(voice_profile_tree_digest "$final_directory")" == "$(cat "$tree_marker")" ]] ||
+    die "voice profile integrity check failed after publication: $profile_id $version"
   VOICE_INSTALL_CLEANUP_PATH=""
   activate_voice_profile "$voice_root" "$profile_id" "$version"
   [[ "$(readlink -f -- "$voice_root/active/$profile_id")" == "$final_directory" ]] ||

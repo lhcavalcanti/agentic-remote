@@ -47,6 +47,9 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   await expect(page.getByText('Listening', { exact: true })).toBeVisible()
 
   await page.waitForFunction(() => Boolean(window.__oracleVoiceE2E.vad))
+  await page.evaluate(() => {
+    window.__oracleVoiceE2E.vadFrameDelayMs = 20
+  })
   const firstStartedAt = Date.now()
   await page.evaluate(() => window.__oracleVoiceE2E.vad?.beginSpeech())
   await page.evaluate(

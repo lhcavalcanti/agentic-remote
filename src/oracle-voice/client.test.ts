@@ -63,6 +63,21 @@ describe('OracleVoiceClient', () => {
     expect(client.instance.currentState).toBe('listening')
   })
 
+  it('acknowledges each server heartbeat once to keep an idle stream alive', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    const heartbeat = control('heartbeat', 'stream-1', 0, {
+      timestamp: 123,
+    })
+
+    client.sockets[0].message(heartbeat)
+    client.sockets[0].message(heartbeat)
+
+    expect(client.sockets[0].jsonMessages().filter(
+      (message) => message.type === 'heartbeat',
+    )).toEqual([heartbeat])
+  })
+
   it('creates and resumes the separate playback context in the start gesture', async () => {
     const client = harness()
     const starting = client.instance.start()
@@ -909,13 +924,20 @@ function control(
   rest: { state: Extract<VoiceServerControl, { type: 'state' }>['state'] },
 ): VoiceServerControl
 function control(
-  type: 'partial' | 'final' | 'error' | 'state',
+  type: 'heartbeat',
+  streamId: string,
+  generation: number,
+  rest: { timestamp: number },
+): VoiceServerControl
+function control(
+  type: 'partial' | 'final' | 'error' | 'state' | 'heartbeat',
   streamId: string,
   generation: number,
   rest:
     | { utteranceId: string; text: string }
     | { code: string; message: string; fatal: boolean }
-    | { state: Extract<VoiceServerControl, { type: 'state' }>['state'] },
+    | { state: Extract<VoiceServerControl, { type: 'state' }>['state'] }
+    | { timestamp: number },
 ): VoiceServerControl {
   return {
     type,

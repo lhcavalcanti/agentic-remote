@@ -852,6 +852,28 @@ process.stdin.on('data', () => undefined)
     }
   }, 15000)
 
+  // A hub that restarts forgets which terminals it last saw ready, and the
+  // first message to each then proves the prompt stable again. Only a Copilot
+  // that just started can still open a startup dialog over an empty prompt.
+  it('sends at once to a Copilot that has been running a while', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(false)
+    Reflect.set(controller, 'settledOwnerAgeMs', 0)
+    const started = performance.now()
+    expect(await controller.send(sessionId, 'First after a hub restart', false)).toBe(true)
+    expect(performance.now() - started).toBeLessThan(1_500)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length))
+    expect(JSON.parse(received)).toEqual({ pastes: ['First after a hub restart'], submits: ['enter'] })
+  }, 15_000)
+
+  it('still lets a Copilot that just started settle before its first message', async () => {
+    const { controller, sessionId } = await deliveryFixture(false)
+    Reflect.set(controller, 'settledOwnerAgeMs', 600_000)
+    const started = performance.now()
+    expect(await controller.send(sessionId, 'First after launch', false)).toBe(true)
+    expect(performance.now() - started).toBeGreaterThanOrEqual(2_900)
+  }, 15_000)
+
   it('declines an unchanged live desktop prompt exactly once after owner validation', async () => {
     const { controller, sessionId, output } = await ownedStartupFixture(desktopInstallPane)
     expect(await controller.inputReady(sessionId)).toBe(true)

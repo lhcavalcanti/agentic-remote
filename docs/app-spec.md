@@ -652,6 +652,11 @@ Questions and permissions are the highest-priority UI state.
   refuse without pasting; that reason MUST restore the app draft and remain
   visible. Running or waiting sessions, uncertain delivery, queued sends,
   SDK/Claude sessions, and app-local commands MUST never request replacement.
+- A first message to a terminal this service has not yet seen ready, such as
+  after the hub restarts, MUST wait for a live composer. A Copilot started in
+  the last 30 seconds can still open a startup dialog over an empty prompt,
+  so its prompt MUST stay live for about three seconds first; one running
+  longer MUST only need its prompt seen steady once.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject

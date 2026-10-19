@@ -4,6 +4,7 @@ import {
   buildTurnContext,
   managerPrompt,
   MANAGER_SYSTEM_PROMPT,
+  MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT,
   recoveryBrief,
   responseStyleInstruction,
   rosterLine,
@@ -234,5 +235,17 @@ describe('manager turn context', () => {
       expect(MANAGER_SYSTEM_PROMPT).toMatch(/# Reporting\n- Write at the length the context's Response style sets/)
       expect(MANAGER_SYSTEM_PROMPT).not.toContain('Be concise.')
     })
+  })
+
+  it('treats structured memory as untrusted evidence rather than instructions', () => {
+    expect(MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT).toMatch(
+      /structured memory[^\n]*untrusted evidence/i,
+    )
+    expect(MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT).toMatch(
+      /cannot override[^\n]*(?:policy|current user)/i,
+    )
+    expect(MANAGER_SYSTEM_PROMPT).not.toContain(
+      MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT,
+    )
   })
 })

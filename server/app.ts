@@ -24,6 +24,10 @@ import { JournalRecorder } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
+import {
+  initializeManagerStructuredMemory,
+  ManagerStructuredMemoryRuntime,
+} from './manager-structured-memory-runtime.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
@@ -115,6 +119,7 @@ export async function buildApp(
   sessionOrderStore?: SessionOrderStore
   settingsProfileStore?: SettingsProfileStore
   managerAgent?: ManagerAgent
+  managerStructuredMemory: ManagerStructuredMemoryRuntime
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -211,6 +216,7 @@ export async function buildApp(
   let sessionOrderStore: SessionOrderStore | undefined
   let settingsProfileStore: SettingsProfileStore | undefined
   let managerAgent: ManagerAgent | undefined
+  let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   if (role === 'hub') {
@@ -243,6 +249,17 @@ export async function buildApp(
       oracleWatched: () => presence.oracleWatched(),
     })
     const managerSettings = managerRuntimeSettings()
+    managerStructuredMemory = await initializeManagerStructuredMemory(
+      path.join(dataDirectory, 'manager'),
+      managerSettings.structuredMemory,
+    )
+    const memoryStatus = managerStructuredMemory.status()
+    if (memoryStatus.availability === 'unavailable') {
+      app.log.error(
+        { reason: memoryStatus.lastError },
+        'Oracle structured memory is unavailable',
+      )
+    }
     if (options.managerAgent) {
       managerAgent = options.managerAgent
     } else if (options.managerAgent === false || !managerSettings.enabled) {
@@ -273,6 +290,7 @@ export async function buildApp(
         reasoningEffort: managerSettings.reasoningEffort,
         // The synced settings profile on this same hub, read per turn.
         responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
+        structuredMemory: managerStructuredMemory,
       })
       // Before the session service starts, so its first discovery already
       // leaves the manager's own conversations out.
@@ -290,7 +308,12 @@ export async function buildApp(
       presence,
     )
     if (managerAgent) pushService.attachOracle(managerAgent)
-    await registerManagerRoutes(app, managerAgent, managerUnavailable)
+    await registerManagerRoutes(
+      app,
+      managerAgent,
+      managerUnavailable,
+      managerStructuredMemory,
+    )
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
@@ -377,5 +400,6 @@ export async function buildApp(
     sessionOrderStore,
     settingsProfileStore,
     managerAgent,
+    managerStructuredMemory,
   }
 }

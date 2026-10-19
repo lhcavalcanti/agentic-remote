@@ -48,10 +48,52 @@ Everything lives under `<data>/manager/`. `<data>` is
 | `journal.jsonl` | App | Append-only session lifecycle events with a sequence number: `created`, `status`, `renamed`, `replaced`, `removed`. Rewritten to the newest 2,000 entries once it holds 4,000. |
 | `sessions.json` | App | Registry keyed by `computerId:sessionId`: origin (`manager`, `user`, or `discovered`), task (the first prompt, truncated), first-seen time, last status, and removal tombstones. Tombstones are kept for 30 days, up to 500. |
 | `memory/**/*.md` | Agent | The agent's own notes, changed only through memory tools. Suggested layout: `MEMORY.md` as the index and durable preferences, `sessions/<id>.md` per session, `projects/<name>.md`. |
+| `structured-memory.json` | App | Optional schema-v1 semantic and episodic records, deletion tombstones, safe audit metadata, and idempotency keys. |
+| `structured-memory.backup.json` | App | Last validated structured-memory snapshot used only when the primary is missing. |
 
 The memory tools accept relative `.md` paths only. Absolute paths, `..`,
 hidden segments, and symlinks are rejected. Limits are 256 KiB per file and
 4 MiB in total. The system prompt forbids storing secrets.
+
+### Structured memory
+
+`AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY` is `off` by default and accepts
+exactly `off`, `shadow`, or `on`; any other value stops startup. `off` does not
+initialize the structured store or change Oracle's prompt. `shadow` performs
+the same local bounded retrieval as `on` and records only count/timing/status
+metrics. `on` adds the retrieved records to Oracle's prompt. Neither retrieval
+path makes a model or network request.
+
+Records are typed as preferences, facts, procedures, decisions, or outcomes.
+They carry a stable ID, exact global/user/computer/project/session scope,
+provenance, authority, confidence, validity interval, timestamps, and
+supersession links. Direct-user tools and APIs cannot write global records;
+those are reserved for policy-authorized imports. Correction preserves and
+supersedes the previous record. Forgetting keeps a content-free tombstone, so
+retry or import cannot resurrect the value.
+
+Every write is strictly validated before persistence. Credentials, secret-like
+entropy, private keys, credential URLs, sensitive paths, unsupported categories
+of personal data, malformed Unicode, invalid scopes, and oversized input are
+rejected without echoing or logging the value. Files are `0600`; writes use a
+synced unique pending file, atomic rename, directory sync, and serialized
+in-process commits. Corrupt or unsupported authoritative state is preserved
+and makes only structured memory unavailable. It is never replaced with an
+empty store.
+
+Retrieval uses exact eligible scopes and current validity, then ranks lexical
+relevance, scope specificity, authority, confidence, recency, and stable ID.
+At most eight active records are returned. Prompt data is escaped JSON inside
+an untrusted-data delimiter, capped at 6,000 characters at whole-record
+boundaries; it cannot override policy or the current request. Oracle tool
+mutations additionally require explicit remember/correct/forget intent in the
+current user message. No session output is promoted automatically.
+
+Back up the whole `<data>/manager/` directory to retain Markdown and structured
+memory together. The export API returns deterministic schema-v1 JSON; import
+requires an empty store and validates the complete state. V1 rejects unknown
+schema versions rather than guessing a migration. Switching from `on` or
+`shadow` to `off` leaves the files untouched for rollback.
 
 ## Session lifecycle
 
@@ -168,6 +210,8 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
 | `memory_list`, `memory_read`, `memory_write`, `memory_append`, `memory_delete` | The agent's memory |
+| `structured_memory_search` | Search active records in the exact scopes available to this Oracle turn |
+| `structured_memory_remember`, `structured_memory_correct`, `structured_memory_forget` | Explicit, audited structured mutations; unavailable without current-message intent |
 
 Sessions are addressed by ID; the computer is resolved from the live list. Tool
 errors return as tool results the model can read, never as thrown failures that
@@ -222,6 +266,12 @@ end the turn.
   conversation runs on (`sessionRuntime`), and the model and effort that
   could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.
+- Structured-memory routes are under `/api/manager/structured-memory`: `GET
+  /status`, `POST /search`, `POST /records`, `POST
+  /records/:id/correct`, `POST /records/:id/forget`, `GET /export`, and `POST
+  /import`. Mutations require an idempotency `requestId`; import takes a
+  deterministic JSON string and an empty store. All inherit the hub's Host and
+  Origin policy.
 - WebSocket: `manager.status`, `manager.message` (upsert), and
   `manager.delta` (streamed text, throttled).
 
@@ -278,6 +328,11 @@ end the turn.
 - Runtime tests with a fake SDK client: queueing, streaming, watchdog,
   rung-by-rung recovery, restart mid-turn, and exclusion from discovery.
 - Route tests: validation, `202`, Origin refusal, and WebSocket events.
+- Structured-memory tests cover privacy rejection, exact scope isolation,
+  ranking and prompt caps, supersession/tombstones, restart and corruption
+  recovery, atomic failures, import/export, concurrent writes, and tool/API
+  authorization. Performance gates enforce retrieval plus prompt assembly at
+  p95 <=10 ms for 1,000 records and <=25 ms for 10,000 records.
 - UI tests: bubble, panel, sending while busy, retry, and session links.
 - Live check on the development hub: ask the manager to start a disposable
   session, confirm it appears with its badge, ask what it did, close it, and

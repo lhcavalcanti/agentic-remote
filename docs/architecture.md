@@ -82,6 +82,9 @@ socket without the parameter, is the whole session. A patch that does not apply
 to the browser's copy is dropped and the browser sends one
 `{type: 'session.resync', computerId, sessionId}`; the hub answers with the
 latest publication in full. Node→hub links still carry whole sessions.
+Every event socket also accepts `{type: 'presence', oracleVisible}` (see
+Notifications in the app spec); each message type is read only by its own
+handler.
 
 Each node advertises provider capabilities. Legacy nodes advertise Copilot only,
 so a hub cannot accidentally create a Claude session on a node that has not

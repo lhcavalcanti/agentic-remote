@@ -110,4 +110,71 @@ describe('notification scope on a running hub', () => {
     await settle()
     expect(titles()).toHaveLength(3)
   })
+
+  it('reads presence on a socket that asked for patches, and still answers its resyncs', async () => {
+    const sender = vi.fn(async (
+      _subscription: PushSubscription,
+      _payload?: string | Buffer | null,
+      _options?: RequestOptions,
+    ) => ({ statusCode: 201, headers: {}, body: '' }))
+    const oracle = Object.assign(new EventEmitter(), {
+      start: async () => undefined,
+      stop: async () => undefined,
+      snapshot: () => ({ available: true, status: 'idle', messages: [], queued: 0, managedSessions: [] }),
+    })
+    runtime = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      pushService: new PushNotificationService(path.join(directory, 'push'), sender),
+      managerAgent: oracle as unknown as ManagerAgent,
+      transcriptionService: {
+        initialize: async () => undefined,
+        stop: async () => undefined,
+        transcribe: vi.fn(),
+      },
+    })
+    await runtime.pushService!.subscribe({
+      endpoint: 'https://push.example.test/phone',
+      expirationTime: null,
+      keys: { p256dh: 'public-key', auth: 'auth-key' },
+    })
+    const titles = () => sender.mock.calls.map(([, payload]) => JSON.parse(String(payload)).title as string)
+    const replied = (id: string) => oracle.emit('event', {
+      type: 'manager.message',
+      message: { id, role: 'user', content: 'Status?', createdAt: 't', state: 'done' },
+    } satisfies ManagerEvent)
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
+    const computerId = runtime.identity.info.id
+    const session = {
+      id: 'one', computerId, computerName: 'development', cwd: '/tmp',
+      title: 'Session one', updatedAt: '2026-10-18T00:00:00.000Z', status: 'idle' as const, isOpen: true,
+      messages: [{ id: 'm1', role: 'user' as const, content: 'hello', createdAt: 't' }],
+    }
+
+    await runtime.app.ready()
+    const socket = await runtime.app.injectWS('/api/events?patches=1', { headers: trusted })
+    const received: Array<{ type: string; session?: { id: string } }> = []
+    socket.on('message', (data) => { received.push(JSON.parse(String(data))) })
+    runtime.manager!.emit('event', { type: 'session.upserted', session })
+    await vi.waitFor(() => expect(received.filter((event) => event.type === 'session.upserted')).toHaveLength(1))
+
+    socket.send(JSON.stringify({ type: 'presence', oracleVisible: true }))
+    await settle()
+    replied('u1')
+    await settle()
+    expect(titles()).toEqual([])
+    // Presence is not taken for a resync, and a resync is not taken for presence.
+    expect(received.filter((event) => event.type === 'session.upserted')).toHaveLength(1)
+
+    socket.send(JSON.stringify({ type: 'session.resync', computerId, sessionId: 'one' }))
+    await vi.waitFor(() => expect(received.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
+    replied('u2')
+    await settle()
+    expect(titles()).toEqual([])
+
+    socket.terminate()
+    await settle()
+    replied('u3')
+    await vi.waitFor(() => expect(titles()).toEqual(['Oracle replied']))
+  })
 })

@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "ed2b38dbc3fa097c9da1cf8d25f86e57b1663e07",
+  "built_at_commit": "dca059672a2690848d96ef635fc3fd9e04c75f2a",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -52609,7 +52609,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L707",
+      "source_location": "L709",
       "target": "server_manager_agent_manageragent_addnote",
       "weight": 1.0
     },
@@ -52620,7 +52620,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1326",
+      "source_location": "L1328",
       "target": "server_manager_agent_manageragent_applyruntime",
       "weight": 1.0
     },
@@ -52631,7 +52631,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1052",
+      "source_location": "L1054",
       "target": "server_manager_agent_manageragent_buildprompt",
       "weight": 1.0
     },
@@ -52642,7 +52642,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L609",
+      "source_location": "L611",
       "target": "server_manager_agent_manageragent_cancel",
       "weight": 1.0
     },
@@ -52653,7 +52653,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1475",
+      "source_location": "L1477",
       "target": "server_manager_agent_manageragent_clearidletimer",
       "weight": 1.0
     },
@@ -52664,7 +52664,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1045",
+      "source_location": "L1047",
       "target": "server_manager_agent_manageragent_clearinterruption",
       "weight": 1.0
     },
@@ -52686,7 +52686,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1352",
+      "source_location": "L1354",
       "target": "server_manager_agent_manageragent_createsession",
       "weight": 1.0
     },
@@ -52697,7 +52697,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L806",
+      "source_location": "L808",
       "target": "server_manager_agent_manageragent_currentturnstructuredmemory",
       "weight": 1.0
     },
@@ -52708,7 +52708,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L834",
+      "source_location": "L836",
       "target": "server_manager_agent_manageragent_discoverskills",
       "weight": 1.0
     },
@@ -52719,7 +52719,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1416",
+      "source_location": "L1418",
       "target": "server_manager_agent_manageragent_dropsession",
       "weight": 1.0
     },
@@ -52730,7 +52730,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L547",
+      "source_location": "L549",
       "target": "server_manager_agent_manageragent_editqueued",
       "weight": 1.0
     },
@@ -52741,7 +52741,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1422",
+      "source_location": "L1424",
       "target": "server_manager_agent_manageragent_ensureclient",
       "weight": 1.0
     },
@@ -52752,7 +52752,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L891",
+      "source_location": "L893",
       "target": "server_manager_agent_manageragent_failunexpectedly",
       "weight": 1.0
     },
@@ -52763,7 +52763,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1026",
+      "source_location": "L1028",
       "target": "server_manager_agent_manageragent_finishcancelled",
       "weight": 1.0
     },
@@ -52774,7 +52774,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L674",
+      "source_location": "L676",
       "target": "server_manager_agent_manageragent_finishclosing",
       "weight": 1.0
     },
@@ -52785,7 +52785,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1283",
+      "source_location": "L1285",
       "target": "server_manager_agent_manageragent_flushdelta",
       "weight": 1.0
     },
@@ -52807,7 +52807,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1022",
+      "source_location": "L1024",
       "target": "server_manager_agent_manageragent_leave",
       "weight": 1.0
     },
@@ -52829,7 +52829,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1294",
+      "source_location": "L1296",
       "target": "server_manager_agent_manageragent_prepare",
       "weight": 1.0
     },
@@ -52840,7 +52840,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L904",
+      "source_location": "L906",
       "target": "server_manager_agent_manageragent_process",
       "weight": 1.0
     },
@@ -52851,7 +52851,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1485",
+      "source_location": "L1487",
       "target": "server_manager_agent_manageragent_publishstatus",
       "weight": 1.0
     },
@@ -52862,7 +52862,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L864",
+      "source_location": "L866",
       "target": "server_manager_agent_manageragent_pump",
       "weight": 1.0
     },
@@ -52873,7 +52873,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L850",
+      "source_location": "L852",
       "target": "server_manager_agent_manageragent_recordactivity",
       "weight": 1.0
     },
@@ -52895,7 +52895,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L571",
+      "source_location": "L573",
       "target": "server_manager_agent_manageragent_removequeued",
       "weight": 1.0
     },
@@ -52906,7 +52906,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L713",
+      "source_location": "L715",
       "target": "server_manager_agent_manageragent_requestcloseconfirmation",
       "weight": 1.0
     },
@@ -52917,7 +52917,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L618",
+      "source_location": "L620",
       "target": "server_manager_agent_manageragent_reset",
       "weight": 1.0
     },
@@ -52928,7 +52928,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L643",
+      "source_location": "L645",
       "target": "server_manager_agent_manageragent_resolveconfirmation",
       "weight": 1.0
     },
@@ -52950,7 +52950,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1398",
+      "source_location": "L1400",
       "target": "server_manager_agent_manageragent_retiresession",
       "weight": 1.0
     },
@@ -52961,7 +52961,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L591",
+      "source_location": "L593",
       "target": "server_manager_agent_manageragent_retry",
       "weight": 1.0
     },
@@ -52983,7 +52983,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1147",
+      "source_location": "L1149",
       "target": "server_manager_agent_manageragent_runturn",
       "weight": 1.0
     },
@@ -52994,7 +52994,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1463",
+      "source_location": "L1465",
       "target": "server_manager_agent_manageragent_scheduleidlestop",
       "weight": 1.0
     },
@@ -53016,7 +53016,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1441",
+      "source_location": "L1443",
       "target": "server_manager_agent_manageragent_sessionconfig",
       "weight": 1.0
     },
@@ -53027,7 +53027,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1480",
+      "source_location": "L1482",
       "target": "server_manager_agent_manageragent_setstatus",
       "weight": 1.0
     },
@@ -53082,7 +53082,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1435",
+      "source_location": "L1437",
       "target": "server_manager_agent_manageragent_stopclient",
       "weight": 1.0
     },
@@ -53093,7 +53093,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1271",
+      "source_location": "L1273",
       "target": "server_manager_agent_manageragent_streamid",
       "weight": 1.0
     },
@@ -53104,7 +53104,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L798",
+      "source_location": "L800",
       "target": "server_manager_agent_manageragent_structuredmemoryenabled",
       "weight": 1.0
     },
@@ -53115,7 +53115,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L811",
+      "source_location": "L813",
       "target": "server_manager_agent_manageragent_structuredmemoryscopes",
       "weight": 1.0
     },
@@ -53159,7 +53159,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L735",
+      "source_location": "L737",
       "target": "server_manager_agent_manageragent_toolhost",
       "weight": 1.0
     },
@@ -53170,7 +53170,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1495",
+      "source_location": "L1497",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -53192,7 +53192,7 @@
       "relation": "method",
       "source": "server_manager_agent_manageragent",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1275",
+      "source_location": "L1277",
       "target": "server_manager_agent_manageragent_updatestream",
       "weight": 1.0
     },
@@ -53312,7 +53312,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_applyruntime",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1349",
+      "source_location": "L1351",
       "target": "server_manager_agent_manageragent_createsession",
       "weight": 1.0
     },
@@ -53324,7 +53324,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_applyruntime",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1348",
+      "source_location": "L1350",
       "target": "server_manager_agent_manageragent_retiresession",
       "weight": 1.0
     },
@@ -53336,7 +53336,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_applyruntime",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1329",
+      "source_location": "L1331",
       "target": "server_manager_agent_manageragent_target",
       "weight": 1.0
     },
@@ -53348,7 +53348,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_applyruntime",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1330",
+      "source_location": "L1332",
       "target": "server_manager_agent_sameruntime",
       "weight": 1.0
     },
@@ -53360,7 +53360,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_applyruntime",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1333",
+      "source_location": "L1335",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -53372,7 +53372,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1064",
+      "source_location": "L1066",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -53384,7 +53384,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1120",
+      "source_location": "L1122",
       "target": "server_manager_agent_manageragent_currentturnstructuredmemory",
       "weight": 1.0
     },
@@ -53396,7 +53396,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1121",
+      "source_location": "L1123",
       "target": "server_manager_agent_manageragent_structuredmemoryscopes",
       "weight": 1.0
     },
@@ -53408,7 +53408,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1060",
+      "source_location": "L1062",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -53420,7 +53420,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1085",
+      "source_location": "L1087",
       "target": "server_manager_context_buildturncontext",
       "weight": 1.0
     },
@@ -53432,7 +53432,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1144",
+      "source_location": "L1146",
       "target": "server_manager_context_managerprompt",
       "weight": 1.0
     },
@@ -53444,7 +53444,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1104",
+      "source_location": "L1106",
       "target": "server_manager_context_recoverybrief",
       "weight": 1.0
     },
@@ -53456,7 +53456,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1117",
+      "source_location": "L1119",
       "target": "server_manager_structured_memory_search_formatstructuredmemorycontext",
       "weight": 1.0
     },
@@ -53468,7 +53468,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_buildprompt",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1052",
+      "source_location": "L1054",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -53516,7 +53516,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_createsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1373",
+      "source_location": "L1375",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -53528,7 +53528,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_createsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1378",
+      "source_location": "L1380",
       "target": "server_manager_agent_manageragent_runtime",
       "weight": 1.0
     },
@@ -53540,7 +53540,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_createsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1361",
+      "source_location": "L1363",
       "target": "server_manager_agent_manageragent_sessionconfig",
       "weight": 1.0
     },
@@ -53552,7 +53552,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_createsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1382",
+      "source_location": "L1384",
       "target": "server_manager_agent_manageragent_settingssnapshot",
       "weight": 1.0
     },
@@ -53564,7 +53564,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_createsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1366",
+      "source_location": "L1368",
       "target": "server_manager_agent_manageragent_target",
       "weight": 1.0
     },
@@ -53576,7 +53576,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_createsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1378",
+      "source_location": "L1380",
       "target": "server_manager_agent_sameruntime",
       "weight": 1.0
     },
@@ -53588,7 +53588,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_createsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1360",
+      "source_location": "L1362",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -53600,7 +53600,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_discoverskills",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L842",
+      "source_location": "L844",
       "target": "server_manager_agent_discover",
       "weight": 1.0
     },
@@ -53612,7 +53612,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_discoverskills",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L839",
+      "source_location": "L841",
       "target": "server_manager_agent_manageragent_ensureclient",
       "weight": 1.0
     },
@@ -53624,7 +53624,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_discoverskills",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L842",
+      "source_location": "L844",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -53636,7 +53636,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_discoverskills",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L834",
+      "source_location": "L836",
       "target": "server_manager_tools_managerskillsummary",
       "weight": 1.0
     },
@@ -53648,7 +53648,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_dropsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1419",
+      "source_location": "L1421",
       "target": "server_manager_agent_managersdksession_disconnect",
       "weight": 1.0
     },
@@ -53660,20 +53660,8 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_dropsession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1419",
+      "source_location": "L1421",
       "target": "server_manager_agent_withtimeout",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_manager_agent_manageragent_editqueued",
-      "source_file": "server/manager-agent.ts",
-      "source_location": "L564",
-      "target": "server_manager_agent_checkcontent",
       "weight": 1.0
     },
     {
@@ -53685,6 +53673,18 @@
       "source": "server_manager_agent_manageragent_editqueued",
       "source_file": "server/manager-agent.ts",
       "source_location": "L566",
+      "target": "server_manager_agent_checkcontent",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_manager_agent_manageragent_editqueued",
+      "source_file": "server/manager-agent.ts",
+      "source_location": "L568",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -53696,20 +53696,8 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_editqueued",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L547",
+      "source_location": "L549",
       "target": "shared_manager_managermessage",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_manager_agent_manageragent_ensureclient",
-      "source_file": "server/manager-agent.ts",
-      "source_location": "L1426",
-      "target": "server_manager_agent_manageragent_start",
       "weight": 1.0
     },
     {
@@ -53721,6 +53709,18 @@
       "source": "server_manager_agent_manageragent_ensureclient",
       "source_file": "server/manager-agent.ts",
       "source_location": "L1428",
+      "target": "server_manager_agent_manageragent_start",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_manager_agent_manageragent_ensureclient",
+      "source_file": "server/manager-agent.ts",
+      "source_location": "L1430",
       "target": "server_manager_agent_manageragent_stop",
       "weight": 1.0
     },
@@ -53732,7 +53732,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_ensureclient",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1426",
+      "source_location": "L1428",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -53744,7 +53744,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_failunexpectedly",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L894",
+      "source_location": "L896",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -53756,7 +53756,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_failunexpectedly",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L901",
+      "source_location": "L903",
       "target": "server_manager_agent_manageragent_setstatus",
       "weight": 1.0
     },
@@ -53768,7 +53768,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_failunexpectedly",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L895",
+      "source_location": "L897",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -53780,7 +53780,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_failunexpectedly",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L891",
+      "source_location": "L893",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -53792,7 +53792,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_finishcancelled",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1042",
+      "source_location": "L1044",
       "target": "server_manager_agent_manageragent_clearinterruption",
       "weight": 1.0
     },
@@ -53804,7 +53804,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_finishcancelled",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1032",
+      "source_location": "L1034",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -53816,7 +53816,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_finishcancelled",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1026",
+      "source_location": "L1028",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -53828,7 +53828,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_finishclosing",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L691",
+      "source_location": "L693",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -53840,7 +53840,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_finishclosing",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L683",
+      "source_location": "L685",
       "target": "server_manager_agent_isnotfound",
       "weight": 1.0
     },
@@ -53852,7 +53852,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_finishclosing",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L697",
+      "source_location": "L699",
       "target": "server_manager_agent_manageragent_addnote",
       "weight": 1.0
     },
@@ -53864,7 +53864,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_finishclosing",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L696",
+      "source_location": "L698",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -53876,7 +53876,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_finishclosing",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L674",
+      "source_location": "L676",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -53912,7 +53912,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1316",
+      "source_location": "L1318",
       "target": "server_manager_agent_manageragent_applyruntime",
       "weight": 1.0
     },
@@ -53924,7 +53924,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1313",
+      "source_location": "L1315",
       "target": "server_manager_agent_manageragent_createsession",
       "weight": 1.0
     },
@@ -53936,7 +53936,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1296",
+      "source_location": "L1298",
       "target": "server_manager_agent_manageragent_dropsession",
       "weight": 1.0
     },
@@ -53948,7 +53948,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1301",
+      "source_location": "L1303",
       "target": "server_manager_agent_manageragent_ensureclient",
       "weight": 1.0
     },
@@ -53960,7 +53960,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1299",
+      "source_location": "L1301",
       "target": "server_manager_agent_manageragent_retiresession",
       "weight": 1.0
     },
@@ -53972,7 +53972,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1308",
+      "source_location": "L1310",
       "target": "server_manager_agent_manageragent_sessionconfig",
       "weight": 1.0
     },
@@ -53984,7 +53984,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1297",
+      "source_location": "L1299",
       "target": "server_manager_agent_manageragent_stopclient",
       "weight": 1.0
     },
@@ -53996,7 +53996,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1308",
+      "source_location": "L1310",
       "target": "server_manager_agent_managersdkclient_resumesession",
       "weight": 1.0
     },
@@ -54008,7 +54008,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_prepare",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1307",
+      "source_location": "L1309",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -54020,7 +54020,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L940",
+      "source_location": "L942",
       "target": "server_manager_agent_delay",
       "weight": 1.0
     },
@@ -54032,7 +54032,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L965",
+      "source_location": "L967",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -54044,7 +54044,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L949",
+      "source_location": "L951",
       "target": "server_manager_agent_manageragent_buildprompt",
       "weight": 1.0
     },
@@ -54056,7 +54056,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L990",
+      "source_location": "L992",
       "target": "server_manager_agent_manageragent_clearinterruption",
       "weight": 1.0
     },
@@ -54068,7 +54068,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L972",
+      "source_location": "L974",
       "target": "server_manager_agent_manageragent_dropsession",
       "weight": 1.0
     },
@@ -54080,7 +54080,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L943",
+      "source_location": "L945",
       "target": "server_manager_agent_manageragent_finishcancelled",
       "weight": 1.0
     },
@@ -54092,7 +54092,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L974",
+      "source_location": "L976",
       "target": "server_manager_agent_manageragent_flushdelta",
       "weight": 1.0
     },
@@ -54104,7 +54104,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L942",
+      "source_location": "L944",
       "target": "server_manager_agent_manageragent_leave",
       "weight": 1.0
     },
@@ -54116,7 +54116,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L946",
+      "source_location": "L948",
       "target": "server_manager_agent_manageragent_prepare",
       "weight": 1.0
     },
@@ -54128,7 +54128,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L957",
+      "source_location": "L959",
       "target": "server_manager_agent_manageragent_runturn",
       "weight": 1.0
     },
@@ -54140,7 +54140,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L926",
+      "source_location": "L928",
       "target": "server_manager_agent_manageragent_setstatus",
       "weight": 1.0
     },
@@ -54152,7 +54152,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1008",
+      "source_location": "L1010",
       "target": "server_manager_agent_manageragent_streamid",
       "weight": 1.0
     },
@@ -54164,7 +54164,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L910",
+      "source_location": "L912",
       "target": "server_manager_agent_manageragent_structuredmemoryenabled",
       "weight": 1.0
     },
@@ -54176,7 +54176,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L918",
+      "source_location": "L920",
       "target": "server_manager_agent_manageragent_structuredmemoryscopes",
       "weight": 1.0
     },
@@ -54188,7 +54188,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L925",
+      "source_location": "L927",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54200,7 +54200,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_process",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L904",
+      "source_location": "L906",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -54212,7 +54212,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_publishstatus",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1486",
+      "source_location": "L1488",
       "target": "server_manager_agent_manageragent_snapshot",
       "weight": 1.0
     },
@@ -54224,7 +54224,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_pump",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L882",
+      "source_location": "L884",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -54236,7 +54236,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_pump",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L872",
+      "source_location": "L874",
       "target": "server_manager_agent_manageragent_clearidletimer",
       "weight": 1.0
     },
@@ -54248,7 +54248,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_pump",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L873",
+      "source_location": "L875",
       "target": "server_manager_agent_manageragent_failunexpectedly",
       "weight": 1.0
     },
@@ -54260,7 +54260,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_pump",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L873",
+      "source_location": "L875",
       "target": "server_manager_agent_manageragent_process",
       "weight": 1.0
     },
@@ -54272,7 +54272,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_pump",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L878",
+      "source_location": "L880",
       "target": "server_manager_agent_manageragent_scheduleidlestop",
       "weight": 1.0
     },
@@ -54284,7 +54284,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_pump",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L877",
+      "source_location": "L879",
       "target": "server_manager_agent_manageragent_setstatus",
       "weight": 1.0
     },
@@ -54296,7 +54296,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_recordactivity",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L853",
+      "source_location": "L855",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54308,7 +54308,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_recordactivity",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L850",
+      "source_location": "L852",
       "target": "server_manager_tools_managertoolactivity",
       "weight": 1.0
     },
@@ -54332,7 +54332,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_removequeued",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L587",
+      "source_location": "L589",
       "target": "server_manager_agent_manageragent_publishstatus",
       "weight": 1.0
     },
@@ -54344,7 +54344,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_removequeued",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L585",
+      "source_location": "L587",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54356,7 +54356,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_removequeued",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L571",
+      "source_location": "L573",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -54368,7 +54368,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_requestcloseconfirmation",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L715",
+      "source_location": "L717",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54380,7 +54380,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_requestcloseconfirmation",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L713",
+      "source_location": "L715",
       "target": "shared_contracts_managedsession",
       "weight": 1.0
     },
@@ -54392,7 +54392,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_reset",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L625",
+      "source_location": "L627",
       "target": "server_manager_agent_manageragent_cancel",
       "weight": 1.0
     },
@@ -54404,7 +54404,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_reset",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L630",
+      "source_location": "L632",
       "target": "server_manager_agent_manageragent_retiresession",
       "weight": 1.0
     },
@@ -54416,7 +54416,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_reset",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L639",
+      "source_location": "L641",
       "target": "server_manager_agent_manageragent_snapshot",
       "weight": 1.0
     },
@@ -54428,7 +54428,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_reset",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L621",
+      "source_location": "L623",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54440,7 +54440,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_resolveconfirmation",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L659",
+      "source_location": "L661",
       "target": "server_manager_agent_manageragent_addnote",
       "weight": 1.0
     },
@@ -54452,7 +54452,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_resolveconfirmation",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L670",
+      "source_location": "L672",
       "target": "server_manager_agent_manageragent_finishclosing",
       "weight": 1.0
     },
@@ -54464,7 +54464,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_resolveconfirmation",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L658",
+      "source_location": "L660",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54476,7 +54476,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_resolveconfirmation",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L643",
+      "source_location": "L645",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -54488,7 +54488,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_retiresession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1411",
+      "source_location": "L1413",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -54500,7 +54500,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_retiresession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1410",
+      "source_location": "L1412",
       "target": "server_manager_agent_managersdkclient_deletesession",
       "weight": 1.0
     },
@@ -54512,7 +54512,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_retiresession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1402",
+      "source_location": "L1404",
       "target": "server_manager_agent_managersdksession_disconnect",
       "weight": 1.0
     },
@@ -54524,7 +54524,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_retiresession",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1402",
+      "source_location": "L1404",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -54536,7 +54536,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_retry",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L603",
+      "source_location": "L605",
       "target": "server_manager_agent_manageragent_publishstatus",
       "weight": 1.0
     },
@@ -54548,7 +54548,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_retry",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L604",
+      "source_location": "L606",
       "target": "server_manager_agent_manageragent_pump",
       "weight": 1.0
     },
@@ -54560,7 +54560,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_retry",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L602",
+      "source_location": "L604",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54572,7 +54572,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_retry",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L591",
+      "source_location": "L593",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -54596,7 +54596,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1186",
+      "source_location": "L1188",
       "target": "server_manager_agent_delay",
       "weight": 1.0
     },
@@ -54608,7 +54608,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1257",
+      "source_location": "L1259",
       "target": "server_manager_agent_errormessage",
       "weight": 1.0
     },
@@ -54620,7 +54620,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1253",
+      "source_location": "L1255",
       "target": "server_manager_agent_manageragent_send",
       "weight": 1.0
     },
@@ -54632,7 +54632,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1241",
+      "source_location": "L1243",
       "target": "server_manager_agent_manageragent_updatestream",
       "weight": 1.0
     },
@@ -54644,7 +54644,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1206",
+      "source_location": "L1208",
       "target": "server_manager_agent_managersdkclient_ping",
       "weight": 1.0
     },
@@ -54656,7 +54656,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1184",
+      "source_location": "L1186",
       "target": "server_manager_agent_managersdksession_abort",
       "weight": 1.0
     },
@@ -54668,7 +54668,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1214",
+      "source_location": "L1216",
       "target": "server_manager_agent_managersdksession_on",
       "weight": 1.0
     },
@@ -54680,7 +54680,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1150",
+      "source_location": "L1152",
       "target": "server_manager_agent_turnerror",
       "weight": 1.0
     },
@@ -54692,7 +54692,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_runturn",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1184",
+      "source_location": "L1186",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -54704,7 +54704,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_scheduleidlestop",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1464",
+      "source_location": "L1466",
       "target": "server_manager_agent_manageragent_clearidletimer",
       "weight": 1.0
     },
@@ -54716,7 +54716,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_scheduleidlestop",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1469",
+      "source_location": "L1471",
       "target": "server_manager_agent_manageragent_dropsession",
       "weight": 1.0
     },
@@ -54728,7 +54728,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_scheduleidlestop",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1470",
+      "source_location": "L1472",
       "target": "server_manager_agent_manageragent_stopclient",
       "weight": 1.0
     },
@@ -54752,7 +54752,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_send",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L537",
+      "source_location": "L539",
       "target": "server_manager_agent_manageragent_publishstatus",
       "weight": 1.0
     },
@@ -54764,7 +54764,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_send",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L538",
+      "source_location": "L540",
       "target": "server_manager_agent_manageragent_pump",
       "weight": 1.0
     },
@@ -54776,7 +54776,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_send",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L533",
+      "source_location": "L535",
       "target": "server_manager_agent_manageragent_structuredmemoryenabled",
       "weight": 1.0
     },
@@ -54788,7 +54788,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_send",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L536",
+      "source_location": "L538",
       "target": "server_manager_agent_manageragent_updatemessage",
       "weight": 1.0
     },
@@ -54824,7 +54824,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_setstatus",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1482",
+      "source_location": "L1484",
       "target": "server_manager_agent_manageragent_publishstatus",
       "weight": 1.0
     },
@@ -54836,7 +54836,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_setstatus",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1480",
+      "source_location": "L1482",
       "target": "shared_manager_managerstatus",
       "weight": 1.0
     },
@@ -55040,7 +55040,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_stopclient",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1438",
+      "source_location": "L1440",
       "target": "server_manager_agent_manageragent_stop",
       "weight": 1.0
     },
@@ -55052,7 +55052,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_stopclient",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1438",
+      "source_location": "L1440",
       "target": "server_manager_agent_withtimeout",
       "weight": 1.0
     },
@@ -55064,7 +55064,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_structuredmemoryscopes",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L811",
+      "source_location": "L813",
       "target": "shared_manager_managerclientdefaults",
       "weight": 1.0
     },
@@ -55076,7 +55076,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_structuredmemoryscopes",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L811",
+      "source_location": "L813",
       "target": "shared_manager_structured_memory_managerstructuredmemoryscope",
       "weight": 1.0
     },
@@ -55160,7 +55160,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L754",
+      "source_location": "L756",
       "target": "server_manager_agent_manageragent_cancel",
       "weight": 1.0
     },
@@ -55172,7 +55172,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L744",
+      "source_location": "L746",
       "target": "server_manager_agent_manageragent_createsession",
       "weight": 1.0
     },
@@ -55184,7 +55184,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L772",
+      "source_location": "L774",
       "target": "server_manager_agent_manageragent_currentturnstructuredmemory",
       "weight": 1.0
     },
@@ -55196,7 +55196,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L756",
+      "source_location": "L758",
       "target": "server_manager_agent_manageragent_discoverskills",
       "weight": 1.0
     },
@@ -55208,7 +55208,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L755",
+      "source_location": "L757",
       "target": "server_manager_agent_manageragent_requestcloseconfirmation",
       "weight": 1.0
     },
@@ -55220,7 +55220,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L765",
+      "source_location": "L767",
       "target": "server_manager_agent_manageragent_updatesettings",
       "weight": 1.0
     },
@@ -55232,7 +55232,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L752",
+      "source_location": "L754",
       "target": "server_manager_agent_managerhub_activatesession",
       "weight": 1.0
     },
@@ -55244,7 +55244,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L743",
+      "source_location": "L745",
       "target": "server_manager_agent_managerhub_asksession",
       "weight": 1.0
     },
@@ -55256,7 +55256,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L739",
+      "source_location": "L741",
       "target": "server_manager_agent_managerhub_findcomputer",
       "weight": 1.0
     },
@@ -55268,7 +55268,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L738",
+      "source_location": "L740",
       "target": "server_manager_agent_managerhub_listcomputers",
       "weight": 1.0
     },
@@ -55280,7 +55280,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L741",
+      "source_location": "L743",
       "target": "server_manager_agent_managerhub_listhistory",
       "weight": 1.0
     },
@@ -55292,7 +55292,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L740",
+      "source_location": "L742",
       "target": "server_manager_agent_managerhub_listsessions",
       "weight": 1.0
     },
@@ -55304,7 +55304,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L742",
+      "source_location": "L744",
       "target": "server_manager_agent_managerhub_readsession",
       "weight": 1.0
     },
@@ -55316,7 +55316,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L745",
+      "source_location": "L747",
       "target": "server_manager_agent_managerhub_renamesession",
       "weight": 1.0
     },
@@ -55328,7 +55328,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L749",
+      "source_location": "L751",
       "target": "server_manager_agent_managerhub_replypermission",
       "weight": 1.0
     },
@@ -55340,7 +55340,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L751",
+      "source_location": "L753",
       "target": "server_manager_agent_managerhub_replyuserinput",
       "weight": 1.0
     },
@@ -55352,7 +55352,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L747",
+      "source_location": "L749",
       "target": "server_manager_agent_managerhub_sendmessage",
       "weight": 1.0
     },
@@ -55364,7 +55364,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L753",
+      "source_location": "L755",
       "target": "server_manager_agent_managersdkclient_resumesession",
       "weight": 1.0
     },
@@ -55376,7 +55376,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L783",
+      "source_location": "L785",
       "target": "server_manager_structured_memory_intent_hasexplicitstructuredmemoryintent",
       "weight": 1.0
     },
@@ -55388,7 +55388,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_toolhost",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L735",
+      "source_location": "L737",
       "target": "server_manager_tools_managertoolhost",
       "weight": 1.0
     },
@@ -55400,7 +55400,7 @@
       "relation": "references",
       "source": "server_manager_agent_manageragent_updatemessage",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1495",
+      "source_location": "L1497",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -55484,7 +55484,7 @@
       "relation": "calls",
       "source": "server_manager_agent_manageragent_updatestream",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1279",
+      "source_location": "L1281",
       "target": "server_manager_agent_manageragent_flushdelta",
       "weight": 1.0
     },
@@ -169346,7 +169346,7 @@
       "label": ".addNote()",
       "norm_label": ".addnote()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L707"
+      "source_location": "L709"
     },
     {
       "_callable": true,
@@ -169358,7 +169358,7 @@
       "label": ".applyRuntime()",
       "norm_label": ".applyruntime()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1326"
+      "source_location": "L1328"
     },
     {
       "_callable": true,
@@ -169370,7 +169370,7 @@
       "label": ".buildPrompt()",
       "norm_label": ".buildprompt()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1052"
+      "source_location": "L1054"
     },
     {
       "_callable": true,
@@ -169382,7 +169382,7 @@
       "label": ".cancel()",
       "norm_label": ".cancel()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L609"
+      "source_location": "L611"
     },
     {
       "_callable": true,
@@ -169394,7 +169394,7 @@
       "label": ".clearIdleTimer()",
       "norm_label": ".clearidletimer()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1475"
+      "source_location": "L1477"
     },
     {
       "_callable": true,
@@ -169406,7 +169406,7 @@
       "label": ".clearInterruption()",
       "norm_label": ".clearinterruption()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1045"
+      "source_location": "L1047"
     },
     {
       "_callable": true,
@@ -169430,7 +169430,7 @@
       "label": ".createSession()",
       "norm_label": ".createsession()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1352"
+      "source_location": "L1354"
     },
     {
       "_callable": true,
@@ -169442,7 +169442,7 @@
       "label": ".currentTurnStructuredMemory()",
       "norm_label": ".currentturnstructuredmemory()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L806"
+      "source_location": "L808"
     },
     {
       "_callable": true,
@@ -169454,7 +169454,7 @@
       "label": ".discoverSkills()",
       "norm_label": ".discoverskills()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L834"
+      "source_location": "L836"
     },
     {
       "_callable": true,
@@ -169466,7 +169466,7 @@
       "label": ".dropSession()",
       "norm_label": ".dropsession()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1416"
+      "source_location": "L1418"
     },
     {
       "_callable": true,
@@ -169478,7 +169478,7 @@
       "label": ".editQueued()",
       "norm_label": ".editqueued()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L547"
+      "source_location": "L549"
     },
     {
       "_callable": true,
@@ -169490,7 +169490,7 @@
       "label": ".ensureClient()",
       "norm_label": ".ensureclient()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1422"
+      "source_location": "L1424"
     },
     {
       "_callable": true,
@@ -169502,7 +169502,7 @@
       "label": ".failUnexpectedly()",
       "norm_label": ".failunexpectedly()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L891"
+      "source_location": "L893"
     },
     {
       "_callable": true,
@@ -169514,7 +169514,7 @@
       "label": ".finishCancelled()",
       "norm_label": ".finishcancelled()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1026"
+      "source_location": "L1028"
     },
     {
       "_callable": true,
@@ -169526,7 +169526,7 @@
       "label": ".finishClosing()",
       "norm_label": ".finishclosing()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L674"
+      "source_location": "L676"
     },
     {
       "_callable": true,
@@ -169538,7 +169538,7 @@
       "label": ".flushDelta()",
       "norm_label": ".flushdelta()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1283"
+      "source_location": "L1285"
     },
     {
       "_callable": true,
@@ -169562,7 +169562,7 @@
       "label": ".leave()",
       "norm_label": ".leave()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1022"
+      "source_location": "L1024"
     },
     {
       "_callable": true,
@@ -169586,7 +169586,7 @@
       "label": ".prepare()",
       "norm_label": ".prepare()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1294"
+      "source_location": "L1296"
     },
     {
       "_callable": true,
@@ -169598,7 +169598,7 @@
       "label": ".process()",
       "norm_label": ".process()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L904"
+      "source_location": "L906"
     },
     {
       "_callable": true,
@@ -169610,7 +169610,7 @@
       "label": ".publishStatus()",
       "norm_label": ".publishstatus()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1485"
+      "source_location": "L1487"
     },
     {
       "_callable": true,
@@ -169622,7 +169622,7 @@
       "label": ".pump()",
       "norm_label": ".pump()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L864"
+      "source_location": "L866"
     },
     {
       "_callable": true,
@@ -169634,7 +169634,7 @@
       "label": ".recordActivity()",
       "norm_label": ".recordactivity()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L850"
+      "source_location": "L852"
     },
     {
       "_callable": true,
@@ -169658,7 +169658,7 @@
       "label": ".removeQueued()",
       "norm_label": ".removequeued()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L571"
+      "source_location": "L573"
     },
     {
       "_callable": true,
@@ -169670,7 +169670,7 @@
       "label": ".requestCloseConfirmation()",
       "norm_label": ".requestcloseconfirmation()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L713"
+      "source_location": "L715"
     },
     {
       "_callable": true,
@@ -169682,7 +169682,7 @@
       "label": ".reset()",
       "norm_label": ".reset()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L618"
+      "source_location": "L620"
     },
     {
       "_callable": true,
@@ -169694,7 +169694,7 @@
       "label": ".resolveConfirmation()",
       "norm_label": ".resolveconfirmation()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L643"
+      "source_location": "L645"
     },
     {
       "_callable": true,
@@ -169718,7 +169718,7 @@
       "label": ".retireSession()",
       "norm_label": ".retiresession()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1398"
+      "source_location": "L1400"
     },
     {
       "_callable": true,
@@ -169730,7 +169730,7 @@
       "label": ".retry()",
       "norm_label": ".retry()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L591"
+      "source_location": "L593"
     },
     {
       "_callable": true,
@@ -169754,7 +169754,7 @@
       "label": ".runTurn()",
       "norm_label": ".runturn()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1147"
+      "source_location": "L1149"
     },
     {
       "_callable": true,
@@ -169766,7 +169766,7 @@
       "label": ".scheduleIdleStop()",
       "norm_label": ".scheduleidlestop()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1463"
+      "source_location": "L1465"
     },
     {
       "_callable": true,
@@ -169790,7 +169790,7 @@
       "label": ".sessionConfig()",
       "norm_label": ".sessionconfig()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1441"
+      "source_location": "L1443"
     },
     {
       "_callable": true,
@@ -169802,7 +169802,7 @@
       "label": ".setStatus()",
       "norm_label": ".setstatus()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1480"
+      "source_location": "L1482"
     },
     {
       "_callable": true,
@@ -169862,7 +169862,7 @@
       "label": ".stopClient()",
       "norm_label": ".stopclient()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1435"
+      "source_location": "L1437"
     },
     {
       "_callable": true,
@@ -169874,7 +169874,7 @@
       "label": ".streamId()",
       "norm_label": ".streamid()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1271"
+      "source_location": "L1273"
     },
     {
       "_callable": true,
@@ -169886,7 +169886,7 @@
       "label": ".structuredMemoryEnabled()",
       "norm_label": ".structuredmemoryenabled()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L798"
+      "source_location": "L800"
     },
     {
       "_callable": true,
@@ -169898,7 +169898,7 @@
       "label": ".structuredMemoryScopes()",
       "norm_label": ".structuredmemoryscopes()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L811"
+      "source_location": "L813"
     },
     {
       "_callable": true,
@@ -169946,7 +169946,7 @@
       "label": ".toolHost()",
       "norm_label": ".toolhost()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L735"
+      "source_location": "L737"
     },
     {
       "_callable": true,
@@ -169958,7 +169958,7 @@
       "label": ".updateMessage()",
       "norm_label": ".updatemessage()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1495"
+      "source_location": "L1497"
     },
     {
       "_callable": true,
@@ -169982,7 +169982,7 @@
       "label": ".updateStream()",
       "norm_label": ".updatestream()",
       "source_file": "server/manager-agent.ts",
-      "source_location": "L1275"
+      "source_location": "L1277"
     },
     {
       "_callable": true,

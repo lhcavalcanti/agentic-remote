@@ -515,6 +515,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     options: { answerOnly?: boolean } = {},
   ): Promise<ManagerMessage> {
     checkContent(content)
+    // Read before any await, so an overlapping send cannot change them first.
+    const sentWith = defaults ?? this.store.state().defaults
     if (defaults) {
       await this.store.updateState((state) => {
         state.defaults = defaults
@@ -531,7 +533,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       ...(options.answerOnly ? { answerOnly: true } : {}),
     }
     if (this.structuredMemoryEnabled()) {
-      this.messageDefaults.set(message.id, this.store.state().defaults)
+      this.messageDefaults.set(message.id, sentWith)
     }
     await this.updateMessage(message)
     this.publishStatus()

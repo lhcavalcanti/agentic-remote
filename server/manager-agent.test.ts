@@ -616,6 +616,44 @@ describe('ManagerAgent', () => {
     expect(sdk.prompts[2]).not.toContain('HUB-COMPUTER-CONTENT')
   })
 
+  it('keeps each overlapping send on its own defaults', async () => {
+    const other: ComputerSummary = { ...computers[0], id: 'other', name: 'production', isLocal: false }
+    hub.findComputer = (nameOrId) =>
+      [...computers, other].find((computer) => computer.id === nameOrId || computer.name === nameOrId)
+    const structuredStore = new ManagerStructuredMemoryStore(path.join(root, 'structured-overlap'))
+    await structuredStore.initialize()
+    for (const computerId of ['hub', 'other']) {
+      await structuredStore.remember({
+        requestId: `remember-${computerId}`,
+        kind: 'fact',
+        canonicalKey: 'deployment policy',
+        content: `${computerId.toUpperCase()}-COMPUTER-CONTENT`,
+        scope: { type: 'computer', computerId },
+      })
+    }
+    sdk.behaviors.push(async (fakeSession) => {
+      await Promise.all([
+        agent!.send('What is the hub deployment policy?', { computerId: 'hub' }),
+        agent!.send('What is the production deployment policy?', { computerId: 'other' }),
+      ])
+      reply('First.')(fakeSession, '')
+    })
+    await start({
+      structuredMemory: new ManagerStructuredMemoryRuntime('on', structuredStore),
+    })
+
+    await agent!.send('What is running?')
+    await settled()
+
+    expect(sdk.prompts).toHaveLength(3)
+    const hubPrompt = sdk.prompts.find((prompt) => prompt.includes('hub deployment policy?'))
+    const otherPrompt = sdk.prompts.find((prompt) => prompt.includes('production deployment policy?'))
+    expect(hubPrompt).toContain('HUB-COMPUTER-CONTENT')
+    expect(hubPrompt).not.toContain('OTHER-COMPUTER-CONTENT')
+    expect(otherPrompt).toContain('OTHER-COMPUTER-CONTENT')
+    expect(otherPrompt).not.toContain('HUB-COMPUTER-CONTENT')
+  })
+
   it('keeps Oracle available and reports a safe status when optional retrieval fails', async () => {
     const structuredStore = new ManagerStructuredMemoryStore(
       path.join(root, 'structured-retrieval-failure'),

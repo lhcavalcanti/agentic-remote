@@ -426,8 +426,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "fa16c4e6d33699ef9e0c2e2dc2d2b4b3329bd1df8368715a8d9b4abaf4ab2ae3",
-    "server/manager-agent.ts": "2a9212cba656bc9184ae73d81360c233addd6e1944a90188de9b196978488d9e",
+    "server/manager-agent.test.ts": "5532424c30dbf9f993890b5fdb3784a73fad16ba239e85f9260a934ded8f5498",
+    "server/manager-agent.ts": "bd65348dbe0acac2394401e684030664f67de8682c10c1860d4545ac0524a096",
     "server/manager-context.test.ts": "2de8b62bd99ac2373f10b7aca67745747df7710819485a5b379ae04c7114fa34",
     "server/manager-context.ts": "2710fc83f377468fd3c60acd4a4512eab0b0bbcf46e13bd5a37047206d69eb6c",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -733,28 +733,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "46d8365f1fe0fe499c1ff5cb035df4f69193eeee04e5cccef500ec25a1ec2b58",
+    "GRAPH_REPORT.md": "160689516f0a2eca202137aec36a0e2f358cf08e11bb72a7abbb95e9bc7f3012",
     "communities.json": "aa21c8c3efe3ee89297e67fc208e67d09bb80287febfe3c4455f29e8c24385f1",
-    "graph.html": "cd1399978eac03563f367188b289212cd54e207460eec5c2b55dab3045f6eee9",
-    "graph.json": "f34b53c2b58c66dfa96a1984680d7aa70b2d22575fbfaea477dc802a0a25153f"
+    "graph.html": "1b5c2c72f8f892fa9deefa560d5f572f4a991d673fc6e1710657db0712819ade",
+    "graph.json": "dae5de104dbc9898d1d46c75acc8e85473cdbc94d854e506b20af7fd4ec0d89b"
   },
   "schema_version": 1,
-  "source_commit": "ed2b38dbc3fa097c9da1cf8d25f86e57b1663e07",
-  "source_fingerprint": "50161bf526d8a21e30ad34e4f787e13f6c1d2a8a872cde75cac252dcb51c7679",
+  "source_commit": "dca059672a2690848d96ef635fc3fd9e04c75f2a",
+  "source_fingerprint": "76c62f7b7bff6ff35e33049d9b4023d55e1b51be84fa45c6ab19120dcd0be6bf",
   "working_tree_changes": [
-    "README.md",
-    "docs/app-spec.md",
-    "docs/superpowers/specs/2026-10-16-oracle-structured-memory-design.md",
     "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-routes.test.ts",
-    "server/manager-routes.ts",
-    "server/manager-structured-memory-intent.test.ts",
-    "server/manager-structured-memory-intent.ts",
-    "server/manager-structured-memory-runtime.ts",
-    "server/manager-structured-memory-store.test.ts",
-    "server/manager-structured-memory-store.ts",
-    "server/manager-structured-memory-validation.test.ts",
-    "server/manager-structured-memory-validation.ts"
+    "server/manager-agent.ts"
   ]
 }

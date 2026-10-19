@@ -538,7 +538,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     try {
       await this.updateMessage(message)
     } catch (error) {
-      this.messageDefaults.delete(message.id)
+      // A message held in memory still runs, so it keeps the defaults it was sent with.
+      if (!this.store.message(message.id)) this.messageDefaults.delete(message.id)
       throw error
     }
     this.publishStatus()

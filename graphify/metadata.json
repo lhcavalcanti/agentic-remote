@@ -426,8 +426,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "bd724d2a5c4b6c886b7ae0dd769cbc74e0519cb669e6b19b142f9ca48a551d77",
-    "server/manager-agent.ts": "05fcbc2b577af61f33c9d35ca9b764fe370a3234b8cec280f8b572a0c8865889",
+    "server/manager-agent.test.ts": "cabbb76bd8d80ed184735f332ffe8c7456de868ced2beec0340b77705accc87f",
+    "server/manager-agent.ts": "bbdea422e5a6f4b92452f22f907f9f17357f61c96af4329751f0e67f0dc7777f",
     "server/manager-context.test.ts": "2de8b62bd99ac2373f10b7aca67745747df7710819485a5b379ae04c7114fa34",
     "server/manager-context.ts": "2710fc83f377468fd3c60acd4a4512eab0b0bbcf46e13bd5a37047206d69eb6c",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -448,8 +448,8 @@
     "server/manager-structured-memory-search.ts": "838dddf58ce3362b63327cb60b641ac58ea8afad59763d90c116b44a726ea46b",
     "server/manager-structured-memory-store.test.ts": "a72955b34c898224eb1795a82be0362025de16e3556b23d46922544e87556927",
     "server/manager-structured-memory-store.ts": "1d4af55988e69789ffe6022ade48deea8edd6c37af5bda2a223ee1d4ed253347",
-    "server/manager-structured-memory-validation.test.ts": "64d7e697f2177a0dd0d8ae0c6a66aa58991d1f78c1e5dc336027fa636061b615",
-    "server/manager-structured-memory-validation.ts": "d5d55910d3762f0175ffed7808d605defffc2f1719a85d853828c22aba0497be",
+    "server/manager-structured-memory-validation.test.ts": "7a4618851ada3517d5c23f55860097fa1146b8112b1bc887a0e88659475c4588",
+    "server/manager-structured-memory-validation.ts": "baf36801defb0b887793cfa04f9dbfac7206a588cd480cdb72b4c04ed3466120",
     "server/manager-tools.test.ts": "cf340caf13e1bfc035a423c9fe3417017794cdda918b805604c15f83cf584f2c",
     "server/manager-tools.ts": "1cba6e385eda017b0eb1bd541da593724176e4b2983cd424b310cd2a0cc351f8",
     "server/multi-node.test.ts": "55e317a0ac3a53f4b0c9acd7e010a483c4a4e7a2ddbb11ba76ed08952329578e",
@@ -733,17 +733,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "af473ddecb43ce2439cefb9d14ae80af91d977b46e18b3901c452a16346cccab",
+    "GRAPH_REPORT.md": "f1292255bfa1f23f3b6b2465b4875c0a60b10825e9b8663aedc67da4886d96d7",
     "communities.json": "c1284d6e75d7b8c22f87acd5ef41437717cff80a058461d25ec1d753ecdd63e8",
-    "graph.html": "1b4da82e709329035ddb15afba4c8b4870ace45ee5ade63f6b065ab9be075858",
-    "graph.json": "8f2caf845652c95a3e4d6f54391b9adff35e1421d27ffe88e28808334e1e1093"
+    "graph.html": "621e9cc4c34d70617732111c2e2b22da9c3773d7caea9363adbaafb92eb98145",
+    "graph.json": "b53483eed643b7bed05949022d611dfb000d752677ef76a30c5caececde1f03e"
   },
   "schema_version": 1,
-  "source_commit": "d1125b830fcd8a783f080b54b5486359e27d61ca",
-  "source_fingerprint": "c8f7051a1616205fe524ffb9c50e2b12e15ecbbf87554e718baa39e5a5d5b27c",
+  "source_commit": "1d2c6717632bde2658f26dcf990d7033d6396a75",
+  "source_fingerprint": "e0c5d19aaf66be6003ced89d25b923eead0cd565080806a1e6f78594e3b54b47",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/superpowers/specs/2026-10-16-oracle-structured-memory-design.md",
+    "server/manager-agent.test.ts",
+    "server/manager-agent.ts",
     "server/manager-structured-memory-validation.test.ts",
     "server/manager-structured-memory-validation.ts"
   ]

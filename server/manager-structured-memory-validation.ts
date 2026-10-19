@@ -454,18 +454,22 @@ function hasPatternSecret(value: string): boolean {
 
 /**
  * A long path is mostly words, so its entropy is judged per segment. A token
- * split by slashes, such as base64, still shows as a run that is largely
- * uppercase while also holding lowercase letters and digits.
+ * split by slashes, such as base64, still shows as a mixed run of few long
+ * segments that break into short pieces at case and digit changes.
  */
 function hasPathSecret(path: string): boolean {
   if (path.split(/[/\\]+/).some(hasHighEntropySecret)) return true
   const runs = path.match(/[A-Za-z0-9_+/=-]{40,}/g) ?? []
   return runs.some((run) => {
-    const letters = run.replace(/[^A-Za-z]/g, '')
-    const upper = run.replace(/[^A-Z]/g, '').length
+    const segments = run.split('/').filter(Boolean).length
+    const words = run.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g) ?? []
+    const meanWord = words.reduce((total, word) => total + word.length, 0) /
+      Math.max(1, words.length)
     return /[a-z]/.test(run) &&
+      /[A-Z]/.test(run) &&
       /\d/.test(run) &&
-      upper >= letters.length * 0.3 &&
+      run.length / Math.max(1, segments) >= 10 &&
+      meanWord < 3.75 &&
       shannonEntropy(run) >= 4
   })
 }

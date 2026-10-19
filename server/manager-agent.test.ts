@@ -725,6 +725,44 @@ describe('ManagerAgent', () => {
       .messageDefaults.size).toBe(0)
   })
 
+  it('keeps the defaults of a message held in memory although its append failed', async () => {
+    const other: ComputerSummary = { ...computers[0], id: 'other', name: 'production', isLocal: false }
+    hub.findComputer = (nameOrId) =>
+      [...computers, other].find((computer) => computer.id === nameOrId || computer.name === nameOrId)
+    const structuredStore = new ManagerStructuredMemoryStore(path.join(root, 'structured-append-failure'))
+    await structuredStore.initialize()
+    for (const computerId of ['hub', 'other']) {
+      await structuredStore.remember({
+        requestId: `remember-${computerId}`,
+        kind: 'fact',
+        canonicalKey: 'deployment policy',
+        content: `${computerId.toUpperCase()}-COMPUTER-CONTENT`,
+        scope: { type: 'computer', computerId },
+      })
+    }
+    await start({
+      structuredMemory: new ManagerStructuredMemoryRuntime('on', structuredStore),
+    })
+    const upsert = store.upsertMessage.bind(store)
+    vi.spyOn(store, 'upsertMessage').mockImplementationOnce(async (message) => {
+      await upsert(message)
+      throw new Error('disk full')
+    })
+
+    await expect(agent!.send('What is the hub deployment policy?', { computerId: 'hub' }))
+      .rejects.toThrow('disk full')
+    await agent!.send('What is the production deployment policy?', { computerId: 'other' })
+    await settled()
+
+    const hubPrompt = sdk.prompts.find((prompt) => prompt.includes('hub deployment policy?'))
+    const otherPrompt = sdk.prompts.find((prompt) => prompt.includes('production deployment policy?'))
+    expect(hubPrompt).toContain('HUB-COMPUTER-CONTENT')
+    expect(hubPrompt).not.toContain('OTHER-COMPUTER-CONTENT')
+    expect(otherPrompt).toContain('OTHER-COMPUTER-CONTENT')
+    expect((agent as unknown as { messageDefaults: Map<string, unknown> })
+      .messageDefaults.size).toBe(0)
+  })
+
   it('keeps Oracle available and reports a safe status when optional retrieval fails', async () => {
     const structuredStore = new ManagerStructuredMemoryStore(
       path.join(root, 'structured-retrieval-failure'),

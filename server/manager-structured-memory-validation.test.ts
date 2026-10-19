@@ -253,6 +253,7 @@ describe('structured memory validation', () => {
   it.each([
     ['a credential URL', '/srv/https://deploy:S3cretPassw0rd@10.0.0.5'],
     ['a base64 secret containing slashes', '/srv/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
+    ['a random token containing a slash', '/srv/Zq3Xk9LmP2vR8tYw/Bn5Hc7Jd1Fg4Ks6Qa0Ue'],
   ])('rejects a project root holding %s', (_label, projectRoot) => {
     expect(() => validateStructuredMemoryRemember({
       ...safeRemember(),
@@ -265,6 +266,12 @@ describe('structured memory validation', () => {
     '/Users/LCavalcanti/Documents/GitHub/Project2024/app',
     '/home/lcavalcanti/src/agentic-remote-worktrees/oracle-structured-memory',
     '/mnt/c/Users/JohnDoe/AppData/Local/Programs/Python311/Lib',
+    '/Users/JohnDoe/Projects/HTTPAPI2024/JSONParser',
+    '/srv/ACME/ETL2023/QAEnv/S3Backups/CSVImport',
+    '/home/AB/src/AWSSDKv3/NodeJSApp/IOSClient2',
+    '/Users/MSmith/XMLHTTPRequestHandler/OAuth2ServerConfig',
+    '/Users/al/Dev/My2ndApp/V1/V2/V3/Q4Report2023',
+    '/srv/k8s/HelmCharts/PostgreSQL14/values/ProdCluster1',
   ])('accepts the ordinary project root %s', (projectRoot) => {
     const scope = { type: 'project' as const, computerId: 'development', projectRoot }
     expect(validateStructuredMemoryRemember({ ...safeRemember(), scope }).scope)

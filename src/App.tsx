@@ -172,7 +172,7 @@ import type {
   ComputerSummary,
   ConfigureRuntimeInput,
   DirectoryListing,
-  HubEvent,
+  HubWireEvent,
   ManagedSession,
   KnowledgeRoot,
   SessionKnowledgeBinding,
@@ -302,6 +302,7 @@ import {
   type SessionNotificationState,
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
+import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import {
   PermissionCard,
@@ -9795,7 +9796,14 @@ function App() {
 
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      socket = new WebSocket(`${protocol}//${window.location.host}/api/events`)
+      // Asks to be sent what changed in a session rather than all of it. Its
+      // patches only apply to what this socket was itself sent, so every new
+      // socket starts from whole sessions; an older hub ignores the request.
+      const current = new WebSocket(`${protocol}//${window.location.host}/api/events?patches=1`)
+      socket = current
+      const patches = new SessionPatchReceiver((request) => {
+        if (current.readyState === WebSocket.OPEN) current.send(JSON.stringify(request))
+      })
       socket.onopen = () => {
         reconnectDelay = 1_000
         setManagerEpoch((epoch) => epoch + 1)
@@ -9810,7 +9818,8 @@ function App() {
         })
       }
       socket.onmessage = (message) => {
-        const event = JSON.parse(message.data as string) as HubEvent
+        const event = patches.receive(JSON.parse(message.data as string) as HubWireEvent)
+        if (!event) return
         if (isManagerEvent(event)) {
           // The manager's conversation, not session lifecycle: it must not
           // move the transcript sequence either.

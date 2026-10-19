@@ -469,6 +469,9 @@ export interface WorkspaceFixtureOptions {
   directoryListings?: Record<string, string[]>
   /** The manager agent's snapshot; absent keeps the manager hidden. */
   manager?: ManagerSnapshot
+  /** Use a native event socket only on the already-validated local fixture origin. */
+  nativeLocalEvents?: boolean
+  realClock?: boolean
 }
 
 export interface WorkspaceFixtureState {
@@ -577,7 +580,7 @@ export async function setupWorkspaceFixture(
   const context = page.context()
 
   page.on('pageerror', (error) => failures.push(`Page error: ${error.message}`))
-  await page.clock.setFixedTime(new Date(FIXTURE_NOW))
+  if (!options.realClock) await page.clock.setFixedTime(new Date(FIXTURE_NOW))
   await context.addInitScript(
     ({ origin, storage, preserveStorageOnReload }) => {
       if (location.origin !== origin) return
@@ -614,33 +617,49 @@ export async function setupWorkspaceFixture(
     },
   )
 
-  await context.routeWebSocket('**/*', (socket) => {
-    const url = new URL(socket.url())
-    sockets.push(url.pathname)
-    if (
-      url.host !== baseUrl.host ||
-      !['ws:', 'wss:'].includes(url.protocol)
-    ) {
-      failures.push(`Blocked external WebSocket: ${url.origin}${url.pathname}`)
-      socket.close({ code: 1008, reason: 'Synthetic fixture only' })
-      return
-    }
-    if (url.pathname === '/api/events') {
-      eventSockets.add(socket)
-      socket.onClose(() => eventSockets.delete(socket))
-      socket.onMessage(() => {
-        failures.push('Unexpected client message on fixture /api/events')
-      })
-      return
-    }
-    if (url.pathname === '/' && url.searchParams.has('token')) {
-      // Vite HMR is mocked too: never connectToServer(), even for the dev socket.
-      socket.send(JSON.stringify({ type: 'connected' }))
-      return
-    }
-    failures.push(`Unmocked WebSocket: ${url.pathname}`)
-    socket.close({ code: 1008, reason: 'Unmocked fixture WebSocket' })
-  })
+  if (options.nativeLocalEvents) {
+    await context.addInitScript(({ host }) => {
+      const NativeSocket = window.WebSocket
+      window.WebSocket = class extends NativeSocket {
+        constructor(input: string | URL, protocols?: string | string[]) {
+          const target = new URL(input, window.location.href)
+          if (target.host !== host || target.pathname !== '/api/events' ||
+            !['ws:', 'wss:'].includes(target.protocol) || target.username || target.password) {
+            throw new Error('Blocked non-fixture native WebSocket')
+          }
+          super(input, protocols)
+        }
+      }
+    }, { host: baseUrl.host })
+  } else {
+    await context.routeWebSocket('**/*', (socket) => {
+      const url = new URL(socket.url())
+      sockets.push(url.pathname)
+      if (
+        url.host !== baseUrl.host ||
+        !['ws:', 'wss:'].includes(url.protocol)
+      ) {
+        failures.push(`Blocked external WebSocket: ${url.origin}${url.pathname}`)
+        socket.close({ code: 1008, reason: 'Synthetic fixture only' })
+        return
+      }
+      if (url.pathname === '/api/events') {
+        eventSockets.add(socket)
+        socket.onClose(() => eventSockets.delete(socket))
+        socket.onMessage(() => {
+          failures.push('Unexpected client message on fixture /api/events')
+        })
+        return
+      }
+      if (url.pathname === '/' && url.searchParams.has('token')) {
+        // Vite HMR is mocked too: never connectToServer(), even for the dev socket.
+        socket.send(JSON.stringify({ type: 'connected' }))
+        return
+      }
+      failures.push(`Unmocked WebSocket: ${url.pathname}`)
+      socket.close({ code: 1008, reason: 'Unmocked fixture WebSocket' })
+    })
+  }
 
   async function reject(route: Route, reason: string) {
     failures.push(reason)

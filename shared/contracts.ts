@@ -483,6 +483,43 @@ export type HubEvent =
       failedPromptAt?: string
     }
 
+/**
+ * What changed in a session's messages since the publication a socket was
+ * last sent: the first `keep` messages it already holds, then `messages`.
+ */
+export interface SessionMessagesPatch {
+  /** The publication this applies to. */
+  from: number
+  /** The publication this produces. */
+  to: number
+  keep: number
+  /** How many messages the session has once applied. */
+  count: number
+  messages: ChatMessage[]
+}
+
+/**
+ * The browser event stream. A socket opened with `?patches=1` is sent a
+ * session it already holds as `session.patched`, and every whole session
+ * with the `patchVersion` patches build on. Any other socket is sent whole
+ * sessions only, exactly as before.
+ */
+export type HubWireEvent =
+  | Exclude<HubEvent, { type: 'session.upserted' }>
+  | { type: 'session.upserted'; session: ManagedSession; patchVersion?: number }
+  | {
+      type: 'session.patched'
+      session: Omit<ManagedSession, 'messages'>
+      patch: SessionMessagesPatch
+    }
+
+/** Sent by a socket whose patch did not apply, for the whole session again. */
+export interface HubResyncRequest {
+  type: 'session.resync'
+  computerId: string
+  sessionId: string
+}
+
 export interface CreateSessionInput {
   cwd: string
   provider?: AgentProvider

@@ -242,6 +242,7 @@ export class OracleVoiceCoordinator {
         this.currentGeneration = message.generation
         this.defaults = structuredClone(message.defaults)
         turn.advanceGeneration(message.generation)
+        this.recoverVoiceSubmissions(message.generation)
         await connection.control(message)
         return
       case 'speech_tentative':
@@ -289,13 +290,13 @@ export class OracleVoiceCoordinator {
     turn.advanceGeneration(message.generation)
     const snapshot = this.manager.snapshot()
     const queuedVoiceIds: string[] = []
-    let runningVoice = false
+    const runningVoiceIds: string[] = []
     for (const [messageId, submission] of this.submissions) {
       if (submission.generation > previousGeneration) continue
       const submitted = snapshot.messages.find((candidate) =>
         candidate.id === messageId && candidate.role === 'user')
-      if (submitted?.state === 'running' || this.activeReplyTo === messageId) {
-        runningVoice = true
+      if (submitted?.state === 'running') {
+        runningVoiceIds.push(messageId)
       } else if (submitted?.state === 'queued') {
         queuedVoiceIds.push(messageId)
       } else if (submitted && ['done', 'failed', 'cancelled', 'interrupted'].includes(
@@ -304,6 +305,7 @@ export class OracleVoiceCoordinator {
         this.submissions.delete(messageId)
       }
     }
+    const runningVoice = runningVoiceIds.length > 0
     const speakingVoice = this.activeSpeech !== undefined || this.speechQueue.length > 0
     this.clearSpeechOutput()
     if (runningVoice || speakingVoice || queuedVoiceIds.length > 0) {
@@ -324,11 +326,20 @@ export class OracleVoiceCoordinator {
           this.submissions.delete(messageId)
         }
         if (runningVoice) {
-          await withTimeout(
-            this.manager.cancel(),
-            this.cancelTimeoutMs,
-            'Oracle cancellation timed out',
+          const latestRunning = this.manager.snapshot().messages.filter(
+            (candidate) =>
+              candidate.role === 'user' && candidate.state === 'running',
           )
+          if (
+            latestRunning.length === 1
+            && runningVoiceIds.includes(latestRunning[0].id)
+          ) {
+            await withTimeout(
+              this.manager.cancel(),
+              this.cancelTimeoutMs,
+              'Oracle cancellation timed out',
+            )
+          }
         }
       } catch (error) {
         const timedOut = error instanceof OperationTimeoutError
@@ -674,6 +685,20 @@ export class OracleVoiceCoordinator {
     this.activeSpeech = undefined
     this.segmenter = undefined
     this.segmenterMessageId = undefined
+  }
+
+  private recoverVoiceSubmissions(generation: number): void {
+    for (const message of this.manager.snapshot().messages) {
+      if (
+        message.role !== 'user'
+        || message.source !== 'voice'
+        || !['queued', 'running'].includes(message.state ?? '')
+      ) {
+        continue
+      }
+      this.submissions.set(message.id, { generation })
+      if (message.state === 'running') this.activeReplyTo = message.id
+    }
   }
 
   private isActiveSpeech(generation: number, segmentId: string): boolean {

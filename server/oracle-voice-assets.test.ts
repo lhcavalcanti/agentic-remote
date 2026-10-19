@@ -354,6 +354,12 @@ async function installerFixture(options: {
       'done',
       'printf "%s\\n" "$url" >>"$DOWNLOAD_LOG"',
       'printf "%s\\n" "$arguments" >>"$CURL_ARGUMENTS_LOG"',
+      'if [[ -n "${DOWNLOAD_STARTED_FILE:-}" ]]; then',
+      '  : >"$DOWNLOAD_STARTED_FILE"',
+      'fi',
+      'if [[ -n "${DOWNLOAD_RELEASE_FILE:-}" ]]; then',
+      '  while [[ ! -e "$DOWNLOAD_RELEASE_FILE" ]]; do sleep 0.01; done',
+      'fi',
       'if [[ "${REDIRECT_TO_HTTP:-}" == 1 ]]; then',
       '  [[ "$arguments" == *"--proto-redir =https"* ]] || {',
       '    if [[ -n "$destination" ]]; then printf insecure >"$destination"; else printf insecure; fi',
@@ -890,6 +896,39 @@ describe('agentic-remote voice-install', () => {
       .toBe(false)
     expect((await readdir(root)).some((entry) => entry.startsWith('.staging-')))
       .toBe(false)
+  })
+
+  it('refuses to activate a concurrent same-digest publication whose tree changed', async () => {
+    const fixture = await installerFixture()
+    const started = path.join(fixture.root, 'slow-download-started')
+    const release = path.join(fixture.root, 'slow-download-release')
+    const slowInstall = fixture.run('fixture', [], {
+      ...fixture.env,
+      DOWNLOAD_STARTED_FILE: started,
+      DOWNLOAD_RELEASE_FILE: release,
+    })
+    await expect.poll(async () =>
+      stat(started).then(() => true, () => false),
+    ).toBe(true)
+    const published = await fixture.runWithProfile(fixture.profile, 'publisher')
+    expect(published, published.stderr).toMatchObject({ code: 0 })
+    const model = path.join(
+      fixture.data,
+      'models',
+      'oracle-voice',
+      'profiles',
+      'fixture',
+      'fixture-1',
+      'stt-model',
+      'voice.onnx',
+    )
+    await writeFile(model, 'corrupt-data')
+    await writeFile(release, '')
+
+    const result = await slowInstall
+
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain('integrity check failed')
   })
 
   it('fails one concurrent conflicting digest without changing the winner or leaking staging', async () => {

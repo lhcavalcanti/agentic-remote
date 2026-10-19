@@ -863,6 +863,10 @@ voice_install() {
       die "voice profile version path is not a directory: $profile_id $version"
     [[ -f "$marker" && ! -L "$marker" && "$(cat "$marker")" == "$profile_digest" ]] ||
       die "voice profile version already exists with different contents: $profile_id $version"
+    [[ -f "$tree_marker" && ! -L "$tree_marker" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
+    [[ "$(voice_profile_tree_digest "$final_directory")" == "$(cat "$tree_marker")" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
     rm -rf -- "$staging"
     VOICE_INSTALL_CLEANUP_PATH=""
     activate_voice_profile "$voice_root" "$profile_id" "$version"

@@ -115,6 +115,7 @@ class FakeBackend implements OracleVoiceBackendConnector {
   readonly closed: string[] = []
   readonly closeStarted: Promise<void>
   readonly deliveryTimeline: string[] = []
+  readonly cancelControl = vi.fn(async (): Promise<void> => undefined)
   private output:
     | ((message: OracleVoiceBackendOutput) => Promise<void>)
     | undefined
@@ -142,6 +143,7 @@ class FakeBackend implements OracleVoiceBackendConnector {
         if (message.type === 'cancel') {
           this.calls.push(`tts.cancel:${message.generation}`)
           this.timeline.push(`tts.cancel:${message.generation}`)
+          await this.cancelControl()
         } else if (message.type === 'synthesize') {
           this.calls.push(`tts.synthesize:${message.text}`)
           this.timeline.push(`tts.synthesize:${message.text}`)
@@ -568,6 +570,76 @@ describe('OracleVoiceCoordinator', () => {
 
     expect(test.backend.calls).not.toContain('tts.cancel:2')
     expect(test.manager.cancel).not.toHaveBeenCalled()
+  })
+
+  it('does not cancel a typed turn that replaces voice while TTS cancellation waits', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-running', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(1)
+    await test.coordinator.receive(confirm(2, 'u2'))
+    await test.backend.emit(final(2, 'u2', 'Running voice request.'))
+    test.manager.setSnapshot(snapshot({
+      status: 'working',
+      messages: [managerMessage('voice-running', {
+        state: 'running',
+        source: 'voice',
+      })],
+    }))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-running', {
+        state: 'running',
+        source: 'voice',
+      }),
+    })
+    let releaseCancel!: () => void
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve
+    })
+    test.backend.cancelControl.mockImplementationOnce(() => cancelGate)
+
+    const interrupted = test.coordinator.receive(confirm(3, 'u3'))
+    await vi.waitFor(() => expect(test.backend.cancelControl).toHaveBeenCalledOnce())
+    test.manager.setSnapshot(snapshot({
+      status: 'working',
+      messages: [
+        managerMessage('voice-running', {
+          state: 'done',
+          source: 'voice',
+        }),
+        managerMessage('typed-running', { state: 'running' }),
+      ],
+    }))
+    releaseCancel()
+    await interrupted
+
+    expect(test.manager.cancel).not.toHaveBeenCalled()
+  })
+
+  it('recovers queued and running voice ownership after a browser reconnect', async () => {
+    const test = harness(snapshot({
+      status: 'working',
+      messages: [
+        managerMessage('old-voice-queued', {
+          state: 'queued',
+          source: 'voice',
+        }),
+        managerMessage('old-voice-running', {
+          state: 'running',
+          source: 'voice',
+        }),
+      ],
+    }))
+    await test.start(4)
+
+    await test.coordinator.receive(confirm(5, 'u5'))
+
+    expect(test.manager.removeQueued).toHaveBeenCalledWith('old-voice-queued')
+    expect(test.manager.cancel).toHaveBeenCalledOnce()
+    expect(test.backend.calls).toContain('tts.cancel:4')
   })
 
   it('closes instead of submitting when Oracle cancellation times out', async () => {

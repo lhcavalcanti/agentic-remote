@@ -39,6 +39,13 @@
   heartbeats, bound cancellation/exact-once histories and Piper output, verify
   installed profile trees, expose enforced Ask state, reject oversized node
   frames before decode, and abort remote startup when the browser disconnects.
+- Supervisor then reviewed `51f86fe5c2ee` and found three remaining races:
+  unscoped manager cancellation after an awaited TTS cancel, lost voice-work
+  ownership after browser reconnect, and missing tree rehash in the
+  concurrent-publisher path. The coordinator now revalidates the captured
+  running voice ID immediately before global cancellation, reconstructs only
+  queued/running `source: voice` ownership on start, and rehashes a
+  same-digest published tree under the publication lock before activation.
 
 ## Publication gates before Graphify
 
@@ -55,18 +62,19 @@ Each iteration: 3 files, 49 tests passed. Aggregate: 9 file executions,
 147 tests, no retry, unhandled rejection, leak, or warning.
 
 The complete changed-feature and version-policy selection passed 41 files and
-1,363 tests. The direct modified-file regression selection passed 12 files and
-406 tests.
+1,366 tests. The first direct modified-file regression selection passed 12
+files and 406 tests; the final Supervisor regressions passed 2 files and 76
+tests.
 
 ### Repository gates
 
 | Gate | Result |
 | --- | --- |
-| `pnpm check` | 152 files passed, 1 skipped; 4,731 tests passed, 1 skipped; 4,338 modules built |
+| `pnpm check` | 152 files passed, 1 skipped; 4,753 tests passed, 1 skipped; build passed |
 | `NODE_ENV=production pnpm check` | same counts; production build passed |
 | Deterministic Chromium | 1/1 passed |
 | Deterministic Firefox | 1/1 passed |
-| Real sherpa Chromium | 1/1 passed in 14.1 s after pacing the real microphone fixture |
+| Real sherpa Chromium | 1/1 passed in 15.0 s after pacing the real microphone fixture |
 | WebKit | host blocker: GTK4, Graphene, GStreamer/media, codec, WebKit support libraries absent |
 
 The real fixture is now delivered in 80 ms VAD frames with a 20 ms delay. This
@@ -78,10 +86,10 @@ Real local interruption evidence:
 
 - 2 manager sends, 1 cancellation, 0 old audio starts after interruption;
 - generation 1: 3 frames + `audio_end`, all cancelled before playback;
-- generation 2: 4 frames + `audio_end`, replacement playback started;
-- first partial 1,589.4 ms; final after speech 164.8 ms;
-- STT RTF 0.381; TTS first audio 176.6 ms; TTS RTF 0.087;
-- peak worker RSS 293.6 MiB; sustained worker CPU 116.6%.
+- generation 2: 3 frames + `audio_end`, replacement playback started;
+- first partial 1,644.2 ms; final after speech 283.1 ms;
+- STT RTF 0.399; TTS first audio 259.2 ms; TTS RTF 0.135;
+- peak worker RSS 296.2 MiB; sustained worker CPU 100.2%.
 
 ### Clean exact-head verification
 
@@ -139,8 +147,9 @@ all 23 assertions are true.
 - Vite emits the existing >500 kB chunk warning.
 - No unhandled rejection, uncaught exception, leak, or new deprecation appeared.
 - The established Supervisor mechanism is a PR comment containing
-  `/supervisor review`; the local service watches and reconciles it. Round 1
-  and its same-head follow-up requested changes at `9c9a99f65a6e`. A new
-  current-head request and verdict are authoritative on PR #425; GitHub
-  Copilot review will not be requested.
+  `/supervisor review`; the local service watches and reconciles it. The two
+  `9c9a99f65a6e` passes and the `51f86fe5c2ee` pass requested changes; all 16
+  reported findings now have regression coverage. The next exact-head request
+  and verdict are authoritative on PR #425; GitHub Copilot review will not be
+  requested.
 - No merge or deployment is authorized.

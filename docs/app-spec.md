@@ -509,7 +509,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   be explicit, idempotent, audited without raw values, and privacy-validated
   before any durable or temporary write; import MUST privacy-validate every
   free-text field, including provenance, tombstone, and audit metadata.
-  Project roots MUST be privacy-checked per path segment. Correction MUST preserve and
+  Project roots MUST get every pattern check on the whole path, with
+  entropy judged per path segment plus a whole-path token check. Correction MUST preserve and
   supersede history; forgetting MUST create a content-free tombstone that
   prevents retry or import from resurrecting the value. Oracle tools MUST
   require matching intent in the current user message and MUST NOT mutate a

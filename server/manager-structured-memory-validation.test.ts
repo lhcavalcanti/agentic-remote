@@ -250,6 +250,27 @@ describe('structured memory validation', () => {
     })).toThrow(expect.objectContaining({ reason: 'secret' }))
   })
 
+  it.each([
+    ['a credential URL', '/srv/https://deploy:S3cretPassw0rd@10.0.0.5'],
+    ['a base64 secret containing slashes', '/srv/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
+  ])('rejects a project root holding %s', (_label, projectRoot) => {
+    expect(() => validateStructuredMemoryRemember({
+      ...safeRemember(),
+      scope: { type: 'project', computerId: 'development', projectRoot },
+    })).toThrow(expect.objectContaining({ reason: 'secret' }))
+  })
+
+  it.each([
+    '/Users/lcavalcanti/Projects/agentic-remote2',
+    '/Users/LCavalcanti/Documents/GitHub/Project2024/app',
+    '/home/lcavalcanti/src/agentic-remote-worktrees/oracle-structured-memory',
+    '/mnt/c/Users/JohnDoe/AppData/Local/Programs/Python311/Lib',
+  ])('accepts the ordinary project root %s', (projectRoot) => {
+    const scope = { type: 'project' as const, computerId: 'development', projectRoot }
+    expect(validateStructuredMemoryRemember({ ...safeRemember(), scope }).scope)
+      .toEqual(scope)
+  })
+
   it('strictly validates persisted versions, uniqueness, and private content', () => {
     const record = {
       schemaVersion: 1 as const,

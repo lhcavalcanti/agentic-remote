@@ -286,7 +286,12 @@ const governmentIdPattern = /\b\d{3}-\d{2}-\d{4}\b/
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function stringsIn(value: unknown): string[] {
+/** A path field, held apart so its checks can tell path words from tokens. */
+class PathText {
+  constructor(readonly value: string) {}
+}
+
+function stringsIn(value: unknown, paths?: string[]): string[] {
   const strings: string[] = []
   const pending: Array<{ value: unknown; depth: number }> = [{
     value,
@@ -302,6 +307,11 @@ function stringsIn(value: unknown): string[] {
     }
     if (typeof current.value === 'string') {
       strings.push(current.value)
+      continue
+    }
+    if (current.value instanceof PathText) {
+      if (paths) paths.push(current.value.value)
+      else strings.push(current.value.value)
       continue
     }
     if (!current.value || typeof current.value !== 'object') continue
@@ -433,20 +443,44 @@ function validateRawSafety(input: unknown): void {
   }
 }
 
-function validatePrivateContent(input: unknown): void {
-  // A canonical UUID cannot carry free text, but its digits can resemble a card.
-  const strings = stringsIn(input).filter((value) => !uuidPattern.test(value))
-  if (strings.some((value) =>
-    tokenPrefixPattern.test(value) ||
+function hasPatternSecret(value: string): boolean {
+  return tokenPrefixPattern.test(value) ||
     bearerPattern.test(value) ||
     jwtPattern.test(value) ||
     privateKeyPattern.test(value) ||
     credentialAssignmentPattern.test(value) ||
-    credentialUrlPattern.test(value) ||
-    hasHighEntropySecret(value)
-  )) {
+    credentialUrlPattern.test(value)
+}
+
+/**
+ * A long path is mostly words, so its entropy is judged per segment. A token
+ * split by slashes, such as base64, still shows as a run that is largely
+ * uppercase while also holding lowercase letters and digits.
+ */
+function hasPathSecret(path: string): boolean {
+  if (path.split(/[/\\]+/).some(hasHighEntropySecret)) return true
+  const runs = path.match(/[A-Za-z0-9_+/=-]{40,}/g) ?? []
+  return runs.some((run) => {
+    const letters = run.replace(/[^A-Za-z]/g, '')
+    const upper = run.replace(/[^A-Z]/g, '').length
+    return /[a-z]/.test(run) &&
+      /\d/.test(run) &&
+      upper >= letters.length * 0.3 &&
+      shannonEntropy(run) >= 4
+  })
+}
+
+function validatePrivateContent(input: unknown): void {
+  const paths: string[] = []
+  // A canonical UUID cannot carry free text, but its digits can resemble a card.
+  const strings = stringsIn(input, paths).filter((value) => !uuidPattern.test(value))
+  if (
+    strings.some((value) => hasPatternSecret(value) || hasHighEntropySecret(value)) ||
+    paths.some((path) => hasPatternSecret(path) || hasPathSecret(path))
+  ) {
     throw new ManagerStructuredMemoryValidationError('secret')
   }
+  strings.push(...paths)
   if (strings.some((value) => sensitivePathPattern.test(value))) {
     throw new ManagerStructuredMemoryValidationError('sensitive_path')
   }
@@ -473,12 +507,12 @@ function selectedFields(
   )
 }
 
-/** Path fields are checked per segment: a long ordinary path is not a token. */
+/** Path fields get path-aware entropy checks: a long ordinary path is not a token. */
 function privateScope(scope: unknown): unknown {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return scope
   const projectRoot = (scope as { projectRoot?: unknown }).projectRoot
   return typeof projectRoot === 'string'
-    ? { ...scope, projectRoot: projectRoot.split(/[/\\]+/) }
+    ? { ...scope, projectRoot: new PathText(projectRoot) }
     : scope
 }
 

@@ -168,8 +168,10 @@ sent with, so later queued messages cannot widen them. Direct-user correction
 and forgetting may not touch global records or policy-authorized records in
 any scope. Import privacy validation covers
 every free-text field, including provenance, tombstone, and audit request
-metadata. Project roots are privacy-checked per path segment, so an ordinary
-long path is not mistaken for a token. Search is read-only and stores nothing:
+metadata. Project roots get every pattern check (credential URLs, tokens,
+personal data) on the whole path, while entropy is judged per segment plus a
+whole-path check for slash-split tokens, so an ordinary long path is not
+mistaken for a token. Search is read-only and stores nothing:
 its query is bounded to 1,000 characters instead of refused, and it is not
 privacy-rejected. Existing Markdown
 tools retain their current prompt-governed behavior.

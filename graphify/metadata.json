@@ -304,9 +304,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 182,
+  "communities": 177,
   "community_algorithm": "louvain-seed-42",
-  "edges": 13123,
+  "edges": 13132,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -338,7 +338,7 @@
     "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
     "config/agentic-remote-promotion.env.example": "3b93ccf7572bb980b70067dab871f06f58a8ca93d078132cc350c6342af6a2de",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "e7b227d1de7942ea3e5ed30628e0029da971848010cbec3ef66dc516381996be",
+    "docs/app-spec.md": "bc1b1fea30854adef3c103d1186a19658bc1d768f320e889a3dd4720d6914dae",
     "docs/architecture.md": "419a152af98ca8dc2eeac6333db161fb40fe4921f9cac64e1443ce1325af307a",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -355,7 +355,7 @@
     "docs/sdk-architecture-roadmap.md": "8481fad04163ed587861493e2431c83786dc1d553428f91933f1d995965f0b96",
     "docs/slash-command-feedback.md": "7c9b801169b4bd9961ee9987859d77e17784169bc373f274895cd62cffc49f13",
     "docs/superpowers/plans/2026-10-16-oracle-structured-memory.md": "bdcff99e75177c1927dec9de0dee10769bcef22a05b74d90c708fde6b11376e1",
-    "docs/superpowers/specs/2026-10-16-oracle-structured-memory-design.md": "0518ce47e6459747af3fe40d16b4c8fe9dabf1a9b4d25157385f46dc478f2224",
+    "docs/superpowers/specs/2026-10-16-oracle-structured-memory-design.md": "82ca91bf70cd9b102231b1cce43cc916836c9b61576eac3518598e1de647e4a4",
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
     "e2e/capture-workspace.ts": "9e4822a55a435bfdc8cc739dfa30fe550ac5a9d421a8cbd51bbb1a6187cc2dcc",
     "e2e/check-workspace-review-regressions.ts": "4af0c558cd0ef02f001e3d627739da338faa88590a96e38a79edd57c46a17f56",
@@ -448,8 +448,8 @@
     "server/manager-structured-memory-search.ts": "838dddf58ce3362b63327cb60b641ac58ea8afad59763d90c116b44a726ea46b",
     "server/manager-structured-memory-store.test.ts": "a72955b34c898224eb1795a82be0362025de16e3556b23d46922544e87556927",
     "server/manager-structured-memory-store.ts": "1d4af55988e69789ffe6022ade48deea8edd6c37af5bda2a223ee1d4ed253347",
-    "server/manager-structured-memory-validation.test.ts": "10a7429ea2f85de3387092a3320ece337f69ed4f447b4d12b0108eca1343df6c",
-    "server/manager-structured-memory-validation.ts": "eb5ab2f04923e6b0e936ba1f9f2704151fba101bb4c3786d54ffe559a8ffd3b9",
+    "server/manager-structured-memory-validation.test.ts": "64d7e697f2177a0dd0d8ae0c6a66aa58991d1f78c1e5dc336027fa636061b615",
+    "server/manager-structured-memory-validation.ts": "d5d55910d3762f0175ffed7808d605defffc2f1719a85d853828c22aba0497be",
     "server/manager-tools.test.ts": "cf340caf13e1bfc035a423c9fe3417017794cdda918b805604c15f83cf584f2c",
     "server/manager-tools.ts": "1cba6e385eda017b0eb1bd541da593724176e4b2983cd424b310cd2a0cc351f8",
     "server/multi-node.test.ts": "55e317a0ac3a53f4b0c9acd7e010a483c4a4e7a2ddbb11ba76ed08952329578e",
@@ -672,7 +672,7 @@
     "vite.config.ts": "e4aade0b7f6812702224266d5177129c044686a471b7a6fef7cbacb1b91deccb"
   },
   "mode": "local-ast-only",
-  "nodes": 4660,
+  "nodes": 4664,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -733,25 +733,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6373889d018d75f874eb908f3bea03efca5e720f1e377ad66dd0633d31adaf02",
-    "communities.json": "c42f6323dc139a61e1506fd65420a14cbbfaaebcaf88cde114194a130c1f4856",
-    "graph.html": "ac266e46249920a2d63ad10e8f2d562671e77e831457e97a0f0423ba5e270556",
-    "graph.json": "9cc46dff4c90efe1c8c575c13d0c88d25088b48f0a602e579ef4ca8431015bf5"
+    "GRAPH_REPORT.md": "af473ddecb43ce2439cefb9d14ae80af91d977b46e18b3901c452a16346cccab",
+    "communities.json": "c1284d6e75d7b8c22f87acd5ef41437717cff80a058461d25ec1d753ecdd63e8",
+    "graph.html": "1b4da82e709329035ddb15afba4c8b4870ace45ee5ade63f6b065ab9be075858",
+    "graph.json": "8f2caf845652c95a3e4d6f54391b9adff35e1421d27ffe88e28808334e1e1093"
   },
   "schema_version": 1,
-  "source_commit": "d9de24772a972ec2227077eab8d575bcd4d883b0",
-  "source_fingerprint": "a7b2f516f8b6f5af3fd41fd1dd1b0307184c94bc90c474c0af0acb9a4b38705e",
+  "source_commit": "d1125b830fcd8a783f080b54b5486359e27d61ca",
+  "source_fingerprint": "c8f7051a1616205fe524ffb9c50e2b12e15ecbbf87554e718baa39e5a5d5b27c",
   "working_tree_changes": [
-    "README.md",
     "docs/app-spec.md",
     "docs/superpowers/specs/2026-10-16-oracle-structured-memory-design.md",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-structured-memory-store.test.ts",
-    "server/manager-structured-memory-store.ts",
     "server/manager-structured-memory-validation.test.ts",
-    "server/manager-structured-memory-validation.ts",
-    "server/manager-tools.ts",
-    "shared/manager-structured-memory.ts"
+    "server/manager-structured-memory-validation.ts"
   ]
 }

@@ -6,7 +6,38 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#111210" />
+    <meta name="theme-color" content="#181d24" />
+    <script>
+      // Paints the saved appearance before the app loads, so a Light choice
+      // never flashes dark. Mirrors src/settings-profile.ts; tested there.
+      ;(function () {
+        var appearance
+        try {
+          var cache = JSON.parse(localStorage.getItem('agentic-remote:settings-profile') || 'null')
+          if (cache && cache.version === 1) {
+            var pending = cache.pending && cache.pending.appearance
+            appearance = pending
+              ? pending.value
+              : cache.values && cache.values.appearance !== undefined
+                ? cache.values.appearance
+                : cache.imports && cache.imports.appearance
+          } else {
+            appearance = JSON.parse(localStorage.getItem('agentic-remote:appearance') || 'null')
+          }
+        } catch (error) {
+          appearance = undefined
+        }
+        if (appearance !== 'light' && appearance !== 'graphite') {
+          appearance =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'graphite'
+        }
+        document.documentElement.dataset.appearance = appearance
+        var meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.content = appearance === 'light' ? '#f5f7f9' : '#181d24'
+      })()
+    </script>
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta

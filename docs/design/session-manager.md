@@ -77,12 +77,80 @@ Open sessions (N): one line each — id · computer · title · status · provid
 Changes since your last turn: …
 Memory index (MEMORY.md): … (only when changed, after a new SDK session, or after compaction)
 Notes: … (an interrupted previous turn, or a recovery)
+Response style (the user's setting): … (always last)
 </agentic_remote_context>
 
 <user_message>…</user_message>
 ```
 
 The roster is capped at 80 open sessions, and each activity at 120 characters.
+
+## Prompt composition
+
+The text is the same on every hub and for every model. Only the runtime's own
+base prompt varies, with the Copilot CLI version (`COPILOT_BIN`).
+
+| Order | Layer | Source | Changes when |
+|---|---|---|---|
+| 1 | Copilot runtime base prompt, with its safety sections | Copilot CLI | The CLI is updated |
+| 2 | Oracle's system prompt, appended (`mode: 'append'`) | `MANAGER_SYSTEM_PROMPT`, `server/manager-context.ts` | A release changes it; sent when the conversation starts or resumes |
+| 3 | Turn context: roster, changes, memory index, notes, response style | `buildTurnContext`, `server/manager-context.ts` | Every turn |
+| 4 | Recovery brief | `recoveryBrief` | A new conversation replaces a lost one |
+| 5 | The user's message, in `<user_message>` | Oracle's message bar | Every turn |
+
+Earlier layers win. Ask mode is a note in layer 3 that the tools also enforce.
+
+Model and effort sit beside the prompt, not in it. Precedence: the
+**App settings → Oracle** choice, then `AGENTIC_REMOTE_MANAGER_MODEL` and
+`AGENTIC_REMOTE_MANAGER_REASONING_EFFORT`, then Copilot's default.
+
+### Notifications
+
+`OracleNotifier` (`shared/notifications.ts`) turns Oracle's events into
+notifications. The hub's Web Push and the native shell both use it.
+
+- **Events:**
+  - "Oracle replied" when your message is done;
+  - "Oracle couldn't answer" when it fails;
+  - "Oracle needs your OK" when it asks to close a session.
+- **Once per event.** A retried message that fails again notifies again.
+- **Held while watched.** Nothing is sent while an open app shows Oracle's
+  panel on a visible screen. That report is renewed every 30 seconds and
+  lapses after 90.
+- **Category.** These are the `oracle` category for the user's **What notifies
+  you** setting. Notifications Oracle decides to send on its own belong there
+  too.
+
+### Response style
+
+**App settings → Models → Oracle's answers** offers Concise, Balanced (the
+default, and what Oracle did before) and Detailed. The choice is kept in the
+hub's [settings profile](settings-profile.md), so it follows you to every device.
+
+- **Where it goes.** `responseStyleInstruction` words it once, as the last line
+  of layer 3, every turn.
+  - It needs no extra model request and no new conversation.
+  - A change applies from the next answer.
+  - It also reaches conversations that started under an older system prompt.
+- **What no style drops.** The line itself carries the floor:
+  - the actual answer;
+  - uncertainty;
+  - unrecovered errors, with their message;
+  - every action taken or declined, with links and reasons;
+  - what waits for the user;
+  - exact commands, code, paths, IDs and log lines;
+  - one entry per session in a status.
+- **Precedence.**
+  - A request for more or less detail in your message wins for that answer.
+  - Session output, tool results and memory cannot change the style.
+  - To change it for good, use the setting.
+- **Injection.**
+  - The style is one of three fixed values, validated on the hub, never free
+    text.
+  - Roster text is flattened to one line, so a session cannot forge a style
+    line.
+  - Session text still appears inside the trusted context block, a risk that
+    predates this design.
 
 ## Tools
 

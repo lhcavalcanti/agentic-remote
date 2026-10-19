@@ -25,6 +25,11 @@ The hub stores remote node IDs, names, URLs, and pairing tokens in
 `~/.agentic-remote/computers.json` with mode `0600`. It decorates session IDs
 with their computer ID in the UI but does not copy repositories.
 
+UI preferences meant to follow the user (appearance, accent, status line,
+new-session defaults, sort, computer order) live in the hub's
+`settings-profile.json`, also mode `0600`. Nodes keep none. See
+[the settings profile](design/settings-profile.md).
+
 Closing a session routes deletion to its owning node. That node disconnects any
 active SDK session, deletes the session from provider storage, removes its local
 rendered-history cache, and emits a removal event.
@@ -77,6 +82,9 @@ socket without the parameter, is the whole session. A patch that does not apply
 to the browser's copy is dropped and the browser sends one
 `{type: 'session.resync', computerId, sessionId}`; the hub answers with the
 latest publication in full. Node→hub links still carry whole sessions.
+Every event socket also accepts `{type: 'presence', oracleVisible}` (see
+Notifications in the app spec); each message type is read only by its own
+handler.
 
 Each node advertises provider capabilities. Legacy nodes advertise Copilot only,
 so a hub cannot accidentally create a Claude session on a node that has not

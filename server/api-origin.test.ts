@@ -88,6 +88,24 @@ describe('canonical API origin enforcement', () => {
     }
   })
 
+  it.each(prefixes)('guards the settings profile through %s and serves it to the trusted origin', async (prefix) => {
+    for (const headers of untrusted) {
+      const read = await runtime.app.inject({ url: `${prefix}/settings`, headers })
+      expect(read.statusCode).toBe(403)
+      const write = await runtime.app.inject({
+        method: 'PATCH',
+        url: `${prefix}/settings`,
+        headers,
+        payload: { changes: { accent: { value: 'rose', baseRevision: 0 } } },
+      })
+      expect(write.statusCode).toBe(403)
+    }
+    expect(runtime.settingsProfileStore?.snapshot().revision).toBe(0)
+    const trustedRead = await runtime.app.inject({ url: `${prefix}/settings`, headers: trusted })
+    expect(trustedRead.statusCode).toBe(200)
+    expect(trustedRead.json().settings).toMatchObject({ revision: 0, values: {} })
+  })
+
   it('allows trusted encoded HTTP routes and event upgrades', async () => {
     const response = await runtime.app.inject({
       url: '/%61pi/computers', headers: trusted,

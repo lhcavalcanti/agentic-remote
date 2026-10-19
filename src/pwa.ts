@@ -142,13 +142,18 @@ export async function clearSessionPushNotifications(
   computerId: string,
   sessionId: string,
 ): Promise<void> {
+  await clearPushNotifications(sessionNotificationTags(computerId, sessionId))
+}
+
+/** Withdraws this device's notifications with these tags. */
+export async function clearPushNotifications(tags: readonly string[]): Promise<void> {
   if (!('serviceWorker' in navigator)) {
     return
   }
   const registration = await navigator.serviceWorker.ready
   registration.active?.postMessage({
     type: 'CLEAR_SESSION_NOTIFICATIONS',
-    tags: sessionNotificationTags(computerId, sessionId),
+    tags: [...tags],
   })
 }
 

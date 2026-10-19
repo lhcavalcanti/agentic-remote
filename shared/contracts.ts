@@ -1,4 +1,5 @@
 import type { ManagerEvent } from './manager.js'
+import type { SettingsProfileSnapshot } from './settings-profile.js'
 
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
@@ -447,6 +448,7 @@ export type HubEvent =
       type: 'session.order.updated'
       order: SessionOrderSnapshot
     }
+  | { type: 'settings.updated'; settings: SettingsProfileSnapshot }
   | {
       type: 'session.knowledge.updated'
       computerId: string

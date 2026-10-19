@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelBackgroundTask,
   dispatchQueuedPrompt,
+  fetchSettingsProfile,
+  importSettingsProfile,
+  saveSettingsChanges,
   getProviderRuntimeOptions,
   getSession,
   getRuntimeOptions,
@@ -641,5 +644,40 @@ describe('API error messages', () => {
         (error: Error) => error.message,
       ),
     ).resolves.toBe('Request failed (503)')
+  })
+})
+
+describe('settings profile requests', () => {
+  const settings = { profileId: 'p', revision: 2, values: { accent: 'teal' } }
+
+  it('reads, changes, and imports the hub profile without browser caching', async () => {
+    const fetchMock = vi.fn(async (path: string, _init?: RequestInit) =>
+      Response.json(path === '/api/settings' ? { settings, conflicts: ['accent'] } : { settings }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchSettingsProfile()).resolves.toEqual(settings)
+    await expect(
+      saveSettingsChanges({ accent: { value: 'rose', baseRevision: 1 } }, 'device-1'),
+    ).resolves.toEqual({ settings, conflicts: ['accent'] })
+    await expect(importSettingsProfile({ sessionSort: 'name' }, 'device-1')).resolves.toEqual(settings)
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.cache, init?.body]))
+      .toEqual([
+        ['/api/settings', undefined, 'no-store', undefined],
+        [
+          '/api/settings', 'PATCH', 'no-store',
+          JSON.stringify({ deviceId: 'device-1', changes: { accent: { value: 'rose', baseRevision: 1 } } }),
+        ],
+        [
+          '/api/settings/import', 'POST', 'no-store',
+          JSON.stringify({ deviceId: 'device-1', values: { sessionSort: 'name' } }),
+        ],
+      ])
+  })
+
+  it('reports a refused change with its status so it is not retried', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      Response.json({ error: 'Setting accent is not a known accent' }, { status: 400 })))
+    await expect(saveSettingsChanges({ accent: { value: 'x', baseRevision: 0 } }))
+      .rejects.toMatchObject({ statusCode: 400, message: 'Setting accent is not a known accent' })
   })
 })

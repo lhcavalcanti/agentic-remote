@@ -466,6 +466,19 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   models, with **Retry** if they cannot be read. A model that cannot start
   falls back to the default and Oracle says so until the choice changes or you
   **Start over**.
+- **App settings → Models → Oracle's answers** chooses Concise, Balanced
+  (default), or Detailed. It is part of the settings profile (§9.3) and
+  applies from Oracle's next answer, with no extra model request. Every style
+  MUST keep:
+  - the answer;
+  - any uncertainty;
+  - unrecovered errors;
+  - each action taken or declined, and why;
+  - anything waiting for the user;
+  - the exact commands, code, paths, IDs, or log lines needed to act.
+
+  A request for more or less detail in a message MUST win for that answer.
+  Session output, tool results, and memory MUST NOT change the style.
 - **App settings → Folders** chooses, per computer, where Oracle starts new
   sessions, beside where yours start; each folder is checked on its computer before it
   is kept on the hub. Oracle keeps them as its own settings and changes one
@@ -1298,33 +1311,105 @@ clear replacement IDs without losing, duplicating, or reordering content.
   indicators, and other non-semantic accent treatments.
 - Warning, error, computer-identity, and background-task colors MUST retain
   their semantic meaning.
-- The accent choice MUST be scoped to the current browser tab, persist across
-  reloads in that tab, and fall back to Agentic green for an unknown value.
+- The accent MUST follow the settings profile (§9.3) and fall back to Agentic
+  green for an unknown value.
+- Appearance MUST offer System, Graphite, and Light. System, and an
+  appearance never chosen, MUST follow the device's `prefers-color-scheme`
+  live; Graphite or Light MUST pin it on every device.
+- The saved appearance MUST paint before the app bundle loads, so a Light
+  choice never flashes dark.
 - The top-left brand mark and browser-tab icon MUST use the fixed Relay
-  artwork in Agentic green and remain independent of the tab-local accent.
+  artwork in Agentic green and remain independent of the chosen accent.
 
 ### 9.2 App settings layout
 
 - App settings MUST group settings by what they are about, in this order:
   - **Models**: new sessions' defaults per provider, then Oracle's model and
-    effort.
+    effort, then Oracle's response style.
   - **Folders**: one card per computer with the folder new sessions start in,
     then Oracle's (blank means the same as new sessions).
   - **Notifications**.
   - **Interface**: Appearance, Status line, Keyboard shortcuts.
-  - **App**: Hub connection (native app only), App updates.
+  - **App**: Settings sync, Hub connection (native app only), App updates.
+- Each section whose scope is not obvious MUST say whether it is **Synced** or
+  kept on **This device**.
 - A jump bar MUST reach each group and stay in view while the settings scroll.
 - Opened from Oracle's model, App settings MUST open at Oracle's model;
   opened any other way, at the top.
 
+### 9.3 Settings profile
+
+The hub keeps one settings profile, shared by every device that opens it. The
+hub has no per-user identity, so different hubs keep separate profiles and
+people sharing a hub share its profile. See
+[the design](design/settings-profile.md).
+
+| Scope | Settings |
+|---|---|
+| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
+| **This device** | Keyboard shortcuts, panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
+| **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
+
+- A change MUST apply at once, persist on the hub before it is reported, and
+  reach other open devices live.
+- The hub MUST keep a newer value another device committed after the change
+  was made, and the device MUST say so. It MUST NOT silently overwrite either
+  value.
+- While the hub is unreachable, edits MUST stay on the device and sync on
+  reconnect.
+- The hub MUST validate every key and value against an allowlist, bound the
+  profile to 32 KB, and guard it with the `/api/` Host and Origin policy.
+- A device without a copy MUST offer its earlier browser-local settings once;
+  the hub MUST keep only settings no device has chosen yet.
+
 ## 10. Notifications
 
 - Notification settings MUST be discoverable under App settings.
+- **What notifies you** is synced (§9.3) and the hub applies it to every
+  notification it sends, on every device. Unset MUST behave as All activity.
+
+  | Scope | Sends |
+  |---|---|
+  | All activity | Session, alert, and Oracle notifications |
+  | Oracle only | Oracle notifications only |
+  | Disabled | Nothing; devices stay subscribed |
+
+  - **Session:** a question, a permission request, or a finish, in any
+    session, including those Oracle started.
+  - **Alert:** the hub's own health, such as a Copilot CLI that failed its
+    startup check.
+  - **Oracle:**
+    - "Oracle replied" when your message is done, with a plain-text brief;
+    - "Oracle couldn't answer" when it fails;
+    - "Oracle needs your OK" (high urgency) when it asks to close a session.
+
+    Notifications Oracle decides to send on its own MUST also use this
+    category.
+- A test notification you ask for MUST be sent whatever the scope.
+- **This device** (its browser permission and push subscription) stays per
+  device. A blocked permission MUST NOT block choosing the scope.
+- Each Oracle event MUST notify at most once.
+- While any open app shows Oracle's panel on a visible screen, the hub MUST
+  NOT push Oracle notifications. The app MUST report this over its event
+  socket and renew it every 30 seconds. The hub MUST forget a report after 90
+  seconds, so a frozen phone cannot hold notifications back.
+- In a browser or installed PWA, Oracle notifications MUST open Oracle
+  (`/?oracle=open`), and opening Oracle MUST clear them.
+- One event MUST belong to one category, so a single event never sends both a
+  session and an Oracle notification.
+- The native shell has no Web Push. It MUST apply the same scope and Oracle
+  rules to the notifications it raises itself, hub alerts included.
+  - Its notifications have no click target yet, so tapping one brings the app
+    forward.
+  - Only iOS and Android let it withdraw them; desktop platforms offer no API.
+  - Both limits already apply to its session notifications.
+- There are no quiet hours. Browser permission behaviour is unchanged.
 - Per-session mute MUST persist on the hub and synchronize across devices.
 - Question and permission notifications MUST use high urgency.
 - Completion notifications MUST use low urgency. RFC 8030 also defines
   `very-low`, but FCM rejects it, so `low` is the lowest portable value.
-- Every notification MUST include computer, session name, and a concise brief.
+- Every session notification MUST include computer, session name, and a
+  concise brief. Oracle notifications name Oracle and give a brief.
 - Completion notifications MUST say that no action is needed.
 - An alert that asks to be notified, such as a Copilot CLI version that failed
   its startup check, MUST use high urgency and replace the previous alert
@@ -1405,6 +1490,7 @@ Persistent state MAY include:
 - Tool activity reconstructed from Copilot events
 - Provider identity and provider-specific runtime metadata
 - Knowledge bookmark metadata
+- The settings profile (§9.3)
 - Paired node registry and encrypted/external secret references
 
 Persistent state MUST NOT include:
@@ -1492,6 +1578,7 @@ Every material release SHOULD preserve:
 - Side questions docked above the message bar, kept per session, with follow-ups
 - Dynamic Island and home-indicator safe areas
 - Bundle-only PWA update detection
+- Synced settings matching across devices on the same hub, with no theme flash
 
 ## 17. Authoritative implementation areas
 
@@ -1503,6 +1590,7 @@ Every material release SHOULD preserve:
 | Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Oracle (session manager agent) | `src/ManagerAssistant.tsx`, `src/OracleSettings.tsx`, `src/use-oracle-settings.ts`, `server/manager-*.ts`, `shared/manager.ts` |
 | Browser API client | `src/api.ts` |
+| Settings profile | `shared/settings-profile.ts`, `src/settings-profile.ts`, `server/settings-profile-*.ts`, `index.html` (appearance bootstrap) |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |
 | Provider aggregation and Claude Agent lifecycle | `server/provider-session-service.ts`, `server/claude-agent-service.ts` |

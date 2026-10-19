@@ -247,6 +247,36 @@ describe('ManagerAgent', () => {
     expect(agent!.hiddenSessionIds()).toEqual(['sdk-1'])
   })
 
+  it("answers in the user's response style, read afresh each turn without another request", async () => {
+    let style: 'concise' | 'balanced' | 'detailed' | undefined
+    await start({ responseStyle: () => style })
+    await agent!.send('one')
+    await settled()
+    style = 'concise'
+    await agent!.send('two')
+    await settled()
+    style = 'detailed'
+    await agent!.send('three', undefined, { answerOnly: true })
+    await settled()
+
+    const lines = sdk.prompts.map((prompt) => prompt.match(/Response style \(the user's setting\): (\w+)\./)?.[1])
+    expect(lines).toEqual(['Balanced', 'Concise', 'Detailed'])
+    // The style rides in the turn it applies to: one send per message, one
+    // conversation, and a system message that does not change with it.
+    expect(sdk.clients[0].createSession).toHaveBeenCalledTimes(1)
+    expect(sdk.clients[0].createSession.mock.calls[0][0].systemMessage.content).not.toContain('Response style (the user')
+    expect(sdk.prompts[2]).toContain('Ask mode')
+    expect(sdk.prompts[2].indexOf('Response style')).toBeLessThan(sdk.prompts[2].indexOf('<user_message>'))
+  })
+
+  it('keeps answering when the response style cannot be read', async () => {
+    await start({ responseStyle: () => { throw new Error('profile unavailable') } })
+    await agent!.send('still there?')
+    await settled()
+    expect(sdk.prompts[0]).toContain("Response style (the user's setting): Balanced.")
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
   it('refuses only blank and oversized messages', async () => {
     await start()
     await expect(agent!.send('   ')).rejects.toMatchObject({ statusCode: 400 })

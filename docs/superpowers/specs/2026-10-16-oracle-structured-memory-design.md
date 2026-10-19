@@ -36,8 +36,11 @@ hard-capped.
 | Mode | Store | Retrieval | Prompt injection | Mutations |
 |---|---|---|---|---|
 | `off` | Not initialized | None | None | Unavailable |
-| `shadow` | Initialized | Computed for safe metrics | Never | Explicit only |
+| `shadow` | Initialized | Computed for safe metrics | Never | Explicit API only |
 | `on` | Initialized | Computed | Bounded context | Explicit only |
+
+In `shadow`, Oracle's system prompt and tool catalog are identical to `off`;
+only `on` adds the structured-memory system instruction and tools.
 
 The default is `off`. Invalid values fail startup through the existing strict
 runtime-configuration path. In `off`, no structured-memory file is created and
@@ -120,7 +123,13 @@ Initialization distinguishes:
 - corrupt, malformed, or unsupported-version primary: mark structured memory
   unavailable and preserve every artifact for operator recovery;
 - inconsistent primary and recovery metadata: fail closed for structured
-  memory.
+  memory;
+- a primary or backup over the store size limit: refused before reading;
+- a primary or backup other users can access: tightened to 0600 when owned by
+  the hub user, otherwise refused.
+
+If a publication fails and restoring the previous primary also fails, the
+store refuses all reads and writes until restart revalidates the files.
 
 The store never renames corrupt authoritative data aside and starts empty.
 Structured-memory unavailability is reported in status and safe logs without
@@ -153,7 +162,12 @@ memory values or rejected input.
 
 REST mutations inherit the hub's Host/Origin protection. Oracle tool mutations
 also require conservative explicit memory intent in the current user message,
-recorded with the manager message ID. Search is read-only. Existing Markdown
+recorded with the manager message ID. The turn's scopes and authorizing
+message are captured when the turn starts, from the defaults that message was
+sent with, so later queued messages cannot widen them. Direct-user correction
+and forgetting may not touch global records. Import privacy validation covers
+every free-text field, including provenance, tombstone, and audit request
+metadata. Search is read-only. Existing Markdown
 tools retain their current prompt-governed behavior.
 
 ## Retrieval and prompt containment

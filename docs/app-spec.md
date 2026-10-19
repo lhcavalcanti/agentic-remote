@@ -494,28 +494,34 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   `off`, `shadow`, and `on`, default to `off`, and fail startup for any other
   value. `off` MUST preserve the pre-feature prompt path and create no
   structured-memory file. `shadow` MUST run bounded local retrieval for safe
-  count/timing/status metrics but inject no text. `on` MUST inject at most
+  count/timing/status metrics but inject no text and MUST give the model the
+  same system prompt and tools as `off`; only `on` exposes memory tools. `on` MUST inject at most
   eight active records and 6,000 characters, escaped and delimited as
   untrusted evidence that cannot override policy or the current request.
   Retrieval MUST make no model or network request.
 - Structured records MUST use exact global, user, computer, project, or
   session scope and carry schema version, stable ID, kind, provenance,
   authority, confidence, validity, timestamps, and supersession. Direct-user
-  writes MUST NOT use global scope. Remember, correction, and forgetting MUST
+  writes MUST NOT use, correct, or forget global records. Remember, correction, and forgetting MUST
   be explicit, idempotent, audited without raw values, and privacy-validated
-  before any durable or temporary write. Correction MUST preserve and
+  before any durable or temporary write; import MUST privacy-validate every
+  free-text field, including provenance, tombstone, and audit metadata. Correction MUST preserve and
   supersede history; forgetting MUST create a content-free tombstone that
   prevents retry or import from resurrecting the value. Oracle tools MUST
   require matching intent in the current user message and MUST NOT mutate a
-  record outside that turn's exact scopes. Session output MUST NOT be promoted
+  record outside that turn's exact scopes, fixed from the defaults the
+  message was sent with when its turn starts. Session output MUST NOT be promoted
   automatically.
 - Structured-memory persistence MUST serialize concurrent writes and use
   private, synced, atomic files with a validated prior snapshot. Corrupt,
   inconsistent, symlinked, oversized, or unsupported authoritative state MUST
   remain untouched and disable only structured memory with visible safe
-  status. The rest of Oracle MUST remain available. Export MUST be
-  deterministic; import MUST require an empty store and validate the complete
-  state. Turning the feature off MUST leave state intact for rollback.
+  status. Size MUST be checked before reading. A state file other users can
+  access MUST be tightened to 0600 when the hub user owns it and refused
+  otherwise. A failed publication whose rollback also fails MUST make
+  structured memory unavailable until restart. The rest of Oracle MUST remain available. Export MUST be
+  deterministic; import MUST require an empty store, validate the complete
+  state, and accept any export within the store size limit. Turning the feature off MUST leave state intact for rollback.
 - Sending MUST NOT be refused because Oracle is busy, recovering, or offline.
   Messages wait in a durable first-in, first-out queue and are answered one at
   a time. Waiting messages are shown above the message bar, numbered in the

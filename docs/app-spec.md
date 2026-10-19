@@ -689,6 +689,15 @@ Questions and permissions are the highest-priority UI state.
   interrupt hint followed by the reasoning/model hint MUST remain a live
   composer for queued messages, wherever the model or its context is cut.
   Anything else after the interrupt hint MUST refuse input.
+- Copilot 1.0.98 ends the footer row with its own model hint: the model, then
+  the reasoning effort and the context in use (`GPT-5 mini · Low · (19%)`,
+  `GPT-5.6 Sol · High · 922K context (0%)`), either later cell left out and
+  only the last cut short. It MUST be recognised after the hint cells and
+  after the interrupt hint, and after the queue key (`· ctrl+q enqueue`) that
+  follows the interrupt hint while the prompt holds text. Just after a prompt
+  is sent, the row offers `esc edit prompt` instead of the interrupt; that is
+  work, and the composer MUST stay live for messages sent during it. Copilot
+  queues a message sent then for after the current turn.
 - A footer that a newer Copilot draws differently MUST NOT stop tmux sessions
   from starting or taking input. Copilot shows the terminal cursor on its
   prompt row only while the prompt has the keyboard, and hides it while a form

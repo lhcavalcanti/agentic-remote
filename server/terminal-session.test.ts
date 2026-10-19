@@ -930,6 +930,95 @@ process.stdin.on('data', () => undefined)
 
   // Copilot 1.0.96 drops hint cells to keep the model on the same row, and
   // cuts the last hint and the model mid-word at the narrowest widths.
+  // Copilot 1.0.98 ends the footer row with the model, its reasoning effort and
+  // how much context is used, and cuts the last cell short when narrow.
+  it.each([
+    ' ← open sidebar · Interactive · Allow All · / commands GPT-5 mini · Low · (19%)',
+    ' Interactive · Allow All · / commands    GPT-5.6 Sol · High · 922K context (0%)',
+    ' Interactive · Manual Approval · / commands            GPT-5 mini · Low · (17%)',
+    ' Autopilot · Allow All · / commands      GPT-5.6 Sol Fast (Internal only) · Ext',
+    ' Autopilot · Allow All · / commands      Claude Opus 5.5 · Extra High · 1M cont',
+  ])('recognizes the one-row idle footer of Copilot 1.0.98: %s', async (footer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, undefined, undefined, footer, '', 'flat',
+        undefined, undefined, undefined, undefined, 'bare',
+      )
+      expect(await controller.inputReady(sessionId)).toBe(true)
+      expect(await controller.send(sessionId, 'Idle 1.0.98 footer proof', false)).toBe(true)
+      const received = await eventually(
+        () => readFile(output, 'utf8'),
+        (value) => Boolean(value && JSON.parse(value).submits.length),
+      )
+      expect(JSON.parse(received)).toEqual({
+        pastes: ['Idle 1.0.98 footer proof'], submits: ['enter'],
+      })
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  }, 15_000)
+
+  // While a turn runs it says so on the same row, the cursor away from the
+  // prompt, which still takes a message.
+  it.each([
+    ' ● Working esc edit prompt                             GPT-5 mini · Low · (19%)',
+    ' ○ Working · 138 B esc interrupt                       GPT-5 mini · Low · (19%)',
+    ' ● Working esc interrupt · ctrl+q enqueue              GPT-5 mini · Low · (20%)',
+    ' ◎ Writing evidence and phased plan -  esc interrupt GPT-6.1 Sol · High · (51%)',
+    ' ◎ Working - autopilot · 4 esc interrupt Claude Opus 5.5 · Extra High · 1M cont',
+    ' ◉ Building conversation U esc interrupt GPT-5.6 Sol Fast (Internal only) · Hig',
+  ])('takes a message while Copilot 1.0.98 works: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, footer, '', 'flat',
+      undefined, undefined, undefined, undefined, 'bare',
+    )
+    expect(isTerminalAgentWorking((await controller.capture(sessionId))!)).toBe(true)
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    expect(await controller.send(
+      sessionId, 'Steer during 1.0.98 work', false, { allowDuringAgentExecution: true },
+    )).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Steer during 1.0.98 work'], submits: ['enter'],
+    })
+  }, 15_000)
+
+  it.each([
+    ' ● Working · 230 B esc interrupt                       Delete the folder? · y/n',
+    ' ● Working esc edit prompt · enter to approve          GPT-5 mini · Low · (19%)',
+    ' Interactive · Allow All · / commands   GPT-5 mini · Low · (19%) · enter to approve',
+    ' ● Delete the folder? esc edit prompt                  GPT-5 mini · Low · (19%)',
+    ' Interactive · Allow All · / commands   GPT- · Low · (19%)',
+    ' ○ Working · 138 B esc interrupt        GPT- · Low · (19%)',
+    ' Interactive · Allow All · / commands   GPT-5 mini · (19%) · (20%)',
+  ])('still refuses a row that only resembles the 1.0.98 footer: %s', async (footer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const rule = '─'.repeat(60)
+      const resembling = [
+        ' /work/project                                      Session: 0 AIC used',
+        rule, '❯', rule, footer,
+      ].join('\n')
+      // One message under a footer the grammar knows, then the look-alike.
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, resembling, undefined, '', '', 'flat',
+      )
+      expect(await controller.send(sessionId, 'Known footer first', false)).toBe(true)
+      await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes(footer.trim())))
+      await expect(controller.send(
+        sessionId, 'Must not be typed', false, { allowDuringAgentExecution: true },
+      )).rejects.toMatchObject({ statusCode: 409 })
+      expect(JSON.parse(await readFile(output, 'utf8')).pastes).toEqual(['Known footer first'])
+    } finally {
+      warn.mockRestore()
+    }
+  }, 15_000)
+
   it.each([
     ' Interactive · Allow All · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
     ' Plan · Allow All · / commands              ctrl+t show reasoning · GPT-6.1 Sol',

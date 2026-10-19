@@ -2986,6 +2986,45 @@ function isTerminalHintRow(line: string): boolean {
 }
 const FOOTER_MODEL = /^(?:Auto$|Claude\b|Copilot\b|Gemini\b|GPT(?:\b|-)|Grok\b|MAI\b|o\d\b|Raptor\b)/iu
 const FOOTER_MODEL_FAMILIES = ['Auto', 'Claude', 'Copilot', 'Gemini', 'GPT', 'Grok', 'MAI', 'o', 'Raptor']
+const FOOTER_EFFORTS = ['Low', 'Medium', 'High', 'Extra High', 'Max']
+const FOOTER_CONTEXT =
+  /^(?:\d+(?:\.\d+)?[KMG]? context(?: \(\d+(?:\.\d+)?%\))?|\(\d+(?:\.\d+)?%\))$/u
+const FOOTER_CONTEXT_CUT =
+  /^(?:\(\d*(?:\.\d*)?%?|\d+(?:\.\d+)?[KMG]?(?: (?:c(?:o(?:n(?:t(?:e(?:xt?)?)?)?)?)?|context \(\d*(?:\.\d*)?%?))?)$/u
+
+/**
+ * Copilot 1.0.98's model hint: the model, then its reasoning effort and the
+ * context in use, in that order, each at most once, either later one left out,
+ * and only the last cell cut short when the row is narrow.
+ */
+function isFooterModelHint(text: string): boolean {
+  const cells = text.trim().replace(/\s+/gu, ' ').split(' · ')
+  if (cells.length > 3 || !isFooterModelCell(cells[0], cells.length === 1)) return false
+  let slot = 0
+  for (const [index, cell] of cells.entries()) {
+    if (index === 0) continue
+    const cut = index === cells.length - 1
+    if (cut && !cell) return true
+    if (slot < 1 && FOOTER_EFFORTS.some((effort) => effort === cell || (cut && effort.startsWith(cell)))) {
+      slot = 1
+    } else if (slot < 2 && (FOOTER_CONTEXT.test(cell) || (cut && FOOTER_CONTEXT_CUT.test(cell)))) {
+      slot = 2
+    } else {
+      return false
+    }
+  }
+  return true
+}
+
+// A model with cells after it is named in full; only a last one is cut short.
+function isFooterModelCell(cell: string, cut: boolean): boolean {
+  if (cell.length > 60 || cell.includes('?')) return false
+  const complete = FOOTER_MODEL.test(cell) && !/[-\s]$/u.test(cell) &&
+    !FOOTER_MODEL_FAMILIES.some((family) =>
+      family !== 'Auto' && family.toLowerCase() === cell.toLowerCase())
+  return complete || (cut && (FOOTER_MODEL.test(cell) || (cell.length < 7 &&
+    FOOTER_MODEL_FAMILIES.some((family) => family.toLowerCase().startsWith(cell.toLowerCase())))))
+}
 
 // The reasoning hint, cut short, or followed by a model that may itself be cut.
 function isFooterReasoningModel(text: string): boolean {
@@ -3012,13 +3051,25 @@ function isTerminalCompactHintFooter(line: string): boolean {
   const trimmed = line.trim().replace(/\s+/gu, ' ')
   if (!trimmed || trimmed.length > 240) return false
   const modelAt = trimmed.search(/(?:^|\s)ctrl\+t(?:\s|$)/u)
-  const hints = modelAt < 0 ? trimmed : trimmed.slice(0, modelAt).trim()
-  const model = modelAt < 0 ? '' : trimmed.slice(modelAt).trim()
-  if (model && !isFooterReasoningModel(model)) return false
+  if (modelAt >= 0) {
+    return isFooterReasoningModel(trimmed.slice(modelAt).trim()) &&
+      isFooterHintSequence(trimmed.slice(0, modelAt).trim(), true)
+  }
+  if (isFooterHintSequence(trimmed, false)) return true
+  // Copilot 1.0.98 sets its model hint straight after the hints.
+  for (let at = trimmed.indexOf(' '); at > 0; at = trimmed.indexOf(' ', at + 1)) {
+    if (isFooterModelHint(trimmed.slice(at + 1)) && isFooterHintSequence(trimmed.slice(0, at), true)) {
+      return true
+    }
+  }
+  return false
+}
+
+function isFooterHintSequence(hints: string, withModel: boolean): boolean {
   const cells = hints ? hints.split('·').map((cell) => cell.trim()).filter(Boolean) : []
   // Hints alone, without the model beside them, need more than one cell to be
   // told apart from a stray word.
-  if (!cells.length || (!model && cells.length < 2)) return false
+  if (!cells.length || (!withModel && cells.length < 2)) return false
   let slot = -1
   for (const [index, cell] of cells.entries()) {
     const last = index === cells.length - 1
@@ -3189,10 +3240,18 @@ function isKnownTerminalFooterRow(
   // While a turn runs, Copilot 1.0.96 puts its status and the interrupt key
   // ahead of the reasoning/model hint on one row, and cuts the model or its
   // context to fit. Anything after the interrupt key must be that hint.
-  const working = /^(.*\besc\s+interrupt)\b(.*)$/iu.exec(line)
+  // Copilot 1.0.98 offers to edit the prompt before the turn gets going, adds
+  // its queue key while the prompt holds text, and draws its own model hint.
+  const working = /^(.*?)\besc\s+(?:interrupt|edit\s+prompt)\b(.*)$/iu.exec(line)
   if (working) {
+    // The status ahead of the key says what the agent is doing. A question or
+    // a choice there is something waiting for an answer, not work going on.
+    if (/\?|\[[^\]]*\/[^\]]*\]|\([^)]*\/[^)]*\)|\b(?:y|yes)\s*\/\s*(?:n|no)\b/iu.test(working[1])) {
+      return false
+    }
     const rest = working[2].trim().replace(/\s+/gu, ' ')
-    return !rest || isFooterReasoningModel(rest)
+      .replace(/^·\s*ctrl\+q\s+enqueue(?:\s|$)/u, '').trim()
+    return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)
   }
   // Hint rows are judged by the hint grammar alone rather than by the looser
   // patterns below, so reordered or unknown cells refuse input.
@@ -3622,9 +3681,10 @@ export function isTerminalOverlay(pane: string): boolean {
 }
 
 // The CLI only offers to interrupt while the agent is working, so this marks
-// the frames whose new lines belong to a turn rather than to a command.
+// the frames whose new lines belong to a turn rather than to a command. Just
+// after a prompt is sent, Copilot 1.0.98 offers to edit it instead.
 export function isTerminalAgentWorking(pane: string): boolean {
-  return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
+  return /esc\s+(?:interrupt|edit\s+prompt)/i.test(terminalControlLines(pane).slice(-6).join(' '))
 }
 
 /**

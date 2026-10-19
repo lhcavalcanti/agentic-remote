@@ -6,6 +6,7 @@ import {
   MANAGER_STRUCTURED_MEMORY_MAX_AUDIT_ENTRIES,
   MANAGER_STRUCTURED_MEMORY_MAX_CONTENT_CHARS,
   MANAGER_STRUCTURED_MEMORY_MAX_KEY_CHARS,
+  MANAGER_STRUCTURED_MEMORY_MAX_QUERY_CHARS,
   MANAGER_STRUCTURED_MEMORY_MAX_RECORDS,
   MANAGER_STRUCTURED_MEMORY_MAX_REQUEST_ID_CHARS,
   MANAGER_STRUCTURED_MEMORY_MAX_RESULTS,
@@ -140,8 +141,7 @@ const forgetSchema = z.object({
   sourceManagerMessageId: identifierSchema.optional(),
 }).strict()
 const searchSchema = z.object({
-  query: z.string().trim().max(1_000)
-    .transform((value) => value.normalize('NFKC')),
+  query: z.string().max(MANAGER_STRUCTURED_MEMORY_MAX_QUERY_CHARS),
   scopes: z.array(scopeSchema).min(1).max(16),
   limit: z.number().int().min(1).max(MANAGER_STRUCTURED_MEMORY_MAX_RESULTS)
     .optional(),
@@ -380,6 +380,43 @@ function looksLikePaymentCard(value: string): boolean {
   })
 }
 
+function withoutMalformedCharacters(value: string): string {
+  let result = ''
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+      result += ' '
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        result += value.slice(index, index + 2)
+        index += 1
+      } else {
+        result += ' '
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      result += ' '
+    } else {
+      result += value[index]
+    }
+  }
+  return result
+}
+
+/** A search stores nothing, so an ordinary message is bounded rather than refused. */
+function boundedSearchQuery(value: string): string {
+  const limit = MANAGER_STRUCTURED_MEMORY_MAX_QUERY_CHARS
+  let query = withoutMalformedCharacters(value.slice(0, limit * 4))
+    .normalize('NFKC')
+    .trim()
+  if (query.length > limit) {
+    query = query.slice(0, limit)
+    if (/[\ud800-\udbff]$/.test(query)) query = query.slice(0, -1)
+    query = query.trimEnd()
+  }
+  return query
+}
+
 function validateRawSafety(input: unknown): void {
   const strings = stringsIn(input)
   if (strings.some(hasMalformedUnicode)) {
@@ -436,6 +473,24 @@ function selectedFields(
   )
 }
 
+/** Path fields are checked per segment: a long ordinary path is not a token. */
+function privateScope(scope: unknown): unknown {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return scope
+  const projectRoot = (scope as { projectRoot?: unknown }).projectRoot
+  return typeof projectRoot === 'string'
+    ? { ...scope, projectRoot: projectRoot.split(/[/\\]+/) }
+    : scope
+}
+
+function privateFields(
+  input: unknown,
+  fields: string[],
+): Record<string, unknown> {
+  const selected = selectedFields(input, fields)
+  if ('scope' in selected) selected.scope = privateScope(selected.scope)
+  return selected
+}
+
 const mutationPrivateFields = [
   'requestId',
   'canonicalKey',
@@ -458,14 +513,14 @@ function persistedPrivateContent(input: unknown): unknown {
     Array.isArray(entries) ? entries.map(select) : entries
   return {
     records: each(state.records, (record) => ({
-      ...selectedFields(record, ['canonicalKey', 'content', 'scope']),
+      ...privateFields(record, ['canonicalKey', 'content', 'scope']),
       provenance: selectedFields(
         (record as { provenance?: unknown } | null)?.provenance,
         ['requestId', 'sourceSession', 'sourceManagerMessageId'],
       ),
     })),
     tombstones: each(state.tombstones, (tombstone) =>
-      selectedFields(tombstone, [
+      privateFields(tombstone, [
         'canonicalKey',
         'scope',
         'requestId',
@@ -500,7 +555,7 @@ export function validateStructuredMemoryRemember(
   return validateWithSchema(
     input,
     rememberSchema,
-    selectedFields(input, mutationPrivateFields),
+    privateFields(input, mutationPrivateFields),
   )
 }
 
@@ -510,7 +565,7 @@ export function validateStructuredMemoryCorrect(
   return validateWithSchema(
     input,
     correctSchema,
-    selectedFields(input, mutationPrivateFields),
+    privateFields(input, mutationPrivateFields),
   )
 }
 
@@ -527,10 +582,13 @@ export function validateStructuredMemoryForget(
 export function validateStructuredMemorySearch(
   input: unknown,
 ): ManagerStructuredMemorySearchInput {
+  const query = input && typeof input === 'object' && !Array.isArray(input)
+    ? (input as { query?: unknown }).query
+    : undefined
   return validateWithSchema(
-    input,
+    typeof query === 'string' ? { ...input as object, query: boundedSearchQuery(query) } : input,
     searchSchema,
-    selectedFields(input, ['query', 'scopes']),
+    {},
   )
 }
 

@@ -192,6 +192,64 @@ describe('structured memory validation', () => {
     })).toThrow(expect.objectContaining({ reason: 'oversized', statusCode: 413 }))
   })
 
+  it('bounds a long search query instead of rejecting it', () => {
+    const validated = validateStructuredMemorySearch({
+      query: `  Deployment policy ${'word '.repeat(1_000)}`,
+      scopes: [{ type: 'user' }],
+    })
+    expect(validated.query.length).toBeLessThanOrEqual(1_000)
+    expect(validated.query.startsWith('Deployment policy word')).toBe(true)
+    expect(validateStructuredMemorySearch({
+      query: `${'a'.repeat(999)}\u{1F600}`,
+      scopes: [{ type: 'user' }],
+    }).query).toBe('a'.repeat(999))
+  })
+
+  it.each([
+    ['an email address', 'Ask alice@example.com about the deployment policy'],
+    ['a dotenv path', 'Why does .env.production break the deployment policy?'],
+    ['an SSH path', 'Check ~/.ssh/config for the deployment policy'],
+    ['a token', `Rotate ghp_${'A'.repeat(36)} per the deployment policy`],
+    ['a control character', 'deployment\u0007 policy'],
+  ])('searches a query containing %s without storing or rejecting it', (_label, query) => {
+    expect(() => validateStructuredMemorySearch({
+      query,
+      scopes: [
+        { type: 'user' },
+        { type: 'project', computerId: 'development', projectRoot: '/home/alice/.ssh/app' },
+      ],
+    })).not.toThrow()
+  })
+
+  it('still validates search scope structure', () => {
+    expect(() => validateStructuredMemorySearch({
+      query: 'style',
+      scopes: [{ type: 'project', computerId: 'development', projectRoot: 'relative' }],
+    })).toThrow(expect.objectContaining({ reason: 'malformed' }))
+  })
+
+  it('accepts a long mixed-case project root without weakening content secret checks', () => {
+    const projectRoot = '/Users/lcavalcanti/Projects/agentic-remote-worktrees'
+    const scope = { type: 'project' as const, computerId: 'development', projectRoot }
+    expect(validateStructuredMemoryRemember({ ...safeRemember(), scope }).scope)
+      .toEqual(scope)
+    expect(validateStructuredMemoryCorrect({
+      ...safeRemember(),
+      recordId: '11111111-1111-4111-8111-111111111111',
+      scope,
+    }).scope).toEqual(scope)
+    expect(() => validateStructuredMemoryRemember(safeRemember(
+      'Use Ab3dEf9hIj2kLm5nOp8qRs1tUv4wXy7zQ0rS6tPq to deploy.',
+    ))).toThrow(expect.objectContaining({ reason: 'secret' }))
+    expect(() => validateStructuredMemoryRemember(safeRemember(
+      'Use Ab3dEf9hIj2k/Lm5nOp8qRs1tUv4wXy7zQ0rS6tPq to deploy.',
+    ))).toThrow(expect.objectContaining({ reason: 'secret' }))
+    expect(() => validateStructuredMemoryRemember({
+      ...safeRemember(),
+      scope: { ...scope, projectRoot: '/srv/mF9xQ2vL8kP4rT7wY1zC6nB3sD0jH5uA9eG2iK8o' },
+    })).toThrow(expect.objectContaining({ reason: 'secret' }))
+  })
+
   it('strictly validates persisted versions, uniqueness, and private content', () => {
     const record = {
       schemaVersion: 1 as const,

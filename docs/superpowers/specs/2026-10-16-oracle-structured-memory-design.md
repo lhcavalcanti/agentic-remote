@@ -165,9 +165,13 @@ also require conservative explicit memory intent in the current user message,
 recorded with the manager message ID. The turn's scopes and authorizing
 message are captured when the turn starts, from the defaults that message was
 sent with, so later queued messages cannot widen them. Direct-user correction
-and forgetting may not touch global records. Import privacy validation covers
+and forgetting may not touch global records or policy-authorized records in
+any scope. Import privacy validation covers
 every free-text field, including provenance, tombstone, and audit request
-metadata. Search is read-only. Existing Markdown
+metadata. Project roots are privacy-checked per path segment, so an ordinary
+long path is not mistaken for a token. Search is read-only and stores nothing:
+its query is bounded to 1,000 characters instead of refused, and it is not
+privacy-rejected. Existing Markdown
 tools retain their current prompt-governed behavior.
 
 ## Retrieval and prompt containment

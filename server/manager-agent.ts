@@ -535,7 +535,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     if (this.structuredMemoryEnabled()) {
       this.messageDefaults.set(message.id, sentWith)
     }
-    await this.updateMessage(message)
+    try {
+      await this.updateMessage(message)
+    } catch (error) {
+      this.messageDefaults.delete(message.id)
+      throw error
+    }
     this.publishStatus()
     void this.pump()
     return message
@@ -621,6 +626,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     for (const message of this.store.messages()) {
       if (message.role === 'user' && message.state === 'queued') {
         await this.updateMessage({ ...message, state: 'cancelled' })
+        this.messageDefaults.delete(message.id)
       }
     }
     this.epoch += 1

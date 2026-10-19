@@ -411,7 +411,7 @@ export class ManagerStructuredMemoryStore {
           404,
         )
       }
-      this.requireUserWritableScope(previous.scope.type)
+      this.requireUserWritableRecord(previous)
       if (
         previous.supersededById ||
         state.tombstones.some(({ recordId }) => recordId === previous.id)
@@ -496,7 +496,7 @@ export class ManagerStructuredMemoryStore {
           404,
         )
       }
-      this.requireUserWritableScope(record.scope.type)
+      this.requireUserWritableRecord(record)
       const existing = state.tombstones.find(
         ({ recordId }) => recordId === record.id,
       )
@@ -807,6 +807,22 @@ export class ManagerStructuredMemoryStore {
     if (scopeType === 'global') {
       throw new ManagerStructuredMemoryReferenceError(
         'Global structured memory requires a policy-authorized write.',
+        403,
+      )
+    }
+  }
+
+  /** Policy memory, in any scope, is never changed by a direct-user request. */
+  private requireUserWritableRecord(
+    record: ManagerStructuredMemoryState['records'][number],
+  ): void {
+    this.requireUserWritableScope(record.scope.type)
+    if (
+      record.authority === 'policy-authorized' ||
+      record.provenance.origin === 'policy'
+    ) {
+      throw new ManagerStructuredMemoryReferenceError(
+        'This structured memory is policy-authorized and cannot be changed by a user request.',
         403,
       )
     }

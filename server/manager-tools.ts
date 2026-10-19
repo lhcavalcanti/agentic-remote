@@ -404,7 +404,7 @@ export function createManagerTools(
         'structured_memory_search',
         'Search active structured memory in the exact scopes available to the current Oracle context.',
         z.object({
-          query: z.string().trim().max(1_000),
+          query: z.string(),
           limit: z.number().int().min(1).max(8).optional(),
         }).strict(),
         async ({ query, limit }) => {

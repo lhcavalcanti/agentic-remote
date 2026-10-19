@@ -654,6 +654,77 @@ describe('ManagerAgent', () => {
     expect(otherPrompt).not.toContain('HUB-COMPUTER-CONTENT')
   })
 
+  it.each([
+    ['a 5,000-character message', `What is the deployment policy? ${'Some background detail. '.repeat(210)}`],
+    ['an email address', 'Ask alice@example.com: what is the deployment policy?'],
+    ['a dotenv path', 'Does .env.production change the deployment policy?'],
+  ])('retrieves structured memory for %s', async (_label, content) => {
+    const structuredStore = new ManagerStructuredMemoryStore(path.join(root, 'structured-ordinary'))
+    await structuredStore.initialize()
+    await structuredStore.remember({
+      requestId: 'remember-policy',
+      kind: 'fact',
+      canonicalKey: 'deployment policy',
+      content: 'POLICY-CONTENT',
+      scope: { type: 'user' },
+    })
+    let searched: unknown
+    sdk.behaviors.push(async (fakeSession) => {
+      searched = await fakeSession.tool('structured_memory_search')({ query: content })
+      reply('Okay.')(fakeSession, '')
+    })
+    await start({
+      structuredMemory: new ManagerStructuredMemoryRuntime('on', structuredStore),
+    })
+
+    await agent!.send(content)
+    await settled()
+
+    expect(sdk.prompts[0]).toContain('POLICY-CONTENT')
+    expect(searched).toContain('POLICY-CONTENT')
+    expect(agent!.structuredMemoryStatus()).toMatchObject({ availability: 'ready' })
+    expect(agent!.structuredMemoryStatus().lastError).toBeUndefined()
+  })
+
+  it('forgets the defaults of queued messages that a reset cancels', async () => {
+    const structuredStore = new ManagerStructuredMemoryStore(path.join(root, 'structured-reset'))
+    await structuredStore.initialize()
+    let resetting: Promise<void> | undefined
+    sdk.behaviors.push(async (fakeSession) => {
+      await agent!.send('Second?', { computerId: 'hub' })
+      await agent!.send('Third?', { computerId: 'hub' })
+      resetting = agent!.reset()
+      reply('First.')(fakeSession, '')
+    })
+    await start({
+      structuredMemory: new ManagerStructuredMemoryRuntime('on', structuredStore),
+    })
+
+    await agent!.send('First?')
+    await vi.waitFor(() => expect(resetting).toBeDefined())
+    await resetting
+    await settled()
+
+    expect(sdk.prompts).toHaveLength(1)
+    expect((agent as unknown as { messageDefaults: Map<string, unknown> })
+      .messageDefaults.size).toBe(0)
+  })
+
+  it('forgets the defaults of a message that could not be queued', async () => {
+    const structuredStore = new ManagerStructuredMemoryStore(path.join(root, 'structured-send-failure'))
+    await structuredStore.initialize()
+    await start({
+      structuredMemory: new ManagerStructuredMemoryRuntime('on', structuredStore),
+    })
+    vi.spyOn(store, 'upsertMessage').mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(agent!.send('What is running?', { computerId: 'hub' }))
+      .rejects.toThrow('disk full')
+
+    expect((agent as unknown as { messageDefaults: Map<string, unknown> })
+      .messageDefaults.size).toBe(0)
+  })
+
   it('keeps Oracle available and reports a safe status when optional retrieval fails', async () => {
     const structuredStore = new ManagerStructuredMemoryStore(
       path.join(root, 'structured-retrieval-failure'),

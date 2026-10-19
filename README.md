@@ -456,8 +456,10 @@ Structured memory accepts explicit remember, correct, forget, search,
 export, and empty-store import operations. It rejects credentials, sensitive
 paths, unsupported personal data, and malformed or oversized records before
 writing, including in imported metadata. Only `on` gives Oracle memory tools;
-in `shadow` the API is the only way to change it. Global records are
-policy-only and cannot be corrected or forgotten by a user request. State
+in `shadow` the API is the only way to change it. Global and
+policy-authorized records cannot be corrected or forgotten by a user request.
+Searches never store their query, so long or private-looking messages still
+retrieve memory. State
 files that other users can read are tightened to owner-only on startup, or
 refused if another user owns them. `off` leaves any existing structured-memory
 files untouched.

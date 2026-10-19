@@ -498,14 +498,18 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   same system prompt and tools as `off`; only `on` exposes memory tools. `on` MUST inject at most
   eight active records and 6,000 characters, escaped and delimited as
   untrusted evidence that cannot override policy or the current request.
-  Retrieval MUST make no model or network request.
+  Retrieval MUST make no model or network request. Because search stores
+  nothing, its query MUST be bounded to 1,000 characters rather than refused
+  and MUST NOT be privacy-rejected; scopes keep structural validation.
 - Structured records MUST use exact global, user, computer, project, or
   session scope and carry schema version, stable ID, kind, provenance,
   authority, confidence, validity, timestamps, and supersession. Direct-user
-  writes MUST NOT use, correct, or forget global records. Remember, correction, and forgetting MUST
+  writes MUST NOT use global scope or correct or forget global or
+  policy-authorized records in any scope. Remember, correction, and forgetting MUST
   be explicit, idempotent, audited without raw values, and privacy-validated
   before any durable or temporary write; import MUST privacy-validate every
-  free-text field, including provenance, tombstone, and audit metadata. Correction MUST preserve and
+  free-text field, including provenance, tombstone, and audit metadata.
+  Project roots MUST be privacy-checked per path segment. Correction MUST preserve and
   supersede history; forgetting MUST create a content-free tombstone that
   prevents retry or import from resurrecting the value. Oracle tools MUST
   require matching intent in the current user message and MUST NOT mutate a

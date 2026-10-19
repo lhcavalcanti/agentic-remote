@@ -510,6 +510,12 @@ describe('ManagerStructuredMemoryStore', () => {
   })
 
   async function openWithPolicyGlobal() {
+    return openWithPolicyRecord({ type: 'global' })
+  }
+
+  async function openWithPolicyRecord(
+    scope: Record<string, string>,
+  ) {
     const store = await open()
     await store.importState('import-policy', JSON.stringify({
       version: 1,
@@ -520,7 +526,7 @@ describe('ManagerStructuredMemoryStore', () => {
         kind: 'procedure',
         canonicalKey: 'review policy',
         content: 'Require a current review before merge.',
-        scope: { type: 'global' },
+        scope,
         provenance: {
           origin: 'policy',
           requestId: 'policy-1',
@@ -566,6 +572,60 @@ describe('ManagerStructuredMemoryStore', () => {
       message: expect.stringContaining('policy-authorized'),
     })
     expect(store.snapshot()).toEqual(before)
+  })
+
+  it.each([
+    ['user', { type: 'user' }],
+    ['project', {
+      type: 'project',
+      computerId: 'development',
+      projectRoot: '/srv/app',
+    }],
+  ])('refuses direct-user correct and forget of a policy record in %s scope', async (_label, scope) => {
+    const store = await openWithPolicyRecord(scope)
+    const before = store.snapshot()
+    await expect((async () => store.correct({
+      requestId: 'correct-policy',
+      recordId: '11111111-1111-4111-8111-111111111111',
+      kind: 'procedure',
+      canonicalKey: 'review policy',
+      content: 'Merge without review.',
+      scope: scope as { type: 'user' },
+    }))()).rejects.toMatchObject({
+      statusCode: 403,
+      message: expect.stringContaining('policy-authorized'),
+    })
+    await expect((async () => store.forget({
+      requestId: 'forget-policy',
+      recordId: '11111111-1111-4111-8111-111111111111',
+    }))()).rejects.toMatchObject({
+      statusCode: 403,
+      message: expect.stringContaining('policy-authorized'),
+    })
+    expect(store.snapshot()).toEqual(before)
+  })
+
+  it('remembers, finds, and round-trips a long mixed-case project root', async () => {
+    const scope = {
+      type: 'project' as const,
+      computerId: 'development',
+      projectRoot: '/Users/lcavalcanti/Projects/agentic-remote-worktrees',
+    }
+    const store = await open()
+    await store.remember({ ...rememberInput('remember-root'), scope })
+
+    expect(store.search({
+      query: 'pull request style',
+      scopes: [scope],
+    }).records).toEqual([expect.objectContaining({ scope })])
+
+    const exported = store.exportState()
+    await rm(path.join(root, 'manager'), { recursive: true, force: true })
+    const restored = await open()
+    await restored.importState('import-root', exported)
+    expect(restored.snapshot().records).toEqual([
+      expect.objectContaining({ scope }),
+    ])
   })
 
   it('tightens a group-readable primary to owner-only before loading it', async () => {

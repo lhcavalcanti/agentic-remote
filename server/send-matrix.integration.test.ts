@@ -1,0 +1,449 @@
+// Real-tmux send matrix (#435). Every cell sends through the real
+// AgentService.sendMessage with the options the browser derives from
+// shared/send-policy, so agent-service chooses allowDuringAgentExecution and
+// replaceExistingInput exactly as it does in production. The fake Copilot
+// draws real panes in an isolated tmux server and records every paste, clear,
+// submit and stray key it receives.
+//
+// The service is never start()ed: startup reconciliation would overwrite the
+// seeded app status, and the "working, app still sees idle" row (#433) depends
+// on the app status lagging behind the pane.
+import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { SessionStatus } from '../shared/contracts.js'
+import { terminalSendOptions } from '../shared/send-policy.js'
+import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
+import { readSessionEvents, sessionEventLogVersion } from './event-log.js'
+import { SessionStore } from './session-store.js'
+import {
+  isTerminalAgentWorking,
+  isTerminalOverlay,
+  parseTerminalFormPrompt,
+  parseTerminalPermission,
+  parseTerminalUserInput,
+  TmuxTerminalSessionController,
+} from './terminal-session.js'
+import { fixtureReceiptWriter, readyComposer } from './terminal-test-fixtures.js'
+import { createIsolatedTmuxRoot, eventually, stopIsolatedTmuxServer, waitForProcessCommand } from './tmux-test-helpers.js'
+
+const exec = promisify(execFile)
+
+const dialogs = {
+  question: [
+    '╭────────────────────────────────────────────────╮',
+    '│ Question                                      │',
+    '│ ────────────────────────────────────────────  │',
+    '│ Which environment do you prefer?              │',
+    '│                                               │',
+    '│ ❯ 1. Production                               │',
+    '│   2. Staging                                  │',
+    '│   3. Other (type your answer)                 │',
+    '│                                               │',
+    '│ ↑/↓ to select · enter to confirm · esc cancel │',
+    '╰────────────────────────────────────────────────╯',
+  ].join('\n'),
+  permission: [
+    'Permission request (1 remaining)',
+    '',
+    '╭────────────────────────────────────────────────────────────╮',
+    '│ Check DNS and credential presence                          │',
+    '│ ────────────────────────────────────────────────────────── │',
+    "│ printf 'files DNS: '; getent ahostsv4 files.example.test  │",
+    '│                                                            │',
+    '│ Do you want to run this command?                           │',
+    '│                                                            │',
+    '│ ❯ 1. Yes                                                   │',
+    '│   2. No, and tell Copilot what to do differently           │',
+    '│                                                            │',
+    '│ ↑/↓ to navigate · enter to select · esc to cancel          │',
+    '╰────────────────────────────────────────────────────────────╯',
+  ].join('\n'),
+  form: [
+    ' Copilot needs information.',
+    ' Choose a target.',
+    ' Target:',
+    ' ↑/↓ select · enter accept · esc cancel',
+  ].join('\n'),
+  overlay: [
+    'Select a session',
+    '- session one',
+    '↑/↓ to navigate · enter to select · esc to cancel',
+  ].join('\n'),
+}
+
+type PaneState = 'idle' | 'working' | keyof typeof dialogs
+
+interface Row { pane: PaneState; status: SessionStatus }
+
+// The app status is what the browser sees and feeds to the send policy.
+const rows = {
+  idle: { pane: 'idle', status: 'idle' },
+  working: { pane: 'working', status: 'running' },
+  // #433: the agent started before the app saw it, so the policy still asks
+  // for draft replacement while the pane is working.
+  'working, app still idle': { pane: 'working', status: 'idle' },
+  question: { pane: 'question', status: 'waiting' },
+  permission: { pane: 'permission', status: 'waiting' },
+  form: { pane: 'form', status: 'waiting' },
+  // Overlays the user opened, such as /session, do not change app status.
+  overlay: { pane: 'overlay', status: 'idle' },
+} satisfies Record<string, Row>
+type RowName = keyof typeof rows
+
+// "none" and "app-only" both leave the terminal composer empty: an app draft
+// exists only in the browser until it is sent. They stay separate rows so the
+// table reads the way the issue frames it.
+type Draft = 'none' | 'app-only' | 'terminal-typed'
+
+const typed = 'Typed at the terminal'
+const message = 'Sent from the app'
+
+// Each refusal keeps its current error class, message and HTTP status.
+const BUSY = {
+  name: 'TerminalDraftConflictError',
+  message: 'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+} as const
+const CLEAR_REFUSED = {
+  name: 'TerminalDraftConflictError',
+  message: 'The terminal changed before its text could be cleared. The app draft was not sent.',
+} as const
+const FULL_SCREEN = {
+  name: 'Error',
+  message: 'The terminal is showing a full-screen view. Close it there, then send this again.',
+} as const
+const NEW_TEXT = {
+  name: 'TerminalDraftConflictError',
+  message: 'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
+} as const
+type Refusal = typeof BUSY | typeof CLEAR_REFUSED | typeof FULL_SCREEN | typeof NEW_TEXT
+
+type Expected =
+  // Exactly one paste and one Enter of the message; `clears` stale drafts.
+  | { outcome: 'delivered'; activity: 'Sent to terminal' | 'Sent queued prompt'; clears: 0 | 1 }
+  // Held in the app FIFO; nothing typed, any terminal draft untouched.
+  | { outcome: 'queued' }
+  // HTTP 409, uncertainDelivery false, nothing typed, any terminal draft kept.
+  | { outcome: 'refused'; refusal: Refusal }
+
+const sent = { outcome: 'delivered', activity: 'Sent to terminal', clears: 0 } as const
+const drained = { outcome: 'delivered', activity: 'Sent queued prompt', clears: 0 } as const
+const replaced = { outcome: 'delivered', activity: 'Sent to terminal', clears: 1 } as const
+const queued = { outcome: 'queued' } as const
+const refused = (refusal: Refusal) => ({ outcome: 'refused', refusal }) as const
+
+// Expected outcomes from docs/app-spec.md §6 and the existing tests. Queue
+// columns use enqueue=true; Send columns use enqueue=false.
+const table: Array<[RowName, Draft, 'Send' | 'Queue', Expected]> = [
+  ['idle', 'none', 'Send', sent],
+  ['idle', 'none', 'Queue', drained],
+  ['idle', 'app-only', 'Send', sent],
+  ['idle', 'app-only', 'Queue', drained],
+  ['idle', 'terminal-typed', 'Send', replaced],
+  ['idle', 'terminal-typed', 'Queue', queued],
+
+  ['working', 'none', 'Send', sent],
+  ['working', 'none', 'Queue', queued],
+  ['working', 'app-only', 'Send', sent],
+  ['working', 'app-only', 'Queue', queued],
+  ['working', 'terminal-typed', 'Send', refused(BUSY)],
+  ['working', 'terminal-typed', 'Queue', queued],
+
+  ['working, app still idle', 'none', 'Send', sent],
+  ['working, app still idle', 'none', 'Queue', queued],
+  ['working, app still idle', 'app-only', 'Send', sent],
+  ['working, app still idle', 'app-only', 'Queue', queued],
+  ['working, app still idle', 'terminal-typed', 'Send', refused(CLEAR_REFUSED)],
+  ['working, app still idle', 'terminal-typed', 'Queue', queued],
+
+  // Dialog and overlay Queue cells are refused today; see the todos below.
+  ...(['question', 'permission', 'form', 'overlay'] as const).flatMap((row) =>
+    (['none', 'app-only', 'terminal-typed'] as const).flatMap((draft) =>
+      (['Send', 'Queue'] as const).map((action) =>
+        [row, draft, action, refused(FULL_SCREEN)] as [RowName, Draft, 'Send' | 'Queue', Expected],
+      ),
+    ),
+  ),
+]
+
+interface Receipt {
+  pastes: string[]
+  submits: Array<{ key: 'enter' | 'queue'; text: string }>
+  clears: number
+  keys: string
+  draft: string
+}
+
+function client(): CopilotClientLike {
+  const session = (sessionId: string): CopilotSessionLike => ({
+    sessionId, on: () => () => {}, getEvents: async () => [],
+    abort: async () => {}, disconnect: vi.fn(async () => {}),
+    sendAndWait: vi.fn(async () => { throw new Error('Terminal sends must never use the SDK') }),
+    rpc: {
+      commands: { list: async () => ({ commands: [] }), invoke: vi.fn(), enqueue: vi.fn() },
+      model: {
+        getCurrent: async () => ({ modelId: 'synthetic' }),
+        switchTo: async () => ({ modelId: 'synthetic' }),
+      },
+      name: { set: async () => {} }, mode: { set: async () => ({ status: 'applied', modelChanged: false }) },
+    },
+  })
+  return {
+    start: vi.fn(async () => {}), stop: vi.fn(async () => []),
+    createSession: vi.fn(async (config) => session(config.sessionId || randomUUID())),
+    resumeSession: vi.fn(async () => { throw new Error('Terminal sessions must not be resumed through the SDK') }),
+    listSessions: vi.fn(async () => []), deleteSession: vi.fn(async () => {}),
+    rpc: {
+      models: { list: async () => ({ models: [] }) },
+      commands: { list: async () => ({ commands: [] }) },
+    },
+  }
+}
+
+let root = ''
+let directory = ''
+const services: AgentService[] = []
+const tmuxSessions: string[] = []
+
+async function terminal(pane: PaneState, status: SessionStatus, draft: string) {
+  const id = randomUUID()
+  const cell = path.join(directory, id)
+  const workspace = path.join(cell, 'workspace')
+  await mkdir(workspace, { recursive: true })
+  const receiptFile = path.join(cell, 'receipt.json')
+  const executable = path.join(cell, 'copilot-matrix.mjs')
+  await writeFile(executable, `
+${fixtureReceiptWriter(receiptFile)}
+const makeComposer = ${readyComposer.toString()}
+const dialogs = ${JSON.stringify(dialogs)}
+let mode = ${JSON.stringify(pane)}
+let draft = ${JSON.stringify(draft)}
+const received = { pastes: [], submits: [], clears: 0, keys: '', draft }
+let input = ''
+const composing = () => mode === 'idle' || mode === 'working'
+const draw = () => {
+  const pane = composing() ? makeComposer(draft, mode === 'working') : dialogs[mode]
+  process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+}
+const save = () => { received.draft = draft; writeReceipt(received) }
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.on('SIGXCPU', () => { mode = 'working'; draw() })
+process.stdin.on('data', (data) => {
+  input += data.toString()
+  while (input) {
+    if (input.startsWith('\\x15')) {
+      input = input.slice(1)
+      received.clears += 1
+      if (composing()) draft = ''
+    } else if (input.startsWith('\\x1b[200~')) {
+      const end = input.indexOf('\\x1b[201~')
+      if (end < 0) break
+      const text = input.slice(6, end).replace(/\\r\\n?/g, '\\n')
+      input = input.slice(end + 6)
+      received.pastes.push(text)
+      if (composing()) draft += text
+    } else if (input[0] === '\\r' || input[0] === '\\x11') {
+      const key = input[0] === '\\r' ? 'enter' : 'queue'
+      input = input.slice(1)
+      if (composing() && draft) {
+        received.submits.push({ key, text: draft })
+        draft = ''
+      } else {
+        received.keys += key
+      }
+    } else {
+      received.keys += input[0]
+      input = input.slice(1)
+    }
+  }
+  save()
+  draw()
+})
+save()
+draw()
+`)
+  const name = `matrix-${id.slice(0, 8)}`
+  tmuxSessions.push(name)
+  await exec('tmux', ['new-session', '-d', '-s', name, '-x', '100', '-y', '30', process.execPath, executable, '--session-id', id])
+  const pid = Number((await exec('tmux', ['display-message', '-p', '-t', name, '#{pane_pid}'])).stdout.trim())
+  await waitForProcessCommand(pid, [executable])
+  const sessionState = path.join(process.env.COPILOT_HOME!, 'session-state', id)
+  await mkdir(sessionState, { recursive: true })
+  await writeFile(path.join(sessionState, `inuse.${pid}.lock`), `${pid}\n`)
+  await writeFile(path.join(sessionState, 'events.jsonl'), [
+    { type: 'session.start', id: 'start', parentId: null, timestamp: '2026-10-20T00:00:00.000Z', data: {} },
+    { type: 'assistant.turn_start', id: 'turn', parentId: 'start', timestamp: '2026-10-20T00:00:01.000Z', data: {} },
+    ...(status === 'idle'
+      ? [{ type: 'session.idle', id: 'idle', parentId: 'turn', timestamp: '2026-10-20T00:00:02.000Z', data: {} }]
+      : []),
+  ].map((event) => JSON.stringify(event)).join('\n') + '\n')
+  const store = new SessionStore(path.join(cell, 'state'))
+  await store.initialize()
+  await store.create({
+    id, provider: 'copilot', cwd: workspace, title: 'Send matrix',
+    updatedAt: '2026-10-20T00:00:00.000Z', status, isOpen: true, messages: [],
+  }, { backend: 'terminal', managedOpen: true })
+  const controller = new TmuxTerminalSessionController()
+  // A Copilot that has been running a while, as most sends find it.
+  Reflect.set(controller, 'settledOwnerAgeMs', 0)
+  const service = new AgentService(
+    store, client(),
+    // Only this cell's Copilot exists; never enumerate the host's processes.
+    async () => [{ id, cwd: workspace, title: 'Send matrix', updatedAt: '2026-10-20T00:00:00.000Z' }],
+    async () => {}, readSessionEvents, sessionEventLogVersion,
+    controller, async () => undefined, async () => undefined,
+  )
+  services.push(service)
+  const receipt = async () => {
+    try { return JSON.parse(await readFile(receiptFile, 'utf8')) as Receipt } catch { return undefined }
+  }
+  await eventually(receipt, Boolean)
+  return {
+    id, pid, service, store, controller,
+    receipt: async () => (await receipt())!,
+  }
+}
+
+// Sends exactly as the browser does: the shared policy turns the selected
+// session and the button into request options, and the node route passes them
+// to sendMessage unchanged.
+async function sendLikeTheApp(
+  fixture: Awaited<ReturnType<typeof terminal>>,
+  status: SessionStatus,
+  enqueue: boolean,
+) {
+  const options = terminalSendOptions({
+    status, provider: 'copilot', executionMode: 'tmux', enqueue, appLocalCommand: false,
+  })
+  return fixture.service.sendMessage(
+    fixture.id, message, options.enqueue, undefined, options.replaceTerminalDraft,
+  )
+}
+
+async function expectRefusal(attempt: Promise<unknown>, refusal: Refusal) {
+  const error = await attempt.then(() => undefined, (failure: unknown) => failure)
+  expect(error).toBeInstanceOf(Error)
+  expect({
+    name: (error as Error).name,
+    message: (error as Error).message,
+    statusCode: Reflect.get(error as Error, 'statusCode'),
+    uncertainDelivery: Reflect.get(error as Error, 'uncertainDelivery'),
+  }).toEqual({ ...refusal, statusCode: 409, uncertainDelivery: false })
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 300))
+
+beforeAll(async () => {
+  root = await createIsolatedTmuxRoot()
+  directory = await mkdtemp(path.join(tmpdir(), 'send-matrix-'))
+  vi.stubEnv('HOME', root)
+  vi.stubEnv('TMUX_TMPDIR', root)
+  vi.stubEnv('TMUX', '')
+  vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+})
+
+afterEach(async () => {
+  for (const service of services.splice(0)) await service.stop()
+  for (const name of tmuxSessions.splice(0)) await exec('tmux', ['kill-session', '-t', name])
+})
+
+afterAll(async () => {
+  await stopIsolatedTmuxServer(root)
+  vi.unstubAllEnvs()
+  await rm(directory, { recursive: true, force: true })
+})
+
+describe('send matrix with the app’s real send options', () => {
+  it('draws panes the server recognizes', () => {
+    expect(isTerminalAgentWorking(readyComposer('', true))).toBe(true)
+    expect(isTerminalAgentWorking(readyComposer(''))).toBe(false)
+    expect(parseTerminalUserInput(dialogs.question)).toBeTruthy()
+    expect(parseTerminalPermission(dialogs.permission)).toBeTruthy()
+    expect(parseTerminalFormPrompt(dialogs.form)).toBe(true)
+    for (const pane of Object.values(dialogs)) expect(isTerminalOverlay(pane)).toBe(true)
+  })
+
+  it.each(table)('%s pane · %s draft · %s', async (rowName, draft, action, expected) => {
+    const { pane, status } = rows[rowName]
+    const terminalDraft = draft === 'terminal-typed' ? typed : ''
+    const fixture = await terminal(pane, status, terminalDraft)
+
+    const attempt = sendLikeTheApp(fixture, status, action === 'Queue')
+
+    if (expected.outcome === 'refused') {
+      await expectRefusal(attempt, expected.refusal)
+      await settle()
+      expect(await fixture.receipt()).toEqual({
+        pastes: [], submits: [], clears: 0, keys: '', draft: terminalDraft,
+      })
+      expect(fixture.store.get(fixture.id)?.queuedPrompts ?? []).toEqual([])
+      return
+    }
+
+    const session = await attempt
+    if (expected.outcome === 'queued') {
+      expect(session.queuedPrompts?.map((prompt) => prompt.content)).toEqual([message])
+      await settle()
+      expect(fixture.store.get(fixture.id)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual([message])
+      expect(await fixture.receipt()).toEqual({
+        pastes: [], submits: [], clears: 0, keys: '', draft: terminalDraft,
+      })
+      return
+    }
+
+    expect(session.activity).toBe(expected.activity)
+    await eventually(fixture.receipt, (receipt) => receipt.submits.length > 0)
+    await settle()
+    expect(await fixture.receipt()).toEqual({
+      pastes: [message],
+      submits: [{ key: 'enter', text: message }],
+      clears: expected.clears,
+      keys: '',
+      draft: '',
+    })
+    expect(fixture.store.get(fixture.id)?.queuedPrompts ?? []).toEqual([])
+  }, 30_000)
+
+  // Replacement clears stale terminal text by design (§6). If the agent starts
+  // after the clear, nothing may be pasted into the new turn; the browser
+  // restores the app draft from the refusal.
+  it('idle pane · terminal-typed draft · Send, agent starts after the clear', async () => {
+    const fixture = await terminal('idle', 'idle', typed)
+    const owner = Reflect.get(fixture.controller, 'owner').bind(fixture.controller)
+    let started = false
+    Reflect.set(fixture.controller, 'owner', async (...args: unknown[]) => {
+      if (!started && (await fixture.receipt()).clears) {
+        started = true
+        process.kill(fixture.pid, 'SIGXCPU')
+        await eventually(
+          () => fixture.controller.capture(fixture.id),
+          (pane) => isTerminalAgentWorking(pane || ''),
+        )
+      }
+      return owner(...args)
+    })
+
+    await expectRefusal(sendLikeTheApp(fixture, 'idle', false), NEW_TEXT)
+    expect(started).toBe(true)
+    await settle()
+    expect(await fixture.receipt()).toEqual({
+      pastes: [], submits: [], clears: 1, keys: '', draft: '',
+    })
+  }, 30_000)
+
+  // Suspected false refusals, recorded rather than fixed here (see #407).
+  // Spec §6.2 says the Queue button MUST add to the app FIFO, and §6 says
+  // explicit Queue requests MUST remain queued, yet the full-screen check runs
+  // before queue routing. Nothing is lost: the browser restores the draft from
+  // the 409.
+  it.todo('question pane · Queue adds to the app FIFO instead of refusing as a full-screen view')
+  it.todo('permission pane · Queue adds to the app FIFO instead of refusing as a full-screen view')
+  it.todo('form pane · Queue adds to the app FIFO instead of refusing as a full-screen view')
+  it.todo('overlay pane · Queue adds to the app FIFO instead of refusing as a full-screen view')
+})

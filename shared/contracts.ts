@@ -305,6 +305,16 @@ export interface SessionRetention {
   idleDays?: number
 }
 
+/**
+ * A field-level retention edit. Omitted fields keep their current value and
+ * `idleDays: null` disables archival, so concurrent edits of different fields
+ * from separate devices never overwrite each other.
+ */
+export interface SessionRetentionPatch {
+  pinned?: boolean
+  idleDays?: number | null
+}
+
 export interface SessionSummary {
   id: string
   revision?: number

@@ -1,15 +1,16 @@
 import { useRef, useState } from 'react'
-import type { SessionRetention } from '../shared/contracts'
+import type { SessionRetention, SessionRetentionPatch } from '../shared/contracts'
 
 export function SessionRetentionSettings({ value, disabled, save }: {
   value?: SessionRetention
   disabled: boolean
-  save: (value: SessionRetention) => Promise<void>
+  /** Receives only the edited field, so a stale view cannot revert another device's edit. */
+  save: (patch: SessionRetentionPatch) => Promise<void>
 }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const inFlight = useRef(false)
-  async function change(next: SessionRetention) {
+  async function change(next: SessionRetentionPatch) {
     if (inFlight.current) return
     inFlight.current = true
     setSaving(true)
@@ -29,7 +30,7 @@ export function SessionRetentionSettings({ value, disabled, save }: {
         <input
           checked={value?.pinned ?? false}
           disabled={disabled || saving}
-          onChange={(event) => void change({ ...value, pinned: event.target.checked })}
+          onChange={(event) => void change({ pinned: event.target.checked })}
           type="checkbox"
         />
         Keep for review
@@ -39,8 +40,7 @@ export function SessionRetentionSettings({ value, disabled, save }: {
         <select
           disabled={disabled || saving}
           onChange={(event) => void change({
-            pinned: value?.pinned ?? false,
-            ...(event.target.value ? { idleDays: Number(event.target.value) } : {}),
+            idleDays: event.target.value ? Number(event.target.value) : null,
           })}
           value={value?.idleDays ?? ''}
         >

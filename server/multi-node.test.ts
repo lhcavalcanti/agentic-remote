@@ -265,13 +265,20 @@ class FakeSessionService extends EventEmitter implements SessionService {
     }
   }
 
+  readonly retentionPatches: import('../shared/contracts.js').SessionRetentionPatch[] = []
+
   async configureRetention(
     id: string,
-    retention: import('../shared/contracts.js').SessionRetention,
+    patch: import('../shared/contracts.js').SessionRetentionPatch,
   ): Promise<SessionDetail> {
     const session = this.sessions.get(id)
     if (!session) throw new Error('Session not found')
-    session.retention = structuredClone(retention)
+    this.retentionPatches.push(structuredClone(patch))
+    const idleDays = patch.idleDays === undefined ? session.retention?.idleDays : patch.idleDays ?? undefined
+    session.retention = {
+      pinned: patch.pinned ?? session.retention?.pinned ?? false,
+      ...(idleDays === undefined ? {} : { idleDays }),
+    }
     this.emitEvent({ type: 'session.upserted', session })
     return structuredClone(session)
   }
@@ -1468,12 +1475,20 @@ describe('multi-node hub', () => {
         title: 'Renamed remote',
         computerName: 'worker-node',
       })
-      const retained = await hub.app.inject({
-        method: 'PUT',
+      const pinned = await hub.app.inject({
+        method: 'PATCH',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session/retention`,
-        payload: { pinned: true, idleDays: 30 },
+        payload: { pinned: true },
+      })
+      expect(pinned.statusCode, pinned.body).toBe(200)
+      const retained = await hub.app.inject({
+        method: 'PATCH',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/retention`,
+        payload: { idleDays: 30 },
       })
       expect(retained.statusCode, retained.body).toBe(200)
+      // Each device's edit reaches the owner as the field it changed.
+      expect(remoteService.retentionPatches).toEqual([{ pinned: true }, { idleDays: 30 }])
       expect(retained.json().session).toMatchObject({
         computerId: remoteComputerId, retention: { pinned: true, idleDays: 30 },
       })
@@ -1490,15 +1505,18 @@ describe('multi-node hub', () => {
           }))
         }
       })
-      const invalidRetention = await hub.app.inject({
-        method: 'PUT',
-        url: `/api/computers/${remoteComputerId}/sessions/remote-session/retention`,
-        payload: { pinned: false, idleDays: 0 },
-      })
-      expect(invalidRetention.statusCode).toBe(400)
+      for (const payload of [{ pinned: false, idleDays: 0 }, {}, { pinned: true, extra: true }]) {
+        const invalidRetention = await hub.app.inject({
+          method: 'PATCH',
+          url: `/api/computers/${remoteComputerId}/sessions/remote-session/retention`,
+          payload,
+        })
+        expect(invalidRetention.statusCode).toBe(400)
+      }
+      expect(remoteService.retentionPatches).toHaveLength(2)
       expect(remoteService.getSession('remote-session')?.retention?.pinned).toBe(true)
       expect((await remote.app.inject({
-        method: 'PUT', url: '/node-api/sessions/remote-session/retention',
+        method: 'PATCH', url: '/node-api/sessions/remote-session/retention',
         payload: { pinned: false },
       })).statusCode).toBe(401)
       const removedQueue = await hub.app.inject({

@@ -29,7 +29,7 @@ import type { SettingsProfileStore } from './settings-profile-store.js'
 import type { ClientPresence } from './client-presence.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
-import { sessionRetentionSchema } from './session-retention.js'
+import { sessionRetentionPatchSchema } from './session-retention.js'
 
 /** The manager agent's events, carried on the same socket as session events. */
 export interface ManagerEventSource {
@@ -766,13 +766,15 @@ export async function registerHubRoutes(
     },
   )
 
-  app.put<{ Params: SessionParams }>(
+  // Field-level: omitted fields keep their value, so devices editing
+  // different fields concurrently never overwrite each other.
+  app.patch<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/retention',
     async (request) => ({
       session: await manager.configureRetention(
         request.params.computerId,
         request.params.sessionId,
-        sessionRetentionSchema.parse(request.body),
+        sessionRetentionPatchSchema.parse(request.body),
       ),
     }),
   )

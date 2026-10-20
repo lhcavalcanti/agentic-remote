@@ -329,3 +329,66 @@ describe('session record retention is independent of provider ownership', () => 
     await store.close()
   })
 })
+
+describe('archival commits only against current ownership', () => {
+  it('re-validates ownership at commit time and never archives a session that gained an owner', async () => {
+    const { store, advance } = await fixture()
+    await store.configureRetention('retained', { idleDays: 7, pinned: false })
+    advance(365 * day)
+    const owners = new Set<string>()
+    const pass = store.syncOpen([], undefined, (id) => !owners.has(id))
+    owners.add('retained')
+    await pass
+    expect(store.get('retained')).toMatchObject({ isOpen: true })
+    expect(store.get('retained')?.archivedAt).toBeUndefined()
+    expect(store.isManagedOpen('retained')).toBe(true)
+    await store.syncOpen([], undefined, () => true)
+    expect(store.get('retained')).toMatchObject({ isOpen: false, archivedAt: expect.any(String) })
+    await store.close()
+  })
+
+  it('archives a single confirmed-absent record only when it is still eligible at commit', async () => {
+    const { store, advance } = await fixture()
+    await store.configureRetention('retained', { idleDays: 7, pinned: false })
+    expect(await store.archiveIfExpired('retained', () => true)).toBeUndefined()
+    advance(365 * day)
+    expect(store.archivalCandidates(['retained'])).toEqual([])
+    expect(store.archivalCandidates([])).toEqual(['retained'])
+    expect(await store.archiveIfExpired('retained', () => false)).toBeUndefined()
+    expect(store.get('retained')?.archivedAt).toBeUndefined()
+    await expect(store.archiveIfExpired('retained', () => true)).resolves.toMatchObject({
+      isOpen: false, archivedAt: expect.any(String),
+    })
+    expect(store.isManagedOpen('retained')).toBe(false)
+    await store.close()
+  })
+})
+
+describe('retention settings merge per field', () => {
+  it('does not let concurrent edits of different fields clobber each other', async () => {
+    const { store } = await fixture()
+    await store.configureRetention('retained', { idleDays: 7 })
+    expect(store.get('retained')?.retention).toEqual({ pinned: false, idleDays: 7 })
+    await Promise.all([
+      store.configureRetention('retained', { pinned: true }),
+      store.configureRetention('retained', { idleDays: 30 }),
+    ])
+    expect(store.get('retained')?.retention).toEqual({ pinned: true, idleDays: 30 })
+    await store.configureRetention('retained', { idleDays: null })
+    expect(store.get('retained')?.retention).toEqual({ pinned: true })
+    await store.configureRetention('retained', { pinned: false })
+    expect(store.get('retained')?.retention).toEqual({ pinned: false })
+    await store.close()
+  })
+
+  it.each([{}, { pinned: true, extra: 1 }, { idleDays: 0 }, { pinned: null }])(
+    'rejects an empty or invalid patch %j without writing', async (patch) => {
+      const { store, directory } = await fixture()
+      const file = path.join(directory, 'state.json')
+      const before = await readFile(file, 'utf8')
+      await expect(store.configureRetention('retained', patch as never)).rejects.toThrow()
+      expect(await readFile(file, 'utf8')).toBe(before)
+      await store.close()
+    },
+  )
+})

@@ -2507,6 +2507,58 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.terminalRecoveryStates?.get(sessionId) === 'pending')
   }
 
+  /**
+   * Anything that could own, attach, or be delivering to the session. Checked
+   * when an archival write commits, so an owner gained after a discovery
+   * snapshot still keeps the record visible. Startup recovery must probe a
+   * managed owner before any archival can clear its recovery intent.
+   */
+  private archivalBlocked(sessionId: string, recovering = false): boolean {
+    return this.stopped ||
+      this.sessions.has(sessionId) || this.loadingSessions.has(sessionId) ||
+      this.hydratingSessions.has(sessionId) || this.activePrompts.has(sessionId) ||
+      this.externalSessionIds.has(sessionId) || this.launchingTerminalSessionIds.has(sessionId) ||
+      this.dispatchingSessions.has(sessionId) || this.drainingSessions.has(sessionId) ||
+      this.terminalActivations.has(sessionId) || this.resumingSessions.has(sessionId) ||
+      this.recoverySeedDispatches.has(sessionId) || this.deletingSessions.has(sessionId) ||
+      this.suspendingSessions.has(sessionId) ||
+      (!recovering && (
+        this.startupRecoveryPending || this.isTerminalRecoveryPending(sessionId) ||
+        this.admissions.hasPending(sessionId) || this.lifecycleLocks.has(sessionId)))
+  }
+
+  /**
+   * Archive candidates whose owner is confirmed absent. A terminal-backed
+   * record is probed directly, because discovery lists only processes it
+   * recognizes; a live or unreadable pane is never treated as absent.
+   */
+  private async confirmArchivalAbsence(present: string[]): Promise<Set<string>> {
+    const confirmed = new Set<string>()
+    if (this.startupRecoveryPending) return confirmed
+    await Promise.all(this.store.archivalCandidates(present).map(async (id) => {
+      if (this.archivalBlocked(id)) return
+      if (this.store.backend(id) !== 'sdk') {
+        try {
+          if (await this.terminalController.has(id)) return
+        } catch {
+          return
+        }
+      }
+      confirmed.add(id)
+    }))
+    return confirmed
+  }
+
+  private assertNotRetained(sessionId: string, action: string, archivedOnly = false): void {
+    const session = this.store.get(sessionId)
+    if (session?.archivedAt || (!archivedOnly && session?.interruption)) {
+      throw Object.assign(
+        new Error(`Reopen the ${session.archivedAt ? 'archived' : 'interrupted'} session before ${action}. Nothing was changed.`),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
+  }
+
   private assertTerminalRecoverySettled(sessionId: string): void {
     if (this.isTerminalRecoveryPending(sessionId)) {
       throw Object.assign(
@@ -2874,7 +2926,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async configureRetention(
     id: string,
-    input: import('../shared/contracts.js').SessionRetention,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
   ): Promise<SessionDetail> {
     return this.serializeLifecycle(id, async () => {
       const session = await this.store.configureRetention(id, input)
@@ -3149,6 +3201,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let stored = await this.store.readAfterWrites(id)
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
+    this.assertNotRetained(id, 'changing its runtime')
     stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
       throw new RuntimeConfigurationError(
@@ -3345,6 +3398,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<SessionDetail> {
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
+    this.assertNotRetained(id, 'suspending it')
     if (
       stored.status === 'running' ||
       stored.status === 'waiting' ||
@@ -3581,6 +3635,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored.suspended) {
       return stored
     }
+    // Resuming would start an owner for a record that stays archived.
+    this.assertNotRetained(id, 'resuming it', true)
     if (this.store.backend(id) === 'terminal') {
       if (!this.terminalController.create) {
         throw new Error('Terminal session resume is not available')
@@ -3661,6 +3717,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = await this.store.readAfterWrites(id)
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
+    // Restart attaches a provider owner; a retained record would be live yet
+    // hidden or read-only. Reopen is the one path that clears retention.
+    this.assertNotRetained(id, 'restarting it')
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Restarting would start a runtime while the session still says it has
       // none, and for a terminal session leave a second owner behind it. A
@@ -3769,6 +3828,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = await this.store.readAfterWrites(id)
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
+    this.assertNotRetained(id, 'moving it to tmux')
     if (this.store.backend(id) === 'terminal') {
       return stored
     }
@@ -3908,6 +3968,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     recoveryReason?: SessionRecoveryReason,
   ): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
+    // Clearing builds a live replacement; from a retained record it would be
+    // live yet hidden behind the archive or interruption.
+    this.assertNotRetained(id, recoveryReason ? 'recovering its conversation' : 'clearing it')
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
     this.assertRecoverySeedReplacementAvailable(id)
@@ -4338,8 +4401,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
-    if (!enqueue && (this.store.get(sessionId)?.interruption || this.store.get(sessionId)?.archivedAt)) {
-      throw queueConflict('Reopen the interrupted session before sending. Nothing was sent.')
+    // Before any recovery token is claimed: a queued send must not consume it.
+    if (this.store.get(sessionId)?.interruption || this.store.get(sessionId)?.archivedAt) {
+      throw Object.assign(
+        queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
+        { uncertainDelivery: false },
+      )
     }
     if (
       this.store.get(sessionId)?.suspended ||
@@ -6113,6 +6180,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     this.assertRecoverySeedSettled(sessionId)
+    this.assertNotRetained(sessionId, 'running commands')
     const claim = await this.claimFailure(sessionId, command, acknowledgedFailure)
     const delivery: DeliveryBoundary = claim ?? { accepted: false }
     let ran: SessionDetail
@@ -7866,6 +7934,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const session = await this.store.readAfterWrites(id)
     if (this.stopped) return 'deferred'
     if (!this.store.shouldRecoverTerminalSession(id)) return 'skipped'
+    // The probe confirmed no owner, so an expired opted-in record archives
+    // here instead of being relaunched only to be kept alive indefinitely.
+    const archived = await this.store.archiveIfExpired(id, () => !this.archivalBlocked(id, true))
+    if (archived) {
+      this.publish(archived)
+      console.info(JSON.stringify({ sessionLifecycle: 'archived', sessionId: id, at: archived.archivedAt }))
+      return 'skipped'
+    }
     // The startup pump needs a positive owner, even if recovery cleanup has
     // already removed its startup marker. A FIFO alone cannot launch one.
     if (this.startupTerminalQueues.has(id) || session.queuedPrompts?.length) {
@@ -8055,10 +8131,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     if (!isCurrent()) return false
-    await this.store.syncOpen([
+    const present = [
       ...this.externalSessionIds,
       ...[...this.sessions.keys()].filter((id) => !excluded(id)),
-    ], isCurrent)
+    ]
+    const confirmedAbsent = await this.confirmArchivalAbsence(present)
+    if (!isCurrent()) return false
+    await this.store.syncOpen(
+      present, isCurrent, (id) => confirmedAbsent.has(id) && !this.archivalBlocked(id),
+    )
     if (!isCurrent()) return false
     const before = new Map(storedBeforeDiscovery.map((session) => [session.id, session]))
     for (const indexed of this.store.discoveryIndex()) {

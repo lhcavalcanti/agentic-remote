@@ -196,6 +196,87 @@ describe('ClaudeAgentService', () => {
       .toEqual(['first', 'second', 'Explicit continuation'])
   })
 
+  it('drains a reopened FIFO in order exactly once when the explicit continuation is queued', async () => {
+    let id = ''
+    const f = await fixture(async function* () {
+      for (const message of textResult(id)) yield message
+    })
+    const created = await f.service.createSession(f.directory)
+    id = created.id
+    await f.service.store.update(id, (session) => {
+      session.status = 'running'
+      session.queuedPrompts = ['first', 'second'].map((content) => ({
+        id: content, content, createdAt: '2026-10-18T00:00:00Z',
+      }))
+    })
+    await f.service.stop()
+    const restarted = new ClaudeAgentService(
+      new SessionStore(path.join(f.directory, 'state')), '/bin/true', f.sdk,
+      async () => ({ loggedIn: true }),
+    )
+    services.add(restarted)
+    await restarted.start()
+    await restarted.activateSession(id)
+    expect(restarted.getSession(id)?.status).toBe('error')
+    await restarted.sendMessage(id, 'Queued continuation', true)
+    await vi.waitFor(() => {
+      expect(restarted.getSession(id)?.queuedPrompts).toEqual([])
+      expect(restarted.getSession(id)?.status).toBe('idle')
+    })
+    expect(restarted.getSession(id)?.messages.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual(['first', 'second', 'Queued continuation'])
+  })
+
+  it('does not archive a session while an admitted send is still in flight', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.configureRetention(created.id, { pinned: false, idleDays: 7 })
+    await f.service.store.update(created.id, (session) => {
+      session.updatedAt = '2026-01-01T00:00:00Z'
+    })
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const admission = f.service['admissions'].run(created.id, () => held)
+    await f.service['refreshRetention']()
+    release()
+    await admission
+    expect(f.service.getSession(created.id)).toMatchObject({ isOpen: true })
+    expect(f.service.getSession(created.id)?.archivedAt).toBeUndefined()
+  })
+
+  it('rejects a queued recovery on an interrupted session without consuming its token', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.store.update(created.id, (session) => {
+      session.status = 'error'
+      session.failedPrompt = { content: 'Lost', failedAt: 'token-1' }
+    })
+    await f.service.store.markInterrupted(created.id)
+    await expect(f.service.sendMessage(created.id, 'Lost', true, 'token-1')).rejects.toMatchObject({ statusCode: 409 })
+    await expect(f.service.sendMessage(created.id, 'Queued', true)).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.service.store.get(created.id)?.failedPrompt).toEqual({ content: 'Lost', failedAt: 'token-1' })
+    expect(f.service.store.get(created.id)?.queuedPrompts ?? []).toEqual([])
+  })
+
+  it.each(['restart', 'resume', 'clear', 'suspend'] as const)('refuses to %s an archived session until it is reopened', async (action) => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.store.update(created.id, (session) => {
+      session.isOpen = false
+      session.archivedAt = '2026-10-19T00:00:00Z'
+      if (action === 'resume') session.suspended = true
+    })
+    const act = {
+      restart: () => f.service.restartSession(created.id),
+      resume: () => f.service.resumeSession(created.id),
+      clear: () => f.service.clearConversation(created.id),
+      suspend: () => f.service.suspendSession(created.id),
+    }[action]
+    await expect(act()).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.service.store.get(created.id)).toMatchObject({ isOpen: false, archivedAt: '2026-10-19T00:00:00Z' })
+    expect(f.service.store.get(created.id)?.suspended).toBe(action === 'resume' ? true : undefined)
+  })
+
   it('checks retention every minute and stops the cleanup timer before shutdown', async () => {
     vi.useFakeTimers()
     try {

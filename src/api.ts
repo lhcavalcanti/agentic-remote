@@ -866,11 +866,11 @@ export async function recoverConversation(
 export async function configureRetention(
   computerId: string,
   sessionId: string,
-  input: import('../shared/contracts').SessionRetention,
+  input: import('../shared/contracts').SessionRetentionPatch,
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     `${sessionPath(computerId, sessionId)}/retention`,
-    { method: 'PUT', body: JSON.stringify(input) },
+    { method: 'PATCH', body: JSON.stringify(input) },
   )
   return response.session
 }

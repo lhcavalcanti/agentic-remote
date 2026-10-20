@@ -198,6 +198,7 @@ import {
 } from '../shared/knowledge-path'
 import {
   deliveryUncertaintyFromError,
+  SubmissionError,
   submissionReceiptFromError,
 } from '../shared/submission-error'
 import {
@@ -8165,11 +8166,16 @@ function App() {
   const selectedComputerOnline = computers.some(
     (computer) => computer.id === selectedComputerId && computer.online,
   )
+  // An interrupted or archived record is read-only until it is reopened; the
+  // server refuses these actions too.
+  const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
   const selectedLifecycleBlocked = !selectedComputerOnline ||
+    selectedRetained ||
     selected?.status !== 'idle' ||
     selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
   const selectedRestartBlocked = !selectedComputerOnline ||
+    selectedRetained ||
     (selected?.status !== 'idle' && selected?.status !== 'error') ||
     selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
@@ -8199,6 +8205,7 @@ function App() {
   const selectedCanRecover =
     selectedShowsRecovery &&
     selectedComputerOnline &&
+    !selectedRetained &&
     selected?.suspended !== true &&
     (selected?.status === 'idle' ||
       selected?.status === 'error') &&
@@ -9804,6 +9811,14 @@ function App() {
             startedAtSequence,
       )
       const answeredFor = new Set(listing.answeredComputerIds)
+      // Archived records are not listed. Only the one being read stays, and
+      // only until its detail is checked below: a deletion event this browser
+      // missed would otherwise leave it forever.
+      const keepsArchivedSelection = (session: ManagedSession) =>
+        Boolean(session.archivedAt) &&
+        !removedSessions.current.has(sessionKey(session)) &&
+        selectedRef.current !== undefined &&
+        sessionKey(selectedRef.current) === sessionKey(session)
       if (!claim.whole) {
         // Only the computers this answer reached that the newer one did not.
         // Everything else in it has already been spoken for more recently.
@@ -9824,7 +9839,7 @@ function App() {
               return (
                 !claim.speaksFor.has(session.computerId) ||
                 speaksForKeys.has(key) ||
-                (session.archivedAt && !removedSessions.current.has(key)) ||
+                keepsArchivedSelection(session) ||
                 (sessionEventSequenceRef.current.get(key) || 0) >
                   startedAtSequence ||
                 ((submissionsInFlight.current.has(key) ||
@@ -9870,7 +9885,7 @@ function App() {
           // hub restart the cache is empty, so it removed all of them.
           if (
             changedAt > startedAtSequence ||
-            (existing.archivedAt && !removedSessions.current.has(sessionKey(existing))) ||
+            keepsArchivedSelection(existing) ||
             !answeredFor.has(existing.computerId) ||
             ((submissionsInFlight.current.has(sessionKey(existing)) ||
               submissionAnchors.current.has(sessionKey(existing))) &&
@@ -9959,7 +9974,7 @@ function App() {
         (snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
         ) ||
-          (selectedAtRefresh.archivedAt && !removedSessions.current.has(sessionKey(selectedAtRefresh))) ||
+          keepsArchivedSelection(selectedAtRefresh) ||
           changedSinceRefresh(sessionKey(selectedAtRefresh)) ||
           pendingReplacements.current.has(sessionKey(selectedAtRefresh)) ||
           // Its computer said nothing about it, so its absence is not news.
@@ -9984,10 +9999,36 @@ function App() {
         setSelectedKey(followedSelection)
       } else if (selectedAtRefresh && selectedStillExists) {
         const detailStartedAtSequence = eventSequenceRef.current
-        const detail = await getSession(
-          selectedAtRefresh.computerId,
-          selectedAtRefresh.id,
-        )
+        let detail: ManagedSession
+        try {
+          detail = await getSession(
+            selectedAtRefresh.computerId,
+            selectedAtRefresh.id,
+          )
+        } catch (caught) {
+          const goneKey = sessionKey(selectedAtRefresh)
+          if (
+            !(caught instanceof SubmissionError && caught.statusCode === 404) ||
+            !selectedAtRefresh.archivedAt ||
+            snapshotSessions.some((session) => sessionKey(session) === goneKey)
+          ) {
+            throw caught
+          }
+          if (
+            generation < snapshotApplied.current ||
+            (sessionEventSequenceRef.current.get(goneKey) || 0) > detailStartedAtSequence
+          ) {
+            return
+          }
+          // The archived record was deleted and its removal event never
+          // arrived here; the list and the detail now agree it is gone.
+          removedSessions.current.add(goneKey)
+          setSessions((current) => current.filter((session) => sessionKey(session) !== goneKey))
+          if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
+            setSelectedKey(snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined)
+          }
+          return
+        }
         const detailKey = sessionKey(detail)
         if (
           generation < snapshotApplied.current ||

@@ -9,10 +9,13 @@ support. Settings belong to that session on its owning computer, not the browser
 | Keep for review | Protect the record from implicit archival on every device |
 | After 7 / 30 / 90 days | Archive eligible inactive records from the active roster; reopen from session history |
 
-The API accepts `{ "pinned": false, "idleDays": 30 }` at
-`PUT /api/computers/:computerId/sessions/:sessionId/retention`. Omitting `idleDays`
-disables archival; accepted values are whole days from 1 through 3650. Unknown
-fields and invalid values are rejected. There is no global idle-process TTL.
+The API accepts field-level patches such as `{ "pinned": true }` or
+`{ "idleDays": 30 }` at
+`PATCH /api/computers/:computerId/sessions/:sessionId/retention`. Omitted fields
+keep their current value, so devices editing different fields concurrently never
+undo each other; `"idleDays": null` disables archival. Accepted ages are whole
+days from 1 through 3650. Empty patches, unknown fields, and invalid values are
+rejected without a write. There is no global idle-process TTL.
 
 Age is elapsed time since the conversation's last activity or explicit Reopen,
 whichever is later, not local midnight, a calendar date, or process shutdown.
@@ -25,6 +28,13 @@ unconfirmed dispatches, questions, permissions, failures, context recovery, and
 review pins prevent it. A previously running/waiting interrupted turn is not
 reclassified as idle just because its process disappeared.
 
+Nothing archives until startup recovery has probed every managed terminal owner.
+A terminal whose owner probe is live or uncertain stays visible; one recovery
+confirms absent archives instead of relaunching only if it is already expired.
+Eligibility and ownership are re-checked when the archive is committed, so a
+session that gained an owner, an admitted send, or a lifecycle change after
+discovery's snapshot is never archived.
+
 Archival is not Delete or Close. It never terminates a live process, removes
 history, deletes a folder/worktree, or erases resumability. Explicit Close and
 Delete retain their existing destructive semantics and confirmations. Default
@@ -36,7 +46,11 @@ respawn a missing one. Failed recovery leaves a visible interruption.
 hub runtime. Read the saved conversation, then use **Reopen session**. Terminal
 reopen resumes the same ID and waits for readiness before dispatching preserved
 FIFO work. SDK reopen does not retry the interrupted turn or automatically
-release its queue; explicitly continue after reviewing its result. Expired
+release its queue; explicitly continue after reviewing its result. Interrupted
+and archived records are read-only until Reopen: sends, queued prompts, retries,
+commands, restart, clear, recovery, suspend, tmux moves, and runtime changes are
+refused with nothing consumed, and resuming an archived record also requires
+Reopen. Expired
 questions/approvals remain visible but cannot invoke dead callbacks. Copilot
 supports **Recover conversation**; Claude can continue with a new prompt.
 
@@ -47,6 +61,9 @@ explicit deletion without fetching each archived transcript. Metadata-only lifec
 session, transition, and UTC detection time; they contain no prompts or provider
 credentials. Concurrent lifecycle changes invalidate stale discovery; retention
 is decided against the current durable record, not a previously read snapshot.
+An authoritative refresh keeps an unlisted archived row only while it is the
+open conversation, and drops it when its detail is gone, so a missed deletion
+event cannot leave a deleted session selected.
 
 ## Investigated development incident
 

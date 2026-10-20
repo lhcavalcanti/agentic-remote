@@ -356,11 +356,11 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
 
   async configureRetention(
     sessionId: string,
-    input: import('../shared/contracts.js').SessionRetention,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
   ): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/retention`,
-      { method: 'PUT', body: JSON.stringify(input) },
+      { method: 'PATCH', body: JSON.stringify(input) },
     )
     return response.session
   }

@@ -15,7 +15,7 @@ import {
 } from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
-import { sessionRetentionSchema } from './session-retention.js'
+import { sessionRetentionPatchSchema } from './session-retention.js'
 import { isSessionResourceRoute, readSessionSkills, readSessionMcpServers, resourceRequestHandler } from './session-resources.js'
 import {
   MAX_AUDIO_BYTES,
@@ -419,14 +419,14 @@ export async function registerNodeRoutes(
         },
       )
 
-      node.put<{ Params: { sessionId: string } }>(
+      node.patch<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/retention',
         async (request) => {
           if (!service.configureRetention) {
             throw Object.assign(new Error('Session retention is not supported by this computer'), { statusCode: 409 })
           }
           return { session: await service.configureRetention(
-            request.params.sessionId, sessionRetentionSchema.parse(request.body),
+            request.params.sessionId, sessionRetentionPatchSchema.parse(request.body),
           ) }
         },
       )

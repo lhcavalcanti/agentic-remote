@@ -10,11 +10,11 @@ import type {
   SessionRuntimeInfo,
   SessionRecoveryReason,
   SessionStatus,
-  SessionRetention,
+  SessionRetentionPatch,
   ActivityKind,
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
-import { canArchiveSession, sessionRetentionSchema } from './session-retention.js'
+import { canArchiveSession, mergeSessionRetention, sessionRetentionSchema } from './session-retention.js'
 
 export interface DiscoveredSession {
   id: string
@@ -822,18 +822,67 @@ export class SessionStore {
     })
   }
 
-  async syncOpen(sessionIds: string[], isCurrent?: () => boolean): Promise<void> {
+  private isProtectedRecord(session: StoredSession): boolean {
+    return Boolean(session.retention?.pinned ||
+      session.queuedPrompts?.length || session.pendingPermission || session.pendingUserInput ||
+      session.failedPrompt || session.recoverySeed || session.queuedDispatch ||
+      session.terminalQueueDispatch || session.sdkQueueAdmission || session.queuedPromptReservation)
+  }
+
+  private isArchivable(session: StoredSession): boolean {
+    return !this.isProtectedRecord(session) && canArchiveSession(session, this.now())
+  }
+
+  /**
+   * Sessions an archival pass would retire now, given the owners it saw. The
+   * caller confirms each one's absence before the decision is committed.
+   */
+  archivalCandidates(presentIds: Iterable<string>): string[] {
+    const present = new Set(presentIds)
+    const retired = this.retiredIds(this.state)
+    return Object.values(this.state.sessions)
+      .filter((session) => !present.has(session.id) && !retired.has(session.id) && this.isArchivable(session))
+      .map((session) => session.id)
+  }
+
+  /**
+   * Archives one record whose owner was just confirmed absent. Eligibility and
+   * `canArchive` are both evaluated when the write commits, never from a copy
+   * read before the probe.
+   */
+  async archiveIfExpired(sessionId: string, canArchive: () => boolean): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const session = state.sessions[sessionId]
+      if (!session || this.retiredIds(state).has(sessionId) || !this.isArchivable(session) || !canArchive()) {
+        return () => undefined
+      }
+      const archivedAt = new Date(this.now()).toISOString()
+      state.sessions[sessionId] = {
+        ...session, revision: (session.revision ?? 0) + 1, isOpen: false, managedOpen: false, archivedAt,
+      }
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  /**
+   * `canArchive` is consulted when the write commits, after every earlier
+   * write has landed, so an owner, admission or probe that appeared after the
+   * caller took its snapshot still prevents archival.
+   */
+  async syncOpen(
+    sessionIds: string[],
+    isCurrent?: () => boolean,
+    canArchive?: (sessionId: string) => boolean,
+  ): Promise<void> {
     const active = new Set(sessionIds)
     return this.change((state) => {
       if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         const present = active.has(session.id)
-        const protectedRecord = Boolean(session.retention?.pinned ||
-          session.queuedPrompts?.length || session.pendingPermission || session.pendingUserInput ||
-          session.failedPrompt || session.recoverySeed || session.queuedDispatch ||
-          session.terminalQueueDispatch || session.sdkQueueAdmission || session.queuedPromptReservation)
-        const archive = !present && !protectedRecord && canArchiveSession(session, this.now())
+        const protectedRecord = this.isProtectedRecord(session)
+        const archive = !present && !protectedRecord && canArchiveSession(session, this.now()) &&
+          (canArchive?.(session.id) ?? true)
         const isOpen = !archive && (
           present ||
           // A suspended session has nothing running by design. Reading that as
@@ -960,10 +1009,14 @@ export class SessionStore {
     })
   }
 
-  async configureRetention(sessionId: string, input: SessionRetention): Promise<SessionDetail> {
-    const retention = sessionRetentionSchema.parse(input)
+  /**
+   * Applies a field-level edit to the current durable value at commit time,
+   * so concurrent edits of different fields compose instead of clobbering.
+   */
+  async configureRetention(sessionId: string, input: SessionRetentionPatch): Promise<SessionDetail> {
+    mergeSessionRetention(undefined, input)
     return this.mutate(sessionId, (session) => {
-      session.retention = retention
+      session.retention = mergeSessionRetention(session.retention, input)
     })
   }
 
@@ -1939,6 +1992,14 @@ export class SessionStore {
         throw Object.assign(
           new Error('That recovery decision has already been used. Review the current recovered prompt.'),
           { statusCode: 409 },
+        )
+      }
+      // Checked in the same write that consumes the token: an interruption or
+      // archive committed after the caller's precheck must leave it intact.
+      if (stored.interruption || stored.archivedAt) {
+        throw Object.assign(
+          new Error('Reopen the retained session before resending. Nothing was sent.'),
+          { statusCode: 409, uncertainDelivery: false },
         )
       }
       // Consume the old token before delivery. The new token describes an

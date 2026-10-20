@@ -1,10 +1,32 @@
 import { z } from 'zod'
-import type { SessionDetail } from '../shared/contracts.js'
+import type { SessionDetail, SessionRetention, SessionRetentionPatch } from '../shared/contracts.js'
+
+const idleDaysSchema = z.number().int().min(1).max(3650)
 
 export const sessionRetentionSchema = z.object({
   pinned: z.boolean(),
-  idleDays: z.number().int().min(1).max(3650).optional(),
+  idleDays: idleDaysSchema.optional(),
 }).strict()
+
+export const sessionRetentionPatchSchema = z.object({
+  pinned: z.boolean().optional(),
+  idleDays: idleDaysSchema.nullable().optional(),
+}).strict().refine(
+  (patch) => patch.pinned !== undefined || patch.idleDays !== undefined,
+  'Change at least one retention setting',
+)
+
+export function mergeSessionRetention(
+  current: SessionRetention | undefined,
+  input: SessionRetentionPatch,
+): SessionRetention {
+  const patch = sessionRetentionPatchSchema.parse(input)
+  const idleDays = patch.idleDays === undefined ? current?.idleDays : patch.idleDays ?? undefined
+  return sessionRetentionSchema.parse({
+    pinned: patch.pinned ?? current?.pinned ?? false,
+    ...(idleDays === undefined ? {} : { idleDays }),
+  })
+}
 
 export function canArchiveSession(session: SessionDetail, now: number): boolean {
   const days = session.retention?.idleDays

@@ -702,7 +702,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   async configureRetention(
     computerId: string,
     sessionId: string,
-    input: import('../shared/contracts.js').SessionRetention,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
   ): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
     let session: SessionDetail

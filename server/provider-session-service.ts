@@ -119,7 +119,7 @@ export class ProviderSessionService
 
   configureRetention(
     id: string,
-    input: import('../shared/contracts.js').SessionRetention,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
   ): Promise<SessionDetail> {
     const service = this.serviceFor(id)
     if (!service.configureRetention) {

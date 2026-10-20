@@ -136,11 +136,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Session retention MUST be persisted on the owning computer and broadcast to
   connected devices. A user MAY pin a session for review or opt into elapsed-age
   archival; default retention MUST be unlimited for records, not live processes.
+  Retention edits MUST be field-level so concurrent devices changing different
+  fields do not overwrite each other.
 - Implicit archival MUST require an absent provider owner, an idle or
   intentionally suspended session, and the configured elapsed age. It MUST NOT
   affect running/waiting work, pending questions/permissions, queued or uncertain
   delivery, failed/recovering work, or review pins. It MUST NOT delete provider
-  history, metadata, files, worktrees, or saved resumability.
+  history, metadata, files, worktrees, or saved resumability. Archival MUST NOT
+  run before startup recovery has probed managed owners, and MUST re-check
+  ownership and eligibility when it commits.
+- Interrupted and archived records MUST stay read-only until Reopen. Sends,
+  queued work, commands, restart, clear, recovery, suspend, and runtime changes
+  MUST be refused without consuming queued or failed work. A refresh MUST NOT
+  keep a deleted archived session selected.
 - Restart recovery MUST retain queues without replaying uncertain admissions.
   Missing terminal owners and interrupted SDK turns MUST remain reviewable;
   expired callbacks MUST NOT become answerable by merely reopening a record.

@@ -27,6 +27,7 @@ import type {
   WorkspaceListing,
 } from '../shared/contracts'
 import App from './App'
+import { SubmissionError } from '../shared/submission-error'
 import {
   applySettingsChanges,
   applySettingsImport,
@@ -7863,6 +7864,49 @@ describe('App', () => {
     await waitFor(() => expect(composer).toBeEnabled())
     expect(composer).toHaveValue('Draft for tomorrow')
     expect(deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('drops an archived selection whose deletion event was missed when the authoritative refresh cannot find it', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    await screen.findByText('Hello agent')
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, isOpen: false, archivedAt: '2026-10-19T06:52:00Z' },
+        }),
+      } as MessageEvent)
+    })
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+    // Deleted on another device while this browser's socket missed the event.
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      if (id === session.id) throw new SubmissionError('Session not found', 404)
+      return secondSession
+    })
+    vi.mocked(listSessionListing).mockResolvedValue({ sessions: [secondSession], answeredComputerIds: [computer.id] })
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(screen.queryByText('Hello agent')).toBeNull())
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Second chat,/ })).toHaveAttribute('aria-current', 'page'))
+    expect(screen.queryByText('Session not found')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reopen session' })).toBeNull()
+  })
+
+  it.each([
+    ['archived', { isOpen: false, archivedAt: '2026-10-19T06:52:00Z' }],
+    ['interrupted', { status: 'error' as const, interruption: { detectedAt: '2026-10-19T06:52:00Z', previousStatus: 'running' as const } }],
+  ])('keeps restart and runtime moves unavailable on an %s session until it is reopened', async (_label, retained) => {
+    const kept = { ...session, executionMode: 'sdk' as const, ...retained }
+    vi.mocked(listSessions).mockResolvedValue([kept])
+    vi.mocked(getSession).mockResolvedValue(kept)
+    render(<App />)
+    await screen.findByText('Hello agent')
+    openSessionActions()
+    for (const name of ['Restart session', 'Move session to tmux']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    expect(restartSession).not.toHaveBeenCalled()
   })
 
   it('saves retention on the owning computer and closes the retention dialog with Escape', async () => {

@@ -19,7 +19,7 @@ import type {
   QueuedPromptDispatchResult,
   ServerEvent,
   SessionDetail,
-  SessionRetention,
+  SessionRetentionPatch,
   SessionSkillsSnapshot,
   SessionMcpServersSnapshot,
   SlashCommand,
@@ -37,7 +37,7 @@ export interface SessionService {
   getSession(id: string): SessionDetail | undefined
   openSession(id: string): Promise<SessionDetail>
   activateSession(id: string): Promise<SessionDetail>
-  configureRetention?(id: string, input: SessionRetention): Promise<SessionDetail>
+  configureRetention?(id: string, input: SessionRetentionPatch): Promise<SessionDetail>
   createSession(
     cwd: string,
     terminalBacked?: boolean,

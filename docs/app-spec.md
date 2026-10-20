@@ -1629,6 +1629,38 @@ guards without disabling legitimate external/native history refresh.
 - Network or process restart recovery MUST preserve as much user-visible state
   as possible without claiming an operation succeeded.
 
+### 14.1 Refusal diagnostics
+
+Every computer counts the user-facing refusals it sends so a refusal that
+fires falsely shows up without a user report:
+
+- A refusal is a 4xx response from a matched route; 404s for unknown routes
+  are not counted. A 401 or 403 a route raises as an error, such as a path
+  outside the session folder or a refused memory change, is counted. The
+  pairing-token and Host/Origin checks reply directly without a reason, so
+  those are not counted.
+- Each refusal is keyed by route template (for example
+  `/api/computers/:computerId/sessions/:sessionId/messages`), method, status,
+  and a stable reason code: the error's `reasonCode` (such as
+  `terminal-draft-conflict.new-text` or `retained-session.archived`), else the
+  `reasonCode` of an error it wraps, else its class name; `validation` for
+  invalid input; `not-found`/`not-registered` for those fallbacks; and
+  `http-<status>` for a plain error or a direct reply that names no reason.
+  Each key keeps `count`, `firstAt`, and `lastAt`.
+- Distinct keys are bounded at 256; further keys count in one `other` bucket.
+  Counts live in memory only and start again when the process restarts.
+- Each refusal emits one `info` log line,
+  `{ event: 'request.refused', route, method, status, reason }`.
+- Message text, prompts, paths, ids, query strings, headers, and client
+  addresses are never recorded or logged by this counter.
+- The hub serves its counts at `GET /api/diagnostics/refusals` as
+  `{ since, refusals }`, sorted by count, under the same Host/Origin policy as
+  every other `/api/` route. There is no reset. Browsers reach only the hub,
+  so it counts every browser-facing refusal, including those a node returned
+  through it (as `RemoteNodeRequestError`, or
+  `remote-node.terminal-draft-conflict`). Nodes only log their own refusals;
+  they expose no endpoint.
+
 ## 15. Release and operations
 
 - Releases MUST be immutable and activated atomically.

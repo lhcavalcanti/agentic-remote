@@ -80,10 +80,12 @@ export type TerminalQueueOutcome =
 export class RetainedSessionError extends Error {
   readonly statusCode = 409
   readonly uncertainDelivery = false
+  readonly reasonCode: `retained-session.${'archived' | 'interrupted'}`
 
   constructor(state: 'archived' | 'interrupted', action: string) {
     super(`Reopen the ${state} session before ${action}. Nothing was changed.`)
     this.name = 'RetainedSessionError'
+    this.reasonCode = `retained-session.${state}`
   }
 }
 

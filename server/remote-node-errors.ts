@@ -5,6 +5,9 @@ import {
 } from '../shared/submission-error.js'
 
 export class RemoteNodeRequestError extends SubmissionError {
+  /** The node's own reason is not on the wire; only a draft conflict is. */
+  readonly reasonCode?: string
+
   constructor(
     message: string,
     statusCode: number,
@@ -21,6 +24,7 @@ export class RemoteNodeRequestError extends SubmissionError {
       ),
     })
     this.name = 'RemoteNodeRequestError'
+    if (terminalDraftConflict) this.reasonCode = 'remote-node.terminal-draft-conflict'
   }
 }
 

@@ -323,7 +323,7 @@
   "inputs": {
     ".github/copilot-instructions.md": "a68bee005531380bbd37beaacaab30e1c2297a539a98457571cd7c8c86245301",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "ba52074bde8b033c5774794723ccc03b8874783198b197111ccd392b8db4a40d",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "d5b4f9f8a4f32db922d6e2811b803c410cd0ee501c0f6266f27844b21bd74d22",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -339,7 +339,7 @@
     ".github/skills/frontend-design/references/evidence-and-review.md": "e47ad2baeda6f5bbde659fe65230047eac1a0bcddbb2e1c404849bdda39799c0",
     ".github/skills/frontend-design/references/motion-and-performance.md": "049f8acfda7a13c9aed056f4de43276b102fa0a6f49769408a16d8b9a4cf2b1e",
     ".github/skills/frontend-design/references/product-workspaces.md": "6a0bd82e73ce8604c38d651743ef03f83e83d29697fb058621dca235d8293e9d",
-    ".github/workflows/light-check.yml": "1eba1fdfd1ba8d2acb887c0f3e15a38f8bf84c6822a44a0192d660a78fc40fc5",
+    ".github/workflows/light-check.yml": "4e91195f5390eb8d454c96dc14f6b9fd4ea8df85e836e411060f7d02efe594ca",
     ".gitignore": "b4880167586d0b59633db90e9c656e8cfdfce739b6d4f234bcecb7317257b76b",
     ".oxlintrc.json": "07c58c79b4cf22b23a6f2b8179b11b19c52ac01e0045111dec7a66522e6428b5",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
@@ -356,7 +356,7 @@
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
-    "docs/deployment-promotion.md": "571c6c886e22fbb8ecf602a4959c361e1e386feecabb38c301f7ff191d1eea0b",
+    "docs/deployment-promotion.md": "1bd3aafb6ab64bc2965bfb12160fd4a56c371e4e59540dea467b4884d82955bc",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
     "docs/design/session-manager.md": "6476b0fc64d1d337175bb1dd1d89a5386cea8ccf0b2fe4e9ef09a71bd0c13d25",
     "docs/design/settings-profile.md": "55cbb79747e67bf7fb637c8446d514ae815998733602979898f9cf51826848b3",
@@ -759,13 +759,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ba8a6a19a6e73e1cfcc29d92dd8cc601c021dab16287668ac1bfe26c309a8a29",
+    "GRAPH_REPORT.md": "f16c4fffd865a80dbe45f722dbc7bc894bd7b77464839b4ccb27ee37c10f62be",
     "communities.json": "08740fcbec6bc379c03a15ce796f76480dfd4d7e8bd87ac70f5984ffad4467d1",
-    "graph.html": "bb17b2348d8c8ae06c459cb50b88a716738d833ee5cf62b4d8427cbe6c495e05",
-    "graph.json": "901658873b3a7e0a6158358b5b7681f881804fc74a118a0ef3e0749ce90e8a79"
+    "graph.html": "b99acc27b7e1c0d5c32a510cedf02ab8b4a7d0f1bc7ca8415ae7bb2810ad3acc",
+    "graph.json": "86175cca629dbb7d042a6a0c0046303cd3a763a5cea19326e6bdd561d75d9a6f"
   },
   "schema_version": 1,
-  "source_commit": "c9607c3456cc9542d3d13313929ee86c7b208f31",
-  "source_fingerprint": "74c31ab60d1fd1f6c80f0fec8ff5bd65e56de386f0ba4671cf1fcc7a33bcd0e4",
+  "source_commit": "0ecac9340c16f2b60d050e17356c3117a986c14e",
+  "source_fingerprint": "061f6d65e367a4b067f4c6caefe9ca7d77d3774164efe3761f1cfd3b14a53fe1",
   "working_tree_changes": []
 }

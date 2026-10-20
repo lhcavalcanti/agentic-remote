@@ -388,7 +388,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "17f3951213ccee0d20db5bf2ef49bed3c353b29472a9d80ad43a38403c30a087",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "d917ac97144474b91d5f5bd82ec39683b16a130d5701003533866d90b865769c",
+    "package.json": "4574e8235ea37446176b1620b2286d4d0fc9db267082087f2002c6e275166e46",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -597,10 +597,10 @@
     "shared/side-question.ts": "026d2e3fae18f5348da782057d669400bb67ed91b7623fe3975c1f2d788ea855",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "b70e94106ead66acdd17c9f3f667dda374ae8434ea9e276ee828c8cf0385d1a5",
+    "shell/README.md": "b41cdb94e8fd3814168612e4bf47bfe5c720d35e1f3fbd8d5386f83279076064",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "3b24dfa84de90ae019b1dea2991c314859e80f9a79db5c3b25f08d123f52b0ea",
-    "shell/src-tauri/Cargo.toml": "d50880e7df29abf048488611f45695eb429d6cd493a384be4ac81b801ca1851f",
+    "shell/package.json": "c2e43e9f3f6c4aa0a4bf82e1738d998bf4c81ddefb0c28babc5454740d2a03dd",
+    "shell/src-tauri/Cargo.toml": "78fc7708704d235b608b01b8c5d22938e20628a6d8ea1d1faf8e731258e499a1",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -608,7 +608,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "3446019b0059b8b1596f9d2c9293635fd23cb463dd32cf25365a1135b642f2f2",
+    "shell/src-tauri/tauri.conf.json": "1a69af1efc88303909e78fb254dd7a4ac9a0813ddfd912aa974bf6a9955d89c5",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -773,18 +773,19 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d3df4c1f3e5f1364b13735178c98fd36245c7caf61b08f86c0323443a506f1de",
+    "GRAPH_REPORT.md": "bcf36a0c0207598ed4b06416e0e091d108b604e5625164dd500c181868c639aa",
     "communities.json": "9d96c5967d05a28711591d99a084232403caf3ec86a2d2c7e5fc9c5ded53723a",
-    "graph.html": "6b3456aca9985e97004fd449f8f4b4beeac91afdd8a11f8bb8c9bebb56bf262d",
-    "graph.json": "f3016586787a6dd02b1b34949d1d7afda5f67321ba40596c98a14a6f4985f119"
+    "graph.html": "2142d1a619ebfbda2e32d5e996440d0226e80fb832ebc7366901136c4e7caf14",
+    "graph.json": "98f81ee44d6aa84f3fcfedf29419811c3cbda5fce25c64d8966af412d33e0995"
   },
   "schema_version": 1,
-  "source_commit": "4739a7666b768cb6b9f4c1081117023ab38218a7",
-  "source_fingerprint": "1810699449c9e8e70d1210bed8dd6eff5c53f56914c8f58116f3626e81ddc4f1",
+  "source_commit": "e5b8ede28581a93f69c2e20de9c560e9b5c4139b",
+  "source_fingerprint": "37b086a1b8cee70d3701e3688e83d67739af232a77d5b19fbeb7264904a63679",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/copilot-sdk-client.test.ts",
-    "server/copilot-sdk-client.ts"
+    "package.json",
+    "shell/README.md",
+    "shell/package.json",
+    "shell/src-tauri/Cargo.toml",
+    "shell/src-tauri/tauri.conf.json"
   ]
 }

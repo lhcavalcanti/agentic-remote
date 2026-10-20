@@ -7112,6 +7112,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return sent
   }
 
+  private async terminalHasEmptyReadyComposer(sessionId: string): Promise<boolean> {
+    if (!this.terminalController.capture || !this.terminalController.inputReady) return false
+    const pane = await this.terminalController.capture(sessionId)
+    if (!pane || composerHoldsText(pane)) return false
+    return this.terminalController.inputReady(sessionId)
+  }
+
   private async dismissTerminalFormForContinuation(
     sessionId: string, request: PendingUserInput, input: UserInputReplyInput, deadline: number,
   ): Promise<SessionDetail> {
@@ -7153,6 +7160,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
       }
       if (!dismissed) return this.continueTerminalFormReply(sessionId, requestId, input)
+    }
+    if (!dismissed && await this.terminalHasEmptyReadyComposer(sessionId)) {
+      // The event-derived card outlived its terminal form. Nothing was
+      // dismissed or submitted, so continue the retained answer only after
+      // tmux independently confirms an empty composer that can accept it.
+      if (await this.isToolCallComplete(
+        sessionId, requestId.slice('persisted-user-input:'.length),
+      )) {
+        this.terminalFormContinuations.delete(key)
+        return this.acceptTerminalFormReply(sessionId, requestId, input)
+      }
+      receipt.dismissed = true
+      return this.continueTerminalFormReply(sessionId, requestId, input)
     }
     if (!dismissed) {
       this.terminalFormContinuations.delete(key)

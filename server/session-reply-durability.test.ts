@@ -434,6 +434,74 @@ describe('Reply durability regressions', () => {
     },
   )
 
+  it('continues a retained answer after the form parser misses a transition to an empty ready composer', async () => {
+    const f = await fallbackFormFixture()
+    f.dismiss.mockResolvedValue(false)
+    f.terminal.capture = vi.fn(async () => [
+      '╭──────────────────────────────╮',
+      '│ > Type a message…             │',
+      '╰──────────────────────────────╯',
+    ].join('\n'))
+    f.terminal.inputReady = vi.fn(async () => true)
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.wait).not.toHaveBeenCalled()
+    expect(f.terminal.inputReady).toHaveBeenCalledOnce()
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(
+      sessionId, 'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true', false,
+    )
+  })
+
+  it('does not send a continuation when the missed form completes before the empty-composer fallback', async () => {
+    const f = await fallbackFormFixture()
+    f.dismiss.mockImplementation(async () => {
+      f.complete.mockResolvedValue(true)
+      return false
+    })
+    f.terminal.capture = vi.fn(async () => [
+      '╭──────────────────────────────╮',
+      '│ > Type a message…             │',
+      '╰──────────────────────────────╯',
+    ].join('\n'))
+    f.terminal.inputReady = vi.fn(async () => true)
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.terminal.inputReady).toHaveBeenCalledOnce()
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
+  it.each([
+    ['a terminal draft', [
+      '╭──────────────────────────────╮',
+      '│ > Keep this terminal draft    │',
+      '╰──────────────────────────────╯',
+    ].join('\n'), true],
+    ['a non-ready composer', [
+      '╭──────────────────────────────╮',
+      '│ > Type a message…             │',
+      '╰──────────────────────────────╯',
+    ].join('\n'), false],
+  ] as const)('rejects a stale form answer when tmux has %s', async (_state, pane, ready) => {
+    const f = await fallbackFormFixture()
+    f.dismiss.mockResolvedValue(false)
+    f.terminal.capture = vi.fn(async () => pane)
+    f.terminal.inputReady = vi.fn(async () => ready)
+
+    await expect(f.reply()).rejects.toMatchObject({
+      message: expect.stringContaining('still showing its prompt'),
+      statusCode: 409,
+    })
+
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
   it.each(['immediate', 'delayed'] as const)(
     'retains the fallback answer after %s dismissal and a failed pending-card write', async (timing) => {
       const f = await fallbackFormFixture()

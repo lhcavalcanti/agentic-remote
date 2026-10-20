@@ -1,5 +1,5 @@
 import type { SessionEvent } from '@github/copilot-sdk'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { backgroundTasksFromEvents, MAX_BACKGROUND_TASKS, type CopilotTaskInfo } from './background-task-adapter.js'
 import { backgroundTaskSnapshot } from './background-task-tracker.js'
 
@@ -1000,17 +1000,24 @@ describe('background shell stop reconciliation', () => {
         completed(`stop-${index}`, stopAcknowledgement(`shell-${index}`), count * 2 + index * 2 + 1),
       )
     }
-    const lookups = vi.spyOn(WeakMap.prototype, 'get')
-    try {
-      const result = snapshot(events)
-      const lookupCount = lookups.mock.calls.length
-      lookups.mockRestore()
-      expect(result.runningCount).toBe(0)
-      expect(result.tasks).toHaveLength(MAX_BACKGROUND_TASKS)
-      expect(lookupCount).toBeLessThan(count * 8)
-    } finally {
-      lookups.mockRestore()
+    // Count with a plain wrapper: vi.spyOn on WeakMap.prototype.get recurses
+    // because Vitest's spy bookkeeping itself uses WeakMap lookups.
+    const originalGet = WeakMap.prototype.get
+    let lookupCount = 0
+    WeakMap.prototype.get = function countedGet(this: WeakMap<WeakKey, unknown>, key: WeakKey) {
+      lookupCount += 1
+      return originalGet.call(this, key)
     }
+    let result: ReturnType<typeof snapshot>
+    try {
+      result = snapshot(events)
+    } finally {
+      WeakMap.prototype.get = originalGet
+    }
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks).toHaveLength(MAX_BACKGROUND_TASKS)
+    expect(lookupCount).toBeGreaterThan(0)
+    expect(lookupCount).toBeLessThan(count * 8)
   })
 
   it.each([true, false])(

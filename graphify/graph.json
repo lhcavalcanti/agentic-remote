@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "83041c117c7e406aae920b694bc759087923c629",
+  "built_at_commit": "3eb85965cfbb93669c99fafa7b8c330ed62c8d17",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -34323,7 +34323,7 @@
       "relation": "contains",
       "source": "server_background_task_stop_test",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L1047",
+      "source_location": "L1054",
       "target": "server_background_task_stop_test_handoff",
       "weight": 1.0
     },
@@ -34367,7 +34367,7 @@
       "relation": "contains",
       "source": "server_background_task_stop_test",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2028",
+      "source_location": "L2035",
       "target": "server_background_task_stop_test_readexit",
       "weight": 1.0
     },
@@ -34433,7 +34433,7 @@
       "relation": "contains",
       "source": "server_background_task_stop_test",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2036",
+      "source_location": "L2043",
       "target": "server_background_task_stop_test_terminalize",
       "weight": 1.0
     },
@@ -34539,7 +34539,7 @@
       "relation": "calls",
       "source": "server_background_task_stop_test_readexit",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2029",
+      "source_location": "L2036",
       "target": "server_background_task_stop_test_completed",
       "weight": 1.0
     },
@@ -34587,7 +34587,7 @@
       "relation": "calls",
       "source": "server_background_task_stop_test_terminalize",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2040",
+      "source_location": "L2047",
       "target": "server_background_task_stop_test_completed",
       "weight": 1.0
     },
@@ -34599,7 +34599,7 @@
       "relation": "calls",
       "source": "server_background_task_stop_test_terminalize",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2042",
+      "source_location": "L2049",
       "target": "server_background_task_stop_test_reportedshell",
       "weight": 1.0
     },
@@ -34611,7 +34611,7 @@
       "relation": "calls",
       "source": "server_background_task_stop_test_terminalize",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2039",
+      "source_location": "L2046",
       "target": "server_background_task_stop_test_started",
       "weight": 1.0
     },
@@ -34623,7 +34623,7 @@
       "relation": "calls",
       "source": "server_background_task_stop_test_terminalize",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2040",
+      "source_location": "L2047",
       "target": "server_background_task_stop_test_stopacknowledgement",
       "weight": 1.0
     },
@@ -165096,7 +165096,7 @@
       "label": "readExit()",
       "norm_label": "readexit()",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2028"
+      "source_location": "L2035"
     },
     {
       "_callable": true,
@@ -165168,7 +165168,7 @@
       "label": "terminalize()",
       "norm_label": "terminalize()",
       "source_file": "server/background-task-stop.test.ts",
-      "source_location": "L2036"
+      "source_location": "L2043"
     },
     {
       "_callable": true,
@@ -165195,6 +165195,18 @@
       "norm_label": "toolstart",
       "source_file": "server/background-task-stop.test.ts",
       "source_location": "L6"
+    },
+    {
+      "_callable": true,
+      "_origin": "ast",
+      "community": 152,
+      "community_name": ".get",
+      "file_type": "code",
+      "id": "server_background_task_stop_test_weakmap_get",
+      "label": ".get()",
+      "norm_label": ".get()",
+      "source_file": "server/background-task-stop.test.ts",
+      "source_location": "L1007"
     },
     {
       "_origin": "ast",
@@ -176789,7 +176801,7 @@
     },
     {
       "_origin": "ast",
-      "community": 152,
+      "community": 153,
       "community_name": "promotion-setup.test.ts",
       "file_type": "code",
       "id": "server_promotion_setup_test",
@@ -176800,7 +176812,7 @@
     },
     {
       "_origin": "ast",
-      "community": 153,
+      "community": 154,
       "community_name": "prompt-form-layout.test.ts",
       "file_type": "code",
       "id": "server_prompt_form_layout_test",
@@ -180160,7 +180172,7 @@
     },
     {
       "_origin": "ast",
-      "community": 154,
+      "community": 155,
       "community_name": "safe-area.test.ts",
       "file_type": "code",
       "id": "server_safe_area_test",
@@ -180171,7 +180183,7 @@
     },
     {
       "_origin": "ast",
-      "community": 155,
+      "community": 156,
       "community_name": "service-unit.test.ts",
       "file_type": "code",
       "id": "server_service_unit_test",
@@ -197424,7 +197436,7 @@
     },
     {
       "_origin": "ast",
-      "community": 156,
+      "community": 157,
       "community_name": "shell/vite.config.ts",
       "file_type": "code",
       "id": "shell_vite_config",
@@ -203296,7 +203308,7 @@
     },
     {
       "_origin": "ast",
-      "community": 157,
+      "community": 158,
       "community_name": "env.d.ts",
       "file_type": "code",
       "id": "src_env_d",
@@ -205260,7 +205272,7 @@
     },
     {
       "_origin": "ast",
-      "community": 158,
+      "community": 159,
       "community_name": "MermaidDiagram.real.test.tsx",
       "file_type": "code",
       "id": "src_mermaiddiagram_real_test",

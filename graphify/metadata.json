@@ -304,7 +304,7 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 159,
+  "communities": 160,
   "community_algorithm": "louvain-seed-42",
   "edges": 13173,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
@@ -367,7 +367,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "17f3951213ccee0d20db5bf2ef49bed3c353b29472a9d80ad43a38403c30a087",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "1197f610ddfd5a365fb98a98bc47221c1d3a80b874036bc671c5aac0d765a254",
+    "package.json": "5dfb77953525f02c8d74468d9c68353a54872190e4e326df38fd6d274cdabb26",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -396,7 +396,7 @@
     "server/app.ts": "c966250cea5b5e499ab021e50f3acf869e815e2ac72970bbd35c79ea6c3471f1",
     "server/background-task-adapter.test.ts": "63304b3d73481475147682d8f95513beffbbcc9049a43823cc39d5600f4a4760",
     "server/background-task-adapter.ts": "a987390d4403ca4d8c12138f40287085d1c029a41528495c152a45771072b0b8",
-    "server/background-task-stop.test.ts": "737c6bba771904456ac14c34b3acc53daf76e34fc589713908ec6839c416ae2b",
+    "server/background-task-stop.test.ts": "0d6ce7dc963b1176cacaf415fd78349718ee89448c3aa6cd9f390e03005ddce4",
     "server/background-task-tracker.test.ts": "50154bcfeb4996dd6a4129fc16c10696da63ff73b439249f28d6aa1864c63137",
     "server/background-task-tracker.ts": "47f0fd9ebf4164c3347376c09aaca797738caeab49eb09312fda5b6ff1d5fdc0",
     "server/claude-agent-service.test.ts": "9dd3f42c939211cd591b1cea5ab7f56f2b52840a520661b8979d8ea295c892d5",
@@ -672,7 +672,7 @@
     "vite.config.ts": "e4aade0b7f6812702224266d5177129c044686a471b7a6fef7cbacb1b91deccb"
   },
   "mode": "local-ast-only",
-  "nodes": 4673,
+  "nodes": 4674,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -733,19 +733,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6efce59042cee0845048c610a2e65b8cab1c0477b8357a14af7c875527585699",
-    "communities.json": "6ca4c87360898ff6e5b81f721e7d2251cbef2c4487268e0ef7f6e83ad93eeca3",
-    "graph.html": "cd54748b840f233f92636349911be8226229437f1c5ca6ccfe7b1ee9f5dcfd24",
-    "graph.json": "cdc521cf79acb6d92495ebda6a1b1959dffac26760a90e2504a8591c3291b2d0"
+    "GRAPH_REPORT.md": "d5a88e8a3ce4b9aa028b58b3d75e0ca934843cd397581f4c854cc60636408063",
+    "communities.json": "8604fbdb215c1067768a6056835da227529559e84dfeebc16ed8245d6d4bbf71",
+    "graph.html": "5ad95abddf828530857fe86ca3e281ceecda32b7164a804d65c5d92174812bb1",
+    "graph.json": "db843d4ba53bc04428abbd455b53731559973ca79ebc182903281b2c2dc493b0"
   },
   "schema_version": 1,
-  "source_commit": "83041c117c7e406aae920b694bc759087923c629",
-  "source_fingerprint": "6c512ca133c957b55acff3cb2d289819b1c080888c6a30863923e6b6e959e542",
+  "source_commit": "3eb85965cfbb93669c99fafa7b8c330ed62c8d17",
+  "source_fingerprint": "d345e83ed0380c970d562674929a7c99e451fb6dedc3cf4f7fb34341553a0d52",
   "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/background-task-stop.test.ts"
   ]
 }

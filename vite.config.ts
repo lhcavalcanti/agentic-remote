@@ -27,8 +27,8 @@ const tmuxTests = [
 // Non-tmux files left out of `pnpm test:quick`, the subset the advisory hosted
 // check runs on every pull request head. That job is billed per started minute
 // and must finish install, lint, type-check, build and these tests within 60
-// seconds on a GitHub runner, which leaves roughly 12 seconds for tests
-// (docs/deployment-promotion.md). Each file listed here took 0.15 seconds or
+// seconds on a GitHub runner, which leaves roughly 10 seconds for tests
+// (docs/deployment-promotion.md). Each file listed here took 0.1 seconds or
 // more locally, counting environment setup and imports; that includes every
 // jsdom file, whose environment alone costs about 0.6 seconds. A new file joins
 // the quick subset by default: if it is that slow, add it here. Every file still
@@ -45,6 +45,7 @@ const slowTests = [
   'server/claude-agent-service.test.ts',
   'server/claude-recovery-admission.test.ts',
   'server/client-presence.test.ts',
+  'server/computer-manager-metadata.test.ts',
   'server/conversation-recovery.test.ts',
   'server/delegated-transcription-service.test.ts',
   'server/file-upload-routes.test.ts',
@@ -55,6 +56,7 @@ const slowTests = [
   'server/manager-structured-memory-performance.test.ts',
   'server/manager-structured-memory-search.test.ts',
   'server/manager-structured-memory-store.test.ts',
+  'server/manager-structured-memory-validation.test.ts',
   'server/manager-tools.test.ts',
   'server/multi-node.test.ts',
   'server/notification-scope.integration.test.ts',
@@ -74,6 +76,7 @@ const slowTests = [
   'server/session-enqueue-clear.test.ts',
   'server/session-knowledge-routes.test.ts',
   'server/session-knowledge-store.test.ts',
+  'server/session-metadata-provenance.test.ts',
   'server/session-order-routes.test.ts',
   'server/session-patch-integration.test.ts',
   'server/session-patch-routes.test.ts',
@@ -89,6 +92,7 @@ const slowTests = [
   'server/session-store-serialization.test.ts',
   'server/session-store.test.ts',
   'server/settings-profile-routes.test.ts',
+  'server/settings-profile-store.test.ts',
   'server/startup-phases.test.ts',
   'server/submission-error-http.test.ts',
   'server/terminal-send-uncertainty.test.ts',
@@ -110,6 +114,7 @@ const slowTests = [
   'src/SessionNavigation.test.tsx',
   'src/SessionResources.test.tsx',
   'src/SessionRetentionSettings.test.tsx',
+  'src/api.test.ts',
   'src/features/prompts/PromptCards.test.tsx',
   'src/markdown-navigation.test.ts',
   'src/pwa.test.ts',

@@ -39,6 +39,7 @@ import {
   waitForProcessCommand,
 } from './tmux-test-helpers.js'
 import * as tmuxErrors from './tmux-errors.js'
+import { fixtureReceiptWriter, readyComposer } from './terminal-test-fixtures.js'
 
 const execFileAsync = promisify(execFile)
 const directories: string[] = []
@@ -81,15 +82,6 @@ const desktopInstallPane = [
   '←/→ to choose · Enter to select · Y / N',
   '╰───────────────────────────────────────────────╯',
 ].join('\n')
-
-function readyComposer(text = '', working = false): string {
-  return [
-    '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
-    `┃ ${text}`,
-    '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
-    working ? ' ◉ Working · esc interrupt' : ' / commands',
-  ].join('\n')
-}
 
 function flatReadyComposer(
   text = '',
@@ -160,17 +152,6 @@ const wideDownloadedUpdateFooter = [
 
 const shellReadyComposer =
   "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
-
-function fixtureReceiptWriter(filename: string): string {
-  return `
-import { renameSync, writeFileSync } from 'node:fs'
-const receiptPath = ${JSON.stringify(filename)}
-const writeReceipt = (value) => {
-  writeFileSync(receiptPath + '.tmp', JSON.stringify(value))
-  renameSync(receiptPath + '.tmp', receiptPath)
-}
-`
-}
 
 async function deliveryFixture(
   working: boolean,

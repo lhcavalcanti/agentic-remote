@@ -175,6 +175,13 @@ interface PendingSdkFollowUp {
   stopped?: boolean
 }
 
+interface SdkFollowUpTracker {
+  activate: () => void
+  settleWhenIdle: () => void
+  settled: Promise<void>
+  cancel: () => void
+}
+
 class TerminalDiscoveryError extends Error {
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
@@ -1782,10 +1789,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // to close its own, and one it supersedes must stop watching.
   private readonly sdkTurnsAwaited = new Map<string, string>()
   private readonly retiredSdkPromptRuns = new Set<string>()
-  private readonly sdkFollowUpTrackers = new Map<
-    string,
-    { settleWhenIdle: () => void; cancel: () => void }
-  >()
+  private readonly sdkFollowUpTrackers = new Map<string, SdkFollowUpTracker>()
   private readonly drainingSessions = new Set<string>()
   /** Old and replacement recovery tokens held by an in-flight dispatch. */
   private readonly claimedFailures = new Set<string>()
@@ -5361,11 +5365,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private trackSdkFollowUp(
     sdkSession: CopilotSessionLike,
     assistantMessageId: string,
-  ): { activate: () => void; settleWhenIdle: () => void; cancel: () => void } {
+  ): SdkFollowUpTracker {
     const sessionId = sdkSession.sessionId
     let active = false
     let closed = false
     let responseStarted = false
+    let resolveSettled = () => {}
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    })
+    const complete = (completion: Promise<void>) => {
+      void completion
+        .catch((error: unknown) => this.publishError(sessionId, error))
+        .finally(resolveSettled)
+    }
     const unsubscribe = sdkSession.on((event) => {
       if (!active || closed || eventAgentId(event)) return
       if (
@@ -5381,10 +5394,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         closed = true
         unsubscribe()
         forget()
-        void this.finishSdkFollowUp(
-          sessionId,
-          assistantMessageId,
-        ).catch((error: unknown) => this.publishError(sessionId, error))
+        complete(this.finishSdkFollowUp(sessionId, assistantMessageId))
       } else if (
         event.type === 'session.error' ||
         event.type === 'session.shutdown'
@@ -5396,11 +5406,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           event.type === 'session.error'
             ? event.data.message
             : 'The SDK session shut down.'
-        void this.failTrackedSdkFollowUp(
+        complete(this.failTrackedSdkFollowUp(
           sessionId,
           assistantMessageId,
           message,
-        ).catch((error: unknown) => this.publishError(sessionId, error))
+        ))
       }
     })
     // Whatever ends this tracker -- an idle, a shutdown, or being superseded
@@ -5422,6 +5432,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       settleWhenIdle: () => {
         responseStarted = true
       },
+      settled,
       cancel: () => {
         forget()
         if (closed) return
@@ -6924,9 +6935,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
         interruptedSdkRun = this.sdkPromptRuns.get(sessionId)
       }
+      const interruptedSdkFollowUp =
+        this.sdkFollowUpTrackers.get(sessionId)
       await this.activeSessionStopper(sessionId)
       if (active) {
         if (this.activePrompts.has(sessionId)) {
+          interruptedSdkFollowUp?.settleWhenIdle()
           this.activePrompts.delete(sessionId)
           await active.abort()
         }
@@ -6935,11 +6949,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.sessions.delete(sessionId)
         }
       }
-      // Admission is closed before teardown, so no follow-up can install a
-      // replacement tracker. Retire this one explicitly because neither
-      // disconnect nor provider deletion must announce shutdown.
-      this.sdkFollowUpTrackers.get(sessionId)?.cancel()
-      this.sdkFollowUpTrackers.delete(sessionId)
       for (const [requestId, permission] of this.permissions) {
         if (permission.sessionId === sessionId) {
           permission.resolve({ kind: 'user-not-available' })
@@ -6965,7 +6974,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         try {
           await this.deleteSdkProviderIdentity(sessionId)
         } catch (error) {
-          await interruptedSdkRun
+          await Promise.all([
+            interruptedSdkRun,
+            interruptedSdkFollowUp?.settled,
+          ])
           await this.reconcileRetainedSdkDeletion(
             sessionId,
             interruptedPrompt,
@@ -6975,6 +6987,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw error
         }
       }
+      // A successful destructive delete does not need a provider event to
+      // retire the follow-up because no retry can reuse this SDK identity.
+      interruptedSdkFollowUp?.cancel()
+      this.sdkFollowUpTrackers.delete(sessionId)
       await this.store.remove(sessionId)
       this.pendingSdkQueueAdmissions.delete(sessionId)
       this.forgetSdkReplies(sessionId)

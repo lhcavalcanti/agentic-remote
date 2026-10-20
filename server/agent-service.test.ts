@@ -739,6 +739,191 @@ describe('AgentService deletion', () => {
     await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
   })
 
+  it('keeps failed deletion exclusive until a tracker-owned follow-up settles', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up after the original wait',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up after the original wait',
+      ),
+    )
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    await vi.waitFor(() =>
+      expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+    )
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+    const followUpAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    let deletionSettled = false
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    ).finally(() => {
+      deletionSettled = true
+    })
+
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const releasedBeforeStaleIdle = deletionSettled
+    const retryOutcome = await service
+      .sendMessage(created.id, 'Retry before the follow-up idle')
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      )
+    client.session.resolveSessionIdle()
+
+    expect(await deletionOutcome).toBe(failure)
+    expect(releasedBeforeStaleIdle).toBe(false)
+    expect(retryOutcome).toMatchObject({
+      error: {
+        statusCode: 409,
+        uncertainDelivery: false,
+      },
+    })
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === followUpAssistant,
+      ),
+    ).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+
+    client.deleteError = undefined
+    await expect(
+      service.sendMessage(created.id, 'Retry after the follow-up settled'),
+    ).resolves.toMatchObject({ status: 'running' })
+    const retryAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(service['activePrompts'].get(created.id)?.assistantMessageId).toBe(
+      retryAssistant,
+    )
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === retryAssistant,
+      ),
+    ).toMatchObject({ content: '', streaming: true })
+
+    client.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('idle'),
+    )
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+  })
+
+  it.each(['session.error', 'session.shutdown'] as const)(
+    'settles failed deletion when a tracker-owned follow-up ends with %s',
+    async (type) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const store = new SessionStore(path.join(directory, 'state'))
+      const client = new FakeCopilotClient()
+      const service = new AgentService(
+        store,
+        client,
+        async () => [],
+        async () => undefined,
+      )
+      await service.start()
+      const created = await service.createSession(directory, false, false)
+      await service.sendMessage(created.id, 'Start guarded work')
+      let acceptFollowUp!: (messageId: string) => void
+      client.session.send = vi.fn(async ({ prompt }) => {
+        client.session.sentPrompts.push(prompt)
+        return new Promise<string>((resolve) => {
+          acceptFollowUp = resolve
+        })
+      })
+      const followingUp = service.sendMessage(
+        created.id,
+        'Follow up after the original wait',
+      )
+      await vi.waitFor(() =>
+        expect(client.session.sentPrompts).toContain(
+          'Follow up after the original wait',
+        ),
+      )
+      client.session.resolvePrompt({
+        id: randomUUID(),
+        type: 'assistant.message',
+        timestamp: new Date().toISOString(),
+        parentId: null,
+        data: { messageId: 'original-response', content: 'base answer' },
+      } as AssistantMessageEvent)
+      acceptFollowUp('follow-up-message')
+      await followingUp
+      await vi.waitFor(() =>
+        expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+      )
+      expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+      const failure = new Error('Provider deletion failed')
+      client.deleteError = failure
+      let deletionSettled = false
+      const deletionOutcome = service.deleteSession(created.id).then(
+        () => undefined,
+        (error: unknown) => error,
+      ).finally(() => {
+        deletionSettled = true
+      })
+
+      await vi.waitFor(() =>
+        expect(client.deletedSessionIds).toContain(created.id),
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      const releasedBeforeTrackerEnded = deletionSettled
+      client.session.emit({
+        id: randomUUID(),
+        type,
+        timestamp: new Date().toISOString(),
+        parentId: null,
+        data: type === 'session.error'
+          ? { errorType: 'runtime', message: 'Follow-up disconnected' }
+          : {},
+      } as SessionEvent)
+
+      expect(await deletionOutcome).toBe(failure)
+      expect(releasedBeforeTrackerEnded).toBe(false)
+      client.deleteError = undefined
+      await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+    },
+  )
+
   it.each([
     ['provider message', new Error('Session not found: active-session')],
     [

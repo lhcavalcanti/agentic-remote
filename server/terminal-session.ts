@@ -55,6 +55,8 @@ export interface TerminalFormReplyOptions {
 export interface TerminalSendOptions {
   allowDuringAgentExecution?: boolean
   replaceExistingInput?: boolean
+  /** Refuse, under the send lock, unless the agent is idle at its composer. */
+  idleOnly?: boolean
 }
 
 export interface TerminalCancelOptions {
@@ -1749,7 +1751,7 @@ export class TmuxTerminalSessionController
     enqueue: boolean,
     options: TerminalSendOptions = {},
   ): Promise<boolean> {
-    return this.sendInternal(sessionId, content, enqueue, false, options)
+    return this.sendInternal(sessionId, content, enqueue, options.idleOnly === true, options)
   }
 
   async sendWhenIdle(sessionId: string, content: string): Promise<boolean> {

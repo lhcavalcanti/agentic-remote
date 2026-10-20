@@ -21,6 +21,7 @@ import {
 } from '../shared/knowledge-path.js'
 import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
+import { noteRefusalReason } from './refusal-metrics.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
@@ -475,6 +476,7 @@ export async function registerHubRoutes(
       .listComputers()
       .find((entry) => entry.id === input.computerId)
     if (!computer) {
+      noteRefusalReason(request, 'not-registered')
       return reply.code(404).send({ error: 'Computer is not registered' })
     }
     const registrationIsCurrent = manager.captureComputerRegistration(input.computerId)
@@ -487,6 +489,7 @@ export async function registerHubRoutes(
       // A node released before knowledge roots has no such route, which would
       // otherwise surface as a bare "Not Found".
       if (Reflect.get(error as object, 'statusCode') === 404) {
+        noteRefusalReason(request, 'knowledge-root.unsupported-node')
         return reply.code(409).send({
           error: `${computer.name} does not support knowledge roots yet. Update it to the latest release.`,
         })
@@ -496,6 +499,7 @@ export async function registerHubRoutes(
     if (!registrationIsCurrent()) {
       const registered = manager.listComputers()
         .some((entry) => entry.id === input.computerId)
+      noteRefusalReason(request, registered ? 'knowledge-root.pairing-changed' : 'not-registered')
       return reply.code(registered ? 409 : 404).send({
         error: registered
           ? 'Computer pairing changed while validating this folder. Choose the computer again.'
@@ -518,6 +522,7 @@ export async function registerHubRoutes(
     if (!(await reservation.finalize(registrationIsCurrent))) {
       const registered = manager.listComputers()
         .some((entry) => entry.id === input.computerId)
+      noteRefusalReason(request, registered ? 'knowledge-root.pairing-changed' : 'not-registered')
       return reply.code(registered ? 409 : 404).send({
         error: registered
           ? 'Computer pairing changed while saving this folder. Choose the computer again.'

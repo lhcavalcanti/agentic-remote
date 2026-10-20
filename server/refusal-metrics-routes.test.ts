@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildApp, type BuildAppOptions } from './app.js'
+import { SubmissionError } from '../shared/submission-error.js'
 import { TerminalDraftConflictError } from './terminal-session.js'
+import { WorkspaceBrowserError } from './workspace-browser.js'
 
 const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
 const sendRoute = '/api/computers/:computerId/sessions/:sessionId/messages'
@@ -96,6 +98,63 @@ describe('refusal counting', () => {
     for (const content of [conflictMessage, prompt, sessionId, computerId, 'draft=1']) {
       expect(serialized).not.toContain(content)
     }
+  })
+
+  it('counts a wrapped draft conflict under the conflict reason', async () => {
+    const runtime = await start()
+    vi.spyOn(runtime.service, 'sendMessage').mockRejectedValue(
+      new SubmissionError(conflictMessage, 409, { sessionId, accepted: false, failedAt: 'synthetic' }, {
+        cause: new TerminalDraftConflictError('new-text'),
+        terminalDraftConflict: true,
+        uncertainDelivery: false,
+      }),
+    )
+
+    const response = await runtime.app.inject({
+      method: 'POST',
+      url: `/api/computers/${runtime.identity.info.id}/sessions/${sessionId}/messages`,
+      headers: trusted,
+      payload: { content: prompt },
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.body).toBe(
+      `{"error":"${conflictMessage}","submission":{"sessionId":"${sessionId}","accepted":false,"failedAt":"synthetic"},"uncertainDelivery":false,"terminalDraftConflict":true}`,
+    )
+    expect((await refusals(runtime)).refusals).toEqual([
+      expect.objectContaining({
+        route: sendRoute,
+        status: 409,
+        reason: 'terminal-draft-conflict.new-text',
+        count: 1,
+      }),
+    ])
+  })
+
+  it('counts a policy 403 raised by a route', async () => {
+    const runtime = await start()
+    vi.spyOn(runtime.manager!, 'listWorkspace').mockRejectedValue(
+      new WorkspaceBrowserError('Workspace browsing is restricted to the session folder', 403),
+    )
+
+    const response = await runtime.app.inject({
+      url: `/api/computers/${runtime.identity.info.id}/sessions/${sessionId}/workspace?path=..%2Fsecret`,
+      headers: trusted,
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.body).toBe('{"error":"Workspace browsing is restricted to the session folder"}')
+    const snapshot = await refusals(runtime)
+    expect(snapshot.refusals).toEqual([
+      expect.objectContaining({
+        route: '/api/computers/:computerId/sessions/:sessionId/workspace',
+        method: 'GET',
+        status: 403,
+        reason: 'http-403',
+        count: 1,
+      }),
+    ])
+    expect(JSON.stringify(snapshot)).not.toContain('secret')
   })
 
   it('counts a validation refusal as validation', async () => {

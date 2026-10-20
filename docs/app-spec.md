@@ -1634,15 +1634,19 @@ guards without disabling legitimate external/native history refresh.
 Every computer counts the user-facing refusals it sends so a refusal that
 fires falsely shows up without a user report:
 
-- A refusal is a 4xx response from a matched route. 401 and 403 (pairing-token
-  and Host/Origin failures) and 404s for unknown routes are not counted.
+- A refusal is a 4xx response from a matched route; 404s for unknown routes
+  are not counted. A 401 or 403 a route raises as an error, such as a path
+  outside the session folder or a refused memory change, is counted. The
+  pairing-token and Host/Origin checks reply directly without a reason, so
+  those are not counted.
 - Each refusal is keyed by route template (for example
   `/api/computers/:computerId/sessions/:sessionId/messages`), method, status,
   and a stable reason code: the error's `reasonCode` (such as
-  `terminal-draft-conflict.new-text` or `retained-session.archived`), its
-  class name, `validation` for invalid input, `not-found`/`not-registered` for
-  those fallbacks, and `http-<status>` for a plain error or a direct reply
-  that names no reason. Each key keeps `count`, `firstAt`, and `lastAt`.
+  `terminal-draft-conflict.new-text` or `retained-session.archived`), else the
+  `reasonCode` of an error it wraps, else its class name; `validation` for
+  invalid input; `not-found`/`not-registered` for those fallbacks; and
+  `http-<status>` for a plain error or a direct reply that names no reason.
+  Each key keeps `count`, `firstAt`, and `lastAt`.
 - Distinct keys are bounded at 256; further keys count in one `other` bucket.
   Counts live in memory only and start again when the process restarts.
 - Each refusal emits one `info` log line,

@@ -95,12 +95,19 @@ export class RefusalCounter {
 }
 
 /**
- * A refusal is a 4xx answer from a matched route. 401 and 403 are auth and
- * Host/Origin failures, and an unmatched route has no template: both are
- * mostly scanner noise rather than a user being turned away.
+ * A refusal is a 4xx answer from a matched route. An unmatched route has no
+ * template, and a 401 or 403 that names no reason is a direct reply from the
+ * node-token or Host/Origin check: both are mostly scanner noise rather than
+ * a user being turned away. A 401 or 403 a route raised, such as a path
+ * outside the session folder, names its reason and is counted.
  */
-export function countsAsRefusal(status: number, route: string | undefined): boolean {
-  return status >= 400 && status < 500 && status !== 401 && status !== 403 && Boolean(route)
+export function countsAsRefusal(
+  status: number,
+  route: string | undefined,
+  reasonNoted: boolean,
+): boolean {
+  if (status < 400 || status >= 500 || !route) return false
+  return reasonNoted || (status !== 401 && status !== 403)
 }
 
 const reasonPattern = /^[A-Za-z0-9_.:-]{1,64}$/
@@ -113,15 +120,29 @@ export function httpRefusalReason(status: number): string {
   return `http-${status}`
 }
 
+const MAX_CAUSE_DEPTH = 4
+
+/** The first safe `reasonCode` on an error or, for a wrapper, its causes. */
+function reasonCodeFromChain(error: object): string | undefined {
+  let current: unknown = error
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== 'object' || current === null) return undefined
+    const reasonCode = safeReason(Reflect.get(current, 'reasonCode'))
+    if (reasonCode) return reasonCode
+    current = Reflect.get(current, 'cause')
+  }
+  return undefined
+}
+
 /**
- * A stable reason for an error: its `reasonCode` when it has one, Fastify's
- * error code, or its class name. A plain `Error` says nothing a status does
- * not, so it reports as `http-<status>`.
+ * A stable reason for an error: its `reasonCode` or that of an error it wraps,
+ * Fastify's error code, or its class name. A plain `Error` says nothing a
+ * status does not, so it reports as `http-<status>`.
  */
 export function refusalReasonFromError(error: unknown, status: number): string {
   if (error instanceof z.ZodError) return 'validation'
   if (typeof error !== 'object' || error === null) return httpRefusalReason(status)
-  const reasonCode = safeReason(Reflect.get(error, 'reasonCode'))
+  const reasonCode = reasonCodeFromChain(error)
   if (reasonCode) return reasonCode
   const name = safeReason(Reflect.get(error, 'name'))
   if (name === 'FastifyError') {
@@ -151,12 +172,13 @@ export function registerRefusalMetrics(app: FastifyInstance, counter: RefusalCou
   app.addHook('onResponse', async (request, reply) => {
     const status = reply.statusCode
     const route = request.routeOptions.url
-    if (!countsAsRefusal(status, route)) return
+    const noted = notedReasons.get(request)
+    if (!countsAsRefusal(status, route, noted !== undefined)) return
     const key: RefusalKey = {
       route: route!,
       method: request.method,
       status,
-      reason: notedReasons.get(request) ?? httpRefusalReason(status),
+      reason: noted ?? httpRefusalReason(status),
     }
     counter.record(key)
     // info, not warn: a refusal is a correct answer to the user, not a server

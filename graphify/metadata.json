@@ -313,7 +313,7 @@
   ],
   "communities": 174,
   "community_algorithm": "louvain-seed-42",
-  "edges": 13437,
+  "edges": 13446,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -345,7 +345,7 @@
     "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
     "config/agentic-remote-promotion.env.example": "3b93ccf7572bb980b70067dab871f06f58a8ca93d078132cc350c6342af6a2de",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "680cd37663d648d1fa93fc9f7f6462763e77bd300b109d1d724ae6be984160e4",
+    "docs/app-spec.md": "20bf9152e5148e7534642fd3c5e2511ecf71c9d0745704b9608857415350d78d",
     "docs/architecture.md": "419a152af98ca8dc2eeac6333db161fb40fe4921f9cac64e1443ce1325af307a",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -485,9 +485,9 @@
     "server/recovery-resend-durability.test.ts": "2d764c61cf75df06dbe6327555a1de5cad8ae06208b00e403dd61b4d24fe0108",
     "server/recovery-seed-guards.test.ts": "160e953bd4df95e34fceef919508b17ba88f5687d978cf2aa8adf4d5cb44a3b2",
     "server/recovery-seed-legacy-fixture.ts": "9826186c940ebbb4c420fc209d23815ccbb43b1468cd9f676c554cde6730952f",
-    "server/refusal-metrics-routes.test.ts": "cad44a24a537ccccf757bca6cf7ab91d8a6a1b7a7d63afc8afbfcd8a5250ed61",
-    "server/refusal-metrics.test.ts": "fa83be79068bb9f384638041a56406064ef5c9d927fd73661aab93460286254e",
-    "server/refusal-metrics.ts": "300707e14d25bf3fe1a180aaeb80af9e36d9180a43f938def05c6f0b55dc5d6d",
+    "server/refusal-metrics-routes.test.ts": "4fd485e8ea02da3badb1519f966f72e660e96c1bfc3c3ad0dba5c3cefd38de57",
+    "server/refusal-metrics.test.ts": "b9e7ec068ff0328c1c95f9c04cb763042f3c91453e6e2ef5d485119968904567",
+    "server/refusal-metrics.ts": "1970d72bef2ec8fefa2277ed6796f9edabe4de60c324699878d3394ff7729a0f",
     "server/release-publication.test.ts": "0a149388fadea5cea054ba821e5d3fe36815f379fb378fe514693b5ff7805ded",
     "server/remote-node-client.test.ts": "221bdc1ca70639fb5a28598401aeb531e33ad23ca8c5221b653969e5711b9c4a",
     "server/remote-node-client.ts": "704405d8d0ea123ebbdef7127c3ee1d4bdc63b94993c21488ebcda6aacae6bac",
@@ -687,7 +687,7 @@
     "vite.config.ts": "e4aade0b7f6812702224266d5177129c044686a471b7a6fef7cbacb1b91deccb"
   },
   "mode": "local-ast-only",
-  "nodes": 4748,
+  "nodes": 4749,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -749,28 +749,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "52a8e36ed2102404b7e71f1a3d6becdaf67bb0fc5404b7f3cda385b0f89d03c7",
-    "communities.json": "64b4c2ee22756ef65d7518a205b314b38a07275ec28eeac016c3a3cc46313a60",
-    "graph.html": "c564a0159444f2504a35aae0edb04e890a9d67a912b5d2f8397df001bda6a92c",
-    "graph.json": "5c88c8512f7e68caf472dce91a748aa711dbf86028c8ff7d1ad5d42086505f16"
+    "GRAPH_REPORT.md": "1138d2a2a15b158ff9067ba2307f6f9cb640f3e93ad3bd1bafc167b6253fa9f1",
+    "communities.json": "a01fff7c808ac97c94ce6dea001d8c9dced8a7753126505d67e10c7a828fec90",
+    "graph.html": "f34ec3773b9c3397f961bb16366ebd19a3453a4943f09ca37c0c3a127423980d",
+    "graph.json": "c03fd87ca96d6258d4d1e437ed73c05b5c7ece83162070cddf36d4e539acd6f3"
   },
   "schema_version": 1,
-  "source_commit": "9cdc840c8eda19bb12a120d858b32bc676ba161d",
-  "source_fingerprint": "542ece8e0db80a76fd74cab926125e11373a0baeaaca5084d10ca22b7d0f5037",
+  "source_commit": "07d56e6dc2a8ff9c83e593c6cb451f4daae8ffdf",
+  "source_fingerprint": "93707211da2f3d239b72ab5c480132da25ff56ed2f3ec3964647605d1b9a2ab8",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "package.json",
-    "server/app.ts",
-    "server/hub-routes.ts",
     "server/refusal-metrics-routes.test.ts",
     "server/refusal-metrics.test.ts",
-    "server/refusal-metrics.ts",
-    "server/remote-node-errors.ts",
-    "server/session-store.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/refusal-metrics.ts"
   ]
 }

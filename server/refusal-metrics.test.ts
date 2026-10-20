@@ -9,6 +9,7 @@ import {
 import { TerminalDraftConflictError } from './terminal-session.js'
 import { RetainedSessionError } from './session-store.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
+import { SubmissionError } from '../shared/submission-error.js'
 
 const route = '/api/computers/:computerId/sessions/:sessionId/messages'
 
@@ -92,18 +93,27 @@ describe('RefusalCounter', () => {
 })
 
 describe('countsAsRefusal', () => {
+  it('counts 401 and 403 only when the refusal named a reason', () => {
+    expect(countsAsRefusal(403, route, true)).toBe(true)
+    expect(countsAsRefusal(401, route, true)).toBe(true)
+    expect(countsAsRefusal(403, route, false)).toBe(false)
+    expect(countsAsRefusal(401, route, false)).toBe(false)
+    expect(countsAsRefusal(404, undefined, true)).toBe(false)
+    expect(countsAsRefusal(500, route, true)).toBe(false)
+  })
+
   it('counts client refusals on matched routes but not auth failures or unknown routes', () => {
-    expect(countsAsRefusal(400, route)).toBe(true)
-    expect(countsAsRefusal(404, route)).toBe(true)
-    expect(countsAsRefusal(409, route)).toBe(true)
-    expect(countsAsRefusal(413, route)).toBe(true)
-    expect(countsAsRefusal(401, route)).toBe(false)
-    expect(countsAsRefusal(403, route)).toBe(false)
-    expect(countsAsRefusal(404, undefined)).toBe(false)
-    expect(countsAsRefusal(200, route)).toBe(false)
-    expect(countsAsRefusal(302, route)).toBe(false)
-    expect(countsAsRefusal(500, route)).toBe(false)
-    expect(countsAsRefusal(503, route)).toBe(false)
+    expect(countsAsRefusal(400, route, false)).toBe(true)
+    expect(countsAsRefusal(404, route, false)).toBe(true)
+    expect(countsAsRefusal(409, route, false)).toBe(true)
+    expect(countsAsRefusal(413, route, false)).toBe(true)
+    expect(countsAsRefusal(401, route, false)).toBe(false)
+    expect(countsAsRefusal(403, route, false)).toBe(false)
+    expect(countsAsRefusal(404, undefined, false)).toBe(false)
+    expect(countsAsRefusal(200, route, false)).toBe(false)
+    expect(countsAsRefusal(302, route, false)).toBe(false)
+    expect(countsAsRefusal(500, route, false)).toBe(false)
+    expect(countsAsRefusal(503, route, false)).toBe(false)
   })
 })
 
@@ -127,6 +137,33 @@ describe('refusalReasonFromError', () => {
       Object.assign(new Error('x'), { name: 'FastifyError', code: 'FST_ERR_CTP_BODY_TOO_LARGE' }),
       413,
     )).toBe('FST_ERR_CTP_BODY_TOO_LARGE')
+  })
+
+  it('takes a reason code from a wrapped cause before the wrapper class', () => {
+    const wrapped = new SubmissionError('x', 409, undefined, {
+      cause: new TerminalDraftConflictError('new-text'),
+      terminalDraftConflict: true,
+    })
+    expect(refusalReasonFromError(wrapped, 409)).toBe('terminal-draft-conflict.new-text')
+    const twice = new SubmissionError('x', 409, undefined, { cause: wrapped })
+    expect(refusalReasonFromError(twice, 409)).toBe('terminal-draft-conflict.new-text')
+    expect(refusalReasonFromError(
+      new SubmissionError('x', 409, undefined, { cause: Object.assign(new Error('y'), { reasonCode: 'a b' }) }),
+      409,
+    )).toBe('SubmissionError')
+    expect(refusalReasonFromError(
+      new SubmissionError('x', 409, undefined, { cause: new Error('plain') }),
+      409,
+    )).toBe('SubmissionError')
+  })
+
+  it('stops at a bounded cause depth and survives cycles', () => {
+    const cyclic: Error & { cause?: unknown } = new Error('loop')
+    cyclic.cause = cyclic
+    expect(refusalReasonFromError(cyclic, 409)).toBe('http-409')
+    let deep: Error = Object.assign(new Error('root'), { reasonCode: 'deep.reason' })
+    for (let index = 0; index < 10; index += 1) deep = new Error('wrapper', { cause: deep })
+    expect(refusalReasonFromError(deep, 409)).toBe('http-409')
   })
 
   it('falls back to the status for plain errors and refuses unsafe names', () => {

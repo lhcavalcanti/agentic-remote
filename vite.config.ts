@@ -1,7 +1,27 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+
+// Test files that drive a real tmux server. Everything else belongs to `fast`,
+// which hosted CI runs without tmux, Copilot or Claude installed, so a new
+// file that needs tmux must be listed here.
+//
+// `canary` is the quick real-tmux send and readiness subset (about a minute).
+const canaryTests = [
+  'server/send-matrix.integration.test.ts',
+  'server/terminal-queue-delivery.test.ts',
+  'server/tmux-test-helpers.integration.test.ts',
+]
+// The rest of the real-tmux suite, which takes most of the full run.
+const tmuxTests = [
+  'server/active-sessions.test.ts',
+  'server/cli-canary.test.ts',
+  'server/terminal-form-viewport.test.ts',
+  'server/terminal-session.test.ts',
+  'server/terminal-startup-queue.test.ts',
+  'server/tmux-errors.integration.test.ts',
+]
 
 const packageVersion = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
@@ -67,6 +87,26 @@ export default defineConfig(({ command }) => {
       fileParallelism: false,
       maxWorkers: 1,
       testTimeout: 30_000,
+      // The projects split the files without overlap, so `pnpm test` still
+      // runs each file once. Each group finishes before the next starts.
+      projects: [
+        {
+          extends: true,
+          test: {
+            name: 'fast',
+            exclude: [...configDefaults.exclude, ...canaryTests, ...tmuxTests],
+            sequence: { groupOrder: 0 },
+          },
+        },
+        {
+          extends: true,
+          test: { name: 'canary', include: canaryTests, sequence: { groupOrder: 1 } },
+        },
+        {
+          extends: true,
+          test: { name: 'tmux', include: tmuxTests, sequence: { groupOrder: 2 } },
+        },
+      ],
     },
   }
 })

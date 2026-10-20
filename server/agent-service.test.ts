@@ -206,6 +206,18 @@ class DeferredSession implements CopilotSessionLike {
     this.responseResolvers.shift()?.(response)
   }
 
+  resolveSessionIdle(): void {
+    const resolvers = this.responseResolvers.splice(0)
+    for (const resolve of resolvers) resolve(undefined)
+    this.emit({
+      id: randomUUID(),
+      type: 'session.idle',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: {},
+    } as SessionEvent)
+  }
+
   async getEvents(): Promise<SessionEvent[]> {
     return []
   }
@@ -459,7 +471,78 @@ describe('AgentService deletion', () => {
     expect(service['sessions'].get(created.id)).toBe(client.session)
   })
 
-  it('reconciles an active SDK turn after provider deletion fails', async () => {
+  it('reconciles a follow-up admitted while provider deletion is draining admissions', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up while deletion starts',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up while deletion starts',
+      ),
+    )
+    const followUpAssistant = store.get(created.id)?.messages.at(-1)?.id
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    await vi.waitFor(() =>
+      expect(service['deletingSessions'].has(created.id)).toBe(true),
+    )
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    expect(
+      service['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(followUpAssistant)
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    client.session.resolveSessionIdle()
+
+    expect(await deletionOutcome).toBe(failure)
+    expect(store.get(created.id)).toMatchObject({
+      status: 'error',
+      activity: undefined,
+    })
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === followUpAssistant,
+      ),
+    ).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+
+    client.deleteError = undefined
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+  })
+
+  it('blocks retry until the aborted session-wide SDK wait settles after provider deletion fails', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const store = new SessionStore(path.join(directory, 'state'))
@@ -493,10 +576,31 @@ describe('AgentService deletion', () => {
     )
     const failure = new Error('Provider deletion failed')
     client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
 
-    await expect(service.deleteSession(created.id)).rejects.toBe(failure)
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const retryOutcome = await service
+      .sendMessage(created.id, 'Retry before the old idle')
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      )
+    client.session.resolveSessionIdle()
+
+    expect(await deletionOutcome).toBe(failure)
     await expect(permission).resolves.toEqual({ kind: 'user-not-available' })
-
+    expect(retryOutcome).toMatchObject({
+      error: {
+        statusCode: 409,
+        uncertainDelivery: false,
+      },
+    })
     const retained = store.get(created.id)
     expect(retained).toMatchObject({
       status: 'error',
@@ -514,25 +618,10 @@ describe('AgentService deletion', () => {
     await expect(
       service.sendMessage(created.id, 'Retry after failed deletion'),
     ).resolves.toMatchObject({ status: 'running' })
-    const retryAssistant =
-      service['activePrompts'].get(created.id)?.assistantMessageId
-    client.session.resolvePrompt({
-      id: randomUUID(),
-      type: 'assistant.message',
-      timestamp: new Date().toISOString(),
-      parentId: null,
-      data: { messageId: 'late-old-response', content: 'late old response' },
-    } as AssistantMessageEvent)
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(store.get(created.id)?.status).toBe('running')
-    expect(
-      service['activePrompts'].get(created.id)?.assistantMessageId,
-    ).toBe(retryAssistant)
-    expect(
-      store.get(created.id)?.messages.find(
-        (message) => message.id === retryAssistant,
-      ),
-    ).toMatchObject({ content: '', streaming: true })
+    client.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('idle'),
+    )
 
     await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
     expect(store.get(created.id)).toBeUndefined()

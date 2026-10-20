@@ -1760,6 +1760,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly queuedDispatches: QueuedDispatches
   private readonly queuedPromptStops = new Map<string, () => void>()
   private readonly queuedPromptRuns = new Map<string, Promise<void>>()
+  private readonly sdkPromptRuns = new Map<string, Promise<void>>()
   private readonly recoverySeedPromptRuns = new Map<string, Promise<void>>()
   private readonly recoverySeedDispatches = new Map<string, Promise<SessionDetail | undefined>>()
   private readonly pendingSessionMetadata = new Map<string, SessionEvent[]>()
@@ -5878,6 +5879,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publishError(sessionId, error)
       },
     )
+    this.sdkPromptRuns.set(sessionId, run)
+    void run.finally(() => {
+      if (this.sdkPromptRuns.get(sessionId) === run) {
+        this.sdkPromptRuns.delete(sessionId)
+      }
+    })
     if (options.recoverySeedPrompt) {
       this.recoverySeedPromptRuns.set(sessionId, run)
       void run.finally(() => {
@@ -6891,8 +6898,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Session not found')
     }
     const terminalBacked = this.store.backend(sessionId) === 'terminal'
-    const interruptedPrompt = this.activePrompts.get(sessionId)
-    const interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
@@ -6906,10 +6911,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.queuedPromptRuns.get(sessionId)?.catch(() => undefined)
       await this.activeSessionStopper(sessionId)
       const active = this.sessions.get(sessionId)
+      const interruptedPrompt = this.activePrompts.get(sessionId)
+      const interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
+      const interruptedSdkRun = this.sdkPromptRuns.get(sessionId)
+      const interruptedTurnSettlement =
+        !terminalBacked && active && interruptedPrompt
+          ? this.watchSdkTurnSettlement(active)
+          : undefined
       if (active) {
         if (this.activePrompts.has(sessionId)) {
           this.activePrompts.delete(sessionId)
-          await active.abort()
+          try {
+            await active.abort()
+          } catch (error) {
+            interruptedTurnSettlement?.cancel()
+            throw error
+          }
         }
         if (terminalBacked) {
           await active.disconnect()
@@ -6946,6 +6963,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         try {
           await this.deleteSdkProviderIdentity(sessionId)
         } catch (error) {
+          await Promise.all([
+            interruptedTurnSettlement?.settled,
+            interruptedSdkRun,
+          ])
           await this.reconcileRetainedSdkDeletion(
             sessionId,
             interruptedPrompt,
@@ -6955,6 +6976,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw error
         }
       }
+      interruptedTurnSettlement?.cancel()
       await this.store.remove(sessionId)
       this.pendingSdkQueueAdmissions.delete(sessionId)
       this.forgetSdkReplies(sessionId)
@@ -6983,6 +7005,36 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!completed) {
         this.deletedSessionIds.delete(sessionId)
       }
+    }
+  }
+
+  private watchSdkTurnSettlement(session: CopilotSessionLike): {
+    settled: Promise<void>
+    cancel: () => void
+  } {
+    let resolveSettled = () => {}
+    let settled = false
+    let unsubscribe = () => {}
+    const finish = () => {
+      if (settled) return
+      settled = true
+      unsubscribe()
+      resolveSettled()
+    }
+    const completion = new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    })
+    unsubscribe = session.on((event) => {
+      if (
+        !eventAgentId(event) &&
+        (event.type === 'session.idle' || event.type === 'session.error')
+      ) {
+        finish()
+      }
+    })
+    return {
+      settled: completion,
+      cancel: finish,
     }
   }
 

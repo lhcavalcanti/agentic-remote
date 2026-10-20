@@ -63,6 +63,10 @@ describe('managed service unit', () => {
       ['AGENTIC_REMOTE_MANAGER', 'manager_switch'],
       ['AGENTIC_REMOTE_MANAGER_MODEL', 'manager_model'],
       ['AGENTIC_REMOTE_MANAGER_REASONING_EFFORT', 'manager_effort'],
+      [
+        'AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY',
+        'manager_structured_memory',
+      ],
     ]) {
       expect(script).toContain(`${local}="\${${variable}:-$(config_value ${variable})}"`)
       expect(script).toContain(`printf '${variable}=%s\\n' "$${local}" >>"$environment_tmp"`)

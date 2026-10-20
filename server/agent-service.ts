@@ -251,6 +251,18 @@ interface TerminalFormContinuation {
   dismissed: boolean
   dismissalError: TerminalFormReplyError
   sendError?: TerminalFormReplyError | SubmissionError
+  // Set the moment the terminal accepts the answer, so a retry after a later
+  // failure only finishes the bookkeeping and never types it again.
+  delivered?: boolean
+  // Answering a card that outlived its form; a retry re-clears that card.
+  stale?: boolean
+}
+
+// A retained form answer typed as an ordinary message. Readiness is checked
+// under the terminal's send lock, so it is refused rather than steered into a
+// turn or draft that appeared after the stale card was inspected.
+interface TerminalAnswerDelivery {
+  onAccepted: () => void
 }
 
 export interface CopilotSessionLike {
@@ -323,6 +335,15 @@ function isRuntimeReasoningEffort(
   )
 }
 
+function terminalAnswerRefused(cause?: unknown): Error {
+  return Object.assign(new Error(
+    'The terminal is no longer idle at an empty prompt, so the answer was not sent. The question is still open; try again once the terminal is idle.',
+  ), { statusCode: 409, uncertainDelivery: false, ...(cause === undefined ? {} : { cause }) })
+}
+
+// Upper bound on the read-only stale-card probe within a reply's budget.
+const STALE_FORM_PROBE_MS = 5_000
+
 function isUncertainDelivery(error: unknown): boolean {
   // The value, not the key. A refusal that says delivery was definite carries
   // the mark too, and reading its presence as doubt turned "this was not sent"
@@ -334,6 +355,11 @@ function isUncertainDelivery(error: unknown): boolean {
 // is checked for something new between passes.
 const TRANSCRIPT_POLL_MS = 750
 const TRANSCRIPT_WAKE_MS = 100
+// A session whose changes keep coming is taken in again no sooner than this
+// many times what taking them in last cost, within the two intervals above.
+// Cheap sessions are seen within a wake; costly ones keep the watcher's
+// pace, so busy sessions cannot take over the process.
+const TRANSCRIPT_PACE_COST_FACTOR = 8
 // How long a message handed to a terminal is watched for in its event log.
 const TRANSCRIPT_ECHO_WAIT_MS = 5_000
 
@@ -490,17 +516,25 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       subagentParentsByAgentId,
     )
   }
+  // Every running activity, and the first message for each ID, so neither
+  // finishing activities nor completing a tool rescans the whole transcript.
+  // Long histories otherwise cost time quadratic in their length.
+  const runningActivities = new Set<ChatMessage>()
+  const messagesById = new Map<string, ChatMessage>()
+  const append = (message: ChatMessage) => {
+    messages.push(message)
+    if (!messagesById.has(message.id)) messagesById.set(message.id, message)
+    if (message.role === 'activity' && message.activityStatus === 'running') {
+      runningActivities.add(message)
+    }
+  }
   const finishRunningActivities = (
     activityStatus: 'completed' | 'failed' = 'completed',
   ) => {
-    for (const message of messages) {
-      if (
-        message.role === 'activity' &&
-        message.activityStatus === 'running'
-      ) {
-        message.activityStatus = activityStatus
-      }
+    for (const message of runningActivities) {
+      message.activityStatus = activityStatus
     }
+    runningActivities.clear()
   }
 
   for (const event of events) {
@@ -511,7 +545,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       const content = visibleUserContent(event.data.content)
       if (content) {
         finishRunningActivities()
-        messages.push({
+        append({
           id: event.id,
           role: 'user',
           content,
@@ -524,7 +558,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       const content = event.data.content.trim()
       if (content) {
         finishRunningActivities()
-        messages.push({
+        append({
           id: event.data.messageId || event.id,
           role: 'assistant',
           content,
@@ -546,7 +580,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
           taskCompletionSummaries.set(toolCallId, summary)
         }
       }
-      messages.push({
+      append({
         id: `tool:${toolCallId}`,
         role: 'activity',
         content: toolActivityContent(event.data),
@@ -559,10 +593,9 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     }
     if (event.type === 'tool.execution_complete') {
       const toolCallId = event.data.toolCallId
-      const message = messages.find(
-        (entry) => entry.id === `tool:${toolCallId}`,
-      )
+      const message = messagesById.get(`tool:${toolCallId}`)
       if (message) {
+        runningActivities.delete(message)
         message.activityStatus = event.data.success ? 'completed' : 'failed'
         const resultContent = activityResult(event.data, event.data.success)
         const duration = activityDuration(message.createdAt, event.timestamp)
@@ -1918,6 +1951,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly transcriptSessionSyncs = new Map<string, Promise<void>>()
   // When each session last had a changed event log taken in.
   private readonly transcriptChangesTakenAt = new Map<string, number>()
+  // What taking each session's changes in last cost, in milliseconds.
+  private readonly transcriptTakeInCosts = new Map<string, number>()
   // Sessions just handed a message, and when: their changes are taken in at
   // once, even inside the watcher's interval, until that message is logged.
   private readonly awaitedTranscriptEchoes = new Map<string, number>()
@@ -4065,6 +4100,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
       this.transcriptChangesTakenAt.delete(id)
+      this.transcriptTakeInCosts.delete(id)
       this.awaitedTranscriptEchoes.delete(id)
       this.workspaceVersions.delete(id)
       this.backgroundTaskSyncs.delete(id)
@@ -4271,6 +4307,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue: boolean,
     acknowledgedFailure?: string,
     replaceTerminalDraft = false,
+    answerDelivery?: TerminalAnswerDelivery,
   ): Promise<SessionDetail> {
     const content = rawContent.trim()
     if (this.stopped) throw queueConflict('The session service is stopping.')
@@ -4333,6 +4370,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           claim?.failedAt,
           delivery,
           replaceTerminalDraft,
+          answerDelivery,
         )
       } finally {
         releaseDispatch()
@@ -4636,6 +4674,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers?: string,
     delivery?: DeliveryBoundary,
     replaceTerminalDraft = false,
+    answerDelivery?: TerminalAnswerDelivery,
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
@@ -4660,6 +4699,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.terminalController.ownsStartupPrompt?.(sessionId) ||
       this.terminalAdmissionOperations.has(sessionId)
     ) {
+      if (answerDelivery) throw terminalAnswerRefused()
       return this.serializeTerminalAdmission(sessionId, async () => {
         const terminalBacked = await this.terminalController.has(sessionId)
         return this.sendAdmittedWithBackend(
@@ -4684,6 +4724,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       false,
       delivery,
       replaceTerminalDraft,
+      answerDelivery,
     )
   }
 
@@ -4696,7 +4737,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     startupLocked = false,
     delivery?: DeliveryBoundary,
     replaceTerminalDraft = false,
+    answerDelivery?: TerminalAnswerDelivery,
   ): Promise<SessionDetail> {
+    if (answerDelivery && (enqueue || !terminalBacked)) throw terminalAnswerRefused()
     if (!enqueue) {
       if (this.drainingSessions.has(sessionId)) {
         throw queueConflict('The queue is dispatching. This message was not sent.')
@@ -4734,6 +4777,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let terminalWorking = false
     if (terminalBacked) {
       if (
+        answerDelivery &&
+        (this.terminalAdmissionOperations.has(sessionId) ||
+          this.terminalController.ownsStartupPrompt?.(sessionId))
+      ) {
+        throw terminalAnswerRefused()
+      }
+      if (
         !startupLocked &&
         this.terminalAdmissionOperations.has(sessionId)
       ) {
@@ -4761,6 +4811,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             (!isTerminalVisiblyIdle(pane) &&
               (await this.terminalTurnOpen(sessionId)))),
       )
+      // An answer is never steered into work that started after its stale
+      // card was inspected; the terminal rechecks idleness under its lock.
+      if (
+        answerDelivery &&
+        (!pane ||
+          terminalWorking ||
+          isTerminalOverlay(pane) ||
+          this.terminalAdmissionOperations.has(sessionId) ||
+          this.terminalController.ownsStartupPrompt?.(sessionId))
+      ) {
+        throw terminalAnswerRefused()
+      }
       if (
         !startupLocked &&
         this.terminalAdmissionOperations.has(sessionId)
@@ -4860,9 +4922,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (terminalBacked) this.assertStartupDispatchSettled(sessionId, enqueue)
     // Startup and owner detection are awaited, so FIFO may have grown meanwhile.
     // Only the claimed failure holding that queue may be resent ahead of it.
+    // A retained answer replies to the question older prompts queued behind,
+    // so it goes first and the queue drains after it.
     if (
       terminalBacked &&
       !enqueue &&
+      !answerDelivery &&
       current.queuedPrompts?.length &&
       !terminalWorking &&
       (answers === undefined || current.failedPrompt?.failedAt !== answers)
@@ -4911,14 +4976,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         content,
         nativeEnqueue,
-        !nativeEnqueue && terminalWorking
-          ? {
-              allowDuringAgentExecution: true,
-              ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
-            }
-          : replaceTerminalDraft
-            ? { replaceExistingInput: true }
-            : undefined,
+        answerDelivery
+          ? { idleOnly: true }
+          : !nativeEnqueue && terminalWorking
+            ? {
+                allowDuringAgentExecution: true,
+                ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+              }
+            : replaceTerminalDraft
+              ? { replaceExistingInput: true }
+              : undefined,
       )
     ) {
       // The terminal has it. Anything that fails from here leaves a send that
@@ -4936,6 +5003,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return queued
       }
       if (delivery) delivery.accepted = true
+      answerDelivery?.onAccepted()
       if (answers) {
         const claim = this.recoveryClaims.get(answers)
         if (claim) claim.accepted = true
@@ -4958,6 +5026,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(untracked)
       return untracked
     }
+    // The terminal declined the answer without typing it. It must never fall
+    // through to the SDK or the queue, where it would run behind other work.
+    if (answerDelivery) throw terminalAnswerRefused()
     const sdkBackgroundAgentRunning =
       !terminalBacked &&
       hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId))
@@ -6754,6 +6825,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.pendingTerminalQueueClaims.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
+      this.transcriptTakeInCosts.delete(sessionId)
       this.backgroundTaskSyncs.delete(sessionId)
       this.backgroundTaskTracker.remove(sessionId)
       this.liveActivityEvents.delete(sessionId)
@@ -7044,7 +7116,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         'The original terminal answer is still pending. Retry that exact reply only; its values cannot be replaced.',
       ), { statusCode: 409, uncertainDelivery: true })
     }
-    if (receipt.sendError) throw receipt.sendError
+    if (receipt.sendError) {
+      if (receipt.stale) await this.clearAnsweredTerminalForm(sessionId, requestId).catch(() => undefined)
+      throw receipt.sendError
+    }
+    if (receipt.delivered) return this.settleDeliveredTerminalFormAnswer(sessionId, requestId)
     if (!receipt.dismissed) {
       if (!(await this.isToolCallComplete(sessionId, requestId.slice('persisted-user-input:'.length)))) {
         throw receipt.dismissalError
@@ -7096,6 +7172,139 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return sent
   }
 
+  /**
+   * Read-only, so a probe that outlives its budget is abandoned and read as
+   * not ready. Delivery rechecks readiness under the terminal's send lock.
+   */
+  private async terminalHasEmptyReadyComposer(sessionId: string, deadline: number): Promise<boolean> {
+    const { capture, inputReady } = this.terminalController
+    if (!capture || !inputReady) return false
+    const budget = Math.min(deadline - Date.now(), STALE_FORM_PROBE_MS)
+    if (!(budget > 0)) return false
+    let timer: NodeJS.Timeout | undefined
+    const expired = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), budget) })
+    const probe = (async () => {
+      const pane = await capture.call(this.terminalController, sessionId)
+      if (!pane || composerHoldsText(pane)) return false
+      return (await inputReady.call(this.terminalController, sessionId)) === true
+    })().catch(() => false)
+    try {
+      return await Promise.race([probe, expired])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private async sendTerminalFormAnswer(
+    sessionId: string,
+    content: string,
+    answerDelivery: TerminalAnswerDelivery,
+  ): Promise<SessionDetail> {
+    try {
+      return await this.admissions.run(sessionId, () => this.sendAdmittedMessage(
+        sessionId, content, false, undefined, false, answerDelivery,
+      ))
+    } finally {
+      this.wakeDeferredQueue(sessionId)
+    }
+  }
+
+  private async clearAnsweredTerminalForm(sessionId: string, requestId: string): Promise<SessionDetail> {
+    // A card left behind by a delivered answer: keep the turn's status, or
+    // release a session that was only waiting on this question.
+    const cleared = await this.store.clearPendingRequest(
+      sessionId, 'pendingUserInput', requestId,
+      (session) => session.status === 'waiting'
+        ? { status: 'idle' }
+        : { status: session.status, activity: session.activity },
+    )
+    this.publish(cleared)
+    return cleared
+  }
+
+  private async settleDeliveredTerminalFormAnswer(
+    sessionId: string, requestId: string,
+  ): Promise<SessionDetail> {
+    let cleared: SessionDetail
+    try {
+      cleared = await this.clearAnsweredTerminalForm(sessionId, requestId)
+    } catch (error) {
+      throw Object.assign(new Error(
+        'The answer was delivered, but its question could not be cleared. Retry to clear it; the answer will not be sent again.',
+      ), { statusCode: 500, uncertainDelivery: true, cause: error })
+    }
+    this.terminalFormContinuations.delete(JSON.stringify([sessionId, requestId]))
+    // The card held the queue back; let a deferred drain run after the answer.
+    this.wakeDeferredQueue(sessionId)
+    return cleared
+  }
+
+  /**
+   * The card outlived its terminal form: tmux shows an empty composer that is
+   * ready for input, and nothing was dismissed or submitted. The card stays
+   * until the terminal accepts the answer, so a refusal leaves the question
+   * open, and the queue cannot dispatch ahead of the answer meanwhile.
+   */
+  private async continueStaleTerminalFormReply(
+    sessionId: string, requestId: string, input: UserInputReplyInput, receipt: TerminalFormContinuation,
+  ): Promise<SessionDetail> {
+    const key = JSON.stringify([sessionId, requestId])
+    const forget = () => {
+      this.terminalFormContinuations.delete(key)
+      if (this.answeredPersistedInputs.get(sessionId)?.requestId === requestId) {
+        this.answeredPersistedInputs.delete(sessionId)
+      }
+    }
+    let complete: boolean
+    try {
+      // Rechecked immediately before delivery: completion recorded after the
+      // parser miss means the agent already has its answer.
+      complete = await this.isToolCallComplete(sessionId, requestId.slice('persisted-user-input:'.length))
+    } catch (error) {
+      forget()
+      throw error
+    }
+    if (complete) {
+      this.terminalFormContinuations.delete(key)
+      return this.acceptTerminalFormReply(sessionId, requestId, input)
+    }
+    const current = this.store.get(sessionId)
+    if (current?.pendingPermission || current?.pendingUserInput?.requestId !== requestId) {
+      forget()
+      throw Object.assign(new Error(
+        'The terminal question changed before its answer could be sent. Nothing was sent; check the conversation.',
+      ), { statusCode: 409, uncertainDelivery: false })
+    }
+    receipt.stale = true
+    try {
+      await this.sendTerminalFormAnswer(sessionId, receipt.content, {
+        onAccepted: () => { receipt.delivered = true },
+      })
+    } catch (error) {
+      // Only a paste whose outcome is unknown says otherwise; admission,
+      // readiness, and lock refusals all happen before anything is typed.
+      if (!receipt.delivered && !isUncertainDelivery(error)) {
+        forget()
+        if (terminalRefused(error)) throw terminalAnswerRefused(error)
+        if (error && typeof error === 'object' && deliveryUncertaintyFromError(error) === undefined) {
+          Reflect.set(error, 'uncertainDelivery', false)
+        }
+        throw error
+      }
+      receipt.sendError = error instanceof SubmissionError && error.submission?.accepted
+        ? error
+        : new TerminalFormReplyError(
+          'The retained terminal answer may have been delivered, but its receipt was not confirmed. Do not resend it.',
+          'uncertain', { cause: error },
+        )
+      // It may already be in the terminal; a card left open invites a second copy.
+      await this.clearAnsweredTerminalForm(sessionId, requestId).catch(() => undefined)
+      this.publishError(sessionId, receipt.sendError)
+      throw receipt.sendError
+    }
+    return this.settleDeliveredTerminalFormAnswer(sessionId, requestId)
+  }
+
   private async dismissTerminalFormForContinuation(
     sessionId: string, request: PendingUserInput, input: UserInputReplyInput, deadline: number,
   ): Promise<SessionDetail> {
@@ -7114,10 +7323,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalFormContinuations.set(key, receipt)
     let dismissed = false
     try {
+      // Escape only hides current CLI forms and leaves ask_user pending.
+      // Decline completes the tool before the fallback answer is sent.
       dismissed = await this.terminalController.dismissUserInput?.(sessionId, {
         question: receipt.request.question,
         fields: receipt.request.form!.fields.map((field) => field.title),
-      }, undefined, { deadline }) ?? false
+      }, 'decline', { deadline }) ?? false
     } catch (error) {
       this.publishError(sessionId, error)
       if (error instanceof TerminalFormReplyError && error.outcome === 'not-submitted') {
@@ -7136,12 +7347,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (!dismissed) return this.continueTerminalFormReply(sessionId, requestId, input)
     }
+    if (!dismissed && await this.terminalHasEmptyReadyComposer(sessionId, deadline)) {
+      return this.continueStaleTerminalFormReply(sessionId, requestId, input, receipt)
+    }
     if (!dismissed) {
       this.terminalFormContinuations.delete(key)
       this.answeredPersistedInputs.delete(sessionId)
       throw Object.assign(new Error(
         'The agent is still showing its prompt, so the answer was not sent. Try again.',
-      ), { statusCode: 409 })
+      ), { statusCode: 409, uncertainDelivery: false })
     }
     await this.store.claimTerminalRecovery(sessionId)
     receipt.dismissed = await this.waitForToolCompletion(
@@ -7254,12 +7468,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             })
             throw uncertain
           }
-          if (!dismissed) {
+          // A card that outlived its prompt is dismissed here only once tmux
+          // shows an empty, input-ready composer; nothing is typed for it.
+          if (!dismissed && !(await this.terminalHasEmptyReadyComposer(sessionId, formDeadline))) {
             throw Object.assign(
               new Error(
                 'The agent is still showing its prompt, so it was not dismissed. Try again.',
               ),
-              { statusCode: 409 },
+              { statusCode: 409, uncertainDelivery: false },
             )
           }
         }
@@ -7915,7 +8131,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.awaitedTranscriptEchoes.delete(sessionId)
     }
     const takenAt = this.transcriptChangesTakenAt.get(sessionId)
-    return takenAt !== undefined && at - takenAt < TRANSCRIPT_POLL_MS
+    return takenAt !== undefined && at - takenAt < this.transcriptPace(sessionId)
+  }
+
+  /** How long after taking a session's changes in it waits to take more. */
+  transcriptPace(sessionId: string): number {
+    const cost = this.transcriptTakeInCosts.get(sessionId)
+    if (cost === undefined || !Number.isFinite(cost)) return TRANSCRIPT_POLL_MS
+    return Math.min(
+      TRANSCRIPT_POLL_MS,
+      Math.max(TRANSCRIPT_WAKE_MS, cost * TRANSCRIPT_PACE_COST_FACTOR),
+    )
   }
 
   /** Watches for a message handed to a terminal at `handedAt` to be logged. */
@@ -7980,6 +8206,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // A change taken in moments ago by a wake; the next pass takes this in.
     if (pacedAt !== undefined && this.transcriptPaced(sessionId, pacedAt)) return
     this.transcriptChangesTakenAt.set(sessionId, pacedAt ?? Date.now())
+    const takeIn = { startedAt: performance.now(), endedAt: undefined as number | undefined }
+    try {
+      await this.takeInTranscript(sessionId, observed, version, takeIn)
+    } finally {
+      // Not for a session deleted while it was being read.
+      if (this.store.get(sessionId)) {
+        this.transcriptTakeInCosts.set(
+          sessionId,
+          (takeIn.endedAt ?? performance.now()) - takeIn.startedAt,
+        )
+      }
+    }
+  }
+
+  /** Reads, projects, installs and publishes a session's changed event log. */
+  private async takeInTranscript(
+    sessionId: string,
+    observed: TranscriptObservation,
+    version: string,
+    takeIn: { endedAt?: number },
+  ): Promise<void> {
     const events = await this.sessionEventReader(sessionId)
     const handedAt = this.awaitedTranscriptEchoes.get(sessionId)
     if (handedAt !== undefined && events.some((event) =>
@@ -8078,6 +8325,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.liveTranscriptWatermarks.delete(sessionId)
     }
     this.publish(updated)
+    // What follows can wait on a terminal, which says nothing about how
+    // costly taking this session's changes in is.
+    takeIn.endedAt = performance.now()
     const latestCompletionAt = events.findLast(
       (event) =>
         // A turn that handed its work to background agents ends before

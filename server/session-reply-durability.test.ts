@@ -120,6 +120,37 @@ async function fallbackFormFixture() {
   return { ...f, wait, send }
 }
 
+const emptyComposer = [
+  '╭──────────────────────────────╮',
+  '│ > Type a message…             │',
+  '╰──────────────────────────────╯',
+].join('\n')
+const workingComposer = `${emptyComposer}\n ◉ Working · esc interrupt`
+const retainedAnswer = 'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true'
+
+// The card outlived its terminal form: the parser no longer finds the form,
+// and tmux shows an empty composer. Delivery runs the real send path.
+async function staleFormFixture() {
+  const f = await terminalFormFixture()
+  f.fill.mockResolvedValue(false)
+  f.dismiss.mockResolvedValue(false)
+  const wait = vi.fn(async () => false)
+  f.service['waitForToolCompletion'] = wait
+  const capture = vi.fn(async (_id: string) => emptyComposer)
+  const inputReady = vi.fn(async (_id: string) => true)
+  f.terminal.capture = capture
+  f.terminal.inputReady = inputReady
+  const cardAtSend: (string | undefined)[] = []
+  const send = vi.mocked(f.terminal.send).mockImplementation(async () => {
+    cardAtSend.push(f.store.get(sessionId)?.pendingUserInput?.requestId)
+    return true
+  })
+  f.service['terminalTurnOpen'] = vi.fn(async () => false)
+  f.service['waitForTerminalEventLog'] = vi.fn(async () => true)
+  f.service['awaitTranscriptEcho'] = vi.fn()
+  return { ...f, wait, capture, inputReady, send, cardAtSend }
+}
+
 async function claudeFixture() {
   const setup = await fixture('claude')
   const sdk: ClaudeSdk = {
@@ -427,12 +458,317 @@ describe('Reply durability regressions', () => {
       )
       expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, {
         question: 'Confirm the full synthetic question?', fields: ['Confirm'],
-      }, undefined, { deadline: expect.any(Number) })
+      }, 'decline', { deadline: expect.any(Number) })
       expect(f.fill).toHaveBeenCalledOnce()
       await expect(f.reply()).rejects.toThrow('no longer pending')
       expect(f.send).toHaveBeenCalledOnce()
     },
   )
+
+  it('continues a retained answer after the form parser misses a transition to an empty ready composer', async () => {
+    const f = await staleFormFixture()
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.wait).not.toHaveBeenCalled()
+    expect(f.inputReady).toHaveBeenCalledOnce()
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true })
+    // Held until the terminal accepted the answer, so nothing could dispatch ahead of it.
+    expect(f.cardAtSend).toEqual([f.requestId])
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+    await expect(f.reply()).rejects.toThrow('no longer pending')
+    expect(f.send).toHaveBeenCalledOnce()
+  })
+
+  it('does not send a continuation when the missed form completes before the empty-composer fallback', async () => {
+    const f = await staleFormFixture()
+    f.dismiss.mockImplementation(async () => {
+      f.complete.mockResolvedValue(true)
+      return false
+    })
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.inputReady).toHaveBeenCalledOnce()
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
+  it('does not send a continuation when the missed form completes after the readiness probe', async () => {
+    const f = await staleFormFixture()
+    f.inputReady.mockImplementation(async () => {
+      f.complete.mockResolvedValue(true)
+      return true
+    })
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
+  it.each([
+    ['a terminal draft', [
+      '╭──────────────────────────────╮',
+      '│ > Keep this terminal draft    │',
+      '╰──────────────────────────────╯',
+    ].join('\n'), true],
+    ['a non-ready composer', emptyComposer, false],
+    ['a visible form the parser missed', [
+      'Confirm the full synthetic question?',
+      '  Confirm  [ ] yes',
+      '  Enter to submit · Esc to cancel',
+    ].join('\n'), false],
+  ] as const)('rejects a stale form answer when tmux has %s', async (_state, pane, ready) => {
+    const f = await staleFormFixture()
+    f.capture.mockResolvedValue(pane)
+    f.inputReady.mockResolvedValue(ready)
+
+    await expect(f.reply()).rejects.toMatchObject({
+      message: expect.stringContaining('still showing its prompt'),
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+    expect(f.service['answeredPersistedInputs'].has(sessionId)).toBe(false)
+  })
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('capture failed'))],
+    ['hangs past the reply budget', () => new Promise<string>(() => {})],
+  ] as const)('keeps the question retryable when the readiness probe %s', async (_failure, probe) => {
+    const f = await staleFormFixture()
+    f.capture.mockImplementationOnce(probe)
+    const realNow = Date.now
+    // Spend the reply budget in the dismissal so a hung probe is cut short.
+    f.dismiss.mockImplementationOnce(async () => {
+      const shifted = realNow() + terminalFormReplyBudget(1) - 50
+      vi.spyOn(Date, 'now').mockImplementation(() => shifted)
+      return false
+    })
+    const started = realNow()
+    try {
+      await expect(f.reply()).rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    } finally {
+      vi.mocked(Date.now).mockRestore?.()
+    }
+    expect(realNow() - started).toBeLessThan(2_000)
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true })
+  })
+
+  it('bounds the read-only readiness probe by the reply deadline', async () => {
+    const f = await staleFormFixture()
+    f.capture.mockImplementation(() => new Promise<string>(() => {}))
+    const started = Date.now()
+    await expect(f.service['terminalHasEmptyReadyComposer'](sessionId, started + 30)).resolves.toBe(false)
+    expect(Date.now() - started).toBeLessThan(1_000)
+    await expect(f.service['terminalHasEmptyReadyComposer'](sessionId, started - 1)).resolves.toBe(false)
+  })
+
+  it('refuses instead of steering when a turn starts between the probe and delivery', async () => {
+    const f = await staleFormFixture()
+    // Idle for the stale-card probe, working by the time delivery inspects it.
+    f.capture.mockResolvedValueOnce(emptyComposer).mockResolvedValue(workingComposer)
+
+    await expect(f.reply()).rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+
+    f.capture.mockResolvedValue(emptyComposer)
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.send).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['a draft', () => Object.assign(new Error('The terminal already has unsent text or a pending paste.'), {
+      statusCode: 409, uncertainDelivery: false, terminalDraftConflict: true,
+    })],
+    ['a turn', () => Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), {
+      statusCode: 409,
+    })],
+    ['a form', () => Object.assign(new Error('The terminal is waiting for user input. Answer it before sending a message.'), {
+      statusCode: 409,
+    })],
+  ] as const)('keeps the question when the terminal lock finds %s at delivery', async (_state, refusal) => {
+    const f = await staleFormFixture()
+    f.send.mockRejectedValueOnce(refusal())
+
+    await expect(f.reply()).rejects.toMatchObject({
+      message: expect.stringContaining('the answer was not sent'),
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+
+    expect(f.send).toHaveBeenCalledOnce()
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.send).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['no queued prompts', []],
+    ['queued prompts', [
+      { id: 'queued-1', content: 'First queued follow-up', createdAt: '2026-09-06T00:00:01.000Z' },
+    ]],
+  ] as const)('keeps the question when the terminal declines the stale answer with %s', async (_state, queued) => {
+    const f = await staleFormFixture()
+    await f.store.update(sessionId, (session) => {
+      session.queuedPrompts = [...queued] as never
+    })
+    // No turn owner: a fallthrough past the terminal would reach startMessage.
+    releasePrompt(f.service)
+    const start = vi.fn(async () => f.store.get(sessionId)!)
+    f.service['startMessage'] = start as never
+    f.send.mockResolvedValueOnce(false)
+
+    await expect(f.reply()).rejects.toMatchObject({
+      message: expect.stringContaining('the answer was not sent'),
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+
+    expect(f.send).toHaveBeenCalledOnce()
+    expect(start).not.toHaveBeenCalled()
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id))
+      .toEqual(queued.map((prompt) => prompt.id))
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
+  it('never resends a stale answer whose terminal delivery is uncertain', async () => {
+    const f = await staleFormFixture()
+    f.send.mockRejectedValueOnce(Object.assign(new Error('paste outcome unknown'), {
+      statusCode: 500, uncertainDelivery: true,
+    }))
+
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    await expect(f.reply({ ...f.input, values: { confirm: false } })).rejects
+      .toMatchObject({ statusCode: 409, uncertainDelivery: true })
+
+    expect(f.send).toHaveBeenCalledOnce()
+    // The answer may be in the terminal; the card no longer invites a second copy.
+    expect(f.store.get(sessionId)?.pendingUserInput).toBeUndefined()
+  })
+
+  it('keeps the question when the service stops before the stale answer is admitted', async () => {
+    const f = await staleFormFixture()
+    vi.spyOn(f.service['admissions'], 'run').mockRejectedValueOnce(
+      Object.assign(new Error('The session service is stopping'), { statusCode: 503 }),
+    )
+
+    await expect(f.reply()).rejects.toMatchObject({ statusCode: 503, uncertainDelivery: false })
+
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
+  it('re-clears the card on retry when an uncertain stale answer could not clear it', async () => {
+    const f = await staleFormFixture()
+    f.send.mockRejectedValueOnce(Object.assign(new Error('paste outcome unknown'), {
+      statusCode: 500, uncertainDelivery: true,
+    }))
+    vi.spyOn(f.store, 'clearPendingRequest').mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+
+    await expect(f.reply()).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(f.store.get(sessionId)?.pendingUserInput).toBeUndefined()
+    expect(f.send).toHaveBeenCalledOnce()
+  })
+
+  it('only clears the card on retry after the delivered answer could not clear it', async () => {
+    const f = await staleFormFixture()
+    const clear = vi.spyOn(f.store, 'clearPendingRequest')
+      .mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(f.reply()).rejects.toMatchObject({
+      message: expect.stringContaining('will not be sent again'), uncertainDelivery: true,
+    })
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.send).toHaveBeenCalledOnce()
+    expect(clear).toHaveBeenCalledTimes(2)
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
+  it('refuses when a permission arrives before the stale answer is delivered', async () => {
+    const f = await staleFormFixture()
+    f.inputReady.mockImplementationOnce(async () => {
+      await f.store.update(sessionId, (session) => {
+        session.pendingPermission = { requestId: 'permission-1', kind: 'shell', title: 'Run a command?' } as never
+      })
+      return true
+    })
+
+    await expect(f.reply()).rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
+  it('delivers the stale answer ahead of prompts queued behind its question', async () => {
+    const f = await staleFormFixture()
+    await f.store.update(sessionId, (session) => {
+      session.queuedPrompts = [
+        { id: 'queued-1', content: 'First queued follow-up', createdAt: '2026-09-06T00:00:01.000Z' },
+        { id: 'queued-2', content: 'Second queued follow-up', createdAt: '2026-09-06T00:00:02.000Z' },
+      ] as never
+    })
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true })
+    expect(f.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id)).toEqual(['queued-1', 'queued-2'])
+  })
+
+  it('does not let an ordinary send skip prompts queued behind a stale question', async () => {
+    const f = await staleFormFixture()
+    await f.store.update(sessionId, (session) => {
+      session.pendingUserInput = undefined
+      session.status = 'idle'
+      session.queuedPrompts = [
+        { id: 'queued-1', content: 'First queued follow-up', createdAt: '2026-09-06T00:00:01.000Z' },
+      ] as never
+    })
+
+    await expect(f.service.sendMessage(sessionId, 'Jump the queue', false)).rejects
+      .toThrow('Older prompts are waiting in the queue')
+    expect(f.send).not.toHaveBeenCalled()
+  })
+
+  it('dismisses a stale card on cancel only when tmux shows an empty ready composer', async () => {
+    const f = await staleFormFixture()
+    const cancel = { ...f.input, action: 'cancel' as const }
+    f.inputReady.mockResolvedValueOnce(false)
+
+    await expect(f.reply(cancel)).rejects.toMatchObject({
+      message: expect.stringContaining('still showing its prompt'), statusCode: 409, uncertainDelivery: false,
+    })
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+
+    await expect(f.reply(cancel)).resolves.toMatchObject({ pendingUserInput: undefined })
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.dismiss).toHaveBeenCalledTimes(2)
+  })
 
   it.each(['immediate', 'delayed'] as const)(
     'retains the fallback answer after %s dismissal and a failed pending-card write', async (timing) => {
@@ -713,7 +1049,7 @@ describe('Reply durability regressions', () => {
 
       if (action === 'accept') {
         expect(f.fill).toHaveBeenCalledExactlyOnceWith(sessionId, expect.any(Array), identity, { deadline })
-        expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, undefined, { deadline })
+        expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, 'decline', { deadline })
       } else {
         expect(f.fill).not.toHaveBeenCalled()
         expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, action, { deadline })

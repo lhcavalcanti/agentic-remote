@@ -7,11 +7,13 @@ import {
 } from './side-question.js'
 import type {
   HubEvent,
+  HubResyncRequest,
   SessionOrderSnapshot,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
+import type { SettingsProfileSnapshot } from '../shared/settings-profile.js'
 import {
   joinKnowledgeRelativePath,
   normalizeKnowledgeRelativePath,
@@ -22,7 +24,11 @@ import { KnowledgeStore } from './knowledge-store.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
+import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
+import type { SettingsProfileStore } from './settings-profile-store.js'
+import type { ClientPresence } from './client-presence.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
+import { type PatchSocket, SessionPublications } from './session-patches.js'
 
 /** The manager agent's events, carried on the same socket as session events. */
 export interface ManagerEventSource {
@@ -375,12 +381,15 @@ export async function registerHubRoutes(
   sessionKnowledge?: SessionKnowledgeStore,
   sessionOrder?: SessionOrderStore,
   managerEvents?: ManagerEventSource,
+  settingsProfile?: SettingsProfileStore,
+  presence?: ClientPresence,
 ): Promise<void> {
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
   // order is still persisted and returned; only the push to other clients is
   // skipped, which is what a client's own response already told it.
   let publishOrder: (snapshot: SessionOrderSnapshot) => void = () => {}
+  let publishSettings: (settings: SettingsProfileSnapshot) => void = () => {}
   const requireSessionOrder = (): SessionOrderStore => {
     if (!sessionOrder) {
       throw Object.assign(new Error('Session order is not available'), {
@@ -708,6 +717,8 @@ export async function registerHubRoutes(
       sessionOrder: await commitOrder((store) => store.bootstrap(input.order)),
     }
   })
+
+  registerSettingsProfileRoutes(app, settingsProfile, (settings) => publishSettings(settings))
 
   app.post<{ Params: { computerId: string } }>(
     '/api/computers/:computerId/sessions',
@@ -1093,26 +1104,49 @@ export async function registerHubRoutes(
     },
   )
 
-  const sockets = new Set<{
-    send: (payload: string) => void
-    readyState: number
-  }>()
-  app.get('/api/events', { websocket: true }, (socket) => {
-    sockets.add(socket)
-    socket.on('close', () => sockets.delete(socket))
+  const publications = new SessionPublications()
+  app.get('/api/events', { websocket: true }, (socket, request) => {
+    const query = request.query as Record<string, unknown> | undefined
+    const target: PatchSocket = socket
+    if (query?.patches === '1') {
+      target.patchVersions = new Map()
+      socket.on('message', (data: Buffer, binary: boolean) => {
+        // A resync request is one of the two messages a browser sends here.
+        // Anything else, or anything too large to be one, is ignored rather
+        // than parsed.
+        if (binary || data.length > 1_024) return
+        let request: Partial<HubResyncRequest>
+        try {
+          request = JSON.parse(data.toString('utf8')) as Partial<HubResyncRequest>
+        } catch {
+          return
+        }
+        if (
+          request?.type === 'session.resync' &&
+          typeof request.computerId === 'string' &&
+          typeof request.sessionId === 'string'
+        ) {
+          publications.resync(target, request.computerId, request.sessionId)
+        }
+      })
+    }
+    // The other: a client says what it is showing. Each reader ignores what
+    // the other accepts.
+    socket.on('message', (data: unknown) => presence?.update(socket, data))
+    publications.add(target)
+    socket.on('close', () => {
+      publications.delete(target)
+      presence?.remove(socket)
+    })
   })
   const broadcast = (event: HubEvent) => {
-    const payload = JSON.stringify(event)
-    for (const socket of sockets) {
-      if (socket.readyState === 1) {
-        socket.send(payload)
-      }
-    }
+    publications.broadcast(event)
   }
   manager.on('event', broadcast)
   managerEvents?.on('event', broadcast)
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
+  publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
   /**
    * Keeps the saved order in step with session identity, which is the part a
    * browser cannot be trusted to do: a client that is closed, filtered, or

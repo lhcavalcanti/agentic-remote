@@ -38,7 +38,13 @@ describe('Idle-only native queue delivery', () => {
       .toBe(false)
   })
 
-  it.each(['before paste', 'after paste'] as const)('does not steer work that starts %s', async (timing) => {
+  it.each([
+    ['before paste', 'sendWhenIdle'],
+    ['after paste', 'sendWhenIdle'],
+    // A retained form answer is held to the same idle-only admission.
+    ['before paste', 'send idleOnly'],
+    ['after paste', 'send idleOnly'],
+  ] as const)('does not steer work that starts %s via %s', async (timing, via) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'native-queue-admission-'))
     directories.push(directory)
     const id = randomUUID()
@@ -94,7 +100,9 @@ draw('', ${timing === 'before paste'})
     await writeFile(path.join(stateDirectory, `inuse.${pid}.lock`), `${pid}\n`)
     const controller = new TmuxTerminalSessionController()
     await eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes('\u2579')))
-    const sending = controller.sendWhenIdle(id, 'Keep this queued work')
+    const sending = via === 'sendWhenIdle'
+      ? controller.sendWhenIdle(id, 'Keep this queued work')
+      : controller.send(id, 'Keep this queued work', false, { idleOnly: true })
     await expect(sending).rejects.toMatchObject({
       statusCode: 409,
       ...(timing === 'after paste' ? { uncertainDelivery: true } : {}),

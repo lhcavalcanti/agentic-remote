@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager.js'
+import { MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES } from '../shared/manager-structured-memory.js'
 import type {
   ManagerClientDefaults,
   ManagerMessage,
@@ -8,6 +9,7 @@ import type {
   ManagerSnapshot,
   UpdateManagerSettingsInput,
 } from '../shared/manager.js'
+import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 
 /** What the routes need from the manager agent. */
 export interface ManagerRouteAgent {
@@ -52,6 +54,14 @@ const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })
 const confirmationSchema = z.object({ accept: z.boolean() })
 
 const editSchema = z.object({ content: z.string().max(200_000) })
+const structuredRecordParams = z.object({
+  recordId: z.string().uuid(),
+})
+const structuredBody = z.record(z.string(), z.unknown())
+const structuredImportSchema = z.object({
+  requestId: z.string(),
+  data: z.string(),
+}).strict()
 
 function managerInputError(error: z.ZodError): Error {
   if (
@@ -88,15 +98,86 @@ export async function registerManagerRoutes(
   app: FastifyInstance,
   agent: ManagerRouteAgent | undefined,
   unavailableReason = 'Oracle is not available on this hub.',
+  structuredMemory?: ManagerStructuredMemoryRuntime,
 ): Promise<void> {
   const requireAgent = () => {
     if (!agent) throw Object.assign(new Error(unavailableReason), { statusCode: 503 })
     return agent
   }
+  const structuredStatus = () =>
+    structuredMemory?.status() ?? {
+      mode: 'off' as const,
+      availability: 'disabled' as const,
+    }
+  const requireStructuredStore = () => {
+    const status = structuredStatus()
+    if (!structuredMemory?.store || status.availability !== 'ready') {
+      const reason = status.mode === 'off'
+        ? 'Oracle structured memory is turned off on this hub.'
+        : status.lastError ?? 'Oracle structured memory is unavailable.'
+      throw Object.assign(new Error(reason), { statusCode: 503 })
+    }
+    return structuredMemory.store
+  }
 
   app.get('/api/manager', async (_request, reply) => {
     reply.header('cache-control', 'no-store')
     return agent ? agent.snapshot() : unavailableSnapshot(unavailableReason)
+  })
+
+  app.get('/api/manager/structured-memory/status', async (_request, reply) => {
+    reply.header('cache-control', 'no-store')
+    return structuredStatus()
+  })
+
+  app.post('/api/manager/structured-memory/search', async (request, reply) => {
+    reply.header('cache-control', 'no-store')
+    return requireStructuredStore().search(request.body ?? {})
+  })
+
+  app.post('/api/manager/structured-memory/records', async (request, reply) => {
+    const result = await requireStructuredStore().remember(request.body ?? {})
+    return reply.code(result.idempotent ? 200 : 201).send(result)
+  })
+
+  app.post(
+    '/api/manager/structured-memory/records/:recordId/correct',
+    async (request) => {
+      const { recordId } = structuredRecordParams.parse(request.params)
+      const body = structuredBody.parse(request.body ?? {})
+      return requireStructuredStore().correct({ ...body, recordId })
+    },
+  )
+
+  app.post(
+    '/api/manager/structured-memory/records/:recordId/forget',
+    async (request) => {
+      const { recordId } = structuredRecordParams.parse(request.params)
+      const body = structuredBody.parse(request.body ?? {})
+      return requireStructuredStore().forget({ ...body, recordId })
+    },
+  )
+
+  app.get('/api/manager/structured-memory/export', async (_request, reply) => {
+    reply.header('cache-control', 'no-store')
+    reply.header(
+      'content-disposition',
+      'attachment; filename="oracle-structured-memory-v1.json"',
+    )
+    return reply.type('application/json').send(
+      requireStructuredStore().exportState(),
+    )
+  })
+
+  app.post('/api/manager/structured-memory/import', {
+    // The export travels as a JSON string, so escaping can at most double it.
+    bodyLimit: MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES * 2 + 64 * 1024,
+  }, async (request, reply) => {
+    const { requestId, data } = structuredImportSchema.parse(
+      request.body ?? {},
+    )
+    const result = await requireStructuredStore().importState(requestId, data)
+    return reply.code(result.idempotent ? 200 : 201).send(result)
   })
 
   app.post('/api/manager/messages', async (request, reply) => {

@@ -28,6 +28,7 @@ import type {
   WorkspaceSearchResponse,
   SideQuestionExchange,
 } from '../shared/contracts.js'
+import { SessionPatchReceiver } from '../src/session-patches.js'
 import { buildApp } from './app.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
@@ -1143,6 +1144,13 @@ describe('multi-node hub', () => {
     await hub.app.listen({ host: '127.0.0.1', port: 0 })
     const hubAddress = hub.app.server.address() as AddressInfo
     let hubSocket: WebSocket | undefined
+    let patchSocket: WebSocket | undefined
+    // What a browser that takes patches rebuilds must be exactly what one that
+    // does not is sent, event for event, including a node's sessions.
+    const plainUpserts: unknown[] = []
+    const rebuiltUpserts: unknown[] = []
+    const patchFrames: string[] = []
+    let resyncs = 0
 
     try {
       const version = await hub.app.inject({
@@ -1189,9 +1197,24 @@ describe('multi-node hub', () => {
       hubSocket = new WebSocket(
         `ws://127.0.0.1:${hubAddress.port}/api/events`,
       )
-      await new Promise<void>((resolve, reject) => {
-        hubSocket?.once('open', resolve)
-        hubSocket?.once('error', reject)
+      patchSocket = new WebSocket(
+        `ws://127.0.0.1:${hubAddress.port}/api/events?patches=1`,
+      )
+      await Promise.all([hubSocket, patchSocket].map((socket) =>
+        new Promise<void>((resolve, reject) => {
+          socket.once('open', resolve)
+          socket.once('error', reject)
+        })))
+      hubSocket.on('message', (data) => {
+        const event = JSON.parse(data.toString()) as { type: string }
+        if (event.type === 'session.upserted') plainUpserts.push(event)
+      })
+      const receiver = new SessionPatchReceiver(() => { resyncs += 1 })
+      patchSocket.on('message', (data) => {
+        const wire = JSON.parse(data.toString()) as Parameters<typeof receiver.receive>[0]
+        if (wire.type === 'session.patched') patchFrames.push(data.toString())
+        const event = receiver.receive(wire)
+        if (event?.type === 'session.upserted') rebuiltUpserts.push(event)
       })
 
       const computers = await hub.app.inject({
@@ -1553,8 +1576,15 @@ describe('multi-node hub', () => {
         type: 'session.removed',
         computerId: remoteComputerId,
       })
+      // Both sockets are sent each event in turn, so both have it by now.
+      await vi.waitFor(() => expect(rebuiltUpserts.length).toBe(plainUpserts.length))
+      expect(rebuiltUpserts).toEqual(plainUpserts)
+      expect(patchFrames.length).toBeGreaterThan(0)
+      expect(patchFrames.some((frame) => frame.includes(remoteComputerId))).toBe(true)
+      expect(resyncs).toBe(0)
     } finally {
       hubSocket?.close()
+      patchSocket?.close()
       await hub.app.close()
       await remote.app.close()
     }

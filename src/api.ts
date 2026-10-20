@@ -52,6 +52,13 @@ import {
   parseSubmissionReceipt,
   SubmissionError,
 } from '../shared/submission-error'
+import type {
+  SettingsChange,
+  SettingsProfileKey,
+  SettingsProfileSnapshot,
+  SettingsProfileValues,
+  SettingsUpdateResult,
+} from '../shared/settings-profile'
 import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 
 async function responseError(
@@ -303,6 +310,39 @@ export async function listSessionMcpServers(
       pluginName: server.pluginName,
     })),
   }
+}
+
+/** The hub's settings profile, shared by every device that opens this hub. */
+export async function fetchSettingsProfile(): Promise<SettingsProfileSnapshot> {
+  const response = await request<{ settings: SettingsProfileSnapshot }>('/api/settings', {
+    cache: 'no-store',
+  })
+  return response.settings
+}
+
+/** Sends this device's edits with the revision each was made from. */
+export async function saveSettingsChanges(
+  changes: Partial<Record<SettingsProfileKey, SettingsChange>>,
+  deviceId?: string,
+): Promise<SettingsUpdateResult> {
+  return request<SettingsUpdateResult>('/api/settings', {
+    method: 'PATCH',
+    cache: 'no-store',
+    body: JSON.stringify({ ...(deviceId ? { deviceId } : {}), changes }),
+  })
+}
+
+/** Offers this browser's earlier settings; the hub keeps only unset ones. */
+export async function importSettingsProfile(
+  values: SettingsProfileValues,
+  deviceId?: string,
+): Promise<SettingsProfileSnapshot> {
+  const response = await request<{ settings: SettingsProfileSnapshot }>('/api/settings/import', {
+    method: 'POST',
+    cache: 'no-store',
+    body: JSON.stringify({ ...(deviceId ? { deviceId } : {}), values }),
+  })
+  return response.settings
 }
 
 /**

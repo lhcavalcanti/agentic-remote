@@ -1,11 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
+  chmod,
   mkdir,
+  opendir,
   open,
   lstat,
   rename,
   rm,
+  unlink,
 } from 'node:fs/promises'
 import path from 'node:path'
 import type { SessionStatus } from '../shared/contracts.js'
@@ -21,6 +24,8 @@ export const MANAGER_PROACTIVE_INBOX_TERMINAL_RETENTION_MS =
 
 const STATE_VERSION = 1 as const
 const STATE_FILE_NAME = 'manager-proactive-inbox.json'
+const STAGING_FILE_PATTERN =
+  /^manager-proactive-inbox\.json\.[A-Za-z0-9-]+\.(?:pending|rollback\.pending)$/
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~+=:@-]{0,127}$/
 const EVENT_KINDS = ['failed', 'finished'] as const
 const DISPOSITIONS = [
@@ -518,7 +523,9 @@ function validatePersistedState(
       cursorIds.has(cursor.namespaceId) ||
       bindingByComputer.get(cursor.computerId)?.generation !==
         cursor.computerGeneration ||
-      (cursor.active && cursor.taskGeneration === 0)
+      (cursor.active && cursor.taskGeneration === 0) ||
+      (!cursor.active && cursor.lastStatus === 'running') ||
+      (cursor.active && cursor.lastStatus === 'error')
     ) {
       throw new Error('unsupported cursor namespace')
     }
@@ -623,6 +630,26 @@ function validatePersistedState(
   )
   if (value.nextEventSequence <= highestSequence) {
     throw new Error('unsupported event sequence')
+  }
+
+  const eventsByNamespace = new Map<string, PersistedEvent[]>()
+  for (const event of events) {
+    const namespaceEvents = eventsByNamespace.get(event.namespaceId) ?? []
+    namespaceEvents.push(event)
+    eventsByNamespace.set(event.namespaceId, namespaceEvents)
+  }
+  for (const namespaceEvents of eventsByNamespace.values()) {
+    namespaceEvents.sort(
+      (left, right) => left.taskGeneration - right.taskGeneration,
+    )
+    for (let index = 1; index < namespaceEvents.length; index += 1) {
+      if (
+        namespaceEvents[index]!.revision <=
+        namespaceEvents[index - 1]!.revision
+      ) {
+        throw new Error('event revisions do not follow task generations')
+      }
+    }
   }
 
   const cursorByNamespace = new Map(
@@ -792,6 +819,10 @@ function isMissing(error: unknown): boolean {
   return isRecord(error) && error.code === 'ENOENT'
 }
 
+function isAlreadyExists(error: unknown): boolean {
+  return isRecord(error) && error.code === 'EEXIST'
+}
+
 export class ManagerProactiveInbox {
   private readonly statePath: string
   private readonly enabled: boolean
@@ -802,6 +833,8 @@ export class ManagerProactiveInbox {
   private state: PersistedState
   private serialized: string | null = null
   private commits: Promise<void> = Promise.resolve()
+  private initialization?: Promise<void>
+  private directoryIdentity?: string
   private initialized = false
   private failure?: ManagerProactiveInboxRecoveryError
 
@@ -845,24 +878,40 @@ export class ManagerProactiveInbox {
     this.state = emptyState(hubId)
   }
 
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
     if (this.initialized) {
-      this.requireAvailable()
-      return
+      try {
+        this.requireAvailable()
+      } catch (error) {
+        return Promise.reject(error)
+      }
+      return Promise.resolve()
     }
+    if (this.initialization) {
+      return this.initialization
+    }
+    const run = this.initializeOnce()
+    const shared = run.then(
+      () => {
+        if (this.initialization === shared) this.initialization = undefined
+      },
+      (error: unknown) => {
+        if (this.initialization === shared) this.initialization = undefined
+        throw error
+      },
+    )
+    this.initialization = shared
+    return shared
+  }
+
+  private async initializeOnce(): Promise<void> {
     if (!this.enabled) {
       this.initialized = true
       return
     }
     try {
-      await mkdir(this.directory, { recursive: true, mode: 0o700 })
-      const directoryMetadata = await lstat(this.directory)
-      if (
-        directoryMetadata.isSymbolicLink() ||
-        !directoryMetadata.isDirectory()
-      ) {
-        throw new Error('inbox directory is not a regular directory')
-      }
+      await this.ensureDirectory()
+      await this.cleanupStagingFiles()
 
       let serialized: string
       try {
@@ -1005,7 +1054,7 @@ export class ManagerProactiveInbox {
   observe(
     value: unknown,
   ): Promise<ManagerProactiveInboxObserveResult> {
-    const observation = validateObservation(value)
+    const observation = { ...validateObservation(value) }
     this.requireInitialized()
     if (!this.enabled) {
       return Promise.resolve({
@@ -1193,12 +1242,13 @@ export class ManagerProactiveInbox {
         'The proactive inbox acknowledgment is invalid.',
       )
     }
+    const acknowledgedIds = [...ids]
     this.requireInitialized()
     if (!this.enabled) {
       return Promise.resolve({ acknowledged: 0, idempotent: true })
     }
     return this.commit<ManagerProactiveInboxAcknowledgeResult>((candidate) => {
-      const events = ids.map((id) => {
+      const events = acknowledgedIds.map((id) => {
         const event = candidate.events.find((item) => item.id === id)
         if (!event) {
           throw new ManagerProactiveInboxReferenceError()
@@ -1368,6 +1418,129 @@ export class ManagerProactiveInbox {
     return task
   }
 
+  private async ensureDirectory(): Promise<void> {
+    await this.walkDirectory(true)
+  }
+
+  private async verifyDirectory(): Promise<void> {
+    await this.walkDirectory(false)
+  }
+
+  private async walkDirectory(createMissing: boolean): Promise<void> {
+    const resolvedDirectory = path.resolve(this.directory)
+    const root = path.parse(resolvedDirectory).root
+    let current = root
+    const segments = resolvedDirectory
+      .slice(root.length)
+      .split(path.sep)
+      .filter(Boolean)
+
+    for (const segment of segments) {
+      const next = path.join(current, segment)
+      if (createMissing) {
+        try {
+          await mkdir(next, { mode: 0o700 })
+        } catch (error) {
+          if (!isAlreadyExists(error)) throw error
+        }
+      }
+      const metadata = await lstat(next)
+      if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+        throw new Error('inbox directory is not a regular directory')
+      }
+      if (createMissing) {
+        await this.syncDirectoryPath(current)
+      }
+      current = next
+    }
+
+    const metadata = await lstat(resolvedDirectory)
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new Error('inbox directory is not a regular directory')
+    }
+    await this.secureDirectory(metadata)
+  }
+
+  private async secureDirectory(
+    metadata: Awaited<ReturnType<typeof lstat>>,
+  ): Promise<void> {
+    const uid = process.getuid?.()
+    if (uid === undefined || metadata.uid !== uid) {
+      throw new ManagerProactiveInboxRecoveryError(
+        'The proactive inbox directory is not owned by the hub; no files were changed.',
+      )
+    }
+    const identity = `${String(metadata.dev)}:${String(metadata.ino)}`
+    if (
+      this.directoryIdentity !== undefined &&
+      this.directoryIdentity !== identity
+    ) {
+      throw new ManagerProactiveInboxRecoveryError(
+        'The proactive inbox directory disappeared or was replaced; no files were changed.',
+      )
+    }
+    if ((Number(metadata.mode) & 0o077) !== 0) {
+      await chmod(this.directory, 0o700)
+    }
+    this.directoryIdentity = identity
+  }
+
+  private async cleanupStagingFiles(): Promise<void> {
+    const directory = await opendir(this.directory)
+    let failed = false
+    let failure: unknown
+    try {
+      for await (const entry of directory) {
+        if (!STAGING_FILE_PATTERN.test(entry.name)) continue
+        const stagingPath = path.join(this.directory, entry.name)
+        let metadata: Awaited<ReturnType<typeof lstat>>
+        try {
+          metadata = await lstat(stagingPath)
+        } catch (error) {
+          if (isMissing(error)) continue
+          throw error
+        }
+        const uid = process.getuid?.()
+        if (
+          uid === undefined ||
+          metadata.uid !== uid ||
+          metadata.isSymbolicLink() ||
+          !metadata.isFile() ||
+          (Number(metadata.mode) & 0o077) !== 0
+        ) {
+          throw new ManagerProactiveInboxRecoveryError(
+            'The proactive inbox has an unsafe staging entry; no files were changed.',
+          )
+        }
+        try {
+          await unlink(stagingPath)
+        } catch {
+          throw new ManagerProactiveInboxRecoveryError(
+            'The proactive inbox could not clean its staging files; no files were changed.',
+          )
+        }
+      }
+    } catch (error) {
+      failed = true
+      failure = error
+    }
+    try {
+      await directory.close()
+    } catch (error) {
+      if (
+        !isRecord(error) ||
+        error.code !== 'ERR_DIR_CLOSED'
+      ) {
+        if (!failed) {
+          failed = true
+          failure = error
+        }
+      }
+    }
+    if (failed) throw failure
+    await this.syncDirectoryPath(this.directory)
+  }
+
   private async persist(candidate: PersistedState): Promise<void> {
     const serialized = JSON.stringify(candidate)
     if (Buffer.byteLength(serialized, 'utf8') > this.limits.maxStateBytes) {
@@ -1379,7 +1552,8 @@ export class ManagerProactiveInbox {
     const previousSerialized = this.serialized
     let primaryPublished = false
     try {
-      await mkdir(this.directory, { recursive: true, mode: 0o700 })
+      await this.verifyDirectory()
+      await this.cleanupStagingFiles()
       await this.writeSynced(pendingPath, serialized)
       await rename(pendingPath, this.statePath)
       primaryPublished = true
@@ -1474,7 +1648,11 @@ export class ManagerProactiveInbox {
       await this.injectedDirectorySync()
       return
     }
-    const handle = await open(this.directory, 'r')
+    await this.syncDirectoryPath(this.directory)
+  }
+
+  private async syncDirectoryPath(directoryPath: string): Promise<void> {
+    const handle = await open(directoryPath, 'r')
     try {
       await handle.sync()
     } finally {

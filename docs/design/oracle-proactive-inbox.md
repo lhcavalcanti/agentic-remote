@@ -1,9 +1,10 @@
 # Oracle lifecycle inbox
 
 This document describes the first staged implementation for [issue #408](https://github.com/lhcavalcanti/agentic-remote/issues/408).
-The related [PR #409](https://github.com/lhcavalcanti/agentic-remote/pull/409)
-remains design-only. This increment adds an uninstantiated, hub-local durable
-inbox; it does not make Oracle proactive and does not deliver a notice.
+The [consolidated lifecycle design](../superpowers/specs/2026-10-17-oracle-proactive-lifecycle-design.md)
+preserves and updates design PR #409 alongside this implementation in PR #434.
+This increment adds an uninstantiated, hub-local durable inbox; it does not make
+Oracle proactive and does not deliver a notice.
 
 ## Boundary
 
@@ -69,6 +70,11 @@ field values.
 ## Durability and ownership
 
 The state lives in a private `0600` JSON file beneath a `0700` directory.
+Initialization verifies directory ownership, secures an existing owned
+directory, synchronizes directory ancestry, and shares one load across
+concurrent callers. Enabled storage requires POSIX UID checks and directory
+sync support; unsupported hosts fail closed. Mutations refuse directory
+replacement rather than silently recreating storage.
 Each mutation clones a candidate state inside the serialized writer queue,
 validates bounds and canonical SHA-256 namespace/event identities, writes an
 exclusive `0600` pending file, synchronizes it, atomically renames it, and
@@ -77,6 +83,9 @@ Pending evidence is never evicted. Capacity, corruption, foreign-hub,
 symlink, oversize, and uncertain-rollback failures are explicit and
 fail-closed. An uncertain rollback poisons that instance until a new instance
 revalidates the on-disk state.
+Queued inputs are detached from caller mutation before admission. Recovery
+removes only recognized owned regular staging files and synchronizes their
+deletion before succeeding, including a retry with no remaining staging files.
 
 Only one trusted hub owner may write a directory. The store does not provide
 multi-user authorization or a generic transaction framework. A changed

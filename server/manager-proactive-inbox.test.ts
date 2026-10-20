@@ -1,16 +1,18 @@
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ManagerProactiveInboxObservation,
   ManagerProactiveInboxOptions,
@@ -19,6 +21,61 @@ import {
   ManagerProactiveInbox,
   ManagerProactiveInboxValidationError,
 } from './manager-proactive-inbox.js'
+
+type ReadGate = {
+  path: string
+  started: () => void
+  release: Promise<void>
+  consumed: boolean
+}
+
+const fsHooks = vi.hoisted(() => ({
+  readGate: undefined as ReadGate | undefined,
+  syncFailurePath: undefined as string | undefined,
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  const open = async (...args: Parameters<typeof fs.open>) => {
+    const handle = await fs.open(...args)
+    const targetPath = args[0]
+    const gate = fsHooks.readGate
+    const syncFailurePath = fsHooks.syncFailurePath
+    if (
+      typeof targetPath !== 'string' ||
+      (!gate && !syncFailurePath)
+    ) {
+      return handle
+    }
+    const originalRead = handle.read.bind(handle)
+    const originalSync = handle.sync.bind(handle)
+    return new Proxy(handle, {
+      get(target, property, receiver) {
+        if (
+          property === 'read' &&
+          gate &&
+          targetPath === gate.path &&
+          !gate.consumed
+        ) {
+          return async (...readArgs: Parameters<typeof handle.read>) => {
+            gate.consumed = true
+            gate.started()
+            await gate.release
+            return originalRead(...readArgs)
+          }
+        }
+        if (property === 'sync' && targetPath === syncFailurePath) {
+          return async () => {
+            throw new Error('injected parent sync failure')
+          }
+        }
+        if (property === 'sync') return originalSync
+        return Reflect.get(target, property, receiver)
+      },
+    })
+  }
+  return { ...fs, open }
+})
 
 describe('ManagerProactiveInbox', () => {
   let directory: string
@@ -33,6 +90,8 @@ describe('ManagerProactiveInbox', () => {
   })
 
   afterEach(async () => {
+    fsHooks.readGate = undefined
+    fsHooks.syncFailurePath = undefined
     await rm(directory, { recursive: true, force: true })
   })
 
@@ -84,6 +143,20 @@ describe('ManagerProactiveInbox', () => {
     ])
   })
 
+  it('snapshots an observation before its queued mutation runs', async () => {
+    const inbox = await openInbox()
+    const input = observation()
+    const pending = inbox.observe(input)
+    input.sessionId = 'different-session'
+
+    await pending
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+
+    expect(inbox.pending()).toMatchObject([
+      { sessionId: 'session-a', kind: 'finished' },
+    ])
+  })
+
   it('does no filesystem work when disabled', async () => {
     const disabledDirectory = path.join(directory, 'disabled')
     const inbox = new ManagerProactiveInbox(disabledDirectory, {
@@ -99,6 +172,142 @@ describe('ManagerProactiveInbox', () => {
     await expect(stat(disabledDirectory)).rejects.toMatchObject({
       code: 'ENOENT',
     })
+  })
+
+  it('syncs newly created directory parents and retries interrupted setup', async () => {
+    const nestedDirectory = path.join(
+      directory,
+      'created',
+      'nested',
+      'inbox',
+    )
+    fsHooks.syncFailurePath = path.join(directory, 'created')
+    const inbox = new ManagerProactiveInbox(nestedDirectory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(inbox.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    await expect(stat(path.join(directory, 'created', 'nested')))
+      .resolves.toMatchObject({ isDirectory: expect.any(Function) })
+    await expect(stat(nestedDirectory)).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+
+    fsHooks.syncFailurePath = undefined
+    await inbox.initialize()
+    expect((await stat(nestedDirectory)).mode & 0o777).toBe(0o700)
+  })
+
+  it('secures an owned existing inbox directory before trusting its state', async () => {
+    const inboxDirectory = path.join(directory, 'owned')
+    await mkdir(inboxDirectory, { mode: 0o777 })
+    await chmod(inboxDirectory, 0o777)
+    const inbox = new ManagerProactiveInbox(inboxDirectory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await inbox.initialize()
+
+    expect((await stat(inboxDirectory)).mode & 0o777).toBe(0o700)
+  })
+
+  it('refuses mutations after the initialized inbox directory is replaced', async () => {
+    const inbox = await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    const replacedDirectory = `${directory}-replaced`
+    await rename(directory, replacedDirectory)
+    await mkdir(directory, { mode: 0o700 })
+    try {
+      await expect(inbox.observe(observation())).rejects.toMatchObject({
+        statusCode: 503,
+      })
+      await expect(stat(statePath)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      await rm(replacedDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a foreign-owned inbox directory without touching it', async () => {
+    const uid = process.getuid?.()
+    expect(uid).toBeDefined()
+    const foreignDirectory = uid === 0 ? '/home/lcavalcanti' : '/proc'
+    const metadata = await stat(foreignDirectory)
+    expect(metadata.uid).not.toBe(uid)
+    const inbox = new ManagerProactiveInbox(foreignDirectory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(inbox.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+  })
+
+  it('coalesces overlapping successful initialization before mutations are available', async () => {
+    await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    const started = deferred<void>()
+    const release = deferred<void>()
+    fsHooks.readGate = {
+      path: statePath,
+      started: started.resolve,
+      release: release.promise,
+      consumed: false,
+    }
+    const inbox = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    const first = inbox.initialize()
+    await started.promise
+    const second = inbox.initialize()
+
+    expect(second).toBe(first)
+    release.resolve()
+    await Promise.all([first, second])
+    await expect(inbox.observe(observation())).resolves.toMatchObject({
+      outcome: 'baseline',
+    })
+  })
+
+  it('coalesces overlapping failed initialization with the same safe error', async () => {
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    const serialized = '{"corrupt":'
+    await writeFile(statePath, serialized, { mode: 0o600 })
+    const started = deferred<void>()
+    const release = deferred<void>()
+    fsHooks.readGate = {
+      path: statePath,
+      started: started.resolve,
+      release: release.promise,
+      consumed: false,
+    }
+    const inbox = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    const first = inbox.initialize()
+    await started.promise
+    const second = inbox.initialize()
+
+    expect(second).toBe(first)
+    release.resolve()
+    await expect(first).rejects.toMatchObject({ statusCode: 503 })
+    await expect(second).rejects.toMatchObject({ statusCode: 503 })
+    expect(await readFile(statePath, 'utf8')).toBe(serialized)
   })
 
   it('requires initialization before operations', async () => {
@@ -400,6 +609,18 @@ describe('ManagerProactiveInbox', () => {
     await expect(inbox.acknowledge([finished!.id], 'expired'))
       .rejects.toMatchObject({ statusCode: 409 })
     await inbox.acknowledge([failed!.id], 'irrelevant')
+    expect(inbox.pending()).toEqual([])
+  })
+
+  it('snapshots acknowledgment IDs before its queued mutation runs', async () => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+    const ids = [inbox.pending()[0]!.id]
+    const pending = inbox.acknowledge(ids, 'handled')
+    ids.length = 0
+
+    await expect(pending).resolves.toMatchObject({ acknowledged: 1 })
     expect(inbox.pending()).toEqual([])
   })
 
@@ -718,6 +939,106 @@ describe('ManagerProactiveInbox', () => {
     expect(await readFile(statePath, 'utf8')).toBe(serialized)
   })
 
+  it('cleans abandoned owned staging files without touching unrelated entries', async () => {
+    await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    const abandonedPending = `${statePath}.orphan.pending`
+    const abandonedRollback = `${statePath}.orphan.rollback.pending`
+    const unrelated = `${statePath}.orphan.tmp`
+    await writeFile(abandonedPending, 'pending', { mode: 0o600 })
+    await writeFile(abandonedRollback, 'rollback', { mode: 0o600 })
+    await writeFile(unrelated, 'unrelated', { mode: 0o600 })
+
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+    await reopened.initialize()
+
+    await expect(stat(abandonedPending)).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    await expect(stat(abandonedRollback)).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(await readFile(unrelated, 'utf8')).toBe('unrelated')
+    expect(await readFile(statePath, 'utf8')).toContain('"hubId":"hub-a"')
+  })
+
+  it('refuses unsafe abandoned staging entries without deleting their targets', async () => {
+    await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    const symlinkTarget = path.join(directory, 'staging-target')
+    const symlinkPath = `${statePath}.unsafe.pending`
+    await writeFile(symlinkTarget, 'target', { mode: 0o600 })
+    await symlink(symlinkTarget, symlinkPath)
+
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(symlinkTarget, 'utf8')).toBe('target')
+    expect((await lstat(symlinkPath)).isSymbolicLink()).toBe(true)
+  })
+
+  it('requires a durable cleanup barrier even when a retry finds no staging files', async () => {
+    await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    const serialized = await readFile(statePath, 'utf8')
+    const abandonedPending = `${statePath}.orphan.pending`
+    await writeFile(abandonedPending, 'pending', { mode: 0o600 })
+    fsHooks.syncFailurePath = directory
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    await expect(stat(abandonedPending)).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+
+    fsHooks.syncFailurePath = undefined
+    await reopened.initialize()
+    expect(reopened.pending()).toEqual([])
+    expect(await readFile(statePath, 'utf8')).toBe(serialized)
+  })
+
+  it('surfaces abandoned staging cleanup failures and retries them safely', async () => {
+    await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    const abandonedPending = `${statePath}.blocked.pending`
+    await writeFile(abandonedPending, 'pending', { mode: 0o600 })
+    await chmod(directory, 0o500)
+
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(abandonedPending, 'utf8')).toBe('pending')
+
+    await chmod(directory, 0o700)
+    await reopened.initialize()
+    await expect(stat(abandonedPending)).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
   it('refuses symlinked state and directory paths', async () => {
     const target = path.join(directory, 'state-target')
     const statePath = path.join(directory, 'manager-proactive-inbox.json')
@@ -906,6 +1227,98 @@ describe('ManagerProactiveInbox', () => {
     expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
   })
 
+  it.each([
+    [
+      'task generations sharing an owner revision',
+      (state: TestState) => {
+        state.events[1]!.revision = state.events[0]!.revision
+      },
+    ],
+    [
+      'task generations reversing owner revisions',
+      (state: TestState) => {
+        const firstRevision = state.events[0]!.revision
+        state.events[0]!.revision = state.events[1]!.revision
+        state.events[1]!.revision = firstRevision
+      },
+    ],
+    [
+      'an inactive cursor reporting running',
+      (state: TestState) => {
+        state.cursors[0]!.active = false
+        state.cursors[0]!.lastStatus = 'running'
+      },
+    ],
+  ])('refuses shape-valid lifecycle corruption: %s', async (_label, mutate) => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+    await inbox.observe(observation({ revision: 3, status: 'running' }))
+    await inbox.observe(observation({ revision: 4, status: 'idle' }))
+
+    const state = await readState(directory)
+    mutate(state)
+    const serialized = await writeState(directory, state)
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
+  })
+
+  it('refuses impossible owner revision order in retained retired history', async () => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+    await inbox.observe(observation({ revision: 3, status: 'running' }))
+    await inbox.observe(observation({ revision: 4, status: 'idle' }))
+    await inbox.bindComputer('computer-a', 'pairing-b')
+
+    const state = await readState(directory)
+    const firstRevision = state.events[0]!.revision
+    state.events[0]!.revision = state.events[1]!.revision
+    state.events[1]!.revision = firstRevision
+    const serialized = await writeState(directory, state)
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
+  })
+
+  it('accepts legal active waiting, queued, and pending-request histories on reopen', async () => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({
+      revision: 2,
+      status: 'waiting',
+    }))
+    await inbox.observe(observation({
+      revision: 3,
+      status: 'idle',
+      queuedCount: 1,
+      hasPendingRequest: true,
+    }))
+
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+    await reopened.initialize()
+    expect(reopened.pending()).toEqual([])
+  })
+
   it('enforces a lower retained-event bound without evicting evidence', async () => {
     const inbox = await openInbox({ maxEventRecords: 1 })
     await inbox.observe(observation())
@@ -933,6 +1346,17 @@ type TestState = {
 
 function statePath(directory: string): string {
   return path.join(directory, 'manager-proactive-inbox.json')
+}
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((finish) => {
+    resolve = finish
+  })
+  return { promise, resolve }
 }
 
 async function readState(directory: string): Promise<TestState> {

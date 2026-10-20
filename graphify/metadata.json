@@ -346,7 +346,7 @@
     "README.md": "4f437ceeefee8e043e6143b5bec9692848a1eea262143d0b92cd94f74193ae1d",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "3a718ed20fbcf62db6e821288cb17388ef42fb95c1163d45ef86751a2a05163f",
-    "bin/agentic-remote-promotion-monitor": "38c1a2d8ec3100fd7ada1915e443402afcc9f85eb5a751769dfc1ca1daa129a2",
+    "bin/agentic-remote-promotion-monitor": "1d4f0661a88425655b7a22835484ec5a5c1f719f6b1ee8faa0c1308a964efa22",
     "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
     "config/agentic-remote-promotion.env.example": "3b93ccf7572bb980b70067dab871f06f58a8ca93d078132cc350c6342af6a2de",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
@@ -759,13 +759,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b56e835c878c8b2b3ac1e0f56dd7d922e26065118b40dc697aa5d3b26b805546",
+    "GRAPH_REPORT.md": "ba8a6a19a6e73e1cfcc29d92dd8cc601c021dab16287668ac1bfe26c309a8a29",
     "communities.json": "08740fcbec6bc379c03a15ce796f76480dfd4d7e8bd87ac70f5984ffad4467d1",
-    "graph.html": "cb13934aacc14689456a0ea6d6d56680dd591be1ae94b6bda2566064d7af80f7",
-    "graph.json": "d973f658cf03bfb099b3dba9e75e5e9c21a196c7c04f31a00f362c13e93e8173"
+    "graph.html": "bb17b2348d8c8ae06c459cb50b88a716738d833ee5cf62b4d8427cbe6c495e05",
+    "graph.json": "901658873b3a7e0a6158358b5b7681f881804fc74a118a0ef3e0749ce90e8a79"
   },
   "schema_version": 1,
-  "source_commit": "2165df1247badf3464856de0e4fcb747f3d7381b",
-  "source_fingerprint": "834a97c8a58ef932b2f6e49ae2f67aecef05dffc34a5dfda473d372fd1d1c8dc",
+  "source_commit": "c9607c3456cc9542d3d13313929ee86c7b208f31",
+  "source_fingerprint": "74c31ab60d1fd1f6c80f0fec8ff5bd65e56de386f0ba4671cf1fcc7a33bcd0e4",
   "working_tree_changes": []
 }

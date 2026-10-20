@@ -458,7 +458,7 @@ describe('Reply durability regressions', () => {
       )
       expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, {
         question: 'Confirm the full synthetic question?', fields: ['Confirm'],
-      }, undefined, { deadline: expect.any(Number) })
+      }, 'decline', { deadline: expect.any(Number) })
       expect(f.fill).toHaveBeenCalledOnce()
       await expect(f.reply()).rejects.toThrow('no longer pending')
       expect(f.send).toHaveBeenCalledOnce()
@@ -1049,7 +1049,7 @@ describe('Reply durability regressions', () => {
 
       if (action === 'accept') {
         expect(f.fill).toHaveBeenCalledExactlyOnceWith(sessionId, expect.any(Array), identity, { deadline })
-        expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, undefined, { deadline })
+        expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, 'decline', { deadline })
       } else {
         expect(f.fill).not.toHaveBeenCalled()
         expect(f.dismiss).toHaveBeenCalledExactlyOnceWith(sessionId, identity, action, { deadline })

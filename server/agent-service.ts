@@ -7323,10 +7323,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalFormContinuations.set(key, receipt)
     let dismissed = false
     try {
+      // Escape only hides current CLI forms and leaves ask_user pending.
+      // Decline completes the tool before the fallback answer is sent.
       dismissed = await this.terminalController.dismissUserInput?.(sessionId, {
         question: receipt.request.question,
         fields: receipt.request.form!.fields.map((field) => field.title),
-      }, undefined, { deadline }) ?? false
+      }, 'decline', { deadline }) ?? false
     } catch (error) {
       this.publishError(sessionId, error)
       if (error instanceof TerminalFormReplyError && error.outcome === 'not-submitted') {

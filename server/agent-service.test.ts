@@ -9704,6 +9704,7 @@ describe('AgentService deletion', () => {
     )
 
     expect(terminal.fillUserInputForm).toHaveBeenCalledOnce()
+    expect(terminal.dismissUserInput).not.toHaveBeenCalled()
     expect(service.store.isManagedOpen(sessionId)).toBe(false)
     await service.stop()
   })
@@ -9786,7 +9787,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('cancels the form and answers in a message when it cannot be filled', async () => {
+  it('declines the form and answers in a message when it cannot be filled', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -9865,7 +9866,7 @@ describe('AgentService deletion', () => {
     expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
       question: 'Confirm the transfer',
       fields: ['Confirm'],
-    }, undefined, { deadline: expect.any(Number) })
+    }, 'decline', { deadline: expect.any(Number) })
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')
@@ -10023,6 +10024,10 @@ describe('AgentService deletion', () => {
       statusCode: 409,
     })
 
+    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
+      question: 'Confirm the transfer',
+      fields: ['Confirm'],
+    }, 'decline', { deadline: expect.any(Number) })
     // Typing now would land in the open form and submit every other field at
     // its default, which is the corruption this path exists to avoid.
     expect(terminal.send).not.toHaveBeenCalled()

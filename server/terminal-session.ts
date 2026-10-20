@@ -261,14 +261,30 @@ function formReplyExpired(progress: FormReplyProgress): TerminalFormReplyError {
   )
 }
 
+const terminalDraftConflictMessages = {
+  'composer-unreadable': 'The terminal composer could not be read, so its text was not cleared.',
+  'changed-before-clear': 'The terminal changed before its text could be cleared. The app draft was not sent.',
+  'owner-changed-before-clear': 'The terminal owner changed before its text could be cleared. The app draft was not sent.',
+  'owner-changed-after-clear': 'The terminal owner changed after its text was cleared. The app draft was not sent.',
+  'clear-unconfirmed': 'The terminal clear was sent, but an empty composer could not be confirmed. The app draft was not sent.',
+  'composer-not-ready': 'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
+  'unsent-text': 'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+  'new-text': 'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
+} as const
+
+export type TerminalDraftConflict = keyof typeof terminalDraftConflictMessages
+
 export class TerminalDraftConflictError extends Error {
   readonly statusCode = 409
   readonly uncertainDelivery = false
   readonly terminalDraftConflict = true
+  /** Stable refusal reason; each conflict has its own message. */
+  readonly reasonCode: `terminal-draft-conflict.${TerminalDraftConflict}`
 
-  constructor(message: string) {
-    super(message)
+  constructor(conflict: TerminalDraftConflict) {
+    super(terminalDraftConflictMessages[conflict])
     this.name = 'TerminalDraftConflictError'
+    this.reasonCode = `terminal-draft-conflict.${conflict}`
   }
 }
 
@@ -1765,9 +1781,7 @@ export class TmuxTerminalSessionController
   ): Promise<string> {
     const readable = composerText(pane)
     if (readable === undefined) {
-      throw new TerminalDraftConflictError(
-        'The terminal composer could not be read, so its text was not cleared.',
-      )
+      throw new TerminalDraftConflictError('composer-unreadable')
     }
     if (!composerHoldsText(pane)) {
       return pane
@@ -1779,9 +1793,7 @@ export class TmuxTerminalSessionController
       parseTerminalFormPrompt(pane) ||
       isTerminalAgentWorking(pane)
     ) {
-      throw new TerminalDraftConflictError(
-        'The terminal changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('changed-before-clear')
     }
     const currentOwner = await this.owner(sessionId, owner.target, true)
     if (
@@ -1790,9 +1802,7 @@ export class TmuxTerminalSessionController
       currentOwner.rootPid !== owner.rootPid ||
       currentOwner.target !== owner.target
     ) {
-      throw new TerminalDraftConflictError(
-        'The terminal owner changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('owner-changed-before-clear')
     }
     const currentPane = await capturePane(owner.target)
     if (
@@ -1804,9 +1814,7 @@ export class TmuxTerminalSessionController
       parseTerminalFormPrompt(currentPane) ||
       isTerminalAgentWorking(currentPane)
     ) {
-      throw new TerminalDraftConflictError(
-        'The terminal changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('changed-before-clear')
     }
     if (!composerHoldsText(currentPane)) {
       return currentPane
@@ -1825,9 +1833,7 @@ export class TmuxTerminalSessionController
       'display-message -p changed',
     ], { timeout: 2_000 })
     if (cleared.stdout.trim() !== 'cleared') {
-      throw new TerminalDraftConflictError(
-        'The terminal owner changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('owner-changed-before-clear')
     }
     let previousEmpty: string | undefined
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1849,18 +1855,14 @@ export class TmuxTerminalSessionController
           ) {
             return clearedPane
           }
-          throw new TerminalDraftConflictError(
-            'The terminal owner changed after its text was cleared. The app draft was not sent.',
-          )
+          throw new TerminalDraftConflictError('owner-changed-after-clear')
         }
         previousEmpty = text
       } else {
         previousEmpty = undefined
       }
     }
-    throw new TerminalDraftConflictError(
-      'The terminal clear was sent, but an empty composer could not be confirmed. The app draft was not sent.',
-    )
+    throw new TerminalDraftConflictError('clear-unconfirmed')
   }
 
   private async sendInternal(
@@ -1942,9 +1944,7 @@ export class TmuxTerminalSessionController
             error instanceof Error &&
             /did not become ready/i.test(error.message)
           ) {
-            throw new TerminalDraftConflictError(
-              'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
-            )
+            throw new TerminalDraftConflictError('composer-not-ready')
           }
           throw error
         }
@@ -2038,9 +2038,7 @@ export class TmuxTerminalSessionController
             error instanceof Error &&
             /did not become ready/i.test(error.message)
           ) {
-            throw new TerminalDraftConflictError(
-              'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
-            )
+            throw new TerminalDraftConflictError('composer-not-ready')
           }
           throw error
         }
@@ -2061,9 +2059,7 @@ export class TmuxTerminalSessionController
         composerText(paneBeforePaste) !== undefined &&
         composerHoldsText(paneBeforePaste)
       if (existingInput && !options.replaceExistingInput) {
-        throw new TerminalDraftConflictError(
-            'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
-        )
+        throw new TerminalDraftConflictError('unsent-text')
       }
       if (isTerminalOverlay(paneBeforePaste)) {
         throw Object.assign(
@@ -2133,9 +2129,7 @@ export class TmuxTerminalSessionController
             parseTerminalFormPrompt(paneBeforePaste) ||
             (!toleratesWorking && isTerminalAgentWorking(paneBeforePaste))
           ) {
-            throw new TerminalDraftConflictError(
-              'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
-            )
+            throw new TerminalDraftConflictError('new-text')
           }
         }
         // The paste can reach the pane even if its acknowledgement is lost.

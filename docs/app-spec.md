@@ -466,6 +466,19 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   models, with **Retry** if they cannot be read. A model that cannot start
   falls back to the default and Oracle says so until the choice changes or you
   **Start over**.
+- **App settings → Models → Oracle's answers** chooses Concise, Balanced
+  (default), or Detailed. It is part of the settings profile (§9.3) and
+  applies from Oracle's next answer, with no extra model request. Every style
+  MUST keep:
+  - the answer;
+  - any uncertainty;
+  - unrecovered errors;
+  - each action taken or declined, and why;
+  - anything waiting for the user;
+  - the exact commands, code, paths, IDs, or log lines needed to act.
+
+  A request for more or less detail in a message MUST win for that answer.
+  Session output, tool results, and memory MUST NOT change the style.
 - **App settings → Folders** chooses, per computer, where Oracle starts new
   sessions, beside where yours start; each folder is checked on its computer before it
   is kept on the hub. Oracle keeps them as its own settings and changes one
@@ -476,6 +489,44 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.
   Background changes MUST NOT be streamed to the model between turns.
+- Structured memory MUST be optional and hub-local beside the existing
+  Markdown memory. `AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY` MUST accept only
+  `off`, `shadow`, and `on`, default to `off`, and fail startup for any other
+  value. `off` MUST preserve the pre-feature prompt path and create no
+  structured-memory file. `shadow` MUST run bounded local retrieval for safe
+  count/timing/status metrics but inject no text and MUST give the model the
+  same system prompt and tools as `off`; only `on` exposes memory tools. `on` MUST inject at most
+  eight active records and 6,000 characters, escaped and delimited as
+  untrusted evidence that cannot override policy or the current request.
+  Retrieval MUST make no model or network request. Because search stores
+  nothing, its query MUST be bounded to 1,000 characters rather than refused
+  and MUST NOT be privacy-rejected; scopes keep structural validation.
+- Structured records MUST use exact global, user, computer, project, or
+  session scope and carry schema version, stable ID, kind, provenance,
+  authority, confidence, validity, timestamps, and supersession. Direct-user
+  writes MUST NOT use global scope or correct or forget global or
+  policy-authorized records in any scope. Remember, correction, and forgetting MUST
+  be explicit, idempotent, audited without raw values, and privacy-validated
+  before any durable or temporary write; import MUST privacy-validate every
+  free-text field, including provenance, tombstone, and audit metadata.
+  Project roots MUST get every pattern check on the whole path, with
+  entropy judged per path segment plus a whole-path token check. Correction MUST preserve and
+  supersede history; forgetting MUST create a content-free tombstone that
+  prevents retry or import from resurrecting the value. Oracle tools MUST
+  require matching intent in the current user message and MUST NOT mutate a
+  record outside that turn's exact scopes, fixed from the defaults the
+  message was sent with when its turn starts. Session output MUST NOT be promoted
+  automatically.
+- Structured-memory persistence MUST serialize concurrent writes and use
+  private, synced, atomic files with a validated prior snapshot. Corrupt,
+  inconsistent, symlinked, oversized, or unsupported authoritative state MUST
+  remain untouched and disable only structured memory with visible safe
+  status. Size MUST be checked before reading. A state file other users can
+  access MUST be tightened to 0600 when the hub user owns it and refused
+  otherwise. A failed publication whose rollback also fails MUST make
+  structured memory unavailable until restart. The rest of Oracle MUST remain available. Export MUST be
+  deterministic; import MUST require an empty store, validate the complete
+  state, and accept any export within the store size limit. Turning the feature off MUST leave state intact for rollback.
 - Sending MUST NOT be refused because Oracle is busy, recovering, or offline.
   Messages wait in a durable first-in, first-out queue and are answered one at
   a time. Waiting messages are shown above the message bar, numbered in the
@@ -505,8 +556,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   turn so it can update its memory.
 - Oracle's data lives in `<data>/manager/`: app-owned state, transcript,
   queue, journal, registry, and settings, plus the agent's Markdown memory under
-  `memory/`. A file that cannot be read is set aside rather than stopping the
-  hub. **Start over** begins a new conversation and keeps memory.
+  `memory/`, and optional `structured-memory.json` with its validated backup.
+  Existing app-owned recoverable files that cannot be read are set aside
+  rather than stopping the hub. Structured memory is stricter: corrupt or
+  unsupported authoritative state is preserved in place and reported
+  unavailable. **Start over** begins a new conversation and keeps both memory
+  forms.
 - Session links in replies use `?computer=<id>&session=<id>` and open that
   session. Your default folder, mode, and model for new sessions are sent with
   each message and apply to the sessions Oracle starts.
@@ -617,11 +672,25 @@ Questions and permissions are the highest-priority UI state.
   The running service MUST retain the original answer continuation across late
   dismissal confirmation and refuse conflicting retries or replay after an
   uncertain send. A receipt for an earlier question MUST NOT clear a newer one.
+- A persisted question whose form neither fills nor dismisses is stale only
+  when a bounded, read-only probe sees an empty, input-ready composer. A probe
+  that fails or outlives the reply budget MUST count as not ready, return
+  HTTP 409 with `uncertainDelivery: false`, and leave no retained answer.
+- A stale card's answer MUST be typed only through idle-only delivery checked
+  under the terminal send lock, never as steering. Drafts, forms, permissions,
+  overlays, startup prompts, and working turns MUST refuse with
+  `uncertainDelivery: false` and keep the card. Tool completion MUST be
+  rechecked immediately before delivery; if it completed, nothing is sent.
+- The stale card MUST stay until the terminal accepts the answer, so queued
+  prompts cannot dispatch first; the answer then goes ahead of them. After
+  acceptance the answer MUST NOT be resent: a failed card clear retries only
+  the clear, and an uncertain send clears the card and refuses replay.
 - Safe Yes/choice and Stop actions MUST be available.
 - Cancelling or declining a persisted terminal question MUST dismiss the
-  matching live form and confirm completion before hiding its card. A failed
-  dismissal MUST retain the question; it MUST NOT report a false success that
-  leaves the terminal capturing subsequent messages.
+  matching live form and confirm completion before hiding its card, unless the
+  stale-card probe above sees an empty, input-ready composer; nothing is typed
+  then. A failed dismissal MUST retain the question; it MUST NOT report a false
+  success that leaves the terminal capturing subsequent messages.
 - Pending SDK questions MUST be reconstructed from persisted tool events after
   a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a
@@ -650,8 +719,17 @@ Questions and permissions are the highest-priority UI state.
   observe a stable empty composer, then paste and submit exactly once.
   A changed, working, unreadable, dialog-owning, or newly occupied pane MUST
   refuse without pasting; that reason MUST restore the app draft and remain
-  visible. Running or waiting sessions, uncertain delivery, queued sends,
+  visible. When no stale text was present, nothing is cleared and the attempt
+  MUST keep the readiness an ordinary immediate send would have: an agent that
+  is already working receives it as an immediate follow-up instead of a false
+  "new terminal text" refusal. After text was cleared, the pane MUST still be
+  idle before the paste. Running or waiting sessions, uncertain delivery, queued sends,
   SDK/Claude sessions, and app-local commands MUST never request replacement.
+- A first message to a terminal this service has not yet seen ready, such as
+  after the hub restarts, MUST wait for a live composer. A Copilot started in
+  the last 30 seconds can still open a startup dialog over an empty prompt,
+  so its prompt MUST stay live for about three seconds first; one running
+  longer MUST only need its prompt seen steady once.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
@@ -689,6 +767,15 @@ Questions and permissions are the highest-priority UI state.
   interrupt hint followed by the reasoning/model hint MUST remain a live
   composer for queued messages, wherever the model or its context is cut.
   Anything else after the interrupt hint MUST refuse input.
+- Copilot 1.0.98 ends the footer row with its own model hint: the model, then
+  the reasoning effort and the context in use (`GPT-5 mini · Low · (19%)`,
+  `GPT-5.6 Sol · High · 922K context (0%)`), either later cell left out and
+  only the last cut short. It MUST be recognised after the hint cells and
+  after the interrupt hint, and after the queue key (`· ctrl+q enqueue`) that
+  follows the interrupt hint while the prompt holds text. Just after a prompt
+  is sent, the row offers `esc edit prompt` instead of the interrupt; that is
+  work, and the composer MUST stay live for messages sent during it. Copilot
+  queues a message sent then for after the current turn.
 - A footer that a newer Copilot draws differently MUST NOT stop tmux sessions
   from starting or taking input. Copilot shows the terminal cursor on its
   prompt row only while the prompt has the keyboard, and hides it while a form
@@ -1284,33 +1371,105 @@ clear replacement IDs without losing, duplicating, or reordering content.
   indicators, and other non-semantic accent treatments.
 - Warning, error, computer-identity, and background-task colors MUST retain
   their semantic meaning.
-- The accent choice MUST be scoped to the current browser tab, persist across
-  reloads in that tab, and fall back to Agentic green for an unknown value.
+- The accent MUST follow the settings profile (§9.3) and fall back to Agentic
+  green for an unknown value.
+- Appearance MUST offer System, Graphite, and Light. System, and an
+  appearance never chosen, MUST follow the device's `prefers-color-scheme`
+  live; Graphite or Light MUST pin it on every device.
+- The saved appearance MUST paint before the app bundle loads, so a Light
+  choice never flashes dark.
 - The top-left brand mark and browser-tab icon MUST use the fixed Relay
-  artwork in Agentic green and remain independent of the tab-local accent.
+  artwork in Agentic green and remain independent of the chosen accent.
 
 ### 9.2 App settings layout
 
 - App settings MUST group settings by what they are about, in this order:
   - **Models**: new sessions' defaults per provider, then Oracle's model and
-    effort.
+    effort, then Oracle's response style.
   - **Folders**: one card per computer with the folder new sessions start in,
     then Oracle's (blank means the same as new sessions).
   - **Notifications**.
   - **Interface**: Appearance, Status line, Keyboard shortcuts.
-  - **App**: Hub connection (native app only), App updates.
+  - **App**: Settings sync, Hub connection (native app only), App updates.
+- Each section whose scope is not obvious MUST say whether it is **Synced** or
+  kept on **This device**.
 - A jump bar MUST reach each group and stay in view while the settings scroll.
 - Opened from Oracle's model, App settings MUST open at Oracle's model;
   opened any other way, at the top.
 
+### 9.3 Settings profile
+
+The hub keeps one settings profile, shared by every device that opens it. The
+hub has no per-user identity, so different hubs keep separate profiles and
+people sharing a hub share its profile. See
+[the design](design/settings-profile.md).
+
+| Scope | Settings |
+|---|---|
+| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
+| **This device** | Keyboard shortcuts, panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
+| **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
+
+- A change MUST apply at once, persist on the hub before it is reported, and
+  reach other open devices live.
+- The hub MUST keep a newer value another device committed after the change
+  was made, and the device MUST say so. It MUST NOT silently overwrite either
+  value.
+- While the hub is unreachable, edits MUST stay on the device and sync on
+  reconnect.
+- The hub MUST validate every key and value against an allowlist, bound the
+  profile to 32 KB, and guard it with the `/api/` Host and Origin policy.
+- A device without a copy MUST offer its earlier browser-local settings once;
+  the hub MUST keep only settings no device has chosen yet.
+
 ## 10. Notifications
 
 - Notification settings MUST be discoverable under App settings.
+- **What notifies you** is synced (§9.3) and the hub applies it to every
+  notification it sends, on every device. Unset MUST behave as All activity.
+
+  | Scope | Sends |
+  |---|---|
+  | All activity | Session, alert, and Oracle notifications |
+  | Oracle only | Oracle notifications only |
+  | Disabled | Nothing; devices stay subscribed |
+
+  - **Session:** a question, a permission request, or a finish, in any
+    session, including those Oracle started.
+  - **Alert:** the hub's own health, such as a Copilot CLI that failed its
+    startup check.
+  - **Oracle:**
+    - "Oracle replied" when your message is done, with a plain-text brief;
+    - "Oracle couldn't answer" when it fails;
+    - "Oracle needs your OK" (high urgency) when it asks to close a session.
+
+    Notifications Oracle decides to send on its own MUST also use this
+    category.
+- A test notification you ask for MUST be sent whatever the scope.
+- **This device** (its browser permission and push subscription) stays per
+  device. A blocked permission MUST NOT block choosing the scope.
+- Each Oracle event MUST notify at most once.
+- While any open app shows Oracle's panel on a visible screen, the hub MUST
+  NOT push Oracle notifications. The app MUST report this over its event
+  socket and renew it every 30 seconds. The hub MUST forget a report after 90
+  seconds, so a frozen phone cannot hold notifications back.
+- In a browser or installed PWA, Oracle notifications MUST open Oracle
+  (`/?oracle=open`), and opening Oracle MUST clear them.
+- One event MUST belong to one category, so a single event never sends both a
+  session and an Oracle notification.
+- The native shell has no Web Push. It MUST apply the same scope and Oracle
+  rules to the notifications it raises itself, hub alerts included.
+  - Its notifications have no click target yet, so tapping one brings the app
+    forward.
+  - Only iOS and Android let it withdraw them; desktop platforms offer no API.
+  - Both limits already apply to its session notifications.
+- There are no quiet hours. Browser permission behaviour is unchanged.
 - Per-session mute MUST persist on the hub and synchronize across devices.
 - Question and permission notifications MUST use high urgency.
 - Completion notifications MUST use low urgency. RFC 8030 also defines
   `very-low`, but FCM rejects it, so `low` is the lowest portable value.
-- Every notification MUST include computer, session name, and a concise brief.
+- Every session notification MUST include computer, session name, and a
+  concise brief. Oracle notifications name Oracle and give a brief.
 - Completion notifications MUST say that no action is needed.
 - An alert that asks to be notified, such as a Copilot CLI version that failed
   its startup check, MUST use high urgency and replace the previous alert
@@ -1391,6 +1550,7 @@ Persistent state MAY include:
 - Tool activity reconstructed from Copilot events
 - Provider identity and provider-specific runtime metadata
 - Knowledge bookmark metadata
+- The settings profile (§9.3)
 - Paired node registry and encrypted/external secret references
 
 Persistent state MUST NOT include:
@@ -1478,6 +1638,7 @@ Every material release SHOULD preserve:
 - Side questions docked above the message bar, kept per session, with follow-ups
 - Dynamic Island and home-indicator safe areas
 - Bundle-only PWA update detection
+- Synced settings matching across devices on the same hub, with no theme flash
 
 ## 17. Authoritative implementation areas
 
@@ -1489,6 +1650,7 @@ Every material release SHOULD preserve:
 | Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Oracle (session manager agent) | `src/ManagerAssistant.tsx`, `src/OracleSettings.tsx`, `src/use-oracle-settings.ts`, `server/manager-*.ts`, `shared/manager.ts` |
 | Browser API client | `src/api.ts` |
+| Settings profile | `shared/settings-profile.ts`, `src/settings-profile.ts`, `server/settings-profile-*.ts`, `index.html` (appearance bootstrap) |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |
 | Provider aggregation and Claude Agent lifecycle | `server/provider-session-service.ts`, `server/claude-agent-service.ts` |

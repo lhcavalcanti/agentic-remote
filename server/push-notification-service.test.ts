@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { PushSubscription, RequestOptions } from 'web-push'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HubEvent } from '../shared/contracts.js'
+import type { HubEvent, ManagedSession } from '../shared/contracts.js'
+import type { ManagerEvent } from '../shared/manager.js'
+import type { NotificationScope } from '../shared/notifications.js'
 import { PushNotificationService } from './push-notification-service.js'
 
 const directories: string[] = []
@@ -371,5 +373,126 @@ describe('PushNotificationService', () => {
       priority: 'low',
     })
     service.stop()
+  })
+
+  describe('notification scope', () => {
+    async function scoped(policy: Parameters<PushNotificationService['setPolicy']>[0] = {}) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'push-service-scope-'))
+      directories.push(directory)
+      const sender = vi.fn(async (
+        _subscription: PushSubscription,
+        _payload?: string | Buffer | null,
+        _options?: RequestOptions,
+      ) => ({ statusCode: 201, headers: {}, body: '' }))
+      const service = new PushNotificationService(directory, sender)
+      await service.initialize()
+      await service.subscribe({
+        endpoint: 'https://push.example.test/scope',
+        expirationTime: null,
+        keys: { p256dh: 'public-key', auth: 'auth-key' },
+      })
+      service.setPolicy(policy)
+      const hub = new EventEmitter<{ event: [HubEvent] }>()
+      const oracle = new EventEmitter<{ event: [ManagerEvent] }>()
+      service.attach(hub)
+      service.attachOracle(oracle)
+      const titles = () => sender.mock.calls.map(([, payload]) => JSON.parse(String(payload)).title as string)
+      return { service, sender, hub, oracle, titles }
+    }
+
+    const session = (id: string, change: Partial<ManagedSession> = {}): ManagedSession => ({
+      id, computerId: 'computer', computerName: 'development', cwd: '/tmp', title: `Session ${id}`,
+      updatedAt: '2026-10-18T00:00:00.000Z', status: 'running', isOpen: true, messages: [], ...change,
+    })
+
+    /** One of each: a question, a finish, a hub alert, and Oracle's reply. */
+    function everything(hub: EventEmitter<{ event: [HubEvent] }>, oracle: EventEmitter<{ event: [ManagerEvent] }>, id: string) {
+      hub.emit('event', { type: 'session.upserted', session: session(`${id}-q`, {
+        status: 'waiting',
+        pendingUserInput: { requestId: `${id}-r`, question: 'Which folder?', choices: [], allowFreeform: true },
+      }) })
+      hub.emit('event', { type: 'session.upserted', session: session(`${id}-f`) })
+      hub.emit('event', { type: 'session.upserted', session: session(`${id}-f`, { status: 'idle' }) })
+      hub.emit('event', { type: 'error', computerId: 'computer', message: 'Copilot CLI failed its check', notify: true })
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: `${id}-a`, role: 'assistant', replyTo: `${id}-u`, content: 'All done.', createdAt: 't',
+      } })
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: `${id}-u`, role: 'user', content: 'Status?', createdAt: 't', state: 'done',
+      } })
+    }
+
+    const all = [
+      'Action needed · Session 1-q', 'Finished · Session 1-f', 'Agentic Remote needs attention', 'Oracle replied',
+    ]
+
+    it.each([
+      ['unset, as on a hub that never chose', undefined, all],
+      ['All activity', 'all', all],
+      ['Oracle only', 'oracle', ['Oracle replied']],
+      ['Disabled', 'off', []],
+    ] as const)('sends what %s allows', async (_name, scope, expected) => {
+      const { hub, oracle, titles, service } = await scoped({ scope: () => scope as NotificationScope | undefined })
+      everything(hub, oracle, '1')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(titles().sort()).toEqual([...expected].sort())
+      service.stop()
+    })
+
+    it('applies a change of scope to the very next notification', async () => {
+      let scope: NotificationScope = 'all'
+      const { hub, oracle, titles, service } = await scoped({ scope: () => scope })
+      everything(hub, oracle, '1')
+      await vi.waitFor(() => expect(titles()).toHaveLength(4))
+      scope = 'oracle'
+      everything(hub, oracle, '2')
+      await vi.waitFor(() => expect(titles()).toHaveLength(5))
+      expect(titles().at(-1)).toBe('Oracle replied')
+      scope = 'off'
+      everything(hub, oracle, '3')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(titles()).toHaveLength(5)
+      service.stop()
+    })
+
+    it('still sends a test you asked for, whatever the scope', async () => {
+      const { service, titles } = await scoped({ scope: () => 'off' })
+      await expect(service.sendTestNotification()).resolves.toEqual({ sent: 1 })
+      expect(titles()).toEqual(['Agentic Remote notifications work'])
+      service.stop()
+    })
+
+    it("holds Oracle's notifications while you are watching Oracle, and never sends one twice", async () => {
+      let watching = true
+      const { oracle, titles, sender, service } = await scoped({ oracleWatched: () => watching })
+      const done = { type: 'manager.message', message: {
+        id: 'u1', role: 'user', content: 'Status?', createdAt: 't', state: 'done',
+      } } as const
+      oracle.emit('event', done)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(titles()).toEqual([])
+      // Watched when it happened, so it is not sent later either.
+      watching = false
+      oracle.emit('event', done)
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: 'c1', role: 'activity', content: 'Close "Docs"? This permanently deletes it and its history.',
+        createdAt: 't', confirmation: { kind: 'close-session', computerId: 'computer', sessionId: 's', title: 'Docs', state: 'pending' },
+      } })
+      await vi.waitFor(() => expect(titles()).toEqual(['Oracle needs your OK']))
+      expect(sender.mock.calls[0]?.[2]).toMatchObject({ urgency: 'high' })
+      expect(JSON.parse(String(sender.mock.calls[0]?.[1])).data).toEqual({ url: '/?oracle=open' })
+      service.stop()
+    })
+
+    it("keeps Oracle's notifications out of a hub whose Oracle is off", async () => {
+      const { hub, titles, service } = await scoped({ scope: () => 'oracle' })
+      hub.emit('event', { type: 'session.upserted', session: session('q', {
+        status: 'waiting',
+        pendingUserInput: { requestId: 'r', question: 'Which folder?', choices: [], allowFreeform: true },
+      }) })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(titles()).toEqual([])
+      service.stop()
+    })
   })
 })

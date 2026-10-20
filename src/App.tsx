@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import ReaderWorkspace from './ReaderWorkspace'
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
@@ -130,7 +131,6 @@ import {
   pendingSessionPlacements,
   providerName,
   sessionKey,
-  sessionSortFrom,
   shortPath,
   taskSnapshot,
 } from './session-presentation'
@@ -172,7 +172,7 @@ import type {
   ComputerSummary,
   ConfigureRuntimeInput,
   DirectoryListing,
-  HubEvent,
+  HubWireEvent,
   ManagedSession,
   KnowledgeRoot,
   SessionKnowledgeBinding,
@@ -242,6 +242,9 @@ import {
   saveSessionVisibility,
   suspendSession,
   fetchSessionOrder,
+  fetchSettingsProfile,
+  importSettingsProfile,
+  saveSettingsChanges,
   saveSessionOrderLane,
   bootstrapSessionOrder,
   replyPermission,
@@ -260,7 +263,28 @@ import {
   projectSessionResponse,
   sessionResponseStartedAt,
 } from './session-response-order'
-import { appearanceFrom, appearanceStorageKey, type Appearance } from './appearance'
+import type { Appearance } from './appearance'
+import {
+  readLegacySettings,
+  resolveAppearance,
+  SettingsProfileClient,
+  settingsProfileCacheKey,
+  type SettingsCacheStorage,
+  type SettingsProfileState,
+} from './settings-profile'
+import {
+  alertNotification,
+  notificationAllowed,
+  OracleNotifier,
+  oracleNotificationTags,
+  type NotificationScope,
+} from '../shared/notifications'
+import type {
+  AppearanceSetting,
+  OracleResponseStyle,
+  SettingsProfileKey,
+  SettingsProfileValues,
+} from '../shared/settings-profile'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
   collapseKnowledgeFolder,
@@ -279,6 +303,7 @@ import {
   activePushSubscription,
   checkForPwaUpdate,
   clearSessionPushNotifications,
+  clearPushNotifications,
   disablePushNotifications,
   enablePushNotifications,
   installedAsApp,
@@ -302,6 +327,7 @@ import {
   type SessionNotificationState,
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
+import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import {
   PermissionCard,
@@ -468,15 +494,6 @@ function agentModeName(mode: AgentMode, provider: AgentProvider): string {
 
 type DefaultSessionFolders = Record<string, string>
 
-type StoredDefaultSessionFolders = {
-  version?: number
-  folders?: Record<string, unknown>
-}
-
-const defaultSessionFoldersStorageKey =
-  'agentic-remote:default-session-folders'
-
-const accentThemeStorageKey = 'agentic-remote:accent-theme'
 const accentThemes = [
   { id: 'agentic', name: 'Agentic', color: '#b8f36b' },
   { id: 'ocean', name: 'Ocean', color: '#6eb7ff' },
@@ -488,15 +505,113 @@ const accentThemes = [
 
 type AccentTheme = (typeof accentThemes)[number]['id']
 
-function readAccentTheme(): AccentTheme {
+const notificationScopeOptions: Array<{ id: NotificationScope; name: string; description: string }> = [
+  {
+    id: 'all',
+    name: 'All activity',
+    description: 'Sessions that need you or finish, hub alerts, and Oracle.',
+  },
+  {
+    id: 'oracle',
+    name: 'Oracle only',
+    description: 'Oracle’s replies and its requests for your OK. Sessions stay quiet, including ones Oracle started.',
+  },
+  {
+    id: 'off',
+    name: 'Disabled',
+    description: 'Nothing, on any device. Each device stays set up, so turning them back on is instant.',
+  },
+]
+
+const appearanceOptions: Array<{ id: AppearanceSetting; name: string }> = [
+  { id: 'system', name: 'System' },
+  { id: 'graphite', name: 'Graphite' },
+  { id: 'light', name: 'Light' },
+]
+
+const settingNames: Record<SettingsProfileKey, string> = {
+  appearance: 'Appearance',
+  accent: 'Accent',
+  statusline: 'Status line',
+  newSessionRuntimes: 'New-session models',
+  newSessionFolders: 'New-session folders',
+  sessionSort: 'Session sort',
+  computerOrder: 'Computer order',
+  oracleResponseStyle: 'Oracle’s response style',
+  notificationScope: 'What notifies you',
+}
+
+/** Storage that may be blocked outright, as some private modes do. */
+function browserStorage(kind: 'localStorage' | 'sessionStorage'): SettingsCacheStorage {
   try {
-    const stored = sessionStorage.getItem(accentThemeStorageKey)
-    return accentThemes.some((theme) => theme.id === stored)
-      ? (stored as AccentTheme)
-      : 'agentic'
+    const storage = window[kind]
+    if (storage) return storage
   } catch {
-    return 'agentic'
+    // Fall through to a store that keeps nothing.
   }
+  return { getItem: () => null, setItem: () => undefined }
+}
+
+function createSettingsProfileClient(): SettingsProfileClient {
+  const local = browserStorage('localStorage')
+  return new SettingsProfileClient({
+    transport: {
+      fetch: fetchSettingsProfile,
+      update: saveSettingsChanges,
+      import: importSettingsProfile,
+    },
+    storage: local,
+    legacy: () => readLegacySettings(local, browserStorage('sessionStorage')),
+  })
+}
+
+const prefersLightQuery = '(prefers-color-scheme: light)'
+
+function subscribePrefersLight(notify: () => void): () => void {
+  if (typeof window.matchMedia !== 'function') return () => undefined
+  const media = window.matchMedia(prefersLightQuery)
+  media.addEventListener?.('change', notify)
+  return () => media.removeEventListener?.('change', notify)
+}
+
+function prefersLightNow(): boolean {
+  return typeof window.matchMedia === 'function' && Boolean(window.matchMedia(prefersLightQuery)?.matches)
+}
+
+function settingsSyncMessage(state: SettingsProfileState): string {
+  switch (state.status) {
+    case 'loading':
+      return 'Loading your settings from the hub…'
+    case 'saving':
+      return 'Saving to the hub…'
+    case 'offline':
+      return state.deviceCopy
+        ? 'The hub can’t be reached. Changes are kept on this device and sync when it’s back.'
+        : 'The hub can’t be reached, and this browser can’t keep a copy. Changes made now last until this page closes.'
+    default:
+      return state.deviceCopy
+        ? 'Saved on this hub.'
+        : 'Saved on this hub. This browser can’t keep a copy, so settings load from the hub each time.'
+  }
+}
+
+function settingsNotice(state: SettingsProfileState): string | undefined {
+  if (state.conflicts.length) {
+    const names = state.conflicts.map((key) => settingNames[key])
+    return `${names.join(', ')} ${names.length === 1 ? 'was' : 'were'} changed on another device first, so this device now uses that choice.`
+  }
+  if (!state.refused) return undefined
+  return state.refusedKey
+    ? `${settingNames[state.refusedKey]} wasn’t saved: ${state.refused}`
+    : `Couldn’t save a setting: ${state.refused}`
+}
+
+function SettingScope({ synced }: { synced: boolean }) {
+  return (
+    <span className={`settings-scope${synced ? ' settings-scope--synced' : ''}`}>
+      {synced ? 'Synced' : 'This device'}
+    </span>
+  )
 }
 
 function currentAppViewportGeometry(keyboardOpen: boolean) {
@@ -1736,64 +1851,6 @@ function isRuntimeReasoningEffort(
     value === 'xhigh' ||
     value === 'max'
   )
-}
-
-function readDefaultRuntimeSettings(): DefaultRuntimeSettings {
-  const parsed = readStoredOrder<unknown>(
-    'agentic-remote:default-models',
-    {},
-  )
-  const stored =
-    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {}
-  const selection = (provider: AgentProvider): DefaultRuntimeSelection => {
-    const value = stored[provider]
-    if (typeof value === 'string') {
-      return { ...emptyRuntimeSelection, model: value }
-    }
-    if (!value || typeof value !== 'object') {
-      return { ...emptyRuntimeSelection }
-    }
-    const fields = value as Record<string, unknown>
-    return {
-      model: typeof fields.model === 'string' ? fields.model : '',
-      reasoningEffort: isRuntimeReasoningEffort(fields.reasoningEffort)
-        ? fields.reasoningEffort
-        : '',
-      contextTier:
-        fields.contextTier === 'long_context' ? 'long_context' : 'default',
-      mode: defaultAgentMode(fields.mode),
-    }
-  }
-  return {
-    copilot: selection('copilot'),
-    claude: selection('claude'),
-  }
-}
-
-function readDefaultSessionFolders(): DefaultSessionFolders {
-  const stored = readStoredOrder<StoredDefaultSessionFolders>(
-    defaultSessionFoldersStorageKey,
-    {},
-  )
-  if (
-    !stored ||
-    typeof stored !== 'object' ||
-    stored.version !== 1 ||
-    !stored.folders ||
-    typeof stored.folders !== 'object' ||
-    Array.isArray(stored.folders)
-  ) {
-    return {}
-  }
-  const folders: DefaultSessionFolders = {}
-  for (const [computerId, value] of Object.entries(stored.folders)) {
-    if (typeof value === 'string' && value.trim().length > 0) {
-      folders[computerId] = value
-    }
-  }
-  return folders
 }
 
 const defaultStatusline: StatuslineSettings = {
@@ -3627,6 +3684,11 @@ function AppSettingsDialog({
   onAccentThemeChange,
   appearance,
   onAppearanceChange,
+  settingsSync,
+  oracleResponseStyle,
+  onOracleResponseStyleChange,
+  notificationScope,
+  onNotificationScopeChange,
   statusline,
   onStatuslineChange,
   shortcuts,
@@ -3647,8 +3709,13 @@ function AppSettingsDialog({
   onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
   accentTheme: AccentTheme
   onAccentThemeChange: (theme: AccentTheme) => void
-  appearance: Appearance
-  onAppearanceChange: (appearance: Appearance) => void
+  appearance: AppearanceSetting
+  onAppearanceChange: (appearance: AppearanceSetting) => void
+  settingsSync: SettingsProfileState
+  oracleResponseStyle: OracleResponseStyle
+  onOracleResponseStyleChange: (style: OracleResponseStyle) => void
+  notificationScope: NotificationScope
+  onNotificationScopeChange: (scope: NotificationScope) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
   shortcuts: ShortcutDefinition[]
@@ -3665,7 +3732,6 @@ function AppSettingsDialog({
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
-  const [appearanceError, setAppearanceError] = useState<string>()
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateMessage, setUpdateMessage] = useState<string>()
   const [testingNotification, setTestingNotification] = useState(false)
@@ -4000,7 +4066,10 @@ function AppSettingsDialog({
         <h3 id="settings-models-heading" tabIndex={-1}>Models</h3>
         <div className="app-settings-group__body">
           <section className="app-settings-section">
-            <h4>New sessions</h4>
+            <div className="app-settings-section__title">
+              <h4>New sessions</h4>
+              <SettingScope synced />
+            </div>
             <p className="dialog-message">
               New sessions use these provider settings. Existing sessions keep
               their current model, effort, context, and agent mode.
@@ -4022,12 +4091,42 @@ function AppSettingsDialog({
               />
             ))}
           </section>
+          {/* One column, so Oracle's answers sit under its model. */}
+          <div className="app-settings-stack">
           <OracleModelSettings
             models={hubCopilotModels}
             modelsError={hubCopilotError}
             onRetryModels={retryHubCopilotModels}
             oracle={oracle}
           />
+          {oracle.settings && !oracle.unavailable ? (
+            <section className="app-settings-section" id="settings-oracle-style">
+              <div className="app-settings-section__title">
+                <h4>Oracle&apos;s answers</h4>
+                <SettingScope synced />
+              </div>
+              <p className="dialog-message">
+                How much Oracle writes. Every style keeps errors, uncertainty,
+                what Oracle did, and anything waiting for you. Ask for more or
+                less in a message to change one answer.
+              </p>
+              <label className="field">
+                <span>Response style</span>
+                <select
+                  aria-label="Oracle response style"
+                  className="dialog-select"
+                  onChange={(event) =>
+                    onOracleResponseStyleChange(event.target.value as OracleResponseStyle)}
+                  value={oracleResponseStyle}
+                >
+                  <option value="concise">Concise</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="detailed">Detailed</option>
+                </select>
+              </label>
+            </section>
+          ) : null}
+          </div>
         </div>
       </section>
       <section
@@ -4095,6 +4194,37 @@ function AppSettingsDialog({
         id="settings-notifications"
       >
         <h3 id="settings-notifications-heading" tabIndex={-1}>Notifications</h3>
+        <div className="app-settings-group__body">
+        <section className="app-settings-section">
+          <div className="app-settings-section__title">
+            <h4>What notifies you</h4>
+            <SettingScope synced />
+          </div>
+          <fieldset className="notification-scope-options">
+            <legend>What notifies you</legend>
+            {notificationScopeOptions.map((option) => (
+              <label className="notification-scope-option" key={option.id}>
+                <input
+                  aria-describedby={`notification-scope-${option.id}`}
+                  aria-label={option.name}
+                  checked={notificationScope === option.id}
+                  name="notification-scope"
+                  onChange={() => onNotificationScopeChange(option.id)}
+                  type="radio"
+                />
+                <span>
+                  <strong>{option.name}</strong>
+                  <small id={`notification-scope-${option.id}`}>{option.description}</small>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        </section>
+        <section className="app-settings-section">
+          <div className="app-settings-section__title">
+            <h4>This device</h4>
+            <SettingScope synced={false} />
+          </div>
         {!supported ? (
           <p className="dialog-message">
             Push notifications are not supported in this browser.
@@ -4112,8 +4242,8 @@ function AppSettingsDialog({
         ) : (
           <>
             <p className="dialog-message">
-              Notify this device when any agent needs your input or finishes
-              working. Individual sessions can be muted from their bell icon.
+              Let this device receive what you chose above. Individual sessions
+              can be muted from their bell icon.
             </p>
             <button
               className={
@@ -4151,6 +4281,8 @@ function AppSettingsDialog({
           </>
         )}
         {error ? <p className="form-error">{error}</p> : null}
+        </section>
+        </div>
       </section>
       <section
         aria-labelledby="settings-interface-heading"
@@ -4160,35 +4292,29 @@ function AppSettingsDialog({
         <h3 id="settings-interface-heading" tabIndex={-1}>Interface</h3>
         <div className="app-settings-group__body">
           <section className="app-settings-section">
-            <h4>Appearance</h4>
+            <div className="app-settings-section__title">
+              <h4>Appearance</h4>
+              <SettingScope synced />
+            </div>
             <fieldset className="appearance-options">
               <legend>Reading surfaces</legend>
-              {(['graphite', 'light'] as const).map((option) => (
-                <label className="appearance-option" data-appearance={option} key={option}>
+              {appearanceOptions.map((option) => (
+                <label className="appearance-option" data-appearance={option.id} key={option.id}>
                   <input
-                    aria-label={`${option === 'light' ? 'Light' : 'Graphite'} appearance`}
-                    checked={appearance === option}
+                    aria-label={`${option.name} appearance`}
+                    checked={appearance === option.id}
                     name="appearance"
-                    onChange={() => {
-                      try {
-                        onAppearanceChange(option)
-                        setAppearanceError(undefined)
-                      } catch (caught) {
-                        setAppearanceError(`Could not save appearance: ${
-                          caught instanceof Error ? caught.message : String(caught)
-                        }`)
-                      }
-                    }}
+                    onChange={() => onAppearanceChange(option.id)}
                     type="radio"
                   />
                   <span aria-hidden="true" className="appearance-option__preview" />
-                  <strong>{option === 'light' ? 'Light' : 'Graphite'}</strong>
+                  <strong>{option.name}</strong>
                 </label>
               ))}
             </fieldset>
             <p className="dialog-message">
-              Choose an accent for this tab. Other Agentic Remote tabs keep their
-              own color.
+              System follows each device&apos;s light or dark setting. The accent
+              colors buttons, focus, and activity.
             </p>
             <div
               aria-label="Accent color"
@@ -4220,10 +4346,12 @@ function AppSettingsDialog({
                 </label>
               ))}
             </div>
-            {appearanceError ? <p className="form-error" role="alert">{appearanceError}</p> : null}
           </section>
           <section className="app-settings-section">
-            <h4>Status line</h4>
+            <div className="app-settings-section__title">
+              <h4>Status line</h4>
+              <SettingScope synced />
+            </div>
             <p className="dialog-message">
               Choose the session and runtime details shown above the composer.
             </p>
@@ -4233,7 +4361,10 @@ function AppSettingsDialog({
             />
           </section>
           <section className="app-settings-section app-settings-section--wide">
-            <h4>Keyboard shortcuts</h4>
+            <div className="app-settings-section__title">
+              <h4>Keyboard shortcuts</h4>
+              <SettingScope synced={false} />
+            </div>
             <p className="dialog-message">
               Available on a keyboard, outside dialogs and the message box. Choose
               one to give it different keys.
@@ -4263,6 +4394,18 @@ function AppSettingsDialog({
       >
         <h3 id="settings-app-heading" tabIndex={-1}>App</h3>
         <div className="app-settings-group__body">
+          <section className="app-settings-section" id="settings-sync">
+            <h4>Settings sync</h4>
+            <p className="dialog-message">
+              Appearance, accent, status line, new-session models and folders,
+              session sort, computer order, Oracle&apos;s response style, and
+              what notifies you follow you to every device that opens this hub. Keyboard shortcuts, panel widths, and drafts stay
+              on this device.
+            </p>
+            <p className="app-settings-section__result" role="status">
+              {settingsSyncMessage(settingsSync)}
+            </p>
+          </section>
           {shellSettingsAvailable() && (
             <section className="app-settings-section">
               <h4>Hub connection</h4>
@@ -6629,7 +6772,10 @@ function App() {
       managerListenersRef.current.delete(listener)
     }
   }, [])
-  const [oracleOpen, setOracleOpen] = useState(false)
+  // A notification about Oracle opens the app at its panel.
+  const [oracleOpen, setOracleOpen] = useState(
+    () => new URLSearchParams(window.location.search).get('oracle') === 'open',
+  )
   // The open Oracle panel's width; the timeline dock moves beside it.
   const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
@@ -7063,20 +7209,75 @@ function App() {
           window.visualViewport?.height || 0,
         ),
   )
-  const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
-    ({
-      ...defaultStatusline,
-      ...readStoredOrder<Partial<StatuslineSettings>>(
-        'agentic-remote:statusline',
-        {},
-      ),
+  // Preferences that follow you to every device on this hub. This device's
+  // copy renders at once; the hub's profile and other devices' changes
+  // arrive through the client.
+  const [settingsClient] = useState(createSettingsProfileClient)
+  const settingsProfile = useSyncExternalStore(
+    settingsClient.subscribe,
+    settingsClient.getState,
+  )
+  const profile = settingsProfile.values
+  useEffect(() => {
+    settingsClient.start()
+    const reconnect = () => void settingsClient.sync()
+    // Another tab changed the shared copy; null means storage was cleared.
+    const otherTab = (event: StorageEvent) => {
+      if (event.key === settingsProfileCacheKey || event.key === null) {
+        settingsClient.refreshFromStorage()
+      }
+    }
+    window.addEventListener('online', reconnect)
+    window.addEventListener('storage', otherTab)
+    return () => {
+      window.removeEventListener('online', reconnect)
+      window.removeEventListener('storage', otherTab)
+      settingsClient.stop()
+    }
+  }, [settingsClient])
+  const saveSetting = useCallback(
+    <K extends SettingsProfileKey>(key: K, value: SettingsProfileValues[K] | null) => {
+      try {
+        settingsClient.set(key, value)
+      } catch (caught) {
+        setError(`Could not save ${settingNames[key].toLowerCase()}: ${
+          caught instanceof Error ? caught.message : String(caught)
+        }`)
+      }
+    },
+    [settingsClient],
+  )
+  const statusline = useMemo<StatuslineSettings>(
+    () => ({ ...defaultStatusline, ...profile.statusline }),
+    [profile.statusline],
+  )
+  const statuslineRef = useRef(statusline)
+  statuslineRef.current = statusline
+  const setStatusline = useCallback(
+    (next: StatuslineSettings | ((current: StatuslineSettings) => StatuslineSettings)) =>
+      saveSetting('statusline', typeof next === 'function' ? next(statuslineRef.current) : next),
+    [saveSetting],
+  )
+  const defaultRuntimes = useMemo<DefaultRuntimeSettings>(
+    () => ({
+      copilot: { ...emptyRuntimeSelection, ...profile.newSessionRuntimes?.copilot },
+      claude: { ...emptyRuntimeSelection, ...profile.newSessionRuntimes?.claude },
     }),
+    [profile.newSessionRuntimes],
   )
-  const [defaultRuntimes, setDefaultRuntimes] = useState<DefaultRuntimeSettings>(
-    readDefaultRuntimeSettings,
+  const setDefaultRuntimes = useCallback(
+    (next: DefaultRuntimeSettings) => saveSetting('newSessionRuntimes', next),
+    [saveSetting],
   )
-  const [defaultSessionFolders, setDefaultSessionFolders] =
-    useState<DefaultSessionFolders>(readDefaultSessionFolders)
+  const defaultSessionFolders = useMemo<DefaultSessionFolders>(
+    () => profile.newSessionFolders ?? {},
+    [profile.newSessionFolders],
+  )
+  const setDefaultSessionFolders = useCallback(
+    (next: DefaultSessionFolders) =>
+      saveSetting('newSessionFolders', Object.keys(next).length ? next : null),
+    [saveSetting],
+  )
   // Your new-session defaults live in this browser, so each message to the
   // manager carries them for the sessions it starts for you.
   const managerDefaults = useMemo<ManagerClientDefaults>(() => {
@@ -7094,11 +7295,10 @@ function App() {
       ...(Object.keys(folders).length ? { folders } : {}),
     }
   }, [computers, defaultRuntimes, defaultSessionFolders])
-  const [accentTheme, setAccentTheme] =
-    useState<AccentTheme>(readAccentTheme)
-  const [appearance, setAppearance] = useState<Appearance>(() =>
-    appearanceFrom(readStoredOrder<unknown>(appearanceStorageKey, 'graphite')),
-  )
+  const accentTheme: AccentTheme = profile.accent ?? 'agentic'
+  const appearanceSetting: AppearanceSetting = profile.appearance ?? 'system'
+  const prefersLight = useSyncExternalStore(subscribePrefersLight, prefersLightNow)
+  const appearance: Appearance = resolveAppearance(profile.appearance, prefersLight)
   useLayoutEffect(() => {
     const root = document.documentElement
     const previous = root.dataset.appearance
@@ -7114,9 +7314,16 @@ function App() {
   }, [appearance])
   const brandIcon = '/icon.svg'
   const [error, setError] = useState<string>()
-  const [computerOrder, setComputerOrder] = useState<string[]>(() =>
-    readStoredOrder('agentic-remote:computer-order', []),
-  )
+  // Computers this profile has not placed yet follow in pairing order, which
+  // is derived here rather than written back: only a drag is a choice.
+  const computerOrder = useMemo(() => {
+    const ids = computers.map((computer) => computer.id)
+    const saved: string[] = profile.computerOrder ?? []
+    return [
+      ...saved.filter((id) => ids.includes(id)),
+      ...ids.filter((id) => !saved.includes(id)),
+    ]
+  }, [computers, profile.computerOrder])
   const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>(
     () => readStoredOrder('agentic-remote:session-order', {}),
   )
@@ -7146,9 +7353,7 @@ function App() {
     },
     [],
   )
-  const [sessionSort, setSessionSort] = useState<SessionSort>(() =>
-    sessionSortFrom(readStoredOrder<unknown>('agentic-remote:session-sort', 'custom')),
-  )
+  const sessionSort: SessionSort = profile.sessionSort ?? 'custom'
   const [sessionQuery, setSessionQuery] = useState('')
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -7762,6 +7967,70 @@ function App() {
   // An embedded webview gets no Web Push, so inside the shell the app raises
   // its own notifications from the live session stream. A browser keeps using
   // the hub's Web Push and must not double-notify, hence the shell check.
+  // Which notifications may be raised, and whether Oracle is on screen, which
+  // makes Oracle's own redundant. The event socket's handlers read these.
+  const notificationScopeRef = useRef(profile.notificationScope)
+  notificationScopeRef.current = profile.notificationScope
+  const oracleOnScreenRef = useRef(false)
+  const eventSocketRef = useRef<WebSocket | undefined>(undefined)
+  /** Tells the hub whether Oracle is on screen, so it holds Oracle's pushes. */
+  const reportOraclePresenceRef = useRef(() => {})
+  reportOraclePresenceRef.current = () => {
+    const socket = eventSocketRef.current
+    if (socket?.readyState !== 1 || typeof socket.send !== 'function') return
+    socket.send(JSON.stringify({ type: 'presence', oracleVisible: oracleOnScreenRef.current }))
+  }
+  useEffect(() => {
+    const report = () => {
+      const onScreen = oracleOpen && document.visibilityState === 'visible'
+      const changed = onScreen !== oracleOnScreenRef.current
+      oracleOnScreenRef.current = onScreen
+      if (changed) reportOraclePresenceRef.current()
+      if (onScreen) {
+        // Opening Oracle clears what it raised, as opening a session does. A
+        // desktop shell has no withdrawal API, so there this does nothing.
+        withdrawShellNotifications(oracleNotificationTags)
+        void clearPushNotifications(oracleNotificationTags).catch((caught: unknown) => {
+          console.warn('Unable to clear Oracle notifications:', caught)
+        })
+      }
+    }
+    report()
+    document.addEventListener('visibilitychange', report)
+    // The hub forgets a report after 90 seconds, so one from a phone that
+    // froze cannot hold Oracle's notifications back for long.
+    const renew = window.setInterval(() => {
+      if (oracleOnScreenRef.current) reportOraclePresenceRef.current()
+    }, 30_000)
+    return () => {
+      document.removeEventListener('visibilitychange', report)
+      window.clearInterval(renew)
+    }
+  }, [oracleOpen])
+  // The shell has no Web Push, so it raises Oracle's notifications itself,
+  // classified exactly as the hub classifies them.
+  const oracleShellNotifierRef = useRef<OracleNotifier | undefined>(undefined)
+  const raiseOracleShellNotificationRef = useRef((_event: ManagerEvent) => {})
+  raiseOracleShellNotificationRef.current = (event) => {
+    if (!nativeShell()) return
+    oracleShellNotifierRef.current ??= new OracleNotifier()
+    const payload = oracleShellNotifierRef.current.next(event)
+    if (!payload || oracleOnScreenRef.current) return
+    if (!notificationAllowed(notificationScopeRef.current, 'oracle')) return
+    sendShellNotification({
+      tag: payload.tag,
+      title: payload.title,
+      body: payload.body,
+      urgent: payload.priority === 'high',
+    })
+  }
+  // Hub alerts reach a browser by Web Push; the shell raises them itself.
+  const raiseAlertShellNotificationRef = useRef((_computerId: string | undefined, _message: string) => {})
+  raiseAlertShellNotificationRef.current = (computerId, message) => {
+    if (!nativeShell() || !notificationAllowed(notificationScopeRef.current, 'alert')) return
+    const payload = alertNotification(computerId, message)
+    sendShellNotification({ tag: payload.tag, title: payload.title, body: payload.body, urgent: true })
+  }
   const notificationStateRef = useRef<Map<string, SessionNotificationState>>(
     new Map(),
   )
@@ -7771,6 +8040,11 @@ function App() {
     }
     const previous = notificationStateRef.current
     notificationStateRef.current = notificationState(sessions)
+    // The hub applies the scope to Web Push; the shell raises its own, so it
+    // applies the same scope here.
+    if (!notificationAllowed(notificationScopeRef.current, 'session')) {
+      return
+    }
     for (const notification of shellNotifications(sessions, {
       previous,
       computerNames: new Map(
@@ -8903,25 +9177,6 @@ function App() {
   )
 
   useEffect(() => {
-    // `computers` is empty until the initial load resolves; reconciling against
-    // it would discard the persisted order before it can be applied.
-    if (computers.length === 0) {
-      return
-    }
-    setComputerOrder((current) => {
-      const ids = computers.map((computer) => computer.id)
-      const next = [
-        ...current.filter((id) => ids.includes(id)),
-        ...ids.filter((id) => !current.includes(id)),
-      ]
-      return next.length === current.length &&
-        next.every((id, index) => id === current[index])
-        ? current
-        : next
-    })
-  }, [computers])
-
-  useEffect(() => {
     if (computers.length === 0) {
       return
     }
@@ -8946,14 +9201,6 @@ function App() {
       return changed ? next : current
     })
   }, [computers, sessions])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('agentic-remote:computer-order', JSON.stringify(computerOrder))
-    } catch {
-      // Automatic snapshot reconciliation remains usable without storage.
-    }
-  }, [computerOrder])
 
   // The hub is the source of truth for the session order, so nothing writes
   // agentic-remote:session-order any more. The existing value is read once at
@@ -8984,35 +9231,6 @@ function App() {
   useEffect(() => {
     void syncSessionOrder()
   }, [syncSessionOrder])
-
-  useEffect(() => {
-    writeStored(
-      'agentic-remote:statusline',
-      JSON.stringify(statusline),
-    )
-  }, [statusline])
-
-  useEffect(() => {
-    writeStored(
-      'agentic-remote:default-models',
-      JSON.stringify(defaultRuntimes),
-    )
-  }, [defaultRuntimes])
-
-  useEffect(() => {
-    writeStored(
-      defaultSessionFoldersStorageKey,
-      JSON.stringify({ version: 1, folders: defaultSessionFolders }),
-    )
-  }, [defaultSessionFolders])
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(accentThemeStorageKey, accentTheme)
-    } catch {
-      // A blocked storage quota should not stop this tab from changing color.
-    }
-  }, [accentTheme])
 
   function durableComposerDraft(key: string, draft: ComposerDraft): ComposerDraft {
     const history = composerHistoryRef.current[key]
@@ -9795,14 +10013,25 @@ function App() {
 
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      socket = new WebSocket(`${protocol}//${window.location.host}/api/events`)
+      // Asks to be sent what changed in a session rather than all of it. Its
+      // patches only apply to what this socket was itself sent, so every new
+      // socket starts from whole sessions; an older hub ignores the request.
+      const current = new WebSocket(`${protocol}//${window.location.host}/api/events?patches=1`)
+      socket = current
+      eventSocketRef.current = current
+      const patches = new SessionPatchReceiver((request) => {
+        if (current.readyState === WebSocket.OPEN) current.send(JSON.stringify(request))
+      })
       socket.onopen = () => {
+        reportOraclePresenceRef.current()
         reconnectDelay = 1_000
         setManagerEpoch((epoch) => epoch + 1)
         sessionKnowledgeRootRef.current.refresh()
         // Order events are not replayed, so a reorder committed while this
         // socket was down would otherwise stay invisible until the next one.
         void syncSessionOrderRef.current()
+        // Settings events are not replayed either.
+        void settingsClient.sync()
         void refreshSnapshot().catch((caught: unknown) => {
           setSessionLoadError(
             caught instanceof Error ? caught.message : String(caught),
@@ -9810,17 +10039,21 @@ function App() {
         })
       }
       socket.onmessage = (message) => {
-        const event = JSON.parse(message.data as string) as HubEvent
+        const event = patches.receive(JSON.parse(message.data as string) as HubWireEvent)
+        if (!event) return
         if (isManagerEvent(event)) {
           // The manager's conversation, not session lifecycle: it must not
           // move the transcript sequence either.
           for (const listener of managerListenersRef.current) listener(event)
+          raiseOracleShellNotificationRef.current(event)
         } else if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
         } else if (event.type === 'session.order.updated') {
           // Preference state, not session lifecycle: it must not advance the
           // transcript sequence the snapshot reconciliation depends on.
           applySessionOrderSnapshot(event.order)
+        } else if (event.type === 'settings.updated') {
+          settingsClient.receive(event.settings)
         } else if (event.type === 'session.upserted') {
           setResourcesView((view) => view?.ownerKey === sessionKey(event.session) &&
             view.signature !== sessionResourceOwner(event.session) ? undefined : view)
@@ -10014,6 +10247,9 @@ function App() {
           // A prompt that was handed over and then failed to send is gone from
           // the queue and was never in the composer, so the text comes back
           // here or nowhere. Anything typed since is newer and is left alone.
+          if (event.type === 'error' && event.notify) {
+            raiseAlertShellNotificationRef.current(event.computerId, event.message)
+          }
           if (event.type === 'error' && event.failedPrompt && event.sessionId) {
             restoreFailedPromptRef.current(
               `${event.computerId || ''}:${event.sessionId}`,
@@ -10025,6 +10261,7 @@ function App() {
         }
       }
       socket.onclose = () => {
+        if (eventSocketRef.current === current) eventSocketRef.current = undefined
         if (!stopped) {
           const delay = reconnectDelay
           reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
@@ -10051,7 +10288,7 @@ function App() {
       }
       socket?.close()
     }
-  }, [upsertSession])
+  }, [settingsClient, upsertSession])
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
@@ -14141,14 +14378,7 @@ function App() {
       const from = computerOrder.indexOf(activeComputer)
       const to = computerOrder.indexOf(overComputer)
       if (from < 0 || to < 0) return
-      const next = arrayMove(computerOrder, from, to)
-      try {
-        localStorage.setItem('agentic-remote:computer-order', JSON.stringify(next))
-        setComputerOrder(next)
-      } catch (caught) {
-        setSidebarOpen(false)
-        setError(`Could not save the computer order: ${caught instanceof Error ? caught.message : String(caught)}`)
-      }
+      saveSetting('computerOrder', arrayMove(computerOrder, from, to))
       return
     }
     if (!activeId.startsWith('session:') || !overId.startsWith('session:')) {
@@ -14227,15 +14457,7 @@ function App() {
   }
 
   function changeSessionSort(sort: SessionSort) {
-    try {
-      localStorage.setItem('agentic-remote:session-sort', JSON.stringify(sort))
-      setSessionSort(sort)
-    } catch (caught) {
-      setSidebarOpen(false)
-      setError(`Could not save the session order: ${
-        caught instanceof Error ? caught.message : String(caught)
-      }`)
-    }
+    saveSetting('sessionSort', sort)
   }
 
   function changeShowSuspendedSessions(showSuspended: boolean) {
@@ -15928,12 +16150,14 @@ function App() {
         accentTheme={accentTheme}
         initialSection={settingsSection}
         onApplyUpdate={() => void applyPwaUpdate()}
-        onAccentThemeChange={setAccentTheme}
-        appearance={appearance}
-        onAppearanceChange={(next) => {
-          localStorage.setItem(appearanceStorageKey, JSON.stringify(next))
-          setAppearance(next)
-        }}
+        onAccentThemeChange={(next) => saveSetting('accent', next)}
+        appearance={appearanceSetting}
+        onAppearanceChange={(next) => saveSetting('appearance', next)}
+        settingsSync={settingsProfile}
+        oracleResponseStyle={profile.oracleResponseStyle ?? 'balanced'}
+        onOracleResponseStyleChange={(next) => saveSetting('oracleResponseStyle', next)}
+        notificationScope={profile.notificationScope ?? 'all'}
+        onNotificationScopeChange={(next) => saveSetting('notificationScope', next)}
         onClose={() => setSettingsOpen(false)}
         computers={computers}
         defaultRuntimes={defaultRuntimes}
@@ -15959,6 +16183,19 @@ function App() {
         open={runtimeOpen}
         session={selected}
       />
+      {settingsNotice(settingsProfile) && !(updateRegistration && !updateToastDismissed) ? (
+        <div className="update-toast settings-toast" role="status">
+          <span>{settingsNotice(settingsProfile)}</span>
+          <button
+            aria-label="Dismiss settings notice"
+            className="update-toast__dismiss"
+            onClick={() => settingsClient.dismissNotice()}
+            type="button"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      ) : null}
       {updateRegistration && !updateToastDismissed ? (
         <div className="update-toast" role="status">
           <span>An Agentic Remote update is ready.</span>

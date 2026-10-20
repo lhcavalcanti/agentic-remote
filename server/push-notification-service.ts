@@ -6,11 +6,34 @@ import webPush, {
   type SendResult,
 } from 'web-push'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
+import type { ManagerEvent } from '../shared/manager.js'
+import {
+  alertNotification,
+  notificationAllowed,
+  notificationBrief,
+  OracleNotifier,
+  type NotificationCategory,
+  type NotificationPayload,
+  type NotificationScope,
+} from '../shared/notifications.js'
 
 interface HubEventSource {
   on(event: 'event', listener: (event: HubEvent) => void): unknown
   off(event: 'event', listener: (event: HubEvent) => void): unknown
   listSessions?(): Promise<ManagedSession[]>
+}
+
+interface OracleEventSource {
+  on(event: 'event', listener: (event: ManagerEvent) => void): unknown
+  off(event: 'event', listener: (event: ManagerEvent) => void): unknown
+}
+
+/** What the hub may send, read afresh for every notification. */
+export interface PushPolicy {
+  /** The settings profile's notification scope; unset sends everything. */
+  scope?: () => NotificationScope | undefined
+  /** Whether an open app is showing Oracle, which then needs no push. */
+  oracleWatched?: () => boolean
 }
 
 interface PushState {
@@ -32,6 +55,9 @@ export class PushNotificationService {
   private state?: PushState
   private writeQueue: Promise<void> = Promise.resolve()
   private manager?: HubEventSource
+  private oracleSource?: OracleEventSource
+  private readonly oracle = new OracleNotifier()
+  private policy: PushPolicy = {}
   private readonly notifiedActions = new Set<string>()
   private readonly sessionStatuses = new Map<string, ManagedSession['status']>()
 
@@ -106,9 +132,21 @@ export class PushNotificationService {
       })
   }
 
+  setPolicy(policy: PushPolicy): void {
+    this.policy = policy
+  }
+
+  /** Notifies Oracle's replies, failures, and requests for your OK. */
+  attachOracle(source: OracleEventSource): void {
+    this.oracleSource = source
+    source.on('event', this.handleOracleEvent)
+  }
+
   stop(): void {
     this.manager?.off('event', this.handleEvent)
     this.manager = undefined
+    this.oracleSource?.off('event', this.handleOracleEvent)
+    this.oracleSource = undefined
   }
 
   publicKey(): string {
@@ -160,6 +198,7 @@ export class PushNotificationService {
     return this.settings()
   }
 
+  /** Sent whatever the scope: you asked for it, to check this device. */
   async sendTestNotification(): Promise<{ sent: number }> {
     const sent = await this.sendPayload({
       title: 'Agentic Remote notifications work',
@@ -169,6 +208,16 @@ export class PushNotificationService {
       data: { url: '/' },
     })
     return { sent }
+  }
+
+  private readonly handleOracleEvent = (event: ManagerEvent) => {
+    // Classified even when it will not be sent, so a notification held while
+    // you watched Oracle is not sent later.
+    const payload = this.oracle.next(event)
+    if (!payload || this.policy.oracleWatched?.()) return
+    void this.sendPayload(payload, 'oracle').catch((error: unknown) => {
+      console.warn('Unable to send Oracle push notification:', error)
+    })
   }
 
   private readonly handleEvent = (event: HubEvent) => {
@@ -311,21 +360,14 @@ export class PushNotificationService {
       data: {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
-    })
+    }, 'session')
   }
 
   private async notifyAlert(
     computerId: string | undefined,
     message: string,
   ): Promise<void> {
-    await this.sendPayload({
-      title: 'Agentic Remote needs attention',
-      body: brief(message),
-      // One per computer, so a repeated alert replaces rather than piles up.
-      tag: `agentic-alert-${computerId || 'local'}`,
-      priority: 'high',
-      data: { url: '/' },
-    })
+    await this.sendPayload(alertNotification(computerId, message), 'alert')
   }
 
   private async notifyCompletion(session: ManagedSession): Promise<void> {
@@ -337,16 +379,17 @@ export class PushNotificationService {
       data: {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
-    })
+    }, 'session')
   }
 
-  private async sendPayload(payload: {
-    title: string
-    body: string
-    tag: string
-    priority: 'high' | 'normal' | 'low'
-    data: { url: string }
-  }): Promise<number> {
+  /** Without a category, as for a test, the scope does not apply. */
+  private async sendPayload(
+    payload: NotificationPayload,
+    category?: NotificationCategory,
+  ): Promise<number> {
+    if (category && !notificationAllowed(this.policy.scope?.(), category)) {
+      return 0
+    }
     const state = this.requireState()
     if (state.subscriptions.length === 0) {
       return 0
@@ -415,8 +458,5 @@ export class PushNotificationService {
 }
 
 function brief(value: string): string {
-  const normalized = value.replace(/\s+/g, ' ').trim()
-  return normalized.length > 140
-    ? `${normalized.slice(0, 139).trimEnd()}…`
-    : normalized
+  return notificationBrief(value)
 }

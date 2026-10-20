@@ -24,6 +24,10 @@ import { JournalRecorder } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
+import {
+  initializeManagerStructuredMemory,
+  ManagerStructuredMemoryRuntime,
+} from './manager-structured-memory-runtime.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
@@ -34,6 +38,8 @@ import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
 import { SessionOrderStore } from './session-order-store.js'
+import { SettingsProfileStore } from './settings-profile-store.js'
+import { ClientPresence } from './client-presence.js'
 import type { SessionService } from './session-service.js'
 import {
   LocalTranscriptionService,
@@ -70,6 +76,7 @@ export interface BuildAppOptions {
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  settingsProfileStore?: SettingsProfileStore
   /**
    * The session manager agent. Built on a hub with the built-in session
    * service unless false or turned off with AGENTIC_REMOTE_MANAGER=off.
@@ -110,7 +117,9 @@ export async function buildApp(
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  settingsProfileStore?: SettingsProfileStore
   managerAgent?: ManagerAgent
+  managerStructuredMemory: ManagerStructuredMemoryRuntime
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -205,7 +214,9 @@ export async function buildApp(
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
   let sessionOrderStore: SessionOrderStore | undefined
+  let settingsProfileStore: SettingsProfileStore | undefined
   let managerAgent: ManagerAgent | undefined
+  let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   if (role === 'hub') {
@@ -225,11 +236,30 @@ export async function buildApp(
     // Hub-only: a node serves no UI, so it has no ordering to remember.
     sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
     await sessionOrderStore.initialize()
+    settingsProfileStore = options.settingsProfileStore ?? new SettingsProfileStore(dataDirectory)
+    await settingsProfileStore.initialize()
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
+    const presence = new ClientPresence()
+    const profile = settingsProfileStore
+    pushService.setPolicy({
+      scope: () => profile.snapshot().values.notificationScope,
+      oracleWatched: () => presence.oracleWatched(),
+    })
     const managerSettings = managerRuntimeSettings()
+    managerStructuredMemory = await initializeManagerStructuredMemory(
+      path.join(dataDirectory, 'manager'),
+      managerSettings.structuredMemory,
+    )
+    const memoryStatus = managerStructuredMemory.status()
+    if (memoryStatus.availability === 'unavailable') {
+      app.log.error(
+        { reason: memoryStatus.lastError },
+        'Oracle structured memory is unavailable',
+      )
+    }
     if (options.managerAgent) {
       managerAgent = options.managerAgent
     } else if (options.managerAgent === false || !managerSettings.enabled) {
@@ -258,6 +288,9 @@ export async function buildApp(
         excludeFromDiscovery: (ids) => agent.excludeFromDiscovery(ids),
         model: managerSettings.model,
         reasoningEffort: managerSettings.reasoningEffort,
+        // The synced settings profile on this same hub, read per turn.
+        responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
+        structuredMemory: managerStructuredMemory,
       })
       // Before the session service starts, so its first discovery already
       // leaves the manager's own conversations out.
@@ -271,8 +304,16 @@ export async function buildApp(
       sessionKnowledgeStore,
       sessionOrderStore,
       managerAgent,
+      settingsProfileStore,
+      presence,
     )
-    await registerManagerRoutes(app, managerAgent, managerUnavailable)
+    if (managerAgent) pushService.attachOracle(managerAgent)
+    await registerManagerRoutes(
+      app,
+      managerAgent,
+      managerUnavailable,
+      managerStructuredMemory,
+    )
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
@@ -357,6 +398,8 @@ export async function buildApp(
     knowledgeStore,
     sessionKnowledgeStore,
     sessionOrderStore,
+    settingsProfileStore,
     managerAgent,
+    managerStructuredMemory,
   }
 }

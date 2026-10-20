@@ -183,6 +183,110 @@ function grantTerminalRecovery(session: StoredSession): void {
   }
 }
 
+// A committed session is never changed in place: every change installs a new
+// object for the session it changes. Each one's encoded form can therefore be
+// reused by every later write it is still part of, so a write serializes and
+// encodes only what changed rather than the whole state.
+const serializedSessions = new WeakMap<object, Buffer>()
+
+function encode(value: unknown): Buffer | undefined {
+  const serialized = JSON.stringify(value) as string | undefined
+  return serialized === undefined ? undefined : Buffer.from(serialized, 'utf8')
+}
+
+/** Byte-for-byte the UTF-8 encoding of `JSON.stringify(state)`. */
+export function serializeState(state: StoredState): Buffer {
+  return Buffer.concat(serializeStateChunks(state))
+}
+
+// Small pieces are joined into writes of up to `JOINED_WRITE_BYTES`; a larger
+// one, such as a large session, is written as views of its cached bytes of up
+// to `WRITE_LIMIT_BYTES`, never copied. Views much smaller than that make a
+// large store measurably slower to write, for no benefit.
+const JOINED_WRITE_BYTES = 64 * 1024
+const WRITE_LIMIT_BYTES = 1024 * 1024
+
+/**
+ * The same bytes as `serializeState`, in pieces of at most `WRITE_LIMIT_BYTES`
+ * to write one after another, each whole UTF-8, so a large state is never
+ * copied into one buffer just to be written.
+ */
+export function serializeStateChunks(state: StoredState): Buffer[] {
+  const chunks: Buffer[] = [Buffer.from('{')]
+  let first = true
+  for (const [key, value] of Object.entries(state)) {
+    const serialized = key === 'sessions' && value && typeof value === 'object' && !Array.isArray(value)
+      ? serializeSessions(value as Record<string, StoredSession>)
+      : encode(value)
+    if (serialized === undefined) continue
+    chunks.push(Buffer.from(`${first ? '' : ','}${JSON.stringify(key)}:`, 'utf8'))
+    chunks.push(...(Array.isArray(serialized) ? serialized : [serialized]))
+    first = false
+  }
+  chunks.push(Buffer.from('}'))
+  const writes: Buffer[] = []
+  let small: Buffer[] = []
+  let smallBytes = 0
+  const flush = () => {
+    if (small.length) writes.push(small.length === 1 ? small[0] : Buffer.concat(small, smallBytes))
+    small = []
+    smallBytes = 0
+  }
+  for (const chunk of chunks) {
+    if (chunk.length >= JOINED_WRITE_BYTES) {
+      flush()
+      let start = 0
+      while (chunk.length - start > WRITE_LIMIT_BYTES) {
+        let end = start + WRITE_LIMIT_BYTES
+        // Back off continuation bytes so no character is split.
+        while ((chunk[end] & 0xc0) === 0x80) end -= 1
+        writes.push(chunk.subarray(start, end))
+        start = end
+      }
+      writes.push(chunk.subarray(start))
+      continue
+    }
+    if (smallBytes + chunk.length > JOINED_WRITE_BYTES) flush()
+    small.push(chunk)
+    smallBytes += chunk.length
+  }
+  flush()
+  return writes
+}
+
+function serializeSessions(sessions: Record<string, StoredSession>): Buffer[] {
+  const chunks: Buffer[] = [Buffer.from('{')]
+  let first = true
+  for (const [id, session] of Object.entries(sessions)) {
+    const cacheable = session !== null && typeof session === 'object'
+    let serialized = cacheable ? serializedSessions.get(session) : undefined
+    if (serialized === undefined) {
+      serialized = encode(session)
+      if (serialized === undefined) continue
+      if (cacheable) serializedSessions.set(session, serialized)
+    }
+    chunks.push(Buffer.from(`${first ? '' : ','}${JSON.stringify(id)}:`, 'utf8'), serialized)
+    first = false
+  }
+  chunks.push(Buffer.from('}'))
+  return chunks
+}
+
+// Tests freeze every committed session, so a change made in place -- which
+// would leave a stale serialized copy behind -- fails where it happens.
+const freezeCommittedSessions = process.env.AGENTIC_REMOTE_STORE_FREEZE === '1'
+
+function freezeDeep(value: unknown): void {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+  Object.freeze(value)
+  for (const entry of Object.values(value)) freezeDeep(entry)
+}
+
+function freezeCommitted(state: StoredState): void {
+  if (!freezeCommittedSessions) return
+  for (const session of Object.values(state.sessions)) freezeDeep(session)
+}
+
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     archivedMessages,
@@ -401,6 +505,7 @@ export class SessionStore {
       }
     }
     this.retire(loaded, legacyRetirements)
+    freezeCommitted(loaded)
     this.state = loaded
     this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
@@ -2430,10 +2535,10 @@ export class SessionStore {
           }
           return
         }
-        const snapshot = JSON.stringify(candidate)
+        const snapshot = serializeStateChunks(candidate)
         this.writingState = candidate
         const temporaryPath = `${this.statePath}.tmp`
-        await writeFile(temporaryPath, snapshot, { mode: 0o600 })
+        await writeFile(temporaryPath, snapshot.length === 1 ? snapshot[0] : snapshot, { mode: 0o600 })
         await rename(temporaryPath, this.statePath)
         // Only replay live deltas over the committed candidate. Applying queued
         // mutations here would publish changes whose own write can still fail.
@@ -2445,6 +2550,7 @@ export class SessionStore {
           }
         }
         this.checkpoint = candidate
+        freezeCommitted(candidate)
         this.state = visible
         this.liveMutableSessions = liveMutableSessions
       } catch (error) {

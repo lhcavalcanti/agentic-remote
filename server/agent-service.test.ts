@@ -5170,7 +5170,12 @@ describe('AgentService deletion', () => {
     }
   })
 
-  it('never takes in a session again within the watcher’s interval of a wake', async () => {
+  it.each([
+    // Taking a costly session in keeps the watcher's pace.
+    { label: 'a costly session within the watcher’s interval', cost: 100, minimum: 750, maximum: Infinity },
+    // A cheap one is seen again within a wake or two, never on every wake.
+    { label: 'a cheap session within a wake', cost: 0, minimum: 100, maximum: 750 },
+  ])('never takes in $label of a wake', async ({ cost, minimum, maximum }) => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -5188,6 +5193,8 @@ describe('AgentService deletion', () => {
       async () => undefined,
       async () => {
         reads.push(Date.now())
+        // Real time: what a take-in costs is measured, not faked.
+        if (cost) await new Promise((resolve) => setTimeout(resolve, cost))
         return events
       },
       async () => `events-${events.length}`,
@@ -5201,7 +5208,7 @@ describe('AgentService deletion', () => {
     }
     const step = async (ms: number) => {
       await vi.advanceTimersByTimeAsync(ms)
-      await new Promise((resolve) => setTimeout(resolve, 30))
+      await new Promise((resolve) => setTimeout(resolve, 30 + cost))
     }
     try {
       await service.start()
@@ -5218,11 +5225,62 @@ describe('AgentService deletion', () => {
       await step(300)
       await step(300)
       expect(reads.length).toBe(2)
-      expect(reads[1] - reads[0]).toBeGreaterThanOrEqual(750)
+      expect(reads[1] - reads[0]).toBeGreaterThanOrEqual(minimum)
+      expect(reads[1] - reads[0]).toBeLessThan(maximum)
       expect(store.get(sessionId)?.messages.some((message) => message.content.includes('true'))).toBe(true)
     } finally {
       await service.stop()
       vi.useRealTimers()
+    }
+  })
+
+  it('forgets what taking a session in cost once it is deleted, even part-way through a read', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot'))
+    const sessionId = randomUUID()
+    let events = JSON.parse(JSON.stringify([
+      { type: 'user.message', id: 'user-1', parentId: null, timestamp: '2026-07-22T00:00:00.000Z', data: { content: 'build it' } },
+    ])) as SessionEvent[]
+    let discovered = true
+    let reads = 0
+    let gate: Promise<void> | undefined
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => discovered
+        ? [{ id: sessionId, cwd: directory, title: 'Active', updatedAt: new Date().toISOString() }]
+        : [],
+      async () => undefined,
+      async () => {
+        reads += 1
+        await gate
+        return events
+      },
+      async () => `events-${events.length}`,
+      { has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    const costs = service['transcriptTakeInCosts']
+    try {
+      await service.start()
+      await service.refreshTranscripts()
+      expect(costs.has(sessionId)).toBe(true)
+
+      let release!: () => void
+      gate = new Promise((resolve) => { release = resolve })
+      events = [...events, { ...events[0], id: 'user-2', data: { content: 'and test it' } } as SessionEvent]
+      const before = reads
+      const refreshing = service.refreshTranscripts()
+      await vi.waitFor(() => expect(reads).toBeGreaterThan(before))
+      discovered = false
+      const deleting = service.deleteSession(sessionId)
+      release()
+      await Promise.all([deleting, refreshing])
+      expect(costs.has(sessionId)).toBe(false)
+    } finally {
+      gate = undefined
+      await service.stop()
     }
   })
 
@@ -5278,7 +5336,13 @@ describe('AgentService deletion', () => {
     }
   })
 
-  it('takes in a busy terminal session no more often than the transcript watcher', async () => {
+  it.each([
+    // The watcher alone reads it about three times here; a wake that took in
+    // every change would read it some twenty more.
+    { label: 'a costly busy terminal session no more often than the transcript watcher', cost: 100, fewest: 1, most: 7 },
+    // Cheap enough to follow at the wake's pace, but no faster than that.
+    { label: 'a cheap busy terminal session no more often than its wake', cost: 0, fewest: 8, most: 24 },
+  ])('takes in $label', async ({ cost, fewest, most }) => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -5293,6 +5357,7 @@ describe('AgentService deletion', () => {
       async () => undefined,
       async () => {
         reads += 1
+        if (cost) await new Promise((resolve) => setTimeout(resolve, cost))
         return events
       },
       async () => `events-${events.length}`,
@@ -5315,9 +5380,8 @@ describe('AgentService deletion', () => {
         await vi.advanceTimersByTimeAsync(50)
         await new Promise((resolve) => setTimeout(resolve, 5))
       }
-      // The watcher alone reads it about three times here; a wake that took in
-      // every change would read it some twenty more.
-      expect(reads).toBeLessThanOrEqual(7)
+      expect(reads).toBeGreaterThanOrEqual(fewest)
+      expect(reads).toBeLessThanOrEqual(most)
     } finally {
       await service.stop()
       vi.useRealTimers()
@@ -9640,6 +9704,7 @@ describe('AgentService deletion', () => {
     )
 
     expect(terminal.fillUserInputForm).toHaveBeenCalledOnce()
+    expect(terminal.dismissUserInput).not.toHaveBeenCalled()
     expect(service.store.isManagedOpen(sessionId)).toBe(false)
     await service.stop()
   })
@@ -9722,7 +9787,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('cancels the form and answers in a message when it cannot be filled', async () => {
+  it('declines the form and answers in a message when it cannot be filled', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -9801,7 +9866,7 @@ describe('AgentService deletion', () => {
     expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
       question: 'Confirm the transfer',
       fields: ['Confirm'],
-    }, undefined, { deadline: expect.any(Number) })
+    }, 'decline', { deadline: expect.any(Number) })
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')
@@ -9959,6 +10024,10 @@ describe('AgentService deletion', () => {
       statusCode: 409,
     })
 
+    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
+      question: 'Confirm the transfer',
+      fields: ['Confirm'],
+    }, 'decline', { deadline: expect.any(Number) })
     // Typing now would land in the open form and submit every other field at
     // its default, which is the corruption this path exists to avoid.
     expect(terminal.send).not.toHaveBeenCalled()

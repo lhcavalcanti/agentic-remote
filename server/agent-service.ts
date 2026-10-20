@@ -5026,6 +5026,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(untracked)
       return untracked
     }
+    // The terminal declined the answer without typing it. It must never fall
+    // through to the SDK or the queue, where it would run behind other work.
+    if (answerDelivery) throw terminalAnswerRefused()
     const sdkBackgroundAgentRunning =
       !terminalBacked &&
       hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId))

@@ -619,6 +619,36 @@ describe('Reply durability regressions', () => {
     expect(f.send).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    ['no queued prompts', []],
+    ['queued prompts', [
+      { id: 'queued-1', content: 'First queued follow-up', createdAt: '2026-09-06T00:00:01.000Z' },
+    ]],
+  ] as const)('keeps the question when the terminal declines the stale answer with %s', async (_state, queued) => {
+    const f = await staleFormFixture()
+    await f.store.update(sessionId, (session) => {
+      session.queuedPrompts = [...queued] as never
+    })
+    // No turn owner: a fallthrough past the terminal would reach startMessage.
+    releasePrompt(f.service)
+    const start = vi.fn(async () => f.store.get(sessionId)!)
+    f.service['startMessage'] = start as never
+    f.send.mockResolvedValueOnce(false)
+
+    await expect(f.reply()).rejects.toMatchObject({
+      message: expect.stringContaining('the answer was not sent'),
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+
+    expect(f.send).toHaveBeenCalledOnce()
+    expect(start).not.toHaveBeenCalled()
+    expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
+    expect(f.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id))
+      .toEqual(queued.map((prompt) => prompt.id))
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
+  })
+
   it('never resends a stale answer whose terminal delivery is uncertain', async () => {
     const f = await staleFormFixture()
     f.send.mockRejectedValueOnce(Object.assign(new Error('paste outcome unknown'), {

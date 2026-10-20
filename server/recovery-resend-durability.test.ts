@@ -1480,6 +1480,12 @@ describe('Recovery and admission integration', () => {
     const restarted = await context.load(false)
     const recovery = restarted.store.get(sessionId)!.failedPrompt!
     expect(recovery).toMatchObject({ content: 'Durable admitted text', uncertain: true })
+    // The turn outlived the runtime, so the record is interrupted: the token
+    // survives a refused claim and is claimable once after explicit Reopen.
+    await expect(restarted.store.claimFailedPrompt(sessionId, recovery, 'Too early', 'resend:too-early'))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    expect(restarted.store.get(sessionId)?.failedPrompt).toEqual(recovery)
+    await restarted.store.setOpen(sessionId, true)
     await restarted.store.claimFailedPrompt(sessionId, recovery, 'Explicit new decision', 'resend:new-decision')
     expect(restarted.store.get(sessionId)?.failedPrompt?.content).toBe('Explicit new decision')
   })

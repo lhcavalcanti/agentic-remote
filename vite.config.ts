@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
@@ -23,12 +23,61 @@ const tmuxTests = [
   'server/tmux-errors.integration.test.ts',
 ]
 
+// Non-tmux files left out of `pnpm test:quick`, the subset the hosted light
+// check runs on every pull request head. That job is billed per started minute,
+// so install, lint, type-check, build and these tests have to finish within
+// 60 seconds on a GitHub runner (docs/deployment-promotion.md). Each file listed
+// here took a second or more locally; together they are most of the `fast`
+// project's run time. A new file joins the quick subset by default: if it takes
+// a second or more, add it here. Every file still runs in `pnpm test`,
+// `pnpm test:fast` and the local promotion gate.
+const slowTests = [
+  'graphify/manage.test.ts',
+  'server/agent-service-recovery.test.ts',
+  'server/agent-service-side-question.test.ts',
+  'server/agent-service.test.ts',
+  'server/claude-recovery-admission.test.ts',
+  'server/conversation-recovery.test.ts',
+  'server/manager-agent.test.ts',
+  'server/manager-routes.test.ts',
+  'server/manager-structured-memory-performance.test.ts',
+  'server/multi-node.test.ts',
+  'server/promotion-monitor.test.ts',
+  'server/promotion-setup-execution.test.ts',
+  'server/recovery-resend-durability.test.ts',
+  'server/recovery-seed-guards.test.ts',
+  'server/release-publication.test.ts',
+  'server/session-admission-lifecycle.test.ts',
+  'server/session-enqueue-clear.test.ts',
+  'server/session-knowledge-routes.test.ts',
+  'server/session-patch-integration.test.ts',
+  'server/session-reply-durability.test.ts',
+  'server/session-resource-providers.test.ts',
+  'server/session-resource-routes.test.ts',
+  'server/session-store-providers.test.ts',
+  'server/session-store-serialization.test.ts',
+  'server/startup-phases.test.ts',
+  'server/tmux-errors.test.ts',
+  'src/App.test.tsx',
+  'src/ManagerAssistant.test.tsx',
+  'src/MermaidDiagram.test.tsx',
+  'src/SessionNavigation.test.tsx',
+  'src/pwa.test.ts',
+]
+
+// A renamed or deleted file would otherwise drop out of these lists silently.
+for (const file of [...canaryTests, ...tmuxTests, ...slowTests]) {
+  if (!existsSync(new URL(`./${file}`, import.meta.url))) {
+    throw new Error(`vite.config.ts lists a missing test file: ${file}`)
+  }
+}
+
 const packageVersion = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
 ) as { version: string }
 
 // https://vite.dev/config/
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
   const buildId = command === 'build' ? randomUUID() : packageVersion.version
   return {
     define: {
@@ -94,7 +143,13 @@ export default defineConfig(({ command }) => {
           extends: true,
           test: {
             name: 'fast',
-            exclude: [...configDefaults.exclude, ...canaryTests, ...tmuxTests],
+            // `vitest --mode quick` (`pnpm test:quick`) also leaves out the slow files.
+            exclude: [
+              ...configDefaults.exclude,
+              ...canaryTests,
+              ...tmuxTests,
+              ...(mode === 'quick' ? slowTests : []),
+            ],
             sequence: { groupOrder: 0 },
           },
         },

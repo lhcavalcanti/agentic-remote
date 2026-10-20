@@ -106,6 +106,7 @@ import {
   useSessionKnowledgeRoot,
 } from './use-session-knowledge-root'
 import { SessionActions } from './SessionActions'
+import { SessionRetentionSettings } from './SessionRetentionSettings'
 import { SessionResources } from './SessionResources'
 import {
   isSessionResourceCommandName,
@@ -197,6 +198,7 @@ import {
 } from '../shared/knowledge-path'
 import {
   deliveryUncertaintyFromError,
+  SubmissionError,
   submissionReceiptFromError,
 } from '../shared/submission-error'
 import {
@@ -208,6 +210,7 @@ import {
   clearConversation,
   recoverConversation,
   configureRuntime,
+  configureRetention,
   createSession,
   deleteSession,
   executeCommand,
@@ -4963,6 +4966,7 @@ function SortableQueuedPrompt({
   editing,
   busy,
   suspended,
+  retained,
   onEdit,
   onRemove,
 }: {
@@ -4971,6 +4975,7 @@ function SortableQueuedPrompt({
   editing: boolean
   busy: boolean
   suspended: boolean
+  retained: boolean
   onEdit: () => void
   onRemove: () => void
 }) {
@@ -4981,7 +4986,9 @@ function SortableQueuedPrompt({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `queued:${prompt.id}` })
+  } = useSortable({ id: `queued:${prompt.id}`, disabled: retained })
+  // A retained session's queue is kept exactly as it was until Reopen.
+  const retainedTitle = retained ? 'Reopen this session to change its queue' : undefined
   return (
     <div
       className={`queued-prompt${editing ? ' queued-prompt--editing' : ''}${
@@ -5005,9 +5012,9 @@ function SortableQueuedPrompt({
         // The composer is closed while a session is put down, so opening a
         // message for rewriting there gave a banner over a box that could not
         // be typed in.
-        disabled={busy || suspended}
+        disabled={busy || suspended || retained}
         onClick={onEdit}
-        title={suspended ? 'Resume this session to rewrite it' : undefined}
+        title={retainedTitle ?? (suspended ? 'Resume this session to rewrite it' : undefined)}
         type="button"
       >
         <Pencil size={14} />
@@ -5015,8 +5022,9 @@ function SortableQueuedPrompt({
       <button
         aria-label={`Remove queued prompt ${index + 1}`}
         className="icon-button icon-button--danger"
-        disabled={busy}
+        disabled={busy || retained}
         onClick={onRemove}
+        title={retainedTitle}
         type="button"
       >
         <X size={15} />
@@ -7156,6 +7164,8 @@ function App() {
   const [recovering, setRecovering] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [suspending, setSuspending] = useState(false)
+  const [retentionOpen, setRetentionOpen] = useState(false)
+  const [reopening, setReopening] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
   const [movingSessionFolder, setMovingSessionFolder] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
@@ -8161,11 +8171,16 @@ function App() {
   const selectedComputerOnline = computers.some(
     (computer) => computer.id === selectedComputerId && computer.online,
   )
+  // An interrupted or archived record is read-only until it is reopened; the
+  // server refuses these actions too.
+  const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
   const selectedLifecycleBlocked = !selectedComputerOnline ||
+    selectedRetained ||
     selected?.status !== 'idle' ||
     selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
   const selectedRestartBlocked = !selectedComputerOnline ||
+    selectedRetained ||
     (selected?.status !== 'idle' && selected?.status !== 'error') ||
     selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
@@ -8195,6 +8210,7 @@ function App() {
   const selectedCanRecover =
     selectedShowsRecovery &&
     selectedComputerOnline &&
+    !selectedRetained &&
     selected?.suspended !== true &&
     (selected?.status === 'idle' ||
       selected?.status === 'error') &&
@@ -9672,7 +9688,7 @@ function App() {
       setCommandsKey(selectedKey)
       return
     }
-    if (selected?.suspended) {
+    if (selected?.suspended || selected?.interruption || selected?.archivedAt) {
       // A suspended session has no runtime to ask, and asking would start the
       // one that suspending put down. Only local read-only resource views are
       // offered until it is resumed.
@@ -9722,6 +9738,8 @@ function App() {
   }, [
     selected?.provider,
     selected?.suspended,
+    selected?.interruption,
+    selected?.archivedAt,
     selectedComputerId,
     selectedSessionId,
     selectedSupportsSideQuestions,
@@ -9798,6 +9816,14 @@ function App() {
             startedAtSequence,
       )
       const answeredFor = new Set(listing.answeredComputerIds)
+      // Archived records are not listed. Only the one being read stays, and
+      // only until its detail is checked below: a deletion event this browser
+      // missed would otherwise leave it forever.
+      const keepsArchivedSelection = (session: ManagedSession) =>
+        Boolean(session.archivedAt) &&
+        !removedSessions.current.has(sessionKey(session)) &&
+        selectedRef.current !== undefined &&
+        sessionKey(selectedRef.current) === sessionKey(session)
       if (!claim.whole) {
         // Only the computers this answer reached that the newer one did not.
         // Everything else in it has already been spoken for more recently.
@@ -9818,6 +9844,7 @@ function App() {
               return (
                 !claim.speaksFor.has(session.computerId) ||
                 speaksForKeys.has(key) ||
+                keepsArchivedSelection(session) ||
                 (sessionEventSequenceRef.current.get(key) || 0) >
                   startedAtSequence ||
                 ((submissionsInFlight.current.has(key) ||
@@ -9863,6 +9890,7 @@ function App() {
           // hub restart the cache is empty, so it removed all of them.
           if (
             changedAt > startedAtSequence ||
+            keepsArchivedSelection(existing) ||
             !answeredFor.has(existing.computerId) ||
             ((submissionsInFlight.current.has(sessionKey(existing)) ||
               submissionAnchors.current.has(sessionKey(existing))) &&
@@ -9951,6 +9979,7 @@ function App() {
         (snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
         ) ||
+          keepsArchivedSelection(selectedAtRefresh) ||
           changedSinceRefresh(sessionKey(selectedAtRefresh)) ||
           pendingReplacements.current.has(sessionKey(selectedAtRefresh)) ||
           // Its computer said nothing about it, so its absence is not news.
@@ -9975,10 +10004,36 @@ function App() {
         setSelectedKey(followedSelection)
       } else if (selectedAtRefresh && selectedStillExists) {
         const detailStartedAtSequence = eventSequenceRef.current
-        const detail = await getSession(
-          selectedAtRefresh.computerId,
-          selectedAtRefresh.id,
-        )
+        let detail: ManagedSession
+        try {
+          detail = await getSession(
+            selectedAtRefresh.computerId,
+            selectedAtRefresh.id,
+          )
+        } catch (caught) {
+          const goneKey = sessionKey(selectedAtRefresh)
+          if (
+            !(caught instanceof SubmissionError && caught.statusCode === 404) ||
+            !selectedAtRefresh.archivedAt ||
+            snapshotSessions.some((session) => sessionKey(session) === goneKey)
+          ) {
+            throw caught
+          }
+          if (
+            generation < snapshotApplied.current ||
+            (sessionEventSequenceRef.current.get(goneKey) || 0) > detailStartedAtSequence
+          ) {
+            return
+          }
+          // The archived record was deleted and its removal event never
+          // arrived here; the list and the detail now agree it is gone.
+          removedSessions.current.add(goneKey)
+          setSessions((current) => current.filter((session) => sessionKey(session) !== goneKey))
+          if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
+            setSelectedKey(snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined)
+          }
+          return
+        }
         const detailKey = sessionKey(detail)
         if (
           generation < snapshotApplied.current ||
@@ -10067,11 +10122,16 @@ function App() {
           // during render, so a request that finishes before React commits
           // would reconcile against a list this event is not in yet and drop
           // the replacement it is announcing.
+          // A node resync's roster summary never read the transcript; the one
+          // already shown stays rather than being blanked.
+          const arrived = (current: ManagedSession[]) => event.summary
+            ? carrySnapshotTranscripts([event.session], current)[0]
+            : event.session
           sessionsRef.current = upsertSession(
             sessionsRef.current,
-            event.session,
+            arrived(sessionsRef.current),
           )
-          setSessions((current) => upsertSession(current, event.session))
+          setSessions((current) => upsertSession(current, arrived(current)))
           // The arrival is the newest word on its own ancestry, and the loads
           // only ever see what the server last listed. Without this, state
           // under an ancestor waits for a reload that may never come.
@@ -11419,6 +11479,7 @@ function App() {
       [settingsOpen, () => setSettingsOpen(false)],
       [statuslineOpen, () => setStatuslineOpen(false)],
       [runtimeOpen, () => setRuntimeOpen(false)],
+      [retentionOpen, () => setRetentionOpen(false)],
       [backgroundTasksOpen, () => setBackgroundTasksOpen(false)],
       [renameOpen, () => setRenameOpen(false)],
       [cwdOpen, () => setCwdOpen(false)],
@@ -13226,7 +13287,7 @@ function App() {
   }
 
   function editQueuedPrompt(prompt: QueuedPrompt) {
-    if (!selected || queueActionId || sending || selected.queuedDispatch) {
+    if (!selected || queueActionId || sending || selected.queuedDispatch || selectedRetained) {
       return
     }
     // Already rewriting this one. Starting again would put the queued text
@@ -13573,6 +13634,10 @@ function App() {
     const submission = queuedEditSubmission()
     if (!submission) return false
     const { target, savedKey, promptId, submitted, content } = submission
+    if (target.interruption || target.archivedAt) {
+      setError('Reopen this session before sending its queued work.')
+      return false
+    }
     if (selectedProviderCapability?.supportsQueuedPromptDispatch !== true) {
       setError('Update the owning runtime before sending a queued edit immediately.')
       return false
@@ -13651,7 +13716,7 @@ function App() {
 
   async function queueDragEnded(event: DragEndEvent) {
     const { active, over } = event
-    if (!selected || !over || active.id === over.id) {
+    if (!selected || !over || active.id === over.id || selectedRetained) {
       return
     }
     if (selected.queuedDispatch) {
@@ -13743,7 +13808,7 @@ function App() {
 
 
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
-    if (!selected || queueActionId) {
+    if (!selected || queueActionId || selectedRetained) {
       return
     }
 
@@ -13942,6 +14007,21 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSuspending(false)
+    }
+  }
+
+  async function reopenInterruptedSession() {
+    if (!selected || reopening) return
+    const target = selected
+    setReopening(true)
+    setError(undefined)
+    try {
+      const updated = await activateSession(target.computerId, target.id)
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setReopening(false)
     }
   }
 
@@ -14982,6 +15062,17 @@ function App() {
           </button>
           {selected ? (
             <SessionActions key={selectedKey}>
+              {selectedProviderCapability?.supportsSessionRetention ? (
+                <button
+                  className="session-action"
+                  disabled={!selectedComputerOnline}
+                  onClick={() => setRetentionOpen(true)}
+                  type="button"
+                >
+                  <History size={17} />
+                  <span>{selected.retention?.pinned ? 'Kept for review' : 'Session retention'}</span>
+                </button>
+              ) : null}
               <button
                 aria-label="View session skills"
                 className="session-action"
@@ -15131,6 +15222,19 @@ function App() {
             </button>
           </div>
         ) : null}
+        {selected?.interruption || selected?.archivedAt ? (
+          <div className="error-banner" role="status">
+            <span>Session {selected.archivedAt ? 'archived' : 'interrupted'}. History, folder, and queued work are retained.</span>
+            <button
+              className="error-banner__retry"
+              disabled={!selectedComputerOnline || reopening}
+              onClick={() => void reopenInterruptedSession()}
+              type="button"
+            >
+              {reopening ? 'Reopening...' : 'Reopen session'}
+            </button>
+          </div>
+        ) : null}
         {error ? (
           <div className="error-banner" role="alert">
             <span>{error}</span>
@@ -15192,7 +15296,7 @@ function App() {
               messages={selected.messages}
             />
           )}
-          {selectedHasStaleInteraction ? (
+          {selectedHasStaleInteraction && selectedShowsRecovery ? (
             <StaleInteractionRecoveryCard
               disabled={!selectedCanRecover || recovering}
               onRecover={() => void recoverSelectedConversation()}
@@ -15203,16 +15307,21 @@ function App() {
               }
             />
           ) : null}
+          {selectedHasStaleInteraction && !selectedShowsRecovery ? (
+            <div className="error-banner" role="status">
+              <span>Previous request expired: {selected?.pendingPermission?.title || selected?.pendingUserInput?.question}. Reopen the session, then send a new prompt to continue. Queued work remains retained.</span>
+            </div>
+          ) : null}
           {selected?.pendingPermission && !selected.pendingPermission.stale ? (
             <PermissionCard
-              disabled={permissionBusy}
+              disabled={permissionBusy || selectedRetained}
               onReply={(optionId) => void replyToPermission(optionId)}
               permission={selected.pendingPermission}
             />
           ) : null}
           {selected?.pendingUserInput && !selected.pendingUserInput.stale ? (
             <UserInputCard
-              disabled={userInputBusy}
+              disabled={userInputBusy || selectedRetained}
               // The answer being composed belongs to this question on this
               // session. Keying on it lets a new question start from a blank
               // card, and keeps the card being filled in from being emptied
@@ -15341,7 +15450,7 @@ function App() {
                 {selected.queuedDispatch?.state === 'uncertain' ? (
                   <button
                     className="queued-edit-banner__save"
-                    disabled={Boolean(queueActionId) || sending}
+                    disabled={Boolean(queueActionId) || sending || selectedRetained}
                     onClick={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
                     type="button"
                   >
@@ -15380,6 +15489,7 @@ function App() {
                             void manageQueuedPrompt(prompt.id, false)
                           }
                           suspended={selected.suspended === true}
+                          retained={selectedRetained}
                           prompt={prompt}
                         />
                       ))}
@@ -15533,7 +15643,7 @@ function App() {
                   // resuming is for.
                   // Asking aside reads the saved conversation, which a
                   // suspended session still has.
-                  disabled={selected.suspended === true && !askingAside}
+                  disabled={(selected.suspended === true || Boolean(selected.interruption || selected.archivedAt)) && !askingAside}
                   maxLength={askingAside ? SIDE_QUESTION_MAX_LENGTH : undefined}
                   onBeforeInput={askingAside ? undefined : composerBeforeInput}
                   onCut={askingAside ? undefined : composerCut}
@@ -15555,6 +15665,10 @@ function App() {
                       ? selectedSideThread?.entries.length
                         ? 'Ask a follow-up…'
                         : 'Ask about this conversation…'
+                      : selected.archivedAt
+                      ? 'Archived - reopen to send'
+                      : selected.interruption
+                      ? 'Interrupted - reopen to send'
                       : selected.suspended
                       ? 'Suspended · resume to send'
                       : editingQueuedPromptId
@@ -15690,7 +15804,7 @@ function App() {
                     disabled={!composer.trim() || sending ||
                       (!readonlyResourceCommand && (
                       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
-                      queuedEditUnconfirmed || selected.suspended === true ||
+                      queuedEditUnconfirmed || selected.suspended === true || Boolean(selected.interruption || selected.archivedAt) ||
                       Boolean(editingQueuedPromptId &&
                         selectedProviderCapability?.supportsQueuedPromptDispatch === true &&
                         (selected.status === 'running' || selected.status === 'waiting'))))}
@@ -16183,6 +16297,19 @@ function App() {
         open={runtimeOpen}
         session={selected}
       />
+      {retentionOpen && selected ? (
+        <DialogFrame eyebrow="Session" title="Session retention" onClose={() => setRetentionOpen(false)}>
+          <SessionRetentionSettings
+            key={selectedKey}
+            disabled={!selectedComputerOnline}
+            value={selected.retention}
+            save={async (input) => {
+              const updated = await configureRetention(selected.computerId, selected.id, input)
+              setSessions((current) => upsertSession(current, updated))
+            }}
+          />
+        </DialogFrame>
+      ) : null}
       {settingsNotice(settingsProfile) && !(updateRegistration && !updateToastDismissed) ? (
         <div className="update-toast settings-toast" role="status">
           <span>{settingsNotice(settingsProfile)}</span>

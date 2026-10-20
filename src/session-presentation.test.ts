@@ -33,6 +33,13 @@ const tasks: BackgroundTaskSnapshot = {
 }
 
 describe('session presentation', () => {
+  it('does not show a missing process as working even with stale running tasks', () => {
+    expect(sessionPresentation({
+      ...session, status: 'running',
+      interruption: { detectedAt: '2026-10-19T06:52:00Z', previousStatus: 'running' },
+    }, tasks)).toMatchObject({ working: false, needsAttention: true, label: 'Interrupted' })
+  })
+
   it('keeps identity scoped to the computer and preserves legacy provider labels', () => {
     expect(sessionKey(session)).toBe('studio:same-id')
     expect(sessionKey({ ...session, computerId: 'worker' })).toBe('worker:same-id')

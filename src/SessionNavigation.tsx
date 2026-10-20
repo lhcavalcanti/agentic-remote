@@ -182,6 +182,7 @@ function SortableSessionItem({
           aria-label={[
             session.title,
             managedSessions?.has(sessionKey(session)) ? 'started by Oracle' : undefined,
+            session.retention?.pinned ? 'kept for review' : undefined,
             providerName(session.provider),
             executionModeName(session.executionMode),
             presentation.description,
@@ -207,6 +208,9 @@ function SortableSessionItem({
                 <em className="provider-badge manager-badge" title="Started by Oracle">
                   Oracle
                 </em>
+              ) : null}
+              {session.retention?.pinned ? (
+                <em className="provider-badge" title="Protected from automatic archival">For review</em>
               ) : null}
               <SessionState presentation={presentation} />
             </span>

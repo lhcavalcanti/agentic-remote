@@ -117,6 +117,17 @@ export class ProviderSessionService
     return this.serviceFor(id).activateSession(id)
   }
 
+  configureRetention(
+    id: string,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
+  ): Promise<SessionDetail> {
+    const service = this.serviceFor(id)
+    if (!service.configureRetention) {
+      throw Object.assign(new Error('Session retention is not supported by this provider'), { statusCode: 409 })
+    }
+    return service.configureRetention(id, input)
+  }
+
   createSession(
     cwd: string,
     terminalBacked = true,

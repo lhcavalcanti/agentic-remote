@@ -17,6 +17,7 @@ export interface AgentProviderCapability {
   supportsQueuedPromptDispatch?: boolean
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
+  supportsSessionRetention?: boolean
   /** Answers side questions about a session without prompting it. */
   supportsSideQuestions?: boolean
   unavailableReason?: string
@@ -299,6 +300,21 @@ export interface ConfigureRuntimeInput {
   mode?: AgentMode
 }
 
+export interface SessionRetention {
+  pinned: boolean
+  idleDays?: number
+}
+
+/**
+ * A field-level retention edit. Omitted fields keep their current value and
+ * `idleDays: null` disables archival, so concurrent edits of different fields
+ * from separate devices never overwrite each other.
+ */
+export interface SessionRetentionPatch {
+  pinned?: boolean
+  idleDays?: number | null
+}
+
 export interface SessionSummary {
   id: string
   revision?: number
@@ -309,6 +325,10 @@ export interface SessionSummary {
   updatedAt: string
   status: SessionStatus
   isOpen?: boolean
+  retention?: SessionRetention
+  retentionLastUsedAt?: string
+  interruption?: { detectedAt: string; previousStatus: SessionStatus }
+  archivedAt?: string
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
   /** A durable dispatch intent. It must never be retried automatically. */
@@ -443,7 +463,15 @@ export type ServerEvent =
 
 export type HubEvent =
   | ManagerEvent
-  | { type: 'session.upserted'; session: ManagedSession }
+  | {
+      type: 'session.upserted'
+      session: ManagedSession
+      /**
+       * A roster summary whose `messages` were never read, as a node resync
+       * sends. Its metadata applies; the transcript already held is kept.
+       */
+      summary?: true
+    }
   | {
       type: 'session.order.updated'
       order: SessionOrderSnapshot
@@ -508,7 +536,7 @@ export interface SessionMessagesPatch {
  */
 export type HubWireEvent =
   | Exclude<HubEvent, { type: 'session.upserted' }>
-  | { type: 'session.upserted'; session: ManagedSession; patchVersion?: number }
+  | { type: 'session.upserted'; session: ManagedSession; patchVersion?: number; summary?: true }
   | {
       type: 'session.patched'
       session: Omit<ManagedSession, 'messages'>

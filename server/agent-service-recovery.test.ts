@@ -12,6 +12,61 @@ const fixtures: { directory: string; service: AgentService }[] = []
 const releases: (() => void)[] = []
 const timestamp = '2026-09-06T00:00:00.000Z'
 
+it('retains interrupted SDK queues across restart and requires explicit continuation without a false running state', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  f.terminal.send.mockResolvedValue(false)
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.queuedPrompts = [prompt('first'), prompt('second')]
+  })
+  const owner = sdkSession('pending')
+  f.client.resumeSession = vi.fn(async () => owner)
+  await f.service.start()
+  expect(f.service.getSession('pending')).toMatchObject({
+    isOpen: true, status: 'error', interruption: { previousStatus: 'running' },
+    queuedPrompts: [prompt('first'), prompt('second')],
+  })
+  expect(owner.send).not.toHaveBeenCalled()
+  const readable = await f.service.openSession('pending')
+  expect(readable.messages.map((message) => message.content)).toEqual(['Retain pending'])
+  expect(await f.service.listCommands('pending')).toEqual([])
+  await f.service['discoverSessions']()
+  expect(f.service.getSession('pending')?.interruption).toBeDefined()
+  expect(f.client.resumeSession).not.toHaveBeenCalled()
+  await expect(f.service.sendMessage('pending', 'Not yet reopened')).rejects.toMatchObject({ statusCode: 409 })
+  const reopened = await f.service.activateSession('pending')
+  expect(reopened.status).toBe('error')
+  expect(reopened.interruption).toBeUndefined()
+  expect(reopened.queuedPrompts).toEqual([prompt('first'), prompt('second')])
+  expect(owner.send).not.toHaveBeenCalled()
+  await f.service.sendMessage('pending', 'Explicit continuation')
+  await vi.waitFor(() => {
+    expect(f.service.getSession('pending')?.status).toBe('idle')
+    expect(f.service.getSession('pending')?.queuedPrompts).toEqual([])
+    expect(owner.send).toHaveBeenCalledTimes(3)
+  })
+  expect(vi.mocked(owner.send)?.mock.calls.map(([input]) => input.prompt)).toEqual([
+    'first', 'second', 'Explicit continuation',
+  ])
+})
+
+it('does not count unconfirmed boot recovery candidates as live owners or archive unfinished work', async () => {
+  const f = await fixture()
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => { session.status = 'running' })
+  await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+  f.terminal.create.mockRejectedValue(new Error('Synthetic unavailable runtime'))
+  await f.service.start()
+  const interrupted = f.service.getSession('pending')
+  expect(interrupted).toMatchObject({ isOpen: true, interruption: { previousStatus: 'running' } })
+  await f.service['discoverSessions']()
+  await f.service['discoverSessions']()
+  expect(f.service.getSession('pending')).toMatchObject({
+    isOpen: true, interruption: interrupted!.interruption,
+  })
+})
+
 function prompt(id: string) {
   return { id, content: id, createdAt: timestamp }
 }
@@ -63,7 +118,7 @@ function sdkSession(sessionId: string): CopilotSessionLike {
   }
 }
 
-async function fixture(ids = ['pending']) {
+async function fixture(ids = ['pending'], backend: 'terminal' | 'sdk' = 'terminal') {
   const directory = path.resolve(`.pr167-recovery-${randomUUID()}`)
   const stateDirectory = path.join(directory, 'state')
   const store = new SessionStore(stateDirectory)
@@ -81,7 +136,7 @@ async function fixture(ids = ['pending']) {
         allowAllPermissions: false, model: 'fixture-model',
         reasoningEffort: 'high', contextTier: 'long_context', mode: 'autopilot',
       },
-    }, { backend: 'terminal', managedOpen: true })
+    }, { backend, managedOpen: true })
   }
   const ownership = {
     aggregateError: new Error('Aggregate discovery unavailable') as Error | undefined,
@@ -725,9 +780,9 @@ describe('PR167 reviewed-parent composition', () => {
 
     expect(f.terminal.create).not.toHaveBeenCalled()
     expect(f.terminal.send).not.toHaveBeenCalled()
-    expect(f.store.get('pending')).toMatchObject({ isOpen: false, queuedCount: 1 })
+    expect(f.store.get('pending')).toMatchObject({ isOpen: true, queuedCount: 1, interruption: expect.any(Object) })
     await expect(f.service.openSession('pending')).resolves.toMatchObject({
-      isOpen: false, queuedPrompts: [prompt('Wait for a positive owner')],
+      isOpen: true, queuedPrompts: [prompt('Wait for a positive owner')],
     })
     expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
     expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
@@ -857,7 +912,7 @@ describe('PR167 reviewed-parent composition', () => {
     expect(f.terminal.create).not.toHaveBeenCalled()
     expect(f.terminal.send).not.toHaveBeenCalled()
     expect(f.store.get('pending')).toMatchObject({
-      isOpen: false, queuedCount: 1,
+      isOpen: true, queuedCount: 1,
       failedPrompt: { content: 'An uncertain attempt', uncertain: true },
     })
     expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
@@ -945,7 +1000,7 @@ describe('Deferred terminal ownership recovery', () => {
     await f.service.refreshDiscovery()
 
     expect.soft(f.store.get('pending')).toMatchObject({
-      isOpen: true, status: 'idle', messages: retained.messages,
+      isOpen: true, status: 'error', interruption: { previousStatus: retained.status }, messages: retained.messages,
       queuedPrompts: retained.queuedPrompts, runtime: retained.runtime,
     })
     expect.soft(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
@@ -972,7 +1027,7 @@ describe('Deferred terminal ownership recovery', () => {
     await f.service.refreshDiscovery()
     if (queued) {
       expect(f.terminal.create).not.toHaveBeenCalled()
-      expect(f.store.get('pending')?.isOpen).toBe(false)
+      expect(f.store.get('pending')?.isOpen).toBe(true)
       expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
       f.ownership.owners.add('pending')
       await f.service.refreshDiscovery()
@@ -1117,7 +1172,7 @@ describe('Deferred terminal ownership recovery', () => {
 
       expect(f.terminal.create).not.toHaveBeenCalled()
       await expect(f.service.activateSession('pending')).rejects.toThrow(/discovery/)
-      expect(f.store.get('pending')).toMatchObject({ isOpen: true, status: 'idle' })
+      expect(f.store.get('pending')).toMatchObject({ isOpen: true, status: listed ? 'idle' : 'error' })
       f.ownership.probeErrors.clear()
       await f.service.refreshDiscovery()
       await expect(f.service.activateSession('pending')).resolves.toMatchObject({ isOpen: true })
@@ -1137,7 +1192,7 @@ describe('Deferred terminal ownership recovery', () => {
     f.ownership.owners.delete('healthy')
     await f.service.refreshDiscovery()
     expect(f.terminal.create).toHaveBeenCalledOnce()
-    expect(f.store.get('healthy')?.isOpen).toBe(false)
+    expect(f.store.get('healthy')).toMatchObject({ isOpen: true, interruption: expect.any(Object) })
     expect(f.store.get('pending')?.isOpen).toBe(true)
     f.ownership.probeErrors.clear()
     await f.service.refreshDiscovery()
@@ -1167,7 +1222,7 @@ describe('Deferred terminal ownership recovery', () => {
     expect(f.readEvents).not.toHaveBeenCalled()
     expect(f.store.get('pending')).toMatchObject({
       messages: retained.messages, runtime: retained.runtime,
-      isOpen: true, status: retained.status,
+      isOpen: true, status: 'error', interruption: { previousStatus: retained.status },
     })
 
     f.ownership.probeErrors.clear()
@@ -1188,7 +1243,9 @@ describe('Deferred terminal ownership recovery', () => {
 
     await f.service.refreshDiscovery()
     expect(f.store.queueDispatchAt('pending')).toBe(timestamp)
-    expect(f.store.get('pending')).toMatchObject({ isOpen: true, status: 'running' })
+    expect(f.store.get('pending')).toMatchObject({
+      isOpen: true, status: 'error', interruption: { previousStatus: 'running' },
+    })
     expect(f.store.queueDispatchAt('healthy')).toBeUndefined()
 
     const laterDispatch = '2026-09-06T01:00:00.000Z'
@@ -1311,7 +1368,7 @@ describe('Deferred terminal ownership recovery', () => {
     },
   )
 
-  it('reports a genuine launch failure and closes only that recovery candidate', async () => {
+  it('reports a genuine launch failure and retains that candidate for explicit recovery', async () => {
     const f = await fixture(['pending', 'healthy'])
     await f.service.start()
     f.ownership.aggregateError = undefined
@@ -1323,9 +1380,9 @@ describe('Deferred terminal ownership recovery', () => {
     await f.service.refreshDiscovery()
 
     expect(f.store.get('pending')).toMatchObject({
-      isOpen: false, status: 'error', activity: 'Boot recovery failed',
+      isOpen: true, status: 'error', interruption: expect.any(Object),
     })
-    expect((await f.persisted()).sessions.pending.managedOpen).toBe(false)
+    expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
     expect(f.events).toContainEqual({
       type: 'error', sessionId: 'pending', message: 'Unable to recover terminal session: Launch refused',
     })
@@ -1443,18 +1500,30 @@ describe('Deferred terminal ownership recovery', () => {
     expect(f.client.resumeSession).not.toHaveBeenCalled()
   })
 
-  it('surfaces persistence refusal while recording a genuine launch failure', async () => {
+  it('surfaces persistence refusal before attempting recovery without a durable interruption', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    await f.blockWrites()
+    await expect(f.service.start()).rejects.toMatchObject({ code: 'EISDIR' })
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
+    await f.unblockWrites()
+    await f.store.readAfterWrites('pending')
+  })
+
+  it('reports a genuine launch failure without rewriting an already durable interruption', async () => {
     const f = await fixture()
     f.ownership.aggregateError = undefined
     f.terminal.create.mockImplementationOnce(async () => {
       await f.blockWrites()
       throw new Error('Launch refused')
     })
-    await expect(f.service.start()).rejects.toMatchObject({ code: 'EISDIR' })
+    await expect(f.service.start()).resolves.toBeUndefined()
     expect(f.events).toContainEqual({
       type: 'error', sessionId: 'pending', message: 'Unable to recover terminal session: Launch refused',
     })
     expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
+    expect((await f.persisted()).sessions.pending.interruption).toMatchObject({ previousStatus: 'idle' })
     await f.unblockWrites()
     await f.store.readAfterWrites('pending')
   })
@@ -1544,5 +1613,377 @@ describe('External terminal recovery intent', () => {
     await f.service.refreshDiscovery()
     await restart(f)
     expect(f.terminal.create.mock.calls.map(([id]) => id).sort()).toEqual(['driven', 'managed'])
+  })
+})
+
+describe('Session retention safety', () => {
+  it('does not archive an expired managed terminal before startup recovery probes its unlisted live owner', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    f.ownership.owners.add('pending')
+    f.active.mockResolvedValue([])
+    await f.service.start()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: true })
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+    expect(f.store.isManagedOpen('pending')).toBe(true)
+    expect(f.terminal.has).toHaveBeenCalledWith('pending')
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+    expect(f.store.isManagedOpen('pending')).toBe(true)
+  })
+
+  it('does not archive an expired managed terminal while its owner probe is uncertain', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    f.ownership.probeErrors.set('pending', new Error('Synthetic uncertain owner'))
+    await f.service.start()
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: true })
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+    expect(f.store.isManagedOpen('pending')).toBe(true)
+    f.ownership.probeErrors.clear()
+  })
+
+  it('archives an expired managed terminal only after recovery confirms its owner is absent', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    await f.service.start()
+    expect(f.terminal.has).toHaveBeenCalledWith('pending')
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: false, archivedAt: expect.any(String) })
+    expect(f.store.get('pending')?.messages.map((message) => message.content)).toEqual(['Retain pending'])
+  })
+
+  it('re-validates SDK ownership when archival commits after discovery snapshotted owners', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    const owner = sdkSession('pending')
+    const syncOpen = f.store.syncOpen.bind(f.store)
+    vi.spyOn(f.store, 'syncOpen').mockImplementationOnce(async (...args) => {
+      f.service['sessions'].set('pending', owner)
+      return syncOpen(...args)
+    })
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: true })
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+  })
+
+  it('does not archive a session whose admitted send is still attaching its SDK owner', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    f.terminal.send.mockResolvedValue(false)
+    await f.service.start()
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    const owner = sdkSession('pending')
+    const started = gate(undefined)
+    const loading = gate<CopilotSessionLike>(owner)
+    vi.mocked(f.client.resumeSession).mockImplementationOnce(async () => {
+      started.finish(undefined)
+      return loading.pending
+    })
+    const send = f.service.sendMessage('pending', 'Keep this send')
+    await started.pending
+    await f.service['discoverSessions']()
+    loading.finish(owner)
+    await expect(send).resolves.toMatchObject({ id: 'pending', status: 'running' })
+    expect(f.service['sessions'].get('pending')).toBe(owner)
+    await vi.waitFor(() => {
+      expect(owner.sendAndWait).toHaveBeenCalledWith('Keep this send', expect.any(Number))
+      expect(f.service.getSession('pending')?.status).toBe('idle')
+    })
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: true })
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+  })
+
+  it.each([
+    ['queued send', (f: Awaited<ReturnType<typeof fixture>>) => f.service.sendMessage('pending', 'Lost', true, 'token-1')],
+    ['queued command', (f: Awaited<ReturnType<typeof fixture>>) => f.service.executeCommand('pending', '/lost', true, 'token-1')],
+    ['immediate command', (f: Awaited<ReturnType<typeof fixture>>) => f.service.executeCommand('pending', '/lost', false, 'token-1')],
+  ])('rejects a %s on an interrupted session without consuming its durable recovery token', async (_name, submit) => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    const content = _name.includes('command') ? '/lost' : 'Lost'
+    await f.store.update('pending', (session) => {
+      session.status = 'error'
+      session.failedPrompt = { content, failedAt: 'token-1' }
+    })
+    await f.store.markInterrupted('pending')
+    await expect(submit(f)).rejects.toMatchObject({ statusCode: 409 })
+    await f.store.flush()
+    const persisted = (await f.persisted()).sessions.pending
+    expect(persisted.failedPrompt).toEqual({ content, failedAt: 'token-1' })
+    expect(persisted.recoveryResend).toBeUndefined()
+    expect(persisted.queuedPrompts ?? []).toEqual([])
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses the durable claim itself when the session became retained after the precheck', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    await f.store.update('pending', (session) => {
+      session.failedPrompt = { content: 'Lost', failedAt: 'token-1' }
+    })
+    await f.store.markInterrupted('pending')
+    await expect(f.store.claimFailedPrompt('pending', { content: 'Lost', failedAt: 'token-1' }, 'Lost', 'resend:x'))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    expect(f.store.get('pending')?.failedPrompt).toEqual({ content: 'Lost', failedAt: 'token-1' })
+  })
+
+  it.each([
+    ['restart', (f: Awaited<ReturnType<typeof fixture>>) => f.service.restartSession('pending')],
+    ['move to tmux', (f: Awaited<ReturnType<typeof fixture>>) => f.service.moveToTerminal('pending')],
+    ['configure runtime', (f: Awaited<ReturnType<typeof fixture>>) => f.service.configureRuntime('pending', { model: 'fixture-model' } as never)],
+    ['clear', (f: Awaited<ReturnType<typeof fixture>>) => f.service.clearConversation('pending')],
+    ['recover', (f: Awaited<ReturnType<typeof fixture>>) => f.service.recoverConversation('pending', 'manual')],
+    ['suspend', (f: Awaited<ReturnType<typeof fixture>>) => f.service.suspendSession('pending')],
+  ])('refuses to %s an archived session instead of attaching a hidden owner', async (_name, act) => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.isOpen = false
+      session.archivedAt = timestamp
+    })
+    await expect(act(f)).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen/) })
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+    expect(f.client.createSession).not.toHaveBeenCalled()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({ isOpen: false, archivedAt: timestamp })
+    expect(f.store.get('pending')?.suspended).not.toBe(true)
+  })
+
+  it('publishes discovery changes only for open or newly archived and interrupted records', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.retention = { pinned: false, idleDays: 7 }
+    })
+    vi.mocked(f.client.listSessions).mockResolvedValue([{
+      sessionId: 'cli-only', summary: 'CLI history', modifiedTime: new Date(timestamp),
+      startTime: new Date(timestamp), isRemote: false, context: { workingDirectory: f.directory },
+    }] as never)
+    f.events.length = 0
+    await f.service.refreshDiscovery()
+    expect(f.store.get('cli-only')).toMatchObject({ isOpen: false })
+    expect(f.store.get('cli-only')?.archivedAt).toBeUndefined()
+    const upserted = f.events.flatMap((event) => event.type === 'session.upserted' ? [event.session.id] : [])
+    expect(upserted).not.toContain('cli-only')
+    expect(f.store.get('pending')?.archivedAt).toBeDefined()
+    expect(upserted).toContain('pending')
+  })
+
+  it('refuses to resume an archived suspended terminal without reopening it', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    f.terminal.create.mockClear()
+    await f.store.setSuspended('pending', true)
+    await f.store.update('pending', (session) => {
+      session.isOpen = false
+      session.archivedAt = timestamp
+    })
+    await expect(f.service.resumeSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({ isOpen: false, suspended: true, archivedAt: timestamp })
+  })
+
+  it('refuses to restart an interrupted SDK session until it is reopened', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.markInterrupted('pending')
+    await expect(f.service.restartSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps a pending context brief pending when startup recovery interrupts its session, and sends it once after Reopen', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    await f.store.update('pending', (session) => {
+      Object.assign(session, { recoverySeed: { prompt: 'Context brief', state: 'pending' } })
+      session.failedPrompt = { content: 'Context brief', failedAt: timestamp }
+    })
+    f.terminal.create.mockRejectedValue(new Error('Synthetic unavailable runtime'))
+    await f.service.start()
+    expect(f.service.getSession('pending')?.interruption).toBeDefined()
+    await f.service['discoverSessions']()
+    await Promise.all(f.service['recoverySeedDispatches'].values())
+    expect(f.store.recoverySeed('pending')).toMatchObject({ state: 'pending', prompt: 'Context brief' })
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    await f.service.activateSession('pending')
+    await vi.waitFor(() => expect(f.store.recoverySeed('pending')).toBeUndefined())
+    expect((f.terminal.send.mock.calls as unknown[][]).filter((call) => call[1] === 'Context brief')).toHaveLength(1)
+  })
+
+  it.each([
+    ['interrupted', (f: Awaited<ReturnType<typeof fixture>>) => f.store.markInterrupted('pending')],
+    ['archived', (f: Awaited<ReturnType<typeof fixture>>) => f.store.update('pending', (session) => {
+      session.isOpen = false
+      session.archivedAt = timestamp
+    })],
+  ])('refuses to rewrite, discard, reorder or dispatch the queue of an %s Copilot session', async (_label, retain) => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.queuedPrompts = [prompt('first'), prompt('second')]
+      session.queuedCount = 2
+    })
+    await retain(f)
+    const attempts = [
+      () => f.service.updateQueuedPrompt('pending', 'first', 'Rewritten'),
+      () => f.service.removeQueuedPrompt('pending', 'second'),
+      () => f.service.reorderQueuedPrompts('pending', ['second', 'first']),
+      () => f.service.dispatchQueuedPrompt('pending', 'first', 'Dispatched'),
+    ]
+    for (const attempt of attempts) {
+      await expect(attempt()).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen/) })
+    }
+    await f.store.flush()
+    expect((await f.persisted()).sessions.pending.queuedPrompts).toEqual([prompt('first'), prompt('second')])
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('does not archive an ownerless session while a tracked background task is still running', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    const task = {
+      id: 'detached-build', type: 'shell' as const, description: 'Detached build',
+      startedAt: timestamp, status: 'running' as const, canCancel: true,
+      executionMode: 'background' as const, attachmentMode: 'detached' as const,
+    }
+    f.service['backgroundTaskTracker'].replace('pending', [task], true)
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: true })
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+    f.service['backgroundTaskTracker'].replace('pending', [{ ...task, status: 'completed', canCancel: false }], true)
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: false, archivedAt: expect.any(String) })
+  })
+
+  const idleComposer = ['Synthetic idle owner', '╻▄▄▄▄▄▄▄▄▄▄', '┃ ', '╹▀▀▀▀▀▀▀▀▀▀', ' / commands'].join('\n')
+
+  it.each(['interrupted', 'archived'] as const)('leaves an %s terminal FIFO untouched by automatic drains and drains it once, in order, after Reopen', async (state) => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    f.terminal.capture.mockResolvedValue(idleComposer)
+    await f.service.start()
+    await f.store.enqueuePrompt('pending', prompt('first'))
+    await f.store.enqueuePrompt('pending', prompt('second'))
+    await f.store.update('pending', (session) => {
+      session.status = 'idle'
+      session.interruption = undefined
+      session.failedPrompt = undefined
+    })
+    f.service['externalSessionIds'].add('pending')
+    f.service['settleTerminalRecoveryForActivation']('pending')
+    if (state === 'interrupted') await f.store.markInterrupted('pending')
+    else await f.store.update('pending', (session) => { session.archivedAt = timestamp })
+    f.service['wakeTerminalQueue']('pending')
+    await Promise.all(f.service['terminalQueueWakeups'].values())
+    await f.drainNow()
+    f.service['wakeSdkQueue']('pending')
+    await Promise.all(f.service['sdkQueueWakeups'].values())
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')?.queuedPrompts).toEqual([prompt('first'), prompt('second')])
+    expect(f.store.terminalQueueDispatch('pending')).toBeUndefined()
+
+    await f.service.activateSession('pending')
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'first', false)
+    expect(f.store.get('pending')?.queuedPrompts).toEqual([prompt('second')])
+  })
+
+  it('refuses a terminal queue claim when retention lands between the drain check and the claim', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    f.terminal.capture.mockResolvedValue(idleComposer)
+    await f.service.start()
+    await f.store.enqueuePrompt('pending', prompt('first'))
+    await f.store.enqueuePrompt('pending', prompt('second'))
+    await f.store.update('pending', (session) => {
+      session.status = 'idle'
+      session.interruption = undefined
+      session.failedPrompt = undefined
+    })
+    f.service['externalSessionIds'].add('pending')
+    f.service['settleTerminalRecoveryForActivation']('pending')
+    const claim = f.store.claimTerminalQueuedPrompt.bind(f.store)
+    const claimed = vi.spyOn(f.store, 'claimTerminalQueuedPrompt').mockImplementationOnce(async (...args) => {
+      await f.store.markInterrupted('pending')
+      return claim(...args)
+    })
+    await f.drainNow()
+    expect(claimed).toHaveBeenCalledOnce()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({
+      queuedPrompts: [prompt('first'), prompt('second')], interruption: expect.any(Object),
+    })
+    expect(f.store.terminalQueueDispatch('pending')).toBeUndefined()
+    expect(f.store.get('pending')?.failedPrompt).toBeUndefined()
+    expect(f.events.filter((event) => event.type === 'error')).toEqual([])
+    expect(f.service['pendingTerminalQueueClaims'].has('pending')).toBe(false)
+
+    await f.service.activateSession('pending')
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'first', false)
+    expect(f.store.get('pending')?.queuedPrompts).toEqual([prompt('second')])
+  })
+
+  it('refuses an automatic SDK queue claim when retention lands at claim time', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    const owner = sdkSession('pending')
+    f.client.resumeSession = vi.fn(async () => owner)
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.status = 'idle'
+      session.interruption = undefined
+      session.failedPrompt = undefined
+      session.queuedPrompts = [prompt('first'), prompt('second')]
+      session.queuedCount = 2
+    })
+    const update = f.store.update.bind(f.store)
+    vi.spyOn(f.store, 'update').mockImplementation(async (id, ...rest) => {
+      const current = f.store.get(id)
+      // Retention commits just before the queue claim's own write.
+      if (!current?.interruption && !current?.queuedDispatch) await f.store.markInterrupted(id)
+      return update(id, ...rest)
+    })
+    f.service['wakeSdkQueue']('pending')
+    await Promise.all(f.service['sdkQueueWakeups'].values())
+    expect(owner.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({
+      queuedPrompts: [prompt('first'), prompt('second')], interruption: expect.any(Object),
+    })
+    expect(f.store.get('pending')?.queuedDispatch).toBeUndefined()
+    expect(f.store.get('pending')?.failedPrompt).toBeUndefined()
+    expect(f.events.filter((event) => event.type === 'error')).toEqual([])
+  })
+
+  it('re-checks tracked background tasks when the archival write commits', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    const syncOpen = f.store.syncOpen.bind(f.store)
+    vi.spyOn(f.store, 'syncOpen').mockImplementationOnce(async (...args) => {
+      f.service['backgroundTaskTracker'].replace('pending', [{
+        id: 'late-task', type: 'agent', description: 'Late agent', startedAt: timestamp,
+        status: 'running', canCancel: true, executionMode: 'background',
+      }], true)
+      return syncOpen(...args)
+    })
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
   })
 })

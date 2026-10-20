@@ -2712,7 +2712,7 @@ describe('AgentService deletion', () => {
         unavailable = false
         await service.refreshDiscovery()
         expect(terminal.create).not.toHaveBeenCalled()
-        expect(store.get('terminal-owner')).toMatchObject({ isOpen: false, queuedCount: 1 })
+        expect(store.get('terminal-owner')).toMatchObject({ isOpen: true, queuedCount: 1 })
         expect(store.shouldRecoverTerminalSession('terminal-owner')).toBe(true)
         live = true
         await service.refreshDiscovery()
@@ -4313,7 +4313,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('closes a terminal session when boot recovery fails', async () => {
+  it('retains a recoverable terminal record when boot recovery fails', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const sessionId = 'abcdef12-3456-7890-abcd-ef1234567891'
@@ -4351,11 +4351,11 @@ describe('AgentService deletion', () => {
 
     await service.start()
 
-    expect(service.listSessions()).toEqual([])
+    expect(service.listSessions()).toEqual([expect.objectContaining({ id: sessionId, isOpen: true })])
     expect(store.get(sessionId)).toMatchObject({
-      isOpen: false,
+      isOpen: true,
       status: 'error',
-      activity: 'Boot recovery failed',
+      interruption: expect.any(Object),
     })
     await service.stop()
   })
@@ -4430,8 +4430,9 @@ describe('AgentService deletion', () => {
       undefined,
     )
     expect(service.store.get(firstId)).toMatchObject({
-      status: 'idle',
+      status: 'error',
       isOpen: true,
+      interruption: { previousStatus: 'idle' },
     })
     expect(service.store.shouldRecoverTerminalSession(firstId)).toBe(true)
     expect(service.store.get(secondId)).toMatchObject({

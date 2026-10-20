@@ -323,8 +323,8 @@ and must still change on every build.
    has no host network: install (`--ignore-scripts`) and `pnpm rebuild` reach
    only public HTTPS through the gate's filtering proxy, and the checks run
    offline. The clone's git directory stays read-only and outside the sandbox's
-   writable mount. It
-   posts the `agentic-remote/full-gate` commit status; success needs passed
+   one writable mount, `/tmp` is a fresh tmpfs per phase, and nothing inside
+   that mount is ever a mount source or followed by the gate. It posts the `agentic-remote/full-gate` commit status; success needs passed
    and zero failed Vitest counts from both runs. A new push needs a new gate.
 6. **Merge only after Supervisor `APPROVE` and an `agentic-remote/full-gate`
    `success` status for the current head.** A `main` ruleset requires that

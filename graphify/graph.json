@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "12fdd7ca7676483e9215819844430f034f176af1",
+  "built_at_commit": "e6dfb48a495211df0f8a2ed4a5c0ca5035c588fd",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -458,7 +458,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L461",
+      "source_location": "L462",
       "target": "bin_agentic_remote_gate_assert_tree",
       "weight": 1.0
     },
@@ -557,7 +557,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L451",
+      "source_location": "L452",
       "target": "bin_agentic_remote_gate_in_system_dir",
       "weight": 1.0
     },
@@ -678,7 +678,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L477",
+      "source_location": "L478",
       "target": "bin_agentic_remote_gate_run_check",
       "weight": 1.0
     },
@@ -799,7 +799,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L441",
+      "source_location": "L442",
       "target": "bin_agentic_remote_gate_tree_git",
       "weight": 1.0
     },
@@ -844,7 +844,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L649",
+      "source_location": "L650",
       "target": "bin_agentic_remote_gate_assert_tree",
       "weight": 1.0
     },
@@ -856,7 +856,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L702",
+      "source_location": "L703",
       "target": "bin_agentic_remote_gate_conclude",
       "weight": 1.0
     },
@@ -868,7 +868,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L530",
+      "source_location": "L531",
       "target": "bin_agentic_remote_gate_die",
       "weight": 1.0
     },
@@ -880,7 +880,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L618",
+      "source_location": "L619",
       "target": "bin_agentic_remote_gate_fail",
       "weight": 1.0
     },
@@ -892,7 +892,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L622",
+      "source_location": "L623",
       "target": "bin_agentic_remote_gate_in_system_dir",
       "weight": 1.0
     },
@@ -904,7 +904,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L518",
+      "source_location": "L519",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -916,7 +916,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L651",
+      "source_location": "L652",
       "target": "bin_agentic_remote_gate_pnpm_version",
       "weight": 1.0
     },
@@ -928,7 +928,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L591",
+      "source_location": "L592",
       "target": "bin_agentic_remote_gate_post_status",
       "weight": 1.0
     },
@@ -940,7 +940,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L619",
+      "source_location": "L620",
       "target": "bin_agentic_remote_gate_prepare_sandbox",
       "weight": 1.0
     },
@@ -952,7 +952,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L607",
+      "source_location": "L608",
       "target": "bin_agentic_remote_gate_record",
       "weight": 1.0
     },
@@ -964,7 +964,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L535",
+      "source_location": "L536",
       "target": "bin_agentic_remote_gate_repo_from_url",
       "weight": 1.0
     },
@@ -976,7 +976,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L541",
+      "source_location": "L542",
       "target": "bin_agentic_remote_gate_require_command",
       "weight": 1.0
     },
@@ -988,7 +988,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L693",
+      "source_location": "L694",
       "target": "bin_agentic_remote_gate_run_check",
       "weight": 1.0
     },
@@ -1000,7 +1000,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L655",
+      "source_location": "L656",
       "target": "bin_agentic_remote_gate_run_phase",
       "weight": 1.0
     },
@@ -1012,7 +1012,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L654",
+      "source_location": "L655",
       "target": "bin_agentic_remote_gate_sandbox_options",
       "weight": 1.0
     },
@@ -1024,7 +1024,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L661",
+      "source_location": "L662",
       "target": "bin_agentic_remote_gate_start_egress",
       "weight": 1.0
     },
@@ -1036,7 +1036,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L688",
+      "source_location": "L689",
       "target": "bin_agentic_remote_gate_stop_egress",
       "weight": 1.0
     },
@@ -1048,7 +1048,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L641",
+      "source_location": "L642",
       "target": "bin_agentic_remote_gate_tree_git",
       "weight": 1.0
     },
@@ -1060,7 +1060,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L507",
+      "source_location": "L508",
       "target": "bin_agentic_remote_gate_usage",
       "weight": 1.0
     },
@@ -1072,7 +1072,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L539",
+      "source_location": "L540",
       "target": "bin_agentic_remote_gate_valid_repo",
       "weight": 1.0
     },
@@ -1084,7 +1084,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L529",
+      "source_location": "L530",
       "target": "bin_agentic_remote_gate_valid_sha",
       "weight": 1.0
     },
@@ -1096,7 +1096,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_assert_tree",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L463",
+      "source_location": "L464",
       "target": "bin_agentic_remote_gate_fail",
       "weight": 1.0
     },
@@ -1108,7 +1108,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_assert_tree",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L467",
+      "source_location": "L468",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -1120,7 +1120,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_assert_tree",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L464",
+      "source_location": "L465",
       "target": "bin_agentic_remote_gate_tree_git",
       "weight": 1.0
     },
@@ -1300,7 +1300,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L489",
+      "source_location": "L490",
       "target": "bin_agentic_remote_gate_assert_tree",
       "weight": 1.0
     },
@@ -1312,7 +1312,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L488",
+      "source_location": "L489",
       "target": "bin_agentic_remote_gate_fail",
       "weight": 1.0
     },
@@ -1324,7 +1324,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L481",
+      "source_location": "L482",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -1336,7 +1336,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L484",
+      "source_location": "L485",
       "target": "bin_agentic_remote_gate_record",
       "weight": 1.0
     },
@@ -1348,7 +1348,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L483",
+      "source_location": "L484",
       "target": "bin_agentic_remote_gate_run_phase",
       "weight": 1.0
     },
@@ -1360,7 +1360,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L486",
+      "source_location": "L487",
       "target": "bin_agentic_remote_gate_test_counts",
       "weight": 1.0
     },
@@ -159989,7 +159989,7 @@
       },
       "norm_label": "assert_tree()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L461"
+      "source_location": "L462"
     },
     {
       "_origin": "ast",
@@ -160124,7 +160124,7 @@
       },
       "norm_label": "in_system_dir()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L451"
+      "source_location": "L452"
     },
     {
       "_origin": "ast",
@@ -160289,7 +160289,7 @@
       },
       "norm_label": "run_check()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L477"
+      "source_location": "L478"
     },
     {
       "_origin": "ast",
@@ -160454,7 +160454,7 @@
       },
       "norm_label": "tree_git()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L441"
+      "source_location": "L442"
     },
     {
       "_origin": "ast",

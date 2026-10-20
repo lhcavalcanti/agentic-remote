@@ -731,9 +731,10 @@ describe('agentic-remote-gate', () => {
         expect(`${source}/`.startsWith(`${f.home}/`)).toBe(false)
         if (options[index].startsWith('--bind')) expect(source.startsWith(`${f.temp}/`)).toBe(true)
       }
-      const privateTmp = options[indexOfSequence(options, '/tmp') - 1]
-      expect(options[indexOfSequence(options, '/tmp') - 2]).toBe('--bind')
-      expect(privateTmp.startsWith(`${f.temp}/`)).toBe(true)
+      // /tmp is mounted before the work directory, which may live under it.
+      const privateTmp = indexOfSequence(options, '--tmpfs', '/tmp')
+      expect(privateTmp).toBeGreaterThan(-1)
+      expect(privateTmp).toBeLessThan(options.lastIndexOf('--bind'))
 
       const environment = clearedEnvironment(command)
       expect(Object.keys(environment).every((name) => allowed.includes(name))).toBe(true)
@@ -772,6 +773,14 @@ describe('agentic-remote-gate', () => {
         if (!['--bind', '--bind-try'].includes(options[index])) continue
         expect(`${gitDir}/`.startsWith(`${options[index + 1]}/`)).toBe(false)
       }
+      // Nothing the sandbox can write is ever a mount source again: a
+      // replaced directory there could point the next phase's mount anywhere.
+      for (let index = 0; index < options.length; index += 1) {
+        if (!/^--(ro-)?bind(-try)?$/.test(options[index])) continue
+        const source = options[index + 1]
+        if (source !== work) expect(source.startsWith(`${work}/`), source).toBe(false)
+      }
+      expect(hasSequence(options, '--tmpfs', '/tmp')).toBe(true)
     }
     // Only installing and building dependencies get network, and only
     // through the egress proxy, whose socket directory is read-only.
@@ -1109,6 +1118,59 @@ describe('agentic-remote-gate', () => {
       } finally {
         listener.close()
       }
+    },
+  )
+
+  it.runIf(realSandbox)(
+    'never mounts or follows what one phase left in the sandbox directory',
+    async () => {
+      const f = await fixture()
+      const outside = path.join(f.root, 'outside')
+      await mkdir(outside)
+      await writeFile(path.join(outside, 'keep'), 'keep\n')
+      const toolchain = path.join(f.root, 'toolchain', 'bin')
+      await mkdir(toolchain, { recursive: true })
+      await stub(toolchain, 'node', `exec ${JSON.stringify(process.execPath)} "$@"`)
+      // Install points the sandbox directory's /tmp source at the git
+      // directory and leaves links to places outside the sandbox; the next
+      // phase plants a clean filter through /tmp if that took effect and
+      // touches a tracked file so the gate's own git status would run it.
+      await stub(
+        toolchain,
+        'corepack',
+        [
+          '[[ "$1" != enable ]] || exit 0',
+          'sandbox="$(dirname "$PWD")"',
+          'gitdir="$(sed -n "s/^gitdir: //p" .git)"',
+          'if [[ " $* " == *" install "* ]]; then',
+          '  mv "$sandbox/tmp" "$sandbox/old-tmp"; ln -s "$gitdir" "$sandbox/tmp"',
+          `  ln -s ${JSON.stringify(outside)} "$sandbox/outside"`,
+          `  ln -s ${JSON.stringify(outside)} "$sandbox/home/outside"`,
+          `  ln -s ${JSON.stringify(f.gates)} "$sandbox/gates"`,
+          'elif [[ -f /tmp/HEAD ]]; then',
+          '  echo "TMP IS GITDIR"',
+          `  printf '[filter "pwn"]\\n\\tclean = touch ${f.pwned}; cat\\n' >>/tmp/config`,
+          '  mkdir -p /tmp/info && echo "* filter=pwn" >/tmp/info/attributes',
+          'fi',
+          'touch -d @1 package.json',
+          'echo "      Tests  1 passed (1)"',
+        ].join('\n'),
+      )
+      const result = await gate(f, [f.mainSha, '--repo', REPO], {
+        PATH: `${toolchain}:${f.bin}:/usr/bin:/bin`,
+      })
+      await expect(stat(f.pwned)).rejects.toThrow()
+      for (const name of ['rebuild.log', 'check.log', 'production-check.log']) {
+        const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
+        expect(log, name).not.toContain('TMP IS GITDIR')
+      }
+      expect(result.code, result.output).toBe(0)
+      expect((await statuses(f)).at(-1)?.state).toBe('success')
+      expect(await readFile(path.join(outside, 'keep'), 'utf8')).toBe('keep\n')
+      expect(await readFile(path.join(f.gates, f.mainSha, 'summary'), 'utf8')).toMatch(
+        /^result=success$/m,
+      )
+      await expectNoClone(f)
     },
   )
 

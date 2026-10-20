@@ -406,10 +406,10 @@ that the gate requires. The sandbox gets every namespace unshared, including
 the network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
 `NODE_ENV` for the production run) that `bwrap` itself is also started with,
 since it stays visible inside as PID 1, a private `HOME` (holding its own
-Corepack `pnpm` shim) and `/tmp` inside the temporary directory, an empty
-tmpfs over the real home and `/run`, read-only
-system directories plus the Node toolchain's `bin` and `lib/node_modules`, and
-one writable directory holding the clone, that `HOME`, and that `/tmp`. So no
+Corepack `pnpm` shim) inside the temporary directory, an empty tmpfs over the
+real home, `/run`, and `/tmp` (fresh for each phase), read-only system
+directories plus the Node toolchain's `bin` and `lib/node_modules`, and one
+writable directory holding the clone and that `HOME`. So no
 token, `gh` or SSH configuration, agent socket, the operator's tmux server, or
 any host service (loopback, LAN, or tailnet) is reachable, and pnpm and
 Corepack caches are per gate. Only the gate itself, outside the sandbox, calls
@@ -427,11 +427,16 @@ Corepack caches are per gate. Only the gate itself, outside the sandbox, calls
   configuration, disable fsmonitor, hooks, and attribute and exclude files,
   and never enter submodules (whose repositories the sandbox could fill), so a
   replaced, symlinked, or re-initialised clone cannot run anything outside the
-  sandbox; a clone that is no longer a plain directory fails the
-  gate. Logs are written by the gate into its state directory, which the
-  sandbox cannot see. When `bwrap` is missing or cannot start (for example where
-unprivileged user namespaces are blocked), the gate posts `failure` and never
-runs the checks unsandboxed.
+  sandbox; a clone that is no longer a plain directory fails the gate.
+- **Mounts and cleanup.** Nothing the sandbox can write is ever a mount source
+  or followed by the gate: the writable directory itself is mounted, never a
+  path inside it, so a symlink one phase leaves there cannot redirect the next
+  phase's mounts. Logs are written by the gate into its state directory, which
+  the sandbox cannot see, and cleanup removes links without following them.
+
+When `bwrap` is missing or cannot start (for example where unprivileged user
+namespaces are blocked), the gate posts `failure` and never runs the checks
+unsandboxed.
 
 Each check takes about half an hour, and suites on one host interfere through
 real tmux, so gates hold a host-wide lock: a second gate waits for the first,

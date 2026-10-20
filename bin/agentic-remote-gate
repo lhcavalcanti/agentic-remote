@@ -407,8 +407,8 @@ prepare_sandbox() {
 
 # Sets SANDBOX_OPTIONS and SANDBOX_ENV for run_phase. The environment is
 # cleared down to a fixed allowlist, the network is the sandbox's own
-# loopback, HOME and /tmp are private directories, the real home is an empty
-# tmpfs, and only the sandbox directory (clone, HOME, /tmp) is writable. It is
+# loopback, HOME is a private directory, /tmp and the real home are empty
+# tmpfs mounts, and only the sandbox directory (clone and HOME) is writable. It is
 # one mount so pnpm can hard-link from its store in the private HOME instead
 # of creating a store inside the clone. The git directory beside it is
 # read-only, so a script cannot plant configuration in it.
@@ -419,9 +419,10 @@ sandbox_options() {
     SANDBOX_OPTIONS+=(--ro-bind-try "$dir" "$dir")
   done
   # Later mounts land on top of earlier ones, so /tmp is replaced before the
-  # home, toolchain, and work directory, any of which may live under it.
-  SANDBOX_OPTIONS+=(--proc /proc --dev /dev --tmpfs /run
-    --bind "$SANDBOX_DIR/tmp" /tmp)
+  # home, toolchain, and work directory, any of which may live under it. It is
+  # a fresh tmpfs for each phase: nothing the sandbox can write is ever a mount
+  # source, since a phase could leave a symlink there for the next to follow.
+  SANDBOX_OPTIONS+=(--proc /proc --dev /dev --tmpfs /run --tmpfs /tmp)
   [[ -z "$REAL_HOME" || "$REAL_HOME" == / ]] || SANDBOX_OPTIONS+=(--tmpfs "$REAL_HOME")
   for dir in "${SANDBOX_TOOLCHAIN_DIRS[@]}"; do
     SANDBOX_OPTIONS+=(--ro-bind "$dir" "$dir")
@@ -631,7 +632,7 @@ TRUSTED_GIT_DIR="$WORK_DIR/git"
 EGRESS_DIR="$WORK_DIR/egress"
 CLONE="$SANDBOX_DIR/repo"
 SANDBOX_HOME="$SANDBOX_DIR/home"
-mkdir -m 700 -- "$SANDBOX_DIR" "$SANDBOX_HOME" "$SANDBOX_HOME/bin" "$SANDBOX_DIR/tmp"
+mkdir -m 700 -- "$SANDBOX_DIR" "$SANDBOX_HOME" "$SANDBOX_HOME/bin"
 PHASE="clone"
 log "cloning $REPO into a private temporary directory"
 {

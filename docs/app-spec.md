@@ -672,11 +672,25 @@ Questions and permissions are the highest-priority UI state.
   The running service MUST retain the original answer continuation across late
   dismissal confirmation and refuse conflicting retries or replay after an
   uncertain send. A receipt for an earlier question MUST NOT clear a newer one.
+- A persisted question whose form neither fills nor dismisses is stale only
+  when a bounded, read-only probe sees an empty, input-ready composer. A probe
+  that fails or outlives the reply budget MUST count as not ready, return
+  HTTP 409 with `uncertainDelivery: false`, and leave no retained answer.
+- A stale card's answer MUST be typed only through idle-only delivery checked
+  under the terminal send lock, never as steering. Drafts, forms, permissions,
+  overlays, startup prompts, and working turns MUST refuse with
+  `uncertainDelivery: false` and keep the card. Tool completion MUST be
+  rechecked immediately before delivery; if it completed, nothing is sent.
+- The stale card MUST stay until the terminal accepts the answer, so queued
+  prompts cannot dispatch first; the answer then goes ahead of them. After
+  acceptance the answer MUST NOT be resent: a failed card clear retries only
+  the clear, and an uncertain send clears the card and refuses replay.
 - Safe Yes/choice and Stop actions MUST be available.
 - Cancelling or declining a persisted terminal question MUST dismiss the
-  matching live form and confirm completion before hiding its card. A failed
-  dismissal MUST retain the question; it MUST NOT report a false success that
-  leaves the terminal capturing subsequent messages.
+  matching live form and confirm completion before hiding its card, unless the
+  stale-card probe above sees an empty, input-ready composer; nothing is typed
+  then. A failed dismissal MUST retain the question; it MUST NOT report a false
+  success that leaves the terminal capturing subsequent messages.
 - Pending SDK questions MUST be reconstructed from persisted tool events after
   a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a

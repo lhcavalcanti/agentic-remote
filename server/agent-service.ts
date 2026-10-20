@@ -1859,27 +1859,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.deletedSessionIds.add(id)
     this.discoveryGeneration += 1
+    await this.deleteSdkProviderIdentity(id)
+  }
+
+  private async deleteSdkProviderIdentity(id: string): Promise<void> {
+    try {
+      await this.client.deleteSession(id)
+    } catch (error) {
+      if (!isMissingSessionError(error)) throw error
+    }
     this.sessions.delete(id)
     this.hydratedSessions.delete(id)
     this.loadingSessions.delete(id)
     this.hydratingSessions.delete(id)
     this.pendingSessionMetadata.delete(id)
-    const errors: unknown[] = []
-    if (session) {
-      try {
-        await session.disconnect()
-      } catch (error) {
-        errors.push(error)
-      }
-    }
-    try {
-      await this.client.deleteSession(id)
-    } catch (error) {
-      if (!isMissingSessionError(error)) errors.push(error)
-    }
-    if (errors.length) {
-      throw new AggregateError(errors, `SDK cleanup is incomplete for session ${id}`)
-    }
   }
 
   /** Marks a session as having a prompt on its way, and gives back the undo. */
@@ -6867,13 +6860,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.activePrompts.delete(sessionId)
           await active.abort()
         }
-        await active.disconnect()
-        this.sessions.delete(sessionId)
+        if (terminalBacked) {
+          await active.disconnect()
+          this.sessions.delete(sessionId)
+        }
       }
-      // Retired once the runtime is actually gone. Doing it earlier left the
-      // door open for a follow-up already being admitted to install its own
-      // tracker afterwards, and disconnecting does not always announce itself,
-      // so waiting for a shutdown event would leak the SDK session.
+      // Admission is closed before teardown, so no follow-up can install a
+      // replacement tracker. Retire this one explicitly because neither
+      // disconnect nor provider deletion must announce shutdown.
       this.sdkFollowUpTrackers.get(sessionId)?.cancel()
       this.sdkFollowUpTrackers.delete(sessionId)
       for (const [requestId, permission] of this.permissions) {
@@ -6898,13 +6892,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (terminalBacked) {
         await removeCopilotSessionFiles(sessionId)
       } else {
-        try {
-          await this.client.deleteSession(sessionId)
-        } catch (error) {
-          if (!isMissingSessionError(error)) {
-            throw error
-          }
-        }
+        await this.deleteSdkProviderIdentity(sessionId)
       }
       await this.store.remove(sessionId)
       this.pendingSdkQueueAdmissions.delete(sessionId)

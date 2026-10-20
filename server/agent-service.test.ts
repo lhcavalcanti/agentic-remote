@@ -41,6 +41,7 @@ class DeferredSession implements CopilotSessionLike {
   readonly taskProgress = new Map<string, CopilotTaskProgress>()
   readonly sentPrompts: string[] = []
   disconnectCount = 0
+  disconnectError?: Error
   readonly invokedCommands: string[] = []
   readonly assignedNames: string[] = []
   readonly modeSwitches: string[] = []
@@ -212,6 +213,7 @@ class DeferredSession implements CopilotSessionLike {
   async abort() {}
   async disconnect() {
     this.disconnectCount += 1
+    if (this.disconnectError) throw this.disconnectError
   }
 }
 
@@ -227,6 +229,7 @@ class FakeCopilotClient implements CopilotClientLike {
   readonly deletedSessionIds: string[] = []
   readonly resumedConfigs: ResumeSessionConfig[] = []
   readonly resumedSessionIds: string[] = []
+  deleteError?: Error
   stopErrors: Error[] = []
   readonly rpc = {
     commands: {
@@ -277,6 +280,7 @@ class FakeCopilotClient implements CopilotClientLike {
   }
   async deleteSession(sessionId: string) {
     this.deletedSessionIds.push(sessionId)
+    if (this.deleteError) throw this.deleteError
   }
 }
 
@@ -405,6 +409,139 @@ describe('AgentService deletion', () => {
 
     expect(client.resumedConfigs[0]).toMatchObject(cliDiscovery)
     await service.stop()
+  })
+
+  it('deletes an SDK session without detaching it first', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const detach = Object.assign(
+      new Error('Unhandled method session.detach'),
+      { code: -32601 },
+    )
+    client.session.disconnectError = detach
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    await service.deleteSession(created.id)
+
+    expect(client.session.disconnectCount).toBe(0)
+    expect(client.deletedSessionIds).toContain(created.id)
+    expect(store.get(created.id)).toBeUndefined()
+  })
+
+  it('preserves an SDK session when provider deletion fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+
+    await expect(service.deleteSession(created.id)).rejects.toBe(failure)
+
+    expect(store.get(created.id)).toBeDefined()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('rejects SDK-to-tmux activation after failed detach without reopening the terminal', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => false),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      reopen: vi.fn(async () => ({
+        sessionName: 'agentic-remote',
+        windowId: '@30',
+      })),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.setBackend(created.id, 'terminal')
+    const failure = new Error('Detach failed')
+    client.session.disconnectError = failure
+
+    await expect(service.activateSession(created.id)).rejects.toBe(failure)
+
+    expect(terminal.reopen).not.toHaveBeenCalled()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('leaves an SDK session unsuspended after failed detach', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failure = new Error('Detach failed')
+    client.session.disconnectError = failure
+
+    await expect(service.suspendSession(created.id)).rejects.toBe(failure)
+
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('performs failed creation cleanup without detaching', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const failure = new Error('Mode unavailable')
+    client.session.modeSetError = failure
+    client.session.disconnectError = new Error('Detach failed')
+
+    await expect(service.createSession(
+      directory,
+      false,
+      true,
+      'copilot',
+      undefined,
+      undefined,
+      undefined,
+      'plan',
+    )).rejects.toBe(failure)
+
+    expect(client.session.disconnectCount).toBe(0)
+    expect(client.deletedSessionIds).toContain(client.session.sessionId)
   })
 
   it('extracts visible prompts while hiding injected context messages', () => {

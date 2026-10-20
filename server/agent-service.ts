@@ -27,6 +27,7 @@ import {
 import {
   COPILOT_SDK_SESSION_DISCOVERY,
   createCopilotSdkClient,
+  readCopilotSdkRuntimeDiagnostic,
 } from './copilot-sdk-client.js'
 import type {
   AgentProvider,
@@ -307,6 +308,8 @@ export interface CopilotSessionLike {
 export interface CopilotClientLike extends CopilotResourceClient {
   start(): Promise<void>
   stop(): Promise<Error[]>
+  getStatus?: CopilotClient['getStatus']
+  getAuthStatus?: CopilotClient['getAuthStatus']
   createSession(config: SessionConfig): Promise<CopilotSessionLike>
   resumeSession(
     sessionId: string,
@@ -2303,6 +2306,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     await phases.run('copilot.sdk', () => this.client.start())
     if (this.stopped) return
+    try {
+      const diagnostic = await readCopilotSdkRuntimeDiagnostic(this.client)
+      if (diagnostic) {
+        console.info(
+          `Copilot SDK runtime: runtimeVersion=${diagnostic.runtimeVersion} ` +
+          `protocolVersion=${diagnostic.protocolVersion} ` +
+          `authenticated=${diagnostic.authenticated} ` +
+          `authType=${diagnostic.authType ?? 'unknown'}`,
+        )
+      }
+    } catch {
+      console.warn('Unable to read Copilot SDK runtime diagnostic')
+    }
+    if (this.stopped) return
     await phases.run('copilot.models', () => this.ensureRuntimeModels()).catch((error: unknown) => {
       console.warn('Unable to load runtime models:', error)
     })
@@ -2670,6 +2687,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }),
     )
     await this.admissions.wait()
+    // An already-admitted send can register its tracker after the first sweep.
+    // Admission quiescence guarantees nothing can register after this one.
+    for (const tracker of [...this.sdkFollowUpTrackers.values()]) {
+      tracker.settleForTeardown()
+    }
     await Promise.allSettled([...this.pendingAcknowledgements.values()])
     await Promise.allSettled([
       this.transcriptWake,

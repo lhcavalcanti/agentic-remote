@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
   AssistantMessageEvent,
+  GetAuthStatusResponse,
+  GetStatusResponse,
   ModelInfo,
   ResumeSessionConfig,
   SessionConfig,
@@ -258,6 +260,8 @@ class DeferredSession implements CopilotSessionLike {
 
 class FakeCopilotClient implements CopilotClientLike {
   readonly session = new DeferredSession()
+  getStatus?: () => Promise<GetStatusResponse>
+  getAuthStatus?: () => Promise<GetAuthStatusResponse>
   nextSessionList?: Promise<SessionMetadata[]>
   resumeError?: Error
   createError?: Error
@@ -396,6 +400,84 @@ beforeEach(() => {
   vi.spyOn(TmuxTerminalSessionController.prototype, 'capture').mockResolvedValue(undefined)
   vi.spyOn(TmuxTerminalSessionController.prototype, 'cancel').mockResolvedValue(false)
   vi.spyOn(TmuxTerminalSessionController.prototype, 'ownerStopped').mockResolvedValue(false)
+})
+
+describe('AgentService startup diagnostics', () => {
+  it('logs only sanitized SDK runtime diagnostic fields after startup', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let started = false
+    client.start = async () => {
+      started = true
+    }
+    client.getStatus = async () => {
+      if (!started) throw new Error('Runtime status requested before startup')
+      return {
+        version: '1.0.98',
+        protocolVersion: 3,
+      }
+    }
+    client.getAuthStatus = async () => {
+      if (!started) throw new Error('Auth status requested before startup')
+      return {
+        isAuthenticated: true,
+        authType: 'gh-cli',
+        login: 'sensitive-login',
+        host: 'https://sensitive.example',
+        statusMessage: 'sensitive provider detail',
+      }
+    }
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+
+    expect(info).toHaveBeenCalledWith(
+      'Copilot SDK runtime: runtimeVersion=1.0.98 protocolVersion=3 authenticated=true authType=gh-cli',
+    )
+    expect(info.mock.calls.flat().join(' ')).not.toMatch(
+      /sensitive-login|sensitive\.example|sensitive provider detail/,
+    )
+    await service.stop()
+  })
+
+  it('warns without exposing a diagnostic provider error', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    client.getStatus = async () => {
+      throw new Error('secret-token provider detail')
+    }
+    client.getAuthStatus = async () => ({
+      isAuthenticated: true,
+      authType: 'gh-cli',
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await expect(service.start()).resolves.toBeUndefined()
+
+    expect(warning).toHaveBeenCalledWith(
+      'Unable to read Copilot SDK runtime diagnostic',
+    )
+    expect(warning.mock.calls.flat().join(' ')).not.toContain(
+      'secret-token provider detail',
+    )
+    await service.stop()
+  })
 })
 
 describe('AgentService deletion', () => {
@@ -1049,6 +1131,82 @@ describe('AgentService deletion', () => {
     await expect(
       retryService.deleteSession(created.id),
     ).resolves.toBeUndefined()
+  })
+
+  it('settles a follow-up tracker registered after the initial SDK teardown sweep', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up before the post-admission sweep',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up before the post-admission sweep',
+      ),
+    )
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    await vi.waitFor(() =>
+      expect(
+        service['pendingSdkFollowUps'].get(created.id)?.previousCompleted,
+      ).toBe(true),
+    )
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await vi.waitFor(() =>
+      expect(service['deletingSessions'].has(created.id)).toBe(true),
+    )
+
+    const stopping = service.stop()
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const settledAfterAdmissions =
+      !service['sdkFollowUpTrackers'].has(created.id)
+    if (!settledAfterAdmissions) {
+      // Let the RED implementation finish so the regression reports the
+      // missing post-admission sweep instead of wedging its own cleanup.
+      client.session.resolveSessionIdle()
+    }
+
+    expect(await deletionOutcome).toBe(failure)
+    await stopping
+    expect(settledAfterAdmissions).toBe(true)
+    expect(store.get(created.id)).toBeDefined()
   })
 
   it.each([

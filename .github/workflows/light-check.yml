@@ -33,7 +33,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: package.json
+          # The engines floor (>=22.12). A range would resolve to Node 24, which
+          # the local gate already runs, leaving the minimum untested.
+          node-version: '22'
           # No dependency cache: restoring the 440 MB pnpm store took 12 s
           # against 17 s for an uncached install, and a pull request's first
           # run has no cache to restore and paid 9 s more to save one.

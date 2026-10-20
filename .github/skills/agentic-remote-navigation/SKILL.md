@@ -241,9 +241,10 @@ NODE_ENV=production pnpm check  # guards the inherited-env regression
   `canaryTests` or `tmuxTests` in `vite.config.ts`; otherwise it lands in
   `fast`, which must pass without tmux, Copilot, or Claude.
 - `.github/workflows/light-check.yml` is an advisory hosted check on ready pull
-  request heads: install, lint, `tsc -b`, `vite build`, and `pnpm test:quick`,
-  sized to one billed minute (about 1,200 minutes a month at roughly 1,200
-  runs). Never make it required; the local gate stays authoritative. A new
+  request heads, on Node 22 (the `engines` floor): install, lint, `tsc -b`,
+  `vite build`, and `pnpm test:quick`, sized to one billed minute (about
+  1,200 minutes a month at roughly 1,200 runs). Never make it required; the
+  local gate stays authoritative. A new
   `fast` file joins `test:quick` by default; add it to `slowTests` when it
   takes 0.1 s or more. Disable with `gh workflow disable light-check.yml`.
   See `docs/deployment-promotion.md`.

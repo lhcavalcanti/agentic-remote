@@ -374,6 +374,8 @@ stays authoritative.
 
 - One `ubuntu-latest` job runs `pnpm install --frozen-lockfile`, `pnpm lint`,
   `pnpm exec tsc -b`, `pnpm exec vite build`, and `pnpm test:quick`.
+- It runs on the latest Node 22, the supported floor in `engines`, while the
+  local gate covers the newer Node a host runs.
 - It runs when a ready pull request is opened, reopened, updated, or marked
   ready. Drafts are skipped, as are pull requests whose every changed file is
   Markdown, under `docs/`, or under `graphify/`. A newer head cancels the

@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readFile, realpath } from 'node:fs/promises'
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import fastifyMultipart from '@fastify/multipart'
 import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
@@ -35,6 +35,12 @@ import { resolveDataDirectory } from './paths.js'
 import { PushNotificationService } from './push-notification-service.js'
 import { ProviderSessionService } from './provider-session-service.js'
 import { registerPushRoutes } from './push-routes.js'
+import {
+  noteRefusalReason,
+  RefusalCounter,
+  refusalReasonFromError,
+  registerRefusalMetrics,
+} from './refusal-metrics.js'
 import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
 import { SessionOrderStore } from './session-order-store.js'
@@ -67,7 +73,7 @@ export interface BuildAppOptions {
   service?: SessionService
   identity?: NodeIdentityStore
   manager?: ComputerManager
-  logger?: boolean
+  logger?: FastifyServerOptions['logger']
   serveStatic?: boolean
   role?: ServerRole
   dataDirectory?: string
@@ -156,8 +162,11 @@ export async function buildApp(
   // Registered before any routes: route plugins capture the error handler
   // present when their scope is created, so a later call would leave them
   // on Fastify's default serialization.
-  app.setErrorHandler((error, _request, reply) => {
+  const refusals = new RefusalCounter()
+  registerRefusalMetrics(app, refusals)
+  app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError) {
+      noteRefusalReason(request, refusalReasonFromError(error, 400))
       return reply.code(400).send({
         error: error.issues[0]?.message || 'Invalid request',
       })
@@ -167,6 +176,7 @@ export async function buildApp(
     const explicitUncertainty = deliveryUncertaintyFromError(error)
     const terminalDraftConflict = terminalDraftConflictFromError(error)
     if (error instanceof TranscriptionError || error instanceof FileUploadError) {
+      noteRefusalReason(request, refusalReasonFromError(error, error.statusCode))
       return reply.code(error.statusCode).send({ error: error.message })
     }
     const explicitStatusCode = errorStatusCode(error)
@@ -175,6 +185,7 @@ export async function buildApp(
       explicitStatusCode >= 400 &&
       explicitStatusCode < 600
     ) {
+      noteRefusalReason(request, refusalReasonFromError(error, explicitStatusCode))
       return reply.code(explicitStatusCode).send({
         error: error instanceof Error ? error.message : 'Request failed',
         ...(submission ? { submission } : {}),
@@ -191,6 +202,7 @@ export async function buildApp(
       : lower.includes('not registered')
         ? 400
         : 500
+    if (statusCode !== 500) noteRefusalReason(request, statusCode === 404 ? 'not-found' : 'not-registered')
     return reply.code(statusCode).send({
       error: statusCode === 500 ? 'Unexpected server error' : message,
       ...(submission ? { submission } : {}),
@@ -329,6 +341,12 @@ export async function buildApp(
     app.get('/api/version', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
       return appVersion ?? { version: identity.info.version }
+    })
+    // Hub-local: browsers reach only the hub, so it sees every browser-facing
+    // refusal, including those a node returned through it.
+    app.get('/api/diagnostics/refusals', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return refusals.snapshot()
     })
   }
 

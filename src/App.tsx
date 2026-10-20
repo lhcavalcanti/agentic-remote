@@ -4966,6 +4966,7 @@ function SortableQueuedPrompt({
   editing,
   busy,
   suspended,
+  retained,
   onEdit,
   onRemove,
 }: {
@@ -4974,6 +4975,7 @@ function SortableQueuedPrompt({
   editing: boolean
   busy: boolean
   suspended: boolean
+  retained: boolean
   onEdit: () => void
   onRemove: () => void
 }) {
@@ -4984,7 +4986,9 @@ function SortableQueuedPrompt({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `queued:${prompt.id}` })
+  } = useSortable({ id: `queued:${prompt.id}`, disabled: retained })
+  // A retained session's queue is kept exactly as it was until Reopen.
+  const retainedTitle = retained ? 'Reopen this session to change its queue' : undefined
   return (
     <div
       className={`queued-prompt${editing ? ' queued-prompt--editing' : ''}${
@@ -5008,9 +5012,9 @@ function SortableQueuedPrompt({
         // The composer is closed while a session is put down, so opening a
         // message for rewriting there gave a banner over a box that could not
         // be typed in.
-        disabled={busy || suspended}
+        disabled={busy || suspended || retained}
         onClick={onEdit}
-        title={suspended ? 'Resume this session to rewrite it' : undefined}
+        title={retainedTitle ?? (suspended ? 'Resume this session to rewrite it' : undefined)}
         type="button"
       >
         <Pencil size={14} />
@@ -5018,8 +5022,9 @@ function SortableQueuedPrompt({
       <button
         aria-label={`Remove queued prompt ${index + 1}`}
         className="icon-button icon-button--danger"
-        disabled={busy}
+        disabled={busy || retained}
         onClick={onRemove}
+        title={retainedTitle}
         type="button"
       >
         <X size={15} />
@@ -10117,11 +10122,16 @@ function App() {
           // during render, so a request that finishes before React commits
           // would reconcile against a list this event is not in yet and drop
           // the replacement it is announcing.
+          // A node resync's roster summary never read the transcript; the one
+          // already shown stays rather than being blanked.
+          const arrived = (current: ManagedSession[]) => event.summary
+            ? carrySnapshotTranscripts([event.session], current)[0]
+            : event.session
           sessionsRef.current = upsertSession(
             sessionsRef.current,
-            event.session,
+            arrived(sessionsRef.current),
           )
-          setSessions((current) => upsertSession(current, event.session))
+          setSessions((current) => upsertSession(current, arrived(current)))
           // The arrival is the newest word on its own ancestry, and the loads
           // only ever see what the server last listed. Without this, state
           // under an ancestor waits for a reload that may never come.
@@ -13277,7 +13287,7 @@ function App() {
   }
 
   function editQueuedPrompt(prompt: QueuedPrompt) {
-    if (!selected || queueActionId || sending || selected.queuedDispatch) {
+    if (!selected || queueActionId || sending || selected.queuedDispatch || selectedRetained) {
       return
     }
     // Already rewriting this one. Starting again would put the queued text
@@ -13624,6 +13634,10 @@ function App() {
     const submission = queuedEditSubmission()
     if (!submission) return false
     const { target, savedKey, promptId, submitted, content } = submission
+    if (target.interruption || target.archivedAt) {
+      setError('Reopen this session before sending its queued work.')
+      return false
+    }
     if (selectedProviderCapability?.supportsQueuedPromptDispatch !== true) {
       setError('Update the owning runtime before sending a queued edit immediately.')
       return false
@@ -13702,7 +13716,7 @@ function App() {
 
   async function queueDragEnded(event: DragEndEvent) {
     const { active, over } = event
-    if (!selected || !over || active.id === over.id) {
+    if (!selected || !over || active.id === over.id || selectedRetained) {
       return
     }
     if (selected.queuedDispatch) {
@@ -13794,7 +13808,7 @@ function App() {
 
 
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
-    if (!selected || queueActionId) {
+    if (!selected || queueActionId || selectedRetained) {
       return
     }
 
@@ -15300,14 +15314,14 @@ function App() {
           ) : null}
           {selected?.pendingPermission && !selected.pendingPermission.stale ? (
             <PermissionCard
-              disabled={permissionBusy || Boolean(selected.interruption)}
+              disabled={permissionBusy || selectedRetained}
               onReply={(optionId) => void replyToPermission(optionId)}
               permission={selected.pendingPermission}
             />
           ) : null}
           {selected?.pendingUserInput && !selected.pendingUserInput.stale ? (
             <UserInputCard
-              disabled={userInputBusy || Boolean(selected.interruption)}
+              disabled={userInputBusy || selectedRetained}
               // The answer being composed belongs to this question on this
               // session. Keying on it lets a new question start from a blank
               // card, and keeps the card being filled in from being emptied
@@ -15436,7 +15450,7 @@ function App() {
                 {selected.queuedDispatch?.state === 'uncertain' ? (
                   <button
                     className="queued-edit-banner__save"
-                    disabled={Boolean(queueActionId) || sending}
+                    disabled={Boolean(queueActionId) || sending || selectedRetained}
                     onClick={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
                     type="button"
                   >
@@ -15475,6 +15489,7 @@ function App() {
                             void manageQueuedPrompt(prompt.id, false)
                           }
                           suspended={selected.suspended === true}
+                          retained={selectedRetained}
                           prompt={prompt}
                         />
                       ))}

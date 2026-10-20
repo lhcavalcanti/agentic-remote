@@ -85,6 +85,8 @@ import {
 } from './background-task-adapter.js'
 import { BackgroundTaskTracker } from './background-task-tracker.js'
 import {
+  assertSessionNotRetained,
+  isRetainedRefusal,
   SessionReplacementCleanupError,
   SessionStore,
   StaleQueuedPromptReservationError,
@@ -2367,6 +2369,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const session of this.store.discoveryIndex()) {
       const seed = this.store.recoverySeed(session.id)
       if (seed?.state !== 'pending') continue
+      // A retained session's brief waits for Reopen, which dispatches it.
+      if (session.interruptedAt || session.archivedAt) continue
       const terminal = this.store.backend(session.id) === 'terminal'
       if (terminal && this.isTerminalRecoveryPending(session.id)) continue
       this.scheduleRecoverySeedDispatch(session.id)
@@ -2414,10 +2418,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             if (
               this.stopped || this.deletingSessions.has(sessionId) ||
               current.suspended || this.suspendingSessions.has(sessionId) ||
+              current.interruption || current.archivedAt ||
               (terminal && this.isTerminalRecoveryPending(sessionId))
             ) return undefined
+            let claimed: SessionDetail
+            try {
+              claimed = await this.store.claimRecoverySeed(sessionId, seed.prompt)
+            } catch (error) {
+              // Retained after the read above: the brief stays pending for Reopen.
+              if (isRetainedRefusal(error)) return undefined
+              prompt = seed.prompt
+              throw error
+            }
             prompt = seed.prompt
-            const claimed = await this.store.claimRecoverySeed(sessionId, seed.prompt)
             this.publish(claimed)
             if (terminal) {
               let sent: boolean
@@ -2522,6 +2535,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.terminalActivations.has(sessionId) || this.resumingSessions.has(sessionId) ||
       this.recoverySeedDispatches.has(sessionId) || this.deletingSessions.has(sessionId) ||
       this.suspendingSessions.has(sessionId) ||
+      // Queued, running, or detached background work is still active work.
+      hasActiveBackgroundTasks(this.backgroundTaskTracker.get(sessionId)) ||
       (!recovering && (
         this.startupRecoveryPending || this.isTerminalRecoveryPending(sessionId) ||
         this.admissions.hasPending(sessionId) || this.lifecycleLocks.has(sessionId)))
@@ -2550,13 +2565,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private assertNotRetained(sessionId: string, action: string, archivedOnly = false): void {
-    const session = this.store.get(sessionId)
-    if (session?.archivedAt || (!archivedOnly && session?.interruption)) {
-      throw Object.assign(
-        new Error(`Reopen the ${session.archivedAt ? 'archived' : 'interrupted'} session before ${action}. Nothing was changed.`),
-        { statusCode: 409, uncertainDelivery: false },
-      )
-    }
+    assertSessionNotRetained(this.store.get(sessionId), action, archivedOnly)
   }
 
   private assertTerminalRecoverySettled(sessionId: string): void {
@@ -2914,14 +2923,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async activateSession(id: string): Promise<SessionDetail> {
-    return this.publicSession(await this.serializeLifecycle(
+    const activated = await this.serializeLifecycle(
       id,
       () => this.admissions.run(
         id,
         () => this.activateSerialized(id),
         this.store.backend(id) === 'terminal',
       ),
-    ))
+    )
+    // A context brief held while the session was retained goes out now,
+    // once, ahead of its queue; the dispatcher takes the lifecycle lock itself.
+    if (this.store.recoverySeed(id)?.state === 'pending') this.scheduleRecoverySeedDispatch(id)
+    return this.publicSession(activated)
   }
 
   async configureRetention(
@@ -5488,6 +5501,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
     acknowledgesDispatch?: string,
   ): Promise<RemovedQueuedPrompt> {
+    this.assertNotRetained(sessionId, 'changing its queue')
     if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
       const original = this.getSession(sessionId)?.queuedPrompts
@@ -5511,6 +5525,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
     rawContent: string,
   ): Promise<RemovedQueuedPrompt> {
+    this.assertNotRetained(sessionId, 'changing its queue')
     const content = await this.normalizeQueuedContent(sessionId, rawContent)
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
       this.queuedDispatches.assertAvailable(sessionId)
@@ -5572,6 +5587,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     order: string[],
   ): Promise<SessionDetail> {
+    this.assertNotRetained(sessionId, 'changing its queue')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
       this.queuedDispatches.assertAvailable(sessionId)
       const session = await this.store.reorderQueuedPrompts(sessionId, order)
@@ -9543,6 +9559,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped || this.deletingSessions.has(sessionId)) {
       throw queueConflict('The session is no longer available.')
     }
+    this.assertNotRetained(sessionId, 'dispatching its queue')
     if (this.drainingSessions.has(sessionId)) {
       throw queueConflict('This queue is already dispatching. Your rewrite was not sent.')
     }
@@ -9568,6 +9585,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             )
           }
         }
+        assertSessionNotRetained(stored, 'dispatching its queue')
         assertIdle(stored)
         const result = await this.queuedDispatches.run(
           sessionId,

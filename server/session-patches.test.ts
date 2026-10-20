@@ -137,6 +137,26 @@ describe('session publications', () => {
     expect(legacy.sent).toEqual([])
   })
 
+  it('keeps the published transcript when a transcript-less roster summary is upserted', () => {
+    const publications = new SessionPublications()
+    const holder = new Browser(true)
+    publications.add(holder.socket)
+    const messages = [{ id: 'm', role: 'assistant' as const, content: 'kept', createdAt: at }]
+    publications.broadcast({ type: 'session.upserted', session: session('a', messages) })
+    const late = new Browser(true)
+    publications.add(late.socket)
+    publications.broadcast({
+      type: 'session.upserted', summary: true,
+      session: session('a', [], { isOpen: false, archivedAt: at, revision: 4 }),
+    })
+    for (const browser of [holder, late]) {
+      expect(browser.seen.get('local:a')).toMatchObject({ archivedAt: at, revision: 4, messages })
+    }
+    publications.broadcast({ type: 'session.upserted', session: session('a', [...messages, { ...messages[0], id: 'n' }]) })
+    expect(holder.seen.get('local:a')!.messages.map((message) => message.id)).toEqual(['m', 'n'])
+    expect(holder.resyncCount).toBe(0)
+  })
+
   it('forgets publications when no patching socket remains', () => {
     const publications = new SessionPublications()
     const browser = new Browser(true)

@@ -463,7 +463,15 @@ export type ServerEvent =
 
 export type HubEvent =
   | ManagerEvent
-  | { type: 'session.upserted'; session: ManagedSession }
+  | {
+      type: 'session.upserted'
+      session: ManagedSession
+      /**
+       * A roster summary whose `messages` were never read, as a node resync
+       * sends. Its metadata applies; the transcript already held is kept.
+       */
+      summary?: true
+    }
   | {
       type: 'session.order.updated'
       order: SessionOrderSnapshot
@@ -528,7 +536,7 @@ export interface SessionMessagesPatch {
  */
 export type HubWireEvent =
   | Exclude<HubEvent, { type: 'session.upserted' }>
-  | { type: 'session.upserted'; session: ManagedSession; patchVersion?: number }
+  | { type: 'session.upserted'; session: ManagedSession; patchVersion?: number; summary?: true }
   | {
       type: 'session.patched'
       session: Omit<ManagedSession, 'messages'>

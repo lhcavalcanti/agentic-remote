@@ -2302,6 +2302,54 @@ describe('remote snapshot consistency', () => {
     manager.stop()
   })
 
+  it('keeps a cached session that reopened between the roster snapshot and its probe', async () => {
+    const { manager, client, computer, managed, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSessionRetention: true,
+    }])
+    manager['sessionCache'].set(computer.id, [managed({
+      ...session('reopened', 'Reopened'), revision: 2, isOpen: false, archivedAt: '2026-10-19T06:52:00Z',
+    })])
+    vi.spyOn(client, 'listSessions').mockResolvedValue([])
+    vi.spyOn(client, 'listBackgroundTasks').mockResolvedValue(taskSnapshot(false))
+    vi.spyOn(client, 'getSession').mockResolvedValue({ ...session('reopened', 'Reopened'), revision: 3, isOpen: true })
+    await manager['resyncRemoteComputer'](computer, client)
+    expect(events.some((event) => event.type === 'session.removed')).toBe(false)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', session: expect.objectContaining({ id: 'reopened', isOpen: true, revision: 3 }),
+    }))
+    expect(manager['sessionCache'].get(computer.id)?.map((entry) => entry.id)).toEqual(['reopened'])
+    manager.stop()
+  })
+
+  it('resyncs roster summaries as transcript-less and reads tasks only for open sessions, bounded', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true,
+      supportsSessionRetention: true, supportsBackgroundTasks: true,
+    }])
+    const open = Array.from({ length: 16 }, (_, index) => session(`open-${index}`, `Open ${index}`))
+    const archived = { ...session('archived', 'Archived'), isOpen: false, archivedAt: '2026-10-19T06:52:00Z' }
+    vi.spyOn(client, 'listSessions').mockResolvedValue([...open, archived])
+    let inFlight = 0
+    let peak = 0
+    vi.spyOn(client, 'listBackgroundTasks').mockImplementation(async () => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 2))
+      inFlight -= 1
+      return taskSnapshot(false)
+    })
+    await manager['resyncRemoteComputer'](computer, client)
+    const upserted = events.filter((event) => event.type === 'session.upserted')
+    expect(upserted).toHaveLength(open.length + 1)
+    for (const event of upserted) expect(event).toMatchObject({ summary: true })
+    expect(vi.mocked(client.listBackgroundTasks).mock.calls.map(([id]) => id).sort())
+      .toEqual(open.map((entry) => entry.id).sort())
+    expect(peak).toBeLessThanOrEqual(8)
+    manager.stop()
+  })
+
   it('does not resurrect an archived record from an in-flight or offline roster snapshot', async () => {
     const { manager, client, computer, events } = await remoteSnapshotFixture()
     const response = deferred<SessionDetail[]>()

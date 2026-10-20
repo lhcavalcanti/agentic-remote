@@ -4,7 +4,7 @@ import type {
   QueuedPromptDispatchResult,
   SessionDetail,
 } from '../shared/contracts.js'
-import type { SessionStore } from './session-store.js'
+import { assertSessionNotRetained, type SessionStore } from './session-store.js'
 
 export interface QueuedDispatchTarget {
   promptId: string
@@ -209,7 +209,9 @@ export class QueuedDispatches {
     promptId: string,
     acknowledgesDispatch?: string,
   ): Promise<SessionDetail | undefined> {
-    const claim = this.store.get(sessionId)?.queuedDispatch
+    const current = this.store.get(sessionId)
+    assertSessionNotRetained(current, 'changing its queue')
+    const claim = current?.queuedDispatch
     if (!claim) {
       if (acknowledgesDispatch) {
         throw queueConflict('That dispatch no longer owns this queue item. Read the queue again.')
@@ -223,6 +225,7 @@ export class QueuedDispatches {
       throw queueConflict('Check the unconfirmed dispatch before discarding it from a fresh queue snapshot.')
     }
     const result = await this.store.update(sessionId, (session) => {
+      assertSessionNotRetained(session, 'changing its queue')
       if (session.queuedDispatch?.attemptId !== claim.attemptId) {
         throw queueConflict('The queued dispatch changed. Read the queue again.')
       }
@@ -261,6 +264,12 @@ export class QueuedDispatches {
   ): Promise<QueuedPromptDispatchResult | undefined> {
     const deadline = Date.now() + 20_000
     const before = await this.store.readAfterWrites(sessionId)
+    // A retained queue waits, untouched, for Reopen; only a reader's explicit
+    // dispatch hears why.
+    if (before.archivedAt || before.interruption) {
+      if (!target) return undefined
+      assertSessionNotRetained(before, 'dispatching its queue')
+    }
     if (before.queuedDispatch) {
       if (!target) return undefined
       this.assertAvailable(sessionId)
@@ -302,6 +311,7 @@ export class QueuedDispatches {
       let claimed: SessionDetail
       try {
         claimed = await this.store.update(sessionId, (session) => {
+          assertSessionNotRetained(session, 'dispatching its queue')
           assertIdle(session)
           if (
             session.queuedDispatch || session.failedPrompt ||

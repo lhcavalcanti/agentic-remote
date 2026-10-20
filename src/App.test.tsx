@@ -7909,6 +7909,48 @@ describe('App', () => {
     expect(restartSession).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['archived', { isOpen: false, archivedAt: '2026-10-19T06:52:00Z' }],
+    ['interrupted', { status: 'error' as const, interruption: { detectedAt: '2026-10-19T06:52:00Z', previousStatus: 'running' as const } }],
+  ])('keeps queued work read-only on an %s session until it is reopened', async (_label, retained) => {
+    const kept = {
+      ...session, ...retained,
+      queuedPrompts: [
+        { id: 'first', content: 'First queued', createdAt: '2026-10-19T06:50:00Z' },
+        { id: 'second', content: 'Second queued', createdAt: '2026-10-19T06:51:00Z' },
+      ],
+      queuedCount: 2,
+    }
+    vi.mocked(listSessions).mockResolvedValue([kept])
+    vi.mocked(getSession).mockResolvedValue(kept)
+    render(<App />)
+    await screen.findByText('First queued')
+    for (const index of [1, 2]) {
+      expect(screen.getByRole('button', { name: `Edit queued prompt ${index}` })).toBeDisabled()
+      expect(screen.getByRole('button', { name: `Remove queued prompt ${index}` })).toBeDisabled()
+      expect(screen.getByRole('button', { name: `Reorder queued prompt ${index}` })).toHaveAttribute('aria-disabled', 'true')
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+    expect(removeQueuedPrompt).not.toHaveBeenCalled()
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
+    expect(reorderQueuedPrompts).not.toHaveBeenCalled()
+  })
+
+  it('keeps the open transcript when a node resync sends a transcript-less summary', async () => {
+    render(<App />)
+    await screen.findByText('Hello agent')
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted', summary: true,
+          session: { ...session, title: 'Renamed while offline', messages: [] },
+        }),
+      } as MessageEvent)
+    })
+    expect(await screen.findAllByText('Renamed while offline')).not.toHaveLength(0)
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+  })
+
   it('saves retention on the owning computer and closes the retention dialog with Escape', async () => {
     vi.mocked(listComputers).mockResolvedValue([{
       ...computer, providers: computer.providers?.map((provider) => ({ ...provider, supportsSessionRetention: true })),

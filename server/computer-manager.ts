@@ -72,6 +72,8 @@ interface RemoteSessionListing {
   previous: ManagedSession[]
   authoritative: boolean
   token: symbol
+  /** Sessions read in full; every other entry is a transcript-less summary. */
+  detailed?: Set<string>
 }
 
 interface RemoteSessionRead {
@@ -1113,6 +1115,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         const merged = new Map(
           sessions.map((session) => [session.id, managedSession(session, computer)]),
         )
+        const detailed = new Set<string>()
         const previous = this.sessionCache.get(computer.id) ?? []
         const supportsRetention = client.providers.some((provider) => provider.supportsSessionRetention === true)
         const unlisted = previous.filter((session) => !merged.has(session.id) && !read.changes.has(session.id))
@@ -1131,7 +1134,12 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             async (session) => {
               try {
                 const retained = await client.getSession(session.id, { passive: true })
-                if (retained.archivedAt) merged.set(session.id, managedSession(retained, computer))
+                // Archived, or reopened after the roster was read: both are
+                // still on the roster. Only a closed, unarchived record leaves.
+                if (retained.archivedAt || retained.isOpen !== false) {
+                  merged.set(session.id, managedSession(retained, computer))
+                  detailed.add(session.id)
+                }
               } catch (error) {
                 // One unreadable record must not fail the whole roster or
                 // stall deletion reconciliation for every other session.
@@ -1151,6 +1159,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           if (session) {
             if (sessionAtLeastAsNew(session, merged.get(id))) {
               merged.set(id, session)
+              detailed.add(id)
             }
           } else {
             merged.delete(id)
@@ -1160,7 +1169,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           !supportsRetention || session.isOpen !== false || session.archivedAt)
         this.sessionCache.set(computer.id, latest)
         this.snapshotTokens.set(computer.id, token)
-        return { sessions: latest, previous, authoritative: true, token }
+        return { sessions: latest, previous, authoritative: true, token, detailed }
       }).finally(() => {
         if (this.sessionReads.get(computer.id) === read) {
           this.sessionReads.delete(computer.id)
@@ -1187,7 +1196,9 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         return
       }
       for (const session of listing.sessions) {
-        this.emit('event', { type: 'session.upserted', session })
+        this.emit('event', listing.detailed?.has(session.id)
+          ? { type: 'session.upserted', session }
+          : { type: 'session.upserted', session, summary: true })
       }
       const live = new Set(listing.sessions.map((session) => session.id))
       for (const session of listing.previous) {
@@ -1212,7 +1223,11 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         }
         return
       }
-      await Promise.all(listing.sessions.map(async (session) => {
+      // An archived or closed session has no running work to report, and a
+      // large roster must not fan out one unbounded read per entry.
+      await mapWithConcurrency(listing.sessions.filter((session) =>
+        session.isOpen !== false && !session.archivedAt,
+      ), REMOTE_RETENTION_PROBE_CONCURRENCY, async (session) => {
         const snapshot = await client.listBackgroundTasks(session.id)
         if (
           !current() || resync.taskEvents.has(session.id) ||
@@ -1226,7 +1241,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           sessionId: session.id,
           ...snapshot,
         })
-      }))
+      })
     } finally {
       if (this.remoteResyncs.get(computer.id) === resync) {
         this.remoteResyncs.delete(computer.id)

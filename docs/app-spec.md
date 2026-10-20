@@ -140,15 +140,23 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   fields do not overwrite each other.
 - Implicit archival MUST require an absent provider owner, an idle or
   intentionally suspended session, and the configured elapsed age. It MUST NOT
-  affect running/waiting work, pending questions/permissions, queued or uncertain
-  delivery, failed/recovering work, or review pins. It MUST NOT delete provider
+  affect running/waiting work, queued, running, or detached background tasks,
+  pending questions/permissions, queued or uncertain delivery,
+  failed/recovering work, or review pins. It MUST NOT delete provider
   history, metadata, files, worktrees, or saved resumability. Archival MUST NOT
   run before startup recovery has probed managed owners, and MUST re-check
   ownership and eligibility when it commits.
 - Interrupted and archived records MUST stay read-only until Reopen. Sends,
   queued work, commands, restart, clear, recovery, suspend, and runtime changes
-  MUST be refused without consuming queued or failed work. A refresh MUST NOT
+  MUST be refused without consuming queued or failed work. Queue edits,
+  removals, reorders, and immediate dispatches MUST be refused by the owning
+  computer and disabled in the UI. Automatic dispatchers, including queue
+  drains and a pending context brief, MUST leave that work pending; Reopen
+  sends a held context brief once, ahead of the queue. A refresh MUST NOT
   keep a deleted archived session selected.
+- A node resync MUST NOT blank a transcript a browser already holds: roster
+  summaries update metadata only. A cached session that reopened after the
+  roster snapshot MUST stay listed.
 - Restart recovery MUST retain queues without replaying uncertain admissions.
   Missing terminal owners and interrupted SDK turns MUST remain reviewable;
   expired callbacks MUST NOT become answerable by merely reopening a record.

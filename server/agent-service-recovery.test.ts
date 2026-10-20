@@ -1802,4 +1802,88 @@ describe('Session retention safety', () => {
     await expect(f.service.restartSession('pending')).rejects.toMatchObject({ statusCode: 409 })
     expect(f.client.resumeSession).not.toHaveBeenCalled()
   })
+
+  it('keeps a pending context brief pending when startup recovery interrupts its session, and sends it once after Reopen', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    await f.store.update('pending', (session) => {
+      Object.assign(session, { recoverySeed: { prompt: 'Context brief', state: 'pending' } })
+      session.failedPrompt = { content: 'Context brief', failedAt: timestamp }
+    })
+    f.terminal.create.mockRejectedValue(new Error('Synthetic unavailable runtime'))
+    await f.service.start()
+    expect(f.service.getSession('pending')?.interruption).toBeDefined()
+    await f.service['discoverSessions']()
+    await Promise.all(f.service['recoverySeedDispatches'].values())
+    expect(f.store.recoverySeed('pending')).toMatchObject({ state: 'pending', prompt: 'Context brief' })
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    await f.service.activateSession('pending')
+    await vi.waitFor(() => expect(f.store.recoverySeed('pending')).toBeUndefined())
+    expect((f.terminal.send.mock.calls as unknown[][]).filter((call) => call[1] === 'Context brief')).toHaveLength(1)
+  })
+
+  it.each([
+    ['interrupted', (f: Awaited<ReturnType<typeof fixture>>) => f.store.markInterrupted('pending')],
+    ['archived', (f: Awaited<ReturnType<typeof fixture>>) => f.store.update('pending', (session) => {
+      session.isOpen = false
+      session.archivedAt = timestamp
+    })],
+  ])('refuses to rewrite, discard, reorder or dispatch the queue of an %s Copilot session', async (_label, retain) => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.queuedPrompts = [prompt('first'), prompt('second')]
+      session.queuedCount = 2
+    })
+    await retain(f)
+    const attempts = [
+      () => f.service.updateQueuedPrompt('pending', 'first', 'Rewritten'),
+      () => f.service.removeQueuedPrompt('pending', 'second'),
+      () => f.service.reorderQueuedPrompts('pending', ['second', 'first']),
+      () => f.service.dispatchQueuedPrompt('pending', 'first', 'Dispatched'),
+    ]
+    for (const attempt of attempts) {
+      await expect(attempt()).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen/) })
+    }
+    await f.store.flush()
+    expect((await f.persisted()).sessions.pending.queuedPrompts).toEqual([prompt('first'), prompt('second')])
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('does not archive an ownerless session while a tracked background task is still running', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    const task = {
+      id: 'detached-build', type: 'shell' as const, description: 'Detached build',
+      startedAt: timestamp, status: 'running' as const, canCancel: true,
+      executionMode: 'background' as const, attachmentMode: 'detached' as const,
+    }
+    f.service['backgroundTaskTracker'].replace('pending', [task], true)
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: true })
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+    f.service['backgroundTaskTracker'].replace('pending', [{ ...task, status: 'completed', canCancel: false }], true)
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')).toMatchObject({ isOpen: false, archivedAt: expect.any(String) })
+  })
+
+  it('re-checks tracked background tasks when the archival write commits', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.configureRetention('pending', { pinned: false, idleDays: 7 })
+    const syncOpen = f.store.syncOpen.bind(f.store)
+    vi.spyOn(f.store, 'syncOpen').mockImplementationOnce(async (...args) => {
+      f.service['backgroundTaskTracker'].replace('pending', [{
+        id: 'late-task', type: 'agent', description: 'Late agent', startedAt: timestamp,
+        status: 'running', canCancel: true, executionMode: 'background',
+      }], true)
+      return syncOpen(...args)
+    })
+    await f.service['discoverSessions']()
+    expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
+  })
 })

@@ -1384,6 +1384,29 @@ describe('SessionStore', () => {
     expect(reloaded.get('custom-title')).not.toHaveProperty('customTitle')
   })
 
+  it.each(['interrupted', 'archived'] as const)('refuses queue rewrites and context-brief claims on an %s record', async (state) => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'retained', cwd: '/tmp/project', title: 'Retained', updatedAt: '2026-07-25T01:00:00.000Z',
+      status: 'idle', messages: [],
+    })
+    for (const id of ['first', 'second']) {
+      await store.enqueuePrompt('retained', { id, content: id, createdAt: '2026-07-25T01:00:01.000Z' })
+    }
+    await store.update('retained', (session) => {
+      Object.assign(session, { recoverySeed: { prompt: 'Brief', state: 'pending' } })
+      if (state === 'archived') Object.assign(session, { isOpen: false, archivedAt: '2026-07-26T00:00:00.000Z' })
+    })
+    if (state === 'interrupted') await store.markInterrupted('retained')
+    const refused = { statusCode: 409, message: expect.stringMatching(/Reopen/) }
+    await expect(store.removeQueuedPrompt('retained', 'first')).rejects.toMatchObject(refused)
+    await expect(store.updateQueuedPrompt('retained', 'first', 'Rewritten')).rejects.toMatchObject(refused)
+    await expect(store.reorderQueuedPrompts('retained', ['second', 'first'])).rejects.toMatchObject(refused)
+    await expect(store.claimRecoverySeed('retained', 'Brief')).rejects.toMatchObject(refused)
+    expect(store.get('retained')?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['first', 'second'])
+    expect(store.recoverySeed('retained')).toMatchObject({ state: 'pending' })
+  })
+
   it('persists queued prompts and removes a selected entry', async () => {
     const { directory, store } = await createStore()
     await store.create({

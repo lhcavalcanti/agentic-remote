@@ -24,8 +24,8 @@ An already-old eligible
 record can archive on the next pass: Copilot discovery runs every 10 seconds;
 Claude checks every 60 seconds, and both reconcile at startup. Archival requires
 no live provider owner and an idle or intentionally suspended state. Queues,
-unconfirmed dispatches, questions, permissions, failures, context recovery, and
-review pins prevent it. A previously running/waiting interrupted turn is not
+unconfirmed dispatches, queued, running, or detached background tasks,
+questions, permissions, failures, context recovery, and review pins prevent it. A previously running/waiting interrupted turn is not
 reclassified as idle just because its process disappeared.
 
 Nothing archives until startup recovery has probed every managed terminal owner.
@@ -50,7 +50,9 @@ release its queue; explicitly continue after reviewing its result. Interrupted
 and archived records are read-only until Reopen: sends, queued prompts, retries,
 commands, restart, clear, recovery, suspend, tmux moves, and runtime changes are
 refused with nothing consumed, and resuming an archived record also requires
-Reopen. Expired
+Reopen. Queued prompts cannot be edited, removed, reordered, or dispatched until
+Reopen, and a pending context brief waits too; Reopen sends it once before the
+queue continues. Expired
 questions/approvals remain visible but cannot invoke dead callbacks. Copilot
 supports **Recover conversation**; Claude can continue with a new prompt.
 

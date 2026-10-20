@@ -72,6 +72,34 @@ export type TerminalQueueOutcome =
   | { kind: 'accepted'; startedTurn: boolean; notice?: string }
   | { kind: 'failed'; uncertain: boolean }
 
+/**
+ * Refuses work on a session kept for review: an interrupted or archived
+ * record's queue, runtime, and pending briefs stay exactly as they are until
+ * the reader reopens it.
+ */
+export class RetainedSessionError extends Error {
+  readonly statusCode = 409
+  readonly uncertainDelivery = false
+
+  constructor(state: 'archived' | 'interrupted', action: string) {
+    super(`Reopen the ${state} session before ${action}. Nothing was changed.`)
+    this.name = 'RetainedSessionError'
+  }
+}
+
+export function assertSessionNotRetained(
+  session: Pick<SessionDetail, 'archivedAt' | 'interruption'> | undefined,
+  action: string,
+  archivedOnly = false,
+): void {
+  if (session?.archivedAt) throw new RetainedSessionError('archived', action)
+  if (!archivedOnly && session?.interruption) throw new RetainedSessionError('interrupted', action)
+}
+
+export function isRetainedRefusal(error: unknown): error is RetainedSessionError {
+  return error instanceof RetainedSessionError
+}
+
 export class SessionReplacementCleanupError extends Error {
   constructor(readonly replacement: SessionDetail, cause: unknown) {
     super('Conversation cleared, but previous uploads could not be removed.', { cause })
@@ -1503,6 +1531,7 @@ export class SessionStore {
       if (session.recoverySeed?.state !== 'pending' || session.recoverySeed.prompt !== prompt) {
         throw Object.assign(new Error('The recovery seed is no longer pending'), { statusCode: 409 })
       }
+      assertSessionNotRetained(session, 'sending its context brief')
       session.recoverySeed = {
         prompt,
         state: 'dispatching',
@@ -1830,6 +1859,7 @@ export class SessionStore {
   ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
     let removed: QueuedPrompt | undefined
     const session = await this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'changing its queue')
       const queue = stored.queuedPrompts || []
       const index = queue.findIndex((prompt) => prompt.id === promptId)
       if (index >= 0) {
@@ -1849,6 +1879,7 @@ export class SessionStore {
   ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
     let updated: QueuedPrompt | undefined
     const session = await this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'changing its queue')
       const queue = stored.queuedPrompts || []
       const index = queue.findIndex((prompt) => prompt.id === promptId)
       if (index < 0) {
@@ -1886,6 +1917,7 @@ export class SessionStore {
     order: string[],
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'changing its queue')
       const queue = stored.queuedPrompts || []
       if (order.length !== queue.length) {
         throw Object.assign(

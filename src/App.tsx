@@ -192,6 +192,7 @@ import {
   hasActiveBackgroundTasks,
   hasRunningBackgroundAgent,
 } from '../shared/background-tasks'
+import { terminalSendOptions } from '../shared/send-policy'
 import {
   knowledgeAbsolutePath,
   normalizeKnowledgeRelativePath,
@@ -12809,34 +12810,28 @@ function App() {
       submissionsInFlight.current.add(targetKey)
       submissionAnchors.current.add(targetKey)
       setSending(true)
-      const dispatch = (
-        replaceTerminalDraft = false,
-        acknowledgesFailure = acknowledgedFailure,
-      ) =>
-        isCommand
-          ? executeCommand(selected.computerId, selected.id, {
-              // A restored prompt can be a slash command, and it answers the
-              // failure just as a message does.
-              acknowledgesFailure,
-              command: content,
-              enqueue: shouldEnqueue,
-              ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
-            })
-          : sendMessage(selected.computerId, selected.id, {
-              // Whatever they were handed back is answered by this, whether
-              // they sent it as it was, edited it, or replaced it outright.
-              acknowledgesFailure,
-              content,
-              enqueue: shouldEnqueue,
-              ...(replaceTerminalDraft ? { replaceTerminalDraft: true } : {}),
-            })
-      const response = await dispatch(
-        !shouldEnqueue &&
-          !appLocalCommand &&
-          (selected.status === 'idle' || selected.status === 'error') &&
-          selected.provider === 'copilot' &&
-          selected.executionMode === 'tmux',
-      )
+      const sendOptions = terminalSendOptions({
+        status: selected.status,
+        provider: selected.provider,
+        executionMode: selected.executionMode,
+        enqueue: shouldEnqueue,
+        appLocalCommand,
+      })
+      const response = await (isCommand
+        ? executeCommand(selected.computerId, selected.id, {
+            // A restored prompt can be a slash command, and it answers the
+            // failure just as a message does.
+            acknowledgesFailure: acknowledgedFailure,
+            command: content,
+            ...sendOptions,
+          })
+        : sendMessage(selected.computerId, selected.id, {
+            // Whatever they were handed back is answered by this, whether
+            // they sent it as it was, edited it, or replaced it outright.
+            acknowledgesFailure: acknowledgedFailure,
+            content,
+            ...sendOptions,
+          }))
       const updated = currentSessionResponse(response)
       if (!composerMounted.current) {
         return

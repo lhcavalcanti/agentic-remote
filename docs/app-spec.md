@@ -150,9 +150,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   queued work, commands, restart, clear, recovery, suspend, and runtime changes
   MUST be refused without consuming queued or failed work. Queue edits,
   removals, reorders, and immediate dispatches MUST be refused by the owning
-  computer and disabled in the UI. Automatic dispatchers, including queue
-  drains and a pending context brief, MUST leave that work pending; Reopen
-  sends a held context brief once, ahead of the queue. A refresh MUST NOT
+  computer and disabled in the UI. Automatic dispatchers, including terminal
+  and SDK queue drains and a pending context brief, MUST leave that work
+  pending in FIFO order, and the durable queue claim MUST refuse a retained
+  record so a retention committed mid-drain sends nothing. Reopen sends a
+  held context brief once, ahead of the queue, and then drains the queue once
+  in order. A refresh MUST NOT
   keep a deleted archived session selected.
 - A node resync MUST NOT blank a transcript a browser already holds: roster
   summaries update metadata only. A cached session that reopened after the

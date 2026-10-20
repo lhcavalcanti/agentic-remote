@@ -9540,6 +9540,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
     } catch (error) {
       if (error instanceof StaleQueuedPromptReservationError) this.sdkDrainRequested.add(sessionId)
+      // Retention landed at the claim: the queue is intact and Reopen drains it.
+      else if (isRetainedRefusal(error)) this.sdkDrainRequested.delete(sessionId)
       else {
         this.sdkDrainRequested.delete(sessionId)
         this.publishError(sessionId, error)
@@ -9707,6 +9709,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const retry = this.pendingTerminalQueueClaims.get(sessionId)
       if (retry && Date.now() < retry.retryAt) return false
       const stored = await this.store.readAfterWrites(sessionId)
+      if (stored.interruption || stored.archivedAt) {
+        // Retained work waits, untouched and unpolled, for Reopen to drain it.
+        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.startupTerminalQueues.delete(sessionId)
+        return false
+      }
       const next = stored.queuedPrompts?.[0]
       const terminalDispatch = this.store.terminalQueueDispatch(sessionId)
       const startup = this.startupTerminalQueues.has(sessionId)
@@ -9756,9 +9764,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.retryTerminalQueueClaim(sessionId)
         return false
       }
-      const { session, dispatch } = startup
-        ? await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, true)
-        : await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent)
+      let claimed: Awaited<ReturnType<SessionStore['claimTerminalQueuedPrompt']>>
+      try {
+        claimed = startup
+          ? await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, true)
+          : await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent)
+      } catch (error) {
+        if (!isRetainedRefusal(error)) throw error
+        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.startupTerminalQueues.delete(sessionId)
+        return false
+      }
+      const { session, dispatch } = claimed
       this.admissions.markCommitted(sessionId)
       this.pendingTerminalQueueClaims.delete(sessionId)
       if (this.stopped || this.deletingSessions.has(sessionId)) return false

@@ -1419,6 +1419,7 @@ export class SessionStore {
       }
       const prompt = existing.queuedPrompts?.[0]
       if (!prompt) return () => ({ session: this.requireSession(sessionId) })
+      assertSessionNotRetained(existing, 'dispatching its queue')
       if (
         !isCurrent() || existing.suspended ||
         (existing.status !== 'idle' && existing.status !== 'error') ||
@@ -1786,6 +1787,8 @@ export class SessionStore {
       prompt: structuredClone(expected),
     }
     const session = await this.mutate(sessionId, (stored) => {
+      // Retention committed after the drain's check still wins: nothing is claimed.
+      assertSessionNotRetained(stored, 'dispatching its queue')
       const head = stored.queuedPrompts?.[0]
       if (
         !isCurrent() || stored.suspended || stored.status !== 'idle' ||
@@ -2134,6 +2137,7 @@ export class SessionStore {
     }
     let prompt: QueuedPrompt | undefined
     const session = await this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'dispatching its queue')
       prompt = stored.queuedPrompts?.shift()
       stored.queuedCount = stored.queuedPrompts?.length || 0
     })

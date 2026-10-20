@@ -1870,6 +1870,106 @@ describe('Session retention safety', () => {
     expect(f.service.getSession('pending')).toMatchObject({ isOpen: false, archivedAt: expect.any(String) })
   })
 
+  const idleComposer = ['Synthetic idle owner', '╻▄▄▄▄▄▄▄▄▄▄', '┃ ', '╹▀▀▀▀▀▀▀▀▀▀', ' / commands'].join('\n')
+
+  it.each(['interrupted', 'archived'] as const)('leaves an %s terminal FIFO untouched by automatic drains and drains it once, in order, after Reopen', async (state) => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    f.terminal.capture.mockResolvedValue(idleComposer)
+    await f.service.start()
+    await f.store.enqueuePrompt('pending', prompt('first'))
+    await f.store.enqueuePrompt('pending', prompt('second'))
+    await f.store.update('pending', (session) => {
+      session.status = 'idle'
+      session.interruption = undefined
+      session.failedPrompt = undefined
+    })
+    f.service['externalSessionIds'].add('pending')
+    f.service['settleTerminalRecoveryForActivation']('pending')
+    if (state === 'interrupted') await f.store.markInterrupted('pending')
+    else await f.store.update('pending', (session) => { session.archivedAt = timestamp })
+    f.service['wakeTerminalQueue']('pending')
+    await Promise.all(f.service['terminalQueueWakeups'].values())
+    await f.drainNow()
+    f.service['wakeSdkQueue']('pending')
+    await Promise.all(f.service['sdkQueueWakeups'].values())
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')?.queuedPrompts).toEqual([prompt('first'), prompt('second')])
+    expect(f.store.terminalQueueDispatch('pending')).toBeUndefined()
+
+    await f.service.activateSession('pending')
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'first', false)
+    expect(f.store.get('pending')?.queuedPrompts).toEqual([prompt('second')])
+  })
+
+  it('refuses a terminal queue claim when retention lands between the drain check and the claim', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    f.terminal.capture.mockResolvedValue(idleComposer)
+    await f.service.start()
+    await f.store.enqueuePrompt('pending', prompt('first'))
+    await f.store.enqueuePrompt('pending', prompt('second'))
+    await f.store.update('pending', (session) => {
+      session.status = 'idle'
+      session.interruption = undefined
+      session.failedPrompt = undefined
+    })
+    f.service['externalSessionIds'].add('pending')
+    f.service['settleTerminalRecoveryForActivation']('pending')
+    const claim = f.store.claimTerminalQueuedPrompt.bind(f.store)
+    const claimed = vi.spyOn(f.store, 'claimTerminalQueuedPrompt').mockImplementationOnce(async (...args) => {
+      await f.store.markInterrupted('pending')
+      return claim(...args)
+    })
+    await f.drainNow()
+    expect(claimed).toHaveBeenCalledOnce()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({
+      queuedPrompts: [prompt('first'), prompt('second')], interruption: expect.any(Object),
+    })
+    expect(f.store.terminalQueueDispatch('pending')).toBeUndefined()
+    expect(f.store.get('pending')?.failedPrompt).toBeUndefined()
+    expect(f.events.filter((event) => event.type === 'error')).toEqual([])
+    expect(f.service['pendingTerminalQueueClaims'].has('pending')).toBe(false)
+
+    await f.service.activateSession('pending')
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'first', false)
+    expect(f.store.get('pending')?.queuedPrompts).toEqual([prompt('second')])
+  })
+
+  it('refuses an automatic SDK queue claim when retention lands at claim time', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    const owner = sdkSession('pending')
+    f.client.resumeSession = vi.fn(async () => owner)
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.status = 'idle'
+      session.interruption = undefined
+      session.failedPrompt = undefined
+      session.queuedPrompts = [prompt('first'), prompt('second')]
+      session.queuedCount = 2
+    })
+    const update = f.store.update.bind(f.store)
+    vi.spyOn(f.store, 'update').mockImplementation(async (id, ...rest) => {
+      const current = f.store.get(id)
+      // Retention commits just before the queue claim's own write.
+      if (!current?.interruption && !current?.queuedDispatch) await f.store.markInterrupted(id)
+      return update(id, ...rest)
+    })
+    f.service['wakeSdkQueue']('pending')
+    await Promise.all(f.service['sdkQueueWakeups'].values())
+    expect(owner.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({
+      queuedPrompts: [prompt('first'), prompt('second')], interruption: expect.any(Object),
+    })
+    expect(f.store.get('pending')?.queuedDispatch).toBeUndefined()
+    expect(f.store.get('pending')?.failedPrompt).toBeUndefined()
+    expect(f.events.filter((event) => event.type === 'error')).toEqual([])
+  })
+
   it('re-checks tracked background tasks when the archival write commits', async () => {
     const f = await fixture(['pending'], 'sdk')
     f.ownership.aggregateError = undefined

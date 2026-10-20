@@ -52,7 +52,8 @@ commands, restart, clear, recovery, suspend, tmux moves, and runtime changes are
 refused with nothing consumed, and resuming an archived record also requires
 Reopen. Queued prompts cannot be edited, removed, reordered, or dispatched until
 Reopen, and a pending context brief waits too; Reopen sends it once before the
-queue continues. Expired
+queue continues. Automatic queue drains skip retained records, and the queue
+claim itself refuses one, so an interruption landing mid-drain sends nothing. Expired
 questions/approvals remain visible but cannot invoke dead callbacks. Copilot
 supports **Recover conversation**; Claude can continue with a new prompt.
 

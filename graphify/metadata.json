@@ -443,8 +443,8 @@
     "server/manager-journal.ts": "ef6202bcd697a0288ba6fe5979330b89c0b8a3f5eb484b73b33fb161ef4afd65",
     "server/manager-memory.test.ts": "9eb272be7cc7e235318778e136e9a9be3ad298aa956e4418652a2b76d7a0f489",
     "server/manager-memory.ts": "223ed822099340e8dc9b4d12125ae7cdd1ba6f59508e4c51b90f6763e6f9d2cd",
-    "server/manager-proactive-inbox.test.ts": "abf24c02fd4a1d5e2ed023a0a1ae494cd3aef3932584707b8f9547061eee6733",
-    "server/manager-proactive-inbox.ts": "3b38b11363dc020ec5fbe60af991e5fabe90f87c8b870692009d46e61d203dc2",
+    "server/manager-proactive-inbox.test.ts": "6911e19922ce655cc700de6b782081426e3a4b3212e83502e49466b589b4c216",
+    "server/manager-proactive-inbox.ts": "a85517800bfccf28cab3482d87aa7feacb3f96c326471e36539b8a5d46ab27c1",
     "server/manager-routes.test.ts": "81102428e3e6e6cf6635d1ff09f96a5debe5d6b68764bd4f76cf3a09869b8409",
     "server/manager-routes.ts": "9a28e2166ecc27a6d37fd15e66443c39d11b2fa19beedd1e0c007907c9cafc2d",
     "server/manager-runtime.test.ts": "8518eed66f174a4a1831b4b6a78fa25db7f37a14429ef7d8e972857870c192f9",
@@ -751,17 +751,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "1b49d157594c37c8a13c97171015de67e2cc03c07756bd5cc629e2479328430c",
+    "GRAPH_REPORT.md": "1e1329c9ad7550afb7a91aab4554e90e2cd56ac0d4c1e000bb083f6276ddb8d4",
     "communities.json": "06601d71b44ecadf195ceb730c0ee511c87b0bc3dd0ff771db790613cf2cbb49",
-    "graph.html": "4a8a1669036188d2f89b0c76d6aafd9ee087ee9d0cc27aae96b1adb57068e551",
-    "graph.json": "cd50153d3e338efe199f83cb4ae2c928091e7d62eb78780e91f2ee2c134f2873"
+    "graph.html": "9a05e5a6083de1a7de5d285edd3bdb2794f70b2c18a7eef817b0a5a740518d60",
+    "graph.json": "24db02d0862c52696b0536b6eec86e2e286c9da2a80bbcc0cfe7a8c2592ca8eb"
   },
   "schema_version": 1,
-  "source_commit": "878e19353bd65a31da533c348e2063adffd70e66",
-  "source_fingerprint": "4edd2467a743d790f0688aaa48b1a4f182e618ecd070fae63525f27ea083048f",
+  "source_commit": "861cf99a41091ebb3b4912c0ce093e39591311d4",
+  "source_fingerprint": "2e743e60d7e971879fcbf8bc89dcbf16a005469636ed1bc962dbe6ce494c47aa",
   "working_tree_changes": [
-    "docs/design/oracle-proactive-inbox.md",
-    "docs/superpowers/specs/2026-10-17-oracle-proactive-lifecycle-design.md",
     "server/manager-proactive-inbox.test.ts",
     "server/manager-proactive-inbox.ts"
   ]

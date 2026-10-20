@@ -677,6 +677,8 @@ function validatePersistedState(
       cursor.computerGeneration !== event.computerGeneration ||
       event.revision > cursor.revision ||
       event.taskGeneration > cursor.taskGeneration ||
+      (event.taskGeneration < cursor.taskGeneration &&
+        event.revision === cursor.revision) ||
       (cursor.active && event.taskGeneration === cursor.taskGeneration)
     ) {
       throw new Error('event contradicts cursor')

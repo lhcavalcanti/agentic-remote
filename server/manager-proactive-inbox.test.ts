@@ -1296,6 +1296,32 @@ describe('ManagerProactiveInbox', () => {
     expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
   })
 
+  it.each([
+    ['active', true, 'running'],
+    ['inactive', false, 'idle'],
+  ] as const)('refuses an older outcome sharing the %s cursor revision', async (_label, active, lastStatus) => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+    await inbox.observe(observation({ revision: 3, status: 'running' }))
+
+    const state = await readState(directory)
+    state.cursors[0]!.revision = 2
+    state.cursors[0]!.active = active
+    state.cursors[0]!.lastStatus = lastStatus
+    const serialized = await writeState(directory, state)
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
+  })
+
   it('accepts legal active waiting, queued, and pending-request histories on reopen', async () => {
     const inbox = await openInbox()
     await inbox.observe(observation())

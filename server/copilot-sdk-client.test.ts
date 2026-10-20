@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { copilotSdkClientOptions } from './copilot-sdk-client.js'
+import {
+  COPILOT_SDK_SESSION_DISCOVERY,
+  copilotSdkClientOptions,
+} from './copilot-sdk-client.js'
+
+describe('COPILOT_SDK_SESSION_DISCOVERY', () => {
+  it('defines the normal-session CLI configuration discovery options', () => {
+    expect(COPILOT_SDK_SESSION_DISCOVERY).toEqual({
+      enableConfigDiscovery: true,
+      enableSkills: true,
+      enableOnDemandInstructionDiscovery: true,
+      enableFileHooks: true,
+      enableHostGitOperations: true,
+    })
+  })
+})
 
 describe('copilotSdkClientOptions', () => {
   it('uses the SDK-bundled runtime by default', () => {

@@ -24,7 +24,10 @@ import {
   type SessionEvent,
   type SessionMetadata,
 } from '@github/copilot-sdk'
-import { createCopilotSdkClient } from './copilot-sdk-client.js'
+import {
+  COPILOT_SDK_SESSION_DISCOVERY,
+  createCopilotSdkClient,
+} from './copilot-sdk-client.js'
 import type {
   AgentProvider,
   AgentProviderCapability,
@@ -3062,6 +3065,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     mode?: AgentMode,
   ): Promise<SessionDetail> {
     const sdkSession = await this.client.createSession({
+      ...COPILOT_SDK_SESSION_DISCOVERY,
       workingDirectory: cwd,
       streaming: true,
       ...runtime,
@@ -7812,6 +7816,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let sdkSession: CopilotSessionLike
     try {
       sdkSession = await this.client.resumeSession(sessionId, {
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         workingDirectory: stored.cwd,
         streaming: true,
         onPermissionRequest: stored.runtime?.allowAllPermissions
@@ -7828,6 +7833,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw error
       }
       sdkSession = await this.client.createSession({
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         sessionId,
         workingDirectory: stored.cwd,
         streaming: true,

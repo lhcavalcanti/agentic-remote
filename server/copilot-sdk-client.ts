@@ -2,7 +2,16 @@ import {
   CopilotClient,
   RuntimeConnection,
   type CopilotClientOptions,
+  type SessionConfig,
 } from '@github/copilot-sdk'
+
+export const COPILOT_SDK_SESSION_DISCOVERY = {
+  enableConfigDiscovery: true,
+  enableSkills: true,
+  enableOnDemandInstructionDiscovery: true,
+  enableFileHooks: true,
+  enableHostGitOperations: true,
+} as const satisfies Partial<SessionConfig>
 
 export function copilotSdkClientOptions(
   environment: NodeJS.ProcessEnv = process.env,

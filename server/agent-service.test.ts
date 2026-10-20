@@ -225,6 +225,7 @@ class FakeCopilotClient implements CopilotClientLike {
   models: ModelInfo[] = []
   readonly createdConfigs: SessionConfig[] = []
   readonly deletedSessionIds: string[] = []
+  readonly resumedConfigs: ResumeSessionConfig[] = []
   readonly resumedSessionIds: string[] = []
   stopErrors: Error[] = []
   readonly rpc = {
@@ -255,9 +256,10 @@ class FakeCopilotClient implements CopilotClientLike {
   }
   async resumeSession(
     sessionId: string,
-    _config: ResumeSessionConfig,
+    config: ResumeSessionConfig,
   ): Promise<CopilotSessionLike> {
     this.resumedSessionIds.push(sessionId)
+    this.resumedConfigs.push(config)
     if (this.resumeError) {
       throw this.resumeError
     }
@@ -281,6 +283,13 @@ class FakeCopilotClient implements CopilotClientLike {
 const directories: string[] = []
 const services = new Set<AgentService>()
 const startService = AgentService.prototype.start
+const cliDiscovery = {
+  enableConfigDiscovery: true,
+  enableSkills: true,
+  enableOnDemandInstructionDiscovery: true,
+  enableFileHooks: true,
+  enableHostGitOperations: true,
+}
 
 function configurableModel(): ModelInfo {
   return {
@@ -347,6 +356,57 @@ beforeEach(() => {
 })
 
 describe('AgentService deletion', () => {
+  it('enables CLI configuration discovery for normal SDK session creation', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await service.createSession(directory, false)
+
+    expect(client.createdConfigs[0]).toMatchObject(cliDiscovery)
+    await service.stop()
+  })
+
+  it('enables CLI configuration discovery when resuming a persisted SDK session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = '12345678-aaaa-bbbb-cccc-123456789abe'
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: sessionId,
+        cwd: directory,
+        title: 'Persisted SDK session',
+        updatedAt: '2026-10-20T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await service.activateSession(sessionId)
+
+    expect(client.resumedConfigs[0]).toMatchObject(cliDiscovery)
+    await service.stop()
+  })
+
   it('extracts visible prompts while hiding injected context messages', () => {
     const events = JSON.parse(`[
       {
@@ -4607,7 +4667,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('recreates an empty managed session when Copilot cannot resume it', async () => {
+  it('recreates a missing empty session with CLI configuration discovery', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const store = new SessionStore(path.join(directory, 'state'))
@@ -4641,6 +4701,7 @@ describe('AgentService deletion', () => {
     expect(client.createdConfigs.at(-1)).toMatchObject({
       sessionId,
       workingDirectory: directory,
+      ...cliDiscovery,
     })
     expect(client.session.modeSwitches).toEqual([])
     await service.stop()

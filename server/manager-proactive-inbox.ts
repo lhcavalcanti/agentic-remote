@@ -166,6 +166,12 @@ interface PersistedBinding {
   boundAt: string
 }
 
+interface PersistedRetiredBinding {
+  computerId: string
+  generation: string
+  retiredAt: string
+}
+
 interface PersistedCursor {
   namespaceId: string
   computerId: string
@@ -204,6 +210,7 @@ interface PersistedState {
   version: typeof STATE_VERSION
   hubId: string
   bindings: PersistedBinding[]
+  retiredBindings: PersistedRetiredBinding[]
   cursors: PersistedCursor[]
   events: PersistedEvent[]
   nextEventSequence: number
@@ -343,6 +350,7 @@ function emptyState(hubId: string): PersistedState {
     version: STATE_VERSION,
     hubId,
     bindings: [],
+    retiredBindings: [],
     cursors: [],
     events: [],
     nextEventSequence: 1,
@@ -382,6 +390,7 @@ function validatePersistedState(
     'version',
     'hubId',
     'bindings',
+    'retiredBindings',
     'cursors',
     'events',
     'nextEventSequence',
@@ -391,6 +400,7 @@ function validatePersistedState(
     !isId(value.hubId) ||
     value.hubId !== expectedHubId ||
     !Array.isArray(value.bindings) ||
+    !Array.isArray(value.retiredBindings) ||
     !Array.isArray(value.cursors) ||
     !Array.isArray(value.events) ||
     !isPositiveSafeCounter(value.nextEventSequence)
@@ -398,7 +408,9 @@ function validatePersistedState(
     throw new Error('unsupported state header')
   }
   if (
-    value.bindings.length + value.cursors.length >
+    value.bindings.length +
+      value.retiredBindings.length +
+      value.cursors.length >
     limits.maxCursorsAndBindings
   ) {
     throw new Error('state scope capacity exceeded')
@@ -424,6 +436,36 @@ function validatePersistedState(
     }
     bindings.push(binding)
     bindingByComputer.set(binding.computerId, binding)
+  }
+
+  const retiredBindings: PersistedRetiredBinding[] = []
+  const retiredBindingKeys = new Set<string>()
+  for (const rawRetiredBinding of value.retiredBindings) {
+    assertExactKeys(rawRetiredBinding, [
+      'computerId',
+      'generation',
+      'retiredAt',
+    ])
+    const retiredBinding: PersistedRetiredBinding = {
+      computerId: requireId(rawRetiredBinding.computerId, 'computer ID'),
+      generation: requireId(
+        rawRetiredBinding.generation,
+        'computer generation',
+      ),
+      retiredAt: rawRetiredBinding.retiredAt as string,
+    }
+    const key = `${retiredBinding.computerId}\u0000${retiredBinding.generation}`
+    if (
+      !isTimestamp(retiredBinding.retiredAt) ||
+      retiredBindingKeys.has(key) ||
+      !bindingByComputer.has(retiredBinding.computerId) ||
+      bindingByComputer.get(retiredBinding.computerId)?.generation ===
+        retiredBinding.generation
+    ) {
+      throw new Error('unsupported retired binding')
+    }
+    retiredBindingKeys.add(key)
+    retiredBindings.push(retiredBinding)
   }
 
   const cursors: PersistedCursor[] = []
@@ -487,6 +529,7 @@ function validatePersistedState(
   const events: PersistedEvent[] = []
   const eventIds = new Set<string>()
   const eventSequences = new Set<number>()
+  const eventTaskKeys = new Set<string>()
   let pendingCount = 0
   for (const rawEvent of value.events) {
     if (!isRecord(rawEvent)) throw new Error('unsupported event')
@@ -560,12 +603,14 @@ function validatePersistedState(
         event.kind,
       ) ||
       eventIds.has(event.id) ||
-      eventSequences.has(event.sequence)
+      eventSequences.has(event.sequence) ||
+      eventTaskKeys.has(`${event.namespaceId}\u0000${event.taskGeneration}`)
     ) {
       throw new Error('unsupported event identity')
     }
     eventIds.add(event.id)
     eventSequences.add(event.sequence)
+    eventTaskKeys.add(`${event.namespaceId}\u0000${event.taskGeneration}`)
     if (event.lifecycle === 'pending') pendingCount += 1
     events.push(event)
   }
@@ -580,10 +625,42 @@ function validatePersistedState(
     throw new Error('unsupported event sequence')
   }
 
+  const cursorByNamespace = new Map(
+    cursors.map((cursor) => [cursor.namespaceId, cursor]),
+  )
+  for (const event of events) {
+    const currentBinding = bindingByComputer.get(event.computerId)
+    if (!currentBinding) {
+      throw new Error('event has no binding')
+    }
+    if (currentBinding.generation !== event.computerGeneration) {
+      if (
+        event.lifecycle !== 'terminal' ||
+        !retiredBindingKeys.has(
+          `${event.computerId}\u0000${event.computerGeneration}`,
+        )
+      ) {
+        throw new Error('old-generation event is pending')
+      }
+      continue
+    }
+    const cursor = cursorByNamespace.get(event.namespaceId)
+    if (
+      !cursor ||
+      cursor.computerGeneration !== event.computerGeneration ||
+      event.revision > cursor.revision ||
+      event.taskGeneration > cursor.taskGeneration ||
+      (cursor.active && event.taskGeneration === cursor.taskGeneration)
+    ) {
+      throw new Error('event contradicts cursor')
+    }
+  }
+
   return {
     version: STATE_VERSION,
     hubId: expectedHubId,
     bindings,
+    retiredBindings,
     cursors,
     events,
     nextEventSequence: value.nextEventSequence,
@@ -593,7 +670,7 @@ function validatePersistedState(
 function validateObservation(
   value: unknown,
 ): ManagerProactiveInboxObservation {
-  assertExactKeys(value, [
+  const keys = [
     'computerId',
     'computerGeneration',
     'sessionId',
@@ -605,7 +682,12 @@ function validateObservation(
     'isOpen',
     'suspended',
     'recovering',
-  ])
+  ] as const
+  if (!isRecord(value) || !hasExactKeys(value, keys)) {
+    throw new ManagerProactiveInboxValidationError(
+      'The proactive inbox observation is invalid.',
+    )
+  }
   if (
     !isId(value.computerId) ||
     !isId(value.computerGeneration) ||
@@ -848,6 +930,17 @@ export class ManagerProactiveInbox {
           },
         }
       }
+      if (
+        candidate.retiredBindings.some(
+          (retired) =>
+            retired.computerId === validComputerId &&
+            retired.generation === validGeneration,
+        )
+      ) {
+        throw new ManagerProactiveInboxScopeError(
+          'The proactive inbox computer generation was retired.',
+        )
+      }
       const retainedCursors = candidate.cursors.filter(
         (cursor) =>
           cursor.computerId !== validComputerId ||
@@ -855,7 +948,14 @@ export class ManagerProactiveInbox {
       )
       const bindingCount = candidate.bindings.length
       const nextBindingCount = current ? bindingCount : bindingCount + 1
-      if (nextBindingCount + retainedCursors.length > this.limits.maxCursorsAndBindings) {
+      const nextRetiredBindingCount =
+        candidate.retiredBindings.length + (current ? 1 : 0)
+      if (
+        nextBindingCount +
+          nextRetiredBindingCount +
+          retainedCursors.length >
+        this.limits.maxCursorsAndBindings
+      ) {
         throw new ManagerProactiveInboxCapacityError(
           'The proactive inbox scope capacity was reached.',
         )
@@ -876,6 +976,11 @@ export class ManagerProactiveInbox {
       }
       candidate.cursors = retainedCursors
       if (current) {
+        candidate.retiredBindings.push({
+          computerId: validComputerId,
+          generation: current.generation,
+          retiredAt: boundAt,
+        })
         current.generation = validGeneration
         current.boundAt = boundAt
       } else {
@@ -948,7 +1053,9 @@ export class ManagerProactiveInbox {
       const observedAt = nowIso(this.now)
       if (!current) {
         if (
-          candidate.bindings.length + candidate.cursors.length >=
+          candidate.bindings.length +
+            candidate.retiredBindings.length +
+            candidate.cursors.length >=
           this.limits.maxCursorsAndBindings
         ) {
           throw new ManagerProactiveInboxCapacityError(

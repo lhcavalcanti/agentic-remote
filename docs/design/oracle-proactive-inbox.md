@@ -62,7 +62,9 @@ suspension, and recovery do not fabricate a completion.
 finishes and never acknowledging by reading. `acknowledge` accepts only named
 events and uses one of `handled`, `irrelevant`, `superseded`, or `expired`.
 Validation is all-or-nothing; identical repeated acknowledgments are
-idempotent and a conflicting disposition is refused.
+idempotent and a conflicting disposition is refused. Observation shape failures
+use the typed `400 INVALID_INPUT` boundary rather than exposing arbitrary
+field values.
 
 ## Durability and ownership
 
@@ -78,10 +80,17 @@ revalidates the on-disk state.
 
 Only one trusted hub owner may write a directory. The store does not provide
 multi-user authorization or a generic transaction framework. A changed
-computer generation supersedes old pending events and retires old cursors;
-retained cursors fence duplicate revisions within the current generation.
-Terminal records are retained until explicit pruning, while cursors remain
-available to prevent replay.
+computer generation supersedes old pending events and retires old cursors.
+It also persists a bounded fence for each retired computer generation;
+attempting to bind that generation again is refused, even after restart or
+terminal-event pruning. Retired fences count together with current bindings
+and cursors against the existing 2,000 scope-record allowance, so the store
+refuses a full fence capacity instead of evicting history. Retained cursors
+fence duplicate revisions within the current generation, and strict load
+validation rejects impossible event/cursor relationships, including pending
+events from retired generations and multiple outcomes for one task generation.
+Terminal records are retained until explicit pruning, while retired fences and
+cursors remain available to prevent replay.
 
 Disabled instances perform no filesystem I/O or timer work. This module has
 no timer and no runtime application path in this increment.

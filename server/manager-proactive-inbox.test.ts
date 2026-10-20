@@ -17,6 +17,7 @@ import type {
 } from './manager-proactive-inbox.js'
 import {
   ManagerProactiveInbox,
+  ManagerProactiveInboxValidationError,
 } from './manager-proactive-inbox.js'
 
 describe('ManagerProactiveInbox', () => {
@@ -168,6 +169,33 @@ describe('ManagerProactiveInbox', () => {
     ])
   })
 
+  it('waits for a pending request to clear before finishing exactly once', async () => {
+    const inbox = await openInbox()
+
+    await inbox.observe(observation())
+    await inbox.observe(observation({
+      revision: 2,
+      status: 'idle',
+      hasPendingRequest: true,
+    }))
+    expect(inbox.pending()).toEqual([])
+
+    await inbox.observe(observation({
+      revision: 3,
+      status: 'idle',
+      hasPendingRequest: false,
+    }))
+    await inbox.observe(observation({
+      revision: 4,
+      status: 'idle',
+      hasPendingRequest: false,
+    }))
+
+    expect(inbox.pending()).toMatchObject([
+      { kind: 'finished', taskGeneration: 1, revision: 3 },
+    ])
+  })
+
   it('admits one failure for an active task', async () => {
     const inbox = await openInbox()
 
@@ -268,6 +296,51 @@ describe('ManagerProactiveInbox', () => {
       status: 'running',
     }))).resolves.toMatchObject({ outcome: 'baseline' })
   })
+
+  it.each([
+    ['finished again', 'idle' as const, 'idle' as const],
+    ['failed after finished', 'idle' as const, 'error' as const],
+    ['failed again', 'error' as const, 'error' as const],
+    ['finished after failed', 'error' as const, 'idle' as const],
+  ])(
+    'refuses a retired generation rebind before a %s transition, after reopen and pruning',
+    async (_label, firstTerminalStatus, retryStatus) => {
+      const inbox = await openInbox({ terminalEventRetentionMs: 1_000 })
+
+      await inbox.observe(observation())
+      await inbox.observe(observation({
+        revision: 2,
+        status: firstTerminalStatus,
+      }))
+      const event = inbox.pending()[0]!
+      await inbox.acknowledge([event.id], 'handled')
+      await inbox.bindComputer('computer-a', 'pairing-b')
+      clock += 1_001
+      await inbox.prune()
+
+      const reopened = new ManagerProactiveInbox(directory, {
+        enabled: true,
+        hubId: 'hub-a',
+        now,
+      })
+      await reopened.initialize()
+
+      await expect(reopened.bindComputer('computer-a', 'pairing-a'))
+        .rejects.toMatchObject({
+          statusCode: 409,
+          code: 'STALE_SCOPE',
+        })
+      await expect(reopened.observe(observation({
+        computerGeneration: 'pairing-a',
+        revision: 3,
+        status: retryStatus,
+      }))).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'STALE_SCOPE',
+      })
+      expect(reopened.pending()).toEqual([])
+    },
+  )
 
   it('returns detached prioritized pending snapshots and validates limits', async () => {
     const inbox = await openInbox()
@@ -589,6 +662,7 @@ describe('ManagerProactiveInbox', () => {
         version: 1,
         hubId: 'hub-a',
         bindings: [],
+        retiredBindings: [],
         cursors: [],
         events: [],
         nextEventSequence: 1,
@@ -601,6 +675,7 @@ describe('ManagerProactiveInbox', () => {
         version: 1,
         hubId: 'hub-b',
         bindings: [],
+        retiredBindings: [],
         cursors: [],
         events: [],
         nextEventSequence: 1,
@@ -673,10 +748,24 @@ describe('ManagerProactiveInbox', () => {
   it('refuses malformed observations and invalid acknowledgment input', async () => {
     const inbox = await openInbox()
 
-    expect(() => inbox.observe({
-      ...observation(),
-      extra: 'not allowed',
-    })).toThrow()
+    let unknownFieldError: unknown
+    try {
+      inbox.observe({
+        ...observation(),
+        extra: 'not allowed',
+      })
+    } catch (error) {
+      unknownFieldError = error
+    }
+    expect(unknownFieldError).toBeInstanceOf(
+      ManagerProactiveInboxValidationError,
+    )
+    expect(unknownFieldError).toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_INPUT',
+      message: 'The proactive inbox observation is invalid.',
+    })
+
     expect(() => inbox.observe(observation({
       computerId: '../outside',
     }))).toThrow()
@@ -688,19 +777,133 @@ describe('ManagerProactiveInbox', () => {
   })
 
   it('refuses scope capacity without consuming the retry', async () => {
-    const inbox = await openInbox({ maxCursorsAndBindings: 2 })
+    const inbox = await openInbox({ maxCursorsAndBindings: 3 })
     await inbox.observe(observation())
+    await inbox.observe(observation({
+      sessionId: 'session-b',
+    }))
 
     await expect(inbox.observe(observation({
-      sessionId: 'session-b',
+      sessionId: 'session-c',
     }))).rejects.toMatchObject({ statusCode: 507 })
     await expect(inbox.bindComputer('computer-a', 'pairing-b')).resolves.toMatchObject({
       changed: true,
     })
     await expect(inbox.observe(observation({
       computerGeneration: 'pairing-b',
-      sessionId: 'session-b',
+      sessionId: 'session-c',
     }))).resolves.toMatchObject({ outcome: 'baseline' })
+  })
+
+  it('refuses a rebind when its retired-generation fence would exceed scope capacity', async () => {
+    const inbox = await openInbox({ maxCursorsAndBindings: 1 })
+
+    await expect(inbox.bindComputer('computer-a', 'pairing-b'))
+      .rejects.toMatchObject({
+        statusCode: 507,
+        code: 'CAPACITY',
+      })
+    await expect(inbox.bindComputer('computer-a', 'pairing-b'))
+      .rejects.toMatchObject({
+        statusCode: 507,
+        code: 'CAPACITY',
+      })
+  })
+
+  it.each([
+    [
+      'an active cursor contradicting a current event',
+      (state: TestState) => {
+        state.cursors[0]!.active = true
+      },
+    ],
+    [
+      'a current event without its cursor',
+      (state: TestState) => {
+        state.cursors = []
+      },
+    ],
+    [
+      'a current event newer than its cursor revision',
+      (state: TestState) => {
+        state.cursors[0]!.revision = 1
+      },
+    ],
+    [
+      'a current event newer than its cursor task generation',
+      (state: TestState) => {
+        state.cursors[0]!.taskGeneration = 0
+      },
+    ],
+  ])('refuses shape-valid cross-record corruption: %s', async (_label, mutate) => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+
+    const state = await readState(directory)
+    mutate(state)
+    const serialized = await writeState(directory, state)
+
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
+  })
+
+  it('refuses a pending event from a retired generation without replacing state', async () => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+    await inbox.bindComputer('computer-a', 'pairing-b')
+
+    const state = await readState(directory)
+    const event = state.events[0]!
+    event.lifecycle = 'pending'
+    delete event.disposition
+    delete event.acknowledgedAt
+    const serialized = await writeState(directory, state)
+
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
+  })
+
+  it('refuses two outcome kinds for one task generation without replacing state', async () => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+
+    const state = await readState(directory)
+    const finished = state.events[0]!
+    state.events.push({
+      ...finished,
+      id: '4168a7f64bc98a3f0e5a58580c574dfc2cd86db88528ebda27c8c70d318ba402',
+      kind: 'failed',
+      sequence: 2,
+    })
+    state.nextEventSequence = 3
+    const serialized = await writeState(directory, state)
+
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
   })
 
   it('enforces a lower retained-event bound without evicting evidence', async () => {
@@ -717,6 +920,33 @@ describe('ManagerProactiveInbox', () => {
     ])
   })
 })
+
+type TestState = {
+  version: number
+  hubId: string
+  bindings: Array<Record<string, unknown>>
+  retiredBindings: Array<Record<string, unknown>>
+  cursors: Array<Record<string, unknown>>
+  events: Array<Record<string, unknown>>
+  nextEventSequence: number
+}
+
+function statePath(directory: string): string {
+  return path.join(directory, 'manager-proactive-inbox.json')
+}
+
+async function readState(directory: string): Promise<TestState> {
+  return JSON.parse(await readFile(statePath(directory), 'utf8')) as TestState
+}
+
+async function writeState(
+  directory: string,
+  state: TestState,
+): Promise<string> {
+  const serialized = JSON.stringify(state)
+  await writeFile(statePath(directory), serialized, { mode: 0o600 })
+  return serialized
+}
 
 async function mkdirForTest(directory: string): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 })

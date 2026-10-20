@@ -55,6 +55,8 @@ export interface TerminalFormReplyOptions {
 export interface TerminalSendOptions {
   allowDuringAgentExecution?: boolean
   replaceExistingInput?: boolean
+  /** Refuse, under the send lock, unless the agent is idle at its composer. */
+  idleOnly?: boolean
 }
 
 export interface TerminalCancelOptions {
@@ -1749,7 +1751,7 @@ export class TmuxTerminalSessionController
     enqueue: boolean,
     options: TerminalSendOptions = {},
   ): Promise<boolean> {
-    return this.sendInternal(sessionId, content, enqueue, false, options)
+    return this.sendInternal(sessionId, content, enqueue, options.idleOnly === true, options)
   }
 
   async sendWhenIdle(sessionId: string, content: string): Promise<boolean> {
@@ -2108,6 +2110,9 @@ export class TmuxTerminalSessionController
           )
         }
         if (options.replaceExistingInput) {
+          // With nothing cleared, the send keeps the working tolerance the
+          // first readiness check granted; a cleared composer must be idle.
+          const toleratesWorking = allowWorking && !existingInput
           const ownerBeforePaste = await this.owner(
             sessionId,
             currentOwner.target,
@@ -2120,13 +2125,13 @@ export class TmuxTerminalSessionController
             ownerBeforePaste.rootPid !== currentOwner.rootPid ||
             ownerBeforePaste.target !== currentOwner.target ||
             composerText(paneBeforePaste) === undefined ||
-            !terminalInputReady(paneBeforePaste) ||
+            !terminalInputReady(paneBeforePaste, toleratesWorking) ||
             composerHoldsText(paneBeforePaste) ||
             isTerminalOverlay(paneBeforePaste) ||
             parseTerminalPermission(paneBeforePaste) ||
             parseTerminalUserInput(paneBeforePaste) ||
             parseTerminalFormPrompt(paneBeforePaste) ||
-            isTerminalAgentWorking(paneBeforePaste)
+            (!toleratesWorking && isTerminalAgentWorking(paneBeforePaste))
           ) {
             throw new TerminalDraftConflictError(
               'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',

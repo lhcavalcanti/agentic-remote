@@ -48,10 +48,52 @@ Everything lives under `<data>/manager/`. `<data>` is
 | `journal.jsonl` | App | Append-only session lifecycle events with a sequence number: `created`, `status`, `renamed`, `replaced`, `removed`. Rewritten to the newest 2,000 entries once it holds 4,000. |
 | `sessions.json` | App | Registry keyed by `computerId:sessionId`: origin (`manager`, `user`, or `discovered`), task (the first prompt, truncated), first-seen time, last status, and removal tombstones. Tombstones are kept for 30 days, up to 500. |
 | `memory/**/*.md` | Agent | The agent's own notes, changed only through memory tools. Suggested layout: `MEMORY.md` as the index and durable preferences, `sessions/<id>.md` per session, `projects/<name>.md`. |
+| `structured-memory.json` | App | Optional schema-v1 semantic and episodic records, deletion tombstones, safe audit metadata, and idempotency keys. |
+| `structured-memory.backup.json` | App | Last validated structured-memory snapshot used only when the primary is missing. |
 
 The memory tools accept relative `.md` paths only. Absolute paths, `..`,
 hidden segments, and symlinks are rejected. Limits are 256 KiB per file and
 4 MiB in total. The system prompt forbids storing secrets.
+
+### Structured memory
+
+`AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY` is `off` by default and accepts
+exactly `off`, `shadow`, or `on`; any other value stops startup. `off` does not
+initialize the structured store or change Oracle's prompt. `shadow` performs
+the same local bounded retrieval as `on` and records only count/timing/status
+metrics. `on` adds the retrieved records to Oracle's prompt. Neither retrieval
+path makes a model or network request.
+
+Records are typed as preferences, facts, procedures, decisions, or outcomes.
+They carry a stable ID, exact global/user/computer/project/session scope,
+provenance, authority, confidence, validity interval, timestamps, and
+supersession links. Direct-user tools and APIs cannot write global records;
+those are reserved for policy-authorized imports. Correction preserves and
+supersedes the previous record. Forgetting keeps a content-free tombstone, so
+retry or import cannot resurrect the value.
+
+Every write is strictly validated before persistence. Credentials, secret-like
+entropy, private keys, credential URLs, sensitive paths, unsupported categories
+of personal data, malformed Unicode, invalid scopes, and oversized input are
+rejected without echoing or logging the value. Files are `0600`; writes use a
+synced unique pending file, atomic rename, directory sync, and serialized
+in-process commits. Corrupt or unsupported authoritative state is preserved
+and makes only structured memory unavailable. It is never replaced with an
+empty store.
+
+Retrieval uses exact eligible scopes and current validity, then ranks lexical
+relevance, scope specificity, authority, confidence, recency, and stable ID.
+At most eight active records are returned. Prompt data is escaped JSON inside
+an untrusted-data delimiter, capped at 6,000 characters at whole-record
+boundaries; it cannot override policy or the current request. Oracle tool
+mutations additionally require explicit remember/correct/forget intent in the
+current user message. No session output is promoted automatically.
+
+Back up the whole `<data>/manager/` directory to retain Markdown and structured
+memory together. The export API returns deterministic schema-v1 JSON; import
+requires an empty store and validates the complete state. V1 rejects unknown
+schema versions rather than guessing a migration. Switching from `on` or
+`shadow` to `off` leaves the files untouched for rollback.
 
 ## Session lifecycle
 
@@ -77,12 +119,80 @@ Open sessions (N): one line each — id · computer · title · status · provid
 Changes since your last turn: …
 Memory index (MEMORY.md): … (only when changed, after a new SDK session, or after compaction)
 Notes: … (an interrupted previous turn, or a recovery)
+Response style (the user's setting): … (always last)
 </agentic_remote_context>
 
 <user_message>…</user_message>
 ```
 
 The roster is capped at 80 open sessions, and each activity at 120 characters.
+
+## Prompt composition
+
+The text is the same on every hub and for every model. Only the runtime's own
+base prompt varies, with the Copilot CLI version (`COPILOT_BIN`).
+
+| Order | Layer | Source | Changes when |
+|---|---|---|---|
+| 1 | Copilot runtime base prompt, with its safety sections | Copilot CLI | The CLI is updated |
+| 2 | Oracle's system prompt, appended (`mode: 'append'`) | `MANAGER_SYSTEM_PROMPT`, `server/manager-context.ts` | A release changes it; sent when the conversation starts or resumes |
+| 3 | Turn context: roster, changes, memory index, notes, response style | `buildTurnContext`, `server/manager-context.ts` | Every turn |
+| 4 | Recovery brief | `recoveryBrief` | A new conversation replaces a lost one |
+| 5 | The user's message, in `<user_message>` | Oracle's message bar | Every turn |
+
+Earlier layers win. Ask mode is a note in layer 3 that the tools also enforce.
+
+Model and effort sit beside the prompt, not in it. Precedence: the
+**App settings → Oracle** choice, then `AGENTIC_REMOTE_MANAGER_MODEL` and
+`AGENTIC_REMOTE_MANAGER_REASONING_EFFORT`, then Copilot's default.
+
+### Notifications
+
+`OracleNotifier` (`shared/notifications.ts`) turns Oracle's events into
+notifications. The hub's Web Push and the native shell both use it.
+
+- **Events:**
+  - "Oracle replied" when your message is done;
+  - "Oracle couldn't answer" when it fails;
+  - "Oracle needs your OK" when it asks to close a session.
+- **Once per event.** A retried message that fails again notifies again.
+- **Held while watched.** Nothing is sent while an open app shows Oracle's
+  panel on a visible screen. That report is renewed every 30 seconds and
+  lapses after 90.
+- **Category.** These are the `oracle` category for the user's **What notifies
+  you** setting. Notifications Oracle decides to send on its own belong there
+  too.
+
+### Response style
+
+**App settings → Models → Oracle's answers** offers Concise, Balanced (the
+default, and what Oracle did before) and Detailed. The choice is kept in the
+hub's [settings profile](settings-profile.md), so it follows you to every device.
+
+- **Where it goes.** `responseStyleInstruction` words it once, as the last line
+  of layer 3, every turn.
+  - It needs no extra model request and no new conversation.
+  - A change applies from the next answer.
+  - It also reaches conversations that started under an older system prompt.
+- **What no style drops.** The line itself carries the floor:
+  - the actual answer;
+  - uncertainty;
+  - unrecovered errors, with their message;
+  - every action taken or declined, with links and reasons;
+  - what waits for the user;
+  - exact commands, code, paths, IDs and log lines;
+  - one entry per session in a status.
+- **Precedence.**
+  - A request for more or less detail in your message wins for that answer.
+  - Session output, tool results and memory cannot change the style.
+  - To change it for good, use the setting.
+- **Injection.**
+  - The style is one of three fixed values, validated on the hub, never free
+    text.
+  - Roster text is flattened to one line, so a session cannot forge a style
+    line.
+  - Session text still appears inside the trusted context block, a risk that
+    predates this design.
 
 ## Tools
 
@@ -100,6 +210,8 @@ The roster is capped at 80 open sessions, and each activity at 120 characters.
 | `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
 | `memory_list`, `memory_read`, `memory_write`, `memory_append`, `memory_delete` | The agent's memory |
+| `structured_memory_search` | Search active records in the exact scopes available to this Oracle turn |
+| `structured_memory_remember`, `structured_memory_correct`, `structured_memory_forget` | Explicit, audited structured mutations; unavailable without current-message intent |
 
 Sessions are addressed by ID; the computer is resolved from the live list. Tool
 errors return as tool results the model can read, never as thrown failures that
@@ -154,6 +266,12 @@ end the turn.
   conversation runs on (`sessionRuntime`), and the model and effort that
   could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.
+- Structured-memory routes are under `/api/manager/structured-memory`: `GET
+  /status`, `POST /search`, `POST /records`, `POST
+  /records/:id/correct`, `POST /records/:id/forget`, `GET /export`, and `POST
+  /import`. Mutations require an idempotency `requestId`; import takes a
+  deterministic JSON string and an empty store. All inherit the hub's Host and
+  Origin policy.
 - WebSocket: `manager.status`, `manager.message` (upsert), and
   `manager.delta` (streamed text, throttled).
 
@@ -210,6 +328,11 @@ end the turn.
 - Runtime tests with a fake SDK client: queueing, streaming, watchdog,
   rung-by-rung recovery, restart mid-turn, and exclusion from discovery.
 - Route tests: validation, `202`, Origin refusal, and WebSocket events.
+- Structured-memory tests cover privacy rejection, exact scope isolation,
+  ranking and prompt caps, supersession/tombstones, restart and corruption
+  recovery, atomic failures, import/export, concurrent writes, and tool/API
+  authorization. Performance gates enforce retrieval plus prompt assembly at
+  p95 <=10 ms for 1,000 records and <=25 ms for 10,000 records.
 - UI tests: bubble, panel, sending while busy, retry, and session links.
 - Live check on the development hub: ask the manager to start a disposable
   session, confirm it appears with its badge, ask what it did, close it, and

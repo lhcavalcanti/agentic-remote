@@ -160,6 +160,8 @@ async function fixture(options: {
     pushService: {
       initialize: async () => undefined,
       attach: () => undefined,
+      attachOracle: () => undefined,
+      setPolicy: () => undefined,
       stop: () => undefined,
       settings: () => ({ mutedSessions: [] }),
     } as unknown as PushNotificationService,

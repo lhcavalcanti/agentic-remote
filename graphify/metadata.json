@@ -71,6 +71,8 @@
     "server/manager-journal.ts",
     "server/manager-memory.test.ts",
     "server/manager-memory.ts",
+    "server/manager-proactive-inbox.test.ts",
+    "server/manager-proactive-inbox.ts",
     "server/manager-routes.test.ts",
     "server/manager-routes.ts",
     "server/manager-runtime.test.ts",
@@ -304,9 +306,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 159,
+  "communities": 178,
   "community_algorithm": "louvain-seed-42",
-  "edges": 13173,
+  "edges": 13368,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -346,6 +348,7 @@
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
     "docs/deployment-promotion.md": "b61e47425636a6a4552966549c5c763cd8e9b9224dc9e01aceb00242ce4c79cf",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
+    "docs/design/oracle-proactive-inbox.md": "81e28da056ba16f34b1d41a1319f8dc048f0b4bc3435d85acfccb6552244df07",
     "docs/design/session-manager.md": "6476b0fc64d1d337175bb1dd1d89a5386cea8ccf0b2fe4e9ef09a71bd0c13d25",
     "docs/design/settings-profile.md": "55cbb79747e67bf7fb637c8446d514ae815998733602979898f9cf51826848b3",
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
@@ -434,6 +437,8 @@
     "server/manager-journal.ts": "ef6202bcd697a0288ba6fe5979330b89c0b8a3f5eb484b73b33fb161ef4afd65",
     "server/manager-memory.test.ts": "9eb272be7cc7e235318778e136e9a9be3ad298aa956e4418652a2b76d7a0f489",
     "server/manager-memory.ts": "223ed822099340e8dc9b4d12125ae7cdd1ba6f59508e4c51b90f6763e6f9d2cd",
+    "server/manager-proactive-inbox.test.ts": "98dccc310fbe1954232f6c7594733fa7f21741db5965e21838188e9b1e950fbb",
+    "server/manager-proactive-inbox.ts": "f654bfab2a46fb3e7c314bb86734e69492a91f73e8b66e1e2b16a6d87689cfd3",
     "server/manager-routes.test.ts": "81102428e3e6e6cf6635d1ff09f96a5debe5d6b68764bd4f76cf3a09869b8409",
     "server/manager-routes.ts": "9a28e2166ecc27a6d37fd15e66443c39d11b2fa19beedd1e0c007907c9cafc2d",
     "server/manager-runtime.test.ts": "8518eed66f174a4a1831b4b6a78fa25db7f37a14429ef7d8e972857870c192f9",
@@ -672,7 +677,7 @@
     "vite.config.ts": "e4aade0b7f6812702224266d5177129c044686a471b7a6fef7cbacb1b91deccb"
   },
   "mode": "local-ast-only",
-  "nodes": 4673,
+  "nodes": 4763,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -706,6 +711,7 @@
     "docs/background-tasks.md",
     "docs/deployment-promotion.md",
     "docs/design/agent-workspace.md",
+    "docs/design/oracle-proactive-inbox.md",
     "docs/design/session-manager.md",
     "docs/design/settings-profile.md",
     "docs/mockups/activity-view.html",
@@ -733,22 +739,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "fff7c3cf77a4e20912ccee8b7f92797d9b8dbad940ed29ee25b211520b620065",
-    "communities.json": "6ca4c87360898ff6e5b81f721e7d2251cbef2c4487268e0ef7f6e83ad93eeca3",
-    "graph.html": "6c8010c0bb438f8bc100479a7abbbae9b7c48efb11e2039f376a14f7318fdad2",
-    "graph.json": "d16a37eb7983c983d2fd8805bf279c84ef4c43070e04252f7481423b49cf46eb"
+    "GRAPH_REPORT.md": "eabc372f459c240decc952cecba5fc5f866d3d1995cc11f5cb212dcd337d3bea",
+    "communities.json": "0ad52b76298853eb8f758ac220cf8dafe250f5410645f6482d98a1adec6e1b2d",
+    "graph.html": "2945ae710a54705bfaa362f3aaf2375e8aee5111702342a737d24bebe6b1f6b8",
+    "graph.json": "a94505d93a340aae09c023fd537c530f552ccec8fcc396232db458597e759b94"
   },
   "schema_version": 1,
-  "source_commit": "f79fd8cb1468f42031983e3de9b3a1314dd0fe60",
-  "source_fingerprint": "df97d9c37fb868fd052e82423779b4dff598c128601bdf33dc4adb185114641a",
-  "working_tree_changes": [
-    "docs/app-spec.md",
-    "package.json",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
-  ]
+  "source_commit": "e755c1b52bdd8d186db28db9ea619c80fa725f83",
+  "source_fingerprint": "74932da28110b7d93f0a2ad6c60f4e5e81226eaf74e17c5ad9f621b5c0999d91",
+  "working_tree_changes": []
 }

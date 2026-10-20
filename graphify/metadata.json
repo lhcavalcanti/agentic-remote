@@ -312,13 +312,13 @@
   ],
   "communities": 173,
   "community_algorithm": "louvain-seed-42",
-  "edges": 13449,
+  "edges": 13459,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
     ".github/copilot-instructions.md": "15a3fe1c5de27c9cc24a3b26697b794876c6b7dda4fbe08ab1cc4523eaa1a2fe",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "86dba5df9e8a9687f91f37bb52d154dfb3e958c3eca0204f7436f130898982b3",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "9c9aedca6cac950b0e5c78e9da5cbd37eb710e9f5b554e591c5afa2527db5ab1",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -340,7 +340,7 @@
     "README.md": "66549653054e53e4877f7eeee6e3d42ace9a0a806eb06b982ea6e02d87893c82",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "3a718ed20fbcf62db6e821288cb17388ef42fb95c1163d45ef86751a2a05163f",
-    "bin/agentic-remote-gate": "1ea6160ef09c5ca80d00adeecd53841ed6073e719fb373d4935ab82b253a071f",
+    "bin/agentic-remote-gate": "4c6e0394c4e3420d90446f960d8639eadbb2b4b27d9677ab32ef672c637d63d6",
     "bin/agentic-remote-promotion-monitor": "38c1a2d8ec3100fd7ada1915e443402afcc9f85eb5a751769dfc1ca1daa129a2",
     "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
     "config/agentic-remote-promotion.env.example": "3b93ccf7572bb980b70067dab871f06f58a8ca93d078132cc350c6342af6a2de",
@@ -351,7 +351,7 @@
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
-    "docs/deployment-promotion.md": "1a63c173abdf7223968d181cf0a7e30de836e02f5fcd8d8b61ce402c34d03752",
+    "docs/deployment-promotion.md": "afcd5dda865de31201fc7b10fd49977f27ced4de27251c5b6031f8ac032c87a6",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
     "docs/design/session-manager.md": "6476b0fc64d1d337175bb1dd1d89a5386cea8ccf0b2fe4e9ef09a71bd0c13d25",
     "docs/design/settings-profile.md": "55cbb79747e67bf7fb637c8446d514ae815998733602979898f9cf51826848b3",
@@ -428,7 +428,7 @@
     "server/event-log.ts": "c5fc6997c675fda84e89c7b0994dea55ee57b2ddc16c01bcacea01dc6df6c378",
     "server/file-upload-routes.test.ts": "c9714330279f98c3942fe8e5e26a6d9c89bd80ac05c7929eef758b956f073d2b",
     "server/file-upload-routes.ts": "29d040bb003be45805497d865cbb3814512c4a72d0423078dea1e48dd042bd57",
-    "server/full-gate.test.ts": "73e7239edbf1387d314e15f42759ef20314936c316cca35d65c0595c5bd3c856",
+    "server/full-gate.test.ts": "196d890a3d4a985b34034b308569b13b63b94ca2b04b1803b1bd08913be7bc9a",
     "server/history-projection.test.ts": "e5acfcbe8806e2c8861a61c706b067937e40a9363aa153bab8743c9a4af29987",
     "server/hub-routes.test.ts": "33e6cc0f5d05dd5b38974905ed9a468692ff8e04413525ca047e4062a277080a",
     "server/hub-routes.ts": "c513862dc55612711d73a9a886c1258fc47ed1ab6a0747e8d7907a002fb19419",
@@ -685,7 +685,7 @@
     "vite.config.ts": "e4aade0b7f6812702224266d5177129c044686a471b7a6fef7cbacb1b91deccb"
   },
   "mode": "local-ast-only",
-  "nodes": 4762,
+  "nodes": 4770,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -747,23 +747,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "00b8e6f616d22c71d030912bb9556205dc3ff8da5c6ac2afe774716a2914a381",
-    "communities.json": "46d77ccd3d6c2247dd0f35c0d6b2ec66c9da3d002bf847d8e8063ed63c10620b",
-    "graph.html": "5d9ca5839c71712b90914e377302f3c5dc8628f63204e853847ae9e13c20d0b2",
-    "graph.json": "1cb6a70e4e7c6879a3a27797f5d50ab6f6ff3db8e378d41b726c02a10efa825a"
+    "GRAPH_REPORT.md": "0b65ae86885e8598ce06b3be0728e23af8930777ec66c61412ac02d25bbf66b6",
+    "communities.json": "731e33b2b4d26a3690c19c14b28ddea76f01ca80774f581daa1d08ac0902202e",
+    "graph.html": "08879d5029ba2cce0d26bdfb395ae11380851b139c98026f90c775b17ad7d9df",
+    "graph.json": "61ec7809d204f2a2736522290961bfc597f2a8cc11534b3e030c03f22b97d849"
   },
   "schema_version": 1,
-  "source_commit": "9cdc840c8eda19bb12a120d858b32bc676ba161d",
-  "source_fingerprint": "4e765a38f82cb2db838db93431a81868c1c62b592154641d1864289c1d534831",
+  "source_commit": "0fa697ff6f38f68288db283466acf22ed18e644c",
+  "source_fingerprint": "0e4e20f165e76a91478de1d14d7936b32c64ba482caf7275617e7ea838c60aaa",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
     "bin/agentic-remote-gate",
     "docs/deployment-promotion.md",
-    "package.json",
-    "server/full-gate.test.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/full-gate.test.ts"
   ]
 }

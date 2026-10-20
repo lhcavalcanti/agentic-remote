@@ -7,6 +7,13 @@
 # fresh clone of the exact SHA, `pnpm check`, then `NODE_ENV=production pnpm
 # check`, with the tree still clean after each. Gates on one host run one at a
 # time, because the suites interfere with each other through real tmux.
+#
+# Everything the pull request controls (install, lint, tests, build) runs in a
+# bubblewrap sandbox with a cleared environment, a private HOME and /tmp, and
+# only its own temporary directory writable, so it cannot read the operator's
+# credentials or reach their tmux and agent sockets. Only this script, outside
+# the sandbox, talks to GitHub. Without a working sandbox the gate fails; it
+# never falls back to running the checks unsandboxed.
 
 set -Eeuo pipefail
 
@@ -18,6 +25,10 @@ readonly LOCK_FILE="$STATE_ROOT/gate.lock"
 readonly CLONE_BASE="${AGENTIC_REMOTE_GATE_CLONE_BASE:-https://github.com}"
 # Seconds an interrupted check may take to exit before it is killed outright.
 readonly STOP_GRACE="${AGENTIC_REMOTE_GATE_STOP_GRACE:-30}"
+readonly REAL_HOME="${HOME:-}"
+# Host directories the sandbox sees, read-only. Home directories, /tmp, /run,
+# and /var stay out, which keeps credentials and sockets out of reach.
+readonly SANDBOX_SYSTEM_DIRS=(/usr /bin /sbin /lib /lib32 /lib64 /libx32 /etc /opt /sys)
 
 log() {
   printf '[agentic-remote-gate] %s\n' "$*"
@@ -86,7 +97,7 @@ test_counts() {
     grep -E '^[[:space:]]*Tests[[:space:]]+[0-9]' | tail -n 1)" || true
   [[ -n "$line" ]] || return 0
   grep -oE '[0-9]+ (failed|passed|skipped|todo)' <<<"$line" | paste -sd, - |
-    sed 's/,/, /g'
+    sed 's/,/, /g' || true
 }
 
 record() {
@@ -103,18 +114,20 @@ post_status() {
     >/dev/null
 }
 
-# Posts the final status once. Failures exit non-zero after recording.
+# Posts the final status once. Failures exit non-zero after recording. Until
+# the post succeeds the exit trap still owes the SHA a failure status.
 conclude() {
   local state="$1" description="$2"
-  CONCLUDED=1
   record result "$state"
   record description "$description"
   record total_seconds "$(($(date +%s) - GATE_STARTED))"
   log "$state: $description"
   if ! post_status "$state" "$description"; then
+    INTERRUPTED="could not record $state"
     log "ERROR: could not record the $CONTEXT status on $SHA" >&2
     exit 1
   fi
+  CONCLUDED=1
   [[ "$state" == success ]] || exit 1
 }
 
@@ -122,12 +135,15 @@ fail() {
   conclude failure "$1"
 }
 
-# Runs a phase in its own process group, so an interrupt stops the whole
-# suite rather than leaving workers behind in a clone being deleted.
+# Runs a pull-request-controlled phase in the sandbox, in its own process
+# group, so an interrupt stops the whole suite rather than leaving workers
+# behind in a clone being deleted.
+#   run_phase LOG_FILE [NAME=value...] COMMAND...
 run_phase() {
   local log_file="$1" status=0
   shift
-  setsid "$@" </dev/null >"$log_file" 2>&1 9>&- &
+  setsid bwrap "${SANDBOX_OPTIONS[@]}" -- env -i "${SANDBOX_ENV[@]}" "$@" \
+    </dev/null >"$log_file" 2>&1 9>&- &
   CHILD_PID=$!
   wait "$CHILD_PID" || status=$?
   CHILD_PID=""
@@ -192,10 +208,68 @@ print(version)
 PY
 }
 
+# Sets SANDBOX_PATH and SANDBOX_TOOLCHAIN_DIRS for the Node toolchain found on
+# PATH. Its bin and lib/node_modules are bound back read-only, never a whole
+# prefix that could be a home directory, and its bin directory takes the PATH
+# position the toolchain was found at, so the sandbox runs the same Node.
+prepare_sandbox() {
+  local node node_dir node_bin prefix entry dir placed=0
+  local -a entries=() path=()
+  node="$(command -v node)" || return 1
+  [[ "$node" == /* ]] || return 1
+  node_dir="$(dirname -- "$node")"
+  node_bin="$(dirname -- "$(realpath -e -- "$node")")" || return 1
+  prefix="$(dirname -- "$node_bin")"
+  SANDBOX_TOOLCHAIN_DIRS=("$node_bin")
+  [[ ! -d "$prefix/lib/node_modules" ]] || SANDBOX_TOOLCHAIN_DIRS+=("$prefix/lib/node_modules")
+  for dir in "${SANDBOX_TOOLCHAIN_DIRS[@]}"; do
+    [[ -z "$REAL_HOME" || "${REAL_HOME%/}/" != "${dir%/}/"* ]] || return 1
+  done
+  IFS=: read -ra entries <<<"$PATH"
+  for entry in "${entries[@]}"; do
+    [[ "$entry" == /* ]] || continue
+    if ((!placed)) && [[ "$entry" == "$node_dir" ]]; then
+      path+=("$node_bin")
+      placed=1
+    fi
+    [[ -n "$REAL_HOME" && "${entry%/}/" == "${REAL_HOME%/}/"* ]] || path+=("$entry")
+  done
+  ((placed)) || path=("$node_bin" "${path[@]}")
+  SANDBOX_PATH="$(IFS=:; printf '%s' "${path[*]}")"
+}
+
+# Sets SANDBOX_OPTIONS and SANDBOX_ENV for run_phase. The environment is
+# cleared down to a fixed allowlist, HOME and /tmp are private directories in
+# the work directory, the real home is an empty tmpfs, and only the work
+# directory is writable, with the clone's .git read-only so a script cannot
+# plant configuration that this script's own git commands would then run.
+# The work directory is one mount so pnpm can hard-link from its store in the
+# private HOME instead of creating a store inside the clone.
+sandbox_options() {
+  local dir
+  SANDBOX_OPTIONS=(--die-with-parent --new-session --unshare-all --share-net)
+  for dir in "${SANDBOX_SYSTEM_DIRS[@]}"; do
+    SANDBOX_OPTIONS+=(--ro-bind-try "$dir" "$dir")
+  done
+  SANDBOX_OPTIONS+=(--proc /proc --dev /dev --tmpfs /run
+    --ro-bind-try /run/systemd/resolve /run/systemd/resolve)
+  [[ -z "$REAL_HOME" || "$REAL_HOME" == / ]] || SANDBOX_OPTIONS+=(--tmpfs "$REAL_HOME")
+  for dir in "${SANDBOX_TOOLCHAIN_DIRS[@]}"; do
+    SANDBOX_OPTIONS+=(--ro-bind "$dir" "$dir")
+  done
+  SANDBOX_OPTIONS+=(--bind "$WORK_DIR/tmp" /tmp
+    --bind "$WORK_DIR" "$WORK_DIR"
+    --ro-bind "$CLONE/.git" "$CLONE/.git"
+    --chdir "$CLONE")
+  SANDBOX_ENV=(PATH="$SANDBOX_HOME/bin:$SANDBOX_PATH" HOME="$SANDBOX_HOME" LANG=C.UTF-8
+    TERM=xterm-256color CI=1 TMPDIR=/tmp COREPACK_ENABLE_DOWNLOAD_PROMPT=0)
+}
+
 # Clean and still on the gated commit; anything else fails the gate.
+# Untracked files count whatever status.showUntrackedFiles says.
 assert_tree() {
   local label="$1" changes head
-  changes="$(git -C "$CLONE" status --porcelain)" ||
+  changes="$(git -C "$CLONE" status --porcelain --untracked-files=all)" ||
     fail "tree unreadable after $label ($(elapsed))"
   [[ -z "$changes" ]] || {
     log "tree changed during $label:" >&2
@@ -221,6 +295,14 @@ run_check() {
   record "${key}_tests" "$CHECK_COUNTS"
   ((status == 0)) || fail "$label failed${CHECK_COUNTS:+: $CHECK_COUNTS} ($(elapsed))"
   assert_tree "$label"
+  # A zero exit is not enough: the run has to show passing tests and no
+  # failures, so a check that skipped or lost its tests cannot pass the gate.
+  if ! [[ "$CHECK_COUNTS" =~ (^|, )([0-9]+)\ passed ]] || ((10#${BASH_REMATCH[2]} == 0)); then
+    fail "$label reported no passed tests${CHECK_COUNTS:+: $CHECK_COUNTS} ($(elapsed))"
+  fi
+  if [[ "$CHECK_COUNTS" =~ (^|, )([0-9]+)\ failed ]] && ((10#${BASH_REMATCH[2]} > 0)); then
+    fail "$label reported failed tests: $CHECK_COUNTS ($(elapsed))"
+  fi
 }
 
 POST_STATUS=1
@@ -267,7 +349,6 @@ valid_repo "$REPO" || die "invalid repository (expected owner/name): $REPO"
 require_command git
 require_command flock
 require_command setsid
-require_command corepack
 require_command python3
 if ((POST_STATUS)) || ! valid_sha "$TARGET"; then
   require_command gh
@@ -292,6 +373,11 @@ INTERRUPTED=""
 CHILD_PID=""
 WORK_DIR=""
 GATE_DIR=""
+SANDBOX_HOME=""
+SANDBOX_PATH=""
+SANDBOX_TOOLCHAIN_DIRS=()
+SANDBOX_OPTIONS=()
+SANDBOX_ENV=()
 GATE_STARTED="$(date +%s)"
 
 mkdir -p "$STATE_ROOT"
@@ -318,20 +404,26 @@ GATE_STARTED="$(date +%s)"
 GATE_DIR="$STATE_ROOT/$SHA"
 mkdir -p "$GATE_DIR"
 rm -f -- "$GATE_DIR/summary" "$GATE_DIR/clone.log" "$GATE_DIR/install.log" \
-  "$GATE_DIR/check.log" "$GATE_DIR/production-check.log"
+  "$GATE_DIR/check.log" "$GATE_DIR/production-check.log" "$GATE_DIR/sandbox.log"
 record sha "$SHA"
 record repo "$REPO"
 record started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-PHASE="clone"
+PHASE="sandbox setup"
 post_status pending "running normal and production checks" ||
   die "could not record the $CONTEXT status on $SHA"
 PENDING_POSTED=1
 log "gating $REPO at $SHA (logs: $GATE_DIR)"
 
+command -v bwrap >/dev/null 2>&1 || fail "sandbox unavailable: bubblewrap (bwrap) not found"
+prepare_sandbox || fail "sandbox unavailable: no Node toolchain it can expose"
+
 WORK_DIR="$(mktemp -d)"
 chmod 700 "$WORK_DIR"
 CLONE="$WORK_DIR/repo"
+SANDBOX_HOME="$WORK_DIR/home"
+mkdir -m 700 -- "$SANDBOX_HOME" "$SANDBOX_HOME/bin" "$WORK_DIR/tmp"
+PHASE="clone"
 log "cloning $REPO into a private temporary directory"
 {
   git clone --quiet --no-checkout "$CLONE_BASE/$REPO.git" "$CLONE" &&
@@ -348,11 +440,20 @@ assert_tree "checkout"
 
 PNPM="pnpm@$(pnpm_version "$CLONE")" || fail "unsupported packageManager ($(elapsed))"
 
+PHASE="sandbox setup"
+sandbox_options
+run_phase "$GATE_DIR/sandbox.log" true ||
+  fail "sandbox unavailable: bubblewrap could not start ($(elapsed))"
+# `pnpm check` calls `pnpm` by name, so the sandbox needs its own Corepack shim.
+run_phase "$GATE_DIR/sandbox.log" \
+  corepack enable --install-directory "$SANDBOX_HOME/bin" pnpm ||
+  fail "sandbox unavailable: could not install the pnpm shim ($(elapsed))"
+
 PHASE="install"
 log "installing dependencies (log: $GATE_DIR/install.log)"
 started="$(date +%s)"
 status=0
-run_phase "$GATE_DIR/install.log" env -u NODE_ENV CI=true COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+run_phase "$GATE_DIR/install.log" \
   corepack "$PNPM" --dir "$CLONE" install --frozen-lockfile || status=$?
 record install_exit "$status"
 record install_seconds "$(($(date +%s) - started))"
@@ -363,15 +464,15 @@ assert_tree "install"
 # NODE_ENV regression, not a different dependency set, so reinstalling would
 # only add time.
 run_check "normal check" normal "$GATE_DIR/check.log" \
-  env -u NODE_ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack "$PNPM" --dir "$CLONE" check
+  corepack "$PNPM" --dir "$CLONE" check
 normal_counts="$CHECK_COUNTS"
 run_check "production check" production "$GATE_DIR/production-check.log" \
-  env NODE_ENV=production COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack "$PNPM" --dir "$CLONE" check
+  NODE_ENV=production corepack "$PNPM" --dir "$CLONE" check
 production_counts="$CHECK_COUNTS"
 
 PHASE="reporting"
 if [[ "$normal_counts" == "$production_counts" ]]; then
-  conclude success "normal+production: ${normal_counts:-no test summary} ($(elapsed))"
+  conclude success "normal+production: $normal_counts ($(elapsed))"
 else
-  conclude success "normal: ${normal_counts:-no test summary}; production: ${production_counts:-no test summary} ($(elapsed))"
+  conclude success "normal: $normal_counts; production: $production_counts ($(elapsed))"
 fi

@@ -382,17 +382,35 @@ bin/agentic-remote-gate <PR-number|full-sha> [--repo owner/name] [--no-status] [
    detaches to it, and refuses to continue unless `HEAD` equals the SHA.
 3. It runs `pnpm install --frozen-lockfile`, `pnpm check`, then
    `NODE_ENV=production pnpm check` in the same clone, through the pinned
-   Corepack pnpm. The tree must stay clean and on the SHA after each step.
+   Corepack pnpm. The tree, untracked files included, must stay clean and on
+   the SHA after each step.
 4. It posts `success` with the Vitest counts and total duration, for example
    `normal+production: 5099 passed, 1 skipped (58m)`, only when both checks
-   pass. Any failure, including install failure, a `HEAD` mismatch, a dirty
-   tree, or an interrupt, posts `failure`. Descriptions carry counts and
-   durations only, never paths, output, or secrets. `--no-status` posts
-   nothing.
+   exit cleanly and each reports passed tests and no failed ones. Any failure,
+   including install failure, a `HEAD` mismatch, a dirty tree, a missing or
+   unparseable test summary, an unusable sandbox, or an interrupt, posts
+   `failure`; so does the exit path when the final status cannot be posted.
+   Descriptions carry counts and durations only, never paths, output, or
+   secrets. `--no-status` posts nothing.
 5. Logs and a `summary` stay in
    `${XDG_STATE_HOME:-~/.local/state}/agentic-remote/gates/<sha>/`
-   (`clone.log`, `install.log`, `check.log`, `production-check.log`). The
-   temporary clone is removed however the gate ends.
+   (`clone.log`, `sandbox.log`, `install.log`, `check.log`,
+   `production-check.log`). The temporary clone is removed however the gate
+   ends.
+
+Install and both checks run pull-request code, so they run in a
+[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox that
+the gate requires. The sandbox gets every namespace unshared except the
+network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
+`NODE_ENV` for the production run), a private `HOME` (holding its own
+Corepack `pnpm` shim) and `/tmp` inside the temporary directory, an empty tmpfs over the real home and `/run`, read-only
+system directories plus the Node toolchain's `bin` and `lib/node_modules`, and
+a writable temporary directory whose clone's `.git` is read-only. So no token, `gh` or SSH
+configuration, agent socket, or the operator's tmux server is reachable, and
+pnpm and Corepack caches are per gate. Only the gate itself, outside the
+sandbox, calls `gh`. When `bwrap` is missing or cannot start (for example where
+unprivileged user namespaces are blocked), the gate posts `failure` and never
+runs the checks unsandboxed.
 
 Each check takes about half an hour, and suites on one host interfere through
 real tmux, so gates hold a host-wide lock: a second gate waits for the first,

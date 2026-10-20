@@ -470,6 +470,29 @@ describe('provider queued delivery', () => {
     expect(action === 'stop' ? Boolean(store.get('session')?.queuedDispatch) : !store.get('session')).toBe(true)
   })
 
+  it('closes a queued SDK assistant when provider deletion fails', async () => {
+    const { service, client, store } = await copilotFixture()
+    expect(await service.dispatchQueuedPrompt('session', 'middle', 'rewrite'))
+      .toMatchObject({ outcome: 'sent' })
+    const assistantId = store.get('session')?.messages.at(-1)?.id
+    const failure = new Error('Provider deletion failed')
+    client.deleteSession.mockRejectedValueOnce(failure)
+
+    await expect(service.deleteSession('session')).rejects.toBe(failure)
+
+    expect(store.get('session')).toMatchObject({
+      status: 'error',
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          id: assistantId,
+          role: 'assistant',
+          streaming: false,
+        }),
+      ]),
+    })
+    await expect(service.deleteSession('session')).resolves.toBeUndefined()
+  })
+
   it.each(['assistant', 'stream_event', 'user', 'result'] as const)(
     'accepts Claude %s evidence before the generator completes', async (type) => {
       const { service, store, promptCalls } = await claudeFixture(async function* (options) {

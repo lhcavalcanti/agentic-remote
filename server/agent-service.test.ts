@@ -60,9 +60,10 @@ class DeferredSession implements CopilotSessionLike {
     reasoningEffort: 'medium',
     contextTier: 'default' as const,
   }
-  private readonly responseResolvers: Array<
-    (value: AssistantMessageEvent | undefined) => void
-  > = []
+  private readonly responseWaits: Array<{
+    resolve: (value: AssistantMessageEvent | undefined) => void
+    reject?: (error: unknown) => void
+  }> = []
   private readonly eventHandlers: Array<(event: SessionEvent) => void> = []
   readonly rpc = {
     model: {
@@ -183,8 +184,8 @@ class DeferredSession implements CopilotSessionLike {
     if (this.sendError) {
       return Promise.reject(this.sendError)
     }
-    return new Promise((resolve) => {
-      this.responseResolvers.push(resolve)
+    return new Promise((resolve, reject) => {
+      this.responseWaits.push({ resolve, reject })
     })
   }
 
@@ -192,23 +193,25 @@ class DeferredSession implements CopilotSessionLike {
     expect(mode).toBe('immediate')
     this.sentPrompts.push(prompt)
     if (this.sendError) throw this.sendError
-    this.responseResolvers.push((response) => {
-      if (response) this.emit(response)
-      this.emit({
-        id: randomUUID(), type: 'session.idle', timestamp: new Date().toISOString(),
-        parentId: null, data: {},
-      } as SessionEvent)
+    this.responseWaits.push({
+      resolve: (response) => {
+        if (response) this.emit(response)
+        this.emit({
+          id: randomUUID(), type: 'session.idle', timestamp: new Date().toISOString(),
+          parentId: null, data: {},
+        } as SessionEvent)
+      },
     })
     return randomUUID()
   }
 
   resolvePrompt(response?: AssistantMessageEvent): void {
-    this.responseResolvers.shift()?.(response)
+    this.responseWaits.shift()?.resolve(response)
   }
 
   resolveSessionIdle(): void {
-    const resolvers = this.responseResolvers.splice(0)
-    for (const resolve of resolvers) resolve(undefined)
+    const waits = this.responseWaits.splice(0)
+    for (const wait of waits) wait.resolve(undefined)
     this.emit({
       id: randomUUID(),
       type: 'session.idle',
@@ -216,6 +219,30 @@ class DeferredSession implements CopilotSessionLike {
       parentId: null,
       data: {},
     } as SessionEvent)
+  }
+
+  disconnectPendingWaits(error: Error): {
+    resolveLate: () => void
+    emitClearedIdle: () => void
+  } {
+    const waits = this.responseWaits.splice(0)
+    const handlers = this.eventHandlers.splice(0)
+    for (const wait of waits) wait.reject?.(error)
+    const idle = {
+      id: randomUUID(),
+      type: 'session.idle',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: {},
+    } as SessionEvent
+    return {
+      resolveLate: () => {
+        for (const wait of waits) wait.resolve(undefined)
+      },
+      emitClearedIdle: () => {
+        for (const handler of handlers) handler(idle)
+      },
+    }
   }
 
   async getEvents(): Promise<SessionEvent[]> {
@@ -625,6 +652,91 @@ describe('AgentService deletion', () => {
 
     await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
     expect(store.get(created.id)).toBeUndefined()
+  })
+
+  it('releases failed deletion when SDK disconnect rejects the interrupted wait without stale settlement', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    const interruptedAssistant = store.get(created.id)?.messages.at(-1)?.id
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    let reconciliationStarted = false
+    const updateIf = store.updateIf.bind(store)
+    vi.spyOn(store, 'updateIf').mockImplementation(async (...args) => {
+      reconciliationStarted = true
+      return updateIf(...args)
+    })
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await expect(
+      service.sendMessage(created.id, 'Retry before disconnect settles'),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+    const disconnected = client.session.disconnectPendingWaits(
+      new Error('Session disconnected while waiting for a response'),
+    )
+    await vi.waitFor(() =>
+      expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const releasedWithoutEvent = reconciliationStarted
+    if (!releasedWithoutEvent) {
+      // Release the old event-only barrier so the RED regression can clean up.
+      disconnected.emitClearedIdle()
+    }
+
+    expect(await deletionOutcome).toBe(failure)
+    expect(releasedWithoutEvent).toBe(true)
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === interruptedAssistant,
+      ),
+    ).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+
+    client.deleteError = undefined
+    await expect(
+      service.sendMessage(created.id, 'Retry after disconnect settled'),
+    ).resolves.toMatchObject({ status: 'running' })
+    const retryAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    disconnected.resolveLate()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(service['activePrompts'].get(created.id)?.assistantMessageId).toBe(
+      retryAssistant,
+    )
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === retryAssistant,
+      ),
+    ).toMatchObject({ content: '', streaming: true })
+
+    client.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('idle'),
+    )
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
   })
 
   it.each([

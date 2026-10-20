@@ -6904,29 +6904,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     forgetSessionEvents(sessionId)
     let completed = false
     try {
+      const queuedSdkRun = this.queuedPromptRuns.get(sessionId)
+      let interruptedPrompt = queuedSdkRun
+        ? this.activePrompts.get(sessionId)
+        : undefined
+      let interruptedSdkTurn = queuedSdkRun
+        ? this.sdkTurnsAwaited.get(sessionId)
+        : undefined
+      let interruptedSdkRun = queuedSdkRun
       this.queuedPromptStops.get(sessionId)?.()
       await this.admissions.wait(sessionId)
       await Promise.allSettled(this.sdkReplyWrites(sessionId))
       await this.queueOperations.get(sessionId)?.catch(() => undefined)
       await this.queuedPromptRuns.get(sessionId)?.catch(() => undefined)
-      await this.activeSessionStopper(sessionId)
       const active = this.sessions.get(sessionId)
-      const interruptedPrompt = this.activePrompts.get(sessionId)
-      const interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
-      const interruptedSdkRun = this.sdkPromptRuns.get(sessionId)
-      const interruptedTurnSettlement =
-        !terminalBacked && active && interruptedPrompt
-          ? this.watchSdkTurnSettlement(active)
-          : undefined
+      const currentPrompt = this.activePrompts.get(sessionId)
+      if (currentPrompt) {
+        interruptedPrompt = currentPrompt
+        interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
+        interruptedSdkRun = this.sdkPromptRuns.get(sessionId)
+      }
+      await this.activeSessionStopper(sessionId)
       if (active) {
         if (this.activePrompts.has(sessionId)) {
           this.activePrompts.delete(sessionId)
-          try {
-            await active.abort()
-          } catch (error) {
-            interruptedTurnSettlement?.cancel()
-            throw error
-          }
+          await active.abort()
         }
         if (terminalBacked) {
           await active.disconnect()
@@ -6963,10 +6965,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         try {
           await this.deleteSdkProviderIdentity(sessionId)
         } catch (error) {
-          await Promise.all([
-            interruptedTurnSettlement?.settled,
-            interruptedSdkRun,
-          ])
+          await interruptedSdkRun
           await this.reconcileRetainedSdkDeletion(
             sessionId,
             interruptedPrompt,
@@ -6976,7 +6975,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw error
         }
       }
-      interruptedTurnSettlement?.cancel()
       await this.store.remove(sessionId)
       this.pendingSdkQueueAdmissions.delete(sessionId)
       this.forgetSdkReplies(sessionId)
@@ -7005,36 +7003,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!completed) {
         this.deletedSessionIds.delete(sessionId)
       }
-    }
-  }
-
-  private watchSdkTurnSettlement(session: CopilotSessionLike): {
-    settled: Promise<void>
-    cancel: () => void
-  } {
-    let resolveSettled = () => {}
-    let settled = false
-    let unsubscribe = () => {}
-    const finish = () => {
-      if (settled) return
-      settled = true
-      unsubscribe()
-      resolveSettled()
-    }
-    const completion = new Promise<void>((resolve) => {
-      resolveSettled = resolve
-    })
-    unsubscribe = session.on((event) => {
-      if (
-        !eventAgentId(event) &&
-        (event.type === 'session.idle' || event.type === 'session.error')
-      ) {
-        finish()
-      }
-    })
-    return {
-      settled: completion,
-      cancel: finish,
     }
   }
 

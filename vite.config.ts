@@ -4,8 +4,9 @@ import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // Test files that drive a real tmux server. Everything else belongs to `fast`,
-// which hosted CI runs without tmux, Copilot or Claude installed, so a new
-// file that needs tmux must be listed here.
+// which must pass without tmux, Copilot or Claude installed (the hosted light
+// check runs a quick subset of it), so a new file that needs tmux must be
+// listed here.
 //
 // `canary` is the quick real-tmux send and readiness subset (about a minute).
 const canaryTests = [

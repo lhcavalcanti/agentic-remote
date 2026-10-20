@@ -232,13 +232,21 @@ pnpm check                      # oxlint + vitest + tsc/vite build
 pnpm vitest run server/x.test.ts -t "name"   # targeted
 pnpm test:canary                # real-tmux send/readiness subset, ~1 min
 pnpm test:fast                  # every file needing no host tmux/Copilot/Claude
+pnpm test:quick                 # fast minus slowTests; the hosted check's tests
 NODE_ENV=production pnpm check  # guards the inherited-env regression
 ```
 
 - Vitest projects `fast`, `canary`, and `tmux` partition the files, so
   `pnpm test` still runs each file once, serially. Add a new real-tmux file to
   `canaryTests` or `tmuxTests` in `vite.config.ts`; otherwise it lands in
-  `fast`, which hosted CI runs without tmux.
+  `fast`, which must pass without tmux, Copilot, or Claude.
+- `.github/workflows/light-check.yml` is an advisory hosted check on ready pull
+  request heads: install, lint, `tsc -b`, `vite build`, and `pnpm test:quick`,
+  sized to one billed minute (about 1,200 minutes a month at roughly 1,200
+  runs). Never make it required; the local gate stays authoritative. A new
+  `fast` file joins `test:quick` by default; add it to `slowTests` when it
+  takes 0.15 s or more. Disable with `gh workflow disable light-check.yml`.
+  See `docs/deployment-promotion.md`.
 - `server/send-matrix.integration.test.ts` drives sends with the app's real
   options from `shared/send-policy.ts` against real tmux panes. Extend its
   table when send, queue, or draft-replacement behavior changes.

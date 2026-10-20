@@ -245,7 +245,7 @@ explain any tradeoff.
 2. Run the smallest relevant existing checks while iterating. Before a runtime
    PR can graduate, run the complete `pnpm check` locally; include the
    inherited-production-environment check when test/config changes require it.
-   There is no hosted CI to substitute for this gate.
+   The advisory hosted light check does not substitute for this gate.
 3. Refresh Graphify for tracked source or documentation changes. UI behavior
    changes also need phone/desktop evidence for the affected flow, including
    keyboard/focus and waiting-state behavior.

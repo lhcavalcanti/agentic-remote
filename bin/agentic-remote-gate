@@ -9,11 +9,15 @@
 # time, because the suites interfere with each other through real tmux.
 #
 # Everything the pull request controls (install, lint, tests, build) runs in a
-# bubblewrap sandbox with a cleared environment, a private HOME and /tmp, and
-# only its own temporary directory writable, so it cannot read the operator's
-# credentials or reach their tmux and agent sockets. Only this script, outside
-# the sandbox, talks to GitHub. Without a working sandbox the gate fails; it
-# never falls back to running the checks unsandboxed.
+# bubblewrap sandbox with a cleared environment, a private HOME and /tmp, its
+# own network namespace, and only its own temporary directory writable, so it
+# cannot read the operator's credentials, reach their tmux and agent sockets,
+# or talk to services on the host. Installing and building dependencies reach
+# public addresses through a filtering proxy; the checks run with no network.
+# The clone's git directory sits outside anything the sandbox can write, and
+# this script's own git commands on the clone run no configured programs. Only
+# this script, outside the sandbox, talks to GitHub. Without a working sandbox
+# the gate fails; it never falls back to running the checks unsandboxed.
 
 set -Eeuo pipefail
 
@@ -29,6 +33,127 @@ readonly REAL_HOME="${HOME:-}"
 # Host directories the sandbox sees, read-only. Home directories, /tmp, /run,
 # and /var stay out, which keeps credentials and sockets out of reach.
 readonly SANDBOX_SYSTEM_DIRS=(/usr /bin /sbin /lib /lib32 /lib64 /libx32 /etc /opt /sys)
+
+# The egress proxy. `serve SOCKET` runs outside the sandbox and accepts only
+# CONNECT to port 443 of hosts whose every address is public, so nothing in
+# the sandbox reaches the host, the LAN, or the tailnet through it. `egress
+# SOCKET -- COMMAND...` runs inside the sandbox: it relays a loopback port to
+# that socket and runs the command with the port as its HTTPS proxy.
+IFS= read -r -d '' EGRESS_PROXY <<'PY' || true
+import asyncio, ipaddress, os, socket, subprocess, sys, threading
+
+
+def public(address):
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    return ip.is_global
+
+
+async def pipe(reader, writer):
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+    except Exception:
+        pass
+    finally:
+        writer.close()
+
+
+async def refuse(writer, status, target):
+    print(f"refused {target!r}: {status}", flush=True)
+    writer.write(f"HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode())
+    await writer.drain()
+    writer.close()
+
+
+async def handle(reader, writer):
+    target = ""
+    try:
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 30)
+        method, target = head.split(b"\r\n", 1)[0].decode("ascii").split(" ")[:2]
+        host, _, port = target.rpartition(":")
+        host, port = host.strip("[]"), int(port)
+    except Exception:
+        return await refuse(writer, "400 Bad Request", target)
+    if method != "CONNECT" or port != 443 or not host:
+        return await refuse(writer, "403 Forbidden", target)
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        addresses = list(dict.fromkeys(info[4][0] for info in infos))
+    except Exception:
+        return await refuse(writer, "502 Bad Gateway", target)
+    if not addresses or not all(public(address) for address in addresses):
+        return await refuse(writer, "403 Forbidden", target)
+    for address in addresses:
+        try:
+            upstream_reader, upstream_writer = await asyncio.wait_for(
+                asyncio.open_connection(address, port), 30)
+            break
+        except Exception:
+            continue
+    else:
+        return await refuse(writer, "502 Bad Gateway", target)
+    writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+    await writer.drain()
+    await asyncio.gather(pipe(reader, upstream_writer), pipe(upstream_reader, writer))
+
+
+async def serve(path):
+    server = await asyncio.start_unix_server(handle, path)
+    async with server:
+        await server.serve_forever()
+
+
+def relay(source, target, done):
+    try:
+        while data := source.recv(65536):
+            target.sendall(data)
+        target.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+    if done.acquire(blocking=False):
+        return
+    source.close()
+    target.close()
+
+
+def forward(listener, path):
+    while True:
+        client, _ = listener.accept()
+        upstream = socket.socket(socket.AF_UNIX)
+        try:
+            upstream.connect(path)
+        except OSError:
+            client.close()
+            upstream.close()
+            continue
+        done = threading.Lock()
+        for pair in ((client, upstream), (upstream, client)):
+            threading.Thread(target=relay, args=(*pair, done), daemon=True).start()
+
+
+def egress(path, command):
+    listener = socket.create_server(("127.0.0.1", 0))
+    threading.Thread(target=forward, args=(listener, path), daemon=True).start()
+    proxy = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    environment = dict(os.environ, NODE_USE_ENV_PROXY="1")
+    for name in ("HTTPS_PROXY", "HTTP_PROXY"):
+        environment[name] = environment[name.lower()] = proxy
+    environment["NO_PROXY"] = environment["no_proxy"] = "localhost,127.0.0.1,::1"
+    status = subprocess.call(command, env=environment)
+    sys.exit(128 - status if status < 0 else status)
+
+
+if sys.argv[1] == "serve":
+    asyncio.run(serve(sys.argv[2]))
+elif sys.argv[1] == "egress" and sys.argv[3] == "--":
+    egress(sys.argv[2], sys.argv[4:])
+else:
+    sys.exit(2)
+PY
+readonly EGRESS_PROXY
 
 log() {
   printf '[agentic-remote-gate] %s\n' "$*"
@@ -140,12 +265,26 @@ fail() {
 # behind in a clone being deleted. bwrap itself starts from the scrubbed
 # environment too: it stays inside the sandbox's PID namespace as PID 1, where
 # the pull request could read its environment from /proc.
-#   run_phase LOG_FILE [NAME=value...] COMMAND...
+# With --egress the phase reaches public addresses through the egress proxy;
+# otherwise it has no network at all.
+#   run_phase [--egress] LOG_FILE [NAME=value...] COMMAND...
 run_phase() {
+  local -a options=("${SANDBOX_OPTIONS[@]}") assignments=()
+  local egress=0
+  if [[ "$1" == --egress ]]; then
+    egress=1
+    shift
+    options+=(--ro-bind "$EGRESS_DIR" "$EGRESS_DIR")
+  fi
   local log_file="$1" status=0
   shift
-  setsid env -i "${SANDBOX_ENV[@]}" "$BWRAP" "${SANDBOX_OPTIONS[@]}" \
-    -- env -i "${SANDBOX_ENV[@]}" "$@" \
+  while (($#)) && [[ "$1" == [A-Za-z_]*=* ]]; do
+    assignments+=("$1")
+    shift
+  done
+  ((!egress)) || set -- "$PYTHON" -I -c "$EGRESS_PROXY" egress "$EGRESS_DIR/sock" -- "$@"
+  setsid env -i "${SANDBOX_ENV[@]}" "$BWRAP" "${options[@]}" \
+    -- env -i "${SANDBOX_ENV[@]}" ${assignments[@]+"${assignments[@]}"} "$@" \
     </dev/null >"$log_file" 2>&1 9>&- &
   CHILD_PID=$!
   wait "$CHILD_PID" || status=$?
@@ -166,6 +305,27 @@ stop_child() {
   CHILD_PID=""
 }
 
+# Starts the egress proxy on a socket in a directory only this script writes.
+start_egress() {
+  local waited=0
+  mkdir -m 700 -- "$EGRESS_DIR" || return 1
+  "$PYTHON" -I -c "$EGRESS_PROXY" serve "$EGRESS_DIR/sock" \
+    </dev/null >>"$GATE_DIR/egress.log" 2>&1 9>&- &
+  EGRESS_PID=$!
+  until [[ -S "$EGRESS_DIR/sock" ]]; do
+    kill -0 "$EGRESS_PID" 2>/dev/null && ((waited < 100)) || return 1
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+}
+
+stop_egress() {
+  [[ -n "${EGRESS_PID:-}" ]] || return 0
+  kill -TERM "$EGRESS_PID" 2>/dev/null || true
+  wait "$EGRESS_PID" 2>/dev/null || true
+  EGRESS_PID=""
+}
+
 on_signal() {
   trap '' INT TERM
   INTERRUPTED="interrupted during $PHASE"
@@ -180,6 +340,7 @@ finish() {
   trap - EXIT
   trap '' INT TERM
   stop_child
+  stop_egress
   if ((PENDING_POSTED && !CONCLUDED)); then
     local description="${INTERRUPTED:-gate stopped during $PHASE}"
     description="$description ($(elapsed))"
@@ -201,11 +362,14 @@ finish() {
 pnpm_version() {
   python3 - "$1/package.json" <<'PY'
 import json
+import re
 import sys
 
 package_manager = json.load(open(sys.argv[1], encoding="utf-8"))["packageManager"]
 name, version = package_manager.split("@", 1)
-if name != "pnpm" or not version:
+# A registry release only, never a URL or tag: Corepack fetches it with network.
+release = r"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+sha(1|224|256|512)\.[0-9a-f]+)?"
+if name != "pnpm" or not re.fullmatch(release, version):
     raise SystemExit(f"Unsupported packageManager: {package_manager}")
 print(version)
 PY
@@ -242,46 +406,69 @@ prepare_sandbox() {
 }
 
 # Sets SANDBOX_OPTIONS and SANDBOX_ENV for run_phase. The environment is
-# cleared down to a fixed allowlist, HOME and /tmp are private directories in
-# the work directory, the real home is an empty tmpfs, and only the work
-# directory is writable, with the clone's .git read-only so a script cannot
-# plant configuration that this script's own git commands would then run.
-# The work directory is one mount so pnpm can hard-link from its store in the
-# private HOME instead of creating a store inside the clone.
+# cleared down to a fixed allowlist, the network is the sandbox's own
+# loopback, HOME and /tmp are private directories, the real home is an empty
+# tmpfs, and only the sandbox directory (clone, HOME, /tmp) is writable. It is
+# one mount so pnpm can hard-link from its store in the private HOME instead
+# of creating a store inside the clone. The git directory beside it is
+# read-only, so a script cannot plant configuration in it.
 sandbox_options() {
   local dir
-  SANDBOX_OPTIONS=(--die-with-parent --new-session --unshare-all --share-net)
+  SANDBOX_OPTIONS=(--die-with-parent --new-session --unshare-all)
   for dir in "${SANDBOX_SYSTEM_DIRS[@]}"; do
     SANDBOX_OPTIONS+=(--ro-bind-try "$dir" "$dir")
   done
   # Later mounts land on top of earlier ones, so /tmp is replaced before the
   # home, toolchain, and work directory, any of which may live under it.
   SANDBOX_OPTIONS+=(--proc /proc --dev /dev --tmpfs /run
-    --ro-bind-try /run/systemd/resolve /run/systemd/resolve
-    --bind "$WORK_DIR/tmp" /tmp)
+    --bind "$SANDBOX_DIR/tmp" /tmp)
   [[ -z "$REAL_HOME" || "$REAL_HOME" == / ]] || SANDBOX_OPTIONS+=(--tmpfs "$REAL_HOME")
   for dir in "${SANDBOX_TOOLCHAIN_DIRS[@]}"; do
     SANDBOX_OPTIONS+=(--ro-bind "$dir" "$dir")
   done
-  SANDBOX_OPTIONS+=(--bind "$WORK_DIR" "$WORK_DIR"
-    --ro-bind "$CLONE/.git" "$CLONE/.git"
+  SANDBOX_OPTIONS+=(--bind "$SANDBOX_DIR" "$SANDBOX_DIR"
+    --ro-bind "$TRUSTED_GIT_DIR" "$TRUSTED_GIT_DIR"
     --chdir "$CLONE")
   SANDBOX_ENV=(PATH="$SANDBOX_HOME/bin:$SANDBOX_PATH" HOME="$SANDBOX_HOME" LANG=C.UTF-8
     TERM=xterm-256color CI=1 TMPDIR=/tmp COREPACK_ENABLE_DOWNLOAD_PROMPT=0)
+}
+
+# Git on the clone's work tree, which sandboxed code may have rewritten. The
+# git directory is always the trusted one, never whatever the tree points at,
+# and no system, global, or repository setting may run a program. Submodules
+# are never entered: their repositories, and so their filter drivers, are
+# whatever the sandbox left there.
+tree_git() {
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 \
+    git --git-dir="$TRUSTED_GIT_DIR" --work-tree="$CLONE" \
+    -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+    -c core.untrackedCache=false -c core.attributesFile=/dev/null \
+    -c core.excludesFile=/dev/null -c submodule.recurse=false \
+    -c diff.ignoreSubmodules=all -c status.submoduleSummary=false "$@"
+}
+
+# True when PATH is inside a directory the sandbox mounts from the host.
+in_system_dir() {
+  local dir
+  for dir in "${SANDBOX_SYSTEM_DIRS[@]}"; do
+    [[ "$1" != "$dir"/* ]] || return 0
+  done
+  return 1
 }
 
 # Clean and still on the gated commit; anything else fails the gate.
 # Untracked files count whatever status.showUntrackedFiles says.
 assert_tree() {
   local label="$1" changes head
-  changes="$(git -C "$CLONE" status --porcelain --untracked-files=all)" ||
+  [[ -d "$CLONE" && ! -L "$CLONE" ]] || fail "clone replaced during $label ($(elapsed))"
+  changes="$(tree_git status --porcelain --untracked-files=all)" ||
     fail "tree unreadable after $label ($(elapsed))"
   [[ -z "$changes" ]] || {
     log "tree changed during $label:" >&2
     printf '%s\n' "$changes" | head -n 20 >&2
     fail "tree changed during $label ($(elapsed))"
   }
-  head="$(git -C "$CLONE" rev-parse HEAD)" ||
+  head="$(tree_git rev-parse HEAD)" ||
     fail "HEAD unreadable after $label ($(elapsed))"
   [[ "$head" == "$SHA" ]] || fail "HEAD moved during $label ($(elapsed))"
 }
@@ -378,7 +565,13 @@ INTERRUPTED=""
 CHILD_PID=""
 WORK_DIR=""
 GATE_DIR=""
+SANDBOX_DIR=""
 SANDBOX_HOME=""
+TRUSTED_GIT_DIR=""
+EGRESS_DIR=""
+EGRESS_PID=""
+CLONE=""
+PYTHON=""
 SANDBOX_PATH=""
 SANDBOX_TOOLCHAIN_DIRS=()
 SANDBOX_OPTIONS=()
@@ -409,7 +602,8 @@ GATE_STARTED="$(date +%s)"
 GATE_DIR="$STATE_ROOT/$SHA"
 mkdir -p "$GATE_DIR"
 rm -f -- "$GATE_DIR/summary" "$GATE_DIR/clone.log" "$GATE_DIR/install.log" \
-  "$GATE_DIR/check.log" "$GATE_DIR/production-check.log" "$GATE_DIR/sandbox.log"
+  "$GATE_DIR/rebuild.log" "$GATE_DIR/check.log" "$GATE_DIR/production-check.log" \
+  "$GATE_DIR/sandbox.log" "$GATE_DIR/egress.log"
 record sha "$SHA"
 record repo "$REPO"
 record started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -423,21 +617,31 @@ log "gating $REPO at $SHA (logs: $GATE_DIR)"
 BWRAP="$(command -v bwrap 2>/dev/null)" && [[ "$BWRAP" == /* ]] ||
   fail "sandbox unavailable: bubblewrap (bwrap) not found"
 prepare_sandbox || fail "sandbox unavailable: no Node toolchain it can expose"
+# The in-sandbox half of the egress proxy needs a Python the sandbox can see.
+PYTHON="$(command -v python3)"
+in_system_dir "$PYTHON" && in_system_dir "$(realpath -e -- "$PYTHON")" ||
+  fail "sandbox unavailable: python3 is not in a system directory"
 
 WORK_DIR="$(mktemp -d)"
 chmod 700 "$WORK_DIR"
-CLONE="$WORK_DIR/repo"
-SANDBOX_HOME="$WORK_DIR/home"
-mkdir -m 700 -- "$SANDBOX_HOME" "$SANDBOX_HOME/bin" "$WORK_DIR/tmp"
+# Only SANDBOX_DIR is writable inside the sandbox. The git directory and the
+# egress socket sit beside it, out of the sandbox's reach.
+SANDBOX_DIR="$WORK_DIR/sandbox"
+TRUSTED_GIT_DIR="$WORK_DIR/git"
+EGRESS_DIR="$WORK_DIR/egress"
+CLONE="$SANDBOX_DIR/repo"
+SANDBOX_HOME="$SANDBOX_DIR/home"
+mkdir -m 700 -- "$SANDBOX_DIR" "$SANDBOX_HOME" "$SANDBOX_HOME/bin" "$SANDBOX_DIR/tmp"
 PHASE="clone"
 log "cloning $REPO into a private temporary directory"
 {
-  git clone --quiet --no-checkout "$CLONE_BASE/$REPO.git" "$CLONE" &&
-    git -C "$CLONE" fetch --quiet origin "$SHA" &&
-    git -C "$CLONE" -c advice.detachedHead=false checkout --quiet --detach "$SHA"
+  git clone --quiet --no-checkout --separate-git-dir="$TRUSTED_GIT_DIR" \
+    "$CLONE_BASE/$REPO.git" "$CLONE" &&
+    git --git-dir="$TRUSTED_GIT_DIR" fetch --quiet origin "$SHA" &&
+    tree_git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 } >"$GATE_DIR/clone.log" 2>&1 </dev/null || fail "could not fetch the requested SHA ($(elapsed))"
 
-checkout_head="$(git -C "$CLONE" rev-parse HEAD)" || checkout_head=""
+checkout_head="$(tree_git rev-parse HEAD)" || checkout_head=""
 if [[ "$checkout_head" != "$SHA" ]]; then
   log "HEAD is ${checkout_head:-unreadable}, not $SHA" >&2
   fail "checkout did not match the requested SHA"
@@ -454,17 +658,34 @@ run_phase "$GATE_DIR/sandbox.log" true ||
 run_phase "$GATE_DIR/sandbox.log" \
   corepack enable --install-directory "$SANDBOX_HOME/bin" pnpm ||
   fail "sandbox unavailable: could not install the pnpm shim ($(elapsed))"
+start_egress || fail "sandbox unavailable: the egress proxy did not start ($(elapsed))"
 
+# The install runs no pull-request code: no lifecycle scripts and no
+# .pnpmfile.cjs. Dependency build scripts, which the pull request chooses
+# through its lockfile, run next as their own phase; some download binaries,
+# so both phases get the egress proxy and nothing else.
 PHASE="install"
 log "installing dependencies (log: $GATE_DIR/install.log)"
 started="$(date +%s)"
 status=0
-run_phase "$GATE_DIR/install.log" \
-  corepack "$PNPM" --dir "$CLONE" install --frozen-lockfile || status=$?
+run_phase --egress "$GATE_DIR/install.log" corepack "$PNPM" --dir "$CLONE" \
+  install --frozen-lockfile --ignore-scripts --ignore-pnpmfile || status=$?
 record install_exit "$status"
 record install_seconds "$(($(date +%s) - started))"
 ((status == 0)) || fail "dependency install failed ($(elapsed))"
 assert_tree "install"
+
+PHASE="dependency build"
+log "building dependencies (log: $GATE_DIR/rebuild.log)"
+started="$(date +%s)"
+status=0
+run_phase --egress "$GATE_DIR/rebuild.log" corepack "$PNPM" --dir "$CLONE" rebuild ||
+  status=$?
+record rebuild_exit "$status"
+record rebuild_seconds "$(($(date +%s) - started))"
+((status == 0)) || fail "dependency build failed ($(elapsed))"
+assert_tree "dependency build"
+stop_egress
 
 # Both checks share one clone: the production run guards the inherited
 # NODE_ENV regression, not a different dependency set, so reinstalling would

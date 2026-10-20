@@ -380,10 +380,12 @@ bin/agentic-remote-gate <PR-number|full-sha> [--repo owner/name] [--no-status] [
    the repository afresh into a private temporary directory, fetches that exact
    SHA (which also reaches pull request heads absent from a plain clone),
    detaches to it, and refuses to continue unless `HEAD` equals the SHA.
-3. It runs `pnpm install --frozen-lockfile`, `pnpm check`, then
-   `NODE_ENV=production pnpm check` in the same clone, through the pinned
-   Corepack pnpm. The tree, untracked files included, must stay clean and on
-   the SHA after each step.
+3. It runs `pnpm install --frozen-lockfile --ignore-scripts
+   --ignore-pnpmfile`, `pnpm rebuild` (the dependency build scripts the
+   lockfile allows), `pnpm check`, then `NODE_ENV=production pnpm check` in the
+   same clone, through the Corepack pnpm the `packageManager` field pins to a
+   plain release version (anything else fails). The tree, untracked files
+   included, must stay clean and on the SHA after each step.
 4. It posts `success` with the Vitest counts and total duration, for example
    `normal+production: 5099 passed, 1 skipped (58m)`, only when both checks
    exit cleanly and each reports passed tests and no failed ones. Any failure,
@@ -394,23 +396,40 @@ bin/agentic-remote-gate <PR-number|full-sha> [--repo owner/name] [--no-status] [
    secrets. `--no-status` posts nothing.
 5. Logs and a `summary` stay in
    `${XDG_STATE_HOME:-~/.local/state}/agentic-remote/gates/<sha>/`
-   (`clone.log`, `sandbox.log`, `install.log`, `check.log`,
-   `production-check.log`). The temporary clone is removed however the gate
+   (`clone.log`, `sandbox.log`, `install.log`, `rebuild.log`, `egress.log`,
+   `check.log`, `production-check.log`). The temporary clone is removed however the gate
    ends.
 
-Install and both checks run pull-request code, so they run in a
-[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox that
-the gate requires. The sandbox gets every namespace unshared except the
-network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
+Install, dependency build, and both checks run pull-request code, so they run
+in a [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox
+that the gate requires. The sandbox gets every namespace unshared, including
+the network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
 `NODE_ENV` for the production run) that `bwrap` itself is also started with,
 since it stays visible inside as PID 1, a private `HOME` (holding its own
 Corepack `pnpm` shim) and `/tmp` inside the temporary directory, an empty
 tmpfs over the real home and `/run`, read-only
 system directories plus the Node toolchain's `bin` and `lib/node_modules`, and
-a writable temporary directory whose clone's `.git` is read-only. So no token, `gh` or SSH
-configuration, agent socket, or the operator's tmux server is reachable, and
-pnpm and Corepack caches are per gate. Only the gate itself, outside the
-sandbox, calls `gh`. When `bwrap` is missing or cannot start (for example where
+one writable directory holding the clone, that `HOME`, and that `/tmp`. So no
+token, `gh` or SSH configuration, agent socket, the operator's tmux server, or
+any host service (loopback, LAN, or tailnet) is reachable, and pnpm and
+Corepack caches are per gate. Only the gate itself, outside the sandbox, calls
+`gh`.
+
+- **Network.** The checks run with only the sandbox's own loopback. Install and
+  dependency build, which download packages and binaries such as
+  `ffmpeg-static`'s, reach the outside only through a proxy the gate runs
+  outside the sandbox. It allows `CONNECT` to port 443 of globally routable
+  addresses only, so host, private, link-local, and tailnet addresses stay
+  unreachable even there, and logs refusals to `egress.log`.
+- **Git.** The clone's git directory sits outside the writable directory and is
+  mounted read-only. The gate's own git commands after each phase name it
+  explicitly with the clone as the work tree, ignore system and global
+  configuration, disable fsmonitor, hooks, and attribute and exclude files,
+  and never enter submodules (whose repositories the sandbox could fill), so a
+  replaced, symlinked, or re-initialised clone cannot run anything outside the
+  sandbox; a clone that is no longer a plain directory fails the
+  gate. Logs are written by the gate into its state directory, which the
+  sandbox cannot see. When `bwrap` is missing or cannot start (for example where
 unprivileged user namespaces are blocked), the gate posts `failure` and never
 runs the checks unsandboxed.
 

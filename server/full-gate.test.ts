@@ -1,5 +1,5 @@
 import { execFile, spawn, spawnSync } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, realpathSync, writeFileSync } from 'node:fs'
 import {
   chmod,
   copyFile,
@@ -8,11 +8,13 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { networkInterfaces, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:net'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -35,8 +37,15 @@ afterEach(async () => {
   )
 })
 
+// The operator's shell, minus any git configuration the test runner itself
+// injects through the environment (some agents disable core.fsmonitor that
+// way), so the gate is tested without hardening it did not provide.
+const operatorEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !/^GIT_CONFIG_(COUNT|KEY_|VALUE_|PARAMETERS)/.test(name)),
+)
+
 const gitEnv = {
-  ...process.env,
+  ...operatorEnv,
   GIT_AUTHOR_NAME: 'Test',
   GIT_AUTHOR_EMAIL: 'test@example.test',
   GIT_COMMITTER_NAME: 'Test',
@@ -66,6 +75,7 @@ interface Fixture {
   statusLog: string
   knobs: string
   sandboxCalls: string
+  pwned: string
   env: NodeJS.ProcessEnv
 }
 
@@ -101,6 +111,7 @@ async function fixture(): Promise<Fixture> {
   const statusLog = path.join(root, 'statuses.log')
   const knobs = path.join(root, 'knobs')
   const sleepMark = path.join(root, 'sleeping')
+  const pwned = path.join(root, 'pwned')
   await mkdir(path.dirname(origin), { recursive: true })
   await Promise.all(
     [bin, temp, state, home, sandboxBin, sandboxCalls].map((dir) =>
@@ -192,9 +203,23 @@ async function fixture(): Promise<Fixture> {
       '[[ "${NODE_ENV:-}" != production ]] || phase=production',
       `head="$(${JSON.stringify(realGit)} -C "$dir" rev-parse HEAD)"`,
       'printf "checkout %s %s %s\\n" "$phase" "$head" "$(stat -c %a "$(dirname "$dir")")" >>"$CALL_LOG"',
+      // Asks the egress proxy, when there is one, to reach places it must not.
+      'if [[ -n "${PROXY_PROBE:-}" && -n "${HTTPS_PROXY:-}" ]]; then',
+      '  proxy="${HTTPS_PROXY#http://}"; proxy="${proxy%/}"',
+      '  for target in $PROXY_PROBE; do',
+      '    reply="$( { exec 3<>"/dev/tcp/${proxy%:*}/${proxy##*:}" &&',
+      '      printf "CONNECT %s HTTP/1.1\\r\\nHost: %s\\r\\n\\r\\n" "$target" "$target" >&3 &&',
+      '      head -n 1 <&3 | tr -d "\\r"; } 2>&1)"',
+      '    printf "proxy %s %s\\n" "$target" "$reply" >>"$CALL_LOG"',
+      '  done',
+      'fi',
       'if [[ " $* " == *" install "* ]]; then',
       '  echo "installing dependencies"',
       '  exit "${INSTALL_EXIT:-0}"',
+      'fi',
+      'if [[ " $* " == *" rebuild "* ]]; then',
+      '  echo "building dependencies"',
+      '  exit "${REBUILD_EXIT:-0}"',
       'fi',
       'printf "check-begin %s\\n" "$head" >>"$CALL_LOG"',
       'if [[ "$phase" == "${SLEEP_PHASE:-}" ]]; then',
@@ -203,6 +228,37 @@ async function fixture(): Promise<Fixture> {
       '  printf "woke %s\\n" "$phase" >>"$CALL_LOG"',
       'fi',
       '[[ "$phase" != "${DIRTY_PHASE:-}" ]] || touch "$dir/stray-output"',
+      // Plants git configuration that would run a command for whichever git
+      // next looks at the clone: a replacement repository, a redirected .git
+      // file, or a symlink to the clone moved elsewhere.
+      `pwn="touch ${pwned}"`,
+      `realgit=${JSON.stringify(realGit)}`,
+      'if [[ "$phase" == "${SWAP_PHASE:-}" ]]; then',
+      '  case "$SWAP_MODE" in',
+      '    rename)',
+      '      mv "$dir" "$dir.moved" && mkdir "$dir" && cp -a "$dir.moved/." "$dir/" && rm -rf "$dir/.git"',
+      '      "$realgit" init -q "$dir" && "$realgit" -C "$dir" add -A ;;',
+      '    gitfile)',
+      '      "$realgit" init -q "$dir.evil" && rm -rf "$dir/.git"',
+      '      printf "gitdir: %s/.git\\n" "$dir.evil" >"$dir/.git"',
+      '      dir="$dir.evil" ;;',
+      '    symlink)',
+      '      mv "$dir" "$dir.moved" && ln -s "$dir.moved" "$dir"',
+      '      dir="$dir.moved" ;;',
+      // Populates a submodule the commit records with a repository whose own
+      // configuration names a clean filter, which git status would run for a
+      // file whose contents it has to compare.
+      '    submodule)',
+      '      "$realgit" init -q "$dir/sub" && dir="$dir/sub"',
+      '      echo "f filter=pwn" >"$dir/.gitattributes" && echo x >"$dir/f"',
+      '      "$realgit" -C "$dir" add . && "$realgit" -C "$dir" -c user.name=x -c user.email=x@x commit -qm x',
+      '      "$realgit" -C "$dir" config filter.pwn.clean "$pwn; cat"',
+      '      echo y >"$dir/f" && touch -d @1 "$dir/f" ;;',
+      '  esac',
+      '  "$realgit" -C "$dir" config core.fsmonitor "$pwn"',
+      '  printf "#!/bin/sh\\n%s\\n" "$pwn" >"$("$realgit" -C "$dir" rev-parse --git-dir)/hooks/post-index-change"',
+      '  chmod +x "$("$realgit" -C "$dir" rev-parse --git-dir)/hooks/post-index-change"',
+      'fi',
       'summary_var="${phase^^}_SUMMARY"',
       'summary="${!summary_var:-5099 passed | 1 skipped (5100)}"',
       'echo " RUN  v4.0.0 $dir"',
@@ -247,8 +303,9 @@ async function fixture(): Promise<Fixture> {
     statusLog,
     knobs,
     sandboxCalls,
+    pwned,
     env: {
-      ...process.env,
+      ...operatorEnv,
       PATH: `${bin}:${sandboxBin}:${process.env.PATH ?? ''}`,
       HOME: home,
       TMPDIR: temp,
@@ -389,8 +446,9 @@ describe('agentic-remote-gate', () => {
     const corepack = log.filter((line) => line.startsWith('corepack '))
     expect(corepack).toEqual([
       expect.stringMatching(
-        /^corepack NODE_ENV=unset pnpm@10\.34\.5 --dir \S+ install --frozen-lockfile$/,
+        /^corepack NODE_ENV=unset pnpm@10\.34\.5 --dir \S+ install --frozen-lockfile --ignore-scripts --ignore-pnpmfile$/,
       ),
+      expect.stringMatching(/^corepack NODE_ENV=unset pnpm@10\.34\.5 --dir \S+ rebuild$/),
       expect.stringMatching(/^corepack NODE_ENV=unset pnpm@10\.34\.5 --dir \S+ check$/),
       expect.stringMatching(/^corepack NODE_ENV=production pnpm@10\.34\.5 --dir \S+ check$/),
     ])
@@ -400,13 +458,20 @@ describe('agentic-remote-gate', () => {
 
     const dir = path.join(f.gates, f.mainSha)
     expect((await readdir(dir)).sort()).toEqual(
-      expect.arrayContaining(['check.log', 'install.log', 'production-check.log', 'summary']),
+      expect.arrayContaining([
+        'check.log',
+        'install.log',
+        'production-check.log',
+        'rebuild.log',
+        'summary',
+      ]),
     )
     const summary = await readFile(path.join(dir, 'summary'), 'utf8')
     expect(summary).toContain('result=success')
     expect(summary).toContain('normal_tests=5099 passed, 1 skipped')
     expect(summary).toContain('production_tests=5099 passed, 1 skipped')
     expect(summary).toMatch(/install_seconds=\d+/)
+    expect(summary).toMatch(/rebuild_seconds=\d+/)
     expect(summary).toMatch(/normal_check_seconds=\d+/)
     expect(summary).toMatch(/production_check_seconds=\d+/)
     expect(await readFile(path.join(dir, 'check.log'), 'utf8')).toContain('Tests  5099 passed')
@@ -426,7 +491,7 @@ describe('agentic-remote-gate', () => {
     ])
     expect(list.at(-1)?.state).toBe('success')
     const checkouts = (await calls(f)).filter((line) => line.startsWith('checkout '))
-    expect(checkouts).toHaveLength(3)
+    expect(checkouts).toHaveLength(4)
     for (const line of checkouts) expect(line).toContain(` ${f.prSha} `)
     await expectNoClone(f)
   })
@@ -644,15 +709,18 @@ describe('agentic-remote-gate', () => {
     const commands = await sandboxCommands(f)
     const corepack = commands.filter(({ command }) => command.includes('--dir'))
     expect(corepack.map(({ command }) => command.slice(command.indexOf('corepack') + 4))).toEqual([
-      ['install', '--frozen-lockfile'],
+      ['install', '--frozen-lockfile', '--ignore-scripts', '--ignore-pnpmfile'],
+      ['rebuild'],
       ['check'],
       ['check'],
     ])
     const allowed = ['CI', 'COREPACK_ENABLE_DOWNLOAD_PROMPT', 'HOME', 'LANG', 'NODE_ENV', 'PATH', 'TERM', 'TMPDIR']
     for (const { options, command } of commands) {
-      for (const flag of ['--unshare-all', '--share-net', '--die-with-parent', '--new-session']) {
+      for (const flag of ['--unshare-all', '--die-with-parent', '--new-session']) {
         expect(options).toContain(flag)
       }
+      // No phase shares the host network, which holds the operator's hub.
+      expect(options).not.toContain('--share-net')
       expect(hasSequence(options, '--tmpfs', f.home)).toBe(true)
       expect(hasSequence(options, '--tmpfs', '/run')).toBe(true)
       for (let index = 0; index < options.length; index += 1) {
@@ -695,9 +763,28 @@ describe('agentic-remote-gate', () => {
       const work = path.dirname(clone)
       const writable = indexOfSequence(options, '--bind', work, work)
       expect(clearedEnvironment(command).HOME.startsWith(`${work}/`)).toBe(true)
-      const gitDir = indexOfSequence(options, '--ro-bind', `${clone}/.git`, `${clone}/.git`)
       expect(writable).toBeGreaterThan(-1)
-      expect(gitDir).toBeGreaterThan(writable)
+      // The repository's git directory lives beside, not inside, the only
+      // writable mount, so nothing in the sandbox can replace or edit it.
+      const gitDir = path.join(path.dirname(work), 'git')
+      expect(hasSequence(options, '--ro-bind', gitDir, gitDir)).toBe(true)
+      for (let index = 0; index < options.length; index += 1) {
+        if (!['--bind', '--bind-try'].includes(options[index])) continue
+        expect(`${gitDir}/`.startsWith(`${options[index + 1]}/`)).toBe(false)
+      }
+    }
+    // Only installing and building dependencies get network, and only
+    // through the egress proxy, whose socket directory is read-only.
+    const [install, rebuild, normal, production] = corepack
+    const egressDir = path.join(path.dirname(path.dirname(install.command[install.command.indexOf('--dir') + 1])), 'egress')
+    for (const { options, command } of [install, rebuild]) {
+      expect(hasSequence(options, '--ro-bind', egressDir, egressDir)).toBe(true)
+      expect(command.indexOf('egress')).toBeGreaterThan(-1)
+      expect(command.indexOf('egress')).toBeLessThan(command.indexOf('corepack'))
+    }
+    for (const { options, command } of [normal, production]) {
+      expect(options).not.toContain(egressDir)
+      expect(command).not.toContain('egress')
     }
     // `pnpm check` runs `pnpm lint` and so on, so Corepack's pnpm shim goes
     // first on the sandbox PATH, installed into the private HOME.
@@ -713,10 +800,13 @@ describe('agentic-remote-gate', () => {
     }
     expect(clearedEnvironment(corepack[0].command).NODE_ENV).toBeUndefined()
     expect(clearedEnvironment(corepack[1].command).NODE_ENV).toBeUndefined()
-    expect(clearedEnvironment(corepack[2].command).NODE_ENV).toBe('production')
+    expect(clearedEnvironment(corepack[2].command).NODE_ENV).toBeUndefined()
+    expect(clearedEnvironment(corepack[3].command).NODE_ENV).toBe('production')
 
-    for (const name of ['install.log', 'check.log', 'production-check.log']) {
+    const proxied = ['install.log', 'rebuild.log']
+    for (const name of [...proxied, 'check.log', 'production-check.log']) {
       const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
+      expect(/^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/m.test(log)).toBe(proxied.includes(name))
       const seen = log.slice(log.indexOf('ENVIRONMENT BEGIN'), log.indexOf('ENVIRONMENT END'))
       expect(seen).toMatch(/^HOME=/m)
       expect(seen).not.toMatch(/secret|SSH_AUTH_SOCK|GH_CONFIG_DIR|XDG_|TMUX|CALL_LOG/)
@@ -828,6 +918,199 @@ describe('agentic-remote-gate', () => {
     expect(production).toHaveLength(phase === 'normal' ? 0 : 1)
   })
 
+
+  it.each([
+    ['rename', 0],
+    ['gitfile', 0],
+    ['symlink', 1],
+  ] as const)(
+    'never runs configuration planted by a %s of the clone outside the sandbox',
+    async (mode, code) => {
+      const f = await fixture()
+      const result = await gate(f, [f.mainSha, '--repo', REPO], {
+        SWAP_PHASE: 'normal',
+        SWAP_MODE: mode,
+      })
+      await expect(stat(f.pwned)).rejects.toThrow()
+      // Neither a .git entry nor a renamed directory holding identical files
+      // changes the tree the gate checks; a symlinked clone fails the gate.
+      expect(result.code, result.output).toBe(code)
+      const list = await statuses(f)
+      expectSafe(f, list)
+      expect(list.at(-1)?.state).toBe(code === 0 ? 'success' : 'failure')
+      if (code !== 0) expect(list.at(-1)?.description).toMatch(/during normal check/)
+      await expectNoClone(f)
+    },
+  )
+
+  it('never enters a submodule the sandbox populated', async () => {
+    const f = await fixture()
+    const work = path.join(f.root, 'work')
+    await git(work, 'update-index', '--add', '--cacheinfo', `160000,${f.mainSha},sub`)
+    await git(work, 'commit', '--quiet', '-m', 'submodule')
+    await git(work, 'push', '--quiet', 'origin', 'HEAD:refs/heads/other')
+    const sha = await git(work, 'rev-parse', 'HEAD')
+    const result = await gate(f, [sha, '--repo', REPO], {
+      SWAP_PHASE: 'normal',
+      SWAP_MODE: 'submodule',
+    })
+    await expect(stat(f.pwned)).rejects.toThrow()
+    expect(result.code, result.output).toBe(0)
+    expect((await statuses(f)).at(-1)?.state).toBe('success')
+    await expectNoClone(f)
+  })
+
+  it('fails closed without running checks when python3 is outside the system directories', async () => {
+    const f = await fixture()
+    const system = path.join(f.root, 'system-bin')
+    const local = path.join(f.root, 'local-bin')
+    await mkdir(system)
+    await mkdir(local)
+    await Promise.all(
+      (await readdir('/usr/bin'))
+        .filter((name) => !name.startsWith('python3'))
+        .map((name) => symlink(path.join('/usr/bin', name), path.join(system, name))),
+    )
+    await symlink('/usr/bin/python3', path.join(local, 'python3'))
+    const result = await gate(f, [f.mainSha, '--repo', REPO], {
+      PATH: `${f.bin}:${path.dirname(process.execPath)}:${local}:${system}`,
+    })
+    expect(result.code).not.toBe(0)
+
+    const list = await statuses(f)
+    expectSafe(f, list)
+    expect(list.map((s) => s.state)).toEqual(['pending', 'failure'])
+    expect(list[1].description).toMatch(/^sandbox unavailable: python3/)
+    expect((await calls(f)).filter((line) => line.startsWith('corepack '))).toEqual([])
+    await expectNoClone(f)
+  })
+
+  it.runIf(realpathSync('/bin') === '/usr/bin')(
+    'accepts a python3 reached through a merged /bin',
+    async () => {
+      const f = await fixture()
+      const result = await gate(f, [f.mainSha, '--repo', REPO], {
+        PATH: `${f.bin}:${path.join(f.root, 'sandbox-bin')}:${path.dirname(process.execPath)}:/bin`,
+      })
+      expect(result.code, result.output).toBe(0)
+      expect((await statuses(f)).at(-1)?.state).toBe('success')
+    },
+  )
+
+  it.each(['pnpm@https://example.com/pnpm.tgz', 'pnpm@latest', 'pnpm@10.34.5 x', 'yarn@4.0.0'])(
+    'refuses packageManager %s without running anything in the sandbox',
+    async (packageManager) => {
+      const f = await fixture()
+      const work = path.join(f.root, 'work')
+      await writeFile(
+        path.join(work, 'package.json'),
+        JSON.stringify({ name: 'fixture', packageManager }),
+      )
+      await git(work, 'commit', '--quiet', '-am', 'package manager')
+      await git(work, 'push', '--quiet', 'origin', 'HEAD:refs/heads/other')
+      const sha = await git(work, 'rev-parse', 'HEAD')
+      const result = await gate(f, [sha, '--repo', REPO])
+      expect(result.code).not.toBe(0)
+
+      const list = await statuses(f)
+      expectSafe(f, list)
+      expect(list.map((s) => s.state)).toEqual(['pending', 'failure'])
+      expect(list[1].description).toMatch(/^unsupported packageManager/)
+      expect(await readdir(f.sandboxCalls)).toEqual([])
+    },
+  )
+
+  it('lets dependency installs reach only public addresses through its proxy', async () => {
+    const f = await fixture()
+    const targets = [
+      '127.0.0.1:443',
+      'localhost:443',
+      '10.0.0.181:443',
+      '100.84.216.62:443',
+      '[::1]:443',
+      '[fd7a:115c:a1e0::1]:443',
+      '169.254.169.254:443',
+      '140.82.112.3:22',
+    ]
+    const result = await gate(f, [f.mainSha, '--repo', REPO], { PROXY_PROBE: targets.join(' ') })
+    expect(result.code, result.output).toBe(0)
+
+    const replies = (await calls(f)).filter((line) => line.startsWith('proxy '))
+    // Asked once from the install and once from the dependency build.
+    expect(replies).toHaveLength(targets.length * 2)
+    for (const reply of replies) expect(reply).toMatch(/^proxy \S+ HTTP\/1\.1 403 /)
+  })
+
+  it.runIf(realSandbox)(
+    'cannot reach the host network or write the git directory from a real sandbox',
+    async () => {
+      const f = await fixture()
+      const accepted: string[] = []
+      const listener = createServer((socket) => {
+        accepted.push(String(socket.remoteAddress))
+        socket.destroy()
+      })
+      await new Promise<void>((resolve) => listener.listen(0, '0.0.0.0', resolve))
+      try {
+        const port = (listener.address() as { port: number }).port
+        const external = Object.values(networkInterfaces())
+          .flat()
+          .find((entry) => entry && entry.family === 'IPv4' && !entry.internal)?.address
+        const addresses = ['127.0.0.1', ...(external ? [external] : [])]
+        const toolchain = path.join(f.root, 'toolchain', 'bin')
+        await mkdir(toolchain, { recursive: true })
+        await stub(toolchain, 'node', `exec ${JSON.stringify(process.execPath)} "$@"`)
+        await stub(
+          toolchain,
+          'corepack',
+          [
+            '[[ "$1" != enable ]] || exit 0',
+            `for address in ${addresses.join(' ')}; do`,
+            `  if (exec 3<>"/dev/tcp/$address/${port}") 2>/dev/null; then`,
+            '    echo "REACHED $address"',
+            '  else',
+            '    echo "BLOCKED $address"',
+            '  fi',
+            'done',
+            'gitdir="$(sed -n "s/^gitdir: //p" .git)"',
+            'if [[ -n "$gitdir" ]] && ! (: >>"$gitdir/config") 2>/dev/null; then',
+            '  echo "GITDIR READONLY"',
+            'fi',
+            'if [[ -n "${HTTPS_PROXY:-}" ]]; then',
+            '  proxy="${HTTPS_PROXY#http://}"; proxy="${proxy%/}"',
+            `  for address in ${addresses.join(' ')}; do`,
+            '    exec 3<>"/dev/tcp/${proxy%:*}/${proxy##*:}"',
+            `    printf "CONNECT %s:${port} HTTP/1.1\\r\\n\\r\\n" "$address" >&3`,
+            '    printf "PROXY %s %s\\n" "$address" "$(head -n 1 <&3 | tr -d "\\r")"',
+            '    exec 3<&-',
+            '  done',
+            'fi',
+            'echo "      Tests  1 passed (1)"',
+          ].join('\n'),
+        )
+        const result = await gate(f, [f.mainSha, '--repo', REPO], {
+          PATH: `${toolchain}:${f.bin}:/usr/bin:/bin`,
+        })
+        expect(result.code, result.output).toBe(0)
+
+        const proxied = ['install.log', 'rebuild.log']
+        for (const name of [...proxied, 'check.log', 'production-check.log']) {
+          const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
+          for (const address of addresses) {
+            expect(log, name).toContain(`BLOCKED ${address}`)
+            if (proxied.includes(name)) {
+              expect(log, name).toMatch(new RegExp(`^PROXY ${address} HTTP/1\\.1 403 `, 'm'))
+            }
+          }
+          expect(log, name).toContain('GITDIR READONLY')
+          expect(log, name).not.toMatch(/^PROXY .* 200 /m)
+        }
+        expect(accepted).toEqual([])
+      } finally {
+        listener.close()
+      }
+    },
+  )
 
   it.runIf(realSandbox)(
     'leaves no inherited secret in any process environment inside a real sandbox',

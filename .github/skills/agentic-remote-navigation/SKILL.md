@@ -319,7 +319,11 @@ and must still change on every build.
    head is final. It clones that SHA afresh, runs `pnpm check` and
    `NODE_ENV=production pnpm check` serially under a host-wide lock inside a
    credentialless `bwrap` sandbox, with `bwrap` itself started from the
-   scrubbed environment (it fails rather than run unsandboxed), and
+   scrubbed environment (it fails rather than run unsandboxed). The sandbox
+   has no host network: install (`--ignore-scripts`) and `pnpm rebuild` reach
+   only public HTTPS through the gate's filtering proxy, and the checks run
+   offline. The clone's git directory stays read-only and outside the sandbox's
+   writable mount. It
    posts the `agentic-remote/full-gate` commit status; success needs passed
    and zero failed Vitest counts from both runs. A new push needs a new gate.
 6. **Merge only after Supervisor `APPROVE` and an `agentic-remote/full-gate`

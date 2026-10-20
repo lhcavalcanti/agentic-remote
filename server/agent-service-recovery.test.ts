@@ -1758,6 +1758,27 @@ describe('Session retention safety', () => {
     expect(f.store.get('pending')?.suspended).not.toBe(true)
   })
 
+  it('publishes discovery changes only for open or newly archived and interrupted records', async () => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.retention = { pinned: false, idleDays: 7 }
+    })
+    vi.mocked(f.client.listSessions).mockResolvedValue([{
+      sessionId: 'cli-only', summary: 'CLI history', modifiedTime: new Date(timestamp),
+      startTime: new Date(timestamp), isRemote: false, context: { workingDirectory: f.directory },
+    }] as never)
+    f.events.length = 0
+    await f.service.refreshDiscovery()
+    expect(f.store.get('cli-only')).toMatchObject({ isOpen: false })
+    expect(f.store.get('cli-only')?.archivedAt).toBeUndefined()
+    const upserted = f.events.flatMap((event) => event.type === 'session.upserted' ? [event.session.id] : [])
+    expect(upserted).not.toContain('cli-only')
+    expect(f.store.get('pending')?.archivedAt).toBeDefined()
+    expect(upserted).toContain('pending')
+  })
+
   it('refuses to resume an archived suspended terminal without reopening it', async () => {
     const f = await fixture()
     f.ownership.aggregateError = undefined

@@ -2222,6 +2222,86 @@ describe('remote snapshot consistency', () => {
     manager.stop()
   })
 
+  it.each([true, false])('evicts a closed non-archived remote session and never probes it again (cached open: %s)', async (cachedOpen) => {
+    const { manager, client, computer, managed, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSessionRetention: true,
+    }])
+    const closed = { ...session('closed', 'History only'), revision: 2, isOpen: false }
+    manager['sessionCache'].set(computer.id, [managed(cachedOpen ? { ...closed, revision: 1, isOpen: true } : closed)])
+    vi.spyOn(client, 'listSessions').mockResolvedValue([])
+    vi.spyOn(client, 'listBackgroundTasks').mockResolvedValue(taskSnapshot(false))
+    vi.spyOn(client, 'getSession').mockResolvedValue(closed)
+    await manager['resyncRemoteComputer'](computer, client)
+    expect(events).toContainEqual({ type: 'session.removed', computerId: computer.id, sessionId: 'closed' })
+    expect(manager['sessionCache'].get(computer.id)).toEqual([])
+    const probes = vi.mocked(client.getSession).mock.calls.length
+    expect(probes).toBe(cachedOpen ? 1 : 0)
+    for (let read = 0; read < 3; read += 1) {
+      expect((await manager.listSessionsWithAuthority()).answeredComputerIds).toContain(computer.id)
+    }
+    await manager['resyncRemoteComputer'](computer, client)
+    expect(client.getSession).toHaveBeenCalledTimes(probes)
+    expect(client.listBackgroundTasks).not.toHaveBeenCalled()
+    manager.stop()
+  })
+
+  it('probes missing retained entries in parallel with a bounded number in flight', async () => {
+    const { manager, client, computer, managed } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSessionRetention: true,
+    }])
+    const archived = (id: string) => ({
+      ...session(id, `Archived ${id}`), isOpen: false, archivedAt: '2026-10-19T06:52:00Z',
+    })
+    const ids = Array.from({ length: 24 }, (_, index) => `archived-${index}`)
+    manager['sessionCache'].set(computer.id, ids.map((id) => managed(archived(id))))
+    vi.spyOn(client, 'listSessions').mockResolvedValue([])
+    let inFlight = 0
+    let peak = 0
+    vi.spyOn(client, 'getSession').mockImplementation(async (id) => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 2))
+      inFlight -= 1
+      return archived(id)
+    })
+    await manager.listSessionsWithAuthority()
+    expect(client.getSession).toHaveBeenCalledTimes(ids.length)
+    expect(peak).toBeGreaterThan(1)
+    expect(peak).toBeLessThanOrEqual(8)
+    expect(manager['sessionCache'].get(computer.id)?.map((entry) => entry.id).sort()).toEqual([...ids].sort())
+    manager.stop()
+  })
+
+  it('keeps the previous entry when one retention probe fails without failing the listing', async () => {
+    const { manager, client, computer, managed, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSessionRetention: true,
+    }])
+    const archived = (id: string) => ({
+      ...session(id, `Archived ${id}`), isOpen: false, archivedAt: '2026-10-19T06:52:00Z',
+    })
+    manager['sessionCache'].set(computer.id, [managed(archived('flaky')), managed(archived('gone')), managed(archived('kept'))])
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('open', 'Live')])
+    vi.spyOn(client, 'listBackgroundTasks').mockResolvedValue(taskSnapshot(false))
+    vi.spyOn(client, 'getSession').mockImplementation(async (id) => {
+      if (id === 'flaky') throw new RemoteNodeRequestError('Bad gateway', 502)
+      if (id === 'gone') throw new RemoteNodeRequestError('Session not found', 404)
+      return archived(id)
+    })
+    const listing = await manager.listSessionsWithAuthority()
+    expect(listing.answeredComputerIds).toContain(computer.id)
+    expect(listing.sessions.map((entry) => entry.id)).toEqual(['open'])
+    expect(manager['sessionCache'].get(computer.id)?.map((entry) => entry.id).sort()).toEqual(['flaky', 'kept', 'open'])
+    manager['sessionCache'].set(computer.id, [managed(archived('flaky')), managed(archived('gone')), managed(archived('kept'))])
+    await manager['resyncRemoteComputer'](computer, client)
+    expect(events.filter((event) => event.type === 'session.removed')).toEqual([
+      { type: 'session.removed', computerId: computer.id, sessionId: 'gone' },
+    ])
+    manager.stop()
+  })
+
   it('does not resurrect an archived record from an in-flight or offline roster snapshot', async () => {
     const { manager, client, computer, events } = await remoteSnapshotFixture()
     const response = deferred<SessionDetail[]>()

@@ -8145,11 +8145,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const indexed of this.store.discoveryIndex()) {
       const previous = before.get(indexed.id)
       if (previous?.revision === indexed.revision) continue
+      const lifecycleChanged =
+        Boolean(indexed.archivedAt && indexed.archivedAt !== previous?.archivedAt) ||
+        Boolean(indexed.interruptedAt && indexed.interruptedAt !== previous?.interruptedAt)
+      // History-only and closed records are not roster entries; publishing
+      // them made every hub cache and re-probe them on each read.
+      if (!indexed.isOpen && !lifecycleChanged) continue
       const session = this.store.get(indexed.id)
       if (!session) continue
       this.publish(session)
-      if ((indexed.archivedAt && indexed.archivedAt !== previous?.archivedAt) ||
-          (indexed.interruptedAt && indexed.interruptedAt !== previous?.interruptedAt)) {
+      if (lifecycleChanged) {
         console.info(JSON.stringify({
           sessionLifecycle: session.archivedAt ? 'archived' : 'interrupted',
           sessionId: session.id,

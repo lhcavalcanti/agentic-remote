@@ -2765,17 +2765,45 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
   return false
 }
 
+const TERMINAL_NOT_READY_MESSAGE = 'Copilot did not become ready for terminal input'
+
+/**
+ * Runs a startup capture bounded by the startup deadline. Its timeout is the
+ * time left, so on a loaded host the last capture can be cut off just as the
+ * deadline passes; that is the deadline expiring, not tmux failing, and must
+ * surface as "did not become ready" so callers classify it as such.
+ */
+async function captureBeforeDeadline<T>(
+  deadline: number,
+  capture: (timeout: number) => Promise<T>,
+): Promise<T> {
+  try {
+    return await capture(Math.max(1, deadline - Date.now()))
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as { killed?: unknown }).killed === true &&
+      (error as { code?: unknown }).code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+    ) {
+      throw new Error(TERMINAL_NOT_READY_MESSAGE)
+    }
+    throw error
+  }
+}
+
 async function clearAutomaticStartupPrompts(
   target: string,
   validateOwner: () => Promise<void>,
   deadline: number,
 ): Promise<void> {
-  const capture = async () =>
-    (
-      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target], {
-        timeout: Math.max(1, deadline - Date.now()),
-      })
-    ).stdout
+  const capture = () =>
+    captureBeforeDeadline(deadline, async (timeout) =>
+      (
+        await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target], {
+          timeout,
+        })
+      ).stdout,
+    )
 
   const waitUntilClosed = async (
     isOpen: (pane: string) => boolean,
@@ -2827,7 +2855,7 @@ async function clearAutomaticStartupPrompts(
   throw new Error('Too many Copilot startup prompts appeared in sequence')
 }
 
-async function waitForTerminalStartup(
+export async function waitForTerminalStartup(
   target: string,
   handleAutomaticPrompts = true,
   validateOwner: () => Promise<void> = async () => undefined,
@@ -2837,7 +2865,9 @@ async function waitForTerminalStartup(
   const deadline = Date.now() + timeoutMs
   let readyFrames = 0
   while (Date.now() < deadline) {
-    const pane = await capturePane(target, Math.max(1, deadline - Date.now()))
+    const pane = await captureBeforeDeadline(deadline, (timeout) =>
+      capturePane(target, timeout),
+    )
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
       parseTerminalPermission(pane) ||
@@ -2873,7 +2903,7 @@ async function waitForTerminalStartup(
     }
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error('Copilot did not become ready for terminal input')
+  throw new Error(TERMINAL_NOT_READY_MESSAGE)
 }
 
 function cleanDialogLine(line: string): string {

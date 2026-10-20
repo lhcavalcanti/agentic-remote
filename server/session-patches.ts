@@ -119,10 +119,15 @@ export class SessionPublications {
     }
   }
 
-  private upsert(event: SessionUpserted): void {
-    const key = sessionKey(event.session.computerId, event.session.id)
+  private upsert(received: SessionUpserted): void {
+    const key = sessionKey(received.session.computerId, received.session.id)
     const patching = [...this.sockets].some((socket) => socket.patchVersions && socket.readyState === 1)
     const previous = this.publications.get(key)
+    // A roster summary never read the transcript. Publishing its empty list
+    // would clear what every browser shows, so the published one is kept.
+    const event: SessionUpserted = received.summary && previous
+      ? { type: 'session.upserted', session: { ...received.session, messages: previous.session.messages } }
+      : received
     const version = (previous?.version ?? 0) + 1
     if (patching) {
       // Detached from the event, which other listeners also hold, so a later

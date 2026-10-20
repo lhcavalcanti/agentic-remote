@@ -15,6 +15,7 @@ import {
 } from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
+import { sessionRetentionPatchSchema } from './session-retention.js'
 import { isSessionResourceRoute, readSessionSkills, readSessionMcpServers, resourceRequestHandler } from './session-resources.js'
 import {
   MAX_AUDIO_BYTES,
@@ -24,6 +25,10 @@ import {
 
 export const AUDIO_FILENAME_HEADER = 'x-agentic-audio-filename'
 export const AUDIO_TYPE_HEADER = 'x-agentic-audio-type'
+
+const sessionListingQuerySchema = z.object({
+  includeArchived: z.enum(['0', '1']).optional(),
+}).strict()
 
 const sideQuestionSchema = z.object({
   question: z.string().trim().min(1).max(SIDE_QUESTION_MAX_LENGTH),
@@ -226,9 +231,14 @@ export async function registerNodeRoutes(
         },
       )
 
-      node.get('/sessions', async () => ({
-        sessions: service.listSessions(),
-      }))
+      node.get<{ Querystring: { includeArchived?: string } }>('/sessions', async (request) => {
+        const query = sessionListingQuerySchema.parse(request.query)
+        return {
+          sessions: query.includeArchived === '1'
+            ? service.listHistory().filter((session) => session.isOpen || session.archivedAt)
+            : service.listSessions(),
+        }
+      })
 
       node.get('/history', async () => ({
         sessions: service.listHistory(),
@@ -406,6 +416,18 @@ export async function registerNodeRoutes(
               input.title,
             ),
           }
+        },
+      )
+
+      node.patch<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/retention',
+        async (request) => {
+          if (!service.configureRetention) {
+            throw Object.assign(new Error('Session retention is not supported by this computer'), { statusCode: 409 })
+          }
+          return { session: await service.configureRetention(
+            request.params.sessionId, sessionRetentionPatchSchema.parse(request.body),
+          ) }
         },
       )
 

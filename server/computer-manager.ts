@@ -39,6 +39,7 @@ import {
 } from './computer-registry.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
+import { RemoteNodeRequestError } from './remote-node-errors.js'
 import type { SessionService } from './session-service.js'
 import {
   readSessionSkills,
@@ -71,6 +72,8 @@ interface RemoteSessionListing {
   previous: ManagedSession[]
   authoritative: boolean
   token: symbol
+  /** Sessions read in full; every other entry is a transcript-less summary. */
+  detailed?: Set<string>
 }
 
 interface RemoteSessionRead {
@@ -246,7 +249,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       }),
     )
     return {
-      sessions: [...local, ...remote.flat()].sort((left, right) =>
+      sessions: [...local, ...remote.flat()].filter((session) => session.isOpen !== false).sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
       ),
       answeredComputerIds: answered,
@@ -698,6 +701,24 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return managedSession(session, computer)
   }
 
+  async configureRetention(
+    computerId: string,
+    sessionId: string,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    let session: SessionDetail
+    if (computerId === this.identity.info.id) {
+      if (!this.localService.configureRetention) {
+        throw Object.assign(new Error('Session retention is not supported by this computer'), { statusCode: 409 })
+      }
+      session = await this.localService.configureRetention(sessionId, input)
+    } else {
+      session = await this.requireClient(computerId).configureRetention(sessionId, input)
+    }
+    return managedSession(session, computer)
+  }
+
   async removeQueuedPrompt(
     computerId: string,
     sessionId: string,
@@ -1094,22 +1115,61 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         const merged = new Map(
           sessions.map((session) => [session.id, managedSession(session, computer)]),
         )
+        const detailed = new Set<string>()
+        const previous = this.sessionCache.get(computer.id) ?? []
+        const supportsRetention = client.providers.some((provider) => provider.supportsSessionRetention === true)
+        const unlisted = previous.filter((session) => !merged.has(session.id) && !read.changes.has(session.id))
+        if (!supportsRetention) {
+          for (const session of unlisted) {
+            if (session.archivedAt) merged.set(session.id, session)
+          }
+        } else {
+          // The listing already carries every open and archived record, so an
+          // unlisted entry is only probed when it was last seen open or
+          // archived; a closed, unarchived one is history, not roster, and is
+          // dropped without a round trip so it cannot be re-fetched forever.
+          await mapWithConcurrency(
+            unlisted.filter((session) => session.isOpen !== false || session.archivedAt),
+            REMOTE_RETENTION_PROBE_CONCURRENCY,
+            async (session) => {
+              try {
+                const retained = await client.getSession(session.id, { passive: true })
+                // Archived, or reopened after the roster was read: both are
+                // still on the roster. Only a closed, unarchived record leaves.
+                if (retained.archivedAt || retained.isOpen !== false) {
+                  merged.set(session.id, managedSession(retained, computer))
+                  detailed.add(session.id)
+                }
+              } catch (error) {
+                // One unreadable record must not fail the whole roster or
+                // stall deletion reconciliation for every other session.
+                if (!(error instanceof RemoteNodeRequestError && error.statusCode === 404)) {
+                  merged.set(session.id, session)
+                }
+              }
+            },
+          )
+        }
+        if (this.clients.get(computer.id) !== client || this.sessionReads.get(computer.id) !== read) {
+          return { sessions: this.sessionCache.get(computer.id) ?? [], previous: [], authoritative: false, token }
+        }
         // Reconcile in-flight events without erasing deletions. An explicitly
         // newer snapshot revision still wins over an earlier event.
         for (const [id, session] of read.changes) {
           if (session) {
             if (sessionAtLeastAsNew(session, merged.get(id))) {
               merged.set(id, session)
+              detailed.add(id)
             }
           } else {
             merged.delete(id)
           }
         }
-        const previous = this.sessionCache.get(computer.id) ?? []
-        const latest = [...merged.values()]
+        const latest = [...merged.values()].filter((session) =>
+          !supportsRetention || session.isOpen !== false || session.archivedAt)
         this.sessionCache.set(computer.id, latest)
         this.snapshotTokens.set(computer.id, token)
-        return { sessions: latest, previous, authoritative: true, token }
+        return { sessions: latest, previous, authoritative: true, token, detailed }
       }).finally(() => {
         if (this.sessionReads.get(computer.id) === read) {
           this.sessionReads.delete(computer.id)
@@ -1136,7 +1196,9 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         return
       }
       for (const session of listing.sessions) {
-        this.emit('event', { type: 'session.upserted', session })
+        this.emit('event', listing.detailed?.has(session.id)
+          ? { type: 'session.upserted', session }
+          : { type: 'session.upserted', session, summary: true })
       }
       const live = new Set(listing.sessions.map((session) => session.id))
       for (const session of listing.previous) {
@@ -1161,7 +1223,11 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         }
         return
       }
-      await Promise.all(listing.sessions.map(async (session) => {
+      // An archived or closed session has no running work to report, and a
+      // large roster must not fan out one unbounded read per entry.
+      await mapWithConcurrency(listing.sessions.filter((session) =>
+        session.isOpen !== false && !session.archivedAt,
+      ), REMOTE_RETENTION_PROBE_CONCURRENCY, async (session) => {
         const snapshot = await client.listBackgroundTasks(session.id)
         if (
           !current() || resync.taskEvents.has(session.id) ||
@@ -1175,7 +1241,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           sessionId: session.id,
           ...snapshot,
         })
-      }))
+      })
     } finally {
       if (this.remoteResyncs.get(computer.id) === resync) {
         this.remoteResyncs.delete(computer.id)
@@ -1277,4 +1343,21 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     }
     return client
   }
+}
+
+const REMOTE_RETENTION_PROBE_CONCURRENCY = 6
+
+async function mapWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next]
+      next += 1
+      await run(item)
+    }
+  }))
 }

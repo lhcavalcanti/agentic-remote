@@ -117,6 +117,7 @@ async function fixture(
     getSessionInfo,
     queryCalls,
     renameSession,
+    sdk,
     service,
   }
 }
@@ -157,6 +158,223 @@ async function waitForIdle(
 }
 
 describe('ClaudeAgentService', () => {
+  it.each([false, true])('continues a restarted FIFO only after explicit input, including expired callbacks (%s)', async (withQuestion) => {
+    let id = ''
+    const f = await fixture(async function* () {
+      for (const message of textResult(id)) yield message
+    })
+    const created = await f.service.createSession(f.directory)
+    id = created.id
+    await f.service.store.update(id, (session) => {
+      session.status = withQuestion ? 'waiting' : 'running'
+      session.queuedPrompts = ['first', 'second'].map((content) => ({
+        id: content, content, createdAt: '2026-10-18T00:00:00Z',
+      }))
+      if (withQuestion) session.pendingUserInput = {
+        requestId: 'expired', question: 'Review changes?', choices: [], allowFreeform: true,
+      }
+    })
+    await f.service.stop()
+    const restarted = new ClaudeAgentService(
+      new SessionStore(path.join(f.directory, 'state')), '/bin/true', f.sdk,
+      async () => ({ loggedIn: true }),
+    )
+    services.add(restarted)
+    await restarted.start()
+    expect(restarted.getSession(id)?.interruption).toBeDefined()
+    const queries = f.queryCalls.length
+    await restarted.activateSession(id)
+    expect(f.queryCalls).toHaveLength(queries)
+    expect(restarted.getSession(id)?.queuedPrompts).toHaveLength(2)
+    if (withQuestion) expect(restarted.getSession(id)?.pendingUserInput).toMatchObject({ stale: true })
+    await restarted.sendMessage(id, 'Explicit continuation')
+    await vi.waitFor(() => {
+      expect(restarted.getSession(id)?.queuedPrompts).toEqual([])
+      expect(restarted.getSession(id)?.status).toBe('idle')
+    })
+    expect(restarted.getSession(id)?.messages.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual(['first', 'second', 'Explicit continuation'])
+  })
+
+  it('drains a reopened FIFO in order exactly once when the explicit continuation is queued', async () => {
+    let id = ''
+    const f = await fixture(async function* () {
+      for (const message of textResult(id)) yield message
+    })
+    const created = await f.service.createSession(f.directory)
+    id = created.id
+    await f.service.store.update(id, (session) => {
+      session.status = 'running'
+      session.queuedPrompts = ['first', 'second'].map((content) => ({
+        id: content, content, createdAt: '2026-10-18T00:00:00Z',
+      }))
+    })
+    await f.service.stop()
+    const restarted = new ClaudeAgentService(
+      new SessionStore(path.join(f.directory, 'state')), '/bin/true', f.sdk,
+      async () => ({ loggedIn: true }),
+    )
+    services.add(restarted)
+    await restarted.start()
+    await restarted.activateSession(id)
+    expect(restarted.getSession(id)?.status).toBe('error')
+    await restarted.sendMessage(id, 'Queued continuation', true)
+    await vi.waitFor(() => {
+      expect(restarted.getSession(id)?.queuedPrompts).toEqual([])
+      expect(restarted.getSession(id)?.status).toBe('idle')
+    })
+    expect(restarted.getSession(id)?.messages.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual(['first', 'second', 'Queued continuation'])
+  })
+
+  it('does not archive a session while an admitted send is still in flight', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.configureRetention(created.id, { pinned: false, idleDays: 7 })
+    await f.service.store.update(created.id, (session) => {
+      session.updatedAt = '2026-01-01T00:00:00Z'
+    })
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const admission = f.service['admissions'].run(created.id, () => held)
+    await f.service['refreshRetention']()
+    release()
+    await admission
+    expect(f.service.getSession(created.id)).toMatchObject({ isOpen: true })
+    expect(f.service.getSession(created.id)?.archivedAt).toBeUndefined()
+  })
+
+  it('rejects a queued recovery on an interrupted session without consuming its token', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.store.update(created.id, (session) => {
+      session.status = 'error'
+      session.failedPrompt = { content: 'Lost', failedAt: 'token-1' }
+    })
+    await f.service.store.markInterrupted(created.id)
+    await expect(f.service.sendMessage(created.id, 'Lost', true, 'token-1')).rejects.toMatchObject({ statusCode: 409 })
+    await expect(f.service.sendMessage(created.id, 'Queued', true)).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.service.store.get(created.id)?.failedPrompt).toEqual({ content: 'Lost', failedAt: 'token-1' })
+    expect(f.service.store.get(created.id)?.queuedPrompts ?? []).toEqual([])
+  })
+
+  it.each(['restart', 'resume', 'clear', 'suspend'] as const)('refuses to %s an archived session until it is reopened', async (action) => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.store.update(created.id, (session) => {
+      session.isOpen = false
+      session.archivedAt = '2026-10-19T00:00:00Z'
+      if (action === 'resume') session.suspended = true
+    })
+    const act = {
+      restart: () => f.service.restartSession(created.id),
+      resume: () => f.service.resumeSession(created.id),
+      clear: () => f.service.clearConversation(created.id),
+      suspend: () => f.service.suspendSession(created.id),
+    }[action]
+    await expect(act()).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.service.store.get(created.id)).toMatchObject({ isOpen: false, archivedAt: '2026-10-19T00:00:00Z' })
+    expect(f.service.store.get(created.id)?.suspended).toBe(action === 'resume' ? true : undefined)
+  })
+
+  it.each(['archived', 'interrupted'] as const)('refuses runtime changes on an %s session until it is reopened', async (state) => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.store.update(created.id, (session) => {
+      if (state === 'archived') {
+        session.isOpen = false
+        session.archivedAt = '2026-10-19T00:00:00Z'
+      }
+    })
+    if (state === 'interrupted') await f.service.store.markInterrupted(created.id)
+    const before = f.service.store.get(created.id)?.runtime
+    await expect(f.service.configureRuntime(created.id, {
+      model: 'provider-model', reasoningEffort: 'low', contextTier: 'default', mode: 'plan',
+    } as never)).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen/) })
+    expect(f.service.store.get(created.id)?.runtime).toEqual(before)
+  })
+
+  it('serializes runtime changes with archival so a change in flight is never applied to an archived record', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.configureRetention(created.id, { pinned: false, idleDays: 7 })
+    await f.service.store.update(created.id, (session) => {
+      session.updatedAt = '2026-01-01T00:00:00Z'
+    })
+    let entered = () => {}
+    const reading = new Promise<void>((resolve) => { entered = resolve })
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const options = f.service.providerRuntimeOptions.bind(f.service)
+    vi.spyOn(f.service, 'providerRuntimeOptions').mockImplementationOnce(async (...args) => {
+      entered()
+      await held
+      return options(...args)
+    })
+    const change = f.service.configureRuntime(created.id, {
+      model: 'provider-model', reasoningEffort: 'low', contextTier: 'default', mode: 'plan',
+    } as never)
+    await reading
+    await f.service['refreshRetention']()
+    expect(f.service.store.get(created.id)?.archivedAt).toBeUndefined()
+    release()
+    await expect(change).resolves.toMatchObject({ runtime: expect.objectContaining({ mode: 'plan' }) })
+    expect(f.service.store.get(created.id)?.archivedAt).toBeUndefined()
+  })
+
+  it('refuses to rewrite, discard, reorder or dispatch the queue of an interrupted session', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    const queued = ['first', 'second'].map((content) => ({
+      id: content, content, createdAt: '2026-10-18T00:00:00Z',
+    }))
+    await f.service.store.update(created.id, (session) => {
+      session.queuedPrompts = queued
+      session.queuedCount = 2
+    })
+    await f.service.store.markInterrupted(created.id)
+    const queries = f.queryCalls.length
+    const attempts = [
+      () => f.service.updateQueuedPrompt(created.id, 'first', 'Rewritten'),
+      () => f.service.removeQueuedPrompt(created.id, 'second'),
+      () => f.service.reorderQueuedPrompts(created.id, ['second', 'first']),
+      () => f.service.dispatchQueuedPrompt(created.id, 'first', 'Dispatched'),
+    ]
+    for (const attempt of attempts) {
+      await expect(attempt()).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen/) })
+    }
+    expect(f.service.store.get(created.id)?.queuedPrompts).toEqual(queued)
+    expect(f.queryCalls).toHaveLength(queries)
+  })
+
+  it('checks retention every minute and stops the cleanup timer before shutdown', async () => {
+    vi.useFakeTimers()
+    try {
+      const f = await fixture(async function* () {})
+      const refresh = vi.spyOn(f.service.store, 'syncOpen')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(refresh).toHaveBeenCalledOnce()
+      await f.service.stop()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(refresh).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('archives opted-in inactive records without deleting provider history', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory)
+    await f.service.configureRetention(created.id, { pinned: false, idleDays: 7 })
+    await f.service.store.update(created.id, (session) => {
+      session.updatedAt = '2026-01-01T00:00:00Z'
+    })
+    await f.service['refreshRetention']()
+    expect(f.service.listSessions()).toEqual([])
+    expect(f.service.listHistory()).toContainEqual(expect.objectContaining({ id: created.id, isOpen: false }))
+    expect(f.deleteSession).not.toHaveBeenCalled()
+  })
+
   it('waits for all fixture services to close before removing any directory', async () => {
     const first = await fixture(async function* () {})
     const second = await fixture(async function* () {})

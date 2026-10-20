@@ -48,7 +48,7 @@ import {
 } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 import {
-  SessionReplacementCleanupError, SessionStore, StaleQueuedPromptReservationError,
+  assertSessionNotRetained, SessionReplacementCleanupError, SessionStore, StaleQueuedPromptReservationError,
   type QueuedPromptReservation, type TranscriptObservation,
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
@@ -294,6 +294,8 @@ export class ClaudeAgentService
   private readonly pendingReplies = new Map<string, PendingClaudeReply>()
   private stopped = false
   private stopTask?: Promise<void>
+  private retentionTimer?: ReturnType<typeof setInterval>
+  private retentionRefresh?: Promise<void>
   private readonly admissions = new SessionAdmissions(() => this.stopped)
   private readonly drainRequested = new Set<string>()
   private readonly queueWakeups = new Map<string, Promise<void>>()
@@ -334,6 +336,7 @@ export class ClaudeAgentService
         supportsQueuedPromptDispatch: true,
         supportsSessionResources: true,
         supportsContextRecovery: false,
+        supportsSessionRetention: true,
         unavailableReason: this.available ? undefined : this.unavailableReason,
       },
     ]
@@ -366,6 +369,41 @@ export class ClaudeAgentService
           .map((session) => this.drainQueue(session.id)),
       ))
     }
+    if (this.stopped) return
+    await this.refreshRetention()
+    this.retentionTimer = setInterval(() => {
+      void this.refreshRetention().catch((error: unknown) => this.publishError('', error))
+    }, 60_000)
+    this.retentionTimer.unref()
+  }
+
+  private refreshRetention(): Promise<void> {
+    if (this.retentionRefresh) return this.retentionRefresh
+    if (this.stopped) return Promise.resolve()
+    const before = new Map(this.store.discoveryIndex().map((session) => [session.id, session]))
+    const owners = new Set([...this.active.keys(), ...this.startingQueries.keys()])
+    const refresh = this.store.syncOpen([...owners], () =>
+      !this.stopped && !this.lifecycleLocks.size && !this.deletingSessions.size &&
+      [...this.active.keys(), ...this.startingQueries.keys()].every((id) => owners.has(id)),
+    // Rechecked when the write commits: an admitted send or drain that has not
+    // registered a query yet still owns the session.
+    (id) => !this.active.has(id) && !this.startingQueries.has(id) &&
+      !this.admissions.hasPending(id) && !this.drainingSessions.has(id) &&
+      !this.dispatchingSessions.has(id) && !this.suspendingSessions.has(id),
+    ).then(() => {
+      if (this.stopped) return
+      for (const indexed of this.store.discoveryIndex()) {
+        if (before.get(indexed.id)?.revision === indexed.revision) continue
+        const session = this.store.get(indexed.id)
+        if (!session) continue
+        this.publish(session)
+        if (session.archivedAt && session.archivedAt !== before.get(indexed.id)?.archivedAt) console.info(JSON.stringify({
+          sessionLifecycle: 'archived', sessionId: session.id, at: session.archivedAt,
+        }))
+      }
+    }).finally(() => { this.retentionRefresh = undefined })
+    this.retentionRefresh = refresh
+    return refresh
   }
 
   stop(): Promise<void> {
@@ -378,6 +416,9 @@ export class ClaudeAgentService
   }
 
   private async stopSettled(): Promise<void> {
+    if (this.retentionTimer) clearInterval(this.retentionTimer)
+    this.retentionTimer = undefined
+    await this.retentionRefresh
     for (const query of this.modelQueries) query.abort()
     for (const stop of this.queueReceiptStops.values()) stop()
     for (const active of this.active.values()) {
@@ -447,9 +488,22 @@ export class ClaudeAgentService
   }
 
   async activateSession(id: string): Promise<SessionDetail> {
-    const opened = await this.store.setOpen(id, true, true)
-    this.publish(opened)
-    return this.queuedDispatches.view(opened)
+    return this.serializeLifecycle(id, async () => {
+      const opened = await this.store.setOpen(id, true, true)
+      this.publish(opened)
+      return this.queuedDispatches.view(opened)
+    })
+  }
+
+  async configureRetention(
+    id: string,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
+  ): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, async () => {
+      const session = await this.store.configureRetention(id, input)
+      this.publish(session)
+      return this.queuedDispatches.view(session)
+    })
   }
 
   async createSession(
@@ -567,7 +621,17 @@ export class ClaudeAgentService
     id: string,
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail> {
+    // Under the lifecycle lock, which retention checks before archiving, so a
+    // change in flight never lands on a record archived beneath it.
+    return this.serializeLifecycle(id, () => this.configureRuntimeSerialized(id, input))
+  }
+
+  private async configureRuntimeSerialized(
+    id: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail> {
     const session = await this.store.readAfterWrites(id)
+    this.assertNotRetained(id, 'changing its runtime')
     this.queuedDispatches.assertAvailable(id)
     if (session.status !== 'idle') {
       throw new Error('Runtime settings can only change while the session is idle')
@@ -587,6 +651,7 @@ export class ClaudeAgentService
       throw new Error('Claude Agent manages its context window automatically')
     }
     const updated = await this.store.update(id, (stored) => {
+      assertSessionNotRetained(stored, 'changing its runtime')
       if (stored.status !== 'idle') {
         throw new Error('Runtime settings can only change while the session is idle')
       }
@@ -713,6 +778,7 @@ export class ClaudeAgentService
     observed: TranscriptObservation,
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(id)
+    this.assertNotRetained(id, 'clearing it')
     if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
       throw Object.assign(new Error('Resume the session before clearing it'), {
         // Carries a status so the reason reaches the reader. Left
@@ -771,6 +837,7 @@ export class ClaudeAgentService
     if (stored.suspended) {
       return stored
     }
+    this.assertNotRetained(id, 'suspending it')
     this.requireIdle(id)
     // Claimed before anything is awaited: a message that got past the check on
     // its way in would otherwise start a query into a session on its way down.
@@ -809,6 +876,7 @@ export class ClaudeAgentService
     if (!stored.suspended) {
       return stored
     }
+    this.assertNotRetained(id, 'resuming it', true)
     const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
     if (hasQueue) {
       this.admissionClosed.add(id)
@@ -852,6 +920,7 @@ export class ClaudeAgentService
 
   private async restartSerialized(id: string): Promise<SessionDetail> {
     await this.store.readAfterWrites(id)
+    this.assertNotRetained(id, 'restarting it')
     if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
       throw Object.assign(new Error('Resume the session before restarting it'), {
         // Carries a status so the reason reaches the reader. Left
@@ -875,6 +944,7 @@ export class ClaudeAgentService
     promptId: string,
     acknowledgesDispatch?: string,
   ): Promise<RemovedQueuedPrompt> {
+    this.assertNotRetained(sessionId, 'changing its queue')
     if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
       const original = this.getSession(sessionId)?.queuedPrompts?.find((prompt) => prompt.id === promptId)
@@ -892,6 +962,7 @@ export class ClaudeAgentService
     promptId: string,
     rawContent: string,
   ): Promise<RemovedQueuedPrompt> {
+    this.assertNotRetained(sessionId, 'changing its queue')
     const content = this.normalizeQueuedContent(rawContent)
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
       this.queuedDispatches.assertAvailable(sessionId)
@@ -934,6 +1005,7 @@ export class ClaudeAgentService
     // the new order was still being written down let the drain take the head
     // of an arrangement that had not been accepted yet -- and if writing it
     // then failed, the prompt already sent was put back on the queue.
+    this.assertNotRetained(sessionId, 'changing its queue')
     if (this.drainingSessions.has(sessionId)) {
       throw Object.assign(
         new Error('The queue is being worked through; try again in a moment'),
@@ -996,8 +1068,32 @@ export class ClaudeAgentService
     acknowledgesFailure?: string,
   ): Promise<SessionDetail> {
     if (!content.trim()) throw queueConflict('Message cannot be empty')
+    // Queued or not, and before any recovery token is claimed.
+    if (this.store.get(sessionId)?.interruption || this.store.get(sessionId)?.archivedAt) {
+      throw Object.assign(
+        queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
+        { uncertainDelivery: false },
+      )
+    }
     if (!enqueue && this.store.get(sessionId)?.queuedDispatch) {
       this.queuedDispatches.assertAvailable(sessionId)
+    }
+    {
+      // Explicit input after Reopen continues the session whether it is sent
+      // or queued. Left in error, a queued continuation is appended and woken
+      // but the drain accepts only idle, so the whole FIFO would stall.
+      await this.store.updateIf(sessionId, (session) => {
+        if (session.status !== 'error' || session.interruption || session.archivedAt ||
+            session.failedPrompt || session.queuedDispatch ||
+            this.active.has(sessionId) || this.startingQueries.has(sessionId) ||
+            (session.pendingPermission && !session.pendingPermission.stale) ||
+            (session.pendingUserInput && !session.pendingUserInput.stale)) return false
+        session.status = 'idle'
+        session.activity = undefined
+        session.pendingPermission = undefined
+        session.pendingUserInput = undefined
+        return true
+      })
     }
     if (acknowledgesFailure !== undefined) {
       const text = content.trim()
@@ -1005,6 +1101,7 @@ export class ClaudeAgentService
       const queued = await this.store.claimRecoveryPrompt(sessionId, {
         id: randomUUID(), content: text, createdAt: new Date().toISOString(),
       }, acknowledgesFailure, (session) =>
+        !session.interruption && !session.archivedAt &&
         !this.stopped && !this.deletingSessions.has(sessionId) &&
         !this.suspendingSessions.has(sessionId) && !this.admissionClosed.has(sessionId) &&
         (enqueue || Boolean(session.queuedPrompts?.length) ||
@@ -2339,6 +2436,7 @@ export class ClaudeAgentService
     if (this.stopped || this.deletingSessions.has(sessionId)) {
       throw queueConflict('The session is no longer available.')
     }
+    this.assertNotRetained(sessionId, 'dispatching its queue')
     if (this.admissionClosed.has(sessionId)) {
       throw queueConflict('The session is still resuming.')
     }
@@ -2364,6 +2462,7 @@ export class ClaudeAgentService
             )
           }
         }
+        assertSessionNotRetained(current, 'dispatching its queue')
         assertIdle(current)
         return this.queuedDispatches.run(
           sessionId,
@@ -2401,6 +2500,8 @@ export class ClaudeAgentService
         this.startingQueries.has(sessionId) || this.stopped || this.deletingSessions.has(sessionId)) {
       return undefined
     }
+    // A retained queue waits, untouched, for Reopen.
+    if (session.interruption || session.archivedAt) return undefined
     if (session.suspended || this.suspendingSessions.has(sessionId)) {
       // Suspending leaves a session idle, so the queue would take a prompt off
       // and then be refused for being suspended, losing it for good.
@@ -2483,6 +2584,10 @@ export class ClaudeAgentService
       throw new Error('Session not found')
     }
     return session
+  }
+
+  private assertNotRetained(id: string, action: string, archivedOnly = false): void {
+    assertSessionNotRetained(this.store.get(id), action, archivedOnly)
   }
 
   private requireIdle(id: string): SessionDetail {

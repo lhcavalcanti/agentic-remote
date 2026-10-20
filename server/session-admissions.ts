@@ -33,6 +33,11 @@ export class SessionAdmissions {
       this.context.getStore()?.get(sessionId)?.active === true)
   }
 
+  /** True while any admitted or exclusive operation still holds the session. */
+  hasPending(sessionId: string): boolean {
+    return Boolean(this.pending.get(sessionId)?.size) || this.exclusiveOwners.has(sessionId)
+  }
+
   protectsTranscript(sessionId: string): boolean {
     return (this.transcriptAdmissions.get(sessionId) || 0) > 0
   }

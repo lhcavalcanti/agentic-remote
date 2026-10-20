@@ -479,13 +479,14 @@ describe('SessionStore', () => {
       pendingPermission: { requestId: 'sdk-request', stale: true },
     })
     expect(restarted.get('terminal-waiting')).toMatchObject({
-      status: 'idle',
-      pendingPermission: undefined,
+      status: 'error',
+      pendingPermission: { requestId: 'terminal-permission:1' },
+      interruption: { previousStatus: 'waiting' },
     })
     expect(restarted.get('claude-waiting')).toMatchObject({
-      status: 'idle',
-      pendingPermission: undefined,
-      pendingUserInput: undefined,
+      status: 'error',
+      pendingPermission: { requestId: 'claude-request', stale: true },
+      pendingUserInput: { requestId: 'claude-input', stale: true },
     })
     const persisted = JSON.parse(
       await readFile(path.join(directory, 'state.json'), 'utf8'),
@@ -1169,7 +1170,7 @@ describe('SessionStore', () => {
     })
   })
 
-  it('keeps managed SDK sessions open but closes missing terminal sessions', async () => {
+  it('keeps managed SDK and missing terminal records open independently of their process', async () => {
     const { directory, store } = await createStore()
     await store.create(
       {
@@ -1204,7 +1205,8 @@ describe('SessionStore', () => {
       isOpen: true,
     })
     expect(reloaded.get('managed-terminal-session')).toMatchObject({
-      isOpen: false,
+      isOpen: true,
+      interruption: expect.any(Object),
     })
     expect(reloaded.get('managed-sdk-session')).not.toHaveProperty('managedOpen')
   })
@@ -1380,6 +1382,48 @@ describe('SessionStore', () => {
       title: 'My project',
     })
     expect(reloaded.get('custom-title')).not.toHaveProperty('customTitle')
+  })
+
+  it.each(['interrupted', 'archived'] as const)('refuses queue rewrites and context-brief claims on an %s record', async (state) => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'retained', cwd: '/tmp/project', title: 'Retained', updatedAt: '2026-07-25T01:00:00.000Z',
+      status: 'idle', messages: [],
+    })
+    for (const id of ['first', 'second']) {
+      await store.enqueuePrompt('retained', { id, content: id, createdAt: '2026-07-25T01:00:01.000Z' })
+    }
+    await store.update('retained', (session) => {
+      Object.assign(session, { recoverySeed: { prompt: 'Brief', state: 'pending' } })
+      if (state === 'archived') Object.assign(session, { isOpen: false, archivedAt: '2026-07-26T00:00:00.000Z' })
+    })
+    if (state === 'interrupted') await store.markInterrupted('retained')
+    const refused = { statusCode: 409, message: expect.stringMatching(/Reopen/) }
+    await expect(store.removeQueuedPrompt('retained', 'first')).rejects.toMatchObject(refused)
+    await expect(store.updateQueuedPrompt('retained', 'first', 'Rewritten')).rejects.toMatchObject(refused)
+    await expect(store.reorderQueuedPrompts('retained', ['second', 'first'])).rejects.toMatchObject(refused)
+    await expect(store.claimRecoverySeed('retained', 'Brief')).rejects.toMatchObject(refused)
+    expect(store.get('retained')?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['first', 'second'])
+    expect(store.recoverySeed('retained')).toMatchObject({ state: 'pending' })
+  })
+
+  it.each(['interrupted', 'archived'] as const)('refuses every queue-head claim on an %s record and keeps the FIFO', async (state) => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'retained', cwd: '/tmp/project', title: 'Retained', updatedAt: '2026-07-25T01:00:00.000Z',
+      status: 'idle', messages: [],
+    })
+    const queued = ['first', 'second'].map((id) => ({ id, content: id, createdAt: '2026-07-25T01:00:01.000Z' }))
+    for (const prompt of queued) await store.enqueuePrompt('retained', prompt)
+    if (state === 'interrupted') await store.markInterrupted('retained')
+    else await store.update('retained', (session) => { session.archivedAt = '2026-07-26T00:00:00.000Z' })
+    const refused = { statusCode: 409, message: expect.stringMatching(/Reopen/) }
+    await expect(store.claimTerminalQueuedPrompt('retained', queued[0], () => true)).rejects.toMatchObject(refused)
+    await expect(store.reserveQueuedPrompt('retained', () => true)).rejects.toMatchObject(refused)
+    await expect(store.shiftQueuedPrompt('retained')).rejects.toMatchObject(refused)
+    expect(store.get('retained')?.queuedPrompts).toEqual(queued)
+    expect(store.terminalQueueDispatch('retained')).toBeUndefined()
+    expect(store['state'].sessions.retained?.queuedPromptReservation).toBeUndefined()
   })
 
   it('persists queued prompts and removes a selected entry', async () => {

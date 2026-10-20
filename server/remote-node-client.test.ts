@@ -38,6 +38,22 @@ afterEach(async () => {
 })
 
 describe('read-only remote resource requests', () => {
+  it.each([true, false])('requests archived snapshot metadata only from retention-capable nodes (%s)', async (retention) => {
+    const paths: string[] = []
+    const node = await listen((request, response) => {
+      paths.push(request.url ?? '')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ sessions: [] }))
+    })
+    const remote = client(node)
+    vi.spyOn(remote, 'providers', 'get').mockReturnValue([{
+      id: 'copilot', name: 'Copilot', available: true, terminalBacked: true,
+      supportsSessionRetention: retention,
+    }])
+    await remote.listSessions()
+    expect(paths).toEqual([retention ? '/node-api/sessions?includeArchived=1' : '/node-api/sessions'])
+  })
+
   const snapshot = {
     sessionId: 'remote/session', provider: 'claude', scope: 'session', capturedAt: '2026-09-05T10:00:00.000Z',
   }

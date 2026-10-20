@@ -10,9 +10,11 @@ import type {
   SessionRuntimeInfo,
   SessionRecoveryReason,
   SessionStatus,
+  SessionRetentionPatch,
   ActivityKind,
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
+import { canArchiveSession, mergeSessionRetention, sessionRetentionSchema } from './session-retention.js'
 
 export interface DiscoveredSession {
   id: string
@@ -69,6 +71,34 @@ interface SdkQueueAdmission {
 export type TerminalQueueOutcome =
   | { kind: 'accepted'; startedTurn: boolean; notice?: string }
   | { kind: 'failed'; uncertain: boolean }
+
+/**
+ * Refuses work on a session kept for review: an interrupted or archived
+ * record's queue, runtime, and pending briefs stay exactly as they are until
+ * the reader reopens it.
+ */
+export class RetainedSessionError extends Error {
+  readonly statusCode = 409
+  readonly uncertainDelivery = false
+
+  constructor(state: 'archived' | 'interrupted', action: string) {
+    super(`Reopen the ${state} session before ${action}. Nothing was changed.`)
+    this.name = 'RetainedSessionError'
+  }
+}
+
+export function assertSessionNotRetained(
+  session: Pick<SessionDetail, 'archivedAt' | 'interruption'> | undefined,
+  action: string,
+  archivedOnly = false,
+): void {
+  if (session?.archivedAt) throw new RetainedSessionError('archived', action)
+  if (!archivedOnly && session?.interruption) throw new RetainedSessionError('interrupted', action)
+}
+
+export function isRetainedRefusal(error: unknown): error is RetainedSessionError {
+  return error instanceof RetainedSessionError
+}
 
 export class SessionReplacementCleanupError extends Error {
   constructor(readonly replacement: SessionDetail, cause: unknown) {
@@ -314,6 +344,10 @@ function cloneSession(session: StoredSession): SessionDetail {
     detail.failedPrompt = undefined
   }
   if (ownsRecoverySeedFailure(session)) detail.failedPrompt = undefined
+  if (detail.interruption) {
+    detail.status = 'error'
+    detail.activity = 'Session process stopped. History and queued work are retained. Reopen to continue.'
+  }
   if (recoverySeed?.state === 'failed') {
     detail.status = 'error'
     detail.activity = recoverySeed.error ||
@@ -352,6 +386,7 @@ export class SessionStore {
 
   constructor(
     directory = resolveDataDirectory(),
+    private readonly now: () => number = Date.now,
   ) {
     this.directory = directory
     this.statePath = path.join(directory, 'state.json')
@@ -390,6 +425,17 @@ export class SessionStore {
     const legacyRetirements: string[] = []
     let staleSdkInteractionMarked = false
     for (const session of Object.values(loaded.sessions)) {
+      if (session.retention !== undefined && !sessionRetentionSchema.safeParse(session.retention).success) {
+        throw new Error('Invalid session retention metadata')
+      }
+      if (session.retentionLastUsedAt !== undefined && !Number.isFinite(Date.parse(session.retentionLastUsedAt))) {
+        throw new Error('Invalid session retention activity timestamp')
+      }
+      if (session.interruption !== undefined && (
+        !session.interruption || typeof session.interruption !== 'object' ||
+        !Number.isFinite(Date.parse(session.interruption.detectedAt)) ||
+        !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus)
+      )) throw new Error('Invalid session interruption metadata')
       if (session.replacedSessionIds !== undefined) {
         if (!isSessionIdList(session.replacedSessionIds)) {
           throw new Error('Invalid session retirement metadata')
@@ -406,12 +452,22 @@ export class SessionStore {
         throw new Error('Invalid recovery claim metadata')
       }
       session.provider ??= 'copilot'
-      session.isOpen = session.managedOpen === true
+      session.isOpen = session.managedOpen === true || (session.isOpen === true && Boolean(
+        session.retention?.pinned || session.queuedPrompts?.length || session.pendingPermission ||
+        session.pendingUserInput || session.failedPrompt || session.recoverySeed ||
+        session.queuedDispatch || session.terminalQueueDispatch || session.sdkQueueAdmission,
+      ))
+      if (session.managedOpen && !session.interruption &&
+          (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) {
+        session.interruption = {
+          detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+        }
+        staleSdkInteractionMarked = true
+      }
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
       session.queuedPromptReservation = undefined
       const staleSdkInteraction =
-        session.provider === 'copilot' &&
         session.backend === 'sdk' &&
         Boolean(session.pendingPermission || session.pendingUserInput)
       if (staleSdkInteraction) {
@@ -420,7 +476,7 @@ export class SessionStore {
         session.status = 'error'
         session.activity = 'Provider interaction expired. Recover the conversation to continue.'
         staleSdkInteractionMarked = true
-      } else {
+      } else if (session.backend !== 'terminal') {
         session.pendingUserInput = undefined
       }
       const resend = session.recoveryResend
@@ -491,8 +547,10 @@ export class SessionStore {
       } else if (!staleSdkInteraction && !session.recoverySeed && session.status !== 'idle') {
         session.status = 'idle'
         session.activity = undefined
-        session.pendingPermission = undefined
-        session.pendingUserInput = undefined
+        if (session.backend !== 'terminal') {
+          session.pendingPermission = undefined
+          session.pendingUserInput = undefined
+        }
       }
       for (const message of session.messages) {
         message.streaming = false
@@ -527,11 +585,14 @@ export class SessionStore {
    * Each listed session's identity and open state, in `list()` order, without
    * copying its history, for work that runs on every discovery cycle.
    */
-  discoveryIndex(): { id: string; isOpen: boolean }[] {
+  discoveryIndex(): { id: string; isOpen: boolean; revision: number; interruptedAt?: string; archivedAt?: string }[] {
     return Object.values(this.state.sessions)
       .filter((session) => !this.isRetiredSession(session.id))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((session) => ({ id: session.id, isOpen: session.isOpen === true }))
+      .map((session) => ({
+        id: session.id, isOpen: session.isOpen === true, revision: session.revision ?? 0,
+        interruptedAt: session.interruption?.detectedAt, archivedAt: session.archivedAt,
+      }))
   }
 
   /** A listed session's title, without copying its history. */
@@ -789,24 +850,92 @@ export class SessionStore {
     })
   }
 
-  async syncOpen(sessionIds: string[], isCurrent?: () => boolean): Promise<void> {
+  private isProtectedRecord(session: StoredSession): boolean {
+    return Boolean(session.retention?.pinned ||
+      session.queuedPrompts?.length || session.pendingPermission || session.pendingUserInput ||
+      session.failedPrompt || session.recoverySeed || session.queuedDispatch ||
+      session.terminalQueueDispatch || session.sdkQueueAdmission || session.queuedPromptReservation)
+  }
+
+  private isArchivable(session: StoredSession): boolean {
+    return !this.isProtectedRecord(session) && canArchiveSession(session, this.now())
+  }
+
+  /**
+   * Sessions an archival pass would retire now, given the owners it saw. The
+   * caller confirms each one's absence before the decision is committed.
+   */
+  archivalCandidates(presentIds: Iterable<string>): string[] {
+    const present = new Set(presentIds)
+    const retired = this.retiredIds(this.state)
+    return Object.values(this.state.sessions)
+      .filter((session) => !present.has(session.id) && !retired.has(session.id) && this.isArchivable(session))
+      .map((session) => session.id)
+  }
+
+  /**
+   * Archives one record whose owner was just confirmed absent. Eligibility and
+   * `canArchive` are both evaluated when the write commits, never from a copy
+   * read before the probe.
+   */
+  async archiveIfExpired(sessionId: string, canArchive: () => boolean): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const session = state.sessions[sessionId]
+      if (!session || this.retiredIds(state).has(sessionId) || !this.isArchivable(session) || !canArchive()) {
+        return () => undefined
+      }
+      const archivedAt = new Date(this.now()).toISOString()
+      state.sessions[sessionId] = {
+        ...session, revision: (session.revision ?? 0) + 1, isOpen: false, managedOpen: false, archivedAt,
+      }
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  /**
+   * `canArchive` is consulted when the write commits, after every earlier
+   * write has landed, so an owner, admission or probe that appeared after the
+   * caller took its snapshot still prevents archival.
+   */
+  async syncOpen(
+    sessionIds: string[],
+    isCurrent?: () => boolean,
+    canArchive?: (sessionId: string) => boolean,
+  ): Promise<void> {
     const active = new Set(sessionIds)
     return this.change((state) => {
       if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
-        const isOpen =
-          active.has(session.id) ||
+        const present = active.has(session.id)
+        const protectedRecord = this.isProtectedRecord(session)
+        const archive = !present && !protectedRecord && canArchiveSession(session, this.now()) &&
+          (canArchive?.(session.id) ?? true)
+        const isOpen = !archive && (
+          present ||
           // A suspended session has nothing running by design. Reading that as
           // closed would hide it from the list, and the only way back to it is
           // the button on the session itself.
-          session.suspended === true ||
-          (session.managedOpen === true && session.backend !== 'terminal')
-        if (session.isOpen === isOpen) continue
+          (session.suspended === true && !session.archivedAt) ||
+          session.managedOpen === true ||
+          (session.isOpen === true && protectedRecord))
+        const interruption = present ? undefined
+          : isOpen && session.backend === 'terminal' && !session.suspended
+            ? session.interruption ?? {
+              detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+            }
+            : session.interruption
+        const stalePermission = Boolean(interruption && session.pendingPermission && !session.pendingPermission.stale)
+        const staleInput = Boolean(interruption && session.pendingUserInput && !session.pendingUserInput.stale)
+        if (session.isOpen === isOpen && session.interruption === interruption && !stalePermission && !staleInput) continue
         state.sessions[session.id] = {
           ...session,
           revision: (session.revision ?? 0) + 1,
           isOpen,
+          interruption,
+          pendingPermission: stalePermission ? { ...session.pendingPermission!, stale: true } : session.pendingPermission,
+          pendingUserInput: staleInput ? { ...session.pendingUserInput!, stale: true } : session.pendingUserInput,
+          ...(archive ? { managedOpen: false, archivedAt: new Date(this.now()).toISOString() } : {}),
         }
       }
       return () => undefined
@@ -825,7 +954,7 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          if (session.backend === 'terminal' && session.isOpen === true) {
+          if (session.backend === 'terminal' && session.isOpen === true && !session.interruption) {
             continue
           }
           // Observed presence only. Any Copilot process in a tmux pane is
@@ -837,6 +966,8 @@ export class SessionStore {
             revision: (session.revision ?? 0) + 1,
             backend: 'terminal',
             isOpen: true,
+            interruption: undefined,
+            archivedAt: undefined,
           }
         } else if (
           !session.backend &&
@@ -890,10 +1021,44 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.isOpen = isOpen
+      if (isOpen) {
+        session.retentionLastUsedAt = new Date(this.now()).toISOString()
+        if (session.interruption && (session.backend === 'sdk' ||
+            session.pendingPermission?.stale || session.pendingUserInput?.stale)) {
+          session.status = 'error'
+          session.activity = 'Previous provider runtime stopped. Send a new prompt or recover to continue.'
+        }
+        session.interruption = undefined
+        session.archivedAt = undefined
+      }
       if (managedOpen) {
         session.managedOpen = isOpen
       }
     })
+  }
+
+  /**
+   * Applies a field-level edit to the current durable value at commit time,
+   * so concurrent edits of different fields compose instead of clobbering.
+   */
+  async configureRetention(sessionId: string, input: SessionRetentionPatch): Promise<SessionDetail> {
+    mergeSessionRetention(undefined, input)
+    return this.mutate(sessionId, (session) => {
+      session.retention = mergeSessionRetention(session.retention, input)
+    })
+  }
+
+  async markInterrupted(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.interruption ??= {
+        detectedAt: new Date(this.now()).toISOString(),
+        previousStatus: session.status,
+      }
+      if (session.pendingPermission) session.pendingPermission.stale = true
+      if (session.pendingUserInput) session.pendingUserInput.stale = true
+    }, (session) => !session.interruption ||
+      Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
+      Boolean(session.pendingUserInput && !session.pendingUserInput.stale))
   }
 
   async setSuspended(
@@ -910,6 +1075,7 @@ export class SessionStore {
       session.isOpen = true
       grantTerminalRecovery(session)
       session.status = 'idle'
+      session.interruption = undefined
       session.activity = undefined
       session.pendingPermission = undefined
       session.pendingUserInput = undefined
@@ -1063,6 +1229,8 @@ export class SessionStore {
         messages: [],
         status: 'idle',
         isOpen: true,
+        interruption: undefined,
+        archivedAt: undefined,
         activity: undefined,
         pendingPermission: undefined,
         pendingUserInput: undefined,
@@ -1172,6 +1340,8 @@ export class SessionStore {
         messages: [],
         status: 'idle',
         isOpen: true,
+        interruption: undefined,
+        archivedAt: undefined,
         activity: undefined,
         pendingPermission: undefined,
         pendingUserInput: undefined,
@@ -1249,6 +1419,7 @@ export class SessionStore {
       }
       const prompt = existing.queuedPrompts?.[0]
       if (!prompt) return () => ({ session: this.requireSession(sessionId) })
+      assertSessionNotRetained(existing, 'dispatching its queue')
       if (
         !isCurrent() || existing.suspended ||
         (existing.status !== 'idle' && existing.status !== 'error') ||
@@ -1284,6 +1455,11 @@ export class SessionStore {
         (Date.parse(session.lastClaimedRecovery || '') || 0) + 1,
       )
       const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
+      if (session.interruption || session.archivedAt) {
+        throw Object.assign(new Error('Reopen the interrupted session before sending. Nothing was sent.'), {
+          statusCode: 409, uncertainDelivery: false,
+        })
+      }
       if (session.suspended) {
         throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409, uncertainDelivery: false })
       }
@@ -1356,6 +1532,7 @@ export class SessionStore {
       if (session.recoverySeed?.state !== 'pending' || session.recoverySeed.prompt !== prompt) {
         throw Object.assign(new Error('The recovery seed is no longer pending'), { statusCode: 409 })
       }
+      assertSessionNotRetained(session, 'sending its context brief')
       session.recoverySeed = {
         prompt,
         state: 'dispatching',
@@ -1610,6 +1787,8 @@ export class SessionStore {
       prompt: structuredClone(expected),
     }
     const session = await this.mutate(sessionId, (stored) => {
+      // Retention committed after the drain's check still wins: nothing is claimed.
+      assertSessionNotRetained(stored, 'dispatching its queue')
       const head = stored.queuedPrompts?.[0]
       if (
         !isCurrent() || stored.suspended || stored.status !== 'idle' ||
@@ -1683,6 +1862,7 @@ export class SessionStore {
   ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
     let removed: QueuedPrompt | undefined
     const session = await this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'changing its queue')
       const queue = stored.queuedPrompts || []
       const index = queue.findIndex((prompt) => prompt.id === promptId)
       if (index >= 0) {
@@ -1702,6 +1882,7 @@ export class SessionStore {
   ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
     let updated: QueuedPrompt | undefined
     const session = await this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'changing its queue')
       const queue = stored.queuedPrompts || []
       const index = queue.findIndex((prompt) => prompt.id === promptId)
       if (index < 0) {
@@ -1739,6 +1920,7 @@ export class SessionStore {
     order: string[],
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'changing its queue')
       const queue = stored.queuedPrompts || []
       if (order.length !== queue.length) {
         throw Object.assign(
@@ -1847,6 +2029,14 @@ export class SessionStore {
           { statusCode: 409 },
         )
       }
+      // Checked in the same write that consumes the token: an interruption or
+      // archive committed after the caller's precheck must leave it intact.
+      if (stored.interruption || stored.archivedAt) {
+        throw Object.assign(
+          new Error('Reopen the retained session before resending. Nothing was sent.'),
+          { statusCode: 409, uncertainDelivery: false },
+        )
+      }
       // Consume the old token before delivery. The new token describes an
       // unresolved attempt, including the edited text, even if no later write
       // can commit or the process exits before it can record the receipt.
@@ -1947,6 +2137,7 @@ export class SessionStore {
     }
     let prompt: QueuedPrompt | undefined
     const session = await this.mutate(sessionId, (stored) => {
+      assertSessionNotRetained(stored, 'dispatching its queue')
       prompt = stored.queuedPrompts?.shift()
       stored.queuedCount = stored.queuedPrompts?.length || 0
     })

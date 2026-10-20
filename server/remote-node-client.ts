@@ -127,8 +127,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   }
 
   async listSessions(): Promise<SessionDetail[]> {
+    const includeArchived = this.providers.some((provider) => provider.supportsSessionRetention === true)
     const response = await this.request<{ sessions: SessionDetail[] }>(
-      '/node-api/sessions',
+      `/node-api/sessions${includeArchived ? '?includeArchived=1' : ''}`,
     )
     return response.sessions
   }
@@ -349,6 +350,17 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         method: 'PATCH',
         body: JSON.stringify(input),
       },
+    )
+    return response.session
+  }
+
+  async configureRetention(
+    sessionId: string,
+    input: import('../shared/contracts.js').SessionRetentionPatch,
+  ): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/retention`,
+      { method: 'PATCH', body: JSON.stringify(input) },
     )
     return response.session
   }

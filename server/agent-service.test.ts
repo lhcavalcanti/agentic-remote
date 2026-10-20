@@ -924,6 +924,133 @@ describe('AgentService deletion', () => {
     },
   )
 
+  it('settles tracker-owned failed deletion when SDK teardown clears handlers without an event', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const store = new SessionStore(stateDirectory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up before SDK teardown',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up before SDK teardown',
+      ),
+    )
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    await vi.waitFor(() =>
+      expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+    )
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+
+    let disconnected:
+      | ReturnType<DeferredSession['disconnectPendingWaits']>
+      | undefined
+    client.session.disconnect = vi.fn(async () => {
+      client.session.disconnectCount += 1
+      disconnected = client.session.disconnectPendingWaits(
+        new Error('Session disconnected while waiting for a response'),
+      )
+    })
+    const stopping = service.stop()
+    const settledFromTeardown =
+      !service['sdkFollowUpTrackers'].has(created.id)
+    if (!settledFromTeardown) {
+      // Let the RED implementation finish so the regression can report the
+      // missing teardown signal instead of wedging its own cleanup.
+      client.session.resolveSessionIdle()
+    }
+
+    expect(await deletionOutcome).toBe(failure)
+    await stopping
+    if (!disconnected) {
+      throw new Error('The SDK session was not disconnected during teardown')
+    }
+
+    const retryClient = new FakeCopilotClient()
+    retryClient.nextSessionList = Promise.resolve([
+      {
+        sessionId: created.id,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Retained after failed deletion',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const retryStore = new SessionStore(stateDirectory)
+    const retryService = new AgentService(
+      retryStore,
+      retryClient,
+      async () => [],
+      async () => undefined,
+    )
+    await retryService.start()
+    await retryService.activateSession(created.id)
+    await expect(
+      retryService.sendMessage(created.id, 'Retry after SDK teardown'),
+    ).resolves.toMatchObject({ status: 'running' })
+    const retryAssistant =
+      retryService['activePrompts'].get(created.id)?.assistantMessageId
+
+    disconnected.resolveLate()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(settledFromTeardown).toBe(true)
+    expect(
+      retryService['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(retryAssistant)
+    expect(
+      retryStore.get(created.id)?.messages.find(
+        (message) => message.id === retryAssistant,
+      ),
+    ).toMatchObject({ content: '', streaming: true })
+
+    retryClient.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(retryStore.get(created.id)?.status).toBe('idle'),
+    )
+    await expect(
+      retryService.deleteSession(created.id),
+    ).resolves.toBeUndefined()
+  })
+
   it.each([
     ['provider message', new Error('Session not found: active-session')],
     [

@@ -179,6 +179,7 @@ interface SdkFollowUpTracker {
   activate: () => void
   settleWhenIdle: () => void
   settled: Promise<void>
+  settleForTeardown: () => void
   cancel: () => void
 }
 
@@ -2624,6 +2625,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async stopSettled(): Promise<void> {
+    // stop() has already closed the service to new work, and provider teardown
+    // is now guaranteed. SDK disconnect clears handlers without an event, so
+    // release tracker-only waits before lifecycle shutdown waits on them.
+    for (const tracker of [...this.sdkFollowUpTrackers.values()]) {
+      tracker.settleForTeardown()
+    }
     for (const stop of this.queuedPromptStops.values()) stop()
     for (const [timer, finish] of this.acknowledgementTimers) {
       clearTimeout(timer)
@@ -5433,6 +5440,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         responseStarted = true
       },
       settled,
+      settleForTeardown: () => {
+        forget()
+        if (closed) return
+        closed = true
+        unsubscribe()
+        resolveSettled()
+      },
       cancel: () => {
         forget()
         if (closed) return

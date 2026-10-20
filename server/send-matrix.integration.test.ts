@@ -233,6 +233,7 @@ const save = () => { received.draft = draft; writeReceipt(received) }
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
 process.on('SIGXCPU', () => { mode = 'working'; draw() })
+process.on('SIGUSR2', () => { mode = 'idle'; draw() })
 process.stdin.on('data', (data) => {
   input += data.toString()
   while (input) {
@@ -336,6 +337,25 @@ async function expectRefusal(attempt: Promise<unknown>, refusal: Refusal) {
   }).toEqual({ ...refusal, statusCode: 409, uncertainDelivery: false })
 }
 
+// Starts a turn once the terminal has cleared its draft, before the send's
+// final ownership check. Returns whether it has happened yet.
+function startAgentAfterClear(fixture: Awaited<ReturnType<typeof terminal>>) {
+  const owner = Reflect.get(fixture.controller, 'owner').bind(fixture.controller)
+  let started = false
+  Reflect.set(fixture.controller, 'owner', async (...args: unknown[]) => {
+    if (!started && (await fixture.receipt()).clears) {
+      started = true
+      process.kill(fixture.pid, 'SIGXCPU')
+      await eventually(
+        () => fixture.controller.capture(fixture.id),
+        (pane) => isTerminalAgentWorking(pane || ''),
+      )
+    }
+    return owner(...args)
+  })
+  return () => started
+}
+
 const settle = () => new Promise((resolve) => setTimeout(resolve, 300))
 
 beforeAll(async () => {
@@ -415,22 +435,40 @@ describe('send matrix with the app’s real send options', () => {
   // restores the app draft from the refusal.
   it('idle pane · terminal-typed draft · Send, agent starts after the clear', async () => {
     const fixture = await terminal('idle', 'idle', typed)
-    const owner = Reflect.get(fixture.controller, 'owner').bind(fixture.controller)
-    let started = false
-    Reflect.set(fixture.controller, 'owner', async (...args: unknown[]) => {
-      if (!started && (await fixture.receipt()).clears) {
-        started = true
-        process.kill(fixture.pid, 'SIGXCPU')
-        await eventually(
-          () => fixture.controller.capture(fixture.id),
-          (pane) => isTerminalAgentWorking(pane || ''),
-        )
-      }
-      return owner(...args)
-    })
+    const started = startAgentAfterClear(fixture)
 
     await expectRefusal(sendLikeTheApp(fixture, 'idle', false), NEW_TEXT)
-    expect(started).toBe(true)
+    expect(started()).toBe(true)
+    await settle()
+    expect(await fixture.receipt()).toEqual({
+      pastes: [], submits: [], clears: 1, keys: '', draft: '',
+    })
+  }, 30_000)
+
+  // The service sees a working pane and grants working tolerance; the turn
+  // ends before the terminal's own check, which clears the typed draft; then a
+  // new turn starts. Tolerance granted before a clear must not carry past it.
+  it('working → idle with a terminal-typed draft → working after the clear · Send', async () => {
+    const fixture = await terminal('working', 'idle', typed)
+    const capture = fixture.controller.capture.bind(fixture.controller)
+    let finished = false
+    Reflect.set(fixture.controller, 'capture', async (sessionId: string) => {
+      const pane = await capture(sessionId)
+      if (!finished && isTerminalAgentWorking(pane || '')) {
+        finished = true
+        process.kill(fixture.pid, 'SIGUSR2')
+        await eventually(
+          () => capture(sessionId),
+          (current) => !isTerminalAgentWorking(current || '') && Boolean(current?.includes(typed)),
+        )
+      }
+      return pane
+    })
+    const started = startAgentAfterClear(fixture)
+
+    await expectRefusal(sendLikeTheApp(fixture, 'idle', false), NEW_TEXT)
+    expect(finished).toBe(true)
+    expect(started()).toBe(true)
     await settle()
     expect(await fixture.receipt()).toEqual({
       pastes: [], submits: [], clears: 1, keys: '', draft: '',

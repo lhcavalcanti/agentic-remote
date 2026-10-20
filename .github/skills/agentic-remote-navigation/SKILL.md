@@ -230,8 +230,18 @@ Do not weaken these without an explicit product decision.
 ```bash
 pnpm check                      # oxlint + vitest + tsc/vite build
 pnpm vitest run server/x.test.ts -t "name"   # targeted
+pnpm test:canary                # real-tmux send/readiness subset, ~1 min
+pnpm test:fast                  # every file needing no host tmux/Copilot/Claude
 NODE_ENV=production pnpm check  # guards the inherited-env regression
 ```
+
+- Vitest projects `fast`, `canary`, and `tmux` partition the files, so
+  `pnpm test` still runs each file once, serially. Add a new real-tmux file to
+  `canaryTests` or `tmuxTests` in `vite.config.ts`; otherwise it lands in
+  `fast`, which hosted CI runs without tmux.
+- `server/send-matrix.integration.test.ts` drives sends with the app's real
+  options from `shared/send-policy.ts` against real tmux panes. Extend its
+  table when send, queue, or draft-replacement behavior changes.
 
 - `vite.config.ts` pins `NODE_ENV=development` for tests because React's
   production build omits `act`.

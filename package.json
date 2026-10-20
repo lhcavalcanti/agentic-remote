@@ -1,7 +1,7 @@
 {
   "name": "agentic-remote",
   "private": true,
-  "version": "1.22.0",
+  "version": "1.23.0",
   "packageManager": "pnpm@10.34.5",
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -21,6 +21,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
+    "test:canary": "vitest run --project canary",
+    "test:fast": "vitest run --project fast",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check": "pnpm lint && pnpm test && pnpm build"

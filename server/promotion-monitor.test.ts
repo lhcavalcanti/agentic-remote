@@ -32,6 +32,10 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim()
 }
 
+// sshd hands the command to the remote user's login shell, which need not be
+// bash. Every fake host parses it with dash (POSIX sh) to prove that.
+const REMOTE_LOGIN_SHELL = 'exec "$(command -v dash || command -v sh)" -c "$command"'
+
 async function stub(dir: string, name: string, body: string): Promise<void> {
   const file = path.join(dir, name)
   await writeFile(file, `#!/usr/bin/env bash\nprintf '%s\\n' "${name} $*" >>"$CALL_LOG"\n${body}\n`)
@@ -214,7 +218,7 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       'shift',
       'command="$*"',
       'command="${command/bash -lc /bash -c }"',
-      'exec bash -c "$command"',
+      REMOTE_LOGIN_SHELL,
     ].join('\n'),
   )
 
@@ -1179,7 +1183,7 @@ describe('promotion monitor', () => {
       `export HOME=${JSON.stringify(remoteHome)}`,
       `export RELEASE_ROOT=${JSON.stringify(remoteReleases)}`,
       'export SETUP_EXIT="${REMOTE_SETUP_EXIT:-0}"',
-      'exec bash -c "$command"',
+      REMOTE_LOGIN_SHELL,
     ].join('\n'))
     const pending = path.join(context.root, 'state', 'pending-promotion')
     const first = await monitor(context, { REMOTE_SETUP_EXIT: '1' })
@@ -1851,7 +1855,7 @@ describe('promotion monitor host canary', () => {
       `from=${JSON.stringify(context.remote)}`,
       `to=${JSON.stringify(second)}`,
       'if [[ "$host" == host-b ]]; then command="${command//"$from"/"$to"}"; fi',
-      'exec bash -c "$command"',
+      REMOTE_LOGIN_SHELL,
     ].join('\n'))
     const base = await git(context.remote, 'rev-parse', 'HEAD')
     const candidate = await advanceMain(context)
@@ -1872,6 +1876,111 @@ describe('promotion monitor host canary', () => {
     expect(JSON.parse(await readFile(state(context, 'pending-promotion'), 'utf8')).phase).toBe('local-verified')
     expect(existsSync(state(context, 'last-graduated-commit'))).toBe(false)
     expect(existsSync(state(context, 'promotion-state'))).toBe(false)
+  })
+
+  // A downstream canary failure leaves the verified local release journaled
+  // as local-verified; the next run must check the local runtime again.
+  async function interruptedAtLocalVerified() {
+    const fixtureState = await healthyReleaseFixture(true)
+    const { context } = fixtureState
+    await addDownstream(context, context.remote)
+    // The remote setup publishes into its own home, as on a separate machine.
+    const remoteHome = path.join(context.root, 'downstream-home')
+    const remoteReleases = path.join(remoteHome, '.config', 'agentic-remote', 'releases')
+    await mkdir(remoteReleases, { recursive: true })
+    await stub(path.join(context.root, 'bin'), 'ssh', [
+      'export REMOTE_HOST="$1"',
+      'shift',
+      'command="$*"',
+      'command="${command/bash -lc /bash -c }"',
+      `export HOME=${JSON.stringify(remoteHome)}`,
+      `export RELEASE_ROOT=${JSON.stringify(remoteReleases)}`,
+      REMOTE_LOGIN_SHELL,
+    ].join('\n'))
+    const remoteBase = await git(context.remote, 'rev-parse', 'HEAD')
+    const previousCommit = await git(context.runtime, 'rev-parse', 'HEAD')
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    const first = await monitor(context, { CANARY_FAIL_ROOT: await realpath(context.remote) })
+    expect(first.code).not.toBe(0)
+    expect(JSON.parse(await readFile(state(context, 'pending-promotion'), 'utf8')).phase).toBe('local-verified')
+    const published = await realpath(path.join(context.releases, 'current'))
+    expect(published).not.toBe(fixtureState.previous)
+    const resumeFrom = (await calls(context)).length
+    const resumedCalls = async () => (await calls(context)).slice(resumeFrom)
+    return { ...fixtureState, remoteBase, previousCommit, candidate, published, resumedCalls }
+  }
+
+  it('re-runs the local canary when resuming a locally verified promotion', async () => {
+    const { context, candidate, published, resumedCalls } = await interruptedAtLocalVerified()
+
+    const resumed = await monitor(context)
+
+    expect(resumed.code).toBe(0)
+    const canaries = (await resumedCalls()).filter((line) => line.startsWith('canary-env '))
+    expect(canaries.map((line) => line.split(' ')[1])).toEqual([
+      `in=${await realpath(context.runtime)}`, `in=${await realpath(context.remote)}`,
+    ])
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(published)
+    expect(await git(context.remote, 'rev-parse', 'HEAD')).toBe(candidate)
+    expect(await readFile(state(context, 'last-graduated-commit'), 'utf8')).toBe(`${candidate}\n`)
+    expect(existsSync(state(context, 'pending-promotion'))).toBe(false)
+  })
+
+  it('rolls back and clears the journal when the local canary fails while resuming', async () => {
+    const { context, previous, state: marker, record, remoteBase, previousCommit, resumedCalls } =
+      await interruptedAtLocalVerified()
+
+    const resumed = await monitor(context, { CANARY_FAIL_ROOT: await realpath(context.runtime) })
+
+    expect(resumed.code).not.toBe(0)
+    expect(resumed.output).toContain('canary failed on local')
+    expect(resumed.output).toContain('the previous runtime was restored')
+    const observed = await resumedCalls()
+    expect(observed.filter((line) => line.startsWith('canary-env '))).toHaveLength(1)
+    expect(observed.filter((line) => line.startsWith('ssh '))).toEqual([])
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previousCommit)
+    expect(await git(context.remote, 'rev-parse', 'HEAD')).toBe(remoteBase)
+    expect(await readFile(state(context, 'last-graduated-commit'), 'utf8')).toBe(marker)
+    expect(await readFile(state(context, 'promotion-state'), 'utf8')).toBe(record)
+    expect(existsSync(state(context, 'pending-promotion'))).toBe(false)
+  })
+
+  it('sends a multi-line canary that a POSIX sh login shell parses', async () => {
+    const context = await fixture()
+    const monitorSource = await readFile(MONITOR, 'utf8')
+    const functions = ['sh_quote', 'run_remote', 'canary_script'].map((name) => {
+      const body = monitorSource.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}\\n\\n`, 'm'))?.[0]
+      if (!body) throw new Error(`Missing ${name} function`)
+      return body
+    }).join('\n')
+    // A fake ssh that records the command line a login shell would receive.
+    const sent = path.join(context.root, 'sent-command')
+    const script = [
+      functions,
+      `fake_ssh() { printf '%s' "$2" >${JSON.stringify(sent)}; }`,
+      'DOWNSTREAM_SSH=fake_ssh',
+      'run_remote host "$(canary_script "$1")"',
+    ].join('\n')
+    const empty = path.join(context.root, 'no-vitest')
+    await mkdir(empty)
+    for (const checkout of [context.remote, empty]) {
+      await run('bash', ['-c', script, 'bash', checkout])
+      const command = await readFile(sent, 'utf8')
+      expect(command).toContain('\n')
+      expect(command).not.toContain("$'")
+      const parsed = await run('dash', ['-c', command.replace(/^bash -lc /, 'bash -c ')], {
+        env: { ...context.env, CANARY_FAIL_ROOT: '' },
+      }).then(() => ({ code: 0, output: '' }), (error: { code?: number; stderr?: string }) =>
+        ({ code: error.code ?? 1, output: error.stderr ?? '' }))
+      if (checkout === empty) {
+        expect(parsed.code).not.toBe(0)
+        expect(parsed.output).toContain(`vitest is not installed in ${await realpath(empty)}`)
+      } else {
+        expect(parsed).toEqual({ code: 0, output: '' })
+      }
+    }
+    expect((await canaryRuns(context)).map((entry) => entry.in)).toEqual([await realpath(context.remote)])
   })
 
   it('fails closed and rolls back when the local checkout has no Vitest', async () => {

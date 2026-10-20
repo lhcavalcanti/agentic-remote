@@ -690,10 +690,16 @@ recover_pending_promotion() {
 
 # Second promotion phase. Values reach a remote bash through printf %q so a
 # path or URL containing spaces, quotes, or substitutions is data rather than
-# code.
+# code. The script itself is first parsed by the remote login shell, which may
+# be any POSIX sh, so it is single-quoted there: printf %q would emit bash-only
+# $'...' for a multi-line script.
+sh_quote() {
+  printf "'%s'" "${1//\'/\'\\\'\'}"
+}
+
 run_remote() {
   local host="$1" script="$2"
-  $DOWNSTREAM_SSH "$host" "bash -lc $(printf '%q' "$script")"
+  $DOWNSTREAM_SSH "$host" "bash -lc $(sh_quote "$script")"
 }
 
 # Rebuild an exact known-good commit rather than reactivating whatever release

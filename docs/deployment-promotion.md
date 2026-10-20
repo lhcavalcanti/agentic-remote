@@ -466,7 +466,8 @@ stays single-machine.
   `agentic-remote update` no longer works on that host, because it runs
   `git pull --ff-only`; the monitor becomes the way that host is updated.
 - A build toolchain reachable from a non-interactive login shell on that host,
-  plus `curl` and `git`.
+  plus `bash`, `curl`, and `git`. The login shell itself may be any POSIX `sh`;
+  each command arrives single-quoted for `bash -lc`.
 - The downstream account must be able to manage its own service, which for the
   default installation means a user systemd service with lingering enabled.
 - At least one previous release, so a failed promotion has something to fall
@@ -517,9 +518,9 @@ split across two commits. The success marker is not advanced, so the next run
 retries the same commit.
 
 The local runtime stays active because its validation and health are durably
-recorded as `local-verified`. A retry rechecks that same local commit/release and
-resumes the downstream phase without rebuilding or restarting the healthy local
-runtime. If that recheck fails, recovery still uses the original journaled
+recorded as `local-verified`. A retry rechecks that same local commit/release,
+including the local canary, and resumes the downstream phase without rebuilding
+or restarting the healthy local runtime. If that recheck fails, recovery still uses the original journaled
 known-good baseline, never the uncompleted candidate.
 
 ### Choosing which machine serves the UI

@@ -14,7 +14,6 @@ import {
 import { isDeepStrictEqual } from 'node:util'
 import {
   CopilotClient,
-  RuntimeConnection,
   type AssistantMessageEvent,
   type CopilotSession,
   type ElicitationResult,
@@ -25,6 +24,7 @@ import {
   type SessionEvent,
   type SessionMetadata,
 } from '@github/copilot-sdk'
+import { createCopilotSdkClient } from './copilot-sdk-client.js'
 import type {
   AgentProvider,
   AgentProviderCapability,
@@ -1994,13 +1994,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   constructor(
     readonly store: SessionStore,
-    client: CopilotClientLike = new CopilotClient({
-      connection: RuntimeConnection.forStdio({
-        path: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
-      }),
-      logLevel: 'error',
-      useLoggedInUser: true,
-    }),
+    client: CopilotClientLike = createCopilotSdkClient(),
     private readonly activeSessionFinder = findActiveCopilotSessions,
     private readonly activeSessionStopper = stopActiveCopilotSession,
     private readonly sessionEventReader = readSessionEvents,
@@ -2012,13 +2006,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Side questions fork through a runtime of their own. One that has the
     // source session loaded records the fork in that session's history.
     private readonly sideQuestionClientFactory: () => CopilotClientLike = () =>
-      new CopilotClient({
-        connection: RuntimeConnection.forStdio({
-          path: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
-        }),
-        logLevel: 'error',
-        useLoggedInUser: true,
-      }),
+      createCopilotSdkClient(),
   ) {
     super()
     this.client = client

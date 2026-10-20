@@ -1,7 +1,7 @@
-import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk'
 import type { RuntimeReasoningEffort } from '../shared/contracts.js'
 import type { ManagerStructuredMemoryMode } from '../shared/manager-structured-memory.js'
 import type { ManagerSdkClient } from './manager-agent.js'
+import { createCopilotSdkClient } from './copilot-sdk-client.js'
 
 const efforts: RuntimeReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
@@ -10,13 +10,7 @@ const efforts: RuntimeReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'ma
  * runs your sessions, so a manager failure or restart never touches them.
  */
 export function createManagerSdkClient(): ManagerSdkClient {
-  const client = new CopilotClient({
-    connection: RuntimeConnection.forStdio({
-      path: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
-    }),
-    logLevel: 'error',
-    useLoggedInUser: true,
-  })
+  const client = createCopilotSdkClient()
   // The manager's narrower types are a structural subset of the SDK's.
   return client as unknown as ManagerSdkClient
 }

@@ -719,7 +719,11 @@ Questions and permissions are the highest-priority UI state.
   observe a stable empty composer, then paste and submit exactly once.
   A changed, working, unreadable, dialog-owning, or newly occupied pane MUST
   refuse without pasting; that reason MUST restore the app draft and remain
-  visible. Running or waiting sessions, uncertain delivery, queued sends,
+  visible. When no stale text was present, nothing is cleared and the attempt
+  MUST keep the readiness an ordinary immediate send would have: an agent that
+  is already working receives it as an immediate follow-up instead of a false
+  "new terminal text" refusal. After text was cleared, the pane MUST still be
+  idle before the paste. Running or waiting sessions, uncertain delivery, queued sends,
   SDK/Claude sessions, and app-local commands MUST never request replacement.
 - A first message to a terminal this service has not yet seen ready, such as
   after the hub restarts, MUST wait for a live composer. A Copilot started in

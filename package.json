@@ -21,6 +21,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
+    "test:canary": "vitest run --project canary",
+    "test:fast": "vitest run --project fast",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check": "pnpm lint && pnpm test && pnpm build"

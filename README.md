@@ -338,6 +338,17 @@ The development server uses Vite plus Fastify. Run the complete checks with:
 pnpm check
 ```
 
+`pnpm test` runs every test file once, serially. Two named Vitest projects run
+a subset:
+
+- `pnpm test:fast` runs every file that needs no tmux, Copilot, or Claude on
+  the host; it is the set suitable for hosted CI.
+- `pnpm test:canary` runs the quick real-tmux send and readiness subset,
+  including the send matrix, in about a minute.
+
+The remaining real-tmux files form the `tmux` project. A new test file that
+needs tmux must be added to `canaryTests` or `tmuxTests` in `vite.config.ts`.
+
 After changing `src/app-icon-design.ts`, regenerate the committed PWA and
 native bundle icons:
 

@@ -47,6 +47,8 @@ readonly DOWNSTREAM_HOSTS="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOS
 readonly DOWNSTREAM_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT '')"
 readonly DOWNSTREAM_HEALTH_URL="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL '')"
 readonly DOWNSTREAM_SSH="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_SSH 'ssh -o BatchMode=yes')"
+# The post-health send canary runs unless the profile sets exactly 0.
+readonly CANARY="$(profile_value AGENTIC_REMOTE_MONITOR_CANARY 1)"
 # How long to wait for a restarted service to answer. A slow machine may need
 # more; a constrained test or a fast one may want less.
 readonly READY_ATTEMPTS="$(profile_value AGENTIC_REMOTE_MONITOR_READY_ATTEMPTS 30)"
@@ -368,6 +370,7 @@ PY
   clear_pending_promotion ||
     die "promotion was recorded but its pending journal could not be cleared"
   log "graduated $PENDING_COMMIT successfully"
+  log_refusal_counts || true
 }
 
 rollback_runtime() {
@@ -480,6 +483,125 @@ verify_local_promotion() {
       return 1
     fi
   fi
+  # Standard output is this function's failure message, so the canary's own
+  # output goes to standard error.
+  if ! run_host_canary local "$PROD_ROOT" >&2; then
+    printf '%s' "send canary failed on the local runtime after graduation"
+    return 1
+  fi
+}
+
+# The `canary` Vitest project: real tmux send and readiness paths driven by a
+# fake Copilot. It runs in the host's own checkout, whose dev dependencies
+# `agentic-remote setup` installs, against a private tmux directory, so the
+# live and runtime tmux servers are never reached. Copilot is replaced by
+# `false` and stripped of credentials, so a misbehaving test cannot make a
+# model request. A missing Vitest fails the canary rather than skipping it.
+canary_script() {
+  local root_q
+  root_q="$(printf '%q' "$1")"
+  cat <<EOF
+cd $root_q || exit 1
+if [[ ! -x node_modules/.bin/vitest ]]; then
+  printf '%s\n' "vitest is not installed in \$PWD; the canary cannot run" >&2
+  exit 1
+fi
+canary_dir="\$(mktemp -d)" || exit 1
+canary_cleanup() {
+  local socket
+  while IFS= read -r -d '' socket; do
+    tmux -S "\$socket" kill-server >/dev/null 2>&1 || true
+  done < <(find "\$canary_dir" -type s -print0 2>/dev/null)
+  rm -rf -- "\$canary_dir"
+}
+trap canary_cleanup EXIT
+mkdir -p "\$canary_dir/copilot-home" || exit 1
+env -u TMUX -u GH_TOKEN -u GITHUB_TOKEN -u COPILOT_GITHUB_TOKEN \\
+  TMUX_TMPDIR="\$canary_dir" TMPDIR="\$canary_dir" CI=true \\
+  COPILOT_BIN="\$(command -v false)" COPILOT_HOME="\$canary_dir/copilot-home" \\
+  timeout --kill-after=30 600 node_modules/.bin/vitest run --project canary
+EOF
+}
+
+# Runs the canary in a checkout on this machine, or on a downstream host when
+# one is named. Succeeds without running when the profile opts out.
+run_host_canary() {
+  local label="$1" root="$2" host="${3:-}" script status=0
+  if [[ "$CANARY" == 0 ]]; then
+    log "host canary is disabled by the profile; skipping it on $label"
+    return 0
+  fi
+  script="$(canary_script "$root")"
+  log "running the send canary on $label in $root"
+  if [[ -n "$host" ]]; then
+    run_remote "$host" "$script" || status=$?
+  else
+    env HOME="$USER_HOME" PATH="$RUNTIME_TOOLS:$USER_HOME/.local/bin:$PATH" \
+      bash -c "$script" || status=$?
+  fi
+  if ((status != 0)); then
+    log "ERROR: canary failed on $label (exit $status)"
+    return 1
+  fi
+  log "canary passed on $label"
+}
+
+# The scheme and authority of a health URL, which is also the hub's origin.
+base_url() {
+  [[ "$1" =~ ^([A-Za-z][A-Za-z0-9+.-]*://[^/?#]+) ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+summarize_refusals() {
+  local label="$1" body="$2" summary
+  if summary="$(python3 - "$body" 2>/dev/null <<'PY'
+import json
+import sys
+
+def clean(value):
+    return "".join(c if c.isprintable() else "?" for c in str(value))
+
+data = json.loads(sys.argv[1])
+since, entries = data["since"], data["refusals"]
+if not isinstance(since, str) or not isinstance(entries, list):
+    raise SystemExit(1)
+entries = sorted(entries, key=lambda e: (-int(e["count"]), str(e["route"]), str(e["method"])))
+total = sum(int(e["count"]) for e in entries)
+parts = [f"since {clean(since)}: {total} total"]
+parts += [f"{clean(e['method'])} {clean(e['route'])} {clean(e['status'])} {clean(e['reason'])}={int(e['count'])}"
+          for e in entries[:10]]
+if len(entries) > 10:
+    parts.append(f"{len(entries) - 10} more")
+print("; ".join(parts))
+PY
+)"; then
+    log "refusals on $label $summary"
+  else
+    log "refusals on $label: unavailable"
+  fi
+}
+
+# Informational only: a node answers 404 and a hub may be unreachable, and
+# neither changes the outcome of a promotion that has already succeeded.
+log_refusal_counts() {
+  local base body="" host path_q origin_q
+  if base="$(base_url "$HEALTH_URL")"; then
+    body="$(curl -fsS --max-time 5 -H "origin: $base" \
+      "$base/api/diagnostics/refusals" 2>/dev/null)" || body=""
+  fi
+  summarize_refusals local "$body"
+  [[ -n "$DOWNSTREAM_HOSTS" ]] || return 0
+  base="$(base_url "$DOWNSTREAM_HEALTH_URL")" || base=""
+  origin_q="$(printf '%q' "origin: $base")"
+  path_q="$(printf '%q' "$base/api/diagnostics/refusals")"
+  for host in $DOWNSTREAM_HOSTS; do
+    body=""
+    if [[ -n "$base" ]]; then
+      body="$(run_remote "$host" "curl -fsS --max-time 5 -H $origin_q $path_q" 2>/dev/null)" ||
+        body=""
+    fi
+    summarize_refusals "$host" "$body"
+  done
 }
 
 recover_pending_promotion() {
@@ -652,6 +774,12 @@ promote_downstream() {
         restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
         return 1
       fi
+    fi
+
+    if ! run_host_canary "$host" "$DOWNSTREAM_ROOT" "$host"; then
+      restore_downstream "$host" "$previous_head"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
     fi
 
     promoted+=("$host:$previous_head")

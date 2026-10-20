@@ -367,7 +367,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "17f3951213ccee0d20db5bf2ef49bed3c353b29472a9d80ad43a38403c30a087",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "1197f610ddfd5a365fb98a98bc47221c1d3a80b874036bc671c5aac0d765a254",
+    "package.json": "5dfb77953525f02c8d74468d9c68353a54872190e4e326df38fd6d274cdabb26",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -733,19 +733,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6efce59042cee0845048c610a2e65b8cab1c0477b8357a14af7c875527585699",
+    "GRAPH_REPORT.md": "9e55aad9a5489f1eeafaa68e0db9eebdb36e75607f101854c5c1365c703c7ebf",
     "communities.json": "6ca4c87360898ff6e5b81f721e7d2251cbef2c4487268e0ef7f6e83ad93eeca3",
-    "graph.html": "cd54748b840f233f92636349911be8226229437f1c5ca6ccfe7b1ee9f5dcfd24",
-    "graph.json": "cdc521cf79acb6d92495ebda6a1b1959dffac26760a90e2504a8591c3291b2d0"
+    "graph.html": "28d8d75f5a29b0cd841049d261da036eec6c3afca577808352ec6e695c9e3129",
+    "graph.json": "57ea4e7ece0db2f079c302cedca46988ac4f5aed44ebbbc7667cef6e58573d79"
   },
   "schema_version": 1,
-  "source_commit": "83041c117c7e406aae920b694bc759087923c629",
-  "source_fingerprint": "6c512ca133c957b55acff3cb2d289819b1c080888c6a30863923e6b6e959e542",
-  "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
-  ]
+  "source_commit": "06827e9a5bfe4e8933e6890b03d4a30a0935e473",
+  "source_fingerprint": "490cfa3f9953117d33017939a22ae1615301ea2b2986a834d88f243ea985472b",
+  "working_tree_changes": []
 }

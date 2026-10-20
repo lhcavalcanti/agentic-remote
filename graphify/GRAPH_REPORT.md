@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `490cfa3f9953117d33017939a22ae1615301ea2b2986a834d88f243ea985472b`
+Snapshot: `d345e83ed0380c970d562674929a7c99e451fb6dedc3cf4f7fb34341553a0d52`
 
-Source checkout: `06827e9a5bfe4e8933e6890b03d4a30a0935e473`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `3eb85965cfbb93669c99fafa7b8c330ed62c8d17`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -12,11 +12,11 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 
 
 ## Corpus Check
-- 303 files · ~609,097 words
+- 303 files · ~609,135 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 4673 nodes · 13173 edges · 159 communities (133 shown, 11 thin omitted)
+- 4674 nodes · 13173 edges · 160 communities (133 shown, 11 thin omitted)
 - Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 865 edges (avg confidence: 0.81)
 - Token cost: 0 input · 0 output
 
@@ -193,7 +193,7 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 ## Import Cycles
 - 4-file cycle: `server/computer-manager.ts -> server/remote-node-client.ts -> server/node-routes.ts -> server/file-upload-routes.ts -> server/computer-manager.ts`
 
-## Communities (159 total, 11 thin omitted)
+## Communities (160 total, 11 thin omitted)
 
 ### Community 0 - "api.ts"
 Cohesion: 0.02
@@ -729,18 +729,18 @@ Nodes (5): addComputer(), removeComputer(), ComputersDialog(), remove(), submit(
 
 ## Knowledge Gaps
 - **852 isolated node(s):** `$schema`, `graphify/vendor/**`, `graphify/.venv/**`, `graphify/.cache/**`, `typescript` (+847 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1310 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1311 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **11 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
+- **Why does `buildApp()` connect `app.ts` to `AgentService`, `ClaudeAgentService`, `registerHubRoutes`, `SessionDetail`, `RemoteNodeClient`, `ManagerAgent`, `PushNotificationService`, `manager-context.ts`, `pwa.ts`, `TerminalSessionController`, `registerNodeRoutes`, `SessionKnowledgeStore`, `multi-node.test.ts`, `ProviderSessionService`, `SessionOrderStore`, `ManagerStore`, `cli-canary.ts`, `KnowledgeStore`, `ManagerMessage`, `transcription-service.ts`, `delegated-transcription-service.test.ts`, `delegated-transcription-service.ts`, `SettingsProfileStore`, `TranscriptionError`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
 - **Why does `AgentService` connect `AgentService` to `session-store.ts`, `.clearSerialized`, `.handleSessionEvent`, `SessionDetail`, `contracts.ts`, `CopilotSessionLike`, `session-resources.ts`, `.get`, `directory-browser.ts`, `TerminalSessionController`, `registerNodeRoutes`?**
+  _High betweenness centrality (0.003) - this node is a cross-community bridge._
+- **Why does `ClaudeAgentService` connect `ClaudeAgentService` to `SlashCommand`, `registerHubRoutes`, `contracts.ts`, `CopilotSessionLike`, `session-resources.ts`, `.get`, `directory-browser.ts`, `registerNodeRoutes`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
-- **Why does `SessionService` connect `registerHubRoutes` to `FakeSessionService`, `SlashCommand`, `contracts.ts`, `RemoteNodeClient`, `session-resources.ts`, `startup-phases.test.ts`, `directory-browser.ts`, `registerNodeRoutes`?**
-  _High betweenness centrality (0.001) - this node is a cross-community bridge._
-- **Why does `SessionStore` connect `SessionDetail` to `AgentService`, `session-store.ts`, `ClaudeAgentService`, `.clearSerialized`, `.get`, `TerminalSessionController`, `registerNodeRoutes`?**
-  _High betweenness centrality (0.000) - this node is a cross-community bridge._
 - **Are the 5 inferred relationships involving `App()` (e.g. with `createSettingsProfileClient()` and `prefersLightNow()`) actually correct?**
   _`App()` has 5 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `$schema`, `graphify/vendor/**`, `graphify/.venv/**` to the rest of the system?**

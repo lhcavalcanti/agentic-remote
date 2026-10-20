@@ -1631,13 +1631,61 @@ function runtimeInfoMatches(
 }
 
 function isMissingSessionError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
+  const details = recordValue(error)
+  const nestedDetails = recordValue(details.error)
+  const detailData = recordValue(details.data)
+  const nestedData = recordValue(nestedDetails.data)
+  const codes = [
+    details.code,
+    nestedDetails.code,
+    detailData.code,
+    nestedData.code,
+  ].flatMap((code) =>
+    typeof code === 'string' || typeof code === 'number'
+      ? [String(code).toLowerCase().replaceAll(/[\s_.-]+/g, '')]
+      : [],
+  )
+  const message =
+    error instanceof Error
+      ? error.message
+      : stringValue(details.message) ||
+        stringValue(nestedDetails.message) ||
+        stringValue(detailData.message) ||
+        stringValue(nestedData.message)
+  const normalizedMessage = message?.toLowerCase()
+
+  if (
+    codes.some((code) =>
+      code === '32601' ||
+      code === 'methodnotfound' ||
+      code === 'endpointnotfound',
+    ) ||
+    (normalizedMessage &&
+      (/\b(?:method|endpoint)\s+(?:was\s+)?not found\b/.test(normalizedMessage) ||
+        /\b(?:unknown|unhandled|unsupported)\s+(?:rpc\s+)?(?:method|endpoint)\b/.test(
+          normalizedMessage,
+        ) ||
+        /\bsession\.delete\b.*\bnot supported\b/.test(normalizedMessage)))
+  ) {
     return false
   }
-  const message = error.message.toLowerCase()
-  return (
-    message.includes('session') &&
-    (message.includes('not found') || message.includes('does not exist'))
+  if (
+    codes.some((code) =>
+      code === 'sessionnotfound' ||
+      code === 'sessiondoesnotexist' ||
+      code === 'nosuchsession',
+    )
+  ) {
+    return true
+  }
+  return Boolean(
+    normalizedMessage &&
+      (/\bsession\s+(?:not found|does not exist)\b/.test(normalizedMessage) ||
+        /\bsession\s+(?:(?:with\s+)?id\s+)?["'`]?[a-z0-9-]+["'`]?\s+(?:was\s+)?(?:not found|does not exist)\b/.test(
+          normalizedMessage,
+        ) ||
+        /\bno such session\b/.test(normalizedMessage) ||
+        /\bno session (?:was )?found\b/.test(normalizedMessage)),
   )
 }
 
@@ -1731,7 +1779,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // live follow-up is watching with. The turn closes the assistant of a
   // follow-up accepted while it runs; once it has returned the follow-up has
   // to close its own, and one it supersedes must stop watching.
-  private readonly sdkTurnsAwaited = new Set<string>()
+  private readonly sdkTurnsAwaited = new Map<string, string>()
+  private readonly retiredSdkPromptRuns = new Set<string>()
   private readonly sdkFollowUpTrackers = new Map<
     string,
     { settleWhenIdle: () => void; cancel: () => void }
@@ -6842,6 +6891,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Session not found')
     }
     const terminalBacked = this.store.backend(sessionId) === 'terminal'
+    const interruptedPrompt = this.activePrompts.get(sessionId)
+    const interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
@@ -6892,7 +6943,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (terminalBacked) {
         await removeCopilotSessionFiles(sessionId)
       } else {
-        await this.deleteSdkProviderIdentity(sessionId)
+        try {
+          await this.deleteSdkProviderIdentity(sessionId)
+        } catch (error) {
+          await this.reconcileRetainedSdkDeletion(
+            sessionId,
+            interruptedPrompt,
+            interruptedSdkTurn,
+            error,
+          )
+          throw error
+        }
       }
       await this.store.remove(sessionId)
       this.pendingSdkQueueAdmissions.delete(sessionId)
@@ -6923,6 +6984,78 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.deletedSessionIds.delete(sessionId)
       }
     }
+  }
+
+  private async reconcileRetainedSdkDeletion(
+    sessionId: string,
+    interruptedPrompt: ActivePrompt | undefined,
+    interruptedSdkTurn: string | undefined,
+    error: unknown,
+  ): Promise<void> {
+    const retained = this.store.get(sessionId)
+    if (
+      !retained ||
+      (!interruptedPrompt &&
+        retained.status !== 'running' &&
+        retained.status !== 'waiting' &&
+        !retained.pendingPermission &&
+        !retained.pendingUserInput)
+    ) {
+      return
+    }
+    if (
+      interruptedSdkTurn &&
+      this.sdkTurnsAwaited.get(sessionId) === interruptedSdkTurn
+    ) {
+      this.retiredSdkPromptRuns.add(interruptedSdkTurn)
+      this.sdkTurnsAwaited.delete(sessionId)
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    const explanation =
+      `Unable to complete the response: Session deletion failed before provider cleanup completed: ${message}`
+    const queueAdmission = interruptedPrompt
+      ? this.pendingSdkQueueAdmissions.get(sessionId)
+      : undefined
+    if (
+      interruptedPrompt &&
+      queueAdmission?.assistantId === interruptedPrompt.assistantMessageId
+    ) {
+      await this.store.failSdkQueueAdmission(
+        sessionId,
+        interruptedPrompt.assistantMessageId,
+        explanation,
+        () => false,
+      )
+    }
+    const updated = await this.store.updateIf(sessionId, (session) => {
+      const assistant = interruptedPrompt
+        ? session.messages.find(
+            (entry) => entry.id === interruptedPrompt.assistantMessageId,
+          )
+        : undefined
+      if (assistant?.role === 'assistant') {
+        assistant.streaming = false
+        if (!assistant.content) assistant.content = explanation
+      }
+      for (const entry of session.messages) {
+        if (
+          entry.role === 'activity' &&
+          entry.activityStatus === 'running'
+        ) {
+          entry.activityStatus = 'failed'
+          entry.activityResult = `Error: ${message}`
+        }
+      }
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.status = 'error'
+      session.activity = undefined
+      return true
+    })
+    if (updated) this.publish(updated)
+    this.pendingSdkQueueAdmissions.delete(sessionId)
+    this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+    this.sdkFollowUpTrackers.delete(sessionId)
   }
 
   private sdkReplyWrites(sessionId?: string): Promise<SessionDetail>[] {
@@ -9265,7 +9398,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<void> {
     const sessionId = sdkSession.sessionId
     let completionAssistantMessageId = assistantMessageId
-    this.sdkTurnsAwaited.add(sessionId)
+    this.sdkTurnsAwaited.set(sessionId, assistantMessageId)
     try {
       if (this.stopped) return
       const response = delivery && receipt
@@ -9279,13 +9412,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (response?.timestamp) {
         this.liveTranscriptWatermarks.set(sessionId, response.timestamp)
       }
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
       if (pendingFollowUp) pendingFollowUp.previousCompleted = true
       await pendingFollowUp?.settled
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       completionAssistantMessageId = pendingFollowUp
@@ -9327,14 +9470,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         (!delivery.submitted || delivery.refused || explicitlyRefused(error))) {
         return
       }
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
       const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
       if (pendingFollowUp) pendingFollowUp.previousCompleted = true
       await pendingFollowUp?.settled
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       completionAssistantMessageId = pendingFollowUp
@@ -9372,7 +9525,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       // Released last: a follow-up accepted while this turn was awaited is
       // closed by it, and one accepted afterwards has to close itself.
-      this.sdkTurnsAwaited.delete(sessionId)
+      if (this.sdkTurnsAwaited.get(sessionId) === assistantMessageId) {
+        this.sdkTurnsAwaited.delete(sessionId)
+      }
+      this.retiredSdkPromptRuns.delete(assistantMessageId)
       if (this.activePrompts.get(sessionId)?.assistantMessageId === completionAssistantMessageId) {
         this.activePrompts.delete(sessionId)
         if (!delivery || delivery.accepted) this.wakeSdkQueue(sessionId)

@@ -459,6 +459,139 @@ describe('AgentService deletion', () => {
     expect(service['sessions'].get(created.id)).toBe(client.session)
   })
 
+  it('reconciles an active SDK turn after provider deletion fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    const handler = client.createdConfigs.at(-1)?.onPermissionRequest
+    if (!handler) throw new Error('Permission handler was not configured')
+    const permission = handler(
+      {
+        kind: 'shell',
+        fullCommandText: 'echo guarded',
+        intention: 'Run guarded work',
+        commands: [],
+        possiblePaths: [],
+        possibleUrls: [],
+        hasWriteFileRedirection: false,
+        canOfferSessionApproval: false,
+      },
+      { sessionId: created.id },
+    )
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('waiting'),
+    )
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+
+    await expect(service.deleteSession(created.id)).rejects.toBe(failure)
+    await expect(permission).resolves.toEqual({ kind: 'user-not-available' })
+
+    const retained = store.get(created.id)
+    expect(retained).toMatchObject({
+      status: 'error',
+      activity: undefined,
+      pendingPermission: undefined,
+    })
+    expect(retained?.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+
+    client.deleteError = undefined
+    await expect(
+      service.sendMessage(created.id, 'Retry after failed deletion'),
+    ).resolves.toMatchObject({ status: 'running' })
+    const retryAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'late-old-response', content: 'late old response' },
+    } as AssistantMessageEvent)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(store.get(created.id)?.status).toBe('running')
+    expect(
+      service['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(retryAssistant)
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === retryAssistant,
+      ),
+    ).toMatchObject({ content: '', streaming: true })
+
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+    expect(store.get(created.id)).toBeUndefined()
+  })
+
+  it.each([
+    ['provider message', new Error('Session not found: active-session')],
+    [
+      'provider code',
+      Object.assign(new Error('Provider rejected deletion'), {
+        code: 'SESSION_NOT_FOUND',
+      }),
+    ],
+  ])('treats a missing SDK identity reported by %s as deleted', async (_label, missing) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.deleteError = missing
+
+    await service.deleteSession(created.id)
+
+    expect(store.get(created.id)).toBeUndefined()
+    expect(service['sessions'].has(created.id)).toBe(false)
+  })
+
+  it('preserves an SDK session when session.delete is not supported', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const unsupported = Object.assign(
+      new Error('Method not found: session.delete'),
+      { code: -32601 },
+    )
+    client.deleteError = unsupported
+
+    await expect(service.deleteSession(created.id)).rejects.toBe(unsupported)
+
+    expect(store.get(created.id)).toBeDefined()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
   it('rejects SDK-to-tmux activation after failed detach without reopening the terminal', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

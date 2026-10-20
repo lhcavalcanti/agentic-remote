@@ -23,46 +23,85 @@ const tmuxTests = [
   'server/tmux-errors.integration.test.ts',
 ]
 
-// Non-tmux files left out of `pnpm test:quick`, the subset the hosted light
-// check runs on every pull request head. That job is billed per started minute,
-// so install, lint, type-check, build and these tests have to finish within
-// 60 seconds on a GitHub runner (docs/deployment-promotion.md). Each file listed
-// here took a second or more locally; together they are most of the `fast`
-// project's run time. A new file joins the quick subset by default: if it takes
-// a second or more, add it here. Every file still runs in `pnpm test`,
-// `pnpm test:fast` and the local promotion gate.
+// Non-tmux files left out of `pnpm test:quick`, the subset the advisory hosted
+// check runs on every pull request head. That job is billed per started minute
+// and must finish install, lint, type-check, build and these tests within 60
+// seconds on a GitHub runner, which leaves roughly 20 seconds for tests
+// (docs/deployment-promotion.md). Each file listed here took 0.35 seconds or
+// more locally, counting environment setup and imports; that includes every
+// jsdom file, whose environment alone costs about 0.6 seconds. A new file joins
+// the quick subset by default: if it is that slow, add it here. Every file still
+// runs in `pnpm test`, `pnpm test:fast` and the local promotion gate.
 const slowTests = [
   'graphify/manage.test.ts',
   'server/agent-service-recovery.test.ts',
   'server/agent-service-side-question.test.ts',
   'server/agent-service.test.ts',
+  'server/api-origin.test.ts',
+  'server/background-task-stop.test.ts',
+  'server/claude-agent-service.test.ts',
   'server/claude-recovery-admission.test.ts',
+  'server/client-presence.test.ts',
   'server/conversation-recovery.test.ts',
+  'server/history-projection.test.ts',
+  'server/hub-routes.test.ts',
   'server/manager-agent.test.ts',
   'server/manager-routes.test.ts',
   'server/manager-structured-memory-performance.test.ts',
+  'server/manager-tools.test.ts',
   'server/multi-node.test.ts',
+  'server/notification-scope.integration.test.ts',
   'server/promotion-monitor.test.ts',
   'server/promotion-setup-execution.test.ts',
+  'server/queued-provider-dispatch.test.ts',
   'server/recovery-resend-durability.test.ts',
   'server/recovery-seed-guards.test.ts',
+  'server/refusal-metrics-routes.test.ts',
   'server/release-publication.test.ts',
   'server/session-admission-lifecycle.test.ts',
+  'server/session-clear-transcript.test.ts',
   'server/session-enqueue-clear.test.ts',
   'server/session-knowledge-routes.test.ts',
+  'server/session-order-routes.test.ts',
   'server/session-patch-integration.test.ts',
+  'server/session-patch-routes.test.ts',
+  'server/session-patches.test.ts',
   'server/session-reply-durability.test.ts',
+  'server/session-resource-clear.test.ts',
   'server/session-resource-providers.test.ts',
   'server/session-resource-routes.test.ts',
+  'server/session-store-durability.test.ts',
   'server/session-store-providers.test.ts',
   'server/session-store-serialization.test.ts',
+  'server/session-store.test.ts',
+  'server/settings-profile-routes.test.ts',
   'server/startup-phases.test.ts',
+  'server/submission-error-http.test.ts',
   'server/tmux-errors.test.ts',
+  'server/transcription-media-digests.test.ts',
   'src/App.test.tsx',
+  'src/DocumentViewControls.test.tsx',
+  'src/HtmlPreview.test.tsx',
+  'src/KnowledgeRootChoices.test.tsx',
+  'src/KnowledgeRootSelector.test.tsx',
   'src/ManagerAssistant.test.tsx',
+  'src/MarkdownCodeBlock.test.tsx',
+  'src/MermaidDiagram.real.test.tsx',
   'src/MermaidDiagram.test.tsx',
+  'src/OracleSettings.test.tsx',
+  'src/ReaderWorkspace.test.tsx',
+  'src/SessionActions.test.tsx',
   'src/SessionNavigation.test.tsx',
+  'src/SessionResources.test.tsx',
+  'src/SessionRetentionSettings.test.tsx',
+  'src/features/prompts/PromptCards.test.tsx',
+  'src/markdown-navigation.test.ts',
   'src/pwa.test.ts',
+  'src/remark-safe-breaks.test.tsx',
+  'src/settings-profile.test.ts',
+  'src/shell.test.ts',
+  'src/use-session-knowledge-root.test.tsx',
+  'src/voice-recorder.test.ts',
 ]
 
 // A renamed or deleted file would otherwise drop out of these lists silently.

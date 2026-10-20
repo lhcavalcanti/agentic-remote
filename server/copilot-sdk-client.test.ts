@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   COPILOT_SDK_SESSION_DISCOVERY,
   copilotSdkClientOptions,
+  createCopilotSdkClient,
   readCopilotSdkRuntimeDiagnostic,
+  retireMissingCopilotSdkSession,
 } from './copilot-sdk-client.js'
 
 describe('COPILOT_SDK_SESSION_DISCOVERY', () => {
@@ -34,6 +36,50 @@ describe('copilotSdkClientOptions', () => {
       COPILOT_SDK_BIN: '/sdk/copilot',
     })
     expect(options.connection).toBeDefined()
+  })
+})
+
+describe('retireMissingCopilotSdkSession', () => {
+  it('retires the local owner so SDK shutdown cannot detach it', async () => {
+    const disconnect = vi.fn(async () => {})
+    const cleanup = vi.fn()
+    const session = {
+      disconnect,
+      _runOnDisconnected: cleanup,
+    }
+    const sessions = new Map([['missing-session', session]])
+
+    await retireMissingCopilotSdkSession({ sessions }, 'missing-session')
+    for (const remaining of sessions.values()) {
+      await remaining.disconnect()
+    }
+
+    expect(sessions.has('missing-session')).toBe(false)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(disconnect).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unknown SDK local registry shape', async () => {
+    await expect(
+      retireMissingCopilotSdkSession({ sessions: {} }, 'missing-session'),
+    ).rejects.toThrow('Copilot SDK local session registry is unavailable')
+  })
+
+  it('preserves the local owner when disconnection cleanup is unavailable', async () => {
+    const session = {}
+    const sessions = new Map([['missing-session', session]])
+
+    await expect(
+      retireMissingCopilotSdkSession({ sessions }, 'missing-session'),
+    ).rejects.toThrow('Copilot SDK local session cleanup is unavailable')
+
+    expect(sessions.get('missing-session')).toBe(session)
+  })
+
+  it('adds the missing-session retirement capability to concrete SDK clients', () => {
+    const client = createCopilotSdkClient({})
+
+    expect(client.retireMissingSession).toEqual(expect.any(Function))
   })
 })
 

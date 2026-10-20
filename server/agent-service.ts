@@ -28,6 +28,7 @@ import {
   COPILOT_SDK_SESSION_DISCOVERY,
   createCopilotSdkClient,
   readCopilotSdkRuntimeDiagnostic,
+  type CopilotSdkMissingSessionRetirement,
 } from './copilot-sdk-client.js'
 import type {
   AgentProvider,
@@ -310,6 +311,7 @@ export interface CopilotClientLike extends CopilotResourceClient {
   stop(): Promise<Error[]>
   getStatus?: CopilotClient['getStatus']
   getAuthStatus?: CopilotClient['getAuthStatus']
+  retireMissingSession?: CopilotSdkMissingSessionRetirement['retireMissingSession']
   createSession(config: SessionConfig): Promise<CopilotSessionLike>
   resumeSession(
     sessionId: string,
@@ -1925,6 +1927,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.client.deleteSession(id)
     } catch (error) {
       if (!isMissingSessionError(error)) throw error
+      await this.client.retireMissingSession?.(id)
     }
     this.sessions.delete(id)
     this.hydratedSessions.delete(id)
@@ -4195,6 +4198,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         original = this.sessions.get(id)
         try {
           fresh = await this.client.createSession({
+            ...COPILOT_SDK_SESSION_DISCOVERY,
             sessionId: replacementId,
             workingDirectory: stored.cwd,
             streaming: true,

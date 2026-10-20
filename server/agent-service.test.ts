@@ -272,6 +272,7 @@ class FakeCopilotClient implements CopilotClientLike {
   readonly deletedSessionIds: string[] = []
   readonly resumedConfigs: ResumeSessionConfig[] = []
   readonly resumedSessionIds: string[] = []
+  retireMissingSession?: (sessionId: string) => Promise<void>
   deleteError?: Error
   stopErrors: Error[] = []
   readonly rpc = {
@@ -573,9 +574,11 @@ describe('AgentService deletion', () => {
     const created = await service.createSession(directory, false)
     const failure = new Error('Provider deletion failed')
     client.deleteError = failure
+    client.retireMissingSession = vi.fn(async () => {})
 
     await expect(service.deleteSession(created.id)).rejects.toBe(failure)
 
+    expect(client.retireMissingSession).not.toHaveBeenCalled()
     expect(store.get(created.id)).toBeDefined()
     expect(service['sessions'].get(created.id)).toBe(client.session)
   })
@@ -1231,11 +1234,77 @@ describe('AgentService deletion', () => {
     await service.start()
     const created = await service.createSession(directory, false)
     client.deleteError = missing
+    client.retireMissingSession = vi.fn(async () => {})
 
     await service.deleteSession(created.id)
 
+    expect(client.retireMissingSession).toHaveBeenCalledWith(created.id)
     expect(store.get(created.id)).toBeUndefined()
     expect(service['sessions'].has(created.id)).toBe(false)
+  })
+
+  it('preserves an SDK session when missing-session retirement fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.deleteError = new Error(`Session not found: ${created.id}`)
+    const retirementFailure = new Error('SDK local retirement failed')
+    client.retireMissingSession = vi.fn(async () => {
+      throw retirementFailure
+    })
+
+    await expect(service.deleteSession(created.id)).rejects.toBe(retirementFailure)
+
+    expect(store.get(created.id)).toBeDefined()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('does not detach a retired missing SDK identity during shutdown', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const sdkSessions = new Map<string, CopilotSessionLike>()
+    client.retireMissingSession = vi.fn(async (sessionId) => {
+      sdkSessions.delete(sessionId)
+    })
+    client.stop = async () => {
+      const results = await Promise.allSettled(
+        [...sdkSessions.values()].map((session) => session.disconnect()),
+      )
+      return results.flatMap((result) =>
+        result.status === 'rejected'
+          ? [result.reason instanceof Error
+              ? result.reason
+              : new Error(String(result.reason))]
+          : [],
+      )
+    }
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    sdkSessions.set(created.id, client.session)
+    client.deleteError = new Error(`Session not found: ${created.id}`)
+
+    await service.deleteSession(created.id)
+    await service.stop()
+
+    expect(client.retireMissingSession).toHaveBeenCalledWith(created.id)
+    expect(client.session.disconnectCount).toBe(0)
   })
 
   it('preserves an SDK session when session.delete is not supported', async () => {
@@ -4126,6 +4195,7 @@ describe('AgentService deletion', () => {
     expect(service.store.get(created.id)).toBeUndefined()
     expect(client.deletedSessionIds).toContain(created.id)
     expect(client.createdConfigs.at(-1)).toMatchObject({
+      ...cliDiscovery,
       sessionId: cleared.id,
       workingDirectory: directory,
     })

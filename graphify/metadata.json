@@ -320,9 +320,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 175,
+  "communities": 180,
   "community_algorithm": "louvain-seed-42",
-  "edges": 13721,
+  "edges": 13729,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -409,8 +409,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "895a8a0cbd6aa9916d48842eb047644ab0220140a361547f19da54f0e94b4dc7",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "aa393cb8f125e9dcdca7a9da552fab8f0abacca8817c2b36a35bd164f029dc3f",
-    "server/agent-service.ts": "678e32d8a590abc37ebd07625f33b63e9ef3da3967c391bc191c302c1d411fa6",
+    "server/agent-service.test.ts": "e3d52af2b21d18cd8fb6e15f72f8e8f0e471c984a20b9b4a6ff229531ec6b84b",
+    "server/agent-service.ts": "7cce8560957a2d6aeeb4df4f37fc7b51bdce3c08b5307ee8e67098a51634d17b",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -433,8 +433,8 @@
     "server/computer-registry.test.ts": "e0616b92fdfb650b523100af4a8f7b8e4f31b99764ec4ab71502d3b69b1bf55b",
     "server/computer-registry.ts": "0b7670e11309f21891b15e5a5265a4d8fae8cadbc3262b4484686bfe7caff15f",
     "server/conversation-recovery.test.ts": "61e33a22980e0897b02f2c9df1e130c79d3ce6474c4bdd5b7970ca2e8a5fe9b5",
-    "server/copilot-sdk-client.test.ts": "a33c5cf672aa6dd5fab509bb8a3005400c9beaa6cbf816cdbba2cea01d3dfef4",
-    "server/copilot-sdk-client.ts": "b2f91c2449b362c1c61e2263ecda489975970556831859d307e2d691c18bde67",
+    "server/copilot-sdk-client.test.ts": "fd2c3f0440f6e4f273e99aa7adf52227071ee71113523f24776a648d57798e71",
+    "server/copilot-sdk-client.ts": "e17ac67d03ddc23bc2d5cd8eed3459bd13af64a0f1d6760eb1ea57871768ae04",
     "server/delegated-transcription-service.test.ts": "a34fed74712fa98c501e7ed21e31b452ed201360cf0e784169a28fde124a9f1a",
     "server/delegated-transcription-service.ts": "875a5d15fb582e7d836b6d3f5d1cc7328480fa793d63f272aa3c163b1c07afb7",
     "server/directory-browser.test.ts": "9952e56f0dbc161daaa8e5ad8da3498629d83e2b934963266f6ee87ab9385ccb",
@@ -708,7 +708,7 @@
     "vite.config.ts": "eacee8590f9e87d8336de9f3e98b332be04929d839e845192f13aeed6dc89643"
   },
   "mode": "local-ast-only",
-  "nodes": 4878,
+  "nodes": 4881,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -773,18 +773,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "958210539c4dca4edb6fb48797e47a22ccc307283c08c393e7761047d93b147e",
-    "communities.json": "aee2ba9354c74f52df8ad02496c9a1d469d29f110148d97118b87fab0134049e",
-    "graph.html": "6727fff317fd914b0a5c7c112b561e18f0c04118c8240a3963f38b93062043d3",
-    "graph.json": "b85aa9dbb1ea676d682c4c20c4f9aa0c751f7cf81c7d1dfa803326c8a5005ebd"
+    "GRAPH_REPORT.md": "d3df4c1f3e5f1364b13735178c98fd36245c7caf61b08f86c0323443a506f1de",
+    "communities.json": "9d96c5967d05a28711591d99a084232403caf3ec86a2d2c7e5fc9c5ded53723a",
+    "graph.html": "6b3456aca9985e97004fd449f8f4b4beeac91afdd8a11f8bb8c9bebb56bf262d",
+    "graph.json": "f3016586787a6dd02b1b34949d1d7afda5f67321ba40596c98a14a6f4985f119"
   },
   "schema_version": 1,
-  "source_commit": "5927798f9c220c2f1ad70759ce5979738548b5c0",
-  "source_fingerprint": "bd4ad0da8160a4b80fba12cd36bae0c77192589ba1205774bff92d8f2211aac7",
+  "source_commit": "4739a7666b768cb6b9f4c1081117023ab38218a7",
+  "source_fingerprint": "1810699449c9e8e70d1210bed8dd6eff5c53f56914c8f58116f3626e81ddc4f1",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/provider-compatibility.md",
-    "docs/sdk-architecture-roadmap.md",
-    "server/session-store-providers.test.ts"
+    "server/agent-service.test.ts",
+    "server/agent-service.ts",
+    "server/copilot-sdk-client.test.ts",
+    "server/copilot-sdk-client.ts"
   ]
 }

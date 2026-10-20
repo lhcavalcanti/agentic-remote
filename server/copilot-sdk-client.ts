@@ -19,6 +19,10 @@ interface CopilotSdkRuntimeDiagnosticClient {
   getAuthStatus?: () => Promise<GetAuthStatusResponse>
 }
 
+export interface CopilotSdkMissingSessionRetirement {
+  retireMissingSession(sessionId: string): Promise<void>
+}
+
 export const COPILOT_SDK_SESSION_DISCOVERY = {
   enableConfigDiscovery: true,
   enableSkills: true,
@@ -57,8 +61,43 @@ export function copilotSdkClientOptions(
   }
 }
 
+export async function retireMissingCopilotSdkSession(
+  client: unknown,
+  sessionId: string,
+): Promise<void> {
+  if ((typeof client !== 'object' && typeof client !== 'function') || client === null) {
+    throw new Error('Copilot SDK local session registry is unavailable')
+  }
+  const sessions = Reflect.get(client, 'sessions')
+  if (!(sessions instanceof Map)) {
+    throw new Error('Copilot SDK local session registry is unavailable')
+  }
+  if (!sessions.has(sessionId)) return
+  const session = sessions.get(sessionId)
+  if ((typeof session !== 'object' && typeof session !== 'function') || session === null) {
+    throw new Error('Copilot SDK local session cleanup is unavailable')
+  }
+  const cleanup = Reflect.get(session, '_runOnDisconnected')
+  if (typeof cleanup !== 'function') {
+    throw new Error('Copilot SDK local session cleanup is unavailable')
+  }
+
+  sessions.delete(sessionId)
+  try {
+    await Reflect.apply(cleanup, session, [])
+  } catch (cause) {
+    sessions.set(sessionId, session)
+    throw new Error('Copilot SDK local session cleanup failed', { cause })
+  }
+}
+
 export function createCopilotSdkClient(
   environment: NodeJS.ProcessEnv = process.env,
-): CopilotClient {
-  return new CopilotClient(copilotSdkClientOptions(environment))
+): CopilotClient & CopilotSdkMissingSessionRetirement {
+  const client = new CopilotClient(copilotSdkClientOptions(environment))
+  Object.defineProperty(client, 'retireMissingSession', {
+    value: (sessionId: string) =>
+      retireMissingCopilotSdkSession(client, sessionId),
+  })
+  return client as CopilotClient & CopilotSdkMissingSessionRetirement
 }

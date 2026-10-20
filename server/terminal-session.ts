@@ -2110,6 +2110,9 @@ export class TmuxTerminalSessionController
           )
         }
         if (options.replaceExistingInput) {
+          // With nothing cleared, the send keeps the working tolerance the
+          // first readiness check granted; a cleared composer must be idle.
+          const toleratesWorking = allowWorking && !existingInput
           const ownerBeforePaste = await this.owner(
             sessionId,
             currentOwner.target,
@@ -2122,13 +2125,13 @@ export class TmuxTerminalSessionController
             ownerBeforePaste.rootPid !== currentOwner.rootPid ||
             ownerBeforePaste.target !== currentOwner.target ||
             composerText(paneBeforePaste) === undefined ||
-            !terminalInputReady(paneBeforePaste) ||
+            !terminalInputReady(paneBeforePaste, toleratesWorking) ||
             composerHoldsText(paneBeforePaste) ||
             isTerminalOverlay(paneBeforePaste) ||
             parseTerminalPermission(paneBeforePaste) ||
             parseTerminalUserInput(paneBeforePaste) ||
             parseTerminalFormPrompt(paneBeforePaste) ||
-            isTerminalAgentWorking(paneBeforePaste)
+            (!toleratesWorking && isTerminalAgentWorking(paneBeforePaste))
           ) {
             throw new TerminalDraftConflictError(
               'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',

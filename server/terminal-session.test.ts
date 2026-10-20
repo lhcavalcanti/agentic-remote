@@ -218,6 +218,7 @@ process.on('SIGUSR1', () => {
   pasted = ${JSON.stringify(injectedText || undefined)}
   draw(composer(pasted || '', ${working}))
 })
+process.on('SIGXCPU', () => draw(composer('', true)))
 process.on('SIGUSR2', () => {
   draw(${JSON.stringify(transientPane)})
   setTimeout(() => draw(composer(pasted || '', ${working})), ${transientRepaintMs})
@@ -1923,6 +1924,62 @@ process.stdin.on('data', () => undefined)
       uncertainDelivery: false,
     })
     expect(await readFile(output, 'utf8')).toBe('')
+  }, 15_000)
+
+  it('sends once to a working terminal when replacement found no draft to clear', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(true)
+
+    await expect(controller.send(
+      sessionId,
+      'Steer the working agent',
+      false,
+      {
+        allowDuringAgentExecution: true,
+        replaceExistingInput: true,
+      },
+    )).resolves.toBe(true)
+
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['Steer the working agent'], submits: ['enter'],
+    })
+  }, 15_000)
+
+  it('refuses to paste when the agent starts working after a draft was cleared', async () => {
+    const { controller, sessionId, output, panePid } = await deliveryFixture(
+      false, undefined, undefined, '', 'stale terminal draft',
+    )
+    const owner = controller['owner'].bind(controller)
+    let started = false
+    controller['owner'] = async (...args: Parameters<typeof owner>) => {
+      const value = await readFile(output, 'utf8')
+      if (!started && value && JSON.parse(value).clears) {
+        started = true
+        process.kill(Number(panePid), 'SIGXCPU')
+        await eventually(
+          () => controller.capture(sessionId),
+          (pane) => isTerminalAgentWorking(pane || ''),
+        )
+      }
+      return owner(...args)
+    }
+
+    await expect(controller.send(
+      sessionId,
+      'Not into the new turn',
+      false,
+      { allowDuringAgentExecution: true, replaceExistingInput: true },
+    )).rejects.toMatchObject({
+      message: 'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
+      statusCode: 409,
+      terminalDraftConflict: true,
+    })
+    expect(started).toBe(true)
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      clears: 1, pastes: [], submits: [],
+    })
   }, 15_000)
 
   it.each([

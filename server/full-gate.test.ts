@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile, spawn, spawnSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import {
   chmod,
@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -22,6 +23,11 @@ const REPO = 'owner/name'
 const CONTEXT = 'agentic-remote/full-gate'
 
 const fixtures: string[] = []
+
+// Whether this host can run a real bubblewrap sandbox (unprivileged user
+// namespaces can be disabled, for example by AppArmor).
+const realSandbox =
+  spawnSync('bwrap', ['--ro-bind', '/', '/', '--unshare-all', '--', 'true']).status === 0
 
 afterEach(async () => {
   await Promise.all(
@@ -207,15 +213,18 @@ async function fixture(): Promise<Fixture> {
       'exit "${!exit_var:-0}"',
     ].join('\n'),
   )
-  // Stands in for bubblewrap: records each sandbox command line, then runs
-  // the sandboxed command exactly as given, cleared environment included.
+  // Stands in for bubblewrap: records each sandbox command line and its own
+  // environment, then runs the sandboxed command exactly as given, cleared
+  // environment included.
   await stub(
     sandboxBin,
     'bwrap',
     [
       `calls=${JSON.stringify(sandboxCalls)}`,
+      `source ${JSON.stringify(knobs)}`,
       'n="$(ls "$calls" | wc -l)"',
       'printf "%s\\0" "$@" >"$calls/$(printf %03d "$n")"',
+      'mkdir -p "$calls-env" && env -0 >"$calls-env/$(printf %03d "$n")"',
       '[[ -z "${BWRAP_EXIT:-}" ]] || exit "$BWRAP_EXIT"',
       'while (($#)) && [[ "$1" != -- ]]; do',
       '  if [[ "$1" == --chdir ]]; then cd "$2" || exit 1; fi',
@@ -667,6 +676,20 @@ describe('agentic-remote-gate', () => {
         expect(value).not.toContain(f.home)
       }
     }
+    // bwrap itself runs as PID 1 inside the sandbox, where the pull request
+    // can read its environment, so it starts from the same scrubbed set.
+    const launches = (await readdir(`${f.sandboxCalls}-env`)).sort()
+    expect(launches).toHaveLength(commands.length)
+    for (const name of launches) {
+      const launch = await readFile(path.join(`${f.sandboxCalls}-env`, name), 'utf8')
+      // Bash adds PWD, SHLVL, and _ to the stub's own environment.
+      const names = launch.split('\0').slice(0, -1).map((entry) => entry.slice(0, entry.indexOf('=')))
+      expect(names.filter((name) => !['PWD', 'SHLVL', '_'].includes(name)).sort()).toEqual(
+        allowed.filter((name) => name !== 'NODE_ENV'),
+      )
+      expect(launch).not.toContain('secret')
+      expect(launch).not.toContain(`=${f.home}\0`)
+    }
     for (const { options, command } of corepack) {
       const clone = command[command.indexOf('--dir') + 1]
       const work = path.dirname(clone)
@@ -804,5 +827,49 @@ describe('agentic-remote-gate', () => {
     )
     expect(production).toHaveLength(phase === 'normal' ? 0 : 1)
   })
+
+
+  it.runIf(realSandbox)(
+    'leaves no inherited secret in any process environment inside a real sandbox',
+    async () => {
+      const f = await fixture()
+      const canary = `canary-${randomUUID()}`
+      // A toolchain outside the system directories, which the gate binds back
+      // into the sandbox; its corepack is a probe that dumps every process
+      // environment it can read, then reports a passing test summary.
+      const toolchain = path.join(f.root, 'toolchain', 'bin')
+      await mkdir(toolchain, { recursive: true })
+      await stub(toolchain, 'node', `exec ${JSON.stringify(process.execPath)} "$@"`)
+      await stub(
+        toolchain,
+        'corepack',
+        [
+          '[[ "$1" != enable ]] || exit 0',
+          'for file in /proc/1/environ /proc/self/environ /proc/[0-9]*/environ; do',
+          '  [[ -r "$file" ]] || continue',
+          '  printf "== %s\\n" "$file"',
+          '  tr "\\0" "\\n" <"$file" 2>/dev/null || true',
+          'done',
+          'echo "      Tests  1 passed (1)"',
+        ].join('\n'),
+      )
+      const result = await gate(f, [f.mainSha, '--repo', REPO], {
+        PATH: `${toolchain}:${f.bin}:/usr/bin:/bin`,
+        GH_TOKEN: canary,
+        GITHUB_TOKEN: canary,
+        AGENTIC_REMOTE_GATE_CANARY: canary,
+      })
+      expect(result.code, result.output).toBe(0)
+
+      for (const name of ['install.log', 'check.log', 'production-check.log']) {
+        const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
+        expect(log).toMatch(/^== \/proc\/1\/environ\nPATH=/m)
+        expect(log).toMatch(/^== \/proc\/self\/environ\n/m)
+        expect(log).not.toContain(canary)
+        expect(log).not.toMatch(/^(GH_TOKEN|GITHUB_TOKEN|AGENTIC_REMOTE_GATE_CANARY)=/m)
+      }
+      expect((await statuses(f)).at(-1)?.state).toBe('success')
+    },
+  )
 
 })

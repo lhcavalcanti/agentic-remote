@@ -402,8 +402,10 @@ Install and both checks run pull-request code, so they run in a
 [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox that
 the gate requires. The sandbox gets every namespace unshared except the
 network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
-`NODE_ENV` for the production run), a private `HOME` (holding its own
-Corepack `pnpm` shim) and `/tmp` inside the temporary directory, an empty tmpfs over the real home and `/run`, read-only
+`NODE_ENV` for the production run) that `bwrap` itself is also started with,
+since it stays visible inside as PID 1, a private `HOME` (holding its own
+Corepack `pnpm` shim) and `/tmp` inside the temporary directory, an empty
+tmpfs over the real home and `/run`, read-only
 system directories plus the Node toolchain's `bin` and `lib/node_modules`, and
 a writable temporary directory whose clone's `.git` is read-only. So no token, `gh` or SSH
 configuration, agent socket, or the operator's tmux server is reachable, and

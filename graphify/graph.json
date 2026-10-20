@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "39e928cc2496815fa06ed771eb58e889fe71d267",
+  "built_at_commit": "325968b08b0e55fab3a7721d67227c61d619362b",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -458,7 +458,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L270",
+      "source_location": "L275",
       "target": "bin_agentic_remote_gate_assert_tree",
       "weight": 1.0
     },
@@ -535,7 +535,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L174",
+      "source_location": "L177",
       "target": "bin_agentic_remote_gate_finish",
       "weight": 1.0
     },
@@ -579,7 +579,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L166",
+      "source_location": "L169",
       "target": "bin_agentic_remote_gate_on_signal",
       "weight": 1.0
     },
@@ -590,7 +590,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L198",
+      "source_location": "L201",
       "target": "bin_agentic_remote_gate_pnpm_version",
       "weight": 1.0
     },
@@ -612,7 +612,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L215",
+      "source_location": "L218",
       "target": "bin_agentic_remote_gate_prepare_sandbox",
       "weight": 1.0
     },
@@ -667,7 +667,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L285",
+      "source_location": "L290",
       "target": "bin_agentic_remote_gate_run_check",
       "weight": 1.0
     },
@@ -678,7 +678,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L142",
+      "source_location": "L144",
       "target": "bin_agentic_remote_gate_run_phase",
       "weight": 1.0
     },
@@ -689,7 +689,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L248",
+      "source_location": "L251",
       "target": "bin_agentic_remote_gate_sandbox_options",
       "weight": 1.0
     },
@@ -733,7 +733,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_gate",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L153",
+      "source_location": "L156",
       "target": "bin_agentic_remote_gate_stop_child",
       "weight": 1.0
     },
@@ -800,7 +800,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L439",
+      "source_location": "L445",
       "target": "bin_agentic_remote_gate_assert_tree",
       "weight": 1.0
     },
@@ -812,7 +812,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L475",
+      "source_location": "L481",
       "target": "bin_agentic_remote_gate_conclude",
       "weight": 1.0
     },
@@ -824,7 +824,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L338",
+      "source_location": "L343",
       "target": "bin_agentic_remote_gate_die",
       "weight": 1.0
     },
@@ -836,7 +836,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L418",
+      "source_location": "L424",
       "target": "bin_agentic_remote_gate_fail",
       "weight": 1.0
     },
@@ -848,7 +848,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L326",
+      "source_location": "L331",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -860,7 +860,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L441",
+      "source_location": "L447",
       "target": "bin_agentic_remote_gate_pnpm_version",
       "weight": 1.0
     },
@@ -872,7 +872,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L393",
+      "source_location": "L398",
       "target": "bin_agentic_remote_gate_post_status",
       "weight": 1.0
     },
@@ -884,7 +884,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L419",
+      "source_location": "L425",
       "target": "bin_agentic_remote_gate_prepare_sandbox",
       "weight": 1.0
     },
@@ -896,7 +896,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L408",
+      "source_location": "L413",
       "target": "bin_agentic_remote_gate_record",
       "weight": 1.0
     },
@@ -908,7 +908,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L343",
+      "source_location": "L348",
       "target": "bin_agentic_remote_gate_repo_from_url",
       "weight": 1.0
     },
@@ -920,7 +920,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L349",
+      "source_location": "L354",
       "target": "bin_agentic_remote_gate_require_command",
       "weight": 1.0
     },
@@ -932,7 +932,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L466",
+      "source_location": "L472",
       "target": "bin_agentic_remote_gate_run_check",
       "weight": 1.0
     },
@@ -944,7 +944,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L445",
+      "source_location": "L451",
       "target": "bin_agentic_remote_gate_run_phase",
       "weight": 1.0
     },
@@ -956,7 +956,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L444",
+      "source_location": "L450",
       "target": "bin_agentic_remote_gate_sandbox_options",
       "weight": 1.0
     },
@@ -968,7 +968,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L315",
+      "source_location": "L320",
       "target": "bin_agentic_remote_gate_usage",
       "weight": 1.0
     },
@@ -980,7 +980,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L347",
+      "source_location": "L352",
       "target": "bin_agentic_remote_gate_valid_repo",
       "weight": 1.0
     },
@@ -992,7 +992,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate__entry",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L337",
+      "source_location": "L342",
       "target": "bin_agentic_remote_gate_valid_sha",
       "weight": 1.0
     },
@@ -1004,7 +1004,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_assert_tree",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L273",
+      "source_location": "L278",
       "target": "bin_agentic_remote_gate_fail",
       "weight": 1.0
     },
@@ -1016,7 +1016,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_assert_tree",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L275",
+      "source_location": "L280",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -1100,7 +1100,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_finish",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L182",
+      "source_location": "L185",
       "target": "bin_agentic_remote_gate_elapsed",
       "weight": 1.0
     },
@@ -1112,7 +1112,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_finish",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L187",
+      "source_location": "L190",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -1124,7 +1124,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_finish",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L188",
+      "source_location": "L191",
       "target": "bin_agentic_remote_gate_post_status",
       "weight": 1.0
     },
@@ -1136,7 +1136,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_finish",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L184",
+      "source_location": "L187",
       "target": "bin_agentic_remote_gate_record",
       "weight": 1.0
     },
@@ -1148,7 +1148,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_finish",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L179",
+      "source_location": "L182",
       "target": "bin_agentic_remote_gate_stop_child",
       "weight": 1.0
     },
@@ -1160,7 +1160,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_on_signal",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L169",
+      "source_location": "L172",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -1184,7 +1184,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L297",
+      "source_location": "L302",
       "target": "bin_agentic_remote_gate_assert_tree",
       "weight": 1.0
     },
@@ -1196,7 +1196,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L296",
+      "source_location": "L301",
       "target": "bin_agentic_remote_gate_fail",
       "weight": 1.0
     },
@@ -1208,7 +1208,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L289",
+      "source_location": "L294",
       "target": "bin_agentic_remote_gate_log",
       "weight": 1.0
     },
@@ -1220,7 +1220,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L292",
+      "source_location": "L297",
       "target": "bin_agentic_remote_gate_record",
       "weight": 1.0
     },
@@ -1232,7 +1232,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L291",
+      "source_location": "L296",
       "target": "bin_agentic_remote_gate_run_phase",
       "weight": 1.0
     },
@@ -1244,7 +1244,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_gate_run_check",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L294",
+      "source_location": "L299",
       "target": "bin_agentic_remote_gate_test_counts",
       "weight": 1.0
     },
@@ -51307,7 +51307,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L299",
+      "source_location": "L308",
       "target": "server_full_gate_test_calls",
       "weight": 1.0
     },
@@ -51318,7 +51318,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L327",
+      "source_location": "L336",
       "target": "server_full_gate_test_clearedenvironment",
       "weight": 1.0
     },
@@ -51329,7 +51329,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L359",
+      "source_location": "L368",
       "target": "server_full_gate_test_expectnoclone",
       "weight": 1.0
     },
@@ -51340,7 +51340,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L348",
+      "source_location": "L357",
       "target": "server_full_gate_test_expectsafe",
       "weight": 1.0
     },
@@ -51351,7 +51351,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L82",
+      "source_location": "L88",
       "target": "server_full_gate_test_fixture",
       "weight": 1.0
     },
@@ -51362,7 +51362,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L24",
+      "source_location": "L25",
       "target": "server_full_gate_test_fixtures",
       "weight": 1.0
     },
@@ -51373,7 +51373,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L285",
+      "source_location": "L294",
       "target": "server_full_gate_test_gate",
       "weight": 1.0
     },
@@ -51384,7 +51384,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L40",
+      "source_location": "L46",
       "target": "server_full_gate_test_git",
       "weight": 1.0
     },
@@ -51395,7 +51395,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L32",
+      "source_location": "L38",
       "target": "server_full_gate_test_gitenv",
       "weight": 1.0
     },
@@ -51406,7 +51406,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L338",
+      "source_location": "L347",
       "target": "server_full_gate_test_hassequence",
       "weight": 1.0
     },
@@ -51417,7 +51417,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L342",
+      "source_location": "L351",
       "target": "server_full_gate_test_indexofsequence",
       "weight": 1.0
     },
@@ -51428,7 +51428,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L73",
+      "source_location": "L79",
       "target": "server_full_gate_test_result",
       "weight": 1.0
     },
@@ -51439,7 +51439,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L19",
+      "source_location": "L20",
       "target": "server_full_gate_test_run",
       "weight": 1.0
     },
@@ -51450,7 +51450,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L314",
+      "source_location": "L323",
       "target": "server_full_gate_test_sandboxcommands",
       "weight": 1.0
     },
@@ -51461,7 +51461,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L259",
+      "source_location": "L268",
       "target": "server_full_gate_test_start",
       "weight": 1.0
     },
@@ -51472,7 +51472,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L66",
+      "source_location": "L72",
       "target": "server_full_gate_test_status",
       "weight": 1.0
     },
@@ -51483,7 +51483,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L289",
+      "source_location": "L298",
       "target": "server_full_gate_test_statuses",
       "weight": 1.0
     },
@@ -51494,7 +51494,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L45",
+      "source_location": "L51",
       "target": "server_full_gate_test_stub",
       "weight": 1.0
     },
@@ -51505,7 +51505,7 @@
       "relation": "contains",
       "source": "server_full_gate_test",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L303",
+      "source_location": "L312",
       "target": "server_full_gate_test_waitfor",
       "weight": 1.0
     },
@@ -51517,7 +51517,7 @@
       "relation": "calls",
       "source": "server_full_gate_test_fixture",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L114",
+      "source_location": "L120",
       "target": "server_full_gate_test_git",
       "weight": 1.0
     },
@@ -51529,7 +51529,7 @@
       "relation": "calls",
       "source": "server_full_gate_test_fixture",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L108",
+      "source_location": "L114",
       "target": "server_full_gate_test_run",
       "weight": 1.0
     },
@@ -51541,7 +51541,7 @@
       "relation": "calls",
       "source": "server_full_gate_test_fixture",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L125",
+      "source_location": "L131",
       "target": "server_full_gate_test_stub",
       "weight": 1.0
     },
@@ -51553,7 +51553,7 @@
       "relation": "calls",
       "source": "server_full_gate_test_gate",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L286",
+      "source_location": "L295",
       "target": "server_full_gate_test_start",
       "weight": 1.0
     },
@@ -51565,7 +51565,7 @@
       "relation": "calls",
       "source": "server_full_gate_test_git",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L41",
+      "source_location": "L47",
       "target": "server_full_gate_test_run",
       "weight": 1.0
     },
@@ -158533,7 +158533,7 @@
       },
       "norm_label": "assert_tree()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L270"
+      "source_location": "L275"
     },
     {
       "_origin": "ast",
@@ -158638,7 +158638,7 @@
       },
       "norm_label": "finish()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L174"
+      "source_location": "L177"
     },
     {
       "_origin": "ast",
@@ -158698,7 +158698,7 @@
       },
       "norm_label": "on_signal()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L166"
+      "source_location": "L169"
     },
     {
       "_origin": "ast",
@@ -158713,7 +158713,7 @@
       },
       "norm_label": "pnpm_version()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L198"
+      "source_location": "L201"
     },
     {
       "_origin": "ast",
@@ -158743,7 +158743,7 @@
       },
       "norm_label": "prepare_sandbox()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L215"
+      "source_location": "L218"
     },
     {
       "_origin": "ast",
@@ -158818,7 +158818,7 @@
       },
       "norm_label": "run_check()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L285"
+      "source_location": "L290"
     },
     {
       "_origin": "ast",
@@ -158833,7 +158833,7 @@
       },
       "norm_label": "run_phase()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L142"
+      "source_location": "L144"
     },
     {
       "_origin": "ast",
@@ -158848,7 +158848,7 @@
       },
       "norm_label": "sandbox_options()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L248"
+      "source_location": "L251"
     },
     {
       "_origin": "ast",
@@ -158908,7 +158908,7 @@
       },
       "norm_label": "stop_child()",
       "source_file": "bin/agentic-remote-gate",
-      "source_location": "L153"
+      "source_location": "L156"
     },
     {
       "_origin": "ast",
@@ -173998,7 +173998,7 @@
       "label": "calls()",
       "norm_label": "calls()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L299"
+      "source_location": "L308"
     },
     {
       "_callable": true,
@@ -174010,7 +174010,7 @@
       "label": "clearedEnvironment()",
       "norm_label": "clearedenvironment()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L327"
+      "source_location": "L336"
     },
     {
       "_callable": true,
@@ -174022,7 +174022,7 @@
       "label": "expectNoClone()",
       "norm_label": "expectnoclone()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L359"
+      "source_location": "L368"
     },
     {
       "_callable": true,
@@ -174034,7 +174034,7 @@
       "label": "expectSafe()",
       "norm_label": "expectsafe()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L348"
+      "source_location": "L357"
     },
     {
       "_callable": true,
@@ -174047,7 +174047,7 @@
       "label": "Fixture",
       "norm_label": "fixture",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L51"
+      "source_location": "L57"
     },
     {
       "_origin": "ast",
@@ -174058,7 +174058,7 @@
       "label": "fixtures",
       "norm_label": "fixtures",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L24"
+      "source_location": "L25"
     },
     {
       "_callable": true,
@@ -174070,7 +174070,7 @@
       "label": "gate()",
       "norm_label": "gate()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L285"
+      "source_location": "L294"
     },
     {
       "_callable": true,
@@ -174082,7 +174082,7 @@
       "label": "git()",
       "norm_label": "git()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L40"
+      "source_location": "L46"
     },
     {
       "_origin": "ast",
@@ -174093,7 +174093,7 @@
       "label": "gitEnv",
       "norm_label": "gitenv",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L32"
+      "source_location": "L38"
     },
     {
       "_callable": true,
@@ -174105,7 +174105,7 @@
       "label": "hasSequence()",
       "norm_label": "hassequence()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L338"
+      "source_location": "L347"
     },
     {
       "_callable": true,
@@ -174117,7 +174117,7 @@
       "label": "indexOfSequence()",
       "norm_label": "indexofsequence()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L342"
+      "source_location": "L351"
     },
     {
       "_callable": true,
@@ -174130,7 +174130,7 @@
       "label": "Result",
       "norm_label": "result",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L73"
+      "source_location": "L79"
     },
     {
       "_origin": "ast",
@@ -174141,7 +174141,7 @@
       "label": "run",
       "norm_label": "run",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L19"
+      "source_location": "L20"
     },
     {
       "_callable": true,
@@ -174153,7 +174153,7 @@
       "label": "sandboxCommands()",
       "norm_label": "sandboxcommands()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L314"
+      "source_location": "L323"
     },
     {
       "_callable": true,
@@ -174165,7 +174165,7 @@
       "label": "start()",
       "norm_label": "start()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L259"
+      "source_location": "L268"
     },
     {
       "_callable": true,
@@ -174178,7 +174178,7 @@
       "label": "Status",
       "norm_label": "status",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L66"
+      "source_location": "L72"
     },
     {
       "_callable": true,
@@ -174190,7 +174190,7 @@
       "label": "statuses()",
       "norm_label": "statuses()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L289"
+      "source_location": "L298"
     },
     {
       "_callable": true,
@@ -174202,7 +174202,7 @@
       "label": "stub()",
       "norm_label": "stub()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L45"
+      "source_location": "L51"
     },
     {
       "_callable": true,
@@ -174214,7 +174214,7 @@
       "label": "waitFor()",
       "norm_label": "waitfor()",
       "source_file": "server/full-gate.test.ts",
-      "source_location": "L303"
+      "source_location": "L312"
     },
     {
       "_origin": "ast",

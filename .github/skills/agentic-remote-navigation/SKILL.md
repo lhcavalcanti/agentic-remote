@@ -308,7 +308,8 @@ and must still change on every build.
 5. **Gate the exact final head.** Run `bin/agentic-remote-gate <PR>` once the
    head is final. It clones that SHA afresh, runs `pnpm check` and
    `NODE_ENV=production pnpm check` serially under a host-wide lock inside a
-   credentialless `bwrap` sandbox (it fails rather than run unsandboxed), and
+   credentialless `bwrap` sandbox, with `bwrap` itself started from the
+   scrubbed environment (it fails rather than run unsandboxed), and
    posts the `agentic-remote/full-gate` commit status; success needs passed
    and zero failed Vitest counts from both runs. A new push needs a new gate.
 6. **Merge only after Supervisor `APPROVE` and an `agentic-remote/full-gate`

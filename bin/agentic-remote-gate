@@ -137,12 +137,15 @@ fail() {
 
 # Runs a pull-request-controlled phase in the sandbox, in its own process
 # group, so an interrupt stops the whole suite rather than leaving workers
-# behind in a clone being deleted.
+# behind in a clone being deleted. bwrap itself starts from the scrubbed
+# environment too: it stays inside the sandbox's PID namespace as PID 1, where
+# the pull request could read its environment from /proc.
 #   run_phase LOG_FILE [NAME=value...] COMMAND...
 run_phase() {
   local log_file="$1" status=0
   shift
-  setsid bwrap "${SANDBOX_OPTIONS[@]}" -- env -i "${SANDBOX_ENV[@]}" "$@" \
+  setsid env -i "${SANDBOX_ENV[@]}" "$BWRAP" "${SANDBOX_OPTIONS[@]}" \
+    -- env -i "${SANDBOX_ENV[@]}" "$@" \
     </dev/null >"$log_file" 2>&1 9>&- &
   CHILD_PID=$!
   wait "$CHILD_PID" || status=$?
@@ -251,14 +254,16 @@ sandbox_options() {
   for dir in "${SANDBOX_SYSTEM_DIRS[@]}"; do
     SANDBOX_OPTIONS+=(--ro-bind-try "$dir" "$dir")
   done
+  # Later mounts land on top of earlier ones, so /tmp is replaced before the
+  # home, toolchain, and work directory, any of which may live under it.
   SANDBOX_OPTIONS+=(--proc /proc --dev /dev --tmpfs /run
-    --ro-bind-try /run/systemd/resolve /run/systemd/resolve)
+    --ro-bind-try /run/systemd/resolve /run/systemd/resolve
+    --bind "$WORK_DIR/tmp" /tmp)
   [[ -z "$REAL_HOME" || "$REAL_HOME" == / ]] || SANDBOX_OPTIONS+=(--tmpfs "$REAL_HOME")
   for dir in "${SANDBOX_TOOLCHAIN_DIRS[@]}"; do
     SANDBOX_OPTIONS+=(--ro-bind "$dir" "$dir")
   done
-  SANDBOX_OPTIONS+=(--bind "$WORK_DIR/tmp" /tmp
-    --bind "$WORK_DIR" "$WORK_DIR"
+  SANDBOX_OPTIONS+=(--bind "$WORK_DIR" "$WORK_DIR"
     --ro-bind "$CLONE/.git" "$CLONE/.git"
     --chdir "$CLONE")
   SANDBOX_ENV=(PATH="$SANDBOX_HOME/bin:$SANDBOX_PATH" HOME="$SANDBOX_HOME" LANG=C.UTF-8
@@ -415,7 +420,8 @@ post_status pending "running normal and production checks" ||
 PENDING_POSTED=1
 log "gating $REPO at $SHA (logs: $GATE_DIR)"
 
-command -v bwrap >/dev/null 2>&1 || fail "sandbox unavailable: bubblewrap (bwrap) not found"
+BWRAP="$(command -v bwrap 2>/dev/null)" && [[ "$BWRAP" == /* ]] ||
+  fail "sandbox unavailable: bubblewrap (bwrap) not found"
 prepare_sandbox || fail "sandbox unavailable: no Node toolchain it can expose"
 
 WORK_DIR="$(mktemp -d)"

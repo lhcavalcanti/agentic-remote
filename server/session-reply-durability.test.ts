@@ -434,7 +434,7 @@ describe('Reply durability regressions', () => {
     },
   )
 
-  it('continues a retained answer when a stale form has vanished into an empty ready composer', async () => {
+  it('continues a retained answer after the form parser misses a transition to an empty ready composer', async () => {
     const f = await fallbackFormFixture()
     f.dismiss.mockResolvedValue(false)
     f.terminal.capture = vi.fn(async () => [
@@ -452,6 +452,27 @@ describe('Reply durability regressions', () => {
     expect(f.send).toHaveBeenCalledExactlyOnceWith(
       sessionId, 'Answering the question you just asked, from the Agentic Remote app:\n- confirm: true', false,
     )
+  })
+
+  it('does not send a continuation when the missed form completes before the empty-composer fallback', async () => {
+    const f = await fallbackFormFixture()
+    f.dismiss.mockImplementation(async () => {
+      f.complete.mockResolvedValue(true)
+      return false
+    })
+    f.terminal.capture = vi.fn(async () => [
+      '╭──────────────────────────────╮',
+      '│ > Type a message…             │',
+      '╰──────────────────────────────╯',
+    ].join('\n'))
+    f.terminal.inputReady = vi.fn(async () => true)
+
+    await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
+
+    expect(f.dismiss).toHaveBeenCalledOnce()
+    expect(f.terminal.inputReady).toHaveBeenCalledOnce()
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.service['terminalFormContinuations'].size).toBe(0)
   })
 
   it.each([

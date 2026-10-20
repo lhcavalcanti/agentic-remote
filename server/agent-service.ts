@@ -7163,6 +7163,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // The event-derived card outlived its terminal form. Nothing was
       // dismissed or submitted, so continue the retained answer only after
       // tmux independently confirms an empty composer that can accept it.
+      if (await this.isToolCallComplete(
+        sessionId, requestId.slice('persisted-user-input:'.length),
+      )) {
+        this.terminalFormContinuations.delete(key)
+        return this.acceptTerminalFormReply(sessionId, requestId, input)
+      }
       receipt.dismissed = true
       return this.continueTerminalFormReply(sessionId, requestId, input)
     }

@@ -1,0 +1,377 @@
+#!/usr/bin/env bash
+#
+# Runs the full merge gate on one exact commit and records the result as the
+# `agentic-remote/full-gate` commit status on that commit.
+#
+# The repository has no hosted CI, so merge readiness rests on this gate: a
+# fresh clone of the exact SHA, `pnpm check`, then `NODE_ENV=production pnpm
+# check`, with the tree still clean after each. Gates on one host run one at a
+# time, because the suites interfere with each other through real tmux.
+
+set -Eeuo pipefail
+
+readonly CONTEXT='agentic-remote/full-gate'
+readonly SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/agentic-remote/gates"
+readonly LOCK_FILE="$STATE_ROOT/gate.lock"
+# Where `<owner>/<name>.git` is cloned from. Tests point it at local remotes.
+readonly CLONE_BASE="${AGENTIC_REMOTE_GATE_CLONE_BASE:-https://github.com}"
+# Seconds an interrupted check may take to exit before it is killed outright.
+readonly STOP_GRACE="${AGENTIC_REMOTE_GATE_STOP_GRACE:-30}"
+
+log() {
+  printf '[agentic-remote-gate] %s\n' "$*"
+}
+
+die() {
+  log "ERROR: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage: agentic-remote-gate <full-sha|PR-number> [--repo owner/name] [--no-status] [--no-wait]
+
+Clones the exact commit, runs `pnpm check` and `NODE_ENV=production pnpm check`,
+and records the `agentic-remote/full-gate` commit status on that commit.
+
+  --repo owner/name  GitHub repository (default: this checkout's origin)
+  --no-status        do not post commit statuses
+  --no-wait          fail at once if another gate is running on this host
+USAGE
+  exit 2
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+# owner/name from a GitHub remote URL, or nothing.
+repo_from_url() {
+  local url="$1"
+  url="${url%/}"
+  url="${url%.git}"
+  case "$url" in
+    https://github.com/*) printf '%s' "${url#https://github.com/}" ;;
+    git@github.com:*) printf '%s' "${url#git@github.com:}" ;;
+    ssh://git@github.com/*) printf '%s' "${url#ssh://git@github.com/}" ;;
+  esac
+}
+
+valid_repo() {
+  [[ "$1" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$1" != *..* ]]
+}
+
+valid_sha() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+}
+
+format_duration() {
+  local seconds="$1"
+  if ((seconds < 60)); then
+    printf '%ss' "$seconds"
+  else
+    printf '%sm' "$(((seconds + 30) / 60))"
+  fi
+}
+
+elapsed() {
+  format_duration "$(($(date +%s) - GATE_STARTED))"
+}
+
+# "5099 passed, 1 skipped" from the last Vitest `Tests` line of a log.
+test_counts() {
+  local line
+  line="$(sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' "$1" 2>/dev/null |
+    grep -E '^[[:space:]]*Tests[[:space:]]+[0-9]' | tail -n 1)" || true
+  [[ -n "$line" ]] || return 0
+  grep -oE '[0-9]+ (failed|passed|skipped|todo)' <<<"$line" | paste -sd, - |
+    sed 's/,/, /g'
+}
+
+record() {
+  printf '%s=%s\n' "$1" "$2" >>"$GATE_DIR/summary"
+}
+
+post_status() {
+  local state="$1" description="$2"
+  # Built from fixed text and counts only; never paths, output, or secrets.
+  description="${description:0:139}"
+  ((POST_STATUS)) || return 0
+  gh api --method POST "repos/$REPO/statuses/$SHA" \
+    -f "state=$state" -f "context=$CONTEXT" -f "description=$description" \
+    >/dev/null
+}
+
+# Posts the final status once. Failures exit non-zero after recording.
+conclude() {
+  local state="$1" description="$2"
+  CONCLUDED=1
+  record result "$state"
+  record description "$description"
+  record total_seconds "$(($(date +%s) - GATE_STARTED))"
+  log "$state: $description"
+  if ! post_status "$state" "$description"; then
+    log "ERROR: could not record the $CONTEXT status on $SHA" >&2
+    exit 1
+  fi
+  [[ "$state" == success ]] || exit 1
+}
+
+fail() {
+  conclude failure "$1"
+}
+
+# Runs a phase in its own process group, so an interrupt stops the whole
+# suite rather than leaving workers behind in a clone being deleted.
+run_phase() {
+  local log_file="$1" status=0
+  shift
+  setsid "$@" </dev/null >"$log_file" 2>&1 9>&- &
+  CHILD_PID=$!
+  wait "$CHILD_PID" || status=$?
+  CHILD_PID=""
+  return "$status"
+}
+
+stop_child() {
+  [[ -n "${CHILD_PID:-}" ]] || return 0
+  local waited=0
+  kill -TERM -- "-$CHILD_PID" 2>/dev/null || kill -TERM "$CHILD_PID" 2>/dev/null || true
+  while kill -0 -- "-$CHILD_PID" 2>/dev/null && ((waited < STOP_GRACE * 10)); do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -KILL -- "-$CHILD_PID" 2>/dev/null || true
+  wait "$CHILD_PID" 2>/dev/null || true
+  CHILD_PID=""
+}
+
+on_signal() {
+  trap '' INT TERM
+  INTERRUPTED="interrupted during $PHASE"
+  log "received $1; stopping"
+  [[ "$1" == INT ]] && exit 130
+  exit 143
+}
+
+finish() {
+  local code=$?
+  set +e
+  trap - EXIT
+  trap '' INT TERM
+  stop_child
+  if ((PENDING_POSTED && !CONCLUDED)); then
+    local description="${INTERRUPTED:-gate stopped during $PHASE}"
+    description="$description ($(elapsed))"
+    [[ -z "${GATE_DIR:-}" ]] || {
+      record result failure
+      record description "$description"
+    }
+    log "failure: $description" >&2
+    post_status failure "$description" ||
+      log "ERROR: could not record the $CONTEXT status on $SHA" >&2
+    ((code != 0)) || code=1
+  fi
+  if [[ -n "${WORK_DIR:-}" && -d "$WORK_DIR" ]]; then
+    rm -rf -- "$WORK_DIR"
+  fi
+  exit "$code"
+}
+
+pnpm_version() {
+  python3 - "$1/package.json" <<'PY'
+import json
+import sys
+
+package_manager = json.load(open(sys.argv[1], encoding="utf-8"))["packageManager"]
+name, version = package_manager.split("@", 1)
+if name != "pnpm" or not version:
+    raise SystemExit(f"Unsupported packageManager: {package_manager}")
+print(version)
+PY
+}
+
+# Clean and still on the gated commit; anything else fails the gate.
+assert_tree() {
+  local label="$1" changes head
+  changes="$(git -C "$CLONE" status --porcelain)" ||
+    fail "tree unreadable after $label ($(elapsed))"
+  [[ -z "$changes" ]] || {
+    log "tree changed during $label:" >&2
+    printf '%s\n' "$changes" | head -n 20 >&2
+    fail "tree changed during $label ($(elapsed))"
+  }
+  head="$(git -C "$CLONE" rev-parse HEAD)" ||
+    fail "HEAD unreadable after $label ($(elapsed))"
+  [[ "$head" == "$SHA" ]] || fail "HEAD moved during $label ($(elapsed))"
+}
+
+# One full check. Leaves the Vitest counts in CHECK_COUNTS.
+run_check() {
+  local label="$1" key="$2" log_file="$3" started status=0
+  shift 3
+  PHASE="$label"
+  log "running $label (log: $log_file)"
+  started="$(date +%s)"
+  run_phase "$log_file" "$@" || status=$?
+  record "${key}_check_exit" "$status"
+  record "${key}_check_seconds" "$(($(date +%s) - started))"
+  CHECK_COUNTS="$(test_counts "$log_file")"
+  record "${key}_tests" "$CHECK_COUNTS"
+  ((status == 0)) || fail "$label failed${CHECK_COUNTS:+: $CHECK_COUNTS} ($(elapsed))"
+  assert_tree "$label"
+}
+
+POST_STATUS=1
+NO_WAIT=0
+REPO=""
+TARGET=""
+while (($#)); do
+  case "$1" in
+    --repo)
+      (($# >= 2)) || usage
+      REPO="$2"
+      shift 2
+      ;;
+    --repo=*)
+      REPO="${1#--repo=}"
+      shift
+      ;;
+    --no-status) POST_STATUS=0; shift ;;
+    --no-wait) NO_WAIT=1; shift ;;
+    -h | --help) usage ;;
+    -*) log "unknown option: $1" >&2; usage ;;
+    *)
+      [[ -z "$TARGET" ]] || usage
+      TARGET="$1"
+      shift
+      ;;
+  esac
+done
+[[ -n "$TARGET" ]] || usage
+
+TARGET="${TARGET,,}"
+if ! valid_sha "$TARGET" && ! [[ "$TARGET" =~ ^[1-9][0-9]{0,8}$ ]]; then
+  die "expected a full 40-character SHA or a pull request number, got: $TARGET"
+fi
+
+if [[ -z "$REPO" ]]; then
+  origin="$(git -C "$SCRIPT_ROOT" remote get-url origin 2>/dev/null)" || origin=""
+  REPO="$(repo_from_url "$origin")"
+  [[ -n "$REPO" ]] ||
+    die "could not derive the GitHub repository from this checkout's origin; pass --repo owner/name"
+fi
+valid_repo "$REPO" || die "invalid repository (expected owner/name): $REPO"
+
+require_command git
+require_command flock
+require_command setsid
+require_command corepack
+require_command python3
+if ((POST_STATUS)) || ! valid_sha "$TARGET"; then
+  require_command gh
+fi
+
+if valid_sha "$TARGET"; then
+  SHA="$TARGET"
+else
+  log "resolving pull request #$TARGET in $REPO"
+  SHA="$(gh api "repos/$REPO/pulls/$TARGET" --jq .head.sha)" ||
+    die "could not resolve pull request #$TARGET in $REPO"
+  SHA="${SHA,,}"
+  valid_sha "$SHA" || die "pull request #$TARGET did not resolve to a full SHA"
+  log "pull request #$TARGET head is $SHA"
+fi
+readonly SHA REPO
+
+PHASE="startup"
+PENDING_POSTED=0
+CONCLUDED=0
+INTERRUPTED=""
+CHILD_PID=""
+WORK_DIR=""
+GATE_DIR=""
+GATE_STARTED="$(date +%s)"
+
+mkdir -p "$STATE_ROOT"
+exec 9>"$LOCK_FILE"
+trap finish EXIT
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
+
+if ! flock -n 9; then
+  ((NO_WAIT)) && die "another gate is already running on this host; retry later or omit --no-wait"
+  log "another gate is running on this host; waiting for it to finish"
+  PHASE="the queue"
+  post_status pending "waiting for another gate on this host" ||
+    die "could not record the $CONTEXT status on $SHA"
+  PENDING_POSTED=1
+  # In the background so an interrupt is handled while still queued.
+  flock 9 </dev/null &
+  CHILD_PID=$!
+  wait "$CHILD_PID" || die "could not acquire the gate lock"
+  CHILD_PID=""
+fi
+
+GATE_STARTED="$(date +%s)"
+GATE_DIR="$STATE_ROOT/$SHA"
+mkdir -p "$GATE_DIR"
+rm -f -- "$GATE_DIR/summary" "$GATE_DIR/clone.log" "$GATE_DIR/install.log" \
+  "$GATE_DIR/check.log" "$GATE_DIR/production-check.log"
+record sha "$SHA"
+record repo "$REPO"
+record started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+PHASE="clone"
+post_status pending "running normal and production checks" ||
+  die "could not record the $CONTEXT status on $SHA"
+PENDING_POSTED=1
+log "gating $REPO at $SHA (logs: $GATE_DIR)"
+
+WORK_DIR="$(mktemp -d)"
+chmod 700 "$WORK_DIR"
+CLONE="$WORK_DIR/repo"
+log "cloning $REPO into a private temporary directory"
+{
+  git clone --quiet --no-checkout "$CLONE_BASE/$REPO.git" "$CLONE" &&
+    git -C "$CLONE" fetch --quiet origin "$SHA" &&
+    git -C "$CLONE" -c advice.detachedHead=false checkout --quiet --detach "$SHA"
+} >"$GATE_DIR/clone.log" 2>&1 </dev/null || fail "could not fetch the requested SHA ($(elapsed))"
+
+checkout_head="$(git -C "$CLONE" rev-parse HEAD)" || checkout_head=""
+if [[ "$checkout_head" != "$SHA" ]]; then
+  log "HEAD is ${checkout_head:-unreadable}, not $SHA" >&2
+  fail "checkout did not match the requested SHA"
+fi
+assert_tree "checkout"
+
+PNPM="pnpm@$(pnpm_version "$CLONE")" || fail "unsupported packageManager ($(elapsed))"
+
+PHASE="install"
+log "installing dependencies (log: $GATE_DIR/install.log)"
+started="$(date +%s)"
+status=0
+run_phase "$GATE_DIR/install.log" env -u NODE_ENV CI=true COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+  corepack "$PNPM" --dir "$CLONE" install --frozen-lockfile || status=$?
+record install_exit "$status"
+record install_seconds "$(($(date +%s) - started))"
+((status == 0)) || fail "dependency install failed ($(elapsed))"
+assert_tree "install"
+
+# Both checks share one clone: the production run guards the inherited
+# NODE_ENV regression, not a different dependency set, so reinstalling would
+# only add time.
+run_check "normal check" normal "$GATE_DIR/check.log" \
+  env -u NODE_ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack "$PNPM" --dir "$CLONE" check
+normal_counts="$CHECK_COUNTS"
+run_check "production check" production "$GATE_DIR/production-check.log" \
+  env NODE_ENV=production COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack "$PNPM" --dir "$CLONE" check
+production_counts="$CHECK_COUNTS"
+
+PHASE="reporting"
+if [[ "$normal_counts" == "$production_counts" ]]; then
+  conclude success "normal+production: ${normal_counts:-no test summary} ($(elapsed))"
+else
+  conclude success "normal: ${normal_counts:-no test summary}; production: ${production_counts:-no test summary} ($(elapsed))"
+fi

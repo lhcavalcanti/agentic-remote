@@ -245,7 +245,7 @@ NODE_ENV=production pnpm check  # guards the inherited-env regression
   sized to one billed minute (about 1,200 minutes a month at roughly 1,200
   runs). Never make it required; the local gate stays authoritative. A new
   `fast` file joins `test:quick` by default; add it to `slowTests` when it
-  takes 0.15 s or more. Disable with `gh workflow disable light-check.yml`.
+  takes 0.1 s or more. Disable with `gh workflow disable light-check.yml`.
   See `docs/deployment-promotion.md`.
 - `server/send-matrix.integration.test.ts` drives sends with the app's real
   options from `shared/send-policy.ts` against real tmux panes. Extend its

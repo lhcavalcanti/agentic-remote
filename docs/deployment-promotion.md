@@ -380,18 +380,21 @@ stays authoritative.
   running check. Permissions are read-only and the job times out after 3
   minutes.
 - `pnpm test:quick` is the `fast` project minus `slowTests` in
-  `vite.config.ts`: every jsdom file and each file measured at 0.15 seconds or
+  `vite.config.ts`: every jsdom file and each file measured at 0.1 seconds or
   more locally. New files join it by default; add one to `slowTests` when it is
   that slow. Every file still runs in `pnpm test`.
 - No dependency cache is used. Restoring the 440 MB pnpm store took 12 seconds
   against 17 seconds for an uncached install, and each pull request's first run
-  had nothing to restore and spent 9 more seconds saving it.
+  had nothing to restore and spent 9 more seconds saving it. pnpm comes from
+  `packageManager` through `npm install --global` (2 seconds) rather than
+  `pnpm/action-setup` (4 to 6 seconds).
 
 Budget: jobs are billed per job and rounded up to whole minutes, so the check is
-sized to finish within 60 seconds, one billed minute. Measured on GitHub it took
-54 seconds: setup and checkout 7, install 18, lint 4, type-check 7, build 4,
-tests 10. About 10 pull requests a day with about 3 heads each is roughly 1,200
-runs, or 1,200 billed minutes, a month against an assumed 2,000-minute quota.
+sized to finish within 60 seconds, one billed minute. Three measured GitHub runs
+took 43 to 54 seconds: setup, checkout, Node, and pnpm 5 to 6, install 15 to 18,
+lint 3 to 4, type-check 5 to 8, build 2 to 4, and tests 7 to 11. About 10 pull
+requests a day with about 3 heads each is roughly 1,200 runs, or 1,200 billed
+minutes, a month against an assumed 2,000-minute quota.
 Skipped runs cost nothing; a cancelled run is billed for its started minute.
 If a run regularly exceeds 60 seconds, shrink the test selection rather than
 double the cost.

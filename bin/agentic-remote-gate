@@ -3,7 +3,7 @@
 # Runs the full merge gate on one exact commit and records the result as the
 # `agentic-remote/full-gate` commit status on that commit.
 #
-# The repository has no hosted CI, so merge readiness rests on this gate: a
+# The hosted light check is advisory, so merge readiness rests on this gate: a
 # fresh clone of the exact SHA, `pnpm check`, then `NODE_ENV=production pnpm
 # check`, with the tree still clean after each. Gates on one host run one at a
 # time, because the suites interfere with each other through real tmux.

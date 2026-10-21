@@ -301,6 +301,9 @@ const REPLACEMENT_READY_FRAMES = 30
 // first message to it only needs its prompt seen steady once.
 const SETTLED_OWNER_AGE_MS = 30_000
 const SETTLED_READY_FRAMES = 2
+// A settled Copilot that is working shows its prompt at once or not at all, so
+// a steer is refused after this rather than waiting out startup under the lock.
+const SETTLED_STEER_READY_TIMEOUT_MS = 5_000
 const PROBE_COLUMNS = 80
 const PROBE_ROWS = 24
 const PROBE_ANSWER_TIMEOUT_MS = 10_000
@@ -1918,6 +1921,8 @@ export class TmuxTerminalSessionController
         // that has been running a while has nothing left to open over its
         // prompt, so it is not held to the settling a fresh one needs.
         const settled = await this.ownerSettled(owner.pid)
+        const boundedSteer =
+          settled && !idleOnly && options.allowDuringAgentExecution === true
         let startup: Awaited<ReturnType<typeof waitForTerminalStartup>>
         try {
           startup = await waitForTerminalStartup(
@@ -1935,10 +1940,26 @@ export class TmuxTerminalSessionController
                 )
               }
             },
-            TERMINAL_STARTUP_TIMEOUT_MS,
+            boundedSteer
+              ? SETTLED_STEER_READY_TIMEOUT_MS
+              : TERMINAL_STARTUP_TIMEOUT_MS,
             settled ? SETTLED_READY_FRAMES : undefined,
           )
         } catch (error) {
+          const notReady =
+            error instanceof Error && /did not become ready/i.test(error.message)
+          if (boundedSteer && notReady && !options.replaceExistingInput) {
+            throw Object.assign(
+              new Error(
+                'The terminal is not ready for this input. Wait for its composer, or queue the message while the agent is working.',
+              ),
+              {
+                statusCode: 409,
+                uncertainDelivery: false,
+                reasonCode: 'terminal-not-ready.steer',
+              },
+            )
+          }
           if (
             options.replaceExistingInput &&
             error instanceof Error &&

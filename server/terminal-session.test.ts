@@ -848,6 +848,43 @@ process.stdin.on('data', () => undefined)
     expect(JSON.parse(received)).toEqual({ pastes: ['First after a hub restart'], submits: ['enter'] })
   }, 15_000)
 
+  // Steering a long-running turn after a hub restart used to wait out the whole
+  // startup timeout under the send lock, then fail as a server error.
+  it('refuses a steer quickly when a settled working Copilot shows no composer', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      true, undefined, undefined, '', '', 'flat',
+      undefined, undefined, undefined, undefined, 'unfamiliar', 'end',
+    )
+    Reflect.set(controller, 'settledOwnerAgeMs', 0)
+    for (const attempt of ['First steer', 'Second steer']) {
+      const started = performance.now()
+      await expect(controller.send(sessionId, attempt, false, { allowDuringAgentExecution: true }))
+        .rejects.toMatchObject({
+          statusCode: 409,
+          uncertainDelivery: false,
+          reasonCode: 'terminal-not-ready.steer',
+        })
+      expect(performance.now() - started).toBeLessThan(7_000)
+    }
+    expect(await readFile(output, 'utf8')).toBe('')
+  }, 30_000)
+
+  it('still waits for a late composer when the send is not a steer', async () => {
+    const { controller, sessionId, output, panePid } = await deliveryFixture(
+      false, undefined, undefined, '', '', 'boxed',
+      '', 7_000,
+    )
+    Reflect.set(controller, 'settledOwnerAgeMs', 0)
+    process.kill(Number(panePid), 'SIGUSR2')
+    await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('Loading terminal frame')))
+    const started = performance.now()
+    expect(await controller.send(sessionId, 'Sent once the prompt is back', false)).toBe(true)
+    expect(performance.now() - started).toBeGreaterThanOrEqual(5_500)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length))
+    expect(JSON.parse(received)).toEqual({ pastes: ['Sent once the prompt is back'], submits: ['enter'] })
+  }, 30_000)
+
   it('still lets a Copilot that just started settle before its first message', async () => {
     const { controller, sessionId } = await deliveryFixture(false)
     Reflect.set(controller, 'settledOwnerAgeMs', 600_000)

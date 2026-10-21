@@ -764,7 +764,10 @@ Questions and permissions are the highest-priority UI state.
   after the hub restarts, MUST wait for a live composer. A Copilot started in
   the last 30 seconds can still open a startup dialog over an empty prompt,
   so its prompt MUST stay live for about three seconds first; one running
-  longer MUST only need its prompt seen steady once.
+  longer MUST only need its prompt seen steady once. A steer to such a settled
+  Copilot MUST be refused with a 409 (`terminal-not-ready.steer`, nothing
+  pasted) if no composer appears within five seconds, rather than holding the
+  send lock for the full startup timeout.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject

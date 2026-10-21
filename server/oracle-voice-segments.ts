@@ -27,8 +27,9 @@ type CandidateAlignment =
   | { type: 'deleted'; emittedIndex: number }
   | { type: 'inserted'; candidateIndex: number }
 
-interface AlignmentCost {
-  cost: number
+interface AlignmentScores {
+  primary: Float64Array
+  secondary: Float64Array
 }
 
 export class SpeakableSegmenter {
@@ -305,72 +306,326 @@ function alignCandidateSequences(
   emitted: EmittedCandidate[],
   candidates: SpeakableCandidate[],
 ): CandidateAlignment[] {
-  const costs: AlignmentCost[][] = Array.from(
-    { length: emitted.length + 1 },
-    () => Array.from({ length: candidates.length + 1 }, () => ({ cost: 0 })),
+  return alignCandidateRanges(
+    emitted,
+    0,
+    emitted.length,
+    candidates,
+    0,
+    candidates.length,
   )
-  for (let emittedIndex = emitted.length; emittedIndex >= 0; emittedIndex -= 1) {
-    costs[emittedIndex][candidates.length].cost = emitted.length - emittedIndex
+}
+
+function alignCandidateRanges(
+  emitted: EmittedCandidate[],
+  emittedStart: number,
+  emittedEnd: number,
+  candidates: SpeakableCandidate[],
+  candidateStart: number,
+  candidateEnd: number,
+): CandidateAlignment[] {
+  const emittedLength = emittedEnd - emittedStart
+  const candidateLength = candidateEnd - candidateStart
+  if (emittedLength === 0) {
+    return Array.from(
+      { length: candidateLength },
+      (_, offset): CandidateAlignment => ({
+        type: 'inserted',
+        candidateIndex: candidateStart + offset,
+      }),
+    )
   }
-  for (let candidateIndex = candidates.length; candidateIndex >= 0; candidateIndex -= 1) {
-    costs[emitted.length][candidateIndex].cost = candidates.length - candidateIndex
+  if (candidateLength === 0) {
+    return Array.from(
+      { length: emittedLength },
+      (_, offset): CandidateAlignment => ({
+        type: 'deleted',
+        emittedIndex: emittedStart + offset,
+      }),
+    )
   }
-  for (let emittedIndex = emitted.length - 1; emittedIndex >= 0; emittedIndex -= 1) {
+  if (emittedLength === 1 || candidateLength === 1) {
+    return alignSmallCandidateRanges(
+      emitted,
+      emittedStart,
+      emittedEnd,
+      candidates,
+      candidateStart,
+      candidateEnd,
+    )
+  }
+
+  const emittedMiddle = emittedStart + Math.floor(emittedLength / 2)
+  const forward = candidatePrefixScores(
+    emitted,
+    emittedStart,
+    emittedMiddle,
+    candidates,
+    candidateStart,
+    candidateEnd,
+    false,
+  )
+  const backward = candidatePrefixScores(
+    emitted,
+    emittedMiddle,
+    emittedEnd,
+    candidates,
+    candidateStart,
+    candidateEnd,
+    true,
+  )
+  let candidateOffset = 0
+  let bestPrimary = Number.POSITIVE_INFINITY
+  let bestSecondary = Number.POSITIVE_INFINITY
+  for (let offset = 0; offset <= candidateLength; offset += 1) {
+    const primary = forward.primary[offset] + backward.primary[candidateLength - offset]
+    const secondary = (
+      forward.secondary[offset] + backward.secondary[candidateLength - offset]
+    )
+    if (scoreIsLess(primary, secondary, bestPrimary, bestSecondary)) {
+      candidateOffset = offset
+      bestPrimary = primary
+      bestSecondary = secondary
+    }
+  }
+  const candidateMiddle = candidateStart + candidateOffset
+
+  return [
+    ...alignCandidateRanges(
+      emitted,
+      emittedStart,
+      emittedMiddle,
+      candidates,
+      candidateStart,
+      candidateMiddle,
+    ),
+    ...alignCandidateRanges(
+      emitted,
+      emittedMiddle,
+      emittedEnd,
+      candidates,
+      candidateMiddle,
+      candidateEnd,
+    ),
+  ]
+}
+
+function alignSmallCandidateRanges(
+  emitted: EmittedCandidate[],
+  emittedStart: number,
+  emittedEnd: number,
+  candidates: SpeakableCandidate[],
+  candidateStart: number,
+  candidateEnd: number,
+): CandidateAlignment[] {
+  const emittedLength = emittedEnd - emittedStart
+  const candidateLength = candidateEnd - candidateStart
+  const primary = Array.from(
+    { length: emittedLength + 1 },
+    () => new Float64Array(candidateLength + 1),
+  )
+  const secondary = Array.from(
+    { length: emittedLength + 1 },
+    () => new Float64Array(candidateLength + 1),
+  )
+  for (let emittedOffset = emittedLength; emittedOffset >= 0; emittedOffset -= 1) {
+    primary[emittedOffset][candidateLength] = emittedLength - emittedOffset
+    secondary[emittedOffset][candidateLength] = 2 * (emittedLength - emittedOffset)
+  }
+  for (let candidateOffset = candidateLength; candidateOffset >= 0; candidateOffset -= 1) {
+    primary[emittedLength][candidateOffset] = candidateLength - candidateOffset
+    secondary[emittedLength][candidateOffset] = candidateLength - candidateOffset
+  }
+  for (let emittedOffset = emittedLength - 1; emittedOffset >= 0; emittedOffset -= 1) {
     for (
-      let candidateIndex = candidates.length - 1;
-      candidateIndex >= 0;
-      candidateIndex -= 1
+      let candidateOffset = candidateLength - 1;
+      candidateOffset >= 0;
+      candidateOffset -= 1
     ) {
-      const substitutionCost = candidateSubstitutionCost(
-        emitted[emittedIndex],
-        candidates[candidateIndex],
-      )
-      costs[emittedIndex][candidateIndex].cost = Math.min(
-        substitutionCost + costs[emittedIndex + 1][candidateIndex + 1].cost,
-        1 + costs[emittedIndex + 1][candidateIndex].cost,
-        1 + costs[emittedIndex][candidateIndex + 1].cost,
-      )
+      const substitutionPrimary = candidateSubstitutionCost(
+        emitted[emittedStart + emittedOffset],
+        candidates[candidateStart + candidateOffset],
+      ) + primary[emittedOffset + 1][candidateOffset + 1]
+      const substitutionSecondary = secondary[emittedOffset + 1][candidateOffset + 1]
+      const insertionPrimary = 1 + primary[emittedOffset][candidateOffset + 1]
+      const insertionSecondary = 1 + secondary[emittedOffset][candidateOffset + 1]
+      const deletionPrimary = 1 + primary[emittedOffset + 1][candidateOffset]
+      const deletionSecondary = 2 + secondary[emittedOffset + 1][candidateOffset]
+
+      primary[emittedOffset][candidateOffset] = substitutionPrimary
+      secondary[emittedOffset][candidateOffset] = substitutionSecondary
+      if (scoreIsLess(
+        insertionPrimary,
+        insertionSecondary,
+        primary[emittedOffset][candidateOffset],
+        secondary[emittedOffset][candidateOffset],
+      )) {
+        primary[emittedOffset][candidateOffset] = insertionPrimary
+        secondary[emittedOffset][candidateOffset] = insertionSecondary
+      }
+      if (scoreIsLess(
+        deletionPrimary,
+        deletionSecondary,
+        primary[emittedOffset][candidateOffset],
+        secondary[emittedOffset][candidateOffset],
+      )) {
+        primary[emittedOffset][candidateOffset] = deletionPrimary
+        secondary[emittedOffset][candidateOffset] = deletionSecondary
+      }
     }
   }
 
   const alignments: CandidateAlignment[] = []
-  let emittedIndex = 0
-  let candidateIndex = 0
-  while (emittedIndex < emitted.length || candidateIndex < candidates.length) {
-    if (emittedIndex === emitted.length) {
-      alignments.push({ type: 'inserted', candidateIndex })
-      candidateIndex += 1
+  let emittedOffset = 0
+  let candidateOffset = 0
+  while (emittedOffset < emittedLength || candidateOffset < candidateLength) {
+    if (emittedOffset === emittedLength) {
+      alignments.push({
+        type: 'inserted',
+        candidateIndex: candidateStart + candidateOffset,
+      })
+      candidateOffset += 1
       continue
     }
-    if (candidateIndex === candidates.length) {
-      alignments.push({ type: 'deleted', emittedIndex })
-      emittedIndex += 1
+    if (candidateOffset === candidateLength) {
+      alignments.push({
+        type: 'deleted',
+        emittedIndex: emittedStart + emittedOffset,
+      })
+      emittedOffset += 1
       continue
     }
 
-    const substitutionCost = candidateSubstitutionCost(
-      emitted[emittedIndex],
-      candidates[candidateIndex],
-    )
-    if (
-      costs[emittedIndex][candidateIndex].cost
-      === substitutionCost + costs[emittedIndex + 1][candidateIndex + 1].cost
-    ) {
-      alignments.push({ type: 'aligned', emittedIndex, candidateIndex })
-      emittedIndex += 1
-      candidateIndex += 1
+    const substitutionPrimary = candidateSubstitutionCost(
+      emitted[emittedStart + emittedOffset],
+      candidates[candidateStart + candidateOffset],
+    ) + primary[emittedOffset + 1][candidateOffset + 1]
+    const substitutionSecondary = secondary[emittedOffset + 1][candidateOffset + 1]
+    if (scoresEqual(
+      primary[emittedOffset][candidateOffset],
+      secondary[emittedOffset][candidateOffset],
+      substitutionPrimary,
+      substitutionSecondary,
+    )) {
+      alignments.push({
+        type: 'aligned',
+        emittedIndex: emittedStart + emittedOffset,
+        candidateIndex: candidateStart + candidateOffset,
+      })
+      emittedOffset += 1
+      candidateOffset += 1
     } else if (
-      costs[emittedIndex][candidateIndex].cost
-      === 1 + costs[emittedIndex][candidateIndex + 1].cost
+      scoresEqual(
+        primary[emittedOffset][candidateOffset],
+        secondary[emittedOffset][candidateOffset],
+        1 + primary[emittedOffset][candidateOffset + 1],
+        1 + secondary[emittedOffset][candidateOffset + 1],
+      )
     ) {
-      alignments.push({ type: 'inserted', candidateIndex })
-      candidateIndex += 1
+      alignments.push({
+        type: 'inserted',
+        candidateIndex: candidateStart + candidateOffset,
+      })
+      candidateOffset += 1
     } else {
-      alignments.push({ type: 'deleted', emittedIndex })
-      emittedIndex += 1
+      alignments.push({
+        type: 'deleted',
+        emittedIndex: emittedStart + emittedOffset,
+      })
+      emittedOffset += 1
     }
   }
   return alignments
+}
+
+function candidatePrefixScores(
+  emitted: EmittedCandidate[],
+  emittedStart: number,
+  emittedEnd: number,
+  candidates: SpeakableCandidate[],
+  candidateStart: number,
+  candidateEnd: number,
+  reverse: boolean,
+): AlignmentScores {
+  const emittedLength = emittedEnd - emittedStart
+  const candidateLength = candidateEnd - candidateStart
+  let previousPrimary = new Float64Array(candidateLength + 1)
+  let previousSecondary = new Float64Array(candidateLength + 1)
+  for (let candidateOffset = 1; candidateOffset <= candidateLength; candidateOffset += 1) {
+    previousPrimary[candidateOffset] = candidateOffset
+    previousSecondary[candidateOffset] = candidateOffset
+  }
+
+  for (let emittedOffset = 1; emittedOffset <= emittedLength; emittedOffset += 1) {
+    const currentPrimary = new Float64Array(candidateLength + 1)
+    const currentSecondary = new Float64Array(candidateLength + 1)
+    currentPrimary[0] = emittedOffset
+    currentSecondary[0] = 2 * emittedOffset
+    const emittedIndex = reverse
+      ? emittedEnd - emittedOffset
+      : emittedStart + emittedOffset - 1
+    for (
+      let candidateOffset = 1;
+      candidateOffset <= candidateLength;
+      candidateOffset += 1
+    ) {
+      const candidateIndex = reverse
+        ? candidateEnd - candidateOffset
+        : candidateStart + candidateOffset - 1
+      const substitutionPrimary = candidateSubstitutionCost(
+        emitted[emittedIndex],
+        candidates[candidateIndex],
+      ) + previousPrimary[candidateOffset - 1]
+      const substitutionSecondary = previousSecondary[candidateOffset - 1]
+      const insertionPrimary = 1 + currentPrimary[candidateOffset - 1]
+      const insertionSecondary = 1 + currentSecondary[candidateOffset - 1]
+      const deletionPrimary = 1 + previousPrimary[candidateOffset]
+      const deletionSecondary = 2 + previousSecondary[candidateOffset]
+
+      currentPrimary[candidateOffset] = substitutionPrimary
+      currentSecondary[candidateOffset] = substitutionSecondary
+      if (scoreIsLess(
+        insertionPrimary,
+        insertionSecondary,
+        currentPrimary[candidateOffset],
+        currentSecondary[candidateOffset],
+      )) {
+        currentPrimary[candidateOffset] = insertionPrimary
+        currentSecondary[candidateOffset] = insertionSecondary
+      }
+      if (scoreIsLess(
+        deletionPrimary,
+        deletionSecondary,
+        currentPrimary[candidateOffset],
+        currentSecondary[candidateOffset],
+      )) {
+        currentPrimary[candidateOffset] = deletionPrimary
+        currentSecondary[candidateOffset] = deletionSecondary
+      }
+    }
+    previousPrimary = currentPrimary
+    previousSecondary = currentSecondary
+  }
+
+  return { primary: previousPrimary, secondary: previousSecondary }
+}
+
+function scoreIsLess(
+  primary: number,
+  secondary: number,
+  otherPrimary: number,
+  otherSecondary: number,
+): boolean {
+  return primary < otherPrimary || (primary === otherPrimary && secondary < otherSecondary)
+}
+
+function scoresEqual(
+  primary: number,
+  secondary: number,
+  otherPrimary: number,
+  otherSecondary: number,
+): boolean {
+  return primary === otherPrimary && secondary === otherSecondary
 }
 
 function candidateSubstitutionCost(

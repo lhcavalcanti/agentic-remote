@@ -378,9 +378,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 211,
+  "communities": 204,
   "community_algorithm": "louvain-seed-42",
-  "edges": 17328,
+  "edges": 17342,
   "generator_fingerprint": "76c8a4dae92413974ae3b048e38524a366cf7e12def9dc9dba51fb15eb01be0d",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -430,6 +430,7 @@
     "docs/design/oracle-conversation-mode.md": "9db6a848e43b8fb45cc8c135ec584aeadae391981594709de40d9cf6e1af07e5",
     "docs/design/session-manager.md": "801cb712de84d82c60b8b6d7694c0a6e17b61b89a1db4262696e3161048b6b95",
     "docs/design/settings-profile.md": "55cbb79747e67bf7fb637c8446d514ae815998733602979898f9cf51826848b3",
+    "docs/licenses/oracle-voice-browser.txt": "5c95620c5edfa4f80c62ad4c638444f7953bbc02e885f6834f173500633acd7b",
     "docs/licenses/oracle-voice.md": "a9b5dea4aca25ca596ef85fd1612ac6e74fdd6ac8520734934e1e267068b04f2",
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
     "docs/mockups/brand-logo.html": "1a1a3efd305260cfba6c2cf5d6eb0f5ec5a68472a010a0eaf9dfd426436766c1",
@@ -586,8 +587,8 @@
     "server/oracle-voice-routes.test.ts": "5ed1bbdb5fbd3910494c1f8a5bbd9c04f24d207466ff24a888cae6db5571d5ea",
     "server/oracle-voice-routes.ts": "2409bd9f85ab5c48bd8794dd0ad2dc5bb572f167868bef199b37267d6142421d",
     "server/oracle-voice-security.test.ts": "3a0e5309b9b3f6674a327f3ec6546c6d1946826dfd126c1bf7b3078d6a9c6b0d",
-    "server/oracle-voice-segments.test.ts": "be320d5389e7b61b23ad421396a93d4c04ba827cc9fddbacd55fa69e32d559bc",
-    "server/oracle-voice-segments.ts": "890d8168cc3a6b2b1812e893c3405e506c52b99b2126ab4bb291f1ef872c78ce",
+    "server/oracle-voice-segments.test.ts": "1d4e4aa65ee3b2385d1658b925713935d5e4735931c6471a890500b1cb2d6c8b",
+    "server/oracle-voice-segments.ts": "fff5d779a5c83e4f0d92de0c52e147f9dcade91394dd44a96564804797d937d6",
     "server/oracle-voice-session.test.ts": "4c04d048fbef6f7d672c455d5718031c4c04fe5abe7f5002b6c00468b1441dfc",
     "server/oracle-voice-session.ts": "f2d0ce1ddadb2cc2e0740bbf746a9ca1117be31a4e06f52ae34c5b9e95243662",
     "server/oracle-voice-sherpa-import.test.ts": "e1028f2a41f71e0b3eefff5a76e01064cb6ea3831770a8e90e16769927fd74bb",
@@ -843,7 +844,7 @@
     "vite.config.ts": "1877d32445dcaba6d8f85d9d29390902440e94de044c75e3077e41db3acfaa9a"
   },
   "mode": "local-ast-only",
-  "nodes": 6311,
+  "nodes": 6317,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -885,6 +886,7 @@
     "docs/design/oracle-conversation-mode.md",
     "docs/design/session-manager.md",
     "docs/design/settings-profile.md",
+    "docs/licenses/oracle-voice-browser.txt",
     "docs/licenses/oracle-voice.md",
     "docs/mockups/activity-view.html",
     "docs/mockups/brand-logo.html",
@@ -927,27 +929,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "3b7ec8d8dd99840baea982836e5885e886c02aa586d15114cf986a897c5d8e17",
-    "communities.json": "00e6c724444a50663e69c07725984380d5421fc852525b7c8c4d6dfd3b651d17",
-    "graph.html": "d8c37330939a90e01bd59be2d71fe48172932c45f511919aae4d5c5047b0dbf9",
-    "graph.json": "e4a2dec8b88c39669fa7f3631d02737ea5c7cb1d63cf97def18c7336690ec100"
+    "GRAPH_REPORT.md": "82249fb8f22aa6f7ef615af11ceb2e1412786fbc10a6b6ef18905e3f6fbeff17",
+    "communities.json": "8b55491ef82663423a448eed9c79741c15ed63754704227eea1553c06ad60002",
+    "graph.html": "5041fdee01354f25f8302f29895dabc408ba79f4890f4bd242ea6abf1c0a623c",
+    "graph.json": "1acc8dbd7701cc92e1b959437abcf12586e3ba0e9b17a415010337bca4077030"
   },
   "schema_version": 1,
-  "source_commit": "1fffb22379c5300cd055b216d3c9d8c129387e68",
-  "source_fingerprint": "67b7cfaeafb3fbade1510d235293f5d74adf2d4e2c0604f36977f1a4f212025b",
+  "source_commit": "0cc640844328b075d991eb38f4ba7af33788831d",
+  "source_fingerprint": "b673f2f1dcd0e1ecb2276534e34aeed5946d87f4c77762cffbadaed8711f3832",
   "working_tree_changes": [
-    "docs/licenses/oracle-voice.md",
-    "server/app-build.test.ts",
-    "server/app.ts",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/multi-node.test.ts",
-    "server/remote-voice-client.test.ts",
-    "server/remote-voice-client.ts",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/oracle-voice/client.test.ts",
-    "src/oracle-voice/client.ts",
-    "vite.config.ts"
+    "server/oracle-voice-segments.test.ts",
+    "server/oracle-voice-segments.ts"
   ]
 }

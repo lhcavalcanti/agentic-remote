@@ -187,7 +187,10 @@ the monitor and profile into machine-local paths; the systemd timer must not
 execute from the mutable development checkout. The local-only monitor may pull
 and validate the development checkout, then graduate the exact validated
 commit to the production runtime. It must not run tests against or replace the
-externally reachable service before validation completes. See
+externally reachable service before validation completes. After each host's
+health check it runs the `canary` Vitest project in that host's checkout
+(private `TMUX_TMPDIR`, fake Copilot; failure rolls that host back) and, after a
+successful rollout, logs each hub's refusal counts. See
 `docs/deployment-promotion.md` for the full contract.
 
 ## Security invariants

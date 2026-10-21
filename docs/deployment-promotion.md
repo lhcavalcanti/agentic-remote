@@ -103,8 +103,8 @@ possibly unverified `current` pointer:
   the recorded known-good release, quarantine the interrupted candidate, and
   leave both success records unchanged. A successfully recovered interruption
   still exits as a failed graduation; a later run may validate and retry.
-- `local-verified`: setup, source identity, local health, and external checks
-  passed and were recorded. Recheck that exact active release and resume the
+- `local-verified`: setup, source identity, local health, external checks, and
+  the host canary passed and were recorded. Recheck that exact active release and resume the
   downstream phase without rebuilding it or choosing a new rollback baseline.
 - `verified`: all configured phases passed. Finish the success records without
   reactivating the candidate, including when an operator has already manually
@@ -351,9 +351,12 @@ A local-only monitor may run this sequence on an opt-in machine:
    the exact validated commit, publish an immutable release, and
    restart the managed service.
 9. Wait for the service, local health endpoint, external access check, paired
-   computers, and relevant sessions to recover.
+   computers, and relevant sessions to recover, then run the
+   [host canary](#host-canary) in the runtime checkout. A canary failure rolls
+   the local runtime back exactly as a health failure does.
 10. Record completed verification and the candidate, tested, promoted, and
     previous release identifiers, then clear the pending journal.
+11. Log each host's refusal counts (see [Refusal counts](#refusal-counts)).
 
 If validation or promotion fails, do not advance the success marker and do not
 discard the previous known-good release. The next run must be able to retry or
@@ -484,7 +487,8 @@ then runs, for each host in order:
 2. Run `./bin/agentic-remote update` there.
 3. Require the remote `HEAD` to equal the validated commit. A host that landed
    on a different tip did not install what was validated, so it is rolled back.
-4. Probe the health URL on that host.
+4. Probe the health URL on that host, then run the
+   [host canary](#host-canary) in `DOWNSTREAM_ROOT`.
 5. Roll that host back with `./bin/agentic-remote rollback` if any step fails.
 
 The success marker only advances after every host succeeds, so a failure leaves
@@ -504,7 +508,8 @@ stays single-machine.
   `agentic-remote update` no longer works on that host, because it runs
   `git pull --ff-only`; the monitor becomes the way that host is updated.
 - A build toolchain reachable from a non-interactive login shell on that host,
-  plus `curl` and `git`.
+  plus `bash`, `curl`, and `git`. The login shell itself may be any POSIX `sh`;
+  each command arrives single-quoted for `bash -lc`.
 - The downstream account must be able to manage its own service, which for the
   default installation means a user systemd service with lingering enabled.
 - At least one previous release, so a failed promotion has something to fall
@@ -517,6 +522,36 @@ Every destination shares one `DOWNSTREAM_ROOT` and one
 health address that is valid from each host. Machines that differ need separate
 profiles on separate monitor hosts.
 
+### Host canary
+
+Validation runs only where the monitor builds, but hosts differ (for example in
+their tmux version). After each host's health check passes, the monitor runs
+the `canary` Vitest project, the real-tmux send and readiness subset, in that
+host's own checkout: `PROD_ROOT` locally and `DOWNSTREAM_ROOT` downstream. Both
+get `node_modules/.bin/vitest` from `agentic-remote setup`, which installs dev
+dependencies.
+
+- It uses a private `mktemp -d` directory as `TMUX_TMPDIR` and `TMPDIR`, with
+  `TMUX` unset, so it never reaches the live or runtime tmux server. Any tmux
+  server left in that directory is stopped, and the directory is removed.
+- Its fixtures fake Copilot. `COPILOT_BIN` is `false`, `COPILOT_HOME` is
+  private, and GitHub tokens are removed, so it makes no model requests.
+- It runs with `CI=true` under `timeout 600`.
+- A missing Vitest fails the canary rather than skipping it. A failure is
+  handled like a failed health check on that host.
+
+`AGENTIC_REMOTE_MONITOR_CANARY=0` turns it off for every host; any other value
+leaves it on.
+
+### Refusal counts
+
+After a successful rollout the monitor logs one line per host summarising
+`GET /api/diagnostics/refusals`, sent with the hub's own base URL as `origin`.
+The base URL comes from `HEALTH_URL`, or from `DOWNSTREAM_HEALTH_URL` probed
+from each downstream host. The counts are informational: a node (`404`) or an
+unreachable hub is logged as `unavailable` and never fails or rolls back the
+promotion.
+
 ### Failure behavior
 
 A failure on any host restores that host to the commit it was on, then restores
@@ -525,9 +560,9 @@ split across two commits. The success marker is not advanced, so the next run
 retries the same commit.
 
 The local runtime stays active because its validation and health are durably
-recorded as `local-verified`. A retry rechecks that same local commit/release and
-resumes the downstream phase without rebuilding or restarting the healthy local
-runtime. If that recheck fails, recovery still uses the original journaled
+recorded as `local-verified`. A retry rechecks that same local commit/release,
+including the local canary, and resumes the downstream phase without rebuilding
+or restarting the healthy local runtime. If that recheck fails, recovery still uses the original journaled
 known-good baseline, never the uncompleted candidate.
 
 ### Choosing which machine serves the UI

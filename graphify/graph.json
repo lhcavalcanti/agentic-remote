@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "c1f65391027a40bfd1e1734c7d1f67ac7693f0b6",
+  "built_at_commit": "a0946709c5e0626cf6336e3ae9f0e107df2e45db",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -159756,7 +159756,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L152",
+      "source_location": "L153",
       "target": "vite_config_generatebundle",
       "weight": 1.0
     },
@@ -159767,7 +159767,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L135",
+      "source_location": "L136",
       "target": "vite_config_packageversion",
       "weight": 1.0
     },
@@ -217755,7 +217755,7 @@
       "label": "generateBundle()",
       "norm_label": "generatebundle()",
       "source_file": "vite.config.ts",
-      "source_location": "L152"
+      "source_location": "L153"
     },
     {
       "_origin": "ast",
@@ -217766,7 +217766,7 @@
       "label": "packageVersion",
       "norm_label": "packageversion",
       "source_file": "vite.config.ts",
-      "source_location": "L135"
+      "source_location": "L136"
     },
     {
       "_origin": "ast",

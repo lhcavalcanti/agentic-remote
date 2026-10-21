@@ -437,7 +437,7 @@
     "server/event-log.ts": "c5fc6997c675fda84e89c7b0994dea55ee57b2ddc16c01bcacea01dc6df6c378",
     "server/file-upload-routes.test.ts": "c9714330279f98c3942fe8e5e26a6d9c89bd80ac05c7929eef758b956f073d2b",
     "server/file-upload-routes.ts": "29d040bb003be45805497d865cbb3814512c4a72d0423078dea1e48dd042bd57",
-    "server/full-gate.test.ts": "1945b88b7b4cb3427ce91555273a1c14bc889f7da6fb35e35a828ffcee1fe433",
+    "server/full-gate.test.ts": "28c2f0e5f7821e926c4da7db6e7d2c53595a6f4ee7d6dfb69a5c07830b302455",
     "server/history-projection.test.ts": "e5acfcbe8806e2c8861a61c706b067937e40a9363aa153bab8743c9a4af29987",
     "server/hub-routes.test.ts": "33e6cc0f5d05dd5b38974905ed9a468692ff8e04413525ca047e4062a277080a",
     "server/hub-routes.ts": "53359805c8f45442f6f5afd1c722e7d6ac835558dc0599fa8cd4eebb3ccfdf86",
@@ -699,7 +699,7 @@
     "tsconfig.json": "91434fd9d32940ba5f1347be26f2c7ff676e7c1e203dba03e9986d71915755ff",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
     "tsconfig.server.json": "c3022e22834e731724ffa817c01bd2e4654184f9031945ffcbff4f489dca93bb",
-    "vite.config.ts": "7fc7140956a7a92071cecccf66e976b5452e66583660bb18d9e0232db2ea7cda"
+    "vite.config.ts": "eacee8590f9e87d8336de9f3e98b332be04929d839e845192f13aeed6dc89643"
   },
   "mode": "local-ast-only",
   "nodes": 4854,
@@ -765,24 +765,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "720391b8f0cf50a5cd3a4b8bb76b81697e5f6010323d49d8060b88ad73804003",
+    "GRAPH_REPORT.md": "56deee632d1a35fbeea9b8e8446ea4bd20db4ff3d90e34b04378a00a5039187a",
     "communities.json": "3440efe6238cbca0f13b642fd883e0b2223257be948c5e31731d6b29e12e542f",
-    "graph.html": "7b595cb3388edfc1e2e983228d165867ad2e5aa42fbda8c8ff3689d52d5bf010",
-    "graph.json": "2469e43470382e6220ba20bb9d300869441ae41748683f741a82ea04a9664d01"
+    "graph.html": "eb3d5a89316b2b2beffac2f658a3cfc6ef52a8f5750ec3e4f97ccad745c3775b",
+    "graph.json": "08a4b148839c42e038fc540e290addcaba1462cbeaeb218deb75122876068d4d"
   },
   "schema_version": 1,
-  "source_commit": "c1f65391027a40bfd1e1734c7d1f67ac7693f0b6",
-  "source_fingerprint": "a89bfa4d344428a97af2130a7f4530faf19a6fb18af70fd3b64b8c6b97bd96cb",
-  "working_tree_changes": [
-    ".github/copilot-instructions.md",
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    ".github/workflows/light-check.yml",
-    "README.md",
-    "bin/agentic-remote-gate",
-    "bin/agentic-remote-promotion-monitor",
-    "docs/deployment-promotion.md",
-    "docs/sdk-architecture-roadmap.md",
-    "package.json",
-    "vite.config.ts"
-  ]
+  "source_commit": "a0946709c5e0626cf6336e3ae9f0e107df2e45db",
+  "source_fingerprint": "c8540d51ac707ed3c0c7211d57003d1e2ac5e9e59dc49d5d27a94f673a584f6f",
+  "working_tree_changes": []
 }

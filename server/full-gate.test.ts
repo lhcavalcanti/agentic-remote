@@ -977,12 +977,12 @@ describe('agentic-remote-gate', () => {
     await mkdir(local)
     await Promise.all(
       (await readdir('/usr/bin'))
-        .filter((name) => !name.startsWith('python3'))
+        .filter((name) => !name.startsWith('python3') && name !== 'bwrap')
         .map((name) => symlink(path.join('/usr/bin', name), path.join(system, name))),
     )
     await symlink('/usr/bin/python3', path.join(local, 'python3'))
     const result = await gate(f, [f.mainSha, '--repo', REPO], {
-      PATH: `${f.bin}:${path.dirname(process.execPath)}:${local}:${system}`,
+      PATH: `${f.bin}:${path.join(f.root, 'sandbox-bin')}:${path.dirname(process.execPath)}:${local}:${system}`,
     })
     expect(result.code).not.toBe(0)
 

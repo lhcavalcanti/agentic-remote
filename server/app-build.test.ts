@@ -11,6 +11,7 @@ import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
 import { buildApp } from './app.js'
 import type { ManagerAgent } from './manager-agent.js'
 import { FakeVoiceEngineFactory } from './oracle-voice-engine.js'
+import { DEFAULT_VOICE_BACKEND_LIMITS } from './oracle-voice-session.js'
 
 const directories: string[] = []
 const apps: FastifyInstance[] = []
@@ -60,6 +61,15 @@ describe('production app build identity', () => {
           await readFile(new URL('../public/sw.js', import.meta.url), 'utf8')
         }`,
       )
+      const voiceNotices = await readFile(
+        path.join(output, 'oracle-voice-assets', 'THIRD_PARTY_NOTICES.txt'),
+        'utf8',
+      )
+      expect(voiceNotices).toContain('@ricky0123/vad-web')
+      expect(voiceNotices).toContain('Copyright (c) 2022-present ricky0123')
+      expect(voiceNotices).toContain('Copyright (c) 2020-present Silero Team')
+      expect(voiceNotices).toContain('onnxruntime-web')
+      expect(voiceNotices).toContain('Copyright (c) Microsoft Corporation')
       return identity
     }
 
@@ -98,6 +108,21 @@ describe('Oracle voice app construction', () => {
       }),
     }) as unknown as ManagerAgent
   }
+
+  it('bounds WebSocket messages before route handlers receive them', async () => {
+    const runtime = await buildApp({
+      dataDirectory: await dataDirectory(),
+      logger: false,
+      managerAgent: availableManager(),
+      transcriptionService,
+    })
+    apps.push(runtime.app)
+
+    await runtime.app.ready()
+
+    expect(runtime.app.websocketServer.options.maxPayload)
+      .toBe(DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes)
+  })
 
   it('keeps voice disabled unless explicitly enabled without starting an injected engine', async () => {
     vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'off')

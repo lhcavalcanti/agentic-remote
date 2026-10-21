@@ -740,7 +740,7 @@ export function ManagerAssistant({
     setSendError(undefined)
     try {
       await sendText(content, onlyOracle)
-      if (content === draft) setDraft('')
+      setDraft((current) => current === content ? '' : current)
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     } finally {

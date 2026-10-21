@@ -1,10 +1,16 @@
 # Oracle voice asset notices
 
-Agentic Remote remains MIT-licensed. Voice assets are not bundled into the
-application release. `voice-install` prints the notices below before network
+Agentic Remote remains MIT-licensed. STT and TTS models are not bundled into
+the application release. `voice-install` prints the notices below before network
 access, downloads only checksum-pinned files from
 `config/oracle-voice-profiles.json`, and writes the selected profile's notices
 beside the installed assets.
+
+The browser release does bundle `@ricky0123/vad-web`, Silero VAD, and
+`onnxruntime-web` runtime assets. Every production build emits their complete
+ISC/MIT redistribution notices at
+`oracle-voice-assets/THIRD_PARTY_NOTICES.txt`; the checked-in source is
+[`oracle-voice-browser.txt`](oracle-voice-browser.txt).
 
 | Asset | Upstream terms and provenance |
 | --- | --- |

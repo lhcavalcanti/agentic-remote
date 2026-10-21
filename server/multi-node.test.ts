@@ -981,7 +981,7 @@ describe('multi-node hub', () => {
 
       await expect(closed).resolves.toEqual({
         code: 1009,
-        reason: 'Node voice frame is too large',
+        reason: '',
       })
     } finally {
       socket.close()
@@ -1019,7 +1019,7 @@ describe('multi-node hub', () => {
 
       await expect(closed).resolves.toEqual({
         code: 1009,
-        reason: 'Node voice frame is too large',
+        reason: '',
       })
     } finally {
       socket.close()

@@ -71,6 +71,7 @@ import {
 } from './oracle-voice-config.js'
 import type { VoiceEngineFactory } from './oracle-voice-engine.js'
 import {
+  DEFAULT_VOICE_BACKEND_LIMITS,
   LocalVoiceBackend,
   type VoiceBackend,
 } from './oracle-voice-session.js'
@@ -283,7 +284,11 @@ export async function buildApp(
     })
   })
 
-  await app.register(fastifyWebsocket)
+  await app.register(fastifyWebsocket, {
+    options: {
+      maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes,
+    },
+  })
   const localTranscription =
     options.transcriptionService ??
     new LocalTranscriptionService(localTranscriptionOptions(dataDirectory))

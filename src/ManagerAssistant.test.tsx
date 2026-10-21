@@ -902,6 +902,36 @@ describe('ManagerAssistant', () => {
       )
     })
 
+    it('preserves a failed voice final restored while a typed send is pending', async () => {
+      let resolveSend!: (message: ManagerSnapshot['messages'][number]) => void
+      vi.mocked(sendManagerMessage).mockReturnValue(new Promise((resolve) => {
+        resolveSend = resolve
+      }))
+      setup()
+      await openPanel()
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'Typed request' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledOnce())
+      const hookOptions = vi.mocked(useOracleConversation).mock.calls.at(-1)?.[0]
+
+      act(() => {
+        hookOptions?.onFinalTranscript('Restored voice request')
+      })
+      expect(input).toHaveValue('Typed request\n\nRestored voice request')
+
+      await act(async () => {
+        resolveSend({
+          id: 'typed-request',
+          role: 'user',
+          content: 'Typed request',
+          createdAt: 't',
+          state: 'queued',
+        })
+      })
+      expect(input).toHaveValue('Typed request\n\nRestored voice request')
+    })
+
     it('offers explicit Start and Stop controls with keyboard focus', async () => {
       setup()
       await openPanel()

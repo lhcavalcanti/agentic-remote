@@ -439,6 +439,46 @@ describe('OracleVoiceClient', () => {
     await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
   })
 
+  it('restores authoritative listening after a tentative VAD misfire', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'thinking',
+    }))
+    client.captures[0].options.onTentativeSpeech?.()
+    expect(client.instance.currentState).toBe('speech')
+
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'listening',
+    }))
+    expect(client.instance.currentState).toBe('speech')
+    client.captures[0].options.onVadMisfire?.()
+
+    expect(client.instance.currentState).toBe('listening')
+  })
+
+  it('restores listening when playback drains during tentative speech', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(encodeVoiceAudioFrame(playback(0, 0, 'segment-a')))
+    client.sockets[0].message(control('audio_end', 'stream-1', 0, {
+      segmentId: 'segment-a',
+    }))
+    await vi.waitFor(() => expect(client.playbacks[0].endSegment)
+      .toHaveBeenCalledWith(0, 'segment-a'))
+    client.captures[0].options.onTentativeSpeech?.()
+
+    client.playbacks[0].drain('segment-a')
+    await Promise.resolve()
+    expect(client.instance.currentState).toBe('speech')
+    client.captures[0].options.onVadMisfire?.()
+
+    expect(client.instance.currentState).toBe('listening')
+  })
+
   it('returns to listening when successful synthesis emits no audio frames', async () => {
     const client = harness()
     await client.connect('stream-1')

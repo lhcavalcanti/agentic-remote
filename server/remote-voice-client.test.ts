@@ -156,6 +156,42 @@ afterEach(async () => {
 })
 
 describe('RemoteVoiceClient', () => {
+  it('rejects oversized node messages at the WebSocket transport boundary', async () => {
+    let resolveClose!: (code: number) => void
+    const closed = new Promise<number>((resolve) => {
+      resolveClose = resolve
+    })
+    const node = await voiceNode((socket) => {
+      socket.once('close', (code) => resolveClose(code))
+    })
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
+    try {
+      node.send('x'.repeat(capabilities.limits.maxFrameBytes + 1))
+
+      await expect(closed).resolves.toBe(1009)
+    } finally {
+      remote.stop()
+    }
+  })
+
+  it('disconnects retryably when an established node stops sending heartbeats', async () => {
+    const node = await voiceNode()
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1', {
+      heartbeatTimeoutMs: 25,
+    })
+    const disconnected = new Promise<unknown>((resolve) => {
+      remote.once('disconnect', resolve)
+    })
+    try {
+      await expect(disconnected).resolves.toMatchObject({
+        cause: 'transport',
+        retryable: true,
+      })
+    } finally {
+      remote.stop()
+    }
+  })
+
   it('authenticates once and forwards controls plus binary microphone audio in order', async () => {
     const node = await voiceNode()
     const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
@@ -427,7 +463,7 @@ describe('RemoteVoiceClient', () => {
 
     await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
     expect(disconnected.mock.calls[0][0]).toMatchObject({
-      message: expect.stringContaining('frame is too large'),
+      message: expect.stringContaining('Max payload size exceeded'),
       retryable: false,
       cause: 'protocol',
     })

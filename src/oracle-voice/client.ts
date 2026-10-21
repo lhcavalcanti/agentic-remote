@@ -657,18 +657,18 @@ export class OracleVoiceClient {
       case 'ready':
       case 'listening':
         if (!this.captureReady) return
-        this.setState('listening')
+        this.setAuthoritativeState('listening')
         return
       case 'recognizing':
-        this.setState('transcribing')
+        this.setAuthoritativeState('transcribing')
         return
       case 'thinking':
-        this.setState('thinking')
+        this.setAuthoritativeState('thinking')
         return
       case 'speaking':
         this.speakingRevision += 1
         this.currentPlaybackSegmentId = undefined
-        this.setState('speaking')
+        this.setAuthoritativeState('speaking')
         return
       case 'stopped':
         await this.handleServerStopped()
@@ -702,6 +702,8 @@ export class OracleVoiceClient {
       return
     }
     void drained.then((completed) => {
+      const canDrainDuringTentativeSpeech = this.state === 'speech'
+        && this.stateBeforeTentative === 'speaking'
       if (
         !completed
         || playback !== this.playback
@@ -712,15 +714,23 @@ export class OracleVoiceClient {
           this.currentPlaybackSegmentId !== undefined
           && segmentId !== this.currentPlaybackSegmentId
         )
-        || this.state !== 'speaking'
+        || (this.state !== 'speaking' && !canDrainDuringTentativeSpeech)
       ) {
         return
       }
       this.currentPlaybackSegmentId = undefined
-      this.setState('listening')
+      this.setAuthoritativeState('listening')
     }).catch((error: unknown) => {
       void this.failFatal(playbackClientError(error))
     })
+  }
+
+  private setAuthoritativeState(state: OracleVoiceUiState): void {
+    if (this.state === 'speech' && this.stateBeforeTentative !== undefined) {
+      this.stateBeforeTentative = state
+      return
+    }
+    this.setState(state)
   }
 
   private sendControl(control: VoiceClientControl): void {

@@ -17,17 +17,20 @@ import {
   RemoteNodeRequestError,
 } from './remote-node-errors.js'
 import {
+  DEFAULT_VOICE_BACKEND_LIMITS,
   VoiceSessionError,
   type VoiceBackendDisconnectCause,
   type VoiceBackendOutput,
 } from './oracle-voice-session.js'
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_BUFFERED_BYTES = 64 * 1024
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 export interface RemoteVoiceClientOptions {
   connectTimeoutMs?: number
+  heartbeatTimeoutMs?: number
   maxBufferedBytes?: number
   registrationSignal?: AbortSignal
   signal?: AbortSignal
@@ -56,6 +59,8 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
   private readonly maxBufferedBytes: number
   private readonly registrationSignal: AbortSignal | undefined
   private readonly registrationAbort: (() => void) | undefined
+  private readonly heartbeatTimeoutMs: number
+  private heartbeatTimer: ReturnType<typeof setTimeout> | undefined
   private sendTail: Promise<void> = Promise.resolve()
   private pendingBytes = 0
   private stopRequested = false
@@ -78,6 +83,14 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     )
     if (!Number.isSafeInteger(this.maxBufferedBytes) || this.maxBufferedBytes <= 0) {
       throw new RangeError('maxBufferedBytes must be a positive safe integer')
+    }
+    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs
+      ?? DEFAULT_HEARTBEAT_TIMEOUT_MS
+    if (
+      !Number.isSafeInteger(this.heartbeatTimeoutMs)
+      || this.heartbeatTimeoutMs <= 0
+    ) {
+      throw new RangeError('heartbeatTimeoutMs must be a positive safe integer')
     }
     this.registrationSignal = options.registrationSignal
     if (this.registrationSignal) {
@@ -111,16 +124,11 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     })
     socket.on('error', (error) => {
       if (this.stopped || this.disconnected || this.closingLocally) return
-      const failure = new RemoteVoiceDisconnectError(
-        `Paired node voice socket failed: ${error.message}`,
-        1006,
-        error.message,
-        true,
-        'transport',
-      )
+      const failure = remoteSocketError('Paired node voice socket failed', error)
       this.disconnect(failure, false)
       this.socket.terminate()
     })
+    this.refreshHeartbeat()
   }
 
   static connect(
@@ -165,6 +173,7 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url, {
         followRedirects: false,
+        maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes,
         headers: {
           authorization: `Bearer ${computer.token}`,
         },
@@ -242,12 +251,9 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
             ))
       })
       socket.once('error', (error) => {
-        finishError(new RemoteVoiceDisconnectError(
-          `${computer.name} voice connection failed: ${error.message}`,
-          1006,
-          error.message,
-          true,
-          'transport',
+        finishError(remoteSocketError(
+          `${computer.name} voice connection failed`,
+          error,
         ))
       })
       socket.once('close', (code, reason) => {
@@ -397,6 +403,7 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     if (this.stopped) return
     this.stopRequested = true
     this.closingLocally = true
+    this.clearHeartbeat()
     this.removeRegistrationAbort()
     await this.sendTail
     if (this.socket.readyState === WebSocket.CLOSED) {
@@ -423,7 +430,8 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
   }
 
   private receive(data: WebSocket.RawData, isBinary: boolean): void {
-    if (this.stopped || this.disconnected) return
+    if (this.stopped || this.disconnected || this.closingLocally) return
+    this.refreshHeartbeat()
     try {
       if (isBinary) {
         const buffer = rawDataBuffer(data)
@@ -463,6 +471,7 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     if (this.stopped || this.disconnected) return
     this.disconnected = true
     this.disconnectError = error
+    this.clearHeartbeat()
     this.removeRegistrationAbort()
     if (closeSocket && this.socket.readyState < WebSocket.CLOSING) {
       this.socket.close(error.code, closeReason(error.message))
@@ -535,7 +544,29 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
   private markStopped(): void {
     if (this.stopped) return
     this.stopped = true
+    this.clearHeartbeat()
     this.removeRegistrationAbort()
+  }
+
+  private refreshHeartbeat(): void {
+    this.clearHeartbeat()
+    this.heartbeatTimer = setTimeout(() => {
+      const failure = new RemoteVoiceDisconnectError(
+        'Paired node voice heartbeat timed out',
+        1006,
+        '',
+        true,
+        'transport',
+      )
+      this.disconnect(failure, false)
+      this.socket.terminate()
+    }, this.heartbeatTimeoutMs)
+  }
+
+  private clearHeartbeat(): void {
+    if (!this.heartbeatTimer) return
+    clearTimeout(this.heartbeatTimer)
+    this.heartbeatTimer = undefined
   }
 }
 
@@ -580,6 +611,7 @@ function remoteSocketCloseError(
       'transport',
     )
   }
+
   if (code === 1013) {
     return new RemoteVoiceDisconnectError(
       message,
@@ -610,5 +642,17 @@ function remoteSocketCloseError(
     reason,
     false,
     code === 1001 ? 'policy' : 'internal',
+  )
+}
+
+function remoteSocketError(prefix: string, error: Error): RemoteVoiceDisconnectError {
+  const payloadTooLarge = (error as NodeJS.ErrnoException).code
+    === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH'
+  return new RemoteVoiceDisconnectError(
+    `${prefix}: ${error.message}`,
+    payloadTooLarge ? 1009 : 1006,
+    error.message,
+    !payloadTooLarge,
+    payloadTooLarge ? 'protocol' : 'transport',
   )
 }

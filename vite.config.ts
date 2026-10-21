@@ -144,6 +144,10 @@ const oracleVoiceAssetNames = new Set([
 const packageVersion = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
 ) as { version: string }
+const oracleVoiceThirdPartyNotices = readFileSync(
+  new URL('./docs/licenses/oracle-voice-browser.txt', import.meta.url),
+  'utf8',
+)
 
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
@@ -173,6 +177,11 @@ export default defineConfig(({ command, mode }) => {
             source: `self.AGENTIC_REMOTE_BUILD_ID = ${JSON.stringify(buildId)};\n${
               readFileSync(new URL('./public/sw.js', import.meta.url), 'utf8')
             }`,
+          })
+          this.emitFile({
+            type: 'asset',
+            fileName: 'oracle-voice-assets/THIRD_PARTY_NOTICES.txt',
+            source: oracleVoiceThirdPartyNotices,
           })
         },
       },

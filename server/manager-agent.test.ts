@@ -1433,7 +1433,14 @@ describe('ManagerAgent', () => {
 
   it('cancels exactly one queued or running message by ID without stopping unrelated work', async () => {
     sdk.behaviors.push(() => undefined)
-    await start({ turnTimeoutMs: 5_000 })
+    const structuredStore = new ManagerStructuredMemoryStore(
+      path.join(root, 'structured-cancel-message'),
+    )
+    await structuredStore.initialize()
+    await start({
+      turnTimeoutMs: 5_000,
+      structuredMemory: new ManagerStructuredMemoryRuntime('on', structuredStore),
+    })
     const typed = await agent!.send('Keep this typed turn running')
     await vi.waitFor(() => expect(agent!.snapshot().messages.find(
       (candidate) => candidate.id === typed.id,
@@ -1448,6 +1455,8 @@ describe('ManagerAgent', () => {
 
     expect(first).toMatchObject({ id: voice.id, state: 'cancelled' })
     expect(second).toMatchObject({ id: voice.id, state: 'cancelled' })
+    expect((agent as unknown as { messageDefaults: Map<string, unknown> })
+      .messageDefaults.size).toBe(0)
     expect(sdk.sessions.get('sdk-1')!.abort).not.toHaveBeenCalled()
     expect(agent!.snapshot().messages.find(
       (candidate) => candidate.id === typed.id,

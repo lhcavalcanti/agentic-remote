@@ -623,6 +623,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         updatedAt: this.now().toISOString(),
       }
       await this.updateMessage(next)
+      this.messageDefaults.delete(messageId)
       this.publishStatus()
       return next
     }

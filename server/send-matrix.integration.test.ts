@@ -76,7 +76,15 @@ const dialogs = {
   ].join('\n'),
 }
 
-type PaneState = 'idle' | 'working' | keyof typeof dialogs
+// A working Copilot whose prompt is not drawn, as a long tool run can leave it.
+const busyWithoutComposer = [
+  ' ● Running a long tool',
+  '   └ still running',
+  '',
+  ' ◉ Working · esc interrupt',
+].join('\n')
+
+type PaneState = 'idle' | 'working' | 'busy' | keyof typeof dialogs
 
 interface Row { pane: PaneState; status: SessionStatus }
 
@@ -220,13 +228,14 @@ async function terminal(pane: PaneState, status: SessionStatus, draft: string) {
 ${fixtureReceiptWriter(receiptFile)}
 const makeComposer = ${readyComposer.toString()}
 const dialogs = ${JSON.stringify(dialogs)}
+const busy = ${JSON.stringify(busyWithoutComposer)}
 let mode = ${JSON.stringify(pane)}
 let draft = ${JSON.stringify(draft)}
 const received = { pastes: [], submits: [], clears: 0, keys: '', draft }
 let input = ''
 const composing = () => mode === 'idle' || mode === 'working'
 const draw = () => {
-  const pane = composing() ? makeComposer(draft, mode === 'working') : dialogs[mode]
+  const pane = composing() ? makeComposer(draft, mode === 'working') : mode === 'busy' ? busy : dialogs[mode]
   process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 }
 const save = () => { received.draft = draft; writeReceipt(received) }
@@ -473,6 +482,25 @@ describe('send matrix with the app’s real send options', () => {
     expect(await fixture.receipt()).toEqual({
       pastes: [], submits: [], clears: 1, keys: '', draft: '',
     })
+  }, 30_000)
+
+  // After a hub restart a settled, busy Copilot may not show its prompt. A
+  // steer must neither hold the send lock for the startup timeout nor fail:
+  // it joins the app FIFO once, with nothing typed into the pane (#449).
+  it('busy pane without a composer · Send after a hub restart is queued, not refused', async () => {
+    const fixture = await terminal('busy', 'running', '')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const started = performance.now()
+      const session = await sendLikeTheApp(fixture, 'running', false)
+      expect(performance.now() - started).toBeLessThan(8_000)
+      expect(session.queuedPrompts?.map((prompt) => prompt.content)).toEqual([message])
+      await settle()
+      expect(fixture.store.get(fixture.id)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual([message])
+      expect(await fixture.receipt()).toEqual({ pastes: [], submits: [], clears: 0, keys: '', draft: '' })
+    } finally {
+      warn.mockRestore()
+    }
   }, 30_000)
 
   // Suspected false refusals, recorded rather than fixed here (see #407).

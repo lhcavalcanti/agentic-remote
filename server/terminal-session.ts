@@ -2101,7 +2101,13 @@ export class TmuxTerminalSessionController
           new Error(
             'The terminal is not ready for this input. Wait for its composer, or queue the message while the agent is working.',
           ),
-          { statusCode: 409 },
+          {
+            statusCode: 409,
+            uncertainDelivery: false,
+            ...(allowWorking && !enqueue && !options.replaceExistingInput
+              ? { reasonCode: 'terminal-not-ready.steer' }
+              : {}),
+          },
         )
       }
       this.inputReadySessions.set(sessionId, {

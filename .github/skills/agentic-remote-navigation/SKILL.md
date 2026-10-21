@@ -114,6 +114,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Transcription on another computer | `server/delegated-transcription-service.ts` |
 | Push notifications | `server/push-notification-service.ts`, `public/sw.js` |
 | Install and service management | `bin/agentic-remote` |
+| Merge gate (full checks on an exact SHA) | `bin/agentic-remote-gate` |
 
 Useful `src/App.tsx` landmarks: `WorkspaceDialog`, `KnowledgeReader`, `AddKnowledgeRootDialog`,
 `UserInputCard`, `SortableSessionItem`, `SortableComputerGroup`,
@@ -237,6 +238,7 @@ pnpm test:canary                # real-tmux send/readiness subset, ~1 min
 pnpm test:fast                  # every file needing no host tmux/Copilot/Claude
 pnpm test:quick                 # fast minus slowTests; the hosted check's tests
 NODE_ENV=production pnpm check  # guards the inherited-env regression
+bin/agentic-remote-gate <PR>    # merge gate: both checks on the exact head
 ```
 
 - Vitest projects `fast`, `canary`, and `tmux` partition the files, so
@@ -325,11 +327,24 @@ and must still change on every build.
    ```
 
    Use `Refs #11` for a partial slice that should leave the issue open.
-5. **Merge only after Supervisor `APPROVE` for the current head.** Follow the
-   review loop below; delete the branch after graduation.
-6. **Deploy and verify on development**, then follow the promotion policy in
+5. **Gate the exact final head.** Run `bin/agentic-remote-gate <PR>` once the
+   head is final. It clones that SHA afresh, runs `pnpm check` and
+   `NODE_ENV=production pnpm check` serially under a host-wide lock inside a
+   credentialless `bwrap` sandbox, with `bwrap` itself started from the
+   scrubbed environment (it fails rather than run unsandboxed). The sandbox
+   has no host network: install (`--ignore-scripts`) and `pnpm rebuild` reach
+   only public HTTPS through the gate's filtering proxy, and the checks run
+   offline. The clone's git directory stays read-only and outside the sandbox's
+   one writable mount, `/tmp` is a fresh tmpfs per phase, and nothing inside
+   that mount is ever a mount source or followed by the gate. It posts the `agentic-remote/full-gate` commit status; success needs passed
+   and zero failed Vitest counts from both runs. A new push needs a new gate.
+6. **Merge only after Supervisor `APPROVE` and an `agentic-remote/full-gate`
+   `success` status for the current head.** A `main` ruleset requires that
+   status, with an administrator bypass. Follow the review loop below; delete
+   the branch after graduation.
+7. **Deploy and verify on development**, then follow the promotion policy in
    `.github/copilot-instructions.md` (see Rolling out).
-7. **Close issues with evidence.** If a PR did not auto-close them, close each
+8. **Close issues with evidence.** If a PR did not auto-close them, close each
    one with what changed, how it was verified, and any deliberate deviation
    from the issue's suggested fix. Record measurements where the issue was
    about performance.
@@ -337,7 +352,8 @@ and must still change on every build.
 ### PR review loop
 
 - Prefer small, single-purpose PRs. Split unrelated fixes into separate PRs.
-- Merge only after an explicit Supervisor `APPROVE` for the current PR head.
+- Merge only after an explicit Supervisor `APPROVE` and an
+  `agentic-remote/full-gate` `success` status for the current PR head.
   A signed verdict counts even when GitHub labels the review `COMMENTED`;
   passing checks, local-agent reviews, and other comments are not substitutes.
   Do not request GitHub Copilot as a reviewer.

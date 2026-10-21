@@ -14,7 +14,6 @@ import {
 import { isDeepStrictEqual } from 'node:util'
 import {
   CopilotClient,
-  RuntimeConnection,
   type AssistantMessageEvent,
   type CopilotSession,
   type ElicitationResult,
@@ -25,6 +24,12 @@ import {
   type SessionEvent,
   type SessionMetadata,
 } from '@github/copilot-sdk'
+import {
+  COPILOT_SDK_SESSION_DISCOVERY,
+  createCopilotSdkClient,
+  readCopilotSdkRuntimeDiagnostic,
+  type CopilotSdkMissingSessionRetirement,
+} from './copilot-sdk-client.js'
 import type {
   AgentProvider,
   AgentProviderCapability,
@@ -172,6 +177,14 @@ interface PendingSdkFollowUp {
   stopped?: boolean
 }
 
+interface SdkFollowUpTracker {
+  activate: () => void
+  settleWhenIdle: () => void
+  settled: Promise<void>
+  settleForTeardown: () => void
+  cancel: () => void
+}
+
 class TerminalDiscoveryError extends Error {
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
@@ -296,6 +309,9 @@ export interface CopilotSessionLike {
 export interface CopilotClientLike extends CopilotResourceClient {
   start(): Promise<void>
   stop(): Promise<Error[]>
+  getStatus?: CopilotClient['getStatus']
+  getAuthStatus?: CopilotClient['getAuthStatus']
+  retireMissingSession?: CopilotSdkMissingSessionRetirement['retireMissingSession']
   createSession(config: SessionConfig): Promise<CopilotSessionLike>
   resumeSession(
     sessionId: string,
@@ -1638,13 +1654,61 @@ function runtimeInfoMatches(
 }
 
 function isMissingSessionError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
+  const details = recordValue(error)
+  const nestedDetails = recordValue(details.error)
+  const detailData = recordValue(details.data)
+  const nestedData = recordValue(nestedDetails.data)
+  const codes = [
+    details.code,
+    nestedDetails.code,
+    detailData.code,
+    nestedData.code,
+  ].flatMap((code) =>
+    typeof code === 'string' || typeof code === 'number'
+      ? [String(code).toLowerCase().replaceAll(/[\s_.-]+/g, '')]
+      : [],
+  )
+  const message =
+    error instanceof Error
+      ? error.message
+      : stringValue(details.message) ||
+        stringValue(nestedDetails.message) ||
+        stringValue(detailData.message) ||
+        stringValue(nestedData.message)
+  const normalizedMessage = message?.toLowerCase()
+
+  if (
+    codes.some((code) =>
+      code === '32601' ||
+      code === 'methodnotfound' ||
+      code === 'endpointnotfound',
+    ) ||
+    (normalizedMessage &&
+      (/\b(?:method|endpoint)\s+(?:was\s+)?not found\b/.test(normalizedMessage) ||
+        /\b(?:unknown|unhandled|unsupported)\s+(?:rpc\s+)?(?:method|endpoint)\b/.test(
+          normalizedMessage,
+        ) ||
+        /\bsession\.delete\b.*\bnot supported\b/.test(normalizedMessage)))
+  ) {
     return false
   }
-  const message = error.message.toLowerCase()
-  return (
-    message.includes('session') &&
-    (message.includes('not found') || message.includes('does not exist'))
+  if (
+    codes.some((code) =>
+      code === 'sessionnotfound' ||
+      code === 'sessiondoesnotexist' ||
+      code === 'nosuchsession',
+    )
+  ) {
+    return true
+  }
+  return Boolean(
+    normalizedMessage &&
+      (/\bsession\s+(?:not found|does not exist)\b/.test(normalizedMessage) ||
+        /\bsession\s+(?:(?:with\s+)?id\s+)?["'`]?[a-z0-9-]+["'`]?\s+(?:was\s+)?(?:not found|does not exist)\b/.test(
+          normalizedMessage,
+        ) ||
+        /\bno such session\b/.test(normalizedMessage) ||
+        /\bno session (?:was )?found\b/.test(normalizedMessage)),
   )
 }
 
@@ -1719,6 +1783,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly queuedDispatches: QueuedDispatches
   private readonly queuedPromptStops = new Map<string, () => void>()
   private readonly queuedPromptRuns = new Map<string, Promise<void>>()
+  private readonly sdkPromptRuns = new Map<string, Promise<void>>()
   private readonly recoverySeedPromptRuns = new Map<string, Promise<void>>()
   private readonly recoverySeedDispatches = new Map<string, Promise<SessionDetail | undefined>>()
   private readonly pendingSessionMetadata = new Map<string, SessionEvent[]>()
@@ -1738,11 +1803,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // live follow-up is watching with. The turn closes the assistant of a
   // follow-up accepted while it runs; once it has returned the follow-up has
   // to close its own, and one it supersedes must stop watching.
-  private readonly sdkTurnsAwaited = new Set<string>()
-  private readonly sdkFollowUpTrackers = new Map<
-    string,
-    { settleWhenIdle: () => void; cancel: () => void }
-  >()
+  private readonly sdkTurnsAwaited = new Map<string, string>()
+  private readonly retiredSdkPromptRuns = new Set<string>()
+  private readonly sdkFollowUpTrackers = new Map<string, SdkFollowUpTracker>()
   private readonly drainingSessions = new Set<string>()
   /** Old and replacement recovery tokens held by an in-flight dispatch. */
   private readonly claimedFailures = new Set<string>()
@@ -1866,27 +1929,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.deletedSessionIds.add(id)
     this.discoveryGeneration += 1
+    await this.deleteSdkProviderIdentity(id)
+  }
+
+  private async deleteSdkProviderIdentity(id: string): Promise<void> {
+    try {
+      await this.client.deleteSession(id)
+    } catch (error) {
+      if (!isMissingSessionError(error)) throw error
+      await this.client.retireMissingSession?.(id)
+    }
     this.sessions.delete(id)
     this.hydratedSessions.delete(id)
     this.loadingSessions.delete(id)
     this.hydratingSessions.delete(id)
     this.pendingSessionMetadata.delete(id)
-    const errors: unknown[] = []
-    if (session) {
-      try {
-        await session.disconnect()
-      } catch (error) {
-        errors.push(error)
-      }
-    }
-    try {
-      await this.client.deleteSession(id)
-    } catch (error) {
-      if (!isMissingSessionError(error)) errors.push(error)
-    }
-    if (errors.length) {
-      throw new AggregateError(errors, `SDK cleanup is incomplete for session ${id}`)
-    }
   }
 
   /** Marks a session as having a prompt on its way, and gives back the undo. */
@@ -2004,13 +2061,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   constructor(
     readonly store: SessionStore,
-    client: CopilotClientLike = new CopilotClient({
-      connection: RuntimeConnection.forStdio({
-        path: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
-      }),
-      logLevel: 'error',
-      useLoggedInUser: true,
-    }),
+    client: CopilotClientLike = createCopilotSdkClient(),
     private readonly activeSessionFinder = findActiveCopilotSessions,
     private readonly activeSessionStopper = stopActiveCopilotSession,
     private readonly sessionEventReader = readSessionEvents,
@@ -2022,13 +2073,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Side questions fork through a runtime of their own. One that has the
     // source session loaded records the fork in that session's history.
     private readonly sideQuestionClientFactory: () => CopilotClientLike = () =>
-      new CopilotClient({
-        connection: RuntimeConnection.forStdio({
-          path: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
-        }),
-        logLevel: 'error',
-        useLoggedInUser: true,
-      }),
+      createCopilotSdkClient(),
   ) {
     super()
     this.client = client
@@ -2273,6 +2318,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (session.isOpen && session.queuedPrompts?.length) this.startupTerminalQueues.add(session.id)
     }
     await phases.run('copilot.sdk', () => this.client.start())
+    if (this.stopped) return
+    try {
+      const diagnostic = await readCopilotSdkRuntimeDiagnostic(this.client)
+      if (diagnostic) {
+        console.info(
+          `Copilot SDK runtime: runtimeVersion=${diagnostic.runtimeVersion} ` +
+          `protocolVersion=${diagnostic.protocolVersion} ` +
+          `authenticated=${diagnostic.authenticated} ` +
+          `authType=${diagnostic.authType ?? 'unknown'}`,
+        )
+      }
+    } catch {
+      console.warn('Unable to read Copilot SDK runtime diagnostic')
+    }
     if (this.stopped) return
     await phases.run('copilot.models', () => this.ensureRuntimeModels()).catch((error: unknown) => {
       console.warn('Unable to load runtime models:', error)
@@ -2596,6 +2655,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async stopSettled(): Promise<void> {
+    // stop() has already closed the service to new work, and provider teardown
+    // is now guaranteed. SDK disconnect clears handlers without an event, so
+    // release tracker-only waits before lifecycle shutdown waits on them.
+    for (const tracker of [...this.sdkFollowUpTrackers.values()]) {
+      tracker.settleForTeardown()
+    }
     for (const stop of this.queuedPromptStops.values()) stop()
     for (const [timer, finish] of this.acknowledgementTimers) {
       clearTimeout(timer)
@@ -2635,6 +2700,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }),
     )
     await this.admissions.wait()
+    // An already-admitted send can register its tracker after the first sweep.
+    // Admission quiescence guarantees nothing can register after this one.
+    for (const tracker of [...this.sdkFollowUpTrackers.values()]) {
+      tracker.settleForTeardown()
+    }
     await Promise.allSettled([...this.pendingAcknowledgements.values()])
     await Promise.allSettled([
       this.transcriptWake,
@@ -3084,6 +3154,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     mode?: AgentMode,
   ): Promise<SessionDetail> {
     const sdkSession = await this.client.createSession({
+      ...COPILOT_SDK_SESSION_DISCOVERY,
       workingDirectory: cwd,
       streaming: true,
       ...runtime,
@@ -4137,6 +4208,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         original = this.sessions.get(id)
         try {
           fresh = await this.client.createSession({
+            ...COPILOT_SDK_SESSION_DISCOVERY,
             sessionId: replacementId,
             workingDirectory: stored.cwd,
             streaming: true,
@@ -5356,11 +5428,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private trackSdkFollowUp(
     sdkSession: CopilotSessionLike,
     assistantMessageId: string,
-  ): { activate: () => void; settleWhenIdle: () => void; cancel: () => void } {
+  ): SdkFollowUpTracker {
     const sessionId = sdkSession.sessionId
     let active = false
     let closed = false
     let responseStarted = false
+    let resolveSettled = () => {}
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    })
+    const complete = (completion: Promise<void>) => {
+      void completion
+        .catch((error: unknown) => this.publishError(sessionId, error))
+        .finally(resolveSettled)
+    }
     const unsubscribe = sdkSession.on((event) => {
       if (!active || closed || eventAgentId(event)) return
       if (
@@ -5376,10 +5457,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         closed = true
         unsubscribe()
         forget()
-        void this.finishSdkFollowUp(
-          sessionId,
-          assistantMessageId,
-        ).catch((error: unknown) => this.publishError(sessionId, error))
+        complete(this.finishSdkFollowUp(sessionId, assistantMessageId))
       } else if (
         event.type === 'session.error' ||
         event.type === 'session.shutdown'
@@ -5391,11 +5469,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           event.type === 'session.error'
             ? event.data.message
             : 'The SDK session shut down.'
-        void this.failTrackedSdkFollowUp(
+        complete(this.failTrackedSdkFollowUp(
           sessionId,
           assistantMessageId,
           message,
-        ).catch((error: unknown) => this.publishError(sessionId, error))
+        ))
       }
     })
     // Whatever ends this tracker -- an idle, a shutdown, or being superseded
@@ -5416,6 +5494,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // it running with Restart blocked.
       settleWhenIdle: () => {
         responseStarted = true
+      },
+      settled,
+      settleForTeardown: () => {
+        forget()
+        if (closed) return
+        closed = true
+        unsubscribe()
+        resolveSettled()
       },
       cancel: () => {
         forget()
@@ -5885,6 +5971,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publishError(sessionId, error)
       },
     )
+    this.sdkPromptRuns.set(sessionId, run)
+    void run.finally(() => {
+      if (this.sdkPromptRuns.get(sessionId) === run) {
+        this.sdkPromptRuns.delete(sessionId)
+      }
+    })
     if (options.recoverySeedPrompt) {
       this.recoverySeedPromptRuns.set(sessionId, run)
       void run.finally(() => {
@@ -6904,27 +6996,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     forgetSessionEvents(sessionId)
     let completed = false
     try {
+      const queuedSdkRun = this.queuedPromptRuns.get(sessionId)
+      let interruptedPrompt = queuedSdkRun
+        ? this.activePrompts.get(sessionId)
+        : undefined
+      let interruptedSdkTurn = queuedSdkRun
+        ? this.sdkTurnsAwaited.get(sessionId)
+        : undefined
+      let interruptedSdkRun = queuedSdkRun
       this.queuedPromptStops.get(sessionId)?.()
       await this.admissions.wait(sessionId)
       await Promise.allSettled(this.sdkReplyWrites(sessionId))
       await this.queueOperations.get(sessionId)?.catch(() => undefined)
       await this.queuedPromptRuns.get(sessionId)?.catch(() => undefined)
-      await this.activeSessionStopper(sessionId)
       const active = this.sessions.get(sessionId)
+      const currentPrompt = this.activePrompts.get(sessionId)
+      if (currentPrompt) {
+        interruptedPrompt = currentPrompt
+        interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
+        interruptedSdkRun = this.sdkPromptRuns.get(sessionId)
+      }
+      const interruptedSdkFollowUp =
+        this.sdkFollowUpTrackers.get(sessionId)
+      await this.activeSessionStopper(sessionId)
       if (active) {
         if (this.activePrompts.has(sessionId)) {
+          interruptedSdkFollowUp?.settleWhenIdle()
           this.activePrompts.delete(sessionId)
           await active.abort()
         }
-        await active.disconnect()
-        this.sessions.delete(sessionId)
+        if (terminalBacked) {
+          await active.disconnect()
+          this.sessions.delete(sessionId)
+        }
       }
-      // Retired once the runtime is actually gone. Doing it earlier left the
-      // door open for a follow-up already being admitted to install its own
-      // tracker afterwards, and disconnecting does not always announce itself,
-      // so waiting for a shutdown event would leak the SDK session.
-      this.sdkFollowUpTrackers.get(sessionId)?.cancel()
-      this.sdkFollowUpTrackers.delete(sessionId)
       for (const [requestId, permission] of this.permissions) {
         if (permission.sessionId === sessionId) {
           permission.resolve({ kind: 'user-not-available' })
@@ -6948,13 +7053,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await removeCopilotSessionFiles(sessionId)
       } else {
         try {
-          await this.client.deleteSession(sessionId)
+          await this.deleteSdkProviderIdentity(sessionId)
         } catch (error) {
-          if (!isMissingSessionError(error)) {
-            throw error
-          }
+          await Promise.all([
+            interruptedSdkRun,
+            interruptedSdkFollowUp?.settled,
+          ])
+          await this.reconcileRetainedSdkDeletion(
+            sessionId,
+            interruptedPrompt,
+            interruptedSdkTurn,
+            error,
+          )
+          throw error
         }
       }
+      // A successful destructive delete does not need a provider event to
+      // retire the follow-up because no retry can reuse this SDK identity.
+      interruptedSdkFollowUp?.cancel()
+      this.sdkFollowUpTrackers.delete(sessionId)
       await this.store.remove(sessionId)
       this.pendingSdkQueueAdmissions.delete(sessionId)
       this.forgetSdkReplies(sessionId)
@@ -6984,6 +7101,78 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.deletedSessionIds.delete(sessionId)
       }
     }
+  }
+
+  private async reconcileRetainedSdkDeletion(
+    sessionId: string,
+    interruptedPrompt: ActivePrompt | undefined,
+    interruptedSdkTurn: string | undefined,
+    error: unknown,
+  ): Promise<void> {
+    const retained = this.store.get(sessionId)
+    if (
+      !retained ||
+      (!interruptedPrompt &&
+        retained.status !== 'running' &&
+        retained.status !== 'waiting' &&
+        !retained.pendingPermission &&
+        !retained.pendingUserInput)
+    ) {
+      return
+    }
+    if (
+      interruptedSdkTurn &&
+      this.sdkTurnsAwaited.get(sessionId) === interruptedSdkTurn
+    ) {
+      this.retiredSdkPromptRuns.add(interruptedSdkTurn)
+      this.sdkTurnsAwaited.delete(sessionId)
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    const explanation =
+      `Unable to complete the response: Session deletion failed before provider cleanup completed: ${message}`
+    const queueAdmission = interruptedPrompt
+      ? this.pendingSdkQueueAdmissions.get(sessionId)
+      : undefined
+    if (
+      interruptedPrompt &&
+      queueAdmission?.assistantId === interruptedPrompt.assistantMessageId
+    ) {
+      await this.store.failSdkQueueAdmission(
+        sessionId,
+        interruptedPrompt.assistantMessageId,
+        explanation,
+        () => false,
+      )
+    }
+    const updated = await this.store.updateIf(sessionId, (session) => {
+      const assistant = interruptedPrompt
+        ? session.messages.find(
+            (entry) => entry.id === interruptedPrompt.assistantMessageId,
+          )
+        : undefined
+      if (assistant?.role === 'assistant') {
+        assistant.streaming = false
+        if (!assistant.content) assistant.content = explanation
+      }
+      for (const entry of session.messages) {
+        if (
+          entry.role === 'activity' &&
+          entry.activityStatus === 'running'
+        ) {
+          entry.activityStatus = 'failed'
+          entry.activityResult = `Error: ${message}`
+        }
+      }
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.status = 'error'
+      session.activity = undefined
+      return true
+    })
+    if (updated) this.publish(updated)
+    this.pendingSdkQueueAdmissions.delete(sessionId)
+    this.sdkFollowUpTrackers.get(sessionId)?.cancel()
+    this.sdkFollowUpTrackers.delete(sessionId)
   }
 
   private sdkReplyWrites(sessionId?: string): Promise<SessionDetail>[] {
@@ -7865,6 +8054,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let sdkSession: CopilotSessionLike
     try {
       sdkSession = await this.client.resumeSession(sessionId, {
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         workingDirectory: stored.cwd,
         streaming: true,
         onPermissionRequest: stored.runtime?.allowAllPermissions
@@ -7881,6 +8071,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw error
       }
       sdkSession = await this.client.createSession({
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         sessionId,
         workingDirectory: stored.cwd,
         streaming: true,
@@ -9324,7 +9515,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<void> {
     const sessionId = sdkSession.sessionId
     let completionAssistantMessageId = assistantMessageId
-    this.sdkTurnsAwaited.add(sessionId)
+    this.sdkTurnsAwaited.set(sessionId, assistantMessageId)
     try {
       if (this.stopped) return
       const response = delivery && receipt
@@ -9338,13 +9529,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (response?.timestamp) {
         this.liveTranscriptWatermarks.set(sessionId, response.timestamp)
       }
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
       if (pendingFollowUp) pendingFollowUp.previousCompleted = true
       await pendingFollowUp?.settled
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       completionAssistantMessageId = pendingFollowUp
@@ -9386,14 +9587,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         (!delivery.submitted || delivery.refused || explicitlyRefused(error))) {
         return
       }
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
       const pendingFollowUp = this.pendingSdkFollowUps.get(sessionId)
       if (pendingFollowUp) pendingFollowUp.previousCompleted = true
       await pendingFollowUp?.settled
-      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (
+        this.retiredSdkPromptRuns.has(assistantMessageId) ||
+        this.stopped ||
+        this.deletingSessions.has(sessionId) ||
+        !this.store.get(sessionId)
+      ) {
         return
       }
       completionAssistantMessageId = pendingFollowUp
@@ -9431,7 +9642,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       // Released last: a follow-up accepted while this turn was awaited is
       // closed by it, and one accepted afterwards has to close itself.
-      this.sdkTurnsAwaited.delete(sessionId)
+      if (this.sdkTurnsAwaited.get(sessionId) === assistantMessageId) {
+        this.sdkTurnsAwaited.delete(sessionId)
+      }
+      this.retiredSdkPromptRuns.delete(assistantMessageId)
       if (this.activePrompts.get(sessionId)?.assistantMessageId === completionAssistantMessageId) {
         this.activePrompts.delete(sessionId)
         if (!delivery || delivery.accepted) this.wakeSdkQueue(sessionId)

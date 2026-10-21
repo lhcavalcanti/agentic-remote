@@ -49,6 +49,7 @@ const slowTests = [
   'server/conversation-recovery.test.ts',
   'server/delegated-transcription-service.test.ts',
   'server/file-upload-routes.test.ts',
+  'server/full-gate.test.ts',
   'server/history-projection.test.ts',
   'server/hub-routes.test.ts',
   'server/manager-agent.test.ts',

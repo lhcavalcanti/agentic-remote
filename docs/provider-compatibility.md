@@ -46,6 +46,17 @@ history is not transferred between providers.
 - Idle Copilot SDK sessions can migrate to tmux with the same provider session
   ID. Claude Agent sessions cannot migrate because the Agent SDK process is not
   attachable to a tmux pane.
+- Normal Copilot SDK sessions discover the owning computer's existing CLI
+  configuration for plugins, MCP servers, skills, custom agents, instructions,
+  repository hooks, and host Git operations. They use the same local Copilot
+  home and logged-in GitHub account as interactive CLI sessions.
+- SDK clients use the runtime bundled with `@github/copilot-sdk` by default.
+  `COPILOT_SDK_BIN` is an advanced compatibility override for a separately
+  qualified SDK runtime; `COPILOT_BIN` remains the interactive tmux executable.
+- Destructive SDK deletion calls provider deletion directly and removes local
+  state only after provider deletion succeeds or reports that the identity is
+  already absent. Suspension and SDK-to-tmux migration still require successful
+  detach so Agentic Remote never creates a second owner.
 - Claude model and effort changes apply to the next turn. Claude controls its
   context window, so it does not advertise a long-context tier.
 - Opening Model and context or App settings reloads the owning provider's model
@@ -57,7 +68,9 @@ history is not transferred between providers.
 - The session menu provides **Skills** and **MCP servers**. `/skill`, `/skills`,
   and `/mcp` open these read-only views; optional trailing text filters the list
   locally. They do not invoke a provider command, send a prompt, or change MCP
-  or skill configuration.
+  or skill configuration. Agentic Remote does not install plugins or MCP
+  servers, perform MCP OAuth onboarding, edit provider configuration, render
+  MCP Apps, or emulate the Copilot CLI TUI.
 - Resource inspection never creates or resumes a provider session merely to
   read metadata. Copilot terminal, suspended, and unloaded sessions use
   server-scoped folder discovery when available. This shows configured defaults,

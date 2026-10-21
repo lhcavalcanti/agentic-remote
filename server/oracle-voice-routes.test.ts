@@ -525,6 +525,43 @@ describe('Oracle voice hub routes', () => {
     )).rejects.toMatchObject({ statusCode: 401 })
   })
 
+  it.each([
+    ['plain GET', {}],
+    ['malformed upgrade', {
+      connection: 'Upgrade',
+      upgrade: 'websocket',
+      'sec-websocket-version': '13',
+      'sec-websocket-key': 'not-a-valid-websocket-key',
+    }],
+  ])('does not consume or reserve a ticket for a %s', async (
+    _label,
+    extraHeaders,
+  ) => {
+    const backend = new RouteVoiceBackend()
+    const { app } = await runtime(backend)
+    const endpoint = await listen(app)
+    const issued = await ticket(app)
+
+    const rejected = await app.inject({
+      method: 'GET',
+      url: `/api/oracle-voice?ticket=${encodeURIComponent(issued)}`,
+      headers: { ...trusted, ...extraHeaders },
+    })
+    expect(rejected.statusCode).toBe(404)
+    expect(backend.opened).toEqual([])
+
+    const connected = await connect(
+      `${endpoint}/api/oracle-voice?ticket=${encodeURIComponent(issued)}`,
+    )
+    await expect(connected.first).resolves.toMatchObject({ type: 'hello' })
+    await closeSocket(connected.socket)
+    await vi.waitFor(() => expect(backend.busy()).toBe(false))
+
+    await expect(connect(
+      `${endpoint}/api/oracle-voice?ticket=${encodeURIComponent(issued)}`,
+    )).rejects.toMatchObject({ statusCode: 401 })
+  })
+
   it('rejects a second active browser stream and releases the backend on close', async () => {
     const backend = new RouteVoiceBackend()
     const { app } = await runtime(backend)

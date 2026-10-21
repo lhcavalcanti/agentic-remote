@@ -126,6 +126,44 @@ The final pre-commit rerun combined those focused and route/app selections:
 13 files and 314 tests passed. Graphify remained current at 5,562 nodes,
 15,302 edges, and 327 code files; `git diff --check` also passed.
 
+Supervisor then reviewed `5c195ffe8370` and reported six final boundaries.
+Red-first evidence reproduced each one:
+
+- backend PCM admission remained pending behind a blocked
+  `speech_confirmed` instead of rejecting the third frame at the 512-byte
+  limit;
+- coordinator `speech_end` reached the backend while an accepted audio
+  delivery was still blocked;
+- a successful assistantless turn emitted no Listening state and a user-done
+  event discarded a later assistant row;
+- plain GET and malformed-upgrade requests consumed their valid tickets, so
+  the subsequent real upgrade failed with 401;
+- a closed node socket left a blocked local acquisition busy;
+- removing the fixture's scoped cancellation method made deterministic
+  Chromium lose the Interrupted transition during barge-in.
+
+The fixes synchronously reserve every backend input frame before control
+ordering, use idempotent per-frame release accounting, snapshot a
+gate/generation audio-delivery barrier for `speech_end`, admit only verified
+WebSocket handshakes, abort node acquisition from socket close, implement the
+fixture's exact-ID cancellation contract, and retain successful voice
+associations until the manager's idle completion boundary. The completion
+path covers no assistant row, empty and filtered assistants, a late assistant,
+failed/cancelled/interrupted turns, and a newer generation without a timeout.
+
+Round-5 focused verification passed 8 files and 246 tests across backend
+session, coordinator, hub routes, node routes, integration, security, browser
+client, and playback. The established critical
+manager/coordinator/session/integration/security/playback/client selection
+passed three independent runs at 7 files and 209 tests each, 627 aggregate.
+Deterministic Chromium passed 1/1 after the scoped barge-in assertions proved
+one live stream, the exact voice target cancelled, and unrelated typed work
+still queued. TypeScript/Vite build and oxlint passed; oxlint emitted only the
+existing React warnings. Graphify refreshed to 5,574 nodes, 15,334 edges, and
+327 code files. Per the explicit instruction, the approximately 29-minute
+normal and production `pnpm check` gates were not rerun; the parent owns those
+exact-head gates after Supervisor approval.
+
 Local rapid-interruption integration and authenticated paired-node integration
 both invoke the captured voice message ID, never global cancellation. The
 manager tests cover crash-state restart into typed Delegate work, every recovery
@@ -229,7 +267,9 @@ all 23 assertions are true.
   findings from those rounds plus both `187cc4068fe4` blockers now have
   regression coverage. The three `7c5200e3e933` lifecycle findings also have
   crash, recovery, scoped-cancellation, paired/local, and real playback-drain
-  regression coverage. The next exact-head request
+  regression coverage. The six `5c195ffe8370` queue, drain, admission,
+  acquisition, fixture, and completion findings have focused red/green
+  coverage and three-pass critical verification. The next exact-head request
   and verdict are authoritative on PR #425; GitHub Copilot review will not be
   requested.
 - No merge or deployment is authorized.

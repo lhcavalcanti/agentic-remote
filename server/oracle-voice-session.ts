@@ -129,10 +129,11 @@ interface ActiveUtterance {
   utteranceId: string
 }
 
-interface QueuedAudio {
+interface AudioReservation {
   frame: VoiceAudioFrame
-  utterance: ActiveUtterance
   bytes: number
+  state: 'queued' | 'pending' | 'released'
+  utterance?: ActiveUtterance
 }
 
 interface QueuedOutput {
@@ -170,9 +171,11 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private readonly observeQueue: (snapshot: VoiceBackendQueueSnapshot) => void
   private readonly onClosed: () => void
   private readonly unsubscribe: () => void
-  private readonly audioQueue: QueuedAudio[] = []
+  private readonly audioQueue: AudioReservation[] = []
+  private readonly audioReservations = new Set<AudioReservation>()
   private readonly outputQueue: QueuedOutput[] = []
   private controlTail: Promise<void> = Promise.resolve()
+  private audioIngressTail: Promise<void> = Promise.resolve()
   private audioDrainPromise: Promise<void> = Promise.resolve()
   private closePromise: Promise<void> | undefined
   private idleTimer: Timer | undefined
@@ -211,10 +214,13 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   }
 
   control(message: VoiceClientControl): Promise<void> {
+    const precedingAudio = message.type === 'speech_end'
+      ? this.audioIngressTail
+      : Promise.resolve()
     const operation = this.controlTail.then(async () => {
       this.requireOpen()
       this.armIdleTimeout()
-      await this.handleControl(message)
+      await this.handleControl(message, precedingAudio)
     })
     this.controlTail = operation.catch(() => undefined)
     return operation.catch(async (error: unknown) => {
@@ -224,9 +230,8 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     })
   }
 
-  async audio(frame: VoiceAudioFrame): Promise<void> {
-    const precedingControls = this.controlTail
-    await precedingControls
+  audio(frame: VoiceAudioFrame): Promise<void> {
+    let reservation: AudioReservation
     try {
       this.requireOpen()
       this.armIdleTimeout()
@@ -237,20 +242,6 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       if (frameBytes > this.limits.maxFrameBytes) {
         throw new VoiceSessionError('Voice audio frame is too large', 1009)
       }
-      const utterance = this.requireUtterance(frame.generation)
-      if (this.finalForwarded) return
-      if (this.utteranceEnded) {
-        throw new VoiceSessionError('Voice utterance has already ended', 1008)
-      }
-      if (frame.sequence !== this.nextSequence) {
-        throw new VoiceSessionError('Voice audio sequence is out of order', 1008)
-      }
-      const maxSamples = Math.floor(
-        ORACLE_VOICE_SAMPLE_RATE * this.limits.maxUtteranceMs / 1000,
-      )
-      if (frame.samples.length > maxSamples - this.utteranceSamples) {
-        throw new VoiceSessionError('Voice utterance duration limit exceeded', 1008)
-      }
       const bytes = frame.samples.byteLength
       if (
         bytes > this.limits.maxQueueBytes
@@ -259,22 +250,57 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       ) {
         throw new VoiceSessionError('Voice input queue is full', 1013)
       }
-
-      this.nextSequence += 1
-      this.utteranceSamples += frame.samples.length
-      this.queuedAudioBytes += bytes
-      this.audioQueue.push({
+      reservation = {
         frame,
-        utterance: { ...utterance },
         bytes,
-      })
+        state: 'queued',
+      }
+      this.audioReservations.add(reservation)
+      this.queuedAudioBytes += bytes
       this.reportQueue()
-      this.startAudioDrain()
     } catch (error) {
       const failure = asSessionError(error)
-      await this.fail(failure, disconnectCause(failure.closeCode))
-      throw failure
+      return this.fail(failure, disconnectCause(failure.closeCode))
+        .then(() => Promise.reject(failure))
     }
+
+    const precedingControls = this.controlTail
+    const operation = this.audioIngressTail.catch(() => undefined).then(async () => {
+      let queued = false
+      try {
+        await precedingControls
+        this.requireOpen()
+        const utterance = this.requireUtterance(frame.generation)
+        if (this.finalForwarded) return
+        if (this.utteranceEnded) {
+          throw new VoiceSessionError('Voice utterance has already ended', 1008)
+        }
+        if (frame.sequence !== this.nextSequence) {
+          throw new VoiceSessionError('Voice audio sequence is out of order', 1008)
+        }
+        const maxSamples = Math.floor(
+          ORACLE_VOICE_SAMPLE_RATE * this.limits.maxUtteranceMs / 1000,
+        )
+        if (frame.samples.length > maxSamples - this.utteranceSamples) {
+          throw new VoiceSessionError('Voice utterance duration limit exceeded', 1008)
+        }
+
+        this.nextSequence += 1
+        this.utteranceSamples += frame.samples.length
+        queued = true
+        reservation.utterance = { ...utterance }
+        this.audioQueue.push(reservation)
+        this.startAudioDrain()
+      } catch (error) {
+        const failure = asSessionError(error)
+        await this.fail(failure, disconnectCause(failure.closeCode))
+        throw failure
+      } finally {
+        if (!queued) this.releaseAudioReservation(reservation)
+      }
+    })
+    this.audioIngressTail = operation.catch(() => undefined)
+    return operation
   }
 
   close(reason: string): Promise<void> {
@@ -283,7 +309,10 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     return this.closePromise
   }
 
-  private async handleControl(message: VoiceClientControl): Promise<void> {
+  private async handleControl(
+    message: VoiceClientControl,
+    precedingAudio: Promise<void>,
+  ): Promise<void> {
     if (message.streamId !== this.streamId) {
       throw new VoiceSessionError('Voice stream ID does not match this connection', 1008)
     }
@@ -350,6 +379,8 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         return
       }
       case 'speech_end': {
+        await precedingAudio
+        this.requireOpen()
         const utterance = this.requireUtterance(message.generation, message.utteranceId)
         if (this.finalForwarded) {
           this.utteranceEnded = true
@@ -448,19 +479,19 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     try {
       while (!this.closed && this.audioQueue.length > 0) {
         const queued = this.audioQueue.shift()!
-        this.queuedAudioBytes -= queued.bytes
-        this.pendingAudioBytes += queued.bytes
-        this.reportQueue()
+        this.markAudioPending(queued)
         try {
-          if (!sameUtterance(this.activeUtterance, queued.utterance)) continue
+          if (
+            !queued.utterance
+            || !sameUtterance(this.activeUtterance, queued.utterance)
+          ) continue
           await this.engine.stt.accept({
             ...queued.frame,
             streamId: this.streamId,
             utteranceId: queued.utterance.utteranceId,
           })
         } finally {
-          this.pendingAudioBytes -= queued.bytes
-          this.reportQueue()
+          this.releaseAudioReservation(queued)
         }
       }
     } catch (error) {
@@ -695,7 +726,28 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
 
   private clearAudioQueue(): void {
     this.audioQueue.length = 0
-    this.queuedAudioBytes = 0
+    for (const reservation of [...this.audioReservations]) {
+      this.releaseAudioReservation(reservation)
+    }
+  }
+
+  private markAudioPending(reservation: AudioReservation): void {
+    if (reservation.state !== 'queued') return
+    reservation.state = 'pending'
+    this.queuedAudioBytes -= reservation.bytes
+    this.pendingAudioBytes += reservation.bytes
+    this.reportQueue()
+  }
+
+  private releaseAudioReservation(reservation: AudioReservation): void {
+    if (reservation.state === 'released') return
+    if (reservation.state === 'pending') {
+      this.pendingAudioBytes -= reservation.bytes
+    } else {
+      this.queuedAudioBytes -= reservation.bytes
+    }
+    reservation.state = 'released'
+    this.audioReservations.delete(reservation)
     this.reportQueue()
   }
 

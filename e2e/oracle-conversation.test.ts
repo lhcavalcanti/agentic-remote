@@ -71,7 +71,12 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   )
   await expect(page.getByText('Speaking', { exact: true })).toBeVisible()
 
+  const unrelatedTypedId = await voice.seedTyped('Unrelated typed work')
   const beforeBargeIn = await voice.snapshot()
+  const cancellationTarget = beforeBargeIn.managerMessages.find(
+    (message) => message.content === 'Which one needs attention?',
+  )?.id
+  expect(cancellationTarget).toBeTruthy()
   await voice.beginSpeech('Stop and summarize.', { holdFinal: true })
   await expect(page.getByText('Interrupted', { exact: true })).toBeVisible()
   await expect.poll(async () => (await voice.snapshot()).audioStops).toBeGreaterThan(
@@ -79,6 +84,15 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   )
   await voice.endSpeech()
   await voice.releaseFinal()
+  await expect.poll(async () => (await voice.snapshot()).managerCancellations)
+    .toEqual([cancellationTarget])
+  const afterBargeIn = await voice.snapshot()
+  expect(afterBargeIn.activeStreams).toBe(1)
+  expect(afterBargeIn.streamStarts).toBe(beforeBargeIn.streamStarts)
+  const unrelatedTyped = afterBargeIn.managerMessages.find((message) =>
+    message.id === unrelatedTypedId)
+  expect(unrelatedTyped).toMatchObject({ state: 'queued' })
+  expect(unrelatedTyped?.source).toBeUndefined()
   await page.evaluate(() => {
     window.__oracleVoiceE2E.playbackStartDelayMs = 0
   })

@@ -1053,6 +1053,103 @@ describe('multi-node hub', () => {
     }
   })
 
+  it('aborts blocked node voice acquisition and admits an immediate replacement', async () => {
+    let initializeStarted!: () => void
+    let releaseInitialize!: () => void
+    const started = new Promise<void>((resolve) => {
+      initializeStarted = resolve
+    })
+    const initializeGate = new Promise<void>((resolve) => {
+      releaseInitialize = resolve
+    })
+    const engine = new FakeVoiceEngine()
+    const factory = new FakeVoiceEngineFactory(engine, {
+      available: true,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      playbackSampleRate: 22_050,
+      languages: ['en'],
+      sttProfile: 'zipformer',
+      ttsVoice: 'lessac',
+      resourceClass: 'low',
+    })
+    vi.spyOn(factory, 'initialize').mockImplementation(async () => {
+      initializeStarted()
+      await initializeGate
+      return engine
+    })
+    const backend = new LocalVoiceBackend(factory, {
+      enabled: true,
+      language: 'en',
+      threads: 1,
+      endpointMs: 800,
+      stt: {
+        profile: 'zipformer',
+        modelDirectory: '/not-used/node-stt',
+      },
+      tts: {
+        binary: '/not-used/node-piper',
+        model: '/not-used/node-voice.onnx',
+        config: '/not-used/node-voice.json',
+        sampleRate: 22_050,
+      },
+    })
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-voice-abort'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      voiceBackend: backend,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = worker.app.server.address() as AddressInfo
+    const endpoint = `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+    const authorization = `Bearer ${worker.identity.token}`
+    const oldMessages: VoiceServerControl[] = []
+    const first = await openNodeVoiceSocket(
+      `${endpoint}?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-blocked`,
+      authorization,
+    )
+    first.on('message', (data, isBinary) => {
+      if (!isBinary) oldMessages.push(JSON.parse(data.toString()) as VoiceServerControl)
+    })
+    let second: WebSocket | undefined
+    try {
+      await started
+      expect(backend.busy()).toBe(true)
+      await new Promise<void>((resolve) => {
+        first.once('close', () => resolve())
+        first.close()
+      })
+      await vi.waitFor(() => expect(backend.busy()).toBe(false))
+
+      second = await openNodeVoiceSocket(
+        `${endpoint}?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-replacement`,
+        authorization,
+      )
+      expect(backend.busy()).toBe(true)
+      expect(oldMessages).toEqual([])
+
+      releaseInitialize()
+      await expect(nextVoiceControl(second)).resolves.toMatchObject({
+        type: 'hello',
+        streamId: 'voice-replacement',
+      })
+      expect(oldMessages).toEqual([])
+      await new Promise<void>((resolve) => {
+        second!.once('close', () => resolve())
+        second!.close()
+      })
+      await vi.waitFor(() => expect(backend.busy()).toBe(false))
+    } finally {
+      releaseInitialize()
+      first.close()
+      second?.close()
+      await worker.app.close()
+      await backend.stop()
+    }
+    expect(engine.calls.filter((call) => call.type === 'close')).toHaveLength(1)
+  })
+
   it('fails closed when an older node does not advertise context recovery', async () => {
     const localService = new FakeSessionService(session('local-session', 'Local'))
     const remoteService = new FakeSessionService({

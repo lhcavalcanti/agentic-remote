@@ -63,6 +63,7 @@ interface OracleVoiceCoordinatorOptions {
 
 interface VoiceSubmission {
   generation: number
+  completed?: boolean
 }
 
 interface QueuedSpeech {
@@ -80,6 +81,12 @@ interface QueuedAudio {
   frame: VoiceAudioFrame
   bytes: number
   gate: AudioGate
+  completion: AudioCompletion
+}
+
+interface AudioCompletion {
+  done: Promise<void>
+  settle(): void
 }
 
 type VoiceFinalControl = Extract<
@@ -112,6 +119,7 @@ export class OracleVoiceCoordinator {
   private activeSpeechPlaybackThrough: number | undefined
   private speechPumpTimer: ReturnType<typeof setTimeout> | undefined
   private readonly audioQueue: QueuedAudio[] = []
+  private readonly pendingAudio = new Set<QueuedAudio>()
   private readonly audioGates = new Set<AudioGate>()
   private audioGate: AudioGate = resolvedAudioGate()
   private audioDrainPromise: Promise<void> | undefined
@@ -160,6 +168,17 @@ export class OracleVoiceCoordinator {
   receive(message: VoiceClientControl | VoiceAudioFrame): Promise<void> {
     if (this.closed || this.closing) return Promise.resolve()
     if (!('type' in message)) return this.receiveAudio(message)
+    if (message.type === 'speech_end') {
+      const audioBarrier = this.captureAudioBarrier(
+        message.generation,
+        this.audioGate,
+      )
+      return this.enqueue(() => this.handleReceive(
+        message,
+        resolvedAudioGate(),
+        audioBarrier,
+      ))
+    }
     if (message.type !== 'speech_confirmed') {
       return this.enqueue(() => this.handleReceive(message))
     }
@@ -258,6 +277,7 @@ export class OracleVoiceCoordinator {
   private async handleReceive(
     message: VoiceClientControl | VoiceAudioFrame,
     audioGate: AudioGate = resolvedAudioGate(),
+    audioBarrier: Promise<void> = Promise.resolve(),
   ): Promise<void> {
     const connection = this.requireConnection()
     const turn = this.requireTurn()
@@ -289,6 +309,9 @@ export class OracleVoiceCoordinator {
       case 'speech_end':
         this.requireCurrentGeneration(message.generation)
         turn.hintSpeechEnd(message.generation, message.utteranceId)
+        await audioBarrier
+        if (this.closed || this.closing) return
+        this.requireCurrentGeneration(message.generation)
         await connection.control(message)
         return
       case 'stop':
@@ -512,6 +535,7 @@ export class OracleVoiceCoordinator {
   private async handleManagerEvent(event: ManagerEvent): Promise<void> {
     switch (event.type) {
       case 'manager.status':
+        if (event.status === 'idle') await this.completeAssistantlessSubmissions()
         return
       case 'manager.delta':
         if (!this.clientStarted) return
@@ -562,6 +586,10 @@ export class OracleVoiceCoordinator {
         message.state ?? '',
       )) {
         const submission = this.submissions.get(message.id)
+        if (message.state === 'done' && submission) {
+          submission.completed = true
+          return
+        }
         this.submissions.delete(message.id)
         if (this.activeReplyTo === message.id) this.activeReplyTo = undefined
         if (
@@ -602,6 +630,30 @@ export class OracleVoiceCoordinator {
       && this.speechQueue.length === 0
       && !this.speechPumpTimer
     ) {
+      await this.sendState('listening', submission.generation)
+    }
+  }
+
+  private async completeAssistantlessSubmissions(): Promise<void> {
+    for (const [messageId, submission] of [...this.submissions]) {
+      if (!submission.completed) continue
+      if (submission.generation !== this.currentGeneration) {
+        this.submissions.delete(messageId)
+        if (this.activeReplyTo === messageId) this.activeReplyTo = undefined
+        continue
+      }
+      if (
+        this.activeReplyTo !== messageId
+        || this.segmenter
+        || this.segmenterMessageId
+        || this.activeSpeech
+        || this.speechQueue.length > 0
+        || this.speechPumpTimer
+      ) {
+        continue
+      }
+      this.submissions.delete(messageId)
+      this.activeReplyTo = undefined
       await this.sendState('listening', submission.generation)
     }
   }
@@ -772,11 +824,14 @@ export class OracleVoiceCoordinator {
         )
       }
       this.pendingAudioBytes += bytes
-      this.audioQueue.push({
+      const queued = {
         frame,
         bytes,
         gate: this.audioGate,
-      })
+        completion: audioCompletion(),
+      }
+      this.pendingAudio.add(queued)
+      this.audioQueue.push(queued)
       this.startAudioDrain()
       return Promise.resolve()
     } catch (error) {
@@ -847,6 +902,8 @@ export class OracleVoiceCoordinator {
         return
       } finally {
         this.pendingAudioBytes -= queued.bytes
+        queued.completion.settle()
+        this.pendingAudio.delete(queued)
       }
     }
   }
@@ -855,7 +912,22 @@ export class OracleVoiceCoordinator {
     for (const gate of [...this.audioGates]) gate.release()
     for (const queued of this.audioQueue.splice(0)) {
       this.pendingAudioBytes -= queued.bytes
+      queued.completion.settle()
+      this.pendingAudio.delete(queued)
     }
+    for (const queued of this.pendingAudio) queued.completion.settle()
+  }
+
+  private captureAudioBarrier(
+    generation: number,
+    gate: AudioGate,
+  ): Promise<void> {
+    return Promise.all(
+      [...this.pendingAudio]
+        .filter((queued) =>
+          queued.frame.generation === generation && queued.gate === gate)
+        .map((queued) => queued.completion.done),
+    ).then(() => undefined)
   }
 
   private scheduleSpeechPump(delayMs: number, generation: number): void {
@@ -1032,5 +1104,20 @@ function resolvedAudioGate(): AudioGate {
   return {
     ready: Promise.resolve(),
     release: () => undefined,
+  }
+}
+
+function audioCompletion(): AudioCompletion {
+  let settle!: () => void
+  let settled = false
+  return {
+    done: new Promise<void>((resolve) => {
+      settle = resolve
+    }),
+    settle: () => {
+      if (settled) return
+      settled = true
+      settle()
+    },
   }
 }

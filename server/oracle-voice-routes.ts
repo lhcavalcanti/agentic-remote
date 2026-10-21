@@ -77,6 +77,7 @@ interface ActiveConversation {
   selection: SelectedVoiceBackend
   coordinator?: OracleVoiceCoordinator
   closing?: Promise<void>
+  claimAdmission?: () => void
 }
 
 export async function registerOracleVoiceRoutes(
@@ -113,6 +114,9 @@ export async function registerOracleVoiceRoutes(
       // logging must not serialize this route's URL.
       logLevel: 'silent',
       preValidation: async (request, reply) => {
+        if (!isWebSocketUpgrade(request.headers)) {
+          return reply.code(404).send({ error: 'Oracle voice requires a WebSocket upgrade' })
+        }
         const ticket = request.query.ticket
         if (typeof ticket !== 'string' || ticket.length === 0 || ticket.length > 512) {
           return reply.code(401).send({ error: 'A valid Oracle voice ticket is required' })
@@ -136,10 +140,19 @@ export async function registerOracleVoiceRoutes(
         if (active || selection.busy) {
           return reply.code(409).send({ error: 'Oracle voice is already in use' })
         }
-        active = {
+        const reservation: ActiveConversation = {
           requestId: request.id,
           selection,
         }
+        const releaseUnclaimed = () => {
+          if (active === reservation) active = undefined
+        }
+        reservation.claimAdmission = () => {
+          request.raw.socket.off('close', releaseUnclaimed)
+          reservation.claimAdmission = undefined
+        }
+        active = reservation
+        request.raw.socket.once('close', releaseUnclaimed)
       },
     },
     (socket, request) => {
@@ -148,6 +161,7 @@ export async function registerOracleVoiceRoutes(
         socket.close(1013, 'Oracle voice is already in use')
         return
       }
+      reservation.claimAdmission?.()
       const streamId = randomUUID()
       const coordinator = new OracleVoiceCoordinator({
         streamId,
@@ -235,6 +249,23 @@ export async function registerOracleVoiceRoutes(
       if (active === conversation) active = undefined
     }
   })
+}
+
+function isWebSocketUpgrade(
+  headers: Record<string, string | string[] | undefined>,
+): boolean {
+  if (headers.upgrade?.toString().toLowerCase() !== 'websocket') return false
+  const connection = headers.connection?.toString().toLowerCase().split(',')
+    .map((token) => token.trim())
+  if (!connection?.includes('upgrade')) return false
+  if (headers['sec-websocket-version']?.toString() !== '13') return false
+  const key = headers['sec-websocket-key']
+  if (typeof key !== 'string') return false
+  const normalizedKey = key.trim()
+  if (!/^[A-Za-z0-9+/]{22}==$/.test(normalizedKey)) return false
+  const decoded = Buffer.from(normalizedKey, 'base64')
+  return decoded.byteLength === 16
+    && decoded.toString('base64') === normalizedKey
 }
 
 function selectBackend(options: OracleVoiceRouteOptions): SelectedVoiceBackend {

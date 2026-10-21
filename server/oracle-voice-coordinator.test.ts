@@ -554,6 +554,176 @@ describe('OracleVoiceCoordinator', () => {
     }))
   })
 
+  it('returns to listening at idle when a successful voice turn has no assistant row', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('empty-user', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'empty-1'))
+    await test.backend.emit(final(1, 'empty-1', 'Return nothing.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('empty-user', {
+        state: 'done',
+        source: 'voice',
+      }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.status',
+      status: 'idle',
+      queued: 0,
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.status',
+      status: 'idle',
+      queued: 0,
+    })
+
+    expect(test.browser.filter((message) =>
+      !('direction' in message)
+      && message.type === 'state'
+      && message.generation === 1
+      && message.state === 'listening')).toHaveLength(1)
+  })
+
+  it.each([
+    ['', 'empty'],
+    ['```ts\nconst answer = 42\n```', 'filtered'],
+  ])('keeps a done voice association for a late %s assistant row', async (
+    content,
+  ) => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('late-user', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'late-1'))
+    await test.backend.emit(final(1, 'late-1', 'Answer later.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('late-user', {
+        state: 'done',
+        source: 'voice',
+      }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('late-assistant', {
+        role: 'assistant',
+        replyTo: 'late-user',
+        content,
+        state: undefined,
+      }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.status',
+      status: 'idle',
+      queued: 0,
+    })
+
+    expect(test.backend.calls.filter((call) => call.startsWith('tts.synthesize:')))
+      .toEqual([])
+    expect(test.browser.filter((message) =>
+      !('direction' in message)
+      && message.type === 'state'
+      && message.generation === 1
+      && message.state === 'listening')).toHaveLength(1)
+  })
+
+  it('speaks a late assistant row emitted after the successful user completion', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('late-user', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'late-1'))
+    await test.backend.emit(final(1, 'late-1', 'Answer later.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('late-user', {
+        state: 'done',
+        source: 'voice',
+      }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('late-assistant', {
+        role: 'assistant',
+        replyTo: 'late-user',
+        content: 'Late answer.',
+        state: undefined,
+      }),
+    })
+
+    expect(test.backend.calls).toContain('tts.synthesize:Late answer.')
+  })
+
+  it.each(['failed', 'cancelled', 'interrupted'] as const)(
+    'does not report listening for an assistantless %s voice turn',
+    async (state) => {
+      const test = harness()
+      test.manager.send.mockResolvedValueOnce(managerMessage('terminal-user', {
+        state: 'running',
+        source: 'voice',
+      }))
+      await test.start(0)
+      await test.coordinator.receive(confirm(1, 'terminal-1'))
+      await test.backend.emit(final(1, 'terminal-1', 'Do not complete.'))
+      await test.coordinator.managerEvent({
+        type: 'manager.message',
+        message: managerMessage('terminal-user', {
+          state,
+          source: 'voice',
+        }),
+      })
+      await test.coordinator.managerEvent({
+        type: 'manager.status',
+        status: 'idle',
+        queued: 0,
+      })
+
+      expect(test.browser.some((message) =>
+        !('direction' in message)
+        && message.type === 'state'
+        && message.generation === 1
+        && message.state === 'listening')).toBe(false)
+    },
+  )
+
+  it('does not let an older assistantless completion reset a newer generation', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('old-empty-user', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'old-empty'))
+    await test.backend.emit(final(1, 'old-empty', 'Old empty response.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('old-empty-user', {
+        state: 'done',
+        source: 'voice',
+      }),
+    })
+    await test.coordinator.receive(confirm(2, 'new-utterance'))
+    await test.coordinator.managerEvent({
+      type: 'manager.status',
+      status: 'idle',
+      queued: 0,
+    })
+
+    expect(test.browser.some((message) =>
+      !('direction' in message)
+      && message.type === 'state'
+      && message.generation === 2
+      && message.state === 'listening')).toBe(false)
+  })
+
   it('finishes a fatal backend callback before draining and closing it', async () => {
     const test = harness()
     await test.start(0)
@@ -804,6 +974,119 @@ describe('OracleVoiceCoordinator', () => {
     releaseFirst()
     await vi.waitFor(() => expect(test.backend.audio).toHaveLength(2))
     expect(test.backend.audio.map((frame) => frame.sequence)).toEqual([0, 1])
+  })
+
+  it('waits for every previously accepted microphone frame before speech end', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    let releaseAudio!: () => void
+    const audioGate = new Promise<void>((resolve) => {
+      releaseAudio = resolve
+    })
+    test.backend.audioDelivery.mockImplementationOnce(() => audioGate)
+    await test.coordinator.receive({
+      direction: 'microphone',
+      generation: 1,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(1_280),
+    })
+    await vi.waitFor(() => expect(test.backend.audio).toHaveLength(1))
+
+    const ending = test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(test.backend.controls.some((message) => message.type === 'speech_end'))
+      .toBe(false)
+    releaseAudio()
+    await ending
+    expect(test.backend.controls.at(-1)).toMatchObject({
+      type: 'speech_end',
+      generation: 1,
+      utteranceId: 'u1',
+    })
+  })
+
+  it('releases a pending speech-end barrier when the coordinator closes', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    let releaseAudio!: () => void
+    test.backend.audioDelivery.mockImplementationOnce(() =>
+      new Promise<void>((resolve) => {
+        releaseAudio = resolve
+      }),
+    )
+    await test.coordinator.receive({
+      direction: 'microphone',
+      generation: 1,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(1_280),
+    })
+    await vi.waitFor(() => expect(test.backend.audio).toHaveLength(1))
+    const ending = test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+
+    const closing = test.coordinator.close('Browser voice socket closed')
+    await expect(Promise.race([
+      closing.then(() => 'closed'),
+      new Promise<'timed-out'>((resolve) => {
+        setTimeout(() => resolve('timed-out'), 100)
+      }),
+    ])).resolves.toBe('closed')
+
+    releaseAudio()
+    await ending
+    expect(test.backend.closed).toEqual(['Browser voice socket closed'])
+  })
+
+  it('does not include future-generation audio in the current speech-end barrier', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    let releaseAudio!: () => void
+    test.backend.audioDelivery.mockImplementationOnce(() =>
+      new Promise<void>((resolve) => {
+        releaseAudio = resolve
+      }),
+    )
+    await test.coordinator.receive({
+      direction: 'microphone',
+      generation: 1,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(1_280),
+    })
+    await vi.waitFor(() => expect(test.backend.audio).toHaveLength(1))
+
+    const ending = test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+    const confirming = test.coordinator.receive(confirm(2, 'u2'))
+    await test.coordinator.receive({
+      direction: 'microphone',
+      generation: 2,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(1_280),
+    })
+
+    releaseAudio()
+    await Promise.all([ending, confirming])
+    await vi.waitFor(() => expect(test.backend.audio).toHaveLength(2))
+    expect(test.backend.controls.filter((message) =>
+      message.type === 'speech_end' || message.type === 'speech_confirmed')
+      .map((message) => `${message.type}:${message.generation}`)).toEqual([
+      'speech_confirmed:1',
+      'speech_end:1',
+      'speech_confirmed:2',
+    ])
+    expect(test.backend.audio.map((frame) => frame.generation)).toEqual([1, 2])
   })
 
   it('fails retained microphone backpressure once at the bounded utterance limit', async () => {

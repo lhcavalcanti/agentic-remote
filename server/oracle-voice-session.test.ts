@@ -275,6 +275,71 @@ describe('VoiceBackendSession', () => {
     release()
   })
 
+  it('reserves microphone backlog before a preceding control finishes', async () => {
+    let startEntered!: () => void
+    let releaseStart!: () => void
+    const entered = new Promise<void>((resolve) => {
+      startEntered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    class BlockingStartEngine extends FakeVoiceEngine {
+      override async start(input: Parameters<FakeVoiceEngine['start']>[0]): Promise<void> {
+        startEntered()
+        await gate
+        await super.start(input)
+      }
+    }
+    const queueSnapshots: Array<{
+      queuedInputBytes: number
+      pendingInputBytes: number
+      queuedOutputBytes: number
+    }> = []
+    const session = createVoiceBackendSession({
+      streamId,
+      engine: new BlockingStartEngine(),
+      limits: { ...limits, maxQueueBytes: 512 },
+      send: async () => undefined,
+      terminate: () => undefined,
+      observeQueue: (snapshot) => queueSnapshots.push(snapshot),
+    })
+    await session.control(control('start', 1, { language: 'en' }))
+    const confirming = session.control(control('speech_confirmed', 2, {
+      utteranceId: 'u2',
+    }))
+    await entered
+    const audio = [
+      session.audio(frame(2, 0, 128)),
+      session.audio(frame(2, 1, 128)),
+      session.audio(frame(2, 2, 128)),
+    ]
+
+    try {
+      const overflow = await Promise.race([
+        audio[2].then(
+          () => 'resolved',
+          (error: unknown) => error instanceof VoiceSessionError
+            && error.closeCode === 1013
+            ? 'rejected'
+            : 'wrong-error',
+        ),
+        new Promise<'pending'>((resolve) => {
+          setTimeout(() => resolve('pending'), 50)
+        }),
+      ])
+
+      expect(overflow).toBe('rejected')
+      expect(Math.max(...queueSnapshots.map((snapshot) =>
+        snapshot.queuedInputBytes + snapshot.pendingInputBytes))).toBe(512)
+    } finally {
+      releaseStart()
+      await confirming.catch(() => undefined)
+      await Promise.allSettled(audio)
+      await session.close('test complete')
+    }
+  })
+
   it('passes every queued frame to the engine before ending the utterance', async () => {
     let acceptStarted!: () => void
     let release!: () => void

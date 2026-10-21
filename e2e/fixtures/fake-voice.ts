@@ -39,6 +39,11 @@ interface FakeVoiceState {
   streamStarts: number
   audioFrames: number
   managerSends: string[]
+  managerCancellations: string[]
+  managerMessages: Array<Pick<
+    ManagerMessage,
+    'id' | 'role' | 'content' | 'state' | 'source'
+  >>
   synthesizedTexts: string[]
   synthesizedSegments: Array<{ text: string; signature: number }>
   cancellations: number
@@ -70,6 +75,7 @@ export class FakeManager extends EventEmitter<{ event: [event: ManagerEvent] }>
   private currentUserId: string | undefined
   private sequence = 0
   readonly sends: string[] = []
+  readonly cancelledMessageIds: string[] = []
   cancellations = 0
 
   async start() {}
@@ -152,12 +158,58 @@ export class FakeManager extends EventEmitter<{ event: [event: ManagerEvent] }>
     this.emit('event', { type: 'manager.status', status: 'idle', queued: 0 })
   }
 
+  async cancelMessage(messageId: string): Promise<ManagerMessage> {
+    const message = this.messages.find((candidate) =>
+      candidate.id === messageId && candidate.role === 'user')
+    if (!message) {
+      throw Object.assign(new Error('Message not found'), { statusCode: 404 })
+    }
+    if (['done', 'failed', 'cancelled', 'interrupted'].includes(message.state ?? '')) {
+      return { ...message }
+    }
+    if (message.state === 'queued') {
+      this.cancelledMessageIds.push(messageId)
+      this.cancellations += 1
+      this.updateUser(messageId, 'cancelled')
+      return { ...this.messages.find((candidate) => candidate.id === messageId)! }
+    }
+    if (message.state === 'running' && this.currentUserId === messageId) {
+      this.cancelledMessageIds.push(messageId)
+      this.cancellations += 1
+      this.updateUser(messageId, 'interrupted')
+      this.currentUserId = undefined
+      this.streaming = undefined
+      this.emit('event', { type: 'manager.status', status: 'idle', queued: 0 })
+      return { ...this.messages.find((candidate) => candidate.id === messageId)! }
+    }
+    throw Object.assign(
+      new Error('This message is not the turn Oracle is currently answering.'),
+      { statusCode: 409 },
+    )
+  }
+
+  seedTyped(content: string): string {
+    const timestamp = new Date().toISOString()
+    const message: ManagerMessage = {
+      id: `typed-user-${++this.sequence}`,
+      role: 'user',
+      content,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      state: 'queued',
+    }
+    this.messages.push(message)
+    this.emit('event', { type: 'manager.message', message: { ...message } })
+    return message.id
+  }
+
   resetState(): void {
     this.messages = []
     this.streaming = undefined
     this.currentUserId = undefined
     this.sequence = 0
     this.sends.length = 0
+    this.cancelledMessageIds.length = 0
     this.cancellations = 0
     this.emit('event', { type: 'manager.reset', snapshot: this.snapshot() })
   }
@@ -474,6 +526,14 @@ export class FakeVoiceController {
 
   async finishOracle(content: string): Promise<void> {
     await this.post('/__e2e/manager/finish', { content })
+  }
+
+  async seedTyped(content: string): Promise<string> {
+    const response = await this.page.request.post('/__e2e/manager/typed', {
+      data: { content },
+    })
+    expectOk(response.ok(), await response.text())
+    return (await response.json() as { id: string }).id
   }
 
   async dropNetwork(): Promise<void> {
@@ -854,6 +914,12 @@ async function startFixtureServer(port: number): Promise<void> {
       return { ok: true }
     },
   )
+  built.app.post<{ Body: { content: string } }>(
+    '/__e2e/manager/typed',
+    async (request) => ({
+      id: manager.seedTyped(request.body.content),
+    }),
+  )
   built.app.post('/__e2e/voice/drop', async () => {
     voice.dropNetwork()
     return { ok: true }
@@ -875,6 +941,14 @@ async function startFixtureServer(port: number): Promise<void> {
     streamStarts: voice.streamStarts,
     audioFrames: voice.audioFrames,
     managerSends: [...manager.sends],
+    managerCancellations: [...manager.cancelledMessageIds],
+    managerMessages: manager.snapshot().messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      state: message.state,
+      source: message.source,
+    })),
     synthesizedTexts: [...voice.synthesizedTexts],
     synthesizedSegments: [...voice.synthesizedSegments],
     cancellations: manager.cancellations,

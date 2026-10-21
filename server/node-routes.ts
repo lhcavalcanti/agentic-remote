@@ -369,8 +369,10 @@ export async function registerNodeRoutes(
           let session: VoiceBackendSession | undefined
           let closing: Promise<void> | undefined
           let pendingCloseReason: string | undefined
+          const openAbortController = new AbortController()
           const closeSession = (reason: string) => {
             pendingCloseReason ??= reason
+            openAbortController.abort()
             if (!session) return Promise.resolve()
             closing ??= session.close(pendingCloseReason)
             return closing
@@ -403,6 +405,7 @@ export async function registerNodeRoutes(
               failure.retryable && failure.cause === 'transport' ? 1012 : failure.code,
               closeReason(failure.reason),
             ),
+            signal: openAbortController.signal,
           }).then(async (opened) => {
             session = opened
             if (pendingCloseReason || socket.readyState !== socket.OPEN) {

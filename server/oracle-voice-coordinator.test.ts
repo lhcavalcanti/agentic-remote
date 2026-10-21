@@ -1640,7 +1640,7 @@ describe('OracleVoiceCoordinator', () => {
     await test.coordinator.managerEvent({
       type: 'manager.delta',
       messageId: 'old-reply',
-      content: 'Old spoken sentence.',
+      content: 'Old spoken sentence. Pending',
     })
     const oldSegment = test.backend.controls.find(
       (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
@@ -1654,7 +1654,7 @@ describe('OracleVoiceCoordinator', () => {
     await test.coordinator.managerEvent({
       type: 'manager.delta',
       messageId: 'old-reply',
-      content: 'Old spoken sentence. More stale text.',
+      content: 'Old spoken sentence. More stale text. Pending',
     })
     await test.coordinator.managerEvent({
       type: 'manager.message',
@@ -1686,7 +1686,7 @@ describe('OracleVoiceCoordinator', () => {
     await test.coordinator.managerEvent({
       type: 'manager.delta',
       messageId: 'voice-reply',
-      content: 'Current sentence.',
+      content: 'Current sentence. Pending',
     })
     const active = test.backend.controls.find(
       (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
@@ -1784,7 +1784,7 @@ describe('OracleVoiceCoordinator', () => {
     await test.coordinator.managerEvent({
       type: 'manager.delta',
       messageId: 'current-reply',
-      content: 'Current sentence.',
+      content: 'Current sentence. Pending',
     })
     const first = test.backend.controls.find(
       (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>

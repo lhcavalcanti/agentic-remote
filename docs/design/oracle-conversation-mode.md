@@ -183,8 +183,11 @@ session implementation without network relay.
 
 The backend runs native inference in an isolated child process. A native crash
 or malformed model cannot terminate the Agentic Remote server. The child stays
-warm, creates one recognizer stream per utterance, emits partial and final
-transcripts, and runs one TTS generation at a time. Its parent enforces:
+warm, creates one recognizer stream per browser speech segment, emits partial
+and final transcripts, and runs one TTS generation at a time. Internal sherpa
+endpoints reset decoding and accumulate text; they do not finalize the browser
+segment. After the ordered PCM drain, one browser `speech_end` produces one
+combined final transcript. Its parent enforces:
 
 - maximum frame size, audio seconds, queue bytes, and utterance duration;
 - monotonic generation and sequence ordering;
@@ -257,8 +260,10 @@ models.
 3. **Confirmed speech:** the browser clears playback, advances generation,
    sends `interrupt`, then flushes pre-roll and live PCM. The hub cancels
    pending TTS and invokes `ManagerAgent.cancel`.
-4. **Endpoint:** client VAD supplies a hint. The server recognizer and maximum
-   silence/utterance timers make the authoritative finalization decision.
+4. **Endpoint:** client VAD supplies the segment-end hint after its redemption
+   window. Internal recognizer endpoints are decoding boundaries only. The
+   server drains all accepted PCM before finalization and enforces the maximum
+   utterance and operation limits.
 5. **Final transcript:** the hub records the utterance ID before submitting it
    once to Oracle. A duplicate final is ignored. A failed submission is shown
    as an error and is not silently retried.
@@ -274,9 +279,12 @@ cancelling Oracle or losing queued audio.
 
 The segmenter consumes replacement snapshots, not append-only deltas. It emits
 only text that is both new and terminated by stable sentence punctuation or a
-paragraph boundary. It strips markdown control syntax, skips fenced code,
-tables, URLs, and activity-only messages, and caps segment length. On the final
-assistant message it may flush a short remaining sentence.
+paragraph boundary. Punctuation at the transient snapshot suffix is held until
+a later snapshot confirms following content or the final assistant message
+arrives; completed list lines are confirmed by their line break. It strips
+markdown control syntax, skips fenced code, tables, URLs, and activity-only
+messages, and caps segments at 150 characters. On the final assistant message
+it may flush a short remaining sentence.
 
 Previously emitted text is tracked by source message ID and character range.
 Any non-prefix rewrite invalidates only the unsynthesized suffix. A rewrite

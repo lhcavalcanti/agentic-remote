@@ -23,6 +23,7 @@ interface RealVoiceState {
       audioEndEvents: number
       audioAfterCancellation: number
       cancelled: boolean
+      synthesizedCharacters: number[]
     }>
     fatalError?: string
   }
@@ -38,6 +39,11 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   expect(wave.sampleRate).toBe(16_000)
   expect(wave.channels).toBe(1)
   const samples = Array.from(wave.samples, (sample) => sample / 32_768)
+  const browserSegment = [
+    ...samples,
+    ...new Array<number>(Math.round(wave.sampleRate * 1.3)).fill(0),
+    ...samples,
+  ]
 
   await installFakeBrowserVoice(page)
   expect((await page.request.post('/__e2e/reset')).ok()).toBe(true)
@@ -48,13 +54,13 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
 
   await page.waitForFunction(() => Boolean(window.__oracleVoiceE2E.vad))
   await page.evaluate(() => {
-    window.__oracleVoiceE2E.vadFrameDelayMs = 20
+    window.__oracleVoiceE2E.vadFrameDelayMs = 80
   })
   const firstStartedAt = Date.now()
   await page.evaluate(() => window.__oracleVoiceE2E.vad?.beginSpeech())
   await page.evaluate(
     (audio) => window.__oracleVoiceE2E.vad?.pushAudio(audio),
-    samples,
+    browserSegment,
   )
   await expect(page.locator('[aria-live="polite"]')).not.toBeEmpty()
   await page.evaluate(() => window.__oracleVoiceE2E.vad?.endSpeech())
@@ -63,7 +69,7 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   }).toBe(1)
   const firstState = await realState(page)
   const transcript = firstState.managerSends[0]
-  expect(transcript.length).toBeGreaterThan(0)
+  expect(transcript.trim().split(/\s+/).length).toBeGreaterThan(12)
   await expect(page.getByText(transcript, { exact: true })).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('')
   expect(Date.now() - firstStartedAt).toBeLessThan(30_000)
@@ -73,11 +79,9 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
     window.__oracleVoiceE2E.playbackStartDelayMs = 1_500
   })
   await post(page, '/__e2e/manager/delta', {
-    content: 'The verified systems are healthy.',
+    content: 'The verified systems are healthy. Additional',
   })
-  await expect(page.getByText('The verified systems are healthy.', {
-    exact: true,
-  })).toBeVisible()
+  await expect(page.getByText(/The verified systems are healthy/)).toBeVisible()
   await expect.poll(async () => {
     const state = await realState(page)
     return state.metrics.fatalError ?? state.metrics.ttsFirstAudioMs
@@ -113,15 +117,26 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
 
   await page.evaluate(
     (audio) => window.__oracleVoiceE2E.vad?.pushAudio(audio),
-    samples,
+    browserSegment,
   )
   await page.evaluate(() => window.__oracleVoiceE2E.vad?.endSpeech())
   await expect.poll(async () => (await realState(page)).managerSends.length, {
     timeout: 30_000,
   }).toBe(2)
   await post(page, '/__e2e/manager/delta', {
-    content: 'The replacement generation is audible.',
+    content: [
+      'The replacement generation is audible.',
+      '',
+      '- First local check is complete.',
+      '- Second local check is complete.',
+      'Next',
+    ].join('\n'),
   })
+  await expect.poll(async () => (
+    await realState(page)
+  ).metrics.generations['2']?.audioEndEvents ?? 0, {
+    timeout: 30_000,
+  }).toBe(3)
   await expect.poll(async () => (
     await browserAudioState(page)
   ).started.filter(({ generation }) => generation === 2).length, {
@@ -147,6 +162,10 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   expect(finalState.metrics.audioAfterCancellation).toBe(0)
   expect(finalState.metrics.generations['1']?.cancelled).toBe(true)
   expect(finalState.metrics.generations['1']?.audioAfterCancellation).toBe(0)
+  expect(finalState.metrics.generations['2']?.synthesizedCharacters).toHaveLength(3)
+  expect(finalState.metrics.generations['2']?.synthesizedCharacters.every(
+    (characters) => characters <= 150,
+  )).toBe(true)
   expect(oldAudioStartsAfterInterruption).toBe(0)
   const outputPath = process.env.AGENTIC_REMOTE_REAL_E2E_OUTPUT
   if (outputPath) {

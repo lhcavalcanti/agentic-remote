@@ -369,6 +369,8 @@ describe('ChildVoiceEngine parent supervision', () => {
 
       reset(stream: FakeSherpaStream): void {
         stream.reset += 1
+        stream.text = ''
+        this.decodeCount = 0
       }
     }
     const OfflineTts = {
@@ -641,9 +643,9 @@ describe('ChildVoiceEngine parent supervision', () => {
       }])
     })
 
-    it('finalizes at a recognizer endpoint without duplicating final on speech end', async () => {
+    it('joins recognizer endpoints until the browser speech segment ends', async () => {
       const harness = childHarness({
-        outputs: ['endpoint text'],
+        outputs: ['first clause', 'second clause'],
         endpointAfterDecode: 1,
       })
       await initializeWorker(harness)
@@ -671,6 +673,22 @@ describe('ChildVoiceEngine parent supervision', () => {
         },
       })
       await harness.worker.handle({
+        type: 'stt_audio',
+        requestId: 'audio-2',
+        frame: {
+          direction: 'microphone',
+          streamId: 'stream-2',
+          generation: 2,
+          utteranceId: 'utterance-2',
+          sequence: 1,
+          sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+          samples: Int16Array.of(2),
+        },
+      })
+      expect(workerEvents(harness.messages)
+        .filter((event) => event.type === 'final')).toEqual([])
+
+      await harness.worker.handle({
         type: 'stt_end',
         requestId: 'end',
         input: {
@@ -681,7 +699,13 @@ describe('ChildVoiceEngine parent supervision', () => {
       })
 
       expect(workerEvents(harness.messages)
-        .filter((event) => event.type === 'final')).toHaveLength(1)
+        .filter((event) => event.type === 'final')).toEqual([{
+        type: 'final',
+        streamId: 'stream-2',
+        generation: 2,
+        utteranceId: 'utterance-2',
+        text: 'first clause second clause',
+      }])
     })
 
     it('rejects audio beyond the maximum utterance without feeding it to sherpa', async () => {

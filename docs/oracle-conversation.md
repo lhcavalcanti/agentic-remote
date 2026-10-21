@@ -195,10 +195,12 @@ exceptions after stop.
 
 Resident VITS still invokes progress only with the complete sentence, so it is
 not engine-incremental within a sentence. The worker validates that complete
-result before splitting it into protocol-safe frames. A sentence remains
-bounded to 12 seconds at the native voice sample rate and fails explicitly
-before playback when the bound is exceeded. Oracle text remains available when
-synthesis fails.
+result before splitting it into protocol-safe frames. Speakable segments are
+capped at 150 characters and completed list lines are synthesized separately.
+A segment remains bounded to 12 seconds at the native voice sample rate and
+fails explicitly before playback when the bound is exceeded. That segment is
+skipped without closing Conversation; later segments continue, and Oracle text
+remains available.
 
 ## Remove or replace
 

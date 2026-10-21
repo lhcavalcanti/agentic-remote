@@ -374,6 +374,50 @@ describe('VoiceBackendSession', () => {
     )).map((call) => call.type)).toEqual(['stt.accept', 'stt.end'])
   })
 
+  it('does not end an utterance finalized while queued audio drains', async () => {
+    let acceptStarted!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => {
+      acceptStarted = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    class BlockingEngine extends FakeVoiceEngine {
+      override async accept(input: VoiceUtteranceAudioFrame): Promise<void> {
+        acceptStarted()
+        await gate
+        this.emit({
+          type: 'final',
+          streamId,
+          generation: 2,
+          utteranceId: 'u2',
+          text: 'Completed during drain',
+        })
+        await super.accept(input)
+      }
+    }
+    const { engine, sent, session, terminated } = harness(new BlockingEngine())
+    await beginUtterance(session)
+    await session.audio(frame(2, 0))
+    await started
+
+    const ending = session.control(control('speech_end', 2, {
+      utteranceId: 'u2',
+    }))
+    release()
+    await expect(ending).resolves.toBeUndefined()
+
+    await vi.waitFor(() => {
+      expect(sent).toContainEqual(expect.objectContaining({
+        type: 'final',
+        text: 'Completed during drain',
+      }))
+    })
+    expect(engine.calls.some((call) => call.type === 'stt.end')).toBe(false)
+    expect(terminated).toEqual([])
+  })
+
   it('echoes heartbeats and closes an idle active utterance explicitly', async () => {
     vi.useFakeTimers()
     try {
@@ -544,6 +588,48 @@ describe('VoiceBackendSession', () => {
       generation: 2,
     })
     release()
+  })
+
+  it('reports one failed synthesis segment without closing the conversation', async () => {
+    class RejectOnceEngine extends FakeVoiceEngine {
+      private attempts = 0
+
+      override async synthesize(
+        input: Parameters<FakeVoiceEngine['synthesize']>[0],
+      ): Promise<void> {
+        this.attempts += 1
+        if (this.attempts === 1) throw new Error('segment is too long')
+        await super.synthesize(input)
+      }
+    }
+    const { engine, sent, session, terminated } = harness(new RejectOnceEngine())
+    await session.control(control('start', 2, { language: 'en' }))
+    await session.control(control('synthesize', 2, {
+      segmentId: 'segment-2',
+      text: 'This segment fails.',
+    }))
+
+    await vi.waitFor(() => {
+      expect(sent).toContainEqual(expect.objectContaining({
+        type: 'error',
+        code: 'tts_failed',
+        fatal: false,
+      }))
+      expect(sent).toContainEqual(expect.objectContaining({
+        type: 'audio_end',
+        segmentId: 'segment-2',
+      }))
+    })
+    expect(terminated).toEqual([])
+
+    await expect(session.control(control('synthesize', 2, {
+      segmentId: 'segment-3',
+      text: 'The next segment still runs.',
+    }))).resolves.toBeUndefined()
+    expect(engine.calls).toContainEqual(expect.objectContaining({
+      type: 'tts.synthesize',
+      segmentId: 'segment-3',
+    }))
   })
 
   it('clears stale synthesis identity when speech confirmation advances the generation', async () => {

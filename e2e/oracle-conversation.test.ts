@@ -42,6 +42,8 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   await expect(page.getByText('Two sessions', { exact: true })).toBeVisible()
   await voice.oracleDelta('Two sessions are still running.')
   await expect(page.getByText('Two sessions are still running.', { exact: true })).toBeVisible()
+  expect((await voice.snapshot()).synthesizedTexts).toEqual([])
+  await voice.finishOracle('Two sessions are still running.')
   await expect.poll(async () => (await voice.snapshot()).synthesizedTexts).toEqual([
     'Two sessions are still running.',
   ])
@@ -50,7 +52,6 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
     'Two sessions are still running.',
   ])
 
-  await voice.finishOracle('Two sessions are still running.')
   await voice.speak('Which one needs attention?', {
     partial: 'Which one needs',
   })
@@ -62,7 +63,7 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   await page.evaluate(() => {
     window.__oracleVoiceE2E.playbackStartDelayMs = 1_500
   })
-  await voice.oracleDelta('This synthesis is cancelled before playback.')
+  await voice.oracleDelta('This synthesis is cancelled before playback. More')
   await expect.poll(async () => (await voice.snapshot()).synthesizedTexts).toContain(
     'This synthesis is cancelled before playback.',
   )
@@ -96,7 +97,7 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   await page.evaluate(() => {
     window.__oracleVoiceE2E.playbackStartDelayMs = 0
   })
-  await voice.oracleDelta('Summary one is obsolete.')
+  await voice.oracleDelta('Summary one is obsolete. More')
   await expect.poll(() => voice.playedText()).toContain('Summary one is obsolete.')
   expect(await voice.playedText()).not.toContain(
     'This synthesis is cancelled before playback.',
@@ -109,7 +110,7 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
     'Third interruption.',
   ].entries()) {
     await voice.speak(transcript)
-    await voice.oracleDelta(`Fresh response ${index + 1}.`)
+    await voice.oracleDelta(`Fresh response ${index + 1}. More`)
     await expect.poll(() => voice.playedText()).toContain(`Fresh response ${index + 1}.`)
   }
 

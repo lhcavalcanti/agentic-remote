@@ -1080,7 +1080,7 @@ describe('Oracle voice cross-layer integration', () => {
       (message) => message.type === 'final',
     )).toEqual([])
 
-    const firstSnapshot = 'First stable sentence.'
+    const firstSnapshot = 'First stable sentence. Sec'
     const sdkSession = test.manager.client.sessions[0]
     sdkSession.emit({
       type: 'assistant.message_delta',
@@ -1138,13 +1138,14 @@ describe('Oracle voice cross-layer integration', () => {
       segmentId: firstSpeech.segmentId,
     })
 
-    const secondSnapshot =
+    const stableSecondSnapshot =
       'First stable sentence. Second stable sentence.'
+    const secondSnapshot = `${stableSecondSnapshot} Fin`
     sdkSession.emit({
       type: 'assistant.message_delta',
       data: {
         messageId: 'sdk-assistant-1',
-        deltaContent: ' Second stable sentence.',
+        deltaContent: 'ond stable sentence. Fin',
       },
     })
     const secondDelta = await test.events.waitForControl<ManagerEvent>(
@@ -1180,7 +1181,7 @@ describe('Oracle voice cross-layer integration', () => {
       segmentId: secondSpeech.segmentId,
     })
 
-    const finalContent = `${secondSnapshot} Final stored suffix.`
+    const finalContent = `${stableSecondSnapshot} Final stored suffix.`
     sdkSession.emit({
       type: 'assistant.message',
       data: {
@@ -1514,10 +1515,11 @@ describe('Oracle voice cross-layer integration', () => {
       answerOnly: true,
     })
     const managerDeltaSentinel = 'paired-manager-tts-4b027dc1.'
-    manager.emitDelta('remote-assistant', managerDeltaSentinel)
+    const managerDelta = `${managerDeltaSentinel} Pending`
+    manager.emitDelta('remote-assistant', managerDelta)
     await events.waitForControl<ManagerEvent>(
       (event) => event.type === 'manager.delta'
-        && event.content === managerDeltaSentinel,
+        && event.content === managerDelta,
     )
     await vi.waitFor(() => {
       expect(engineCalls(nodeVoice.engine, 'tts.synthesize').map((call) => call.text))
@@ -2039,7 +2041,7 @@ describe('Oracle voice cross-layer integration', () => {
       await vi.waitFor(() => expect(test.manager.send).toHaveBeenCalledOnce())
     }
     if (phase === 'tts' || phase === 'playback') {
-      test.manager.emitDelta('phase-assistant', 'One spoken sentence.')
+      test.manager.emitDelta('phase-assistant', 'One spoken sentence. Pending')
       await vi.waitFor(() => expect(engineCalls(test.engine, 'tts.synthesize')).toHaveLength(1))
     }
     if (phase === 'playback') {
@@ -2221,7 +2223,7 @@ describe('Oracle voice cross-layer integration', () => {
       'First generation.',
       'Current generation.',
     ])
-    rapid.manager.emitDelta('current-assistant', 'Current spoken reply.')
+    rapid.manager.emitDelta('current-assistant', 'Current spoken reply. Pending')
     await vi.waitFor(() => {
       expect(engineCalls(rapid.engine, 'tts.synthesize').map((call) => ({
         generation: call.generation,
@@ -2280,7 +2282,7 @@ describe('Oracle voice cross-layer integration', () => {
       text: 'Create playback.',
     })
     await vi.waitFor(() => expect(slow.manager.send).toHaveBeenCalledOnce())
-    slow.manager.emitDelta('slow-assistant', 'Slow playback sentence.')
+    slow.manager.emitDelta('slow-assistant', 'Slow playback sentence. Pending')
     await vi.waitFor(() => expect(engineCalls(slow.engine, 'tts.synthesize')).toHaveLength(1))
     const slowSpeech = engineCalls(slow.engine, 'tts.synthesize')[0]
     const slowClose = closeEvent(slow.browser)

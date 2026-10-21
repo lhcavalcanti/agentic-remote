@@ -108,6 +108,7 @@ interface ActiveUtterance {
   generation: number
   utteranceId: string
   stream: SherpaStream
+  completedTexts: string[]
   sampleCount: number
   nextSequence: number
   lastText: string
@@ -319,6 +320,7 @@ class ResidentVoiceWorker implements VoiceWorker {
       generation: input.generation,
       utteranceId: input.utteranceId,
       stream,
+      completedTexts: [],
       sampleCount: 0,
       nextSequence: 0,
       lastText: '',
@@ -350,7 +352,7 @@ class ResidentVoiceWorker implements VoiceWorker {
     })
     await this.decodeAvailable(utterance)
     if (this.requireRecognizer().isEndpoint(utterance.stream)) {
-      await this.finalizeUtterance(utterance, false)
+      this.captureEndpoint(utterance)
     }
   }
 
@@ -391,7 +393,10 @@ class ResidentVoiceWorker implements VoiceWorker {
     utterance.stream.inputFinished()
     await this.decodeAvailable(utterance)
     const recognizer = this.requireRecognizer()
-    const text = recognizer.getResult(utterance.stream).text
+    const text = combinedTranscript(
+      utterance.completedTexts,
+      recognizer.getResult(utterance.stream).text,
+    )
     if (!this.isCancelled(utterance)) {
       await this.emit({
         type: 'final',
@@ -408,7 +413,10 @@ class ResidentVoiceWorker implements VoiceWorker {
     const recognizer = this.requireRecognizer()
     while (recognizer.isReady(utterance.stream)) {
       recognizer.decode(utterance.stream)
-      const text = recognizer.getResult(utterance.stream).text
+      const text = combinedTranscript(
+        utterance.completedTexts,
+        recognizer.getResult(utterance.stream).text,
+      )
       if (
         text !== utterance.lastText
         && !this.isCancelled(utterance)
@@ -423,6 +431,13 @@ class ResidentVoiceWorker implements VoiceWorker {
         })
       }
     }
+  }
+
+  private captureEndpoint(utterance: ActiveUtterance): void {
+    const recognizer = this.requireRecognizer()
+    const text = recognizer.getResult(utterance.stream).text.trim()
+    if (text.length > 0) utterance.completedTexts.push(text)
+    recognizer.reset(utterance.stream)
   }
 
   private cancelStt(input: VoiceGenerationIdentity): void {
@@ -739,6 +754,12 @@ function pcm16ToFloat32(samples: Int16Array): Float32Array {
     converted[index] = samples[index] / 32_768
   }
   return converted
+}
+
+function combinedTranscript(completedTexts: string[], currentText: string): string {
+  return [...completedTexts, currentText.trim()]
+    .filter((text) => text.length > 0)
+    .join(' ')
 }
 
 function float32ToPcm16(samples: Float32Array): Int16Array {

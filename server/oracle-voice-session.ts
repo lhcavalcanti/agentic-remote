@@ -393,6 +393,10 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         this.utteranceEnded = true
         await this.audioDrainPromise
         this.requireOpen()
+        if (this.finalForwarded) {
+          this.activeUtterance = undefined
+          return
+        }
         this.requireUtterance(utterance.generation, utterance.utteranceId)
         await this.engine.stt.end({
           streamId: this.streamId,
@@ -417,13 +421,11 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
           segmentId: message.segmentId,
           text: message.text,
         }).catch((error: unknown) => {
-          if (
-            this.closed
-            || this.generation !== message.generation
-            || this.activeSegmentId !== message.segmentId
-          ) return
-          this.activeSegmentId = undefined
-          void this.fail(asSessionError(error, 1011), 'internal')
+          void this.handleSynthesisFailure(message, error).catch(
+            (deliveryError: unknown) => {
+              void this.fail(asSessionError(deliveryError, 1011), 'internal')
+            },
+          )
         })
         await this.sendControl({
           type: 'state',
@@ -473,6 +475,30 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     if (this.drainingAudio) return
     this.drainingAudio = true
     this.audioDrainPromise = this.drainAudio()
+  }
+
+  private async handleSynthesisFailure(
+    message: Extract<VoiceClientControl, { type: 'synthesize' }>,
+    error: unknown,
+  ): Promise<void> {
+    if (
+      this.closed
+      || this.generation !== message.generation
+      || this.activeSegmentId !== message.segmentId
+    ) return
+    this.activeSegmentId = undefined
+    await this.sendControl({
+      type: 'error',
+      generation: message.generation,
+      code: 'tts_failed',
+      message: asSessionError(error, 1011).message,
+      fatal: false,
+    })
+    await this.sendControl({
+      type: 'audio_end',
+      generation: message.generation,
+      segmentId: message.segmentId,
+    })
   }
 
   private async drainAudio(): Promise<void> {

@@ -34,7 +34,7 @@ export class SpeakableSegmenter {
   private readonly maxSegmentCharacters: number
   private readonly emittedCandidates: EmittedCandidate[] = []
 
-  constructor(messageId: string, maxSegmentCharacters = 320) {
+  constructor(messageId: string, maxSegmentCharacters = 150) {
     validateMessageId(messageId)
     if (!Number.isSafeInteger(maxSegmentCharacters) || maxSegmentCharacters <= 0) {
       throw new Error('maxSegmentCharacters must be a positive integer')
@@ -142,7 +142,9 @@ function collectProseBlocks(snapshot: string): ProseBlock[] {
   }
 
   for (const match of snapshot.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
-    const rawLine = match[0].replace(/\r?\n$/, '')
+    const matchedLine = match[0]
+    const hasLineBreak = /\r?\n$/.test(matchedLine)
+    const rawLine = matchedLine.replace(/\r?\n$/, '')
     if (rawLine.length === 0 && (match.index ?? 0) === snapshot.length) break
     const lineStart = match.index ?? 0
     const lineEnd = lineStart + rawLine.length
@@ -161,6 +163,7 @@ function collectProseBlocks(snapshot: string): ProseBlock[] {
       flush(true)
       continue
     }
+    const listLine = /^(?:[-+*]|\d+[.)])\s+/.test(trimmed)
     const prose = stripMarkdown(trimmed)
     if (/https?:\/\/|www\./i.test(prose)) {
       flush(true)
@@ -168,6 +171,16 @@ function collectProseBlocks(snapshot: string): ProseBlock[] {
     }
 
     if (prose.length > 0) {
+      if (listLine) {
+        flush(true)
+        blocks.push({
+          text: prose,
+          hasBoundary: hasLineBreak,
+          sourceStart: lineStart,
+          sourceEnd: lineEnd,
+        })
+        continue
+      }
       if (currentLines.length === 0) blockStart = lineStart
       blockEnd = lineEnd
       currentLines.push(prose)
@@ -179,15 +192,43 @@ function collectProseBlocks(snapshot: string): ProseBlock[] {
 
 function splitCompletedProse(text: string, allowUnfinished: boolean): ProseSegment[] {
   const segments: ProseSegment[] = []
-  const sentencePattern = /.+?[.!?]+(?:["')\]]+)?(?=\s|$)/g
   let consumed = 0
-  for (const match of text.matchAll(sentencePattern)) {
-    const sentence = normalizeProse(match[0])
-    if (sentence.length > 0) {
-      const start = match.index ?? 0
-      segments.push({ text: sentence, start, end: start + match[0].length })
+  let tokenStart = 0
+  for (let index = 0; index < text.length; index += 1) {
+    if (/\s/.test(text[index])) {
+      tokenStart = index + 1
+      continue
     }
-    consumed = (match.index ?? 0) + match[0].length
+    if (!/[.!?]/.test(text[index])) continue
+
+    let boundaryEnd = index + 1
+    while (boundaryEnd < text.length && /[.!?]/.test(text[boundaryEnd])) {
+      boundaryEnd += 1
+    }
+    while (boundaryEnd < text.length && /["')\]]/.test(text[boundaryEnd])) {
+      boundaryEnd += 1
+    }
+    const followedByWhitespace = (
+      boundaryEnd < text.length && /\s/.test(text[boundaryEnd])
+    )
+    if (!followedByWhitespace && !(allowUnfinished && boundaryEnd === text.length)) {
+      index = boundaryEnd - 1
+      continue
+    }
+    if (
+      text[index] === '.'
+      && isNonTerminalAbbreviation(text.slice(tokenStart, index + 1))
+    ) {
+      index = boundaryEnd - 1
+      continue
+    }
+
+    const sentence = normalizeProse(text.slice(consumed, boundaryEnd))
+    if (sentence.length > 0) {
+      segments.push({ text: sentence, start: consumed, end: boundaryEnd })
+    }
+    consumed = boundaryEnd
+    index = boundaryEnd - 1
   }
 
   const remainder = normalizeProse(text.slice(consumed))
@@ -195,6 +236,12 @@ function splitCompletedProse(text: string, allowUnfinished: boolean): ProseSegme
     segments.push({ text: remainder, start: consumed, end: text.length })
   }
   return segments
+}
+
+function isNonTerminalAbbreviation(token: string): boolean {
+  const normalized = token.replace(/^["'([{\s]+/, '').toLowerCase()
+  return /^(?:[a-z]\.){2,}$/.test(normalized)
+    || /^(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc)\.$/.test(normalized)
 }
 
 function stripMarkdown(line: string): string {

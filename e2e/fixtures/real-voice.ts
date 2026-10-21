@@ -45,6 +45,7 @@ interface RealMetrics {
     audioEndEvents: number
     audioAfterCancellation: number
     cancelled: boolean
+    synthesizedCharacters: number[]
   }>
   fatalError?: string
 }
@@ -106,6 +107,8 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
         const generation = this.generation(input.generation)
         generation.ttsStartedAt = performance.now()
         generation.ttsSamples = 0
+        this.generationObservation(input.generation)
+          .synthesizedCharacters.push(input.text.length)
         await childSession.tts.synthesize(input)
       },
       cancel: async (input) => {
@@ -230,6 +233,7 @@ class InstrumentedRealEngine implements VoiceEngineFactory {
       audioEndEvents: 0,
       audioAfterCancellation: 0,
       cancelled: false,
+      synthesizedCharacters: [],
     }
   }
 

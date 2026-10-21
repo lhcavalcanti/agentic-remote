@@ -367,6 +367,91 @@ The monitor is machine-local orchestration. It is intentionally not an
 Agentic Remote application command and must not be required by the hub or node
 runtime.
 
+## Merge gate
+
+The [advisory hosted check](#advisory-hosted-check) runs only a quick subset,
+so a pull request is merge-ready only when the full gate has passed on its
+exact final head. Run it from a checkout of this
+repository on a host with the operator's `gh` authentication:
+
+```bash
+bin/agentic-remote-gate <PR-number|full-sha> [--repo owner/name] [--no-status] [--no-wait]
+```
+
+1. A pull request number resolves to its current head SHA; anything else must
+   be a full 40-character SHA. The repository defaults to this checkout's
+   `origin`.
+2. The gate posts a `pending` `agentic-remote/full-gate` commit status, clones
+   the repository afresh into a private temporary directory, fetches that exact
+   SHA (which also reaches pull request heads absent from a plain clone),
+   detaches to it, and refuses to continue unless `HEAD` equals the SHA.
+3. It runs `pnpm install --frozen-lockfile --ignore-scripts
+   --ignore-pnpmfile`, `pnpm rebuild` (the dependency build scripts the
+   lockfile allows), `pnpm check`, then `NODE_ENV=production pnpm check` in the
+   same clone, through the Corepack pnpm the `packageManager` field pins to a
+   plain release version (anything else fails). The tree, untracked files
+   included, must stay clean and on the SHA after each step.
+4. It posts `success` with the Vitest counts and total duration, for example
+   `normal+production: 5099 passed, 1 skipped (58m)`, only when both checks
+   exit cleanly and each reports passed tests and no failed ones. Any failure,
+   including install failure, a `HEAD` mismatch, a dirty tree, a missing or
+   unparseable test summary, an unusable sandbox, or an interrupt, posts
+   `failure`; so does the exit path when the final status cannot be posted.
+   Descriptions carry counts and durations only, never paths, output, or
+   secrets. `--no-status` posts nothing.
+5. Logs and a `summary` stay in
+   `${XDG_STATE_HOME:-~/.local/state}/agentic-remote/gates/<sha>/`
+   (`clone.log`, `sandbox.log`, `install.log`, `rebuild.log`, `egress.log`,
+   `check.log`, `production-check.log`). The temporary clone is removed however the gate
+   ends.
+
+Install, dependency build, and both checks run pull-request code, so they run
+in a [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox
+that the gate requires. The sandbox gets every namespace unshared, including
+the network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
+`NODE_ENV` for the production run) that `bwrap` itself is also started with,
+since it stays visible inside as PID 1, a private `HOME` (holding its own
+Corepack `pnpm` shim) inside the temporary directory, an empty tmpfs over the
+real home, `/run`, and `/tmp` (fresh for each phase), read-only system
+directories plus the Node toolchain's `bin` and `lib/node_modules`, and one
+writable directory holding the clone and that `HOME`. So no
+token, `gh` or SSH configuration, agent socket, the operator's tmux server, or
+any host service (loopback, LAN, or tailnet) is reachable, and pnpm and
+Corepack caches are per gate. Only the gate itself, outside the sandbox, calls
+`gh`.
+
+- **Network.** The checks run with only the sandbox's own loopback. Install and
+  dependency build, which download packages and binaries such as
+  `ffmpeg-static`'s, reach the outside only through a proxy the gate runs
+  outside the sandbox. It allows `CONNECT` to port 443 of globally routable
+  addresses only, so host, private, link-local, and tailnet addresses stay
+  unreachable even there, and logs refusals to `egress.log`.
+- **Git.** The clone's git directory sits outside the writable directory and is
+  mounted read-only. The gate's own git commands after each phase name it
+  explicitly with the clone as the work tree, ignore system and global
+  configuration, disable fsmonitor, hooks, and attribute and exclude files,
+  and never enter submodules (whose repositories the sandbox could fill), so a
+  replaced, symlinked, or re-initialised clone cannot run anything outside the
+  sandbox; a clone that is no longer a plain directory fails the gate.
+- **Mounts and cleanup.** Nothing the sandbox can write is ever a mount source
+  or followed by the gate: the writable directory itself is mounted, never a
+  path inside it, so a symlink one phase leaves there cannot redirect the next
+  phase's mounts. Logs are written by the gate into its state directory, which
+  the sandbox cannot see, and cleanup removes links without following them.
+
+When `bwrap` is missing or cannot start (for example where unprivileged user
+namespaces are blocked), the gate posts `failure` and never runs the checks
+unsandboxed.
+
+Each check takes about half an hour, and suites on one host interfere through
+real tmux, so gates hold a host-wide lock: a second gate waits for the first,
+or fails at once with `--no-wait`. Avoid running other full suites on the host
+meanwhile.
+
+A ruleset on `main` requires the `agentic-remote/full-gate` status, with an
+administrator bypass. A new push needs a new gate, because the status belongs
+to the commit that was tested.
+
 ## Advisory hosted check
 
 `.github/workflows/light-check.yml` gives each pull request head fast feedback

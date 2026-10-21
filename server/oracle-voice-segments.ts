@@ -303,6 +303,8 @@ function alignCandidateSequences(
   emitted: EmittedCandidate[],
   candidates: SpeakableCandidate[],
 ): CandidateAlignment[] {
+  // A deletion destroys positional identity. Treat later unmatched prose as
+  // fresh rather than silently dropping text whose intent cannot be inferred.
   const allowPositionalRewrite = emitted.every(({ present }) => present)
   return alignCandidateRanges(
     emitted,

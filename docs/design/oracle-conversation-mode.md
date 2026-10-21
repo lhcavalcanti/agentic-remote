@@ -280,7 +280,10 @@ assistant message it may flush a short remaining sentence.
 
 Previously emitted text is tracked by source message ID and character range.
 Any non-prefix rewrite invalidates only the unsynthesized suffix. A rewrite
-cannot cause already spoken text to be spoken again.
+cannot cause the same already spoken text to be spoken again. Once a deletion
+makes positional identity ambiguous, unmatched completed prose is treated as
+new instead of being silently dropped; replacement snapshots do not carry
+semantic intent that could distinguish a correction from a new sentence.
 
 ## State and UX
 

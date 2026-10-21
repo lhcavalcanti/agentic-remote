@@ -427,7 +427,7 @@
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
     "docs/deployment-promotion.md": "e2b4bdd37fd6398bb342edb8b5c89334146a0058086cdf3ad3b3af2ebffeb71d",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
-    "docs/design/oracle-conversation-mode.md": "9db6a848e43b8fb45cc8c135ec584aeadae391981594709de40d9cf6e1af07e5",
+    "docs/design/oracle-conversation-mode.md": "a37244f33bedadd9688477b332ef75c0c8dfc445aa4e40cc1154ae555d81a881",
     "docs/design/session-manager.md": "801cb712de84d82c60b8b6d7694c0a6e17b61b89a1db4262696e3161048b6b95",
     "docs/design/settings-profile.md": "55cbb79747e67bf7fb637c8446d514ae815998733602979898f9cf51826848b3",
     "docs/licenses/oracle-voice-browser.txt": "5c95620c5edfa4f80c62ad4c638444f7953bbc02e885f6834f173500633acd7b",
@@ -588,7 +588,7 @@
     "server/oracle-voice-routes.ts": "2409bd9f85ab5c48bd8794dd0ad2dc5bb572f167868bef199b37267d6142421d",
     "server/oracle-voice-security.test.ts": "3a0e5309b9b3f6674a327f3ec6546c6d1946826dfd126c1bf7b3078d6a9c6b0d",
     "server/oracle-voice-segments.test.ts": "d581189600c05a979e618f24ea6a7102a6f15dc6afef4dc4c7cf0452f65b6973",
-    "server/oracle-voice-segments.ts": "c76243fc9452f57f2e02a9d3a441779099ee9cd9f067c362df4687441789be4e",
+    "server/oracle-voice-segments.ts": "8f069cdeb25a88e64dfe308113ffac04d18a1dbfad10279f6019bc12b6df2faa",
     "server/oracle-voice-session.test.ts": "4c04d048fbef6f7d672c455d5718031c4c04fe5abe7f5002b6c00468b1441dfc",
     "server/oracle-voice-session.ts": "f2d0ce1ddadb2cc2e0740bbf746a9ca1117be31a4e06f52ae34c5b9e95243662",
     "server/oracle-voice-sherpa-import.test.ts": "e1028f2a41f71e0b3eefff5a76e01064cb6ea3831770a8e90e16769927fd74bb",
@@ -929,16 +929,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6be5fb36a4220fa08e144a842c9fac01fb5326ea958721e2ce38865a50ce7412",
+    "GRAPH_REPORT.md": "f94ccb3ed4eccc4d650a379b2c0e75f66c3e49623d8cb32f9c5e6df358184dc9",
     "communities.json": "c7446807f77e056a06de301a106d470e702760eedefde9555f32c01fdaae9bea",
-    "graph.html": "38cef5385c3432af6ca95b944214ce48de927193aeebdeb7119258bb24dfcac6",
-    "graph.json": "61082eabccaacd91a73fdd9519818245dec5995888873d9e34f3bdaa620c60c7"
+    "graph.html": "392f78bc145f9401425ca360eb79a44f6d4c7517571c6dc028efd059fdf26a42",
+    "graph.json": "884dc1e24657a642ebc2282cf2f5dc68b81cacdfe1435486a227df3a87f4e878"
   },
   "schema_version": 1,
-  "source_commit": "8a35b328093a2c90d1a147756c334af76e9dbd4e",
-  "source_fingerprint": "2f168cd0e522e60e19dc914ceb5c04ffbfdc7689814e4c9709ded8c9c4d525d6",
+  "source_commit": "fb5d3aecc4ffc724352d42f823f2a9a519c5eccf",
+  "source_fingerprint": "b214ef67e59f70ebda583ca8479aadd511e8d0e1220bc853327f93af63d631f8",
   "working_tree_changes": [
-    "server/oracle-voice-segments.test.ts",
+    "docs/design/oracle-conversation-mode.md",
     "server/oracle-voice-segments.ts"
   ]
 }

@@ -215,11 +215,11 @@ async function receiveNodeVoiceMessage(
   isBinary: boolean,
   limits: VoiceBackendSessionLimits,
 ): Promise<void> {
+  if (rawDataByteLength(data) > limits.maxFrameBytes) {
+    throw new VoiceSessionError('Node voice frame is too large', 1009)
+  }
   if (isBinary) {
     const buffer = rawDataBuffer(data)
-    if (buffer.byteLength > limits.maxFrameBytes) {
-      throw new VoiceSessionError('Node voice frame is too large', 1009)
-    }
     const frame = decodeVoiceAudioFrame(exactArrayBuffer(buffer))
     if (frame.direction !== 'microphone') {
       throw new VoiceSessionError('Node voice clients may send microphone audio only', 1008)
@@ -276,6 +276,11 @@ function closeVoiceSocket(socket: WebSocket, error: unknown): void {
         1011,
       )
   socket.close(failure.closeCode, closeReason(failure.message))
+}
+
+function rawDataByteLength(data: WebSocket.RawData): number {
+  if (!Array.isArray(data)) return data.byteLength
+  return data.reduce((total, chunk) => total + chunk.byteLength, 0)
 }
 
 function rawDataBuffer(data: WebSocket.RawData): Buffer {
@@ -369,6 +374,8 @@ export async function registerNodeRoutes(
           let session: VoiceBackendSession | undefined
           let closing: Promise<void> | undefined
           let pendingCloseReason: string | undefined
+          let pendingInputBytes = 0
+          let inputClosed = false
           const openAbortController = new AbortController()
           const closeSession = (reason: string) => {
             pendingCloseReason ??= reason
@@ -378,19 +385,36 @@ export async function registerNodeRoutes(
             return closing
           }
           socket.on('message', (data, isBinary) => {
+            if (inputClosed) return
             if (!session) {
+              inputClosed = true
               socket.close(1008, 'Oracle voice backend is not ready')
               return
             }
+            const bytes = rawDataByteLength(data)
+            if (bytes > voiceLimits.maxFrameBytes) {
+              inputClosed = true
+              socket.close(1009, 'Node voice frame is too large')
+              return
+            }
+            if (bytes > voiceLimits.maxQueueBytes - pendingInputBytes) {
+              inputClosed = true
+              socket.close(1013, 'Node voice input queue is full')
+              return
+            }
+            pendingInputBytes += bytes
             void receiveNodeVoiceMessage(
               session,
               streamId,
               data,
               isBinary,
               voiceLimits,
-            ).catch(
-              (error: unknown) => closeVoiceSocket(socket, error),
-            )
+            ).catch((error: unknown) => {
+              inputClosed = true
+              closeVoiceSocket(socket, error)
+            }).finally(() => {
+              pendingInputBytes -= bytes
+            })
           })
           socket.on('close', () => {
             void closeSession('Node voice socket closed')

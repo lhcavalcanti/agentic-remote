@@ -990,6 +990,118 @@ describe('multi-node hub', () => {
     }
   })
 
+  it('rejects an oversized node voice control before parsing it', async () => {
+    const backend = voiceBackend()
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-voice-control-oversized'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      voiceBackend: backend,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = worker.app.server.address() as AddressInfo
+    const socket = await openNodeVoiceSocket(
+      `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+        + `?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-control-oversized`,
+      `Bearer ${worker.identity.token}`,
+    )
+    try {
+      const hello = await nextVoiceControl(socket)
+      if (hello.type !== 'hello') throw new Error('Expected node voice hello')
+      const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+        socket.once('close', (code, reason) => {
+          resolve({ code, reason: reason.toString() })
+        })
+      })
+
+      socket.send('x'.repeat(hello.capabilities.limits.maxFrameBytes + 1))
+
+      await expect(closed).resolves.toEqual({
+        code: 1009,
+        reason: 'Node voice frame is too large',
+      })
+    } finally {
+      socket.close()
+      await worker.app.close()
+      await backend.stop()
+    }
+  })
+
+  it('bounds node voice controls waiting on a slow backend', async () => {
+    let releaseControl!: () => void
+    const controlGate = new Promise<void>((resolve) => {
+      releaseControl = resolve
+    })
+    const control = vi.fn(async () => controlGate)
+    const backend: VoiceBackend = {
+      capability: () => ({
+        available: true,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        playbackSampleRate: 22_050,
+        languages: ['en'],
+        sttProfile: 'zipformer',
+        ttsVoice: 'lessac',
+        resourceClass: 'low',
+      }),
+      limits: () => ({
+        maxFrameBytes: 512,
+        maxQueueBytes: 1_024,
+        maxOutputQueueBytes: 4_096,
+        maxUtteranceMs: 30_000,
+        idleTimeoutMs: 30_000,
+      }),
+      busy: () => false,
+      open: async () => ({
+        control,
+        audio: async () => undefined,
+        close: async () => undefined,
+      }),
+      stop: async () => undefined,
+    }
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-voice-control-queue'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      voiceBackend: backend,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = worker.app.server.address() as AddressInfo
+    const socket = await openNodeVoiceSocket(
+      `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+        + `?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=voice-control-queue`,
+      `Bearer ${worker.identity.token}`,
+    )
+    let closed: { code: number; reason: string } | undefined
+    socket.once('close', (code, reason) => {
+      closed = { code, reason: reason.toString() }
+    })
+    try {
+      await nextVoiceControl(socket)
+      const heartbeat = JSON.stringify({
+        type: 'heartbeat',
+        protocol: ORACLE_VOICE_PROTOCOL,
+        streamId: 'voice-control-queue',
+        generation: 0,
+        timestamp: 1,
+      })
+      const count = Math.floor(1_024 / Buffer.byteLength(heartbeat)) + 1
+      for (let index = 0; index < count; index += 1) socket.send(heartbeat)
+
+      await vi.waitFor(() => expect(closed).toEqual({
+        code: 1013,
+        reason: 'Node voice input queue is full',
+      }), { timeout: 1_000 })
+      expect(control.mock.calls.length).toBeLessThan(count)
+    } finally {
+      releaseControl()
+      socket.close()
+      await worker.app.close()
+      await backend.stop()
+    }
+  })
+
   it('closes a voice session that finishes opening after its socket disconnects', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {

@@ -662,6 +662,44 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.backend.calls).toContain('tts.synthesize:Late answer.')
   })
 
+  it('does not speak typed deltas after an assistantless voice turn completes', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-user', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'voice-utterance'))
+    await test.backend.emit(final(1, 'voice-utterance', 'Answer briefly.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-user', {
+        state: 'done',
+        source: 'voice',
+      }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('typed-user', {
+        state: 'running',
+        source: 'typed',
+      }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.delta',
+      messageId: 'typed-assistant',
+      content: 'Typed work must stay silent.',
+    })
+
+    expect(test.backend.calls.filter((call) => call.startsWith('tts.synthesize:')))
+      .toEqual([])
+    expect(test.browser.filter((message) =>
+      !('direction' in message)
+      && message.type === 'state'
+      && message.generation === 1
+      && message.state === 'listening')).toHaveLength(1)
+  })
+
   it.each(['failed', 'cancelled', 'interrupted'] as const)(
     'does not report listening for an assistantless %s voice turn',
     async (state) => {

@@ -707,7 +707,10 @@ export class OracleVoiceClient {
         || drainRevision !== this.playbackDrainRevision
         || speakingRevision !== this.speakingRevision
         || generation !== this.generation
-        || segmentId !== this.currentPlaybackSegmentId
+        || (
+          this.currentPlaybackSegmentId !== undefined
+          && segmentId !== this.currentPlaybackSegmentId
+        )
         || this.state !== 'speaking'
       ) {
         return

@@ -581,6 +581,23 @@ export class OracleVoiceCoordinator {
           this.activeReplyTo = message.id
           this.segmenter = undefined
           this.segmenterMessageId = undefined
+        } else if (message.source !== 'voice' && this.activeReplyTo) {
+          const voiceMessageId = this.activeReplyTo
+          const submission = this.submissions.get(voiceMessageId)
+          if (submission?.completed) {
+            this.submissions.delete(voiceMessageId)
+            this.activeReplyTo = undefined
+            if (
+              submission.generation === this.currentGeneration
+              && !this.segmenter
+              && !this.segmenterMessageId
+              && !this.activeSpeech
+              && this.speechQueue.length === 0
+              && !this.speechPumpTimer
+            ) {
+              await this.sendState('listening', submission.generation)
+            }
+          }
         }
       } else if (['done', 'failed', 'cancelled', 'interrupted'].includes(
         message.state ?? '',

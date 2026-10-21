@@ -439,6 +439,22 @@ describe('OracleVoiceClient', () => {
     await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
   })
 
+  it('returns to listening when successful synthesis emits no audio frames', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(control('audio_end', 'stream-1', 0, {
+      segmentId: 'silent-segment',
+    }))
+
+    await vi.waitFor(() => expect(client.playbacks[0].endSegment)
+      .toHaveBeenCalledWith(0, 'silent-segment'))
+    client.playbacks[0].drain('silent-segment')
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
+  })
+
   it('ignores drained callbacks superseded by a newer segment, interruption, or close', async () => {
     const client = harness()
     await client.connect('stream-1')

@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "8af24348aa3d6af65d9f5879b27bc36296a5a1da",
+  "built_at_commit": "8a35b328093a2c90d1a147756c334af76e9dbd4e",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -97752,7 +97752,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_segments",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L316",
+      "source_location": "L318",
       "target": "server_oracle_voice_segments_aligncandidateranges",
       "weight": 1.0
     },
@@ -97774,7 +97774,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_segments",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L415",
+      "source_location": "L423",
       "target": "server_oracle_voice_segments_alignsmallcandidateranges",
       "weight": 1.0
     },
@@ -97796,7 +97796,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_segments",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L508",
+      "source_location": "L519",
       "target": "server_oracle_voice_segments_candidateprefixscores",
       "weight": 1.0
     },
@@ -97807,7 +97807,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_segments",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L556",
+      "source_location": "L569",
       "target": "server_oracle_voice_segments_candidatesubstitutioncost",
       "weight": 1.0
     },
@@ -97995,7 +97995,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_segments_aligncandidateranges",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L349",
+      "source_location": "L352",
       "target": "server_oracle_voice_segments_alignsmallcandidateranges",
       "weight": 1.0
     },
@@ -98007,7 +98007,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_segments_aligncandidateranges",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L360",
+      "source_location": "L364",
       "target": "server_oracle_voice_segments_candidateprefixscores",
       "weight": 1.0
     },
@@ -98019,7 +98019,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_segments_aligncandidatesequences",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L306",
+      "source_location": "L307",
       "target": "server_oracle_voice_segments_aligncandidateranges",
       "weight": 1.0
     },
@@ -98031,7 +98031,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_segments_alignsmallcandidateranges",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L441",
+      "source_location": "L450",
       "target": "server_oracle_voice_segments_candidatesubstitutioncost",
       "weight": 1.0
     },
@@ -98043,7 +98043,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_segments_candidateprefixscores",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L538",
+      "source_location": "L550",
       "target": "server_oracle_voice_segments_candidatesubstitutioncost",
       "weight": 1.0
     },
@@ -235860,7 +235860,7 @@
       "label": "alignCandidateRanges()",
       "norm_label": "aligncandidateranges()",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L316"
+      "source_location": "L318"
     },
     {
       "_callable": true,
@@ -235884,7 +235884,7 @@
       "label": "alignSmallCandidateRanges()",
       "norm_label": "alignsmallcandidateranges()",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L415"
+      "source_location": "L423"
     },
     {
       "_callable": true,
@@ -235909,7 +235909,7 @@
       "label": "candidatePrefixScores()",
       "norm_label": "candidateprefixscores()",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L508"
+      "source_location": "L519"
     },
     {
       "_callable": true,
@@ -235921,7 +235921,7 @@
       "label": "candidateSubstitutionCost()",
       "norm_label": "candidatesubstitutioncost()",
       "source_file": "server/oracle-voice-segments.ts",
-      "source_location": "L556"
+      "source_location": "L569"
     },
     {
       "_callable": true,

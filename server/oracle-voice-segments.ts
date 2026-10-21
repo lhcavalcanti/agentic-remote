@@ -303,6 +303,7 @@ function alignCandidateSequences(
   emitted: EmittedCandidate[],
   candidates: SpeakableCandidate[],
 ): CandidateAlignment[] {
+  const allowPositionalRewrite = emitted.every(({ present }) => present)
   return alignCandidateRanges(
     emitted,
     0,
@@ -310,6 +311,7 @@ function alignCandidateSequences(
     candidates,
     0,
     candidates.length,
+    allowPositionalRewrite,
   )
 }
 
@@ -320,6 +322,7 @@ function alignCandidateRanges(
   candidates: SpeakableCandidate[],
   candidateStart: number,
   candidateEnd: number,
+  allowPositionalRewrite: boolean,
 ): CandidateAlignment[] {
   const emittedLength = emittedEnd - emittedStart
   const candidateLength = candidateEnd - candidateStart
@@ -353,6 +356,7 @@ function alignCandidateRanges(
       candidates,
       candidateStart,
       candidateEnd,
+      allowPositionalRewrite,
     )
   }
 
@@ -365,6 +369,7 @@ function alignCandidateRanges(
     candidateStart,
     candidateEnd,
     false,
+    allowPositionalRewrite,
   )
   const backward = candidatePrefixScores(
     emitted,
@@ -374,6 +379,7 @@ function alignCandidateRanges(
     candidateStart,
     candidateEnd,
     true,
+    allowPositionalRewrite,
   )
   let candidateOffset = 0
   let bestCost = Number.POSITIVE_INFINITY
@@ -400,6 +406,7 @@ function alignCandidateRanges(
       candidates,
       candidateStart,
       candidateMiddle,
+      allowPositionalRewrite,
     ),
     ...alignCandidateRanges(
       emitted,
@@ -408,6 +415,7 @@ function alignCandidateRanges(
       candidates,
       candidateMiddle,
       candidateEnd,
+      allowPositionalRewrite,
     ),
   ]
 }
@@ -419,6 +427,7 @@ function alignSmallCandidateRanges(
   candidates: SpeakableCandidate[],
   candidateStart: number,
   candidateEnd: number,
+  allowPositionalRewrite: boolean,
 ): CandidateAlignment[] {
   const emittedLength = emittedEnd - emittedStart
   const candidateLength = candidateEnd - candidateStart
@@ -441,6 +450,7 @@ function alignSmallCandidateRanges(
       const substitutionPrimary = candidateSubstitutionCost(
         emitted[emittedStart + emittedOffset],
         candidates[candidateStart + candidateOffset],
+        allowPositionalRewrite,
       ) + primary[emittedOffset + 1][candidateOffset + 1]
       const insertionPrimary = 1 + primary[emittedOffset][candidateOffset + 1]
       const deletionPrimary = 1 + primary[emittedOffset + 1][candidateOffset]
@@ -476,6 +486,7 @@ function alignSmallCandidateRanges(
     const substitutionPrimary = candidateSubstitutionCost(
       emitted[emittedStart + emittedOffset],
       candidates[candidateStart + candidateOffset],
+      allowPositionalRewrite,
     ) + primary[emittedOffset + 1][candidateOffset + 1]
     if (primary[emittedOffset][candidateOffset] === substitutionPrimary) {
       alignments.push({
@@ -513,6 +524,7 @@ function candidatePrefixScores(
   candidateStart: number,
   candidateEnd: number,
   reverse: boolean,
+  allowPositionalRewrite: boolean,
 ): Float64Array {
   const emittedLength = emittedEnd - emittedStart
   const candidateLength = candidateEnd - candidateStart
@@ -538,6 +550,7 @@ function candidatePrefixScores(
       const substitutionPrimary = candidateSubstitutionCost(
         emitted[emittedIndex],
         candidates[candidateIndex],
+        allowPositionalRewrite,
       ) + previousPrimary[candidateOffset - 1]
       const insertionPrimary = 1 + currentPrimary[candidateOffset - 1]
       const deletionPrimary = 1 + previousPrimary[candidateOffset]
@@ -556,7 +569,9 @@ function candidatePrefixScores(
 function candidateSubstitutionCost(
   emitted: EmittedCandidate,
   candidate: SpeakableCandidate,
+  allowPositionalRewrite: boolean,
 ): number {
   if (emitted.text === candidate.text) return emitted.present ? 0 : 1
-  return emitted.present ? 2 : 3
+  if (!emitted.present) return 3
+  return allowPositionalRewrite ? 2 : 4
 }

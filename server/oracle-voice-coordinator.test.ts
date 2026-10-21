@@ -86,6 +86,11 @@ class FakeManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
     this.calls.push('manager.cancel')
     this.timeline.push('manager.cancel')
   })
+  readonly cancelMessage = vi.fn(async (messageId: string) => {
+    this.calls.push(`manager.cancelMessage:${messageId}`)
+    this.timeline.push(`manager.cancelMessage:${messageId}`)
+    return managerMessage(messageId, { state: 'cancelled', source: 'voice' })
+  })
   readonly removeQueued = vi.fn(async (messageId: string) => {
     this.calls.push(`manager.removeQueued:${messageId}`)
     this.timeline.push(`manager.removeQueued:${messageId}`)
@@ -410,12 +415,13 @@ describe('OracleVoiceCoordinator', () => {
     const duplicate = test.backend.emit(final(6, 'u6', 'Please stop and check tests.'))
 
     expect(test.timeline).toContain('tts.cancel:5')
-    expect(test.timeline).toContain('manager.cancel')
+    expect(test.timeline).toContain('manager.cancelMessage:voice-running')
     expect(test.timeline.slice(-2)).toEqual([
-      'manager.cancel',
+      'manager.cancelMessage:voice-running',
       'manager.send:Please stop and check tests.',
     ])
-    expect(test.manager.cancel).toHaveBeenCalledTimes(1)
+    expect(test.manager.cancelMessage).toHaveBeenCalledTimes(1)
+    expect(test.manager.cancel).not.toHaveBeenCalled()
     expect(test.manager.send).toHaveBeenCalledTimes(2)
     expect(test.manager.send).toHaveBeenLastCalledWith(
       'Please stop and check tests.',
@@ -428,7 +434,7 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.send).toHaveBeenCalledTimes(2)
   })
 
-  it('removes stale queued voice work before accepting the next utterance', async () => {
+  it('cancels stale queued voice work by ID before accepting the next utterance', async () => {
     const test = harness()
     test.manager.send.mockResolvedValueOnce(managerMessage('voice-queued', {
       state: 'queued',
@@ -448,8 +454,50 @@ describe('OracleVoiceCoordinator', () => {
 
     await test.coordinator.receive(confirm(2, 'u2'))
 
-    expect(test.manager.removeQueued).toHaveBeenCalledWith('voice-queued')
+    expect(test.manager.cancelMessage).toHaveBeenCalledWith('voice-queued')
+    expect(test.manager.removeQueued).not.toHaveBeenCalled()
     expect(test.manager.cancel).not.toHaveBeenCalled()
+  })
+
+  it('cancels a captured queued voice ID after it becomes running during backend confirmation', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-transition', {
+      state: 'queued',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.backend.emit(final(1, 'u1', 'Queued voice request.'))
+    test.manager.setSnapshot(snapshot({
+      status: 'working',
+      queued: 1,
+      messages: [managerMessage('voice-transition', {
+        state: 'queued',
+        source: 'voice',
+      })],
+    }))
+    let releaseConfirmation!: () => void
+    test.backend.confirmationControl.mockImplementationOnce(() =>
+      new Promise<void>((resolve) => {
+        releaseConfirmation = resolve
+      }))
+
+    const interrupted = test.coordinator.receive(confirm(2, 'u2'))
+    await vi.waitFor(() => expect(test.backend.confirmationControl).toHaveBeenCalledTimes(2))
+    test.manager.setSnapshot(snapshot({
+      status: 'working',
+      messages: [managerMessage('voice-transition', {
+        state: 'running',
+        source: 'voice',
+      })],
+    }))
+    releaseConfirmation()
+    await interrupted
+
+    expect(test.manager.cancelMessage).toHaveBeenCalledTimes(1)
+    expect(test.manager.cancelMessage).toHaveBeenCalledWith('voice-transition')
+    expect(test.manager.cancel).not.toHaveBeenCalled()
+    expect(test.manager.removeQueued).not.toHaveBeenCalled()
   })
 
   it('forwards partials for display without submitting them', async () => {
@@ -461,6 +509,49 @@ describe('OracleVoiceCoordinator', () => {
 
     expect(test.browser).toContainEqual(partial(1, 'u1', 'display only'))
     expect(test.manager.send).not.toHaveBeenCalled()
+  })
+
+  it('returns to listening when a completed assistant reply has no speakable segments', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('silent-user', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'silent-1'))
+    await test.backend.emit(final(1, 'silent-1', 'Show code only.'))
+    test.manager.setSnapshot(snapshot({
+      status: 'working',
+      messages: [managerMessage('silent-user', {
+        state: 'running',
+        source: 'voice',
+      })],
+    }))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('silent-user', {
+        state: 'running',
+        source: 'voice',
+      }),
+    })
+
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('silent-assistant', {
+        role: 'assistant',
+        replyTo: 'silent-user',
+        content: '```ts\nconst answer = 42\n```',
+        state: undefined,
+      }),
+    })
+
+    expect(test.backend.calls.filter((call) => call.startsWith('tts.synthesize:')))
+      .toEqual([])
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'state',
+      generation: 1,
+      state: 'listening',
+    }))
   })
 
   it('finishes a fatal backend callback before draining and closing it', async () => {
@@ -582,7 +673,7 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.cancel).not.toHaveBeenCalled()
   })
 
-  it('does not cancel a typed turn that replaces voice while TTS cancellation waits', async () => {
+  it('scopes cancellation to voice when a typed turn replaces it while TTS cancellation waits', async () => {
     const test = harness()
     test.manager.send.mockResolvedValueOnce(managerMessage('voice-running', {
       state: 'running',
@@ -626,6 +717,7 @@ describe('OracleVoiceCoordinator', () => {
     releaseCancel()
     await interrupted
 
+    expect(test.manager.cancelMessage).toHaveBeenCalledWith('voice-running')
     expect(test.manager.cancel).not.toHaveBeenCalled()
   })
 
@@ -897,8 +989,11 @@ describe('OracleVoiceCoordinator', () => {
 
     await test.coordinator.receive(confirm(5, 'u5'))
 
-    expect(test.manager.removeQueued).toHaveBeenCalledWith('old-voice-queued')
-    expect(test.manager.cancel).toHaveBeenCalledOnce()
+    expect(test.manager.cancelMessage).toHaveBeenCalledWith('old-voice-queued')
+    expect(test.manager.cancelMessage).toHaveBeenCalledWith('old-voice-running')
+    expect(test.manager.cancelMessage).toHaveBeenCalledTimes(2)
+    expect(test.manager.removeQueued).not.toHaveBeenCalled()
+    expect(test.manager.cancel).not.toHaveBeenCalled()
     expect(test.backend.calls).toContain('tts.cancel:4')
   })
 
@@ -926,7 +1021,7 @@ describe('OracleVoiceCoordinator', () => {
         source: 'voice',
       }),
     })
-    test.manager.cancel.mockImplementationOnce(() => new Promise(() => undefined))
+    test.manager.cancelMessage.mockImplementationOnce(() => new Promise(() => undefined))
 
     const interrupted = test.coordinator.receive(confirm(3, 'u3'))
     await vi.advanceTimersByTimeAsync(25)

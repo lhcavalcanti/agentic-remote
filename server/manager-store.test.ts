@@ -30,12 +30,17 @@ describe('ManagerStore', () => {
     expect(store.state()).toMatchObject({ generation: 0, acknowledgedJournalSeq: 0, knownSdkSessionIds: [] })
     await store.updateState((state) => {
       state.sdkSessionId = 'sdk-1'
+      state.voiceTaintedSdkSessionId = 'sdk-1'
       state.generation = 1
     })
     await store.flush()
 
     const reopened = await open()
-    expect(reopened.state()).toMatchObject({ sdkSessionId: 'sdk-1', generation: 1 })
+    expect(reopened.state()).toMatchObject({
+      sdkSessionId: 'sdk-1',
+      voiceTaintedSdkSessionId: 'sdk-1',
+      generation: 1,
+    })
   })
 
   it('keeps the latest version of each message in first-seen order', async () => {

@@ -420,6 +420,62 @@ describe('OracleVoiceClient', () => {
     expect(client.instance.currentState).toBe('thinking')
   })
 
+  it('returns to listening only after the current playback segment really drains', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(encodeVoiceAudioFrame(playback(0, 0, 'segment-a')))
+    client.sockets[0].message(control('audio_end', 'stream-1', 0, {
+      segmentId: 'segment-a',
+    }))
+
+    await vi.waitFor(() => expect(client.playbacks[0].endSegment)
+      .toHaveBeenCalledWith(0, 'segment-a'))
+    expect(client.instance.currentState).toBe('speaking')
+
+    client.playbacks[0].drain('segment-a')
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
+  })
+
+  it('ignores drained callbacks superseded by a newer segment, interruption, or close', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(encodeVoiceAudioFrame(playback(0, 0, 'segment-a')))
+    client.sockets[0].message(control('audio_end', 'stream-1', 0, {
+      segmentId: 'segment-a',
+    }))
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(encodeVoiceAudioFrame(playback(0, 0, 'segment-b')))
+    client.playbacks[0].drain('segment-a')
+    await Promise.resolve()
+    expect(client.instance.currentState).toBe('speaking')
+
+    client.captures[0].options.onTentativeSpeech?.()
+    client.captures[0].options.onSpeechConfirmed?.(1)
+    client.playbacks[0].drain('segment-b')
+    await Promise.resolve()
+    expect(client.instance.currentState).toBe('interrupted')
+
+    client.sockets[0].message(control('state', 'stream-1', 1, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(encodeVoiceAudioFrame(playback(1, 0, 'segment-c')))
+    client.sockets[0].message(control('audio_end', 'stream-1', 1, {
+      segmentId: 'segment-c',
+    }))
+    await client.instance.stop()
+    client.playbacks[0].drain('segment-c')
+    await Promise.resolve()
+    expect(client.instance.currentState).toBe('off')
+  })
+
   it('treats a slow-consumer close as explicit fatal error instead of reconnecting', async () => {
     const client = harness()
     await client.connect('stream-1')
@@ -756,12 +812,35 @@ class FakePlayback {
   readonly tentativeSpeech = vi.fn()
   readonly restoreAfterMisfire = vi.fn()
   readonly confirmSpeech = vi.fn().mockReturnValue(true)
-  readonly endSegment = vi.fn()
+  readonly endSegment = vi.fn((generation: number, segmentId: string) => {
+    if (generation !== this.options.initialGeneration) return Promise.resolve(false)
+    return this.drainPromise(segmentId)
+  })
   readonly close = vi.fn().mockResolvedValue(undefined)
   readonly options: VoicePlaybackOptions
+  private readonly drains = new Map<string, {
+    promise: Promise<boolean>
+    resolve: (drained: boolean) => void
+  }>()
 
   constructor(options: VoicePlaybackOptions) {
     this.options = options
+  }
+
+  drain(segmentId: string, drained = true): void {
+    this.drainPromise(segmentId)
+    this.drains.get(segmentId)!.resolve(drained)
+  }
+
+  private drainPromise(segmentId: string): Promise<boolean> {
+    const existing = this.drains.get(segmentId)
+    if (existing) return existing.promise
+    let resolve!: (drained: boolean) => void
+    const promise = new Promise<boolean>((settle) => {
+      resolve = settle
+    })
+    this.drains.set(segmentId, { promise, resolve })
+    return promise
   }
 }
 
@@ -930,14 +1009,21 @@ function control(
   rest: { timestamp: number },
 ): VoiceServerControl
 function control(
-  type: 'partial' | 'final' | 'error' | 'state' | 'heartbeat',
+  type: 'audio_end',
+  streamId: string,
+  generation: number,
+  rest: { segmentId: string },
+): VoiceServerControl
+function control(
+  type: 'partial' | 'final' | 'error' | 'state' | 'heartbeat' | 'audio_end',
   streamId: string,
   generation: number,
   rest:
     | { utteranceId: string; text: string }
     | { code: string; message: string; fatal: boolean }
     | { state: Extract<VoiceServerControl, { type: 'state' }>['state'] }
-    | { timestamp: number },
+    | { timestamp: number }
+    | { segmentId: string },
 ): VoiceServerControl {
   return {
     type,
@@ -958,11 +1044,15 @@ function microphone(generation: number, sequence: number): VoiceAudioFrame {
   }
 }
 
-function playback(generation: number, sequence: number): VoiceAudioFrame {
+function playback(
+  generation: number,
+  sequence: number,
+  segmentId = 'segment-a',
+): VoiceAudioFrame {
   return {
     direction: 'playback',
     generation,
-    segmentId: 'segment-a',
+    segmentId,
     sequence,
     sampleRate: 24_000,
     samples: new Int16Array([1, 2, 3]),

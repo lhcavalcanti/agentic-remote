@@ -46,8 +46,10 @@ export interface OracleVoiceBackendConnector {
   }): Promise<OracleVoiceBackendConnection>
 }
 
-interface OracleVoiceManager
-  extends Pick<ManagerRouteAgent, 'snapshot' | 'send' | 'cancel' | 'removeQueued'> {}
+export interface OracleVoiceManager
+  extends Pick<ManagerRouteAgent, 'snapshot' | 'send'> {
+  cancelMessage(messageId: string): Promise<ManagerMessage>
+}
 
 interface OracleVoiceCoordinatorOptions {
   streamId: string
@@ -321,27 +323,27 @@ export class OracleVoiceCoordinator {
     this.currentGeneration = message.generation
     turn.advanceGeneration(message.generation)
     const snapshot = this.manager.snapshot()
-    const queuedVoiceIds: string[] = []
-    const runningVoiceIds: string[] = []
+    const voiceMessageIds: string[] = []
+    let capturedRunningVoice = false
     for (const [messageId, submission] of this.submissions) {
       if (submission.generation > previousGeneration) continue
       const submitted = snapshot.messages.find((candidate) =>
         candidate.id === messageId && candidate.role === 'user')
       if (submitted?.state === 'running') {
-        runningVoiceIds.push(messageId)
+        voiceMessageIds.push(messageId)
+        capturedRunningVoice = true
       } else if (submitted?.state === 'queued') {
-        queuedVoiceIds.push(messageId)
+        voiceMessageIds.push(messageId)
       } else if (submitted && ['done', 'failed', 'cancelled', 'interrupted'].includes(
         submitted.state ?? '',
       )) {
         this.submissions.delete(messageId)
       }
     }
-    const runningVoice = runningVoiceIds.length > 0
     const speakingVoice = this.activeSpeech !== undefined || this.speechQueue.length > 0
     this.clearSpeechOutput()
     turn.confirmSpeech(message.generation, message.utteranceId)
-    const backendCancellation = runningVoice || speakingVoice
+    const backendCancellation = voiceMessageIds.length > 0 || speakingVoice
       ? connection.control(this.clientControl('cancel', previousGeneration, {}))
       : Promise.resolve()
     const backendConfirmation = connection.control(message)
@@ -362,38 +364,22 @@ export class OracleVoiceCoordinator {
       throw error
     }
     audioGate.release()
-    if (runningVoice || speakingVoice || queuedVoiceIds.length > 0) {
+    if (voiceMessageIds.length > 0 || speakingVoice) {
       try {
-        if (runningVoice || speakingVoice) {
+        if (voiceMessageIds.length > 0 || speakingVoice) {
           await withTimeout(
             backendCancellation,
             this.cancelTimeoutMs,
             'Voice synthesis cancellation timed out',
           )
         }
-        for (const messageId of queuedVoiceIds) {
+        for (const messageId of voiceMessageIds) {
           await withTimeout(
-            this.manager.removeQueued(messageId),
+            this.manager.cancelMessage(messageId),
             this.cancelTimeoutMs,
-            'Queued Oracle voice removal timed out',
+            'Oracle message cancellation timed out',
           )
           this.submissions.delete(messageId)
-        }
-        if (runningVoice) {
-          const latestRunning = this.manager.snapshot().messages.filter(
-            (candidate) =>
-              candidate.role === 'user' && candidate.state === 'running',
-          )
-          if (
-            latestRunning.length === 1
-            && runningVoiceIds.includes(latestRunning[0].id)
-          ) {
-            await withTimeout(
-              this.manager.cancel(),
-              this.cancelTimeoutMs,
-              'Oracle cancellation timed out',
-            )
-          }
         }
       } catch (error) {
         const timedOut = error instanceof OperationTimeoutError
@@ -404,7 +390,9 @@ export class OracleVoiceCoordinator {
         )
         throw error
       }
-      if (runningVoice) this.activeReplyTo = undefined
+      if (capturedRunningVoice || voiceMessageIds.length > 0) {
+        this.activeReplyTo = undefined
+      }
     }
     await backendConfirmation
   }
@@ -604,12 +592,18 @@ export class OracleVoiceCoordinator {
     this.submissions.delete(message.replyTo)
     this.segmenterMessageId ??= message.id
     this.segmenter ??= new SpeakableSegmenter(message.id)
-    this.queueSpeech(
-      this.segmenter.finalize(message.content),
-      submission.generation,
-    )
+    const segments = this.segmenter.finalize(message.content)
+    this.queueSpeech(segments, submission.generation)
     if (this.activeReplyTo === message.replyTo) this.activeReplyTo = undefined
     await this.pumpSpeech()
+    if (
+      segments.length === 0
+      && !this.activeSpeech
+      && this.speechQueue.length === 0
+      && !this.speechPumpTimer
+    ) {
+      await this.sendState('listening', submission.generation)
+    }
   }
 
   private queueSpeech(segments: string[], generation: number): void {

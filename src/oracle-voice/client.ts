@@ -103,7 +103,7 @@ interface OracleVoicePlayback {
   tentativeSpeech(): void
   restoreAfterMisfire(): void
   confirmSpeech(generation: number): boolean
-  endSegment(generation: number, segmentId: string): void
+  endSegment(generation: number, segmentId: string): Promise<boolean>
   close(): Promise<void>
 }
 
@@ -168,6 +168,9 @@ export class OracleVoiceClient {
   private terminalFailure = false
   private hasStarted = false
   private lastAcknowledgedHeartbeat: number | undefined
+  private currentPlaybackSegmentId: string | undefined
+  private playbackDrainRevision = 0
+  private speakingRevision = 0
 
   constructor(options: OracleVoiceClientOptions) {
     if (!options.language.trim()) throw new Error('Oracle voice language is required')
@@ -442,7 +445,8 @@ export class OracleVoiceClient {
           'Oracle voice audio generation is ahead of the browser',
         )
       }
-      this.playback?.enqueue(frame)
+      const accepted = this.playback?.enqueue(frame) ?? false
+      if (accepted) this.currentPlaybackSegmentId = frame.segmentId
     } catch (error) {
       const failure = error instanceof VoicePlaybackQueueError
         ? new OracleVoiceClientError(
@@ -488,7 +492,7 @@ export class OracleVoiceClient {
         await this.applyServerState(control.state)
         return
       case 'audio_end':
-        this.playback?.endSegment(control.generation, control.segmentId)
+        this.handlePlaybackEnd(control.generation, control.segmentId)
         return
       case 'error':
         this.report(new OracleVoiceClientError(
@@ -614,6 +618,7 @@ export class OracleVoiceClient {
     }
     this.generation = generation
     try {
+      this.invalidatePlaybackDrain()
       this.playback?.confirmSpeech(generation)
       const interrupted = this.stateBeforeTentative === 'speaking'
         || this.stateBeforeTentative === 'thinking'
@@ -661,6 +666,7 @@ export class OracleVoiceClient {
         this.setState('thinking')
         return
       case 'speaking':
+        this.speakingRevision += 1
         this.setState('speaking')
         return
       case 'stopped':
@@ -680,6 +686,37 @@ export class OracleVoiceClient {
     )
     this.capabilities = undefined
     this.setState('off')
+  }
+
+  private handlePlaybackEnd(generation: number, segmentId: string): void {
+    const playback = this.playback
+    if (!playback) return
+    const drainRevision = this.playbackDrainRevision
+    const speakingRevision = this.speakingRevision
+    let drained: Promise<boolean>
+    try {
+      drained = playback.endSegment(generation, segmentId)
+    } catch (error) {
+      void this.failFatal(playbackClientError(error))
+      return
+    }
+    void drained.then((completed) => {
+      if (
+        !completed
+        || playback !== this.playback
+        || drainRevision !== this.playbackDrainRevision
+        || speakingRevision !== this.speakingRevision
+        || generation !== this.generation
+        || segmentId !== this.currentPlaybackSegmentId
+        || this.state !== 'speaking'
+      ) {
+        return
+      }
+      this.currentPlaybackSegmentId = undefined
+      this.setState('listening')
+    }).catch((error: unknown) => {
+      void this.failFatal(playbackClientError(error))
+    })
   }
 
   private sendControl(control: VoiceClientControl): void {
@@ -840,6 +877,7 @@ export class OracleVoiceClient {
     const playback = this.playback
     this.capture = undefined
     this.playback = undefined
+    this.invalidatePlaybackDrain()
     this.captureReady = false
     this.stateBeforeTentative = undefined
     // Defer resource shutdown until callers can observe the shared promise.
@@ -900,6 +938,11 @@ export class OracleVoiceClient {
   private advanceGeneration(): void {
     if (this.generation === 0xffff_ffff) this.generation = 0
     else this.generation += 1
+  }
+
+  private invalidatePlaybackDrain(): void {
+    this.playbackDrainRevision += 1
+    this.currentPlaybackSegmentId = undefined
   }
 
   private requireEpoch(epoch: number): void {

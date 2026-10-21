@@ -105,6 +105,17 @@ class StoredManager extends EventEmitter<{ event: [event: ManagerEvent] }> {
   readonly start = vi.fn(async () => undefined)
   readonly stop = vi.fn(async () => undefined)
   readonly cancel = vi.fn<() => Promise<void>>(async () => undefined)
+  readonly cancelMessage = vi.fn(async (messageId: string): Promise<ManagerMessage> => {
+    const message = this.store.message(messageId)
+    if (!message || message.role !== 'user') throw new Error('Message not found')
+    if (['done', 'failed', 'cancelled', 'interrupted'].includes(message.state ?? '')) {
+      return message
+    }
+    const cancelled = { ...message, state: 'cancelled' as const }
+    await this.store.upsertMessage(cancelled)
+    this.emit('event', { type: 'manager.message', message: cancelled })
+    return cancelled
+  })
   readonly send = vi.fn(this.sendMessage.bind(this))
   readonly submitted: ManagerMessage[] = []
   failSend: Error | undefined
@@ -1555,6 +1566,29 @@ describe('Oracle voice cross-layer integration', () => {
       createdAt: '2026-10-18T00:00:02.000Z',
     })
 
+    sendControl(browser, hello.streamId, 'speech_confirmed', 22, {
+      utteranceId: 'remote-22',
+    })
+    await vi.waitFor(() => expect(engineCalls(nodeVoice.engine, 'stt.start')
+      .some((call) => call.generation === 22)).toBe(true))
+    nodeVoice.engine.emit({
+      type: 'final',
+      streamId: hello.streamId,
+      generation: 22,
+      utteranceId: 'remote-22',
+      text: 'Paired cancellation target.',
+    })
+    await vi.waitFor(() => expect(manager.send).toHaveBeenCalledTimes(2))
+    const cancelTarget = manager.submitted[1]
+    sendControl(browser, hello.streamId, 'speech_confirmed', 23, {
+      utteranceId: 'remote-23',
+    })
+    await vi.waitFor(() => expect(manager.cancelMessage)
+      .toHaveBeenCalledWith(cancelTarget.id))
+    expect(manager.cancel).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(engineCalls(nodeVoice.engine, 'cancel'))
+      .toContainEqual(expect.objectContaining({ generation: 22 })))
+
     expect(await fileInventory(nodeRoot)).toEqual(nodeFilesBefore)
     const hubFiles = await fileInventory(hubRoot)
     const nodeFiles = await fileInventory(nodeRoot)
@@ -1600,7 +1634,7 @@ describe('Oracle voice cross-layer integration', () => {
     const browserClose = await disconnected
     expect(browserClose.code).toBe(1011)
     expect(browserClose.reason).toContain('Node voice worker crashed')
-    expect(manager.send).toHaveBeenCalledOnce()
+    expect(manager.send).toHaveBeenCalledTimes(2)
   })
 
   it('reconnects the production browser client after a paired node restart without replay', async () => {
@@ -2152,7 +2186,9 @@ describe('Oracle voice cross-layer integration', () => {
     sendControl(rapid.browser, rapid.streamId, 'speech_confirmed', 9, {
       utteranceId: 'rapid-9',
     })
-    await vi.waitFor(() => expect(rapid.manager.cancel).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(rapid.manager.cancelMessage)
+      .toHaveBeenCalledWith(first.id))
+    expect(rapid.manager.cancel).not.toHaveBeenCalled()
     rapid.manager.emitDelta('stale-assistant', 'Stale manager delta.')
     rapid.engine.emit(playback(
       rapid.streamId,
@@ -2289,9 +2325,9 @@ describe('Oracle voice cross-layer integration', () => {
     })
     await vi.waitFor(() => expect(timeout.manager.send).toHaveBeenCalledOnce())
     let releaseCancel!: () => void
-    timeout.manager.cancel.mockImplementationOnce(
-      () => new Promise<void>((resolve) => {
-        releaseCancel = resolve
+    timeout.manager.cancelMessage.mockImplementationOnce(
+      () => new Promise<ManagerMessage>((resolve) => {
+        releaseCancel = () => resolve(timeout.manager.submitted[0])
       }),
     )
     vi.useFakeTimers()
@@ -2299,7 +2335,7 @@ describe('Oracle voice cross-layer integration', () => {
     sendControl(timeout.browser, timeout.streamId, 'speech_confirmed', 52, {
       utteranceId: 'timeout-52',
     })
-    await vi.waitFor(() => expect(timeout.manager.cancel).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(timeout.manager.cancelMessage).toHaveBeenCalledOnce())
     await vi.advanceTimersByTimeAsync(5_001)
     releaseCancel()
     await Promise.resolve()

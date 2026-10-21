@@ -80,6 +80,7 @@ class FakeSdk {
   sessions = new Map<string, FakeSession>()
   createFailures: Array<(config: ManagerSdkSessionConfig) => Error | undefined> = []
   resumeFailures: Error[] = []
+  deleteFailure: Error | undefined
 
   factory = () => {
     const client = new FakeClient(this)
@@ -91,7 +92,9 @@ class FakeSdk {
 class FakeClient implements ManagerSdkClient {
   start = vi.fn(async (): Promise<void> => undefined)
   stop = vi.fn(async () => [])
-  deleteSession = vi.fn(async (_id: string) => undefined)
+  deleteSession = vi.fn(async (_id: string) => {
+    if (this.fake.deleteFailure) throw this.fake.deleteFailure
+  })
   createSession = vi.fn(async (config: ManagerSdkSessionConfig) => {
     const failure = this.fake.createFailures.shift()?.(config)
     if (failure) throw failure
@@ -1359,6 +1362,104 @@ describe('ManagerAgent', () => {
     expect(hub.createSession).toHaveBeenCalledTimes(1)
     expect(sdk.prompts[1]).not.toContain('Untrusted nearby speech')
     expect(sdk.prompts[1]).not.toContain('Voice answer.')
+  })
+
+  it('persists the exact SDK session tainted by every voice recovery attempt before prompting it', async () => {
+    const attempts: Array<{ sessionId: string; taintedSessionId?: string }> = []
+    const record = (finish: Behavior): Behavior => (fakeSession, prompt) => {
+      attempts.push({
+        sessionId: fakeSession.sessionId,
+        taintedSessionId: store.state().voiceTaintedSdkSessionId,
+      })
+      return finish(fakeSession, prompt)
+    }
+    sdk.behaviors.push(
+      record(fail('same failed')),
+      record(fail('same failed again')),
+      record(fail('restart failed')),
+      record(reply('Fresh voice answer.')),
+    )
+    await start()
+
+    await agent!.send('Untrusted voice across recovery', undefined, { source: 'voice' })
+    await settled()
+
+    expect(attempts).toEqual([
+      { sessionId: 'sdk-1', taintedSessionId: 'sdk-1' },
+      { sessionId: 'sdk-1', taintedSessionId: 'sdk-1' },
+      { sessionId: 'sdk-1', taintedSessionId: 'sdk-1' },
+      { sessionId: 'sdk-2', taintedSessionId: 'sdk-2' },
+    ])
+    expect(store.state().voiceTaintedSdkSessionId).toBeUndefined()
+  })
+
+  it('retires persisted voice taint before restart pumps typed work even when SDK deletion fails', async () => {
+    await store.updateState((state) => {
+      state.sdkSessionId = 'voice-crash-session'
+      state.voiceTaintedSdkSessionId = 'voice-crash-session'
+      state.sessionRuntime = {}
+      state.knownSdkSessionIds = ['voice-crash-session']
+    })
+    await store.upsertMessage({
+      id: 'typed-after-crash',
+      role: 'user',
+      content: 'Start trusted typed work after restart',
+      createdAt: 't',
+      state: 'queued',
+      source: 'typed',
+    })
+    sdk.deleteFailure = new Error('delete unavailable')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await start()
+    await settled()
+
+    expect(sdk.clients[0].deleteSession).toHaveBeenCalledWith('voice-crash-session')
+    expect(sdk.clients[0].resumeSession).not.toHaveBeenCalledWith(
+      'voice-crash-session',
+      expect.anything(),
+    )
+    expect(sdk.clients[0].createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sdk-1' }),
+    )
+    expect(sdk.prompts[0]).toContain('Start trusted typed work after restart')
+    expect(store.state()).toMatchObject({ sdkSessionId: 'sdk-1' })
+    expect(store.state().voiceTaintedSdkSessionId).toBeUndefined()
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('voice-crash-session'),
+      'delete unavailable',
+    )
+  })
+
+  it('cancels exactly one queued or running message by ID without stopping unrelated work', async () => {
+    sdk.behaviors.push(() => undefined)
+    await start({ turnTimeoutMs: 5_000 })
+    const typed = await agent!.send('Keep this typed turn running')
+    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
+      (candidate) => candidate.id === typed.id,
+    )?.state).toBe('running'))
+    await vi.waitFor(() => expect(sdk.prompts).toHaveLength(1))
+    const voice = await agent!.send('Cancel only this queued voice', undefined, {
+      source: 'voice',
+    })
+
+    const first = await agent!.cancelMessage(voice.id)
+    const second = await agent!.cancelMessage(voice.id)
+
+    expect(first).toMatchObject({ id: voice.id, state: 'cancelled' })
+    expect(second).toMatchObject({ id: voice.id, state: 'cancelled' })
+    expect(sdk.sessions.get('sdk-1')!.abort).not.toHaveBeenCalled()
+    expect(agent!.snapshot().messages.find(
+      (candidate) => candidate.id === typed.id,
+    )?.state).toBe('running')
+
+    await agent!.cancelMessage(typed.id)
+    await agent!.cancelMessage(typed.id)
+    await settled()
+    expect(sdk.sessions.get('sdk-1')!.abort).toHaveBeenCalledTimes(1)
+    expect(agent!.snapshot().messages.find(
+      (candidate) => candidate.id === typed.id,
+    )?.state).toBe('cancelled')
   })
 
   it('keeps voice provenance through queue edits, failures, retries, and restart recovery', async () => {

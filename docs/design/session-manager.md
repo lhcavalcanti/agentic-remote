@@ -353,6 +353,12 @@ remains unchanged.
 The current transcript is escaped and delimited as acoustically untrusted in
 the model prompt. It cannot be promoted into memory or settings, and a fresh
 runtime's recovery brief excludes the voice message and its linked exchange.
+Before every voice prompt enters Copilot, durable manager state binds the voice
+taint to that exact SDK session ID. Queue recovery retires that session before
+selecting any typed or retried work, and retirement clears the active session
+pointer and matching taint in one persisted state update before best-effort SDK
+deletion. Thus a crash after prompt entry cannot let a later typed Delegate turn
+resume acoustically influenced context, even when remote deletion fails.
 The message still appears as exactly one normal Oracle user message in visible
 history and goes with the generated current-turn context to Oracle's remote
 Copilot model. No separate voice transcript or recording artifact is
@@ -369,8 +375,15 @@ explicitly research-only and installation requires
 
 One stream per hub is supported initially. Local VAD can duck playback, but
 the server owns endpoint and finalization decisions. Confirmed interruption
-advances generation, cancels Oracle and TTS, and rejects stale STT, deltas, and
-audio. Reconnect never replays microphone frames. See
+advances generation, cancels backend TTS first, then cancels each captured
+voice-owned manager message by ID whether it is still queued or has become
+running, without stopping unrelated typed work. It rejects stale STT, deltas,
+and audio, and reconnect restores ownership only for queued/running voice
+messages. Browser state returns to Listening only after the current generation
+and segment have actually drained from Web Audio; stale drain callbacks from a
+new segment, interruption, generation change, or close are ignored. A completed
+reply with no speakable segment returns to Listening directly. Reconnect never
+replays microphone frames. See
 [Oracle Conversation mode](../oracle-conversation.md) for profile evidence,
 browser requirements, topology, and licences.
 

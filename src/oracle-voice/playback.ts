@@ -38,6 +38,11 @@ interface ScheduledSource {
   endTime: number
 }
 
+interface SegmentDrain {
+  promise: Promise<boolean>
+  resolve(drained: boolean): void
+}
+
 export class VoicePlayback {
   private readonly context: AudioContext
   private readonly gainNode: GainNode
@@ -46,6 +51,7 @@ export class VoicePlayback {
   private readonly sources = new Set<ScheduledSource>()
   private readonly nextSequenceBySegment = new Map<string, number>()
   private readonly endedSegments = new Set<string>()
+  private readonly segmentDrains = new Map<string, SegmentDrain>()
   private generation: number
   private nextStartTime: number
   private closed = false
@@ -161,6 +167,7 @@ export class VoicePlayback {
     this.requireOpen()
     validateGeneration(generation)
     if (generation <= this.generation) return false
+    this.settleSegmentDrains(false)
     this.stopAllSources()
     this.generation = generation
     this.nextSequenceBySegment.clear()
@@ -170,11 +177,22 @@ export class VoicePlayback {
     return true
   }
 
-  endSegment(generation: number, segmentId: string): void {
-    if (generation !== this.generation) return
+  endSegment(generation: number, segmentId: string): Promise<boolean> {
+    if (generation !== this.generation) return Promise.resolve(false)
     const segmentKey = this.segmentKey(generation, segmentId)
     this.nextSequenceBySegment.delete(segmentKey)
     this.endedSegments.add(segmentKey)
+    if (!this.hasSourcesForSegment(generation, segmentId)) {
+      return Promise.resolve(true)
+    }
+    const existing = this.segmentDrains.get(segmentKey)
+    if (existing) return existing.promise
+    let resolve!: (drained: boolean) => void
+    const promise = new Promise<boolean>((settle) => {
+      resolve = settle
+    })
+    this.segmentDrains.set(segmentKey, { promise, resolve })
+    return promise
   }
 
   close(): Promise<void> {
@@ -185,6 +203,7 @@ export class VoicePlayback {
   private async finishClose(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.settleSegmentDrains(false)
     this.stopAllSources()
     this.nextSequenceBySegment.clear()
     this.endedSegments.clear()
@@ -223,7 +242,33 @@ export class VoicePlayback {
     if (!this.sources.delete(scheduled)) return
     scheduled.source.onended = null
     scheduled.source.disconnect()
+    const segmentKey = this.segmentKey(scheduled.generation, scheduled.segmentId)
+    if (
+      this.endedSegments.has(segmentKey)
+      && !this.hasSourcesForSegment(scheduled.generation, scheduled.segmentId)
+    ) {
+      const drain = this.segmentDrains.get(segmentKey)
+      this.segmentDrains.delete(segmentKey)
+      drain?.resolve(true)
+    }
     if (this.sources.size === 0) this.nextStartTime = this.context.currentTime
+  }
+
+  private hasSourcesForSegment(generation: number, segmentId: string): boolean {
+    for (const scheduled of this.sources) {
+      if (
+        scheduled.generation === generation
+        && scheduled.segmentId === segmentId
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private settleSegmentDrains(drained: boolean): void {
+    for (const drain of this.segmentDrains.values()) drain.resolve(drained)
+    this.segmentDrains.clear()
   }
 
   private segmentKey(generation: number, segmentId: string): string {

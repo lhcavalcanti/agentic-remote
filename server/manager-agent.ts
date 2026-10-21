@@ -334,7 +334,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   /** Every SDK session ID that must stay out of the session lists. */
   hiddenSessionIds(): string[] {
     const state = this.store.state()
-    return [...new Set([...(state.sdkSessionId ? [state.sdkSessionId] : []), ...state.knownSdkSessionIds])]
+    return [...new Set([
+      ...(state.sdkSessionId ? [state.sdkSessionId] : []),
+      ...(state.voiceTaintedSdkSessionId ? [state.voiceTaintedSdkSessionId] : []),
+      ...state.knownSdkSessionIds,
+    ])]
   }
 
   async start(): Promise<void> {
@@ -601,6 +605,49 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.messageDefaults.delete(messageId)
     this.publishStatus()
     return next
+  }
+
+  /** Cancels only the captured message, whether it is still queued or now running. */
+  async cancelMessage(messageId: string): Promise<ManagerMessage> {
+    const message = this.store.message(messageId)
+    if (!message || message.role !== 'user') {
+      throw Object.assign(new Error('Message not found'), { statusCode: 404 })
+    }
+    if (['done', 'failed', 'cancelled', 'interrupted'].includes(message.state ?? '')) {
+      return message
+    }
+    if (message.state === 'queued') {
+      const next: ManagerMessage = {
+        ...message,
+        state: 'cancelled',
+        updatedAt: this.now().toISOString(),
+      }
+      await this.updateMessage(next)
+      this.publishStatus()
+      return next
+    }
+    if (
+      message.state === 'running'
+      && this.processing
+      && this.currentReplyTo === messageId
+    ) {
+      if (this.cancelledMessageId !== messageId) {
+        this.cancelledMessageId = messageId
+        this.running?.cancel()
+      }
+      return this.store.message(messageId) ?? message
+    }
+    const latest = this.store.message(messageId)
+    if (
+      latest?.role === 'user'
+      && ['done', 'failed', 'cancelled', 'interrupted'].includes(latest.state ?? '')
+    ) {
+      return latest
+    }
+    throw Object.assign(
+      new Error('This message is not the turn Oracle is currently answering.'),
+      { statusCode: 409 },
+    )
   }
 
   async retry(messageId: string): Promise<ManagerMessage> {
@@ -885,6 +932,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     try {
       for (;;) {
         if (this.stopped) return
+        await this.retirePersistedVoiceTaint()
         const next = this.store.messages().find((message) => message.role === 'user' && message.state === 'queued')
         if (!next) break
         this.clearIdleTimer()
@@ -966,6 +1014,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         await this.prepare(rung)
         if (!current()) return this.leave()
         if (cancelled()) return this.finishCancelled(message, current)
+        if (this.currentMessageSource === 'voice') {
+          await this.markCurrentSessionVoiceTainted()
+        }
         const prompt = await this.buildPrompt(message, {
           interrupted,
           performed,
@@ -1418,6 +1469,42 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     })
   }
 
+  private async markCurrentSessionVoiceTainted(): Promise<void> {
+    const state = this.store.state()
+    const sessionId = state.sdkSessionId
+    if (!sessionId || this.session?.sessionId !== sessionId) {
+      throw new TurnError('The manager runtime session changed before the voice turn', 'runtime')
+    }
+    await this.store.updateState((next) => {
+      if (next.sdkSessionId !== sessionId) {
+        throw new TurnError('The manager runtime session changed before the voice turn', 'runtime')
+      }
+      next.voiceTaintedSdkSessionId = sessionId
+    })
+  }
+
+  private async retirePersistedVoiceTaint(): Promise<void> {
+    const state = this.store.state()
+    const tainted = state.voiceTaintedSdkSessionId
+    if (!tainted) return
+    await this.ensureClient()
+    if (state.sdkSessionId === tainted) {
+      await this.retireSession()
+      return
+    }
+    if (this.session?.sessionId === tainted) {
+      const session = this.session
+      this.session = undefined
+      await withTimeout(session.disconnect(), 5000, 'disconnect').catch(() => undefined)
+    }
+    await this.store.updateState((next) => {
+      if (next.voiceTaintedSdkSessionId === tainted) {
+        delete next.voiceTaintedSdkSessionId
+      }
+    })
+    await this.deleteRetiredSession(tainted)
+  }
+
   /** Moves off the current SDK session; it stays excluded from discovery. */
   private async retireSession(): Promise<void> {
     const state = this.store.state()
@@ -1429,12 +1516,18 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     await this.store.updateState((next) => {
       delete next.sdkSessionId
       delete next.sessionRuntime
+      if (next.voiceTaintedSdkSessionId === retired) {
+        delete next.voiceTaintedSdkSessionId
+      }
     })
-    if (this.client) {
-      await withTimeout(this.client.deleteSession(retired), 10_000, 'delete').catch((error: unknown) => {
-        console.warn(`Could not delete retired manager session ${retired}:`, errorMessage(error))
-      })
-    }
+    await this.deleteRetiredSession(retired)
+  }
+
+  private async deleteRetiredSession(retired: string): Promise<void> {
+    if (!this.client) return
+    await withTimeout(this.client.deleteSession(retired), 10_000, 'delete').catch((error: unknown) => {
+      console.warn(`Could not delete retired manager session ${retired}:`, errorMessage(error))
+    })
   }
 
   private dropSession(): void {

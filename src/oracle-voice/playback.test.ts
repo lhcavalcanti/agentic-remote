@@ -102,6 +102,42 @@ describe('VoicePlayback', () => {
     expect(playback.instance.activeSourceCount).toBe(0)
   })
 
+  it('resolves segment drain only after every scheduled source for that segment ends', async () => {
+    const playback = harness()
+    playback.enqueue(audio(2, 'segment-a', 0))
+    playback.enqueue(audio(2, 'segment-a', 1))
+    playback.enqueue(audio(2, 'segment-b', 0))
+
+    const drained = playback.endSegment(2, 'segment-a')
+    const settled = vi.fn()
+    void drained.then(settled)
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+
+    playback.sources[0].finish()
+    playback.sources[2].finish()
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+
+    playback.sources[1].finish()
+    await expect(drained).resolves.toBe(true)
+  })
+
+  it('settles obsolete drain waiters on generation change and close', async () => {
+    const playback = harness()
+    playback.enqueue(audio(2, 'segment-a', 0))
+    const interrupted = playback.endSegment(2, 'segment-a')
+
+    playback.confirmSpeech(3)
+    await expect(interrupted).resolves.toBe(false)
+    await expect(playback.endSegment(2, 'segment-a')).resolves.toBe(false)
+
+    playback.enqueue(audio(3, 'segment-b', 0))
+    const closed = playback.endSegment(3, 'segment-b')
+    await playback.instance.close()
+    await expect(closed).resolves.toBe(false)
+  })
+
   it('uses each frame native sample rate so Web Audio performs conversion', () => {
     const playback = harness({ contextRate: 48_000 })
 

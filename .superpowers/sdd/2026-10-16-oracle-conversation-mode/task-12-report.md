@@ -56,6 +56,20 @@
   serially, counts retained bytes through delivery, fails once on overflow,
   and releases queued work on close. Backend cancellation still starts before
   scoped Oracle cancellation, and a new final remains serialized behind both.
+- Supervisor reviewed `7c5200e3e933` and found three remaining lifecycle
+  boundaries. Manager state now persists the exact voice-tainted SDK session
+  before every prompt attempt, including resumed/restarted/fresh recovery
+  rungs, and the pump retires persisted taint before selecting any queued work.
+  Session and taint pointers clear atomically before best-effort deletion, so a
+  delete failure cannot make restart resume acoustic context. Barge-in now
+  captures voice message IDs and invokes an internal idempotent
+  `cancelMessage(id)` after backend TTS cancellation; a queued message that
+  becomes running is still cancelled, while unrelated typed work is untouched.
+  Web Audio exposes a per-generation/per-segment drain promise settled by real
+  source completion, interruption, or close. The client does not block socket
+  delivery while waiting, ignores stale callbacks, and reaches Listening only
+  for the still-current segment. Code-only or otherwise silent assistant
+  completions receive an explicit Listening state from the coordinator.
 
 ## Publication gates before Graphify
 
@@ -95,6 +109,29 @@ backend confirmation/cancellation failure, cancellation timeout, fail-once
 retained-queue overflow, close during a pending gate, and real local-session
 delivery of 30 ordered PCM frames after blocked synthesis cancellation.
 
+After the `7c5200e3e933` findings, strict red tests produced 12 expected
+failures: four missing persisted/session-scoped manager behaviors, five stale
+coordinator cancellation/listening behaviors, two missing playback-drain
+promises, and one client drain transition. Green verification then passed:
+
+- focused manager/store/context/tools, coordinator/integration/security,
+  playback/client, hook, and Oracle UI: 11 files, 294 tests;
+- critical manager/coordinator/session/integration/security/playback/client
+  race selection, three independent runs: 7 files and 197 tests each, 591
+  aggregate;
+- route/app internal cancellation wiring: 2 files, 20 tests;
+- TypeScript, oxlint, and Vite production build.
+
+The final pre-commit rerun combined those focused and route/app selections:
+13 files and 314 tests passed. Graphify remained current at 5,562 nodes,
+15,302 edges, and 327 code files; `git diff --check` also passed.
+
+Local rapid-interruption integration and authenticated paired-node integration
+both invoke the captured voice message ID, never global cancellation. The
+manager tests cover crash-state restart into typed Delegate work, every recovery
+rung, historical optional state, terminal idempotence, unrelated typed-turn
+protection, and SDK deletion failure.
+
 ### Repository gates
 
 | Gate | Result |
@@ -105,6 +142,17 @@ delivery of 30 ordered PCM frames after blocked synthesis cancellation.
 | Deterministic Firefox | 1/1 passed |
 | Real sherpa Chromium | 1/1 passed in 15.0 s after pacing the real microphone fixture |
 | WebKit | host blocker: GTK4, Graphene, GStreamer/media, codec, WebKit support libraries absent |
+
+Round-4 host exception: the new normal `pnpm check` was stopped after 17
+minutes while its serial real-tmux tests were still progressing. A diagnostic
+verbose run was then bounded at 600 seconds and recorded 253 passing test cases
+with no failure; the final two completed
+`terminal-session.test.ts` working-footer lookalike cases each took about 90
+seconds under host tmux contention. Lint and build had already passed
+independently. Per the instruction not to rerun blindly under host contention,
+neither complete normal nor `NODE_ENV=production` check was repeated for this
+round; the focused and three-pass race evidence above is the authoritative
+round-4 result.
 
 The real fixture is now delivered in 80 ms VAD frames with a 20 ms delay. This
 preserves bounded production backpressure while avoiding the earlier
@@ -179,6 +227,8 @@ all 23 assertions are true.
   `/supervisor review`; the local service watches and reconciles it. The two
   `9c9a99f65a6e` passes and the `51f86fe5c2ee` pass requested changes; all 16
   findings from those rounds plus both `187cc4068fe4` blockers now have
+  regression coverage. The three `7c5200e3e933` lifecycle findings also have
+  crash, recovery, scoped-cancellation, paired/local, and real playback-drain
   regression coverage. The next exact-head request
   and verdict are authoritative on PR #425; GitHub Copilot review will not be
   requested.

@@ -15,6 +15,8 @@ export type SessionOrigin = 'manager' | 'user' | 'discovered'
 export interface ManagerState {
   /** The SDK session holding the manager's conversation. */
   sdkSessionId?: string
+  /** Exact SDK session that has received acoustically untrusted voice content. */
+  voiceTaintedSdkSessionId?: string
   /** Bumped every time the conversation moves to a new SDK session. */
   generation: number
   /**

@@ -17,7 +17,6 @@ import type {
 } from '../shared/contracts.js'
 import type {
   ManagerEventSource,
-  ManagerRouteAgent,
 } from './manager-routes.js'
 import {
   OracleVoiceCoordinator,
@@ -25,6 +24,7 @@ import {
   type OracleVoiceBackendConnector,
   type OracleVoiceBackendDisconnect,
   type OracleVoiceBackendOutput,
+  type OracleVoiceManager,
 } from './oracle-voice-coordinator.js'
 import {
   DEFAULT_VOICE_BACKEND_LIMITS,
@@ -56,7 +56,7 @@ export interface OracleVoiceComputerManager {
 export interface OracleVoiceRouteOptions {
   identity: { info: NodeInfo }
   computers: OracleVoiceComputerManager
-  manager?: ManagerRouteAgent
+  manager?: OracleVoiceManager
   managerEvents?: ManagerEventSource
   localBackend?: VoiceBackend
   selectedComputerName?: string

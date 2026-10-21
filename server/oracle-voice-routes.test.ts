@@ -21,7 +21,7 @@ import type {
 import type { VoiceBackendCapability } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import type { ManagerAgent } from './manager-agent.js'
-import type { ManagerRouteAgent } from './manager-routes.js'
+import type { OracleVoiceManager } from './oracle-voice-coordinator.js'
 import {
   FakeVoiceEngine,
   type VoiceEngineFactory,
@@ -139,6 +139,14 @@ class RouteManager extends EventEmitter {
   readonly start = vi.fn(async () => undefined)
   readonly stop = vi.fn(async () => undefined)
   readonly cancel = vi.fn(async () => undefined)
+  readonly cancelMessage = vi.fn(async (messageId: string): Promise<ManagerMessage> => ({
+    id: messageId,
+    role: 'user',
+    content: 'Voice request',
+    createdAt: '2026-10-17T00:00:00.000Z',
+    state: 'cancelled',
+    source: 'voice',
+  }))
   readonly send = vi.fn(async (
     content: string,
     _defaults?: ManagerClientDefaults,
@@ -427,7 +435,7 @@ describe('Oracle voice hub routes', () => {
         ],
         connectVoice: vi.fn(),
       },
-      manager: new RouteManager() as unknown as ManagerRouteAgent,
+      manager: new RouteManager() as unknown as OracleVoiceManager,
       selectedComputerName: 'Speech node',
       unavailableReason: 'Voice unavailable',
     })
@@ -470,7 +478,7 @@ describe('Oracle voice hub routes', () => {
         listComputers: () => [],
         connectVoice: vi.fn(),
       },
-      manager: manager as unknown as ManagerRouteAgent,
+      manager: manager as unknown as OracleVoiceManager,
       managerEvents: manager,
       localBackend: new RouteVoiceBackend(),
       unavailableReason: 'Voice unavailable',
@@ -648,7 +656,7 @@ describe('Oracle voice hub routes', () => {
         }],
         connectVoice,
       },
-      manager: manager as unknown as ManagerRouteAgent,
+      manager: manager as unknown as OracleVoiceManager,
       managerEvents: manager,
       selectedComputerName: 'Speech node',
       unavailableReason: 'Voice unavailable',

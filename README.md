@@ -342,7 +342,10 @@ pnpm check
 a subset:
 
 - `pnpm test:fast` runs every file that needs no tmux, Copilot, or Claude on
-  the host; it is the set suitable for hosted CI.
+  the host.
+- `pnpm test:quick` runs the part of `fast` that fits the advisory hosted
+  check's one-minute budget; files measured as slow are listed in `slowTests`
+  in `vite.config.ts`.
 - `pnpm test:canary` runs the quick real-tmux send and readiness subset,
   including the send matrix, in about a minute.
 

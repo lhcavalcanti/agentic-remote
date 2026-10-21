@@ -339,8 +339,9 @@ A local-only monitor may run this sequence on an opt-in machine:
    while every test passes. Pinning also means what passed is what is
    promoted, rather than whatever the checkout became while the suite ran.
    `state_dir` therefore decides which filesystem validation runs on.
-   Nothing runs the suite remotely, so this is the only gate a commit passes
-   before production and it has to include the tests.
+   The [advisory hosted check](#advisory-hosted-check) runs only a quick
+   subset, so this is the only gate a commit passes before production and it
+   has to include the tests.
 6. Remove the validation worktree afterwards, refusing to delete anything that
    turns out to be a checkout this repository cannot account for.
 7. Verify the production runtime worktree is clean, intentionally detached, and
@@ -365,6 +366,47 @@ commit, the monitor should exit without restarting the service.
 The monitor is machine-local orchestration. It is intentionally not an
 Agentic Remote application command and must not be required by the hub or node
 runtime.
+
+## Advisory hosted check
+
+`.github/workflows/light-check.yml` gives each pull request head fast feedback
+on GitHub. It is advisory: it must never be a required check or part of a
+branch ruleset, because an exhausted Actions quota then fails every run and
+blocks merges, which is why hosted CI was removed in #124. The local gate above
+stays authoritative.
+
+- One `ubuntu-latest` job runs `pnpm install --frozen-lockfile`, `pnpm lint`,
+  `pnpm exec tsc -b`, `pnpm exec vite build`, and `pnpm test:quick`.
+- It runs on the latest Node 22, the supported floor in `engines`, while the
+  local gate covers the newer Node a host runs.
+- It runs when a ready pull request is opened, reopened, updated, or marked
+  ready. Drafts are skipped, as are pull requests whose every changed file is
+  Markdown, under `docs/`, or under `graphify/`. A newer head cancels the
+  running check. Permissions are read-only and the job times out after 3
+  minutes.
+- `pnpm test:quick` is the `fast` project minus `slowTests` in
+  `vite.config.ts`: every jsdom file and each file measured at 0.1 seconds or
+  more locally. New files join it by default; add one to `slowTests` when it is
+  that slow. Every file still runs in `pnpm test`.
+- No dependency cache is used. Restoring the 440 MB pnpm store took 12 seconds
+  against 17 seconds for an uncached install, and each pull request's first run
+  had nothing to restore and spent 9 more seconds saving it. pnpm comes from
+  `packageManager` through `npm install --global` (2 seconds) rather than
+  `pnpm/action-setup` (4 to 6 seconds).
+
+Budget: jobs are billed per job and rounded up to whole minutes, so the check is
+sized to finish within 60 seconds, one billed minute. Three measured GitHub runs
+took 43 to 54 seconds: setup, checkout, Node, and pnpm 5 to 6, install 15 to 18,
+lint 3 to 4, type-check 5 to 8, build 2 to 4, and tests 7 to 11. About 10 pull
+requests a day with about 3 heads each is roughly 1,200 runs, or 1,200 billed
+minutes, a month against an assumed 2,000-minute quota.
+Skipped runs cost nothing; a cancelled run is billed for its started minute.
+If a run regularly exceeds 60 seconds, shrink the test selection rather than
+double the cost.
+
+Disable the check with `gh workflow disable light-check.yml` (and re-enable it
+with `gh workflow enable light-check.yml`), for example when the quota runs
+low.
 
 ## Connection-continuity invariants
 

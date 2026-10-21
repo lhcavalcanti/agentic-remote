@@ -1217,8 +1217,8 @@ run() {
   CI=true run_pnpm "$VALIDATE_ROOT" install --frozen-lockfile
   log "running validation lint"
   CI=true run_pnpm "$VALIDATE_ROOT" lint
-  # The repository has no hosted CI, so the suite that used to gate promotion
-  # remotely has to run here. Without it nothing would exercise the tests
+  # The hosted light check is advisory and runs only a quick subset, so the
+  # full suite has to run here. Without it nothing would exercise every test
   # before a commit reaches production.
   log "running validation tests"
   CI=true run_pnpm "$VALIDATE_ROOT" test

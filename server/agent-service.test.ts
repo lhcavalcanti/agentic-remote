@@ -7756,6 +7756,100 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it.each([
+    ['behind a waiting queue', true, 'v1'],
+    ['on an empty queue', false, 'v1'],
+  ] as const)('queues a steer the busy terminal could not take yet, %s', async (_name, waiting, logVersion) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([{
+      sessionId: client.session.sessionId, startTime: new Date(), modifiedTime: new Date(),
+      summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+    }])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        throw Object.assign(new Error('The terminal is not ready for this input.'), {
+          statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.steer',
+        })
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => ' ◉ Working · esc interrupt'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client,
+      async () => [{ id: client.session.sessionId, cwd: directory, title: 'External session', updatedAt: new Date().toISOString() }],
+      async () => undefined, async () => [], async () => logVersion, terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+      session.activity = 'Working in terminal'
+      if (waiting) {
+        session.queuedPrompts = [{ id: randomUUID(), content: 'Older queued prompt', createdAt: new Date().toISOString() }]
+        session.queuedCount = 1
+      }
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const sent = await service.sendMessage(client.session.sessionId, 'Steer when you can')
+      expect(terminal.send).toHaveBeenCalledTimes(1)
+      expect(terminal.send).toHaveBeenCalledWith(
+        client.session.sessionId, 'Steer when you can', false, { allowDuringAgentExecution: true },
+      )
+      const expected = [
+        ...(waiting ? [{ content: 'Older queued prompt' }] : []),
+        { content: 'Steer when you can' },
+      ]
+      expect(sent.queuedPrompts).toMatchObject(expected)
+      expect(service.store.get(client.session.sessionId)?.queuedPrompts).toMatchObject(expected)
+      expect(client.session.sentPrompts).toEqual([])
+    } finally {
+      warn.mockRestore()
+      await service.stop()
+    }
+  })
+
+  it.each([
+    ['a refusal for another reason', { statusCode: 409, uncertainDelivery: false }],
+    ['a not-ready refusal that may have typed', { statusCode: 409, uncertainDelivery: true, reasonCode: 'terminal-not-ready.steer' }],
+  ])('does not queue a steer after %s', async (_name, fields) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([{
+      sessionId: client.session.sessionId, startTime: new Date(), modifiedTime: new Date(),
+      summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+    }])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        throw Object.assign(new Error('Refused'), fields)
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => ' ◉ Working · esc interrupt'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client,
+      async () => [{ id: client.session.sessionId, cwd: directory, title: 'External session', updatedAt: new Date().toISOString() }],
+      async () => undefined, async () => [], async () => 'v1', terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+      session.activity = 'Working in terminal'
+    })
+    try {
+      await expect(service.sendMessage(client.session.sessionId, 'Steer now'))
+        .rejects.toMatchObject({ statusCode: 409 })
+      expect(terminal.send).toHaveBeenCalledTimes(1)
+      expect(service.store.get(client.session.sessionId)?.queuedPrompts ?? []).toEqual([])
+    } finally {
+      await service.stop()
+    }
+  })
+
   it('sends an explicit enqueue immediately when an idle terminal has no event log', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

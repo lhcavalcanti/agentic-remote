@@ -359,6 +359,16 @@ function terminalAnswerRefused(cause?: unknown): Error {
   ), { statusCode: 409, uncertainDelivery: false, ...(cause === undefined ? {} : { cause }) })
 }
 
+/** A steer the terminal refused, before typing anything, for want of a composer. */
+function isTerminalNotReadyRefusal(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      Reflect.get(error, 'reasonCode') === 'terminal-not-ready.steer' &&
+      Reflect.get(error, 'uncertainDelivery') === false,
+  )
+}
+
 // Upper bound on the read-only stale-card probe within a reply's budget.
 const STALE_FORM_PROBE_MS = 5_000
 
@@ -5139,14 +5149,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue && !startupReady,
     )
     const dispatchedAt = new Date().toISOString()
-    if (
-      await this.sendTerminalInput(
+    const steer =
+      terminalBacked && !answerDelivery && !nativeEnqueue && terminalWorking
+    let terminalSent: boolean
+    try {
+      terminalSent = await this.sendTerminalInput(
         sessionId,
         content,
         nativeEnqueue,
         answerDelivery
           ? { idleOnly: true }
-          : !nativeEnqueue && terminalWorking
+          : steer
             ? {
                 allowDuringAgentExecution: true,
                 ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
@@ -5155,7 +5168,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               ? { replaceExistingInput: true }
               : undefined,
       )
-    ) {
+    } catch (error) {
+      // A steer the busy terminal could not take yet goes on the queue, just
+      // as Queue would have put it, rather than coming back as an error. It
+      // was refused before anything was typed, so it is queued exactly once.
+      if (
+        steer &&
+        !replaceTerminalDraft &&
+        !delivery?.accepted &&
+        isTerminalNotReadyRefusal(error) &&
+        this.canQueueRefusedSteer(sessionId) &&
+        (await this.shouldEnqueueTerminalPrompt(sessionId))
+      ) {
+        console.warn('A steer found the terminal not ready, so it was queued instead')
+        return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery)
+      }
+      throw error
+    }
+    if (terminalSent) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
       if (startupLocked && !nativeEnqueue) {
@@ -5737,6 +5767,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } catch {
       return false
     }
+  }
+
+  private canQueueRefusedSteer(sessionId: string): boolean {
+    const session = this.store.get(sessionId)
+    return (
+      !this.stopped &&
+      !this.deletingSessions.has(sessionId) &&
+      !this.suspendingSessions.has(sessionId) &&
+      !session?.suspended &&
+      session?.status === 'running'
+    )
   }
 
   private async shouldEnqueueTerminalPrompt(

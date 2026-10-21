@@ -455,6 +455,30 @@ describe('OracleVoiceClient', () => {
     await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
   })
 
+  it('drains a zero-frame segment after superseding an older playback drain', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(encodeVoiceAudioFrame(playback(0, 0, 'older-segment')))
+    client.sockets[0].message(control('audio_end', 'stream-1', 0, {
+      segmentId: 'older-segment',
+    }))
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(control('audio_end', 'stream-1', 0, {
+      segmentId: 'silent-segment',
+    }))
+
+    client.playbacks[0].drain('silent-segment')
+    await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
+    client.playbacks[0].drain('older-segment')
+    await Promise.resolve()
+    expect(client.instance.currentState).toBe('listening')
+  })
+
   it('ignores drained callbacks superseded by a newer segment, interruption, or close', async () => {
     const client = harness()
     await client.connect('stream-1')

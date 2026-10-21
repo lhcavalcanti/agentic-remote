@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "0810d22cb06ed8cd7840d1f1698e8b875c6d8829",
+  "built_at_commit": "0295403c028c42efbc9320f050e2c29e0f5ef10c",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -185466,7 +185466,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1041",
+      "source_location": "L1042",
       "target": "src_oracle_voice_client_captureclienterror",
       "weight": 1.0
     },
@@ -185477,7 +185477,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1031",
+      "source_location": "L1032",
       "target": "src_oracle_voice_client_clienterror",
       "weight": 1.0
     },
@@ -185488,7 +185488,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1023",
+      "source_location": "L1024",
       "target": "src_oracle_voice_client_closeerror",
       "weight": 1.0
     },
@@ -185499,7 +185499,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1105",
+      "source_location": "L1106",
       "target": "src_oracle_voice_client_closereason",
       "weight": 1.0
     },
@@ -185510,7 +185510,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1068",
+      "source_location": "L1069",
       "target": "src_oracle_voice_client_iscapabilities",
       "weight": 1.0
     },
@@ -185521,7 +185521,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1095",
+      "source_location": "L1096",
       "target": "src_oracle_voice_client_isrecord",
       "weight": 1.0
     },
@@ -185532,7 +185532,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1087",
+      "source_location": "L1088",
       "target": "src_oracle_voice_client_isticket",
       "weight": 1.0
     },
@@ -185653,7 +185653,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L976",
+      "source_location": "L977",
       "target": "src_oracle_voice_client_parsehello",
       "weight": 1.0
     },
@@ -185675,7 +185675,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1051",
+      "source_location": "L1052",
       "target": "src_oracle_voice_client_playbackclienterror",
       "weight": 1.0
     },
@@ -185697,7 +185697,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1099",
+      "source_location": "L1100",
       "target": "src_oracle_voice_client_responsemessage",
       "weight": 1.0
     },
@@ -185708,7 +185708,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1058",
+      "source_location": "L1059",
       "target": "src_oracle_voice_client_terminalclosecode",
       "weight": 1.0
     },
@@ -185719,7 +185719,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1013",
+      "source_location": "L1014",
       "target": "src_oracle_voice_client_transcriptevent",
       "weight": 1.0
     },
@@ -185801,20 +185801,8 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_captureclienterror",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1042",
+      "source_location": "L1043",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_oracle_voice_client_clienterror",
-      "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1033",
-      "target": "src_oracle_voice_client_captureclienterror",
       "weight": 1.0
     },
     {
@@ -185826,6 +185814,18 @@
       "source": "src_oracle_voice_client_clienterror",
       "source_file": "src/oracle-voice/client.ts",
       "source_location": "L1034",
+      "target": "src_oracle_voice_client_captureclienterror",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_oracle_voice_client_clienterror",
+      "source_file": "src/oracle-voice/client.ts",
+      "source_location": "L1035",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -185837,7 +185837,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_closeerror",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1024",
+      "source_location": "L1025",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -185849,7 +185849,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_closeerror",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1027",
+      "source_location": "L1028",
       "target": "src_oracle_voice_client_terminalclosecode",
       "weight": 1.0
     },
@@ -185861,7 +185861,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_iscapabilities",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1069",
+      "source_location": "L1070",
       "target": "src_oracle_voice_client_isrecord",
       "weight": 1.0
     },
@@ -185873,7 +185873,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_isticket",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1088",
+      "source_location": "L1089",
       "target": "src_oracle_voice_client_isrecord",
       "weight": 1.0
     },
@@ -185930,7 +185930,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L941",
+      "source_location": "L942",
       "target": "src_oracle_voice_client_oraclevoiceclient_advancegeneration",
       "weight": 1.0
     },
@@ -185952,7 +185952,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L934",
+      "source_location": "L935",
       "target": "src_oracle_voice_client_oraclevoiceclient_cancelhellowait",
       "weight": 1.0
     },
@@ -185963,7 +185963,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L928",
+      "source_location": "L929",
       "target": "src_oracle_voice_client_oraclevoiceclient_cancelreconnect",
       "weight": 1.0
     },
@@ -186007,7 +186007,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L915",
+      "source_location": "L916",
       "target": "src_oracle_voice_client_oraclevoiceclient_detachsocket",
       "weight": 1.0
     },
@@ -186029,7 +186029,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L790",
+      "source_location": "L791",
       "target": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "weight": 1.0
     },
@@ -186040,7 +186040,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L803",
+      "source_location": "L804",
       "target": "src_oracle_voice_client_oraclevoiceclient_fetchcapabilities",
       "weight": 1.0
     },
@@ -186051,7 +186051,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L834",
+      "source_location": "L835",
       "target": "src_oracle_voice_client_oraclevoiceclient_fetchticket",
       "weight": 1.0
     },
@@ -186073,7 +186073,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L691",
+      "source_location": "L692",
       "target": "src_oracle_voice_client_oraclevoiceclient_handleplaybackend",
       "weight": 1.0
     },
@@ -186095,7 +186095,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L677",
+      "source_location": "L678",
       "target": "src_oracle_voice_client_oraclevoiceclient_handleserverstopped",
       "weight": 1.0
     },
@@ -186150,7 +186150,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L946",
+      "source_location": "L947",
       "target": "src_oracle_voice_client_oraclevoiceclient_invalidateplaybackdrain",
       "weight": 1.0
     },
@@ -186161,7 +186161,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L775",
+      "source_location": "L776",
       "target": "src_oracle_voice_client_oraclevoiceclient_prepareplayback",
       "weight": 1.0
     },
@@ -186172,7 +186172,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L971",
+      "source_location": "L972",
       "target": "src_oracle_voice_client_oraclevoiceclient_report",
       "weight": 1.0
     },
@@ -186183,7 +186183,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L951",
+      "source_location": "L952",
       "target": "src_oracle_voice_client_oraclevoiceclient_requireepoch",
       "weight": 1.0
     },
@@ -186216,7 +186216,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L741",
+      "source_location": "L742",
       "target": "src_oracle_voice_client_oraclevoiceclient_sendaudio",
       "weight": 1.0
     },
@@ -186227,7 +186227,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L725",
+      "source_location": "L726",
       "target": "src_oracle_voice_client_oraclevoiceclient_sendcontrol",
       "weight": 1.0
     },
@@ -186238,7 +186238,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L751",
+      "source_location": "L752",
       "target": "src_oracle_voice_client_oraclevoiceclient_sendpayload",
       "weight": 1.0
     },
@@ -186249,7 +186249,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L965",
+      "source_location": "L966",
       "target": "src_oracle_voice_client_oraclevoiceclient_setstate",
       "weight": 1.0
     },
@@ -186260,7 +186260,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L850",
+      "source_location": "L851",
       "target": "src_oracle_voice_client_oraclevoiceclient_socketurl",
       "weight": 1.0
     },
@@ -186293,7 +186293,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L857",
+      "source_location": "L858",
       "target": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "weight": 1.0
     },
@@ -186304,7 +186304,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_oraclevoiceclient",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L877",
+      "source_location": "L878",
       "target": "src_oracle_voice_client_oraclevoiceclient_teardownmedia",
       "weight": 1.0
     },
@@ -186339,7 +186339,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_applyserverstate",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L673",
+      "source_location": "L674",
       "target": "src_oracle_voice_client_oraclevoiceclient_handleserverstopped",
       "weight": 1.0
     },
@@ -186363,7 +186363,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_cancelhellowait",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L938",
+      "source_location": "L939",
       "target": "src_oracle_voice_client_pendinghello_cancel",
       "weight": 1.0
     },
@@ -186591,7 +186591,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L797",
+      "source_location": "L798",
       "target": "src_oracle_voice_client_oraclevoiceclient_cancelhellowait",
       "weight": 1.0
     },
@@ -186603,7 +186603,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L795",
+      "source_location": "L796",
       "target": "src_oracle_voice_client_oraclevoiceclient_cancelreconnect",
       "weight": 1.0
     },
@@ -186615,7 +186615,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L796",
+      "source_location": "L797",
       "target": "src_oracle_voice_client_oraclevoiceclient_report",
       "weight": 1.0
     },
@@ -186627,7 +186627,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L800",
+      "source_location": "L801",
       "target": "src_oracle_voice_client_oraclevoiceclient_setstate",
       "weight": 1.0
     },
@@ -186639,7 +186639,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L798",
+      "source_location": "L799",
       "target": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "weight": 1.0
     },
@@ -186651,7 +186651,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_oraclevoiceclient_fetchcapabilities",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L803",
+      "source_location": "L804",
       "target": "shared_oracle_voice_voicecapabilities",
       "weight": 1.0
     },
@@ -186663,7 +186663,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_fetchcapabilities",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L808",
+      "source_location": "L809",
       "target": "src_oracle_voice_client_iscapabilities",
       "weight": 1.0
     },
@@ -186675,7 +186675,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_fetchcapabilities",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L809",
+      "source_location": "L810",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -186687,7 +186687,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_fetchcapabilities",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L813",
+      "source_location": "L814",
       "target": "src_oracle_voice_client_responsemessage",
       "weight": 1.0
     },
@@ -186699,7 +186699,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_fetchticket",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L840",
+      "source_location": "L841",
       "target": "src_oracle_voice_client_isticket",
       "weight": 1.0
     },
@@ -186711,7 +186711,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_fetchticket",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L841",
+      "source_location": "L842",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -186723,7 +186723,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_fetchticket",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L843",
+      "source_location": "L844",
       "target": "src_oracle_voice_client_responsemessage",
       "weight": 1.0
     },
@@ -186783,7 +186783,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleplaybackend",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L700",
+      "source_location": "L701",
       "target": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "weight": 1.0
     },
@@ -186795,7 +186795,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleplaybackend",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L719",
+      "source_location": "L720",
       "target": "src_oracle_voice_client_oraclevoiceclient_setstate",
       "weight": 1.0
     },
@@ -186807,7 +186807,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleplaybackend",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L698",
+      "source_location": "L699",
       "target": "src_oracle_voice_client_oraclevoiceplayback_endsegment",
       "weight": 1.0
     },
@@ -186819,7 +186819,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleplaybackend",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L700",
+      "source_location": "L701",
       "target": "src_oracle_voice_client_playbackclienterror",
       "weight": 1.0
     },
@@ -186963,7 +186963,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleserverstopped",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L682",
+      "source_location": "L683",
       "target": "src_oracle_voice_client_oraclevoiceclient_cancelhellowait",
       "weight": 1.0
     },
@@ -186975,7 +186975,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleserverstopped",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L681",
+      "source_location": "L682",
       "target": "src_oracle_voice_client_oraclevoiceclient_cancelreconnect",
       "weight": 1.0
     },
@@ -186987,7 +186987,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleserverstopped",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L688",
+      "source_location": "L689",
       "target": "src_oracle_voice_client_oraclevoiceclient_setstate",
       "weight": 1.0
     },
@@ -186999,7 +186999,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_handleserverstopped",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L683",
+      "source_location": "L684",
       "target": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "weight": 1.0
     },
@@ -187239,7 +187239,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_prepareplayback",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L782",
+      "source_location": "L783",
       "target": "src_oracle_voice_client_oraclevoiceclient_start",
       "weight": 1.0
     },
@@ -187251,7 +187251,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_prepareplayback",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L783",
+      "source_location": "L784",
       "target": "src_oracle_voice_client_playbackclienterror",
       "weight": 1.0
     },
@@ -187263,7 +187263,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_report",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L972",
+      "source_location": "L973",
       "target": "src_oracle_voice_client_oraclevoiceclientoptions_onerror",
       "weight": 1.0
     },
@@ -187275,7 +187275,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_requireepoch",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L957",
+      "source_location": "L958",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -187407,7 +187407,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendaudio",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L748",
+      "source_location": "L749",
       "target": "shared_oracle_voice_encodevoiceaudioframe",
       "weight": 1.0
     },
@@ -187419,7 +187419,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendaudio",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L741",
+      "source_location": "L742",
       "target": "shared_oracle_voice_voiceaudioframe",
       "weight": 1.0
     },
@@ -187431,7 +187431,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendaudio",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L748",
+      "source_location": "L749",
       "target": "src_oracle_voice_client_oraclevoiceclient_sendpayload",
       "weight": 1.0
     },
@@ -187443,7 +187443,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendaudio",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L743",
+      "source_location": "L744",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -187455,7 +187455,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendcontrol",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L725",
+      "source_location": "L726",
       "target": "shared_oracle_voice_voiceclientcontrol",
       "weight": 1.0
     },
@@ -187467,7 +187467,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendcontrol",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L738",
+      "source_location": "L739",
       "target": "src_oracle_voice_client_oraclevoiceclient_sendpayload",
       "weight": 1.0
     },
@@ -187479,7 +187479,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendcontrol",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L727",
+      "source_location": "L728",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -187491,7 +187491,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendpayload",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L769",
+      "source_location": "L770",
       "target": "src_oracle_voice_client_oraclevoiceclient_failfatal",
       "weight": 1.0
     },
@@ -187503,7 +187503,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendpayload",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L755",
+      "source_location": "L756",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -187515,7 +187515,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_sendpayload",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L772",
+      "source_location": "L773",
       "target": "src_oracle_voice_client_oraclevoicesocket_send",
       "weight": 1.0
     },
@@ -187527,7 +187527,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_setstate",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L968",
+      "source_location": "L969",
       "target": "src_oracle_voice_client_oraclevoiceclientoptions_onstate",
       "weight": 1.0
     },
@@ -187695,7 +187695,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L869",
+      "source_location": "L870",
       "target": "src_oracle_voice_client_closereason",
       "weight": 1.0
     },
@@ -187707,7 +187707,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L862",
+      "source_location": "L863",
       "target": "src_oracle_voice_client_oraclevoiceclient_cancelhellowait",
       "weight": 1.0
     },
@@ -187719,7 +187719,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L863",
+      "source_location": "L864",
       "target": "src_oracle_voice_client_oraclevoiceclient_detachsocket",
       "weight": 1.0
     },
@@ -187731,7 +187731,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L865",
+      "source_location": "L866",
       "target": "src_oracle_voice_client_oraclevoiceclient_teardownmedia",
       "weight": 1.0
     },
@@ -187743,7 +187743,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownconnection",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L869",
+      "source_location": "L870",
       "target": "src_oracle_voice_client_oraclevoiceplayback_close",
       "weight": 1.0
     },
@@ -187755,7 +187755,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownmedia",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L883",
+      "source_location": "L884",
       "target": "src_oracle_voice_client_oraclevoiceclient_invalidateplaybackdrain",
       "weight": 1.0
     },
@@ -187767,7 +187767,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownmedia",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L892",
+      "source_location": "L893",
       "target": "src_oracle_voice_client_oraclevoiceclient_stop",
       "weight": 1.0
     },
@@ -187779,7 +187779,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_oraclevoiceclient_teardownmedia",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L899",
+      "source_location": "L900",
       "target": "src_oracle_voice_client_oraclevoiceplayback_close",
       "weight": 1.0
     },
@@ -188190,7 +188190,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_parsehello",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L995",
+      "source_location": "L996",
       "target": "shared_oracle_voice_isvoiceservercontrol",
       "weight": 1.0
     },
@@ -188202,7 +188202,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_parsehello",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L993",
+      "source_location": "L994",
       "target": "src_oracle_voice_client_isrecord",
       "weight": 1.0
     },
@@ -188214,7 +188214,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_parsehello",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L978",
+      "source_location": "L979",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -188237,7 +188237,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_playbackclienterror",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1052",
+      "source_location": "L1053",
       "target": "src_oracle_voice_client_oraclevoiceclienterror",
       "weight": 1.0
     },
@@ -188249,7 +188249,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_responsemessage",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1100",
+      "source_location": "L1101",
       "target": "src_oracle_voice_client_isrecord",
       "weight": 1.0
     },
@@ -188488,7 +188488,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1033",
+      "source_location": "L1057",
       "target": "src_oracle_voice_client_test_control",
       "weight": 1.0
     },
@@ -188499,7 +188499,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L803",
+      "source_location": "L827",
       "target": "src_oracle_voice_client_test_fakecapture",
       "weight": 1.0
     },
@@ -188510,7 +188510,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L825",
+      "source_location": "L849",
       "target": "src_oracle_voice_client_test_fakeplayback",
       "weight": 1.0
     },
@@ -188521,7 +188521,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L948",
+      "source_location": "L972",
       "target": "src_oracle_voice_client_test_fakescheduler",
       "weight": 1.0
     },
@@ -188532,7 +188532,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L863",
+      "source_location": "L887",
       "target": "src_oracle_voice_client_test_fakesocket",
       "weight": 1.0
     },
@@ -188543,7 +188543,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L651",
+      "source_location": "L675",
       "target": "src_oracle_voice_client_test_harness",
       "weight": 1.0
     },
@@ -188554,7 +188554,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L993",
+      "source_location": "L1017",
       "target": "src_oracle_voice_client_test_hello",
       "weight": 1.0
     },
@@ -188565,7 +188565,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1085",
+      "source_location": "L1109",
       "target": "src_oracle_voice_client_test_isbrowserclientclosecode",
       "weight": 1.0
     },
@@ -188576,7 +188576,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1078",
+      "source_location": "L1102",
       "target": "src_oracle_voice_client_test_jsonresponse",
       "weight": 1.0
     },
@@ -188587,7 +188587,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1053",
+      "source_location": "L1077",
       "target": "src_oracle_voice_client_test_microphone",
       "weight": 1.0
     },
@@ -188598,7 +188598,7 @@
       "relation": "contains",
       "source": "src_oracle_voice_client_test",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1063",
+      "source_location": "L1087",
       "target": "src_oracle_voice_client_test_playback",
       "weight": 1.0
     },
@@ -188635,7 +188635,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_test_fakecapture",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L806",
+      "source_location": "L830",
       "target": "src_oracle_voice_capture_voicecaptureoptions",
       "weight": 1.0
     },
@@ -188646,7 +188646,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakecapture",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L808",
+      "source_location": "L832",
       "target": "src_oracle_voice_client_test_fakecapture_constructor",
       "weight": 1.0
     },
@@ -188658,7 +188658,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_test_fakecapture_constructor",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L808",
+      "source_location": "L832",
       "target": "src_oracle_voice_capture_voicecaptureerror",
       "weight": 1.0
     },
@@ -188670,7 +188670,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_test_fakecapture_constructor",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L808",
+      "source_location": "L832",
       "target": "src_oracle_voice_capture_voicecaptureoptions",
       "weight": 1.0
     },
@@ -188681,7 +188681,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakeplayback",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L842",
+      "source_location": "L866",
       "target": "src_oracle_voice_client_test_fakeplayback_constructor",
       "weight": 1.0
     },
@@ -188692,7 +188692,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakeplayback",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L846",
+      "source_location": "L870",
       "target": "src_oracle_voice_client_test_fakeplayback_drain",
       "weight": 1.0
     },
@@ -188703,7 +188703,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakeplayback",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L851",
+      "source_location": "L875",
       "target": "src_oracle_voice_client_test_fakeplayback_drainpromise",
       "weight": 1.0
     },
@@ -188715,7 +188715,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_test_fakeplayback",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L836",
+      "source_location": "L860",
       "target": "src_oracle_voice_playback_voiceplaybackoptions",
       "weight": 1.0
     },
@@ -188727,7 +188727,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_test_fakeplayback_constructor",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L842",
+      "source_location": "L866",
       "target": "src_oracle_voice_playback_voiceplaybackoptions",
       "weight": 1.0
     },
@@ -188739,7 +188739,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_fakeplayback_drain",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L847",
+      "source_location": "L871",
       "target": "src_oracle_voice_client_test_fakeplayback_drainpromise",
       "weight": 1.0
     },
@@ -188750,7 +188750,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakescheduler",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L962",
+      "source_location": "L986",
       "target": "src_oracle_voice_client_test_fakescheduler_cleartimeout",
       "weight": 1.0
     },
@@ -188761,7 +188761,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakescheduler",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L967",
+      "source_location": "L991",
       "target": "src_oracle_voice_client_test_fakescheduler_pending",
       "weight": 1.0
     },
@@ -188772,7 +188772,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakescheduler",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L980",
+      "source_location": "L1004",
       "target": "src_oracle_voice_client_test_fakescheduler_runnext",
       "weight": 1.0
     },
@@ -188783,7 +188783,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakescheduler",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L971",
+      "source_location": "L995",
       "target": "src_oracle_voice_client_test_fakescheduler_scheduleddelays",
       "weight": 1.0
     },
@@ -188794,7 +188794,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakescheduler",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L956",
+      "source_location": "L980",
       "target": "src_oracle_voice_client_test_fakescheduler_settimeout",
       "weight": 1.0
     },
@@ -188806,7 +188806,7 @@
       "relation": "implements",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L863",
+      "source_location": "L887",
       "target": "src_oracle_voice_client_oraclevoicesocket",
       "weight": 1.0
     },
@@ -188817,7 +188817,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L936",
+      "source_location": "L960",
       "target": "src_oracle_voice_client_test_fakesocket_binarymessages",
       "weight": 1.0
     },
@@ -188828,7 +188828,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L907",
+      "source_location": "L931",
       "target": "src_oracle_voice_client_test_fakesocket_close",
       "weight": 1.0
     },
@@ -188839,7 +188839,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L879",
+      "source_location": "L903",
       "target": "src_oracle_voice_client_test_fakesocket_constructor",
       "weight": 1.0
     },
@@ -188850,7 +188850,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L941",
+      "source_location": "L965",
       "target": "src_oracle_voice_client_test_fakesocket_jsonmessages",
       "weight": 1.0
     },
@@ -188861,7 +188861,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L919",
+      "source_location": "L943",
       "target": "src_oracle_voice_client_test_fakesocket_message",
       "weight": 1.0
     },
@@ -188872,7 +188872,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L883",
+      "source_location": "L907",
       "target": "src_oracle_voice_client_test_fakesocket_open",
       "weight": 1.0
     },
@@ -188883,7 +188883,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L888",
+      "source_location": "L912",
       "target": "src_oracle_voice_client_test_fakesocket_send",
       "weight": 1.0
     },
@@ -188894,7 +188894,7 @@
       "relation": "method",
       "source": "src_oracle_voice_client_test_fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L926",
+      "source_location": "L950",
       "target": "src_oracle_voice_client_test_fakesocket_serverclose",
       "weight": 1.0
     },
@@ -188906,7 +188906,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_fakesocket_close",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L916",
+      "source_location": "L940",
       "target": "src_oracle_voice_client_test_fakesocket_serverclose",
       "weight": 1.0
     },
@@ -188918,7 +188918,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_fakesocket_close",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L909",
+      "source_location": "L933",
       "target": "src_oracle_voice_client_test_isbrowserclientclosecode",
       "weight": 1.0
     },
@@ -188930,7 +188930,7 @@
       "relation": "references",
       "source": "src_oracle_voice_client_test_fakesocket_jsonmessages",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L941",
+      "source_location": "L965",
       "target": "shared_oracle_voice_voiceclientcontrol",
       "weight": 1.0
     },
@@ -188942,7 +188942,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L740",
+      "source_location": "L764",
       "target": "src_oracle_voice_client_oraclevoiceclient",
       "weight": 1.0
     },
@@ -188954,7 +188954,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L727",
+      "source_location": "L751",
       "target": "src_oracle_voice_client_test_fakecapture",
       "weight": 1.0
     },
@@ -188966,7 +188966,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L732",
+      "source_location": "L756",
       "target": "src_oracle_voice_client_test_fakeplayback",
       "weight": 1.0
     },
@@ -188978,7 +188978,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L669",
+      "source_location": "L693",
       "target": "src_oracle_voice_client_test_fakescheduler",
       "weight": 1.0
     },
@@ -188990,7 +188990,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L762",
+      "source_location": "L786",
       "target": "src_oracle_voice_client_test_fakescheduler_scheduleddelays",
       "weight": 1.0
     },
@@ -189002,7 +189002,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L722",
+      "source_location": "L746",
       "target": "src_oracle_voice_client_test_fakesocket",
       "weight": 1.0
     },
@@ -189014,7 +189014,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L765",
+      "source_location": "L789",
       "target": "src_oracle_voice_client_test_fakesocket_jsonmessages",
       "weight": 1.0
     },
@@ -189026,7 +189026,7 @@
       "relation": "calls",
       "source": "src_oracle_voice_client_test_harness",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L696",
+      "source_location": "L720",
       "target": "src_oracle_voice_client_test_jsonresponse",
       "weight": 1.0
     },
@@ -268103,7 +268103,7 @@
       "label": "captureClientError()",
       "norm_label": "captureclienterror()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1041"
+      "source_location": "L1042"
     },
     {
       "_callable": true,
@@ -268115,7 +268115,7 @@
       "label": "clientError()",
       "norm_label": "clienterror()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1031"
+      "source_location": "L1032"
     },
     {
       "_callable": true,
@@ -268127,7 +268127,7 @@
       "label": "closeError()",
       "norm_label": "closeerror()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1023"
+      "source_location": "L1024"
     },
     {
       "_callable": true,
@@ -268139,7 +268139,7 @@
       "label": "closeReason()",
       "norm_label": "closereason()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1105"
+      "source_location": "L1106"
     },
     {
       "_callable": true,
@@ -268151,7 +268151,7 @@
       "label": "isCapabilities()",
       "norm_label": "iscapabilities()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1068"
+      "source_location": "L1069"
     },
     {
       "_callable": true,
@@ -268163,7 +268163,7 @@
       "label": "isRecord()",
       "norm_label": "isrecord()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1095"
+      "source_location": "L1096"
     },
     {
       "_callable": true,
@@ -268175,7 +268175,7 @@
       "label": "isTicket()",
       "norm_label": "isticket()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1087"
+      "source_location": "L1088"
     },
     {
       "_callable": true,
@@ -268237,7 +268237,7 @@
       "label": ".advanceGeneration()",
       "norm_label": ".advancegeneration()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L941"
+      "source_location": "L942"
     },
     {
       "_callable": true,
@@ -268261,7 +268261,7 @@
       "label": ".cancelHelloWait()",
       "norm_label": ".cancelhellowait()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L934"
+      "source_location": "L935"
     },
     {
       "_callable": true,
@@ -268273,7 +268273,7 @@
       "label": ".cancelReconnect()",
       "norm_label": ".cancelreconnect()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L928"
+      "source_location": "L929"
     },
     {
       "_callable": true,
@@ -268321,7 +268321,7 @@
       "label": ".detachSocket()",
       "norm_label": ".detachsocket()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L915"
+      "source_location": "L916"
     },
     {
       "_callable": true,
@@ -268345,7 +268345,7 @@
       "label": ".failFatal()",
       "norm_label": ".failfatal()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L790"
+      "source_location": "L791"
     },
     {
       "_callable": true,
@@ -268357,7 +268357,7 @@
       "label": ".fetchCapabilities()",
       "norm_label": ".fetchcapabilities()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L803"
+      "source_location": "L804"
     },
     {
       "_callable": true,
@@ -268369,7 +268369,7 @@
       "label": ".fetchTicket()",
       "norm_label": ".fetchticket()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L834"
+      "source_location": "L835"
     },
     {
       "_callable": true,
@@ -268393,7 +268393,7 @@
       "label": ".handlePlaybackEnd()",
       "norm_label": ".handleplaybackend()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L691"
+      "source_location": "L692"
     },
     {
       "_callable": true,
@@ -268417,7 +268417,7 @@
       "label": ".handleServerStopped()",
       "norm_label": ".handleserverstopped()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L677"
+      "source_location": "L678"
     },
     {
       "_callable": true,
@@ -268477,7 +268477,7 @@
       "label": ".invalidatePlaybackDrain()",
       "norm_label": ".invalidateplaybackdrain()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L946"
+      "source_location": "L947"
     },
     {
       "_callable": true,
@@ -268489,7 +268489,7 @@
       "label": ".preparePlayback()",
       "norm_label": ".prepareplayback()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L775"
+      "source_location": "L776"
     },
     {
       "_callable": true,
@@ -268501,7 +268501,7 @@
       "label": ".report()",
       "norm_label": ".report()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L971"
+      "source_location": "L972"
     },
     {
       "_callable": true,
@@ -268513,7 +268513,7 @@
       "label": ".requireEpoch()",
       "norm_label": ".requireepoch()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L951"
+      "source_location": "L952"
     },
     {
       "_callable": true,
@@ -268549,7 +268549,7 @@
       "label": ".sendAudio()",
       "norm_label": ".sendaudio()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L741"
+      "source_location": "L742"
     },
     {
       "_callable": true,
@@ -268561,7 +268561,7 @@
       "label": ".sendControl()",
       "norm_label": ".sendcontrol()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L725"
+      "source_location": "L726"
     },
     {
       "_callable": true,
@@ -268573,7 +268573,7 @@
       "label": ".sendPayload()",
       "norm_label": ".sendpayload()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L751"
+      "source_location": "L752"
     },
     {
       "_callable": true,
@@ -268585,7 +268585,7 @@
       "label": ".setState()",
       "norm_label": ".setstate()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L965"
+      "source_location": "L966"
     },
     {
       "_callable": true,
@@ -268597,7 +268597,7 @@
       "label": ".socketUrl()",
       "norm_label": ".socketurl()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L850"
+      "source_location": "L851"
     },
     {
       "_callable": true,
@@ -268633,7 +268633,7 @@
       "label": ".teardownConnection()",
       "norm_label": ".teardownconnection()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L857"
+      "source_location": "L858"
     },
     {
       "_callable": true,
@@ -268645,7 +268645,7 @@
       "label": ".teardownMedia()",
       "norm_label": ".teardownmedia()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L877"
+      "source_location": "L878"
     },
     {
       "_callable": true,
@@ -269037,7 +269037,7 @@
       "label": "parseHello()",
       "norm_label": "parsehello()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L976"
+      "source_location": "L977"
     },
     {
       "_callable": true,
@@ -269074,7 +269074,7 @@
       "label": "playbackClientError()",
       "norm_label": "playbackclienterror()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1051"
+      "source_location": "L1052"
     },
     {
       "_origin": "ast",
@@ -269097,7 +269097,7 @@
       "label": "responseMessage()",
       "norm_label": "responsemessage()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1099"
+      "source_location": "L1100"
     },
     {
       "_callable": true,
@@ -269109,7 +269109,7 @@
       "label": "terminalCloseCode()",
       "norm_label": "terminalclosecode()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1058"
+      "source_location": "L1059"
     },
     {
       "_origin": "ast",
@@ -269143,7 +269143,7 @@
       "label": "control()",
       "norm_label": "control()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1033"
+      "source_location": "L1057"
     },
     {
       "_callable": true,
@@ -269156,7 +269156,7 @@
       "label": "FakeCapture",
       "norm_label": "fakecapture",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L803"
+      "source_location": "L827"
     },
     {
       "_callable": true,
@@ -269168,7 +269168,7 @@
       "label": ".constructor()",
       "norm_label": ".constructor()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L808"
+      "source_location": "L832"
     },
     {
       "_callable": true,
@@ -269181,7 +269181,7 @@
       "label": "FakePlayback",
       "norm_label": "fakeplayback",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L825"
+      "source_location": "L849"
     },
     {
       "_callable": true,
@@ -269193,7 +269193,7 @@
       "label": ".constructor()",
       "norm_label": ".constructor()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L842"
+      "source_location": "L866"
     },
     {
       "_callable": true,
@@ -269205,7 +269205,7 @@
       "label": ".drain()",
       "norm_label": ".drain()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L846"
+      "source_location": "L870"
     },
     {
       "_callable": true,
@@ -269217,7 +269217,7 @@
       "label": ".drainPromise()",
       "norm_label": ".drainpromise()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L851"
+      "source_location": "L875"
     },
     {
       "_callable": true,
@@ -269230,7 +269230,7 @@
       "label": "FakeScheduler",
       "norm_label": "fakescheduler",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L948"
+      "source_location": "L972"
     },
     {
       "_callable": true,
@@ -269242,7 +269242,7 @@
       "label": ".clearTimeout()",
       "norm_label": ".cleartimeout()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L962"
+      "source_location": "L986"
     },
     {
       "_callable": true,
@@ -269254,7 +269254,7 @@
       "label": ".pending()",
       "norm_label": ".pending()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L967"
+      "source_location": "L991"
     },
     {
       "_callable": true,
@@ -269266,7 +269266,7 @@
       "label": ".runNext()",
       "norm_label": ".runnext()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L980"
+      "source_location": "L1004"
     },
     {
       "_callable": true,
@@ -269278,7 +269278,7 @@
       "label": ".scheduledDelays()",
       "norm_label": ".scheduleddelays()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L971"
+      "source_location": "L995"
     },
     {
       "_callable": true,
@@ -269290,7 +269290,7 @@
       "label": ".setTimeout()",
       "norm_label": ".settimeout()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L956"
+      "source_location": "L980"
     },
     {
       "_callable": true,
@@ -269303,7 +269303,7 @@
       "label": "FakeSocket",
       "norm_label": "fakesocket",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L863"
+      "source_location": "L887"
     },
     {
       "_callable": true,
@@ -269315,7 +269315,7 @@
       "label": ".binaryMessages()",
       "norm_label": ".binarymessages()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L936"
+      "source_location": "L960"
     },
     {
       "_callable": true,
@@ -269327,7 +269327,7 @@
       "label": ".close()",
       "norm_label": ".close()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L907"
+      "source_location": "L931"
     },
     {
       "_callable": true,
@@ -269339,7 +269339,7 @@
       "label": ".constructor()",
       "norm_label": ".constructor()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L879"
+      "source_location": "L903"
     },
     {
       "_callable": true,
@@ -269351,7 +269351,7 @@
       "label": ".jsonMessages()",
       "norm_label": ".jsonmessages()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L941"
+      "source_location": "L965"
     },
     {
       "_callable": true,
@@ -269363,7 +269363,7 @@
       "label": ".message()",
       "norm_label": ".message()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L919"
+      "source_location": "L943"
     },
     {
       "_callable": true,
@@ -269375,7 +269375,7 @@
       "label": ".open()",
       "norm_label": ".open()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L883"
+      "source_location": "L907"
     },
     {
       "_callable": true,
@@ -269387,7 +269387,7 @@
       "label": ".send()",
       "norm_label": ".send()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L888"
+      "source_location": "L912"
     },
     {
       "_callable": true,
@@ -269399,7 +269399,7 @@
       "label": ".serverClose()",
       "norm_label": ".serverclose()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L926"
+      "source_location": "L950"
     },
     {
       "_callable": true,
@@ -269411,7 +269411,7 @@
       "label": "harness()",
       "norm_label": "harness()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L651"
+      "source_location": "L675"
     },
     {
       "_callable": true,
@@ -269423,7 +269423,7 @@
       "label": "hello()",
       "norm_label": "hello()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L993"
+      "source_location": "L1017"
     },
     {
       "_callable": true,
@@ -269435,7 +269435,7 @@
       "label": "isBrowserClientCloseCode()",
       "norm_label": "isbrowserclientclosecode()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1085"
+      "source_location": "L1109"
     },
     {
       "_callable": true,
@@ -269447,7 +269447,7 @@
       "label": "jsonResponse()",
       "norm_label": "jsonresponse()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1078"
+      "source_location": "L1102"
     },
     {
       "_callable": true,
@@ -269459,7 +269459,7 @@
       "label": "microphone()",
       "norm_label": "microphone()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1053"
+      "source_location": "L1077"
     },
     {
       "_callable": true,
@@ -269471,7 +269471,7 @@
       "label": "playback()",
       "norm_label": "playback()",
       "source_file": "src/oracle-voice/client.test.ts",
-      "source_location": "L1063"
+      "source_location": "L1087"
     },
     {
       "_callable": true,
@@ -269483,7 +269483,7 @@
       "label": "transcriptEvent()",
       "norm_label": "transcriptevent()",
       "source_file": "src/oracle-voice/client.ts",
-      "source_location": "L1013"
+      "source_location": "L1014"
     },
     {
       "_origin": "ast",

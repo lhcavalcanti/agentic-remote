@@ -667,6 +667,7 @@ export class OracleVoiceClient {
         return
       case 'speaking':
         this.speakingRevision += 1
+        this.currentPlaybackSegmentId = undefined
         this.setState('speaking')
         return
       case 'stopped':

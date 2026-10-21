@@ -84,7 +84,11 @@ const busyWithoutComposer = [
   ' ◉ Working · esc interrupt',
 ].join('\n')
 
-type PaneState = 'idle' | 'working' | 'busy' | keyof typeof dialogs
+// Copilot 1.0.101 once a turn has handed its work to background agents and
+// ended: the prompt is back, and the footer offers only to stop the agents.
+const backgroundAgentsFooter = ' ● Waiting for background agents · 273 B esc esc stop agents'
+
+type PaneState = 'idle' | 'working' | 'busy' | 'background' | keyof typeof dialogs
 
 interface Row { pane: PaneState; status: SessionStatus }
 
@@ -229,13 +233,16 @@ ${fixtureReceiptWriter(receiptFile)}
 const makeComposer = ${readyComposer.toString()}
 const dialogs = ${JSON.stringify(dialogs)}
 const busy = ${JSON.stringify(busyWithoutComposer)}
+const backgroundFooter = ${JSON.stringify(backgroundAgentsFooter)}
 let mode = ${JSON.stringify(pane)}
 let draft = ${JSON.stringify(draft)}
 const received = { pastes: [], submits: [], clears: 0, keys: '', draft }
 let input = ''
-const composing = () => mode === 'idle' || mode === 'working'
+const composing = () => mode === 'idle' || mode === 'working' || mode === 'background'
 const draw = () => {
-  const pane = composing() ? makeComposer(draft, mode === 'working') : mode === 'busy' ? busy : dialogs[mode]
+  const pane = mode === 'background'
+    ? makeComposer(draft, false).replace(' / commands', backgroundFooter)
+    : composing() ? makeComposer(draft, mode === 'working') : mode === 'busy' ? busy : dialogs[mode]
   process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 }
 const save = () => { received.draft = draft; writeReceipt(received) }
@@ -288,6 +295,12 @@ draw()
   await writeFile(path.join(sessionState, 'events.jsonl'), [
     { type: 'session.start', id: 'start', parentId: null, timestamp: '2026-10-20T00:00:00.000Z', data: {} },
     { type: 'assistant.turn_start', id: 'turn', parentId: 'start', timestamp: '2026-10-20T00:00:01.000Z', data: {} },
+    ...(pane === 'background'
+      ? [
+          { type: 'subagent.started', id: 'agent', parentId: 'turn', agentId: 'agent-1', timestamp: '2026-10-20T00:00:02.000Z', data: {} },
+          { type: 'assistant.turn_end', id: 'turn-end', parentId: 'turn', timestamp: '2026-10-20T00:00:03.000Z', data: {} },
+        ]
+      : []),
     ...(status === 'idle'
       ? [{ type: 'session.idle', id: 'idle', parentId: 'turn', timestamp: '2026-10-20T00:00:02.000Z', data: {} }]
       : []),
@@ -501,6 +514,19 @@ describe('send matrix with the app’s real send options', () => {
     } finally {
       warn.mockRestore()
     }
+  }, 30_000)
+
+  // The turn handed its work to a background agent and ended, so the session
+  // is running while Copilot's prompt takes a new message at once. Send
+  // delivers it rather than refusing the composer as not ready.
+  it('background agents running · Send is delivered, not refused', async () => {
+    const fixture = await terminal('background', 'running', '')
+    const session = await sendLikeTheApp(fixture, 'running', false)
+    expect(session.queuedPrompts ?? []).toEqual([])
+    const receipt = await eventually(fixture.receipt, (value) => Boolean(value?.submits.length))
+    expect(receipt).toEqual({
+      pastes: [message], submits: [{ key: 'enter', text: message }], clears: 0, keys: '', draft: '',
+    })
   }, 30_000)
 
   // Suspected false refusals, recorded rather than fixed here (see #407).

@@ -5,6 +5,7 @@ import type {
 } from '../shared/manager.js'
 import {
   ORACLE_VOICE_PROTOCOL,
+  voiceAudioFrameByteLength,
   type VoiceAudioFrame,
   type VoiceCapabilities,
   type VoiceClientControl,
@@ -68,6 +69,17 @@ interface QueuedSpeech {
   text: string
 }
 
+interface AudioGate {
+  ready: Promise<void>
+  release(): void
+}
+
+interface QueuedAudio {
+  frame: VoiceAudioFrame
+  bytes: number
+  gate: AudioGate
+}
+
 type VoiceFinalControl = Extract<
   VoiceServerControl,
   { type: 'partial' | 'final' }
@@ -95,6 +107,15 @@ export class OracleVoiceCoordinator {
   private segmenter: SpeakableSegmenter | undefined
   private segmenterMessageId: string | undefined
   private activeSpeech: QueuedSpeech | undefined
+  private activeSpeechPlaybackThrough: number | undefined
+  private speechPumpTimer: ReturnType<typeof setTimeout> | undefined
+  private readonly audioQueue: QueuedAudio[] = []
+  private readonly audioGates = new Set<AudioGate>()
+  private audioGate: AudioGate = resolvedAudioGate()
+  private audioDrainPromise: Promise<void> | undefined
+  private maxPendingAudioBytes = 0
+  private pendingAudioBytes = 0
+  private failurePromise: Promise<void> | undefined
   private segmentSequence = 0
   private subscribed = false
   private clientStarted = false
@@ -135,7 +156,21 @@ export class OracleVoiceCoordinator {
   }
 
   receive(message: VoiceClientControl | VoiceAudioFrame): Promise<void> {
-    return this.enqueue(() => this.handleReceive(message))
+    if (this.closed || this.closing) return Promise.resolve()
+    if (!('type' in message)) return this.receiveAudio(message)
+    if (message.type !== 'speech_confirmed') {
+      return this.enqueue(() => this.handleReceive(message))
+    }
+    const gate = this.createAudioGate()
+    this.audioGate = gate
+    return this.enqueue(async () => {
+      try {
+        await this.handleReceive(message, gate)
+      } catch (error) {
+        gate.release()
+        throw error
+      }
+    })
   }
 
   managerEvent(event: ManagerEvent): Promise<void> {
@@ -146,10 +181,9 @@ export class OracleVoiceCoordinator {
     if (this.closePromise) return this.closePromise
     this.closing = true
     this.startAbortController.abort()
+    this.clearAudioInput()
     const start = this.startPromise?.catch(() => undefined) ?? Promise.resolve()
-    const pendingOperations = this.operationTail
     this.closePromise = start
-      .then(() => pendingOperations.catch(() => undefined))
       .then(() => this.finishClose(reason))
     this.operationTail = this.closePromise.catch(() => undefined)
     return this.closePromise
@@ -179,6 +213,8 @@ export class OracleVoiceCoordinator {
         * connection.capabilities.limits.maxUtteranceMs
         / 1_000,
       )
+      this.maxPendingAudioBytes = maxAudioSamples * Int16Array.BYTES_PER_ELEMENT
+        + connection.capabilities.limits.maxQueueBytes
       this.turn = new VoiceTurnState({ maxAudioSamples })
       if (this.closing) {
         await this.finishClose('Oracle voice connection closed while starting')
@@ -219,16 +255,11 @@ export class OracleVoiceCoordinator {
 
   private async handleReceive(
     message: VoiceClientControl | VoiceAudioFrame,
+    audioGate: AudioGate = resolvedAudioGate(),
   ): Promise<void> {
     const connection = this.requireConnection()
     const turn = this.requireTurn()
-    if (!('type' in message)) {
-      this.requireClientStarted()
-      const accepted = turn.acceptFrame(message)
-      if (!accepted.accepted) return
-      await connection.audio(message)
-      return
-    }
+    if (!('type' in message)) return
     if (
       message.protocol !== ORACLE_VOICE_PROTOCOL
       || message.streamId !== this.streamId
@@ -251,7 +282,7 @@ export class OracleVoiceCoordinator {
         await connection.control(message)
         return
       case 'speech_confirmed':
-        await this.confirmSpeech(message, connection, turn)
+        await this.confirmSpeech(message, connection, turn, audioGate)
         return
       case 'speech_end':
         this.requireCurrentGeneration(message.generation)
@@ -277,6 +308,7 @@ export class OracleVoiceCoordinator {
     message: Extract<VoiceClientControl, { type: 'speech_confirmed' }>,
     connection: OracleVoiceBackendConnection,
     turn: VoiceTurnState,
+    audioGate: AudioGate,
   ): Promise<void> {
     this.requireClientStarted()
     const previousGeneration = this.currentGeneration
@@ -308,11 +340,33 @@ export class OracleVoiceCoordinator {
     const runningVoice = runningVoiceIds.length > 0
     const speakingVoice = this.activeSpeech !== undefined || this.speechQueue.length > 0
     this.clearSpeechOutput()
+    turn.confirmSpeech(message.generation, message.utteranceId)
+    const backendCancellation = runningVoice || speakingVoice
+      ? connection.control(this.clientControl('cancel', previousGeneration, {}))
+      : Promise.resolve()
+    const backendConfirmation = connection.control(message)
+    void backendCancellation.catch(() => undefined)
+    void backendConfirmation.catch(() => undefined)
+    try {
+      await withTimeout(
+        backendConfirmation,
+        this.cancelTimeoutMs,
+        'Voice speech confirmation timed out',
+      )
+    } catch (error) {
+      await this.fail(
+        'voice_backend_confirmation_failed',
+        errorMessage(error, 'Voice speech confirmation failed'),
+        1011,
+      )
+      throw error
+    }
+    audioGate.release()
     if (runningVoice || speakingVoice || queuedVoiceIds.length > 0) {
       try {
         if (runningVoice || speakingVoice) {
           await withTimeout(
-            connection.control(this.clientControl('cancel', previousGeneration, {})),
+            backendCancellation,
             this.cancelTimeoutMs,
             'Voice synthesis cancellation timed out',
           )
@@ -352,8 +406,7 @@ export class OracleVoiceCoordinator {
       }
       if (runningVoice) this.activeReplyTo = undefined
     }
-    turn.confirmSpeech(message.generation, message.utteranceId)
-    await connection.control(message)
+    await backendConfirmation
   }
 
   private async handleBackendOutput(
@@ -365,6 +418,13 @@ export class OracleVoiceCoordinator {
         && this.isActiveSpeech(output.generation, output.segmentId)
       ) {
         await this.sendOutput(output)
+        const forwardedAt = Date.now()
+        this.activeSpeechPlaybackThrough = Math.max(
+          this.activeSpeechPlaybackThrough ?? forwardedAt,
+          forwardedAt,
+        ) + (
+          output.samples.length / output.sampleRate * 1_000
+        )
       }
       return
     }
@@ -398,8 +458,14 @@ export class OracleVoiceCoordinator {
       case 'audio_end':
         if (!this.isActiveSpeech(output.generation, output.segmentId)) return
         await this.sendOutput(output)
+        const playbackDelayMs = this.remainingPlaybackDelayMs()
         this.activeSpeech = undefined
-        await this.pumpSpeech()
+        this.activeSpeechPlaybackThrough = undefined
+        if (playbackDelayMs > 0) {
+          this.scheduleSpeechPump(playbackDelayMs, output.generation)
+        } else {
+          await this.pumpSpeech()
+        }
         return
       case 'state':
       case 'heartbeat':
@@ -557,7 +623,7 @@ export class OracleVoiceCoordinator {
   }
 
   private async pumpSpeech(): Promise<void> {
-    if (this.activeSpeech || this.closed || this.closing) return
+    if (this.activeSpeech || this.speechPumpTimer || this.closed || this.closing) return
     while (
       this.speechQueue.length > 0
       && this.speechQueue[0].generation !== this.currentGeneration
@@ -567,6 +633,7 @@ export class OracleVoiceCoordinator {
     const next = this.speechQueue.shift()
     if (!next) return
     this.activeSpeech = next
+    this.activeSpeechPlaybackThrough = undefined
     try {
       await this.requireConnection().control(
         this.clientControl('synthesize', next.generation, {
@@ -606,9 +673,13 @@ export class OracleVoiceCoordinator {
     closeCode: number,
   ): Promise<void> {
     if (this.closed) return
-    await this.sendError(code, message, true).catch(() => undefined)
-    this.terminate(closeCode, message)
-    await this.finishClose(message)
+    if (this.failurePromise) return this.failurePromise
+    this.failurePromise = (async () => {
+      await this.sendError(code, message, true).catch(() => undefined)
+      this.terminate(closeCode, message)
+      await this.finishClose(message)
+    })()
+    return this.failurePromise
   }
 
   private async sendState(
@@ -681,10 +752,127 @@ export class OracleVoiceCoordinator {
   }
 
   private clearSpeechOutput(): void {
+    if (this.speechPumpTimer) {
+      clearTimeout(this.speechPumpTimer)
+      this.speechPumpTimer = undefined
+    }
     this.speechQueue.length = 0
     this.activeSpeech = undefined
+    this.activeSpeechPlaybackThrough = undefined
     this.segmenter = undefined
     this.segmenterMessageId = undefined
+  }
+
+  private receiveAudio(frame: VoiceAudioFrame): Promise<void> {
+    if (this.closed || this.closing || this.failurePromise) return Promise.resolve()
+    try {
+      this.requireConnection()
+      const bytes = voiceAudioFrameByteLength(frame)
+      if (
+        bytes > this.maxPendingAudioBytes - this.pendingAudioBytes
+      ) {
+        return this.fail(
+          'voice_input_backpressure',
+          'Voice input queue is full',
+          1013,
+        )
+      }
+      this.pendingAudioBytes += bytes
+      this.audioQueue.push({
+        frame,
+        bytes,
+        gate: this.audioGate,
+      })
+      this.startAudioDrain()
+      return Promise.resolve()
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
+
+  private remainingPlaybackDelayMs(): number {
+    if (this.activeSpeechPlaybackThrough === undefined) return 0
+    return Math.max(
+      0,
+      Math.ceil(this.activeSpeechPlaybackThrough - Date.now()),
+    )
+  }
+
+  private createAudioGate(): AudioGate {
+    let resolveReady!: () => void
+    let released = false
+    const gate: AudioGate = {
+      ready: new Promise<void>((resolve) => {
+        resolveReady = resolve
+      }),
+      release: () => {
+        if (released) return
+        released = true
+        this.audioGates.delete(gate)
+        resolveReady()
+      },
+    }
+    this.audioGates.add(gate)
+    return gate
+  }
+
+  private startAudioDrain(): void {
+    if (this.audioDrainPromise || this.closed) return
+    const draining = this.drainAudio()
+    this.audioDrainPromise = draining.finally(() => {
+      this.audioDrainPromise = undefined
+      if (!this.closed && this.audioQueue.length > 0) this.startAudioDrain()
+    })
+    void this.audioDrainPromise.catch(() => undefined)
+  }
+
+  private async drainAudio(): Promise<void> {
+    while (!this.closed && this.audioQueue.length > 0) {
+      const queued = this.audioQueue.shift()!
+      try {
+        await queued.gate.ready
+        if (this.closed || this.closing) continue
+        this.requireClientStarted()
+        let accepted: ReturnType<VoiceTurnState['acceptFrame']>
+        try {
+          accepted = this.requireTurn().acceptFrame(queued.frame)
+        } catch (error) {
+          throw new VoiceSessionError(
+            errorMessage(error, 'Invalid microphone audio'),
+            1008,
+          )
+        }
+        if (!accepted.accepted) continue
+        await this.requireConnection().audio(queued.frame)
+      } catch (error) {
+        await this.fail(
+          'voice_audio_failed',
+          errorMessage(error, 'Voice audio delivery failed'),
+          error instanceof VoiceSessionError ? error.closeCode : 1011,
+        )
+        return
+      } finally {
+        this.pendingAudioBytes -= queued.bytes
+      }
+    }
+  }
+
+  private clearAudioInput(): void {
+    for (const gate of [...this.audioGates]) gate.release()
+    for (const queued of this.audioQueue.splice(0)) {
+      this.pendingAudioBytes -= queued.bytes
+    }
+  }
+
+  private scheduleSpeechPump(delayMs: number, generation: number): void {
+    if (this.speechPumpTimer) clearTimeout(this.speechPumpTimer)
+    this.speechPumpTimer = setTimeout(() => {
+      this.speechPumpTimer = undefined
+      void this.enqueue(async () => {
+        if (generation !== this.currentGeneration) return
+        await this.pumpSpeech()
+      }).catch(() => undefined)
+    }, delayMs)
   }
 
   private recoverVoiceSubmissions(generation: number): void {
@@ -708,7 +896,11 @@ export class OracleVoiceCoordinator {
   }
 
   private scheduleClose(reason: string): void {
-    void this.close(reason).catch(() => undefined)
+    const pendingOperation = this.operationTail
+    void pendingOperation
+      .catch(() => undefined)
+      .then(() => this.close(reason))
+      .catch(() => undefined)
   }
 
   private async finishClose(reason: string): Promise<void> {
@@ -717,6 +909,7 @@ export class OracleVoiceCoordinator {
     this.closed = true
     this.unsubscribeManager()
     this.clearSpeechOutput()
+    this.clearAudioInput()
     this.submissions.clear()
     const connection = this.connection
     this.connection = undefined
@@ -839,4 +1032,11 @@ function terminalStartupCloseCode(code: number): number {
     || code === 1013
     ? code
     : 1008
+}
+
+function resolvedAudioGate(): AudioGate {
+  return {
+    ready: Promise.resolve(),
+    release: () => undefined,
+  }
 }

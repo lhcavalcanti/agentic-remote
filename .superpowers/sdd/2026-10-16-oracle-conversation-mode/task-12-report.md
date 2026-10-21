@@ -46,6 +46,16 @@
   running voice ID immediately before global cancellation, reconstructs only
   queued/running `source: voice` ownership on start, and rehashes a
   same-digest published tree under the publication lock before activation.
+- Supervisor reviewed `187cc4068fe4` and found two final coordinator blockers.
+  Forwarded audio now advances a wall-clock playback cursor, so the next
+  sentence starts only after already-forwarded active-segment audio should
+  have been consumed; gaps between frames reduce the cursor instead of
+  accumulating false backlog. Barge-in now admits current-generation PCM into
+  an utterance-bounded retained queue outside manager/cancellation
+  serialization, releases it only after backend `speech_confirmed`, drains it
+  serially, counts retained bytes through delivery, fails once on overflow,
+  and releases queued work on close. Backend cancellation still starts before
+  scoped Oracle cancellation, and a new final remains serialized behind both.
 
 ## Publication gates before Graphify
 
@@ -66,12 +76,31 @@ The complete changed-feature and version-policy selection passed 41 files and
 files and 406 tests; the final Supervisor regressions passed 2 files and 76
 tests.
 
+After the `187cc4068fe4` findings, the final coordinator/session/integration/
+security/client selection ran three clean iterations:
+
+```text
+pnpm vitest run server/oracle-voice-coordinator.test.ts \
+  server/oracle-voice-session.test.ts \
+  server/oracle-voice-integration.test.ts \
+  server/oracle-voice-security.test.ts \
+  src/oracle-voice/client.test.ts
+```
+
+Each iteration: 5 files and 123 tests passed. Aggregate: 15 file executions
+and 369 tests, with no retry, unhandled rejection, leak, or warning. Coverage
+includes 12 seconds of first-sentence browser queue, wall-clock consumption
+between frames, stale generations, invalid sequence, timer cancellation,
+backend confirmation/cancellation failure, cancellation timeout, fail-once
+retained-queue overflow, close during a pending gate, and real local-session
+delivery of 30 ordered PCM frames after blocked synthesis cancellation.
+
 ### Repository gates
 
 | Gate | Result |
 | --- | --- |
-| `pnpm check` | 152 files passed, 1 skipped; 4,753 tests passed, 1 skipped; build passed |
-| `NODE_ENV=production pnpm check` | same counts; production build passed |
+| `pnpm check` | 152 files passed, 1 skipped; 4,761 tests passed, 1 skipped; build passed |
+| `NODE_ENV=production pnpm check` | same counts; production build passed after one unrelated contended tmux command was killed by its command timeout and passed immediately in isolation |
 | Deterministic Chromium | 1/1 passed |
 | Deterministic Firefox | 1/1 passed |
 | Real sherpa Chromium | 1/1 passed in 15.0 s after pacing the real microphone fixture |
@@ -149,7 +178,8 @@ all 23 assertions are true.
 - The established Supervisor mechanism is a PR comment containing
   `/supervisor review`; the local service watches and reconciles it. The two
   `9c9a99f65a6e` passes and the `51f86fe5c2ee` pass requested changes; all 16
-  reported findings now have regression coverage. The next exact-head request
+  findings from those rounds plus both `187cc4068fe4` blockers now have
+  regression coverage. The next exact-head request
   and verdict are authoritative on PR #425; GitHub Copilot review will not be
   requested.
 - No merge or deployment is authorized.

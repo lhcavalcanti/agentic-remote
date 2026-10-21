@@ -116,6 +116,8 @@ class FakeBackend implements OracleVoiceBackendConnector {
   readonly closeStarted: Promise<void>
   readonly deliveryTimeline: string[] = []
   readonly cancelControl = vi.fn(async (): Promise<void> => undefined)
+  readonly confirmationControl = vi.fn(async (): Promise<void> => undefined)
+  readonly audioDelivery = vi.fn(async (_frame: VoiceAudioFrame): Promise<void> => undefined)
   private output:
     | ((message: OracleVoiceBackendOutput) => Promise<void>)
     | undefined
@@ -144,6 +146,10 @@ class FakeBackend implements OracleVoiceBackendConnector {
           this.calls.push(`tts.cancel:${message.generation}`)
           this.timeline.push(`tts.cancel:${message.generation}`)
           await this.cancelControl()
+        } else if (message.type === 'speech_confirmed') {
+          this.calls.push(`stt.confirm:${message.generation}`)
+          this.timeline.push(`stt.confirm:${message.generation}`)
+          await this.confirmationControl()
         } else if (message.type === 'synthesize') {
           this.calls.push(`tts.synthesize:${message.text}`)
           this.timeline.push(`tts.synthesize:${message.text}`)
@@ -151,6 +157,8 @@ class FakeBackend implements OracleVoiceBackendConnector {
       },
       audio: async (frame: VoiceAudioFrame) => {
         this.audio.push(frame)
+        this.timeline.push(`stt.audio:${frame.generation}:${frame.sequence}`)
+        await this.audioDelivery(frame)
       },
       close: async (reason: string) => {
         this.deliveryTimeline.push(`backend.close.start:${reason}`)
@@ -204,6 +212,7 @@ function harness(
   managerSnapshot = snapshot(),
   cancelTimeoutMs = 1_000,
   sendFailure?: (message: OracleVoiceBackendOutput) => Error | undefined,
+  observeSend?: (message: OracleVoiceBackendOutput) => void | Promise<void>,
 ): Harness {
   const timeline: string[] = []
   const manager = new FakeManager(managerSnapshot, timeline)
@@ -218,6 +227,7 @@ function harness(
     send: async (message) => {
       const failure = sendFailure?.(message)
       if (failure) throw failure
+      await observeSend?.(message)
       browser.push(message)
     },
     terminate: (code, reason) => terminated.push({ code, reason }),
@@ -619,6 +629,256 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.cancel).not.toHaveBeenCalled()
   })
 
+  it('drains confirmed current microphone frames in order while barge-in cancellation waits', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-running', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(1)
+    await test.coordinator.receive(confirm(2, 'u2'))
+    await test.backend.emit(final(2, 'u2', 'Running voice request.'))
+    test.manager.setSnapshot(snapshot({
+      status: 'working',
+      messages: [managerMessage('voice-running', {
+        state: 'running',
+        source: 'voice',
+      })],
+    }))
+    let releaseCancel!: () => void
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve
+    })
+    test.backend.cancelControl.mockImplementationOnce(() => cancelGate)
+    let releaseConfirmation!: () => void
+    const confirmationGate = new Promise<void>((resolve) => {
+      releaseConfirmation = resolve
+    })
+    test.backend.confirmationControl.mockImplementationOnce(() => confirmationGate)
+
+    const interrupted = test.coordinator.receive(confirm(3, 'u3'))
+    await vi.waitFor(() => expect(test.backend.cancelControl).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(test.backend.confirmationControl).toHaveBeenCalledTimes(2))
+    const accepted = Promise.all(Array.from({ length: 30 }, (_, sequence) =>
+      test.coordinator.receive({
+        direction: 'microphone',
+        generation: 3,
+        sequence,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        samples: new Int16Array(1_280),
+      }),
+    ))
+    await accepted
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(test.terminated).toEqual([])
+    expect(test.backend.audio).toEqual([])
+    releaseConfirmation()
+    await vi.waitFor(() => expect(test.backend.audio).toHaveLength(30))
+    expect(test.backend.audio.map((frame) => frame.sequence))
+      .toEqual(Array.from({ length: 30 }, (_, sequence) => sequence))
+    expect(test.timeline.indexOf('stt.confirm:3'))
+      .toBeLessThan(test.timeline.indexOf('stt.audio:3:0'))
+    releaseCancel()
+    await interrupted
+  })
+
+  it('serializes retained microphone delivery without allowing sequence bypass', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    test.backend.audioDelivery.mockImplementationOnce(() => firstGate)
+
+    await test.coordinator.receive({
+      direction: 'microphone',
+      generation: 1,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(1_280),
+    })
+    await test.coordinator.receive({
+      direction: 'microphone',
+      generation: 1,
+      sequence: 1,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(1_280),
+    })
+    await vi.waitFor(() => expect(test.backend.audio).toHaveLength(1))
+
+    releaseFirst()
+    await vi.waitFor(() => expect(test.backend.audio).toHaveLength(2))
+    expect(test.backend.audio.map((frame) => frame.sequence)).toEqual([0, 1])
+  })
+
+  it('fails retained microphone backpressure once at the bounded utterance limit', async () => {
+    const test = harness(snapshot(), 10_000)
+    await test.start(0)
+    let releaseConfirmation!: () => void
+    test.backend.confirmationControl.mockImplementationOnce(() =>
+      new Promise<void>((resolve) => {
+        releaseConfirmation = resolve
+      }),
+    )
+    const confirming = test.coordinator.receive(confirm(1, 'u1'))
+    await vi.waitFor(() => expect(test.backend.confirmationControl).toHaveBeenCalledOnce())
+
+    await Promise.all(Array.from({ length: 33 }, (_, sequence) =>
+      test.coordinator.receive({
+        direction: 'microphone',
+        generation: 1,
+        sequence,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        samples: new Int16Array(16_000),
+      }),
+    ))
+    await vi.waitFor(() => expect(test.terminated).toEqual([{
+      code: 1013,
+      reason: 'Voice input queue is full',
+    }]))
+
+    expect(test.browser.filter(
+      (message) => !('direction' in message)
+        && message.type === 'error'
+        && message.code === 'voice_input_backpressure',
+    )).toHaveLength(1)
+    releaseConfirmation()
+    await confirming.catch(() => undefined)
+  })
+
+  it('drops stale microphone frames but fails future and out-of-order frames', async () => {
+    const stale = harness()
+    await stale.start(1)
+    await stale.coordinator.receive(confirm(2, 'u2'))
+    await stale.coordinator.receive({
+      direction: 'microphone',
+      generation: 1,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(100),
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(stale.backend.audio).toEqual([])
+    expect(stale.terminated).toEqual([])
+
+    for (const frame of [
+      {
+        direction: 'microphone',
+        generation: 3,
+        sequence: 0,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        samples: new Int16Array(100),
+      },
+      {
+        direction: 'microphone',
+        generation: 2,
+        sequence: 1,
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        samples: new Int16Array(100),
+      },
+    ] satisfies VoiceAudioFrame[]) {
+      const invalid = harness()
+      await invalid.start(1)
+      await invalid.coordinator.receive(confirm(2, 'u2'))
+      await invalid.coordinator.receive(frame)
+      await vi.waitFor(() => expect(invalid.terminated).toEqual([{
+        code: 1008,
+        reason: expect.stringMatching(/generation|sequence/),
+      }]))
+      expect(invalid.backend.audio).toEqual([])
+    }
+  })
+
+  it('closes without delivering audio retained behind a pending confirmation gate', async () => {
+    const test = harness(snapshot(), 1_000)
+    await test.start(0)
+    let releaseConfirmation!: () => void
+    test.backend.confirmationControl.mockImplementationOnce(() =>
+      new Promise<void>((resolve) => {
+        releaseConfirmation = resolve
+      }),
+    )
+    const confirming = test.coordinator.receive(confirm(1, 'u1'))
+    await vi.waitFor(() => expect(test.backend.confirmationControl).toHaveBeenCalledOnce())
+    await test.coordinator.receive({
+      direction: 'microphone',
+      generation: 1,
+      sequence: 0,
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Int16Array(1_280),
+    })
+
+    const closing = test.coordinator.close('Browser voice socket closed')
+    const outcome = await Promise.race([
+      closing.then(() => 'closed'),
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 100)),
+    ])
+    releaseConfirmation()
+    await confirming.catch(() => undefined)
+    await closing
+
+    expect(outcome).toBe('closed')
+    expect(test.backend.audio).toEqual([])
+    expect(test.backend.closed).toEqual(['Browser voice socket closed'])
+  })
+
+  it('fails closed when backend speech confirmation fails', async () => {
+    const test = harness()
+    await test.start(0)
+    test.backend.confirmationControl.mockRejectedValueOnce(
+      new Error('STT confirmation failed'),
+    )
+
+    await expect(test.coordinator.receive(confirm(1, 'u1')))
+      .rejects.toThrow('STT confirmation failed')
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'error',
+      code: 'voice_backend_confirmation_failed',
+      message: 'STT confirmation failed',
+      fatal: true,
+    }))
+    expect(test.terminated).toEqual([{
+      code: 1011,
+      reason: 'STT confirmation failed',
+    }])
+  })
+
+  it('fails closed when backend cancellation fails after confirmation', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-running', {
+      state: 'running',
+      source: 'voice',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.backend.emit(final(1, 'u1', 'Running voice request.'))
+    test.manager.setSnapshot(snapshot({
+      status: 'working',
+      messages: [managerMessage('voice-running', {
+        state: 'running',
+        source: 'voice',
+      })],
+    }))
+    test.backend.cancelControl.mockRejectedValueOnce(new Error('TTS cancel failed'))
+
+    await expect(test.coordinator.receive(confirm(2, 'u2')))
+      .rejects.toThrow('TTS cancel failed')
+    expect(test.backend.confirmationControl).toHaveBeenCalled()
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'error',
+      code: 'oracle_cancel_failed',
+      message: 'TTS cancel failed',
+      fatal: true,
+    }))
+    expect(test.terminated).toEqual([{
+      code: 1011,
+      reason: 'TTS cancel failed',
+    }])
+  })
+
   it('recovers queued and running voice ownership after a browser reconnect', async () => {
     const test = harness(snapshot({
       status: 'working',
@@ -782,6 +1042,172 @@ describe('OracleVoiceCoordinator', () => {
     const third = test.backend.controls.filter((message) => message.type === 'synthesize')[2]
     expect(third).toMatchObject({ text: 'Final suffix' })
   })
+
+  it('paces a second sentence until twelve seconds of forwarded audio is consumed', async () => {
+    vi.useFakeTimers()
+    let browserPlaybackThrough = Date.now()
+    let maximumBrowserQueueMs = 0
+    const test = harness(snapshot(), 1_000, undefined, (message) => {
+      if (!('direction' in message) || message.direction !== 'playback') return
+      const forwardedAt = Date.now()
+      browserPlaybackThrough = Math.max(browserPlaybackThrough, forwardedAt)
+        + message.samples.length / message.sampleRate * 1_000
+      maximumBrowserQueueMs = Math.max(
+        maximumBrowserQueueMs,
+        browserPlaybackThrough - forwardedAt,
+      )
+    })
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-user', {
+      state: 'queued',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.backend.emit(final(1, 'u1', 'Tell me the result.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-user', { state: 'running' }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-reply', {
+        role: 'assistant',
+        replyTo: 'voice-user',
+        content: 'First sentence. Second sentence.',
+        state: undefined,
+      }),
+    })
+    const first = test.backend.controls.find(
+      (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+        message.type === 'synthesize',
+    )!
+    for (let sequence = 0; sequence < 24; sequence += 1) {
+      await test.backend.emit({
+        ...audio(1, first.segmentId, sequence),
+        samples: new Int16Array(11_025),
+      })
+    }
+
+    await test.backend.emit(audioEnd(1, first.segmentId))
+
+    expect(maximumBrowserQueueMs).toBe(12_000)
+    expect(test.backend.controls.filter((message) => message.type === 'synthesize'))
+      .toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(11_999)
+    expect(test.backend.controls.filter((message) => message.type === 'synthesize'))
+      .toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    const second = test.backend.controls.filter(
+      (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+        message.type === 'synthesize',
+    )[1]
+    expect(second).toMatchObject({ text: 'Second sentence.' })
+    expect(browserPlaybackThrough - Date.now()).toBe(0)
+    for (let sequence = 0; sequence < 4; sequence += 1) {
+      await test.backend.emit({
+        ...audio(1, second.segmentId, sequence),
+        samples: new Int16Array(11_025),
+      })
+    }
+    await test.backend.emit(audioEnd(1, second.segmentId))
+    expect(maximumBrowserQueueMs).toBe(12_000)
+    expect(test.backend.controls.filter(
+      (message) => message.type === 'synthesize',
+    ).map((message) => 'text' in message ? message.text : undefined)).toEqual([
+      'First sentence.',
+      'Second sentence.',
+    ])
+  })
+
+  it('accounts for playback consumed between forwarded audio frames', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-user', {
+      state: 'queued',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.backend.emit(final(1, 'u1', 'Tell me the result.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-user', { state: 'running' }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-reply', {
+        role: 'assistant',
+        replyTo: 'voice-user',
+        content: 'First sentence. Second sentence.',
+        state: undefined,
+      }),
+    })
+    const first = test.backend.controls.find(
+      (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+        message.type === 'synthesize',
+    )!
+    await test.backend.emit({
+      ...audio(1, first.segmentId, 0),
+      samples: new Int16Array(22_050),
+    })
+    await vi.advanceTimersByTimeAsync(1_500)
+    await test.backend.emit({
+      ...audio(1, first.segmentId, 1),
+      samples: new Int16Array(22_050),
+    })
+    await test.backend.emit(audioEnd(1, first.segmentId))
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(test.backend.controls.filter((message) => message.type === 'synthesize'))
+      .toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(test.backend.controls.filter((message) => message.type === 'synthesize')[1])
+      .toMatchObject({ text: 'Second sentence.' })
+  })
+
+  it.each(['barge-in', 'close'] as const)(
+    'cancels a pending speech pacing timer on %s',
+    async (action) => {
+      vi.useFakeTimers()
+      const test = harness()
+      test.manager.send.mockResolvedValueOnce(managerMessage('voice-user', {
+        state: 'queued',
+      }))
+      await test.start(0)
+      await test.coordinator.receive(confirm(1, 'u1'))
+      await test.backend.emit(final(1, 'u1', 'Tell me the result.'))
+      await test.coordinator.managerEvent({
+        type: 'manager.message',
+        message: managerMessage('voice-user', { state: 'running' }),
+      })
+      await test.coordinator.managerEvent({
+        type: 'manager.message',
+        message: managerMessage('voice-reply', {
+          role: 'assistant',
+          replyTo: 'voice-user',
+          content: 'First sentence. Second sentence.',
+          state: undefined,
+        }),
+      })
+      const first = test.backend.controls.find(
+        (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+          message.type === 'synthesize',
+      )!
+      await test.backend.emit({
+        ...audio(1, first.segmentId, 0),
+        samples: new Int16Array(22_050 * 12),
+      })
+      await test.backend.emit(audioEnd(1, first.segmentId))
+
+      if (action === 'barge-in') {
+        await test.coordinator.receive(confirm(2, 'u2'))
+      } else {
+        await test.coordinator.close('Browser voice socket closed')
+      }
+      await vi.advanceTimersByTimeAsync(12_000)
+
+      expect(test.backend.controls.filter((message) => message.type === 'synthesize'))
+        .toHaveLength(1)
+    },
+  )
 
   it('drops stale manager events and TTS audio after a newer interruption', async () => {
     const test = harness()

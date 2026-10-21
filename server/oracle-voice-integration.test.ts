@@ -2059,6 +2059,75 @@ describe('Oracle voice cross-layer integration', () => {
     expect(ordering.manager.send).not.toHaveBeenCalled()
   })
 
+  it('retains current microphone ingress while local synthesis cancellation is blocked', async () => {
+    let releaseCancel!: () => void
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve
+    })
+    let blocked = false
+    class BlockingCancelEngine extends FakeVoiceEngine {
+      override async cancelGeneration(
+        input: Parameters<FakeVoiceEngine['cancelGeneration']>[0],
+      ): Promise<void> {
+        if (input.generation === 1 && !blocked) {
+          blocked = true
+          await cancelGate
+        }
+        await super.cancelGeneration(input)
+      }
+    }
+    const engine = new BlockingCancelEngine()
+    const retained = await createLocalHarness(engine)
+    sendControl(retained.browser, retained.streamId, 'start', 0, {
+      language: 'en',
+      defaults,
+      answerOnly: true,
+    })
+    sendControl(retained.browser, retained.streamId, 'speech_confirmed', 1, {
+      utteranceId: 'retained-1',
+    })
+    await vi.waitFor(() => expect(engineCalls(engine, 'stt.start')).toHaveLength(1))
+    engine.emit({
+      type: 'final',
+      streamId: retained.streamId,
+      generation: 1,
+      utteranceId: 'retained-1',
+      text: 'Interrupt this response.',
+    })
+    await vi.waitFor(() => expect(retained.manager.send).toHaveBeenCalledOnce())
+
+    let closed = false
+    void closeEvent(retained.browser).then(() => {
+      closed = true
+    })
+    sendControl(retained.browser, retained.streamId, 'speech_confirmed', 2, {
+      utteranceId: 'retained-2',
+    })
+    await vi.waitFor(() => expect(blocked).toBe(true))
+    for (let sequence = 0; sequence < 30; sequence += 1) {
+      retained.browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(
+        2,
+        sequence,
+        new Int16Array(1_280),
+      ))))
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(closed).toBe(false)
+    expect(engineCalls(engine, 'stt.accept').filter(
+      (call) => call.generation === 2,
+    )).toEqual([])
+
+    releaseCancel()
+    await vi.waitFor(() => {
+      expect(engineCalls(engine, 'stt.accept').filter(
+        (call) => call.generation === 2,
+      ).map((call) => call.sequence)).toEqual(
+        Array.from({ length: 30 }, (_, sequence) => sequence),
+      )
+    })
+    expect(closed).toBe(false)
+  })
+
   it('rejects stale manager and audio work across rapid 7 to 8 to 9 turns', async () => {
     const rapid = await createLocalHarness()
     sendControl(rapid.browser, rapid.streamId, 'start', 7, {

@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   isTerminalAgentWorking,
+  isTerminalVisiblyIdle,
   isTerminalDesktopInstallPrompt,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
@@ -1030,6 +1031,67 @@ process.stdin.on('data', () => undefined)
     expect(JSON.parse(received)).toEqual({
       pastes: ['Steer during 1.0.98 work'], submits: ['enter'],
     })
+  }, 15_000)
+
+  // Once a turn hands its work to background agents and ends, Copilot 1.0.101
+  // keeps its prompt open and offers to stop them. A message sent then is a
+  // new prompt Copilot answers at once, not a steer into a turn.
+  it.each([
+    ' ● Waiting for background agents · 273 B esc esc stop agents                                  GPT-6.1 Sol · High · (9%)',
+    ' ◉ Waiting for background agents · 1.2 KB esc esc stop agents GPT-5 mini · Low · (19%)',
+    ' ○ Waiting for background agents esc esc stop agents   Claude Opus 5.5 · Extra High · 1M cont',
+    ' ◎ Waiting for background agents · 4 B esc esc stop agents',
+  ])('takes a message while Copilot waits for background agents: %s', async (footer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, undefined, undefined, footer, '', 'flat',
+        undefined, undefined, undefined, undefined, 'bare',
+      )
+      const pane = (await controller.capture(sessionId))!
+      expect(isTerminalAgentWorking(pane)).toBe(false)
+      expect(isTerminalVisiblyIdle(pane)).toBe(true)
+      expect(await controller.inputReady(sessionId)).toBe(true)
+      expect(await controller.send(sessionId, 'Background agents footer proof', false)).toBe(true)
+      const received = await eventually(
+        () => readFile(output, 'utf8'),
+        (value) => Boolean(value && JSON.parse(value).submits.length),
+      )
+      expect(JSON.parse(received)).toEqual({
+        pastes: ['Background agents footer proof'], submits: ['enter'],
+      })
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  }, 15_000)
+
+  it.each([
+    ' ● Waiting for background agents · 273 B esc esc stop agents · enter to approve     GPT-6.1 Sol',
+    ' ● Waiting for background agents · 273 B esc esc stop agents   Delete the folder? · y/n',
+    ' ● Stop all background agents? esc esc stop agents            GPT-6.1 Sol · High · (9%)',
+    ' ● Waiting for background agents · 273 B esc esc stop agents   GPT- · High · (9%)',
+    ' ● Waiting for background agents · 273 B esc stop agents       GPT-6.1 Sol · High · (9%)',
+  ])('still refuses a row that only resembles the background agents footer: %s', async (footer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const rule = '─'.repeat(60)
+      const resembling = [
+        ' /work/project                                      Session: 0 AIC used',
+        rule, '❯', rule, footer,
+      ].join('\n')
+      const { controller, sessionId, output } = await deliveryFixture(
+        false, resembling, undefined, '', '', 'flat',
+      )
+      expect(await controller.send(sessionId, 'Known footer first', false)).toBe(true)
+      await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes(footer.trim())))
+      expect(isTerminalVisiblyIdle((await controller.capture(sessionId))!)).toBe(false)
+      await expect(controller.send(sessionId, 'Must not be typed', false))
+        .rejects.toMatchObject({ statusCode: 409 })
+      expect(JSON.parse(await readFile(output, 'utf8')).pastes).toEqual(['Known footer first'])
+    } finally {
+      warn.mockRestore()
+    }
   }, 15_000)
 
   it.each([

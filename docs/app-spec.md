@@ -826,6 +826,13 @@ Questions and permissions are the highest-priority UI state.
   is sent, the row offers `esc edit prompt` instead of the interrupt; that is
   work, and the composer MUST stay live for messages sent during it. Copilot
   queues a message sent then for after the current turn.
+- Once a turn hands its work to background agents and ends, Copilot 1.0.101
+  keeps its prompt open and its footer row reads `Waiting for background
+  agents`, an optional output size, `esc esc stop agents`, then the model
+  hint. That composer MUST be live and idle: Send delivers the message as a
+  new prompt, which Copilot answers while the agents keep running, rather
+  than refusing it as not ready. Anything else after the stop key MUST refuse
+  input, and the session stays running until the agents finish.
 - A footer that a newer Copilot draws differently MUST NOT stop tmux sessions
   from starting or taking input. Copilot shows the terminal cursor on its
   prompt row only while the prompt has the keyboard, and hides it while a form

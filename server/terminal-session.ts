@@ -3336,6 +3336,15 @@ function isKnownTerminalFooterRow(
       .replace(/^·\s*ctrl\+q\s+enqueue(?:\s|$)/u, '').trim()
     return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)
   }
+  // Once a turn hands its work to background agents and ends, Copilot 1.0.101
+  // keeps its prompt open and offers only to stop them; a message sent then
+  // starts a new turn. Anything after that key must be the model hint.
+  const background =
+    /^\s*[●○◉◎]\s+Waiting for background agents(?:\s+·\s+\d+(?:\.\d+)?\s?[KMG]?B)?\s+esc\s+esc\s+stop\s+agents\b(.*)$/u.exec(line)
+  if (background) {
+    const rest = background[1].trim().replace(/\s+/gu, ' ')
+    return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)
+  }
   // Hint rows are judged by the hint grammar alone rather than by the looser
   // patterns below, so reordered or unknown cells refuse input.
   if (isTerminalHintRow(line)) {

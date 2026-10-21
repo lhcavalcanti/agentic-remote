@@ -378,9 +378,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 204,
+  "communities": 191,
   "community_algorithm": "louvain-seed-42",
-  "edges": 17342,
+  "edges": 17335,
   "generator_fingerprint": "76c8a4dae92413974ae3b048e38524a366cf7e12def9dc9dba51fb15eb01be0d",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -587,8 +587,8 @@
     "server/oracle-voice-routes.test.ts": "5ed1bbdb5fbd3910494c1f8a5bbd9c04f24d207466ff24a888cae6db5571d5ea",
     "server/oracle-voice-routes.ts": "2409bd9f85ab5c48bd8794dd0ad2dc5bb572f167868bef199b37267d6142421d",
     "server/oracle-voice-security.test.ts": "3a0e5309b9b3f6674a327f3ec6546c6d1946826dfd126c1bf7b3078d6a9c6b0d",
-    "server/oracle-voice-segments.test.ts": "1d4e4aa65ee3b2385d1658b925713935d5e4735931c6471a890500b1cb2d6c8b",
-    "server/oracle-voice-segments.ts": "fff5d779a5c83e4f0d92de0c52e147f9dcade91394dd44a96564804797d937d6",
+    "server/oracle-voice-segments.test.ts": "1230e3c346ffce937b47d2af6f444f82a8fdff48ed73f5fb671f859019cd053c",
+    "server/oracle-voice-segments.ts": "231b207c0a25b24e8ef5b9e62368a6ab986eb8c2df6a23052baf945853d5f441",
     "server/oracle-voice-session.test.ts": "4c04d048fbef6f7d672c455d5718031c4c04fe5abe7f5002b6c00468b1441dfc",
     "server/oracle-voice-session.ts": "f2d0ce1ddadb2cc2e0740bbf746a9ca1117be31a4e06f52ae34c5b9e95243662",
     "server/oracle-voice-sherpa-import.test.ts": "e1028f2a41f71e0b3eefff5a76e01064cb6ea3831770a8e90e16769927fd74bb",
@@ -844,7 +844,7 @@
     "vite.config.ts": "1877d32445dcaba6d8f85d9d29390902440e94de044c75e3077e41db3acfaa9a"
   },
   "mode": "local-ast-only",
-  "nodes": 6317,
+  "nodes": 6314,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -929,14 +929,14 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "82249fb8f22aa6f7ef615af11ceb2e1412786fbc10a6b6ef18905e3f6fbeff17",
-    "communities.json": "8b55491ef82663423a448eed9c79741c15ed63754704227eea1553c06ad60002",
-    "graph.html": "5041fdee01354f25f8302f29895dabc408ba79f4890f4bd242ea6abf1c0a623c",
-    "graph.json": "1acc8dbd7701cc92e1b959437abcf12586e3ba0e9b17a415010337bca4077030"
+    "GRAPH_REPORT.md": "8065ca6488890a7458fbbc56cbd64268276d53f8e6725ad0e3e78bfcd272b034",
+    "communities.json": "c7446807f77e056a06de301a106d470e702760eedefde9555f32c01fdaae9bea",
+    "graph.html": "aee8399863451ebce0d162f950947a78f0deef55d54b978bdc728b3609413b40",
+    "graph.json": "432cedc81e26117f02f67f8aad78d5e96cd42e0d02b157c7de24dc27b1f5c318"
   },
   "schema_version": 1,
-  "source_commit": "0cc640844328b075d991eb38f4ba7af33788831d",
-  "source_fingerprint": "b673f2f1dcd0e1ecb2276534e34aeed5946d87f4c77762cffbadaed8711f3832",
+  "source_commit": "8af24348aa3d6af65d9f5879b27bc36296a5a1da",
+  "source_fingerprint": "b13772bcd27b4719983c18fb67c2a67c7c03a2289a3c5d8c9af91cfe6d9f714a",
   "working_tree_changes": [
     "server/oracle-voice-segments.test.ts",
     "server/oracle-voice-segments.ts"

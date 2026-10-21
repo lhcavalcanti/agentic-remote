@@ -51,6 +51,13 @@ describe('SpeakableSegmenter', () => {
     expect(segmenter.update('Second. First.')).toEqual(['First.'])
   })
 
+  it('speaks novel prose after an earlier sentence becomes a tombstone', () => {
+    const segmenter = new SpeakableSegmenter('message-1')
+    expect(segmenter.update('First. Second.')).toEqual(['First.', 'Second.'])
+    expect(segmenter.update('Second.')).toEqual([])
+    expect(segmenter.update('Third.')).toEqual(['Third.'])
+  })
+
   it('strips Markdown controls while retaining speakable prose', () => {
     const segmenter = new SpeakableSegmenter('message-1')
     expect(segmenter.update(

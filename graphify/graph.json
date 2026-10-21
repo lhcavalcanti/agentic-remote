@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "e1576a9e9ffdc6fae52ad08471fd4e7397ef111f",
+  "built_at_commit": "dca9e8d4f41410dd946b737500ea0defe3a791f7",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -105483,7 +105483,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2698",
+      "source_location": "L2702",
       "target": "server_terminal_session_activebottomframe",
       "weight": 1.0
     },
@@ -105494,7 +105494,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3460",
+      "source_location": "L3464",
       "target": "server_terminal_session_boxedcomposerframe",
       "weight": 1.0
     },
@@ -105505,7 +105505,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2803",
+      "source_location": "L2807",
       "target": "server_terminal_session_capturebeforedeadline",
       "weight": 1.0
     },
@@ -105516,7 +105516,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4913",
+      "source_location": "L4917",
       "target": "server_terminal_session_capturepane",
       "weight": 1.0
     },
@@ -105527,7 +105527,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4922",
+      "source_location": "L4926",
       "target": "server_terminal_session_captureterminal",
       "weight": 1.0
     },
@@ -105538,7 +105538,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2936",
+      "source_location": "L2940",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -105549,7 +105549,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2821",
+      "source_location": "L2825",
       "target": "server_terminal_session_clearautomaticstartupprompts",
       "weight": 1.0
     },
@@ -105560,7 +105560,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4762",
+      "source_location": "L4766",
       "target": "server_terminal_session_composer_placeholders",
       "weight": 1.0
     },
@@ -105571,7 +105571,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3566",
+      "source_location": "L3570",
       "target": "server_terminal_session_composerfocusedpanes",
       "weight": 1.0
     },
@@ -105582,7 +105582,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3569",
+      "source_location": "L3573",
       "target": "server_terminal_session_composerfocuswitnessed",
       "weight": 1.0
     },
@@ -105593,7 +105593,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3419",
+      "source_location": "L3423",
       "target": "server_terminal_session_composerframetext",
       "weight": 1.0
     },
@@ -105604,7 +105604,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3625",
+      "source_location": "L3629",
       "target": "server_terminal_session_composerhasfocus",
       "weight": 1.0
     },
@@ -105615,7 +105615,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4778",
+      "source_location": "L4782",
       "target": "server_terminal_session_composerholdsothertext",
       "weight": 1.0
     },
@@ -105626,7 +105626,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4894",
+      "source_location": "L4898",
       "target": "server_terminal_session_composerholdstext",
       "weight": 1.0
     },
@@ -105637,7 +105637,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3410",
+      "source_location": "L3414",
       "target": "server_terminal_session_composerrowtext",
       "weight": 1.0
     },
@@ -105648,7 +105648,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4882",
+      "source_location": "L4886",
       "target": "server_terminal_session_composertext",
       "weight": 1.0
     },
@@ -105659,7 +105659,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4959",
+      "source_location": "L4963",
       "target": "server_terminal_session_composertookpaste",
       "weight": 1.0
     },
@@ -105670,7 +105670,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2751",
+      "source_location": "L2755",
       "target": "server_terminal_session_containscopiedinteractiveframe",
       "weight": 1.0
     },
@@ -105681,7 +105681,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4613",
+      "source_location": "L4617",
       "target": "server_terminal_session_copilotcommand",
       "weight": 1.0
     },
@@ -105692,7 +105692,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3506",
+      "source_location": "L3510",
       "target": "server_terminal_session_cursorcomposerframe",
       "weight": 1.0
     },
@@ -105703,7 +105703,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2685",
+      "source_location": "L2689",
       "target": "server_terminal_session_desktopinstallpromptidentity",
       "weight": 1.0
     },
@@ -105714,7 +105714,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3210",
+      "source_location": "L3214",
       "target": "server_terminal_session_downloaded_update_layouts",
       "weight": 1.0
     },
@@ -105725,7 +105725,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3194",
+      "source_location": "L3198",
       "target": "server_terminal_session_downloaded_update_notice_cell",
       "weight": 1.0
     },
@@ -105736,7 +105736,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3181",
+      "source_location": "L3185",
       "target": "server_terminal_session_downloadedupdatecell",
       "weight": 1.0
     },
@@ -105747,7 +105747,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3279",
+      "source_location": "L3283",
       "target": "server_terminal_session_downloadedupdatefooterblock",
       "weight": 1.0
     },
@@ -105769,7 +105769,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3188",
+      "source_location": "L3192",
       "target": "server_terminal_session_exactcell",
       "weight": 1.0
     },
@@ -105791,7 +105791,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4405",
+      "source_location": "L4409",
       "target": "server_terminal_session_findterminalwrappedtext",
       "weight": 1.0
     },
@@ -105802,7 +105802,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3429",
+      "source_location": "L3433",
       "target": "server_terminal_session_flatcomposerframe",
       "weight": 1.0
     },
@@ -105813,7 +105813,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3068",
+      "source_location": "L3072",
       "target": "server_terminal_session_footer_efforts",
       "weight": 1.0
     },
@@ -105824,7 +105824,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3049",
+      "source_location": "L3053",
       "target": "server_terminal_session_footer_hint_slots",
       "weight": 1.0
     },
@@ -105835,7 +105835,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3057",
+      "source_location": "L3061",
       "target": "server_terminal_session_footer_hints",
       "weight": 1.0
     },
@@ -105846,7 +105846,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3067",
+      "source_location": "L3071",
       "target": "server_terminal_session_footer_model_families",
       "weight": 1.0
     },
@@ -105901,7 +105901,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3714",
+      "source_location": "L3718",
       "target": "server_terminal_session_hasclippedterminalformfooter",
       "weight": 1.0
     },
@@ -105912,7 +105912,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4068",
+      "source_location": "L4072",
       "target": "server_terminal_session_hasclippedterminalformtabs",
       "weight": 1.0
     },
@@ -105923,7 +105923,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2694",
+      "source_location": "L2698",
       "target": "server_terminal_session_hascomposerafter",
       "weight": 1.0
     },
@@ -105934,7 +105934,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3552",
+      "source_location": "L3556",
       "target": "server_terminal_session_hasliveterminalcomposer",
       "weight": 1.0
     },
@@ -105945,7 +105945,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3366",
+      "source_location": "L3370",
       "target": "server_terminal_session_hasplainkeyhint",
       "weight": 1.0
     },
@@ -105956,7 +105956,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4366",
+      "source_location": "L4370",
       "target": "server_terminal_session_hasterminalcommandpermissionquestion",
       "weight": 1.0
     },
@@ -105967,7 +105967,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3719",
+      "source_location": "L3723",
       "target": "server_terminal_session_hasterminalformfooter",
       "weight": 1.0
     },
@@ -105978,7 +105978,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4049",
+      "source_location": "L4053",
       "target": "server_terminal_session_hasterminalformquestionreflowcandidate",
       "weight": 1.0
     },
@@ -105989,7 +105989,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3233",
+      "source_location": "L3237",
       "target": "server_terminal_session_isdownloadedupdatefooterrows",
       "weight": 1.0
     },
@@ -106000,7 +106000,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3147",
+      "source_location": "L3151",
       "target": "server_terminal_session_isfooterhintsequence",
       "weight": 1.0
     },
@@ -106011,7 +106011,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3099",
+      "source_location": "L3103",
       "target": "server_terminal_session_isfootermodelcell",
       "weight": 1.0
     },
@@ -106022,7 +106022,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3079",
+      "source_location": "L3083",
       "target": "server_terminal_session_isfootermodelhint",
       "weight": 1.0
     },
@@ -106033,7 +106033,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3109",
+      "source_location": "L3113",
       "target": "server_terminal_session_isfooterreasoningmodel",
       "weight": 1.0
     },
@@ -106044,7 +106044,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3308",
+      "source_location": "L3312",
       "target": "server_terminal_session_isknownterminalfooterrow",
       "weight": 1.0
     },
@@ -106055,7 +106055,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3765",
+      "source_location": "L3769",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -106066,7 +106066,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2990",
+      "source_location": "L2994",
       "target": "server_terminal_session_isterminalchrome",
       "weight": 1.0
     },
@@ -106077,7 +106077,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3129",
+      "source_location": "L3133",
       "target": "server_terminal_session_isterminalcompacthintfooter",
       "weight": 1.0
     },
@@ -106088,7 +106088,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3296",
+      "source_location": "L3300",
       "target": "server_terminal_session_isterminalcomposerfooter",
       "weight": 1.0
     },
@@ -106099,7 +106099,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3025",
+      "source_location": "L3029",
       "target": "server_terminal_session_isterminalcontextfooter",
       "weight": 1.0
     },
@@ -106110,7 +106110,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2654",
+      "source_location": "L2658",
       "target": "server_terminal_session_isterminaldesktopinstallprompt",
       "weight": 1.0
     },
@@ -106121,7 +106121,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3062",
+      "source_location": "L3066",
       "target": "server_terminal_session_isterminalhintrow",
       "weight": 1.0
     },
@@ -106132,7 +106132,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3779",
+      "source_location": "L3783",
       "target": "server_terminal_session_isterminalloading",
       "weight": 1.0
     },
@@ -106143,7 +106143,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3035",
+      "source_location": "L3039",
       "target": "server_terminal_session_isterminalmodelfooter",
       "weight": 1.0
     },
@@ -106154,7 +106154,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3744",
+      "source_location": "L3748",
       "target": "server_terminal_session_isterminaloverlay",
       "weight": 1.0
     },
@@ -106165,7 +106165,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2650",
+      "source_location": "L2654",
       "target": "server_terminal_session_isterminalsessioninuseprompt",
       "weight": 1.0
     },
@@ -106176,7 +106176,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3774",
+      "source_location": "L3778",
       "target": "server_terminal_session_isterminalvisiblyidle",
       "weight": 1.0
     },
@@ -106187,7 +106187,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3164",
+      "source_location": "L3168",
       "target": "server_terminal_session_isterminalworkspacefooter",
       "weight": 1.0
     },
@@ -106198,7 +106198,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3386",
+      "source_location": "L3390",
       "target": "server_terminal_session_isunrecognizedfooterrow",
       "weight": 1.0
     },
@@ -106209,7 +106209,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4560",
+      "source_location": "L4564",
       "target": "server_terminal_session_listtmuxsessions",
       "weight": 1.0
     },
@@ -106220,7 +106220,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3792",
+      "source_location": "L3796",
       "target": "server_terminal_session_normaliseoutputline",
       "weight": 1.0
     },
@@ -106231,7 +106231,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4870",
+      "source_location": "L4874",
       "target": "server_terminal_session_occurrences",
       "weight": 1.0
     },
@@ -106242,7 +106242,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4686",
+      "source_location": "L4690",
       "target": "server_terminal_session_paneevidencecount",
       "weight": 1.0
     },
@@ -106253,7 +106253,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4730",
+      "source_location": "L4734",
       "target": "server_terminal_session_paneshowstext",
       "weight": 1.0
     },
@@ -106264,7 +106264,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4490",
+      "source_location": "L4494",
       "target": "server_terminal_session_parseterminalfoldertrust",
       "weight": 1.0
     },
@@ -106275,7 +106275,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4157",
+      "source_location": "L4161",
       "target": "server_terminal_session_parseterminalformactivefield",
       "weight": 1.0
     },
@@ -106286,7 +106286,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3887",
+      "source_location": "L3891",
       "target": "server_terminal_session_parseterminalformprompt",
       "weight": 1.0
     },
@@ -106297,7 +106297,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4257",
+      "source_location": "L4261",
       "target": "server_terminal_session_parseterminalpermission",
       "weight": 1.0
     },
@@ -106308,7 +106308,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4436",
+      "source_location": "L4440",
       "target": "server_terminal_session_parseterminalsessioninuse",
       "weight": 1.0
     },
@@ -106319,7 +106319,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2951",
+      "source_location": "L2955",
       "target": "server_terminal_session_parseterminalupdatenotice",
       "weight": 1.0
     },
@@ -106330,7 +106330,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4184",
+      "source_location": "L4188",
       "target": "server_terminal_session_parseterminaluserinput",
       "weight": 1.0
     },
@@ -106341,7 +106341,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4849",
+      "source_location": "L4853",
       "target": "server_terminal_session_pastecouldcollapse",
       "weight": 1.0
     },
@@ -106352,7 +106352,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4847",
+      "source_location": "L4851",
       "target": "server_terminal_session_pasted_placeholders",
       "weight": 1.0
     },
@@ -106363,7 +106363,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4877",
+      "source_location": "L4881",
       "target": "server_terminal_session_pastedplaceholdercount",
       "weight": 1.0
     },
@@ -106385,7 +106385,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5136",
+      "source_location": "L5140",
       "target": "server_terminal_session_processancestors",
       "weight": 1.0
     },
@@ -106396,7 +106396,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4603",
+      "source_location": "L4607",
       "target": "server_terminal_session_processcommand",
       "weight": 1.0
     },
@@ -106407,7 +106407,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5126",
+      "source_location": "L5130",
       "target": "server_terminal_session_processisalive",
       "weight": 1.0
     },
@@ -106418,7 +106418,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4854",
+      "source_location": "L4858",
       "target": "server_terminal_session_qualifyingpastecount",
       "weight": 1.0
     },
@@ -106429,7 +106429,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3573",
+      "source_location": "L3577",
       "target": "server_terminal_session_remembercomposerfocus",
       "weight": 1.0
     },
@@ -106440,7 +106440,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3581",
+      "source_location": "L3585",
       "target": "server_terminal_session_reportedunknownshapes",
       "weight": 1.0
     },
@@ -106451,7 +106451,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3586",
+      "source_location": "L3590",
       "target": "server_terminal_session_reportonce",
       "weight": 1.0
     },
@@ -106462,7 +106462,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3611",
+      "source_location": "L3615",
       "target": "server_terminal_session_reportunrecognisedcomposer",
       "weight": 1.0
     },
@@ -106473,7 +106473,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3647",
+      "source_location": "L3651",
       "target": "server_terminal_session_reportunrecognisedcomposerparts",
       "weight": 1.0
     },
@@ -106484,7 +106484,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3602",
+      "source_location": "L3606",
       "target": "server_terminal_session_reportunrecognisedfooter",
       "weight": 1.0
     },
@@ -106495,7 +106495,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4592",
+      "source_location": "L4596",
       "target": "server_terminal_session_safewindowname",
       "weight": 1.0
     },
@@ -106506,7 +106506,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2743",
+      "source_location": "L2747",
       "target": "server_terminal_session_stripouterframeedge",
       "weight": 1.0
     },
@@ -106517,7 +106517,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3681",
+      "source_location": "L3685",
       "target": "server_terminal_session_stripterminalstatus",
       "weight": 1.0
     },
@@ -106528,7 +106528,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3873",
+      "source_location": "L3877",
       "target": "server_terminal_session_submitterminalform",
       "weight": 1.0
     },
@@ -106539,7 +106539,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3995",
+      "source_location": "L3999",
       "target": "server_terminal_session_tabnames",
       "weight": 1.0
     },
@@ -106550,7 +106550,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2978",
+      "source_location": "L2982",
       "target": "server_terminal_session_terminal_chrome",
       "weight": 1.0
     },
@@ -106561,7 +106561,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3918",
+      "source_location": "L3922",
       "target": "server_terminal_session_terminalboxwrap",
       "weight": 1.0
     },
@@ -106583,7 +106583,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4121",
+      "source_location": "L4125",
       "target": "server_terminal_session_terminalcheckliststate",
       "weight": 1.0
     },
@@ -106594,7 +106594,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3796",
+      "source_location": "L3800",
       "target": "server_terminal_session_terminalcommandoutput",
       "weight": 1.0
     },
@@ -106605,7 +106605,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3537",
+      "source_location": "L3541",
       "target": "server_terminal_session_terminalcomposerframe",
       "weight": 1.0
     },
@@ -106616,7 +106616,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3694",
+      "source_location": "L3698",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -106627,7 +106627,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4376",
+      "source_location": "L4380",
       "target": "server_terminal_session_terminaldialogchoices",
       "weight": 1.0
     },
@@ -106671,7 +106671,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3863",
+      "source_location": "L3867",
       "target": "server_terminal_session_terminalformcommitkeys",
       "weight": 1.0
     },
@@ -106693,7 +106693,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3932",
+      "source_location": "L3936",
       "target": "server_terminal_session_terminalformquestionend",
       "weight": 1.0
     },
@@ -106737,7 +106737,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4141",
+      "source_location": "L4145",
       "target": "server_terminal_session_terminalformshowsfields",
       "weight": 1.0
     },
@@ -106759,7 +106759,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4028",
+      "source_location": "L4032",
       "target": "server_terminal_session_terminalformtabsindex",
       "weight": 1.0
     },
@@ -106770,7 +106770,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3999",
+      "source_location": "L4003",
       "target": "server_terminal_session_terminalformtabsline",
       "weight": 1.0
     },
@@ -106781,7 +106781,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4040",
+      "source_location": "L4044",
       "target": "server_terminal_session_terminalformtabsmatch",
       "weight": 1.0
     },
@@ -106792,7 +106792,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3668",
+      "source_location": "L3672",
       "target": "server_terminal_session_terminalinputready",
       "weight": 1.0
     },
@@ -106847,7 +106847,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2644",
+      "source_location": "L2648",
       "target": "server_terminal_session_tmuxsessioninfo",
       "weight": 1.0
     },
@@ -106858,7 +106858,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5071",
+      "source_location": "L5075",
       "target": "server_terminal_session_tmuxtargetforpid",
       "weight": 1.0
     },
@@ -106880,7 +106880,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5043",
+      "source_location": "L5047",
       "target": "server_terminal_session_waitforcomposerpaste",
       "weight": 1.0
     },
@@ -106902,7 +106902,7 @@
       "relation": "contains",
       "source": "server_terminal_session",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2885",
+      "source_location": "L2889",
       "target": "server_terminal_session_waitforterminalstartup",
       "weight": 1.0
     },
@@ -107035,7 +107035,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_activebottomframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2732",
+      "source_location": "L2736",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -107047,7 +107047,7 @@
       "relation": "calls",
       "source": "server_terminal_session_activebottomframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2726",
+      "source_location": "L2730",
       "target": "server_terminal_session_containscopiedinteractiveframe",
       "weight": 1.0
     },
@@ -107059,7 +107059,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_activebottomframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2727",
+      "source_location": "L2731",
       "target": "server_terminal_session_stripouterframeedge",
       "weight": 1.0
     },
@@ -107071,7 +107071,7 @@
       "relation": "calls",
       "source": "server_terminal_session_boxedcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3486",
+      "source_location": "L3490",
       "target": "server_terminal_session_composerframetext",
       "weight": 1.0
     },
@@ -107083,7 +107083,7 @@
       "relation": "calls",
       "source": "server_terminal_session_boxedcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3478",
+      "source_location": "L3482",
       "target": "server_terminal_session_isterminalcomposerfooter",
       "weight": 1.0
     },
@@ -107095,7 +107095,7 @@
       "relation": "calls",
       "source": "server_terminal_session_capturebeforedeadline",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2808",
+      "source_location": "L2812",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_capture",
       "weight": 1.0
     },
@@ -107107,7 +107107,7 @@
       "relation": "calls",
       "source": "server_terminal_session_capturepane",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4914",
+      "source_location": "L4918",
       "target": "server_terminal_session_captureterminal",
       "weight": 1.0
     },
@@ -107119,7 +107119,7 @@
       "relation": "calls",
       "source": "server_terminal_session_captureterminal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4941",
+      "source_location": "L4945",
       "target": "server_terminal_session_composerhasfocus",
       "weight": 1.0
     },
@@ -107131,7 +107131,7 @@
       "relation": "calls",
       "source": "server_terminal_session_captureterminal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4928",
+      "source_location": "L4932",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -107143,7 +107143,7 @@
       "relation": "calls",
       "source": "server_terminal_session_captureterminal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4942",
+      "source_location": "L4946",
       "target": "server_terminal_session_remembercomposerfocus",
       "weight": 1.0
     },
@@ -107155,7 +107155,7 @@
       "relation": "calls",
       "source": "server_terminal_session_captureterminal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4943",
+      "source_location": "L4947",
       "target": "server_terminal_session_reportunrecognisedcomposerparts",
       "weight": 1.0
     },
@@ -107167,7 +107167,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2827",
+      "source_location": "L2831",
       "target": "server_terminal_session_capturebeforedeadline",
       "weight": 1.0
     },
@@ -107179,7 +107179,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2863",
+      "source_location": "L2867",
       "target": "server_terminal_session_desktopinstallpromptidentity",
       "weight": 1.0
     },
@@ -107191,7 +107191,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2829",
+      "source_location": "L2833",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -107203,7 +107203,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2852",
+      "source_location": "L2856",
       "target": "server_terminal_session_hasterminalcommandpermissionquestion",
       "weight": 1.0
     },
@@ -107215,7 +107215,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2859",
+      "source_location": "L2863",
       "target": "server_terminal_session_isterminaldesktopinstallprompt",
       "weight": 1.0
     },
@@ -107227,7 +107227,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2855",
+      "source_location": "L2859",
       "target": "server_terminal_session_parseterminalformprompt",
       "weight": 1.0
     },
@@ -107239,7 +107239,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2853",
+      "source_location": "L2857",
       "target": "server_terminal_session_parseterminalpermission",
       "weight": 1.0
     },
@@ -107251,7 +107251,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2854",
+      "source_location": "L2858",
       "target": "server_terminal_session_parseterminaluserinput",
       "weight": 1.0
     },
@@ -107263,7 +107263,7 @@
       "relation": "calls",
       "source": "server_terminal_session_clearautomaticstartupprompts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2840",
+      "source_location": "L2844",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_capture",
       "weight": 1.0
     },
@@ -107275,7 +107275,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerfocuswitnessed",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3570",
+      "source_location": "L3574",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -107287,7 +107287,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerframetext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3424",
+      "source_location": "L3428",
       "target": "server_terminal_session_composerrowtext",
       "weight": 1.0
     },
@@ -107299,7 +107299,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerhasfocus",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3640",
+      "source_location": "L3644",
       "target": "server_terminal_session_composerrowtext",
       "weight": 1.0
     },
@@ -107311,7 +107311,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerhasfocus",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3632",
+      "source_location": "L3636",
       "target": "server_terminal_session_hasterminalformfooter",
       "weight": 1.0
     },
@@ -107323,7 +107323,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerhasfocus",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3639",
+      "source_location": "L3643",
       "target": "server_terminal_session_isterminalcomposerfooter",
       "weight": 1.0
     },
@@ -107335,7 +107335,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerholdsothertext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4783",
+      "source_location": "L4787",
       "target": "server_terminal_session_composerholdstext",
       "weight": 1.0
     },
@@ -107347,7 +107347,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerholdsothertext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4790",
+      "source_location": "L4794",
       "target": "server_terminal_session_composertext",
       "weight": 1.0
     },
@@ -107359,32 +107359,8 @@
       "relation": "calls",
       "source": "server_terminal_session_composerholdsothertext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4827",
+      "source_location": "L4831",
       "target": "server_terminal_session_occurrences",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_terminal_session_composerholdsothertext",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L4812",
-      "target": "server_terminal_session_pastecouldcollapse",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_terminal_session_composerholdsothertext",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L4815",
-      "target": "server_terminal_session_pastedplaceholdercount",
       "weight": 1.0
     },
     {
@@ -107396,6 +107372,30 @@
       "source": "server_terminal_session_composerholdsothertext",
       "source_file": "server/terminal-session.ts",
       "source_location": "L4816",
+      "target": "server_terminal_session_pastecouldcollapse",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_terminal_session_composerholdsothertext",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L4819",
+      "target": "server_terminal_session_pastedplaceholdercount",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_terminal_session_composerholdsothertext",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L4820",
       "target": "server_terminal_session_qualifyingpastecount",
       "weight": 1.0
     },
@@ -107407,7 +107407,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composerholdstext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4895",
+      "source_location": "L4899",
       "target": "server_terminal_session_composertext",
       "weight": 1.0
     },
@@ -107419,7 +107419,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4884",
+      "source_location": "L4888",
       "target": "server_terminal_session_composerfocuswitnessed",
       "weight": 1.0
     },
@@ -107431,7 +107431,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4886",
+      "source_location": "L4890",
       "target": "server_terminal_session_composerframetext",
       "weight": 1.0
     },
@@ -107443,7 +107443,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertookpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4997",
+      "source_location": "L5001",
       "target": "server_terminal_session_composerholdstext",
       "weight": 1.0
     },
@@ -107455,7 +107455,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertookpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4970",
+      "source_location": "L4974",
       "target": "server_terminal_session_composertext",
       "weight": 1.0
     },
@@ -107467,7 +107467,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertookpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5030",
+      "source_location": "L5034",
       "target": "server_terminal_session_occurrences",
       "weight": 1.0
     },
@@ -107479,7 +107479,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertookpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4990",
+      "source_location": "L4994",
       "target": "server_terminal_session_paneevidencecount",
       "weight": 1.0
     },
@@ -107491,7 +107491,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertookpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4979",
+      "source_location": "L4983",
       "target": "server_terminal_session_pastedplaceholdercount",
       "weight": 1.0
     },
@@ -107503,7 +107503,7 @@
       "relation": "calls",
       "source": "server_terminal_session_composertookpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4984",
+      "source_location": "L4988",
       "target": "server_terminal_session_qualifyingpastecount",
       "weight": 1.0
     },
@@ -107515,7 +107515,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_containscopiedinteractiveframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2768",
+      "source_location": "L2772",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -107527,7 +107527,7 @@
       "relation": "calls",
       "source": "server_terminal_session_copilotcommand",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4618",
+      "source_location": "L4622",
       "target": "server_terminal_session_processcommand",
       "weight": 1.0
     },
@@ -107539,7 +107539,7 @@
       "relation": "calls",
       "source": "server_terminal_session_copilotcommand",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4655",
+      "source_location": "L4659",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -107551,7 +107551,7 @@
       "relation": "calls",
       "source": "server_terminal_session_cursorcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3522",
+      "source_location": "L3526",
       "target": "server_terminal_session_composerframetext",
       "weight": 1.0
     },
@@ -107563,7 +107563,7 @@
       "relation": "calls",
       "source": "server_terminal_session_cursorcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3507",
+      "source_location": "L3511",
       "target": "server_terminal_session_hasterminalformfooter",
       "weight": 1.0
     },
@@ -107575,7 +107575,7 @@
       "relation": "calls",
       "source": "server_terminal_session_cursorcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3511",
+      "source_location": "L3515",
       "target": "server_terminal_session_isterminalcomposerfooter",
       "weight": 1.0
     },
@@ -107587,7 +107587,7 @@
       "relation": "calls",
       "source": "server_terminal_session_desktopinstallpromptidentity",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2690",
+      "source_location": "L2694",
       "target": "server_terminal_session_activebottomframe",
       "weight": 1.0
     },
@@ -107599,7 +107599,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_desktopinstallpromptidentity",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2688",
+      "source_location": "L2692",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -107611,7 +107611,7 @@
       "relation": "calls",
       "source": "server_terminal_session_desktopinstallpromptidentity",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2686",
+      "source_location": "L2690",
       "target": "server_terminal_session_isterminaldesktopinstallprompt",
       "weight": 1.0
     },
@@ -107622,7 +107622,7 @@
       "relation": "method",
       "source": "server_terminal_session_downloadedupdatecell",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3185",
+      "source_location": "L3189",
       "target": "server_terminal_session_downloadedupdatecell_accepts",
       "weight": 1.0
     },
@@ -107633,7 +107633,7 @@
       "relation": "method",
       "source": "server_terminal_session_downloadedupdatecell",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3184",
+      "source_location": "L3188",
       "target": "server_terminal_session_downloadedupdatecell_allows",
       "weight": 1.0
     },
@@ -107645,7 +107645,7 @@
       "relation": "calls",
       "source": "server_terminal_session_downloadedupdatefooterblock",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3282",
+      "source_location": "L3286",
       "target": "server_terminal_session_isdownloadedupdatefooterrows",
       "weight": 1.0
     },
@@ -107693,7 +107693,7 @@
       "relation": "calls",
       "source": "server_terminal_session_flatcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3452",
+      "source_location": "L3456",
       "target": "server_terminal_session_composerframetext",
       "weight": 1.0
     },
@@ -107705,7 +107705,7 @@
       "relation": "calls",
       "source": "server_terminal_session_flatcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3436",
+      "source_location": "L3440",
       "target": "server_terminal_session_hasterminalformfooter",
       "weight": 1.0
     },
@@ -107717,7 +107717,7 @@
       "relation": "calls",
       "source": "server_terminal_session_flatcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3443",
+      "source_location": "L3447",
       "target": "server_terminal_session_isterminalcomposerfooter",
       "weight": 1.0
     },
@@ -107752,7 +107752,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasclippedterminalformfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3715",
+      "source_location": "L3719",
       "target": "server_terminal_session_hasliveterminalcomposer",
       "weight": 1.0
     },
@@ -107764,7 +107764,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasclippedterminalformfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3716",
+      "source_location": "L3720",
       "target": "server_terminal_session_hasterminalformfooter",
       "weight": 1.0
     },
@@ -107776,7 +107776,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasclippedterminalformfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3716",
+      "source_location": "L3720",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -107788,7 +107788,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_hasclippedterminalformtabs",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4076",
+      "source_location": "L4080",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -107800,7 +107800,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasclippedterminalformtabs",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4104",
+      "source_location": "L4108",
       "target": "server_terminal_session_tabnames",
       "weight": 1.0
     },
@@ -107812,7 +107812,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasclippedterminalformtabs",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4077",
+      "source_location": "L4081",
       "target": "server_terminal_session_terminalboxwrap",
       "weight": 1.0
     },
@@ -107824,7 +107824,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasclippedterminalformtabs",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4075",
+      "source_location": "L4079",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -107836,7 +107836,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasclippedterminalformtabs",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4077",
+      "source_location": "L4081",
       "target": "server_terminal_session_terminalformtabsline",
       "weight": 1.0
     },
@@ -107848,8 +107848,32 @@
       "relation": "calls",
       "source": "server_terminal_session_hasliveterminalcomposer",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3553",
+      "source_location": "L3557",
       "target": "server_terminal_session_composerfocuswitnessed",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_terminal_session_hasterminalcommandpermissionquestion",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L4377",
+      "target": "server_terminal_session_activebottomframe",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "argument",
+      "relation": "indirect_call",
+      "source": "server_terminal_session_hasterminalcommandpermissionquestion",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L4372",
+      "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
     {
@@ -107861,30 +107885,6 @@
       "source": "server_terminal_session_hasterminalcommandpermissionquestion",
       "source_file": "server/terminal-session.ts",
       "source_location": "L4373",
-      "target": "server_terminal_session_activebottomframe",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "INFERRED",
-      "confidence_score": 0.85,
-      "context": "argument",
-      "relation": "indirect_call",
-      "source": "server_terminal_session_hasterminalcommandpermissionquestion",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L4368",
-      "target": "server_terminal_session_cleandialogline",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_terminal_session_hasterminalcommandpermissionquestion",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L4369",
       "target": "server_terminal_session_findterminalwrappedtext",
       "weight": 1.0
     },
@@ -107896,7 +107896,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_hasterminalformfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3720",
+      "source_location": "L3724",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -107908,7 +107908,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_hasterminalformquestionreflowcandidate",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4056",
+      "source_location": "L4060",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -107920,7 +107920,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasterminalformquestionreflowcandidate",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4053",
+      "source_location": "L4057",
       "target": "server_terminal_session_parseterminalformprompt",
       "weight": 1.0
     },
@@ -107932,7 +107932,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasterminalformquestionreflowcandidate",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4056",
+      "source_location": "L4060",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -107944,7 +107944,7 @@
       "relation": "calls",
       "source": "server_terminal_session_hasterminalformquestionreflowcandidate",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4059",
+      "source_location": "L4063",
       "target": "server_terminal_session_terminalformtabsmatch",
       "weight": 1.0
     },
@@ -107956,7 +107956,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isdownloadedupdatefooterrows",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3262",
+      "source_location": "L3266",
       "target": "server_terminal_session_downloadedupdatecell_accepts",
       "weight": 1.0
     },
@@ -107968,7 +107968,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isdownloadedupdatefooterrows",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3254",
+      "source_location": "L3258",
       "target": "server_terminal_session_downloadedupdatecell_allows",
       "weight": 1.0
     },
@@ -107980,7 +107980,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isdownloadedupdatefooterrows",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3248",
+      "source_location": "L3252",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -107992,7 +107992,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isfootermodelhint",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3081",
+      "source_location": "L3085",
       "target": "server_terminal_session_isfootermodelcell",
       "weight": 1.0
     },
@@ -108004,56 +108004,8 @@
       "relation": "calls",
       "source": "server_terminal_session_isknownterminalfooterrow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3333",
+      "source_location": "L3337",
       "target": "server_terminal_session_isfootermodelhint",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_terminal_session_isknownterminalfooterrow",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L3333",
-      "target": "server_terminal_session_isfooterreasoningmodel",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_terminal_session_isknownterminalfooterrow",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L3344",
-      "target": "server_terminal_session_isterminalchrome",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_terminal_session_isknownterminalfooterrow",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L3338",
-      "target": "server_terminal_session_isterminalcompacthintfooter",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_terminal_session_isknownterminalfooterrow",
-      "source_file": "server/terminal-session.ts",
-      "source_location": "L3347",
-      "target": "server_terminal_session_isterminalcontextfooter",
       "weight": 1.0
     },
     {
@@ -108065,7 +108017,7 @@
       "source": "server_terminal_session_isknownterminalfooterrow",
       "source_file": "server/terminal-session.ts",
       "source_location": "L3337",
-      "target": "server_terminal_session_isterminalhintrow",
+      "target": "server_terminal_session_isfooterreasoningmodel",
       "weight": 1.0
     },
     {
@@ -108077,6 +108029,54 @@
       "source": "server_terminal_session_isknownterminalfooterrow",
       "source_file": "server/terminal-session.ts",
       "source_location": "L3348",
+      "target": "server_terminal_session_isterminalchrome",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_terminal_session_isknownterminalfooterrow",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L3342",
+      "target": "server_terminal_session_isterminalcompacthintfooter",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_terminal_session_isknownterminalfooterrow",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L3351",
+      "target": "server_terminal_session_isterminalcontextfooter",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_terminal_session_isknownterminalfooterrow",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L3341",
+      "target": "server_terminal_session_isterminalhintrow",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_terminal_session_isknownterminalfooterrow",
+      "source_file": "server/terminal-session.ts",
+      "source_location": "L3352",
       "target": "server_terminal_session_isterminalmodelfooter",
       "weight": 1.0
     },
@@ -108088,7 +108088,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isknownterminalfooterrow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3339",
+      "source_location": "L3343",
       "target": "server_terminal_session_isterminalworkspacefooter",
       "weight": 1.0
     },
@@ -108100,7 +108100,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalagentworking",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3766",
+      "source_location": "L3770",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108112,7 +108112,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalcompacthintfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3135",
+      "source_location": "L3139",
       "target": "server_terminal_session_isfooterhintsequence",
       "weight": 1.0
     },
@@ -108124,7 +108124,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalcompacthintfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3140",
+      "source_location": "L3144",
       "target": "server_terminal_session_isfootermodelhint",
       "weight": 1.0
     },
@@ -108136,7 +108136,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalcompacthintfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3134",
+      "source_location": "L3138",
       "target": "server_terminal_session_isfooterreasoningmodel",
       "weight": 1.0
     },
@@ -108148,7 +108148,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalcomposerfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3297",
+      "source_location": "L3301",
       "target": "server_terminal_session_downloadedupdatefooterblock",
       "weight": 1.0
     },
@@ -108160,7 +108160,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalcomposerfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3301",
+      "source_location": "L3305",
       "target": "server_terminal_session_isknownterminalfooterrow",
       "weight": 1.0
     },
@@ -108172,7 +108172,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalcomposerfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3302",
+      "source_location": "L3306",
       "target": "server_terminal_session_isunrecognizedfooterrow",
       "weight": 1.0
     },
@@ -108184,7 +108184,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminaldesktopinstallprompt",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2660",
+      "source_location": "L2664",
       "target": "server_terminal_session_activebottomframe",
       "weight": 1.0
     },
@@ -108196,7 +108196,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_isterminaldesktopinstallprompt",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2656",
+      "source_location": "L2660",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108208,7 +108208,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalloading",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3781",
+      "source_location": "L3785",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108220,7 +108220,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminaloverlay",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3746",
+      "source_location": "L3750",
       "target": "server_terminal_session_parseterminalformprompt",
       "weight": 1.0
     },
@@ -108232,7 +108232,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminaloverlay",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3745",
+      "source_location": "L3749",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108244,7 +108244,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalsessioninuseprompt",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2651",
+      "source_location": "L2655",
       "target": "server_terminal_session_parseterminalsessioninuse",
       "weight": 1.0
     },
@@ -108256,7 +108256,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isterminalvisiblyidle",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3776",
+      "source_location": "L3780",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -108268,7 +108268,7 @@
       "relation": "calls",
       "source": "server_terminal_session_isunrecognizedfooterrow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3404",
+      "source_location": "L3408",
       "target": "server_terminal_session_hasplainkeyhint",
       "weight": 1.0
     },
@@ -108280,7 +108280,7 @@
       "relation": "calls",
       "source": "server_terminal_session_listtmuxsessions",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4563",
+      "source_location": "L4567",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -108292,7 +108292,7 @@
       "relation": "calls",
       "source": "server_terminal_session_listtmuxsessions",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4585",
+      "source_location": "L4589",
       "target": "server_tmux_errors_notmuxserver",
       "weight": 1.0
     },
@@ -108304,7 +108304,7 @@
       "relation": "calls",
       "source": "server_terminal_session_listtmuxsessions",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4585",
+      "source_location": "L4589",
       "target": "server_tmux_errors_tmuxnotinstalled",
       "weight": 1.0
     },
@@ -108316,7 +108316,7 @@
       "relation": "calls",
       "source": "server_terminal_session_normaliseoutputline",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3793",
+      "source_location": "L3797",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108328,7 +108328,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_paneevidencecount",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4699",
+      "source_location": "L4703",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108340,7 +108340,7 @@
       "relation": "calls",
       "source": "server_terminal_session_paneevidencecount",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4720",
+      "source_location": "L4724",
       "target": "server_terminal_session_qualifyingpastecount",
       "weight": 1.0
     },
@@ -108352,7 +108352,7 @@
       "relation": "calls",
       "source": "server_terminal_session_paneshowstext",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4739",
+      "source_location": "L4743",
       "target": "server_terminal_session_paneevidencecount",
       "weight": 1.0
     },
@@ -108364,7 +108364,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalfoldertrust",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4497",
+      "source_location": "L4501",
       "target": "server_terminal_session_activebottomframe",
       "weight": 1.0
     },
@@ -108376,7 +108376,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_parseterminalfoldertrust",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4492",
+      "source_location": "L4496",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108388,7 +108388,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalfoldertrust",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4493",
+      "source_location": "L4497",
       "target": "server_terminal_session_findterminalwrappedtext",
       "weight": 1.0
     },
@@ -108400,7 +108400,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalfoldertrust",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4491",
+      "source_location": "L4495",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108412,7 +108412,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalfoldertrust",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4530",
+      "source_location": "L4534",
       "target": "server_terminal_session_terminaldialogchoices",
       "weight": 1.0
     },
@@ -108424,7 +108424,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_parseterminalformactivefield",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4167",
+      "source_location": "L4171",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108436,7 +108436,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalformactivefield",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4168",
+      "source_location": "L4172",
       "target": "server_terminal_session_terminalboxwrap",
       "weight": 1.0
     },
@@ -108448,7 +108448,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalformactivefield",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4166",
+      "source_location": "L4170",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108460,7 +108460,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalformactivefield",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4168",
+      "source_location": "L4172",
       "target": "server_terminal_session_terminalformtabsindex",
       "weight": 1.0
     },
@@ -108472,7 +108472,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_parseterminalformprompt",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3889",
+      "source_location": "L3893",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108484,7 +108484,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalformprompt",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3902",
+      "source_location": "L3906",
       "target": "server_terminal_session_hascomposerafter",
       "weight": 1.0
     },
@@ -108496,7 +108496,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalformprompt",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3888",
+      "source_location": "L3892",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108508,7 +108508,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalpermission",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4277",
+      "source_location": "L4281",
       "target": "server_terminal_session_activebottomframe",
       "weight": 1.0
     },
@@ -108520,7 +108520,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_parseterminalpermission",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4269",
+      "source_location": "L4273",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108532,7 +108532,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalpermission",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4270",
+      "source_location": "L4274",
       "target": "server_terminal_session_findterminalwrappedtext",
       "weight": 1.0
     },
@@ -108544,7 +108544,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalpermission",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4264",
+      "source_location": "L4268",
       "target": "server_terminal_session_parseterminalfoldertrust",
       "weight": 1.0
     },
@@ -108556,7 +108556,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalpermission",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4260",
+      "source_location": "L4264",
       "target": "server_terminal_session_parseterminalsessioninuse",
       "weight": 1.0
     },
@@ -108568,7 +108568,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalpermission",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4268",
+      "source_location": "L4272",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108580,7 +108580,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalpermission",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4331",
+      "source_location": "L4335",
       "target": "server_terminal_session_terminaldialogchoices",
       "weight": 1.0
     },
@@ -108592,7 +108592,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalsessioninuse",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4444",
+      "source_location": "L4448",
       "target": "server_terminal_session_activebottomframe",
       "weight": 1.0
     },
@@ -108604,7 +108604,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_parseterminalsessioninuse",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4439",
+      "source_location": "L4443",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108616,7 +108616,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalsessioninuse",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4437",
+      "source_location": "L4441",
       "target": "server_terminal_session_hasterminalcommandpermissionquestion",
       "weight": 1.0
     },
@@ -108628,7 +108628,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalsessioninuse",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4445",
+      "source_location": "L4449",
       "target": "server_terminal_session_isterminalchrome",
       "weight": 1.0
     },
@@ -108640,7 +108640,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminalsessioninuse",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4438",
+      "source_location": "L4442",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108652,7 +108652,7 @@
       "relation": "calls",
       "source": "server_terminal_session_parseterminaluserinput",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4193",
+      "source_location": "L4197",
       "target": "server_terminal_session_activebottomframe",
       "weight": 1.0
     },
@@ -108664,7 +108664,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_parseterminaluserinput",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4188",
+      "source_location": "L4192",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108676,7 +108676,7 @@
       "relation": "calls",
       "source": "server_terminal_session_processancestors",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5139",
+      "source_location": "L5143",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -108688,7 +108688,7 @@
       "relation": "calls",
       "source": "server_terminal_session_qualifyingpastecount",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4855",
+      "source_location": "L4859",
       "target": "server_terminal_session_pastecouldcollapse",
       "weight": 1.0
     },
@@ -108700,7 +108700,7 @@
       "relation": "calls",
       "source": "server_terminal_session_qualifyingpastecount",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4866",
+      "source_location": "L4870",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -108712,7 +108712,7 @@
       "relation": "calls",
       "source": "server_terminal_session_reportonce",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3588",
+      "source_location": "L3592",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -108724,7 +108724,7 @@
       "relation": "calls",
       "source": "server_terminal_session_reportunrecognisedcomposer",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3612",
+      "source_location": "L3616",
       "target": "server_terminal_session_reportonce",
       "weight": 1.0
     },
@@ -108736,7 +108736,7 @@
       "relation": "calls",
       "source": "server_terminal_session_reportunrecognisedcomposerparts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3661",
+      "source_location": "L3665",
       "target": "server_terminal_session_isterminalcomposerfooter",
       "weight": 1.0
     },
@@ -108748,7 +108748,7 @@
       "relation": "calls",
       "source": "server_terminal_session_reportunrecognisedcomposerparts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3656",
+      "source_location": "L3660",
       "target": "server_terminal_session_reportunrecognisedcomposer",
       "weight": 1.0
     },
@@ -108760,7 +108760,7 @@
       "relation": "calls",
       "source": "server_terminal_session_reportunrecognisedcomposerparts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3662",
+      "source_location": "L3666",
       "target": "server_terminal_session_reportunrecognisedfooter",
       "weight": 1.0
     },
@@ -108772,7 +108772,7 @@
       "relation": "calls",
       "source": "server_terminal_session_reportunrecognisedfooter",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3604",
+      "source_location": "L3608",
       "target": "server_terminal_session_reportonce",
       "weight": 1.0
     },
@@ -108784,7 +108784,7 @@
       "relation": "calls",
       "source": "server_terminal_session_stripterminalstatus",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3683",
+      "source_location": "L3687",
       "target": "server_terminal_session_composerfocuswitnessed",
       "weight": 1.0
     },
@@ -108796,7 +108796,7 @@
       "relation": "calls",
       "source": "server_terminal_session_submitterminalform",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3879",
+      "source_location": "L3883",
       "target": "server_terminal_session_parseterminalformprompt",
       "weight": 1.0
     },
@@ -108808,7 +108808,7 @@
       "relation": "calls",
       "source": "server_terminal_session_submitterminalform",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3879",
+      "source_location": "L3883",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_capture",
       "weight": 1.0
     },
@@ -108820,7 +108820,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_terminalcheckliststate",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4126",
+      "source_location": "L4130",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108832,7 +108832,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalcommandoutput",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3819",
+      "source_location": "L3823",
       "target": "server_terminal_session_isterminalchrome",
       "weight": 1.0
     },
@@ -108844,7 +108844,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalcommandoutput",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3805",
+      "source_location": "L3809",
       "target": "server_terminal_session_normaliseoutputline",
       "weight": 1.0
     },
@@ -108856,7 +108856,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalcommandoutput",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3804",
+      "source_location": "L3808",
       "target": "server_terminal_session_stripterminalstatus",
       "weight": 1.0
     },
@@ -108868,7 +108868,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3543",
+      "source_location": "L3547",
       "target": "server_terminal_session_boxedcomposerframe",
       "weight": 1.0
     },
@@ -108880,7 +108880,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3549",
+      "source_location": "L3553",
       "target": "server_terminal_session_cursorcomposerframe",
       "weight": 1.0
     },
@@ -108892,7 +108892,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3542",
+      "source_location": "L3546",
       "target": "server_terminal_session_flatcomposerframe",
       "weight": 1.0
     },
@@ -108904,7 +108904,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalcontrollines",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3699",
+      "source_location": "L3703",
       "target": "server_terminal_session_composerfocuswitnessed",
       "weight": 1.0
     },
@@ -108938,7 +108938,7 @@
       "relation": "indirect_call",
       "source": "server_terminal_session_terminalformshowsfields",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4147",
+      "source_location": "L4151",
       "target": "server_terminal_session_cleandialogline",
       "weight": 1.0
     },
@@ -108950,7 +108950,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalformshowsfields",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4147",
+      "source_location": "L4151",
       "target": "server_terminal_session_terminalboxwrap",
       "weight": 1.0
     },
@@ -108962,7 +108962,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalformshowsfields",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4145",
+      "source_location": "L4149",
       "target": "server_terminal_session_terminalcontrollines",
       "weight": 1.0
     },
@@ -108974,7 +108974,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalformshowsfields",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4146",
+      "source_location": "L4150",
       "target": "server_terminal_session_terminalformtabsindex",
       "weight": 1.0
     },
@@ -108986,7 +108986,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalformtabsindex",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4033",
+      "source_location": "L4037",
       "target": "server_terminal_session_terminalformtabsline",
       "weight": 1.0
     },
@@ -108998,7 +108998,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalformtabsindex",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4037",
+      "source_location": "L4041",
       "target": "server_terminal_session_terminalformtabsmatch",
       "weight": 1.0
     },
@@ -109010,7 +109010,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalformtabsline",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4015",
+      "source_location": "L4019",
       "target": "server_terminal_session_terminalformquestionend",
       "weight": 1.0
     },
@@ -109022,7 +109022,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalformtabsmatch",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4046",
+      "source_location": "L4050",
       "target": "server_terminal_session_tabnames",
       "weight": 1.0
     },
@@ -109034,7 +109034,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3670",
+      "source_location": "L3674",
       "target": "server_terminal_session_hasliveterminalcomposer",
       "weight": 1.0
     },
@@ -109046,7 +109046,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3671",
+      "source_location": "L3675",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -109058,7 +109058,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3674",
+      "source_location": "L3678",
       "target": "server_terminal_session_isterminaldesktopinstallprompt",
       "weight": 1.0
     },
@@ -109070,7 +109070,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3672",
+      "source_location": "L3676",
       "target": "server_terminal_session_isterminaloverlay",
       "weight": 1.0
     },
@@ -109082,7 +109082,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3673",
+      "source_location": "L3677",
       "target": "server_terminal_session_isterminalsessioninuseprompt",
       "weight": 1.0
     },
@@ -109094,7 +109094,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3677",
+      "source_location": "L3681",
       "target": "server_terminal_session_parseterminalformprompt",
       "weight": 1.0
     },
@@ -109106,7 +109106,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3675",
+      "source_location": "L3679",
       "target": "server_terminal_session_parseterminalpermission",
       "weight": 1.0
     },
@@ -109118,7 +109118,7 @@
       "relation": "calls",
       "source": "server_terminal_session_terminalinputready",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3676",
+      "source_location": "L3680",
       "target": "server_terminal_session_parseterminaluserinput",
       "weight": 1.0
     },
@@ -109809,7 +109809,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4865",
+      "source_location": "L4868",
       "target": "server_terminal_session_test_bracketedtabpane",
       "weight": 1.0
     },
@@ -109820,7 +109820,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L2099",
+      "source_location": "L2102",
       "target": "server_terminal_session_test_clearfixture",
       "weight": 1.0
     },
@@ -109908,7 +109908,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4819",
+      "source_location": "L4822",
       "target": "server_terminal_session_test_formpanefirstfield",
       "weight": 1.0
     },
@@ -109919,7 +109919,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4835",
+      "source_location": "L4838",
       "target": "server_terminal_session_test_formpanelastfield",
       "weight": 1.0
     },
@@ -109941,7 +109941,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L2306",
+      "source_location": "L2309",
       "target": "server_terminal_session_test_owner",
       "weight": 1.0
     },
@@ -109985,7 +109985,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4851",
+      "source_location": "L4854",
       "target": "server_terminal_session_test_singlefieldpane",
       "weight": 1.0
     },
@@ -110173,7 +110173,7 @@
       "relation": "calls",
       "source": "server_terminal_session_test_clearfixture",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L2118",
+      "source_location": "L2121",
       "target": "server_terminal_session_test_execfileasync",
       "weight": 1.0
     },
@@ -110185,7 +110185,7 @@
       "relation": "calls",
       "source": "server_terminal_session_test_clearfixture",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L2112",
+      "source_location": "L2115",
       "target": "server_terminal_session_tmuxterminalsessioncontroller",
       "weight": 1.0
     },
@@ -110197,7 +110197,7 @@
       "relation": "calls",
       "source": "server_terminal_session_test_clearfixture",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L2114",
+      "source_location": "L2117",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_create",
       "weight": 1.0
     },
@@ -110209,7 +110209,7 @@
       "relation": "calls",
       "source": "server_terminal_session_test_clearfixture",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L2121",
+      "source_location": "L2124",
       "target": "server_tmux_test_helpers_waitforprocesscommand",
       "weight": 1.0
     },
@@ -110437,7 +110437,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxtargetforpid",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5077",
+      "source_location": "L5081",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -110449,7 +110449,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxtargetforpid",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5103",
+      "source_location": "L5107",
       "target": "server_terminal_session_processancestors",
       "weight": 1.0
     },
@@ -110461,7 +110461,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxtargetforpid",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5107",
+      "source_location": "L5111",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -110473,7 +110473,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxtargetforpid",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5098",
+      "source_location": "L5102",
       "target": "server_tmux_errors_notmuxserver",
       "weight": 1.0
     },
@@ -110485,7 +110485,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxtargetforpid",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5090",
+      "source_location": "L5094",
       "target": "server_tmux_errors_tmuxnotinstalled",
       "weight": 1.0
     },
@@ -110520,7 +110520,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2432",
+      "source_location": "L2436",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_activeprocesses",
       "weight": 1.0
     },
@@ -110542,7 +110542,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2400",
+      "source_location": "L2404",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_boundowner",
       "weight": 1.0
     },
@@ -110553,7 +110553,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2425",
+      "source_location": "L2429",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_boundtarget",
       "weight": 1.0
     },
@@ -110641,7 +110641,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2466",
+      "source_location": "L2470",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_createwindow",
       "weight": 1.0
     },
@@ -110685,7 +110685,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2214",
+      "source_location": "L2218",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_finishsend",
       "weight": 1.0
     },
@@ -110696,7 +110696,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2383",
+      "source_location": "L2387",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_formowner",
       "weight": 1.0
     },
@@ -110751,7 +110751,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2328",
+      "source_location": "L2332",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_nopaneremains",
       "weight": 1.0
     },
@@ -110762,7 +110762,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2362",
+      "source_location": "L2366",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "weight": 1.0
     },
@@ -110773,7 +110773,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2306",
+      "source_location": "L2310",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_ownersettled",
       "weight": 1.0
     },
@@ -110949,7 +110949,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2623",
+      "source_location": "L2627",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_sending",
       "weight": 1.0
     },
@@ -110982,7 +110982,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2627",
+      "source_location": "L2631",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_serialize",
       "weight": 1.0
     },
@@ -111004,7 +111004,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2314",
+      "source_location": "L2318",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_target",
       "weight": 1.0
     },
@@ -111026,7 +111026,7 @@
       "relation": "method",
       "source": "server_terminal_session_tmuxterminalsessioncontroller",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2451",
+      "source_location": "L2455",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_waitfornewowner",
       "weight": 1.0
     },
@@ -111060,7 +111060,7 @@
       "relation": "references",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_activeprocesses",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2432",
+      "source_location": "L2436",
       "target": "server_active_sessions_findactivecopilotprocesses",
       "weight": 1.0
     },
@@ -111108,7 +111108,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_boundowner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2407",
+      "source_location": "L2411",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "weight": 1.0
     },
@@ -111120,7 +111120,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_boundtarget",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2429",
+      "source_location": "L2433",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_boundowner",
       "weight": 1.0
     },
@@ -111600,7 +111600,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_createwindow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2538",
+      "source_location": "L2542",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -111612,7 +111612,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_createwindow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2474",
+      "source_location": "L2478",
       "target": "server_terminal_session_listtmuxsessions",
       "weight": 1.0
     },
@@ -111624,7 +111624,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_createwindow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2486",
+      "source_location": "L2490",
       "target": "server_terminal_session_safewindowname",
       "weight": 1.0
     },
@@ -111636,7 +111636,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_createwindow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2568",
+      "source_location": "L2572",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "weight": 1.0
     },
@@ -111648,7 +111648,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_createwindow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2571",
+      "source_location": "L2575",
       "target": "server_terminal_session_waitforterminalstartup",
       "weight": 1.0
     },
@@ -111660,7 +111660,7 @@
       "relation": "references",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_createwindow",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2466",
+      "source_location": "L2470",
       "target": "shared_contracts_sessionruntimeinfo",
       "weight": 1.0
     },
@@ -111924,7 +111924,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_finishsend",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2287",
+      "source_location": "L2291",
       "target": "server_terminal_session_capturepane",
       "weight": 1.0
     },
@@ -111936,7 +111936,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_finishsend",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2267",
+      "source_location": "L2271",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -111948,7 +111948,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_finishsend",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2288",
+      "source_location": "L2292",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -111960,7 +111960,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_finishsend",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2288",
+      "source_location": "L2292",
       "target": "server_terminal_session_isterminaloverlay",
       "weight": 1.0
     },
@@ -111972,7 +111972,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_finishsend",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2223",
+      "source_location": "L2227",
       "target": "server_terminal_session_waitforcomposerpaste",
       "weight": 1.0
     },
@@ -111984,7 +111984,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_formowner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2387",
+      "source_location": "L2391",
       "target": "server_active_sessions_isdirectcopilotsessionprocess",
       "weight": 1.0
     },
@@ -111996,7 +111996,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_formowner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2390",
+      "source_location": "L2394",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -112008,7 +112008,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_formowner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2395",
+      "source_location": "L2399",
       "target": "server_terminal_session_processancestors",
       "weight": 1.0
     },
@@ -112020,7 +112020,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_formowner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2395",
+      "source_location": "L2399",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_has",
       "weight": 1.0
     },
@@ -112032,7 +112032,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_formowner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2388",
+      "source_location": "L2392",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "weight": 1.0
     },
@@ -112116,7 +112116,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_nopaneremains",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2332",
+      "source_location": "L2336",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -112128,7 +112128,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_nopaneremains",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2341",
+      "source_location": "L2345",
       "target": "server_tmux_errors_notmuxserver",
       "weight": 1.0
     },
@@ -112140,7 +112140,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2371",
+      "source_location": "L2375",
       "target": "server_terminal_session_tmuxtargetforpid",
       "weight": 1.0
     },
@@ -112152,7 +112152,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2367",
+      "source_location": "L2371",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_activeprocesses",
       "weight": 1.0
     },
@@ -112164,7 +112164,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_ownersettled",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2308",
+      "source_location": "L2312",
       "target": "server_active_sessions_processstarttimems",
       "weight": 1.0
     },
@@ -112812,7 +112812,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L1995",
+      "source_location": "L1999",
       "target": "server_terminal_session_composerholdstext",
       "weight": 1.0
     },
@@ -112824,7 +112824,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L1994",
+      "source_location": "L1998",
       "target": "server_terminal_session_composertext",
       "weight": 1.0
     },
@@ -112836,7 +112836,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2120",
+      "source_location": "L2124",
       "target": "server_terminal_session_execfileasync",
       "weight": 1.0
     },
@@ -112848,7 +112848,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2020",
+      "source_location": "L2024",
       "target": "server_terminal_session_isterminalagentworking",
       "weight": 1.0
     },
@@ -112860,7 +112860,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2052",
+      "source_location": "L2056",
       "target": "server_terminal_session_isterminalloading",
       "weight": 1.0
     },
@@ -112932,7 +112932,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L1968",
+      "source_location": "L1972",
       "target": "server_terminal_session_terminaldraftconflicterror",
       "weight": 1.0
     },
@@ -112944,7 +112944,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2018",
+      "source_location": "L2022",
       "target": "server_terminal_session_terminalinputready",
       "weight": 1.0
     },
@@ -112956,7 +112956,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2129",
+      "source_location": "L2133",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_clearcomposerforreplacement",
       "weight": 1.0
     },
@@ -112968,7 +112968,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2176",
+      "source_location": "L2180",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_finishsend",
       "weight": 1.0
     },
@@ -113016,7 +113016,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_sendinternal",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L1928",
+      "source_location": "L1932",
       "target": "server_terminal_session_waitforterminalstartup",
       "weight": 1.0
     },
@@ -113088,7 +113088,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_target",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2318",
+      "source_location": "L2322",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "weight": 1.0
     },
@@ -113136,7 +113136,7 @@
       "relation": "calls",
       "source": "server_terminal_session_tmuxterminalsessioncontroller_waitfornewowner",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2457",
+      "source_location": "L2461",
       "target": "server_terminal_session_tmuxterminalsessioncontroller_owner",
       "weight": 1.0
     },
@@ -113340,7 +113340,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforcomposerpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5052",
+      "source_location": "L5056",
       "target": "server_terminal_session_capturepane",
       "weight": 1.0
     },
@@ -113352,7 +113352,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforcomposerpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5056",
+      "source_location": "L5060",
       "target": "server_terminal_session_composertext",
       "weight": 1.0
     },
@@ -113364,7 +113364,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforcomposerpaste",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5054",
+      "source_location": "L5058",
       "target": "server_terminal_session_composertookpaste",
       "weight": 1.0
     },
@@ -113388,7 +113388,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2895",
+      "source_location": "L2899",
       "target": "server_terminal_session_capturebeforedeadline",
       "weight": 1.0
     },
@@ -113400,7 +113400,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2896",
+      "source_location": "L2900",
       "target": "server_terminal_session_capturepane",
       "weight": 1.0
     },
@@ -113412,7 +113412,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2910",
+      "source_location": "L2914",
       "target": "server_terminal_session_clearautomaticstartupprompts",
       "weight": 1.0
     },
@@ -113424,7 +113424,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2917",
+      "source_location": "L2921",
       "target": "server_terminal_session_hasliveterminalcomposer",
       "weight": 1.0
     },
@@ -113436,7 +113436,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2899",
+      "source_location": "L2903",
       "target": "server_terminal_session_hasterminalcommandpermissionquestion",
       "weight": 1.0
     },
@@ -113448,7 +113448,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2906",
+      "source_location": "L2910",
       "target": "server_terminal_session_isterminaldesktopinstallprompt",
       "weight": 1.0
     },
@@ -113460,7 +113460,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2914",
+      "source_location": "L2918",
       "target": "server_terminal_session_isterminaloverlay",
       "weight": 1.0
     },
@@ -113472,7 +113472,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2902",
+      "source_location": "L2906",
       "target": "server_terminal_session_parseterminalformprompt",
       "weight": 1.0
     },
@@ -113484,7 +113484,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2900",
+      "source_location": "L2904",
       "target": "server_terminal_session_parseterminalpermission",
       "weight": 1.0
     },
@@ -113496,7 +113496,7 @@
       "relation": "calls",
       "source": "server_terminal_session_waitforterminalstartup",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2901",
+      "source_location": "L2905",
       "target": "server_terminal_session_parseterminaluserinput",
       "weight": 1.0
     },
@@ -194311,7 +194311,7 @@
       "label": "activeBottomFrame()",
       "norm_label": "activebottomframe()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2698"
+      "source_location": "L2702"
     },
     {
       "_callable": true,
@@ -194323,7 +194323,7 @@
       "label": "boxedComposerFrame()",
       "norm_label": "boxedcomposerframe()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3460"
+      "source_location": "L3464"
     },
     {
       "_callable": true,
@@ -194335,7 +194335,7 @@
       "label": "captureBeforeDeadline()",
       "norm_label": "capturebeforedeadline()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2803"
+      "source_location": "L2807"
     },
     {
       "_callable": true,
@@ -194347,7 +194347,7 @@
       "label": "capturePane()",
       "norm_label": "capturepane()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4913"
+      "source_location": "L4917"
     },
     {
       "_callable": true,
@@ -194359,7 +194359,7 @@
       "label": "captureTerminal()",
       "norm_label": "captureterminal()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4922"
+      "source_location": "L4926"
     },
     {
       "_callable": true,
@@ -194371,7 +194371,7 @@
       "label": "cleanDialogLine()",
       "norm_label": "cleandialogline()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2936"
+      "source_location": "L2940"
     },
     {
       "_callable": true,
@@ -194383,7 +194383,7 @@
       "label": "clearAutomaticStartupPrompts()",
       "norm_label": "clearautomaticstartupprompts()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2821"
+      "source_location": "L2825"
     },
     {
       "_origin": "ast",
@@ -194394,7 +194394,7 @@
       "label": "COMPOSER_PLACEHOLDERS",
       "norm_label": "composer_placeholders",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4762"
+      "source_location": "L4766"
     },
     {
       "_origin": "ast",
@@ -194405,7 +194405,7 @@
       "label": "composerFocusedPanes",
       "norm_label": "composerfocusedpanes",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3566"
+      "source_location": "L3570"
     },
     {
       "_callable": true,
@@ -194417,7 +194417,7 @@
       "label": "composerFocusWitnessed()",
       "norm_label": "composerfocuswitnessed()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3569"
+      "source_location": "L3573"
     },
     {
       "_callable": true,
@@ -194429,7 +194429,7 @@
       "label": "composerFrameText()",
       "norm_label": "composerframetext()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3419"
+      "source_location": "L3423"
     },
     {
       "_callable": true,
@@ -194441,7 +194441,7 @@
       "label": "composerHasFocus()",
       "norm_label": "composerhasfocus()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3625"
+      "source_location": "L3629"
     },
     {
       "_callable": true,
@@ -194453,7 +194453,7 @@
       "label": "composerHoldsOtherText()",
       "norm_label": "composerholdsothertext()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4778"
+      "source_location": "L4782"
     },
     {
       "_callable": true,
@@ -194465,7 +194465,7 @@
       "label": "composerHoldsText()",
       "norm_label": "composerholdstext()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4894"
+      "source_location": "L4898"
     },
     {
       "_callable": true,
@@ -194477,7 +194477,7 @@
       "label": "composerRowText()",
       "norm_label": "composerrowtext()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3410"
+      "source_location": "L3414"
     },
     {
       "_callable": true,
@@ -194489,7 +194489,7 @@
       "label": "composerText()",
       "norm_label": "composertext()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4882"
+      "source_location": "L4886"
     },
     {
       "_callable": true,
@@ -194501,7 +194501,7 @@
       "label": "composerTookPaste()",
       "norm_label": "composertookpaste()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4959"
+      "source_location": "L4963"
     },
     {
       "_callable": true,
@@ -194513,7 +194513,7 @@
       "label": "containsCopiedInteractiveFrame()",
       "norm_label": "containscopiedinteractiveframe()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2751"
+      "source_location": "L2755"
     },
     {
       "_callable": true,
@@ -194525,7 +194525,7 @@
       "label": "copilotCommand()",
       "norm_label": "copilotcommand()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4613"
+      "source_location": "L4617"
     },
     {
       "_callable": true,
@@ -194537,7 +194537,7 @@
       "label": "cursorComposerFrame()",
       "norm_label": "cursorcomposerframe()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3506"
+      "source_location": "L3510"
     },
     {
       "_callable": true,
@@ -194549,7 +194549,7 @@
       "label": "desktopInstallPromptIdentity()",
       "norm_label": "desktopinstallpromptidentity()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2685"
+      "source_location": "L2689"
     },
     {
       "_origin": "ast",
@@ -194560,7 +194560,7 @@
       "label": "DOWNLOADED_UPDATE_LAYOUTS",
       "norm_label": "downloaded_update_layouts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3210"
+      "source_location": "L3214"
     },
     {
       "_origin": "ast",
@@ -194571,7 +194571,7 @@
       "label": "DOWNLOADED_UPDATE_NOTICE_CELL",
       "norm_label": "downloaded_update_notice_cell",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3194"
+      "source_location": "L3198"
     },
     {
       "_callable": true,
@@ -194584,7 +194584,7 @@
       "label": "DownloadedUpdateCell",
       "norm_label": "downloadedupdatecell",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3181"
+      "source_location": "L3185"
     },
     {
       "_callable": true,
@@ -194596,7 +194596,7 @@
       "label": ".accepts()",
       "norm_label": ".accepts()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3185"
+      "source_location": "L3189"
     },
     {
       "_callable": true,
@@ -194608,7 +194608,7 @@
       "label": ".allows()",
       "norm_label": ".allows()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3184"
+      "source_location": "L3188"
     },
     {
       "_callable": true,
@@ -194620,7 +194620,7 @@
       "label": "downloadedUpdateFooterBlock()",
       "norm_label": "downloadedupdatefooterblock()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3279"
+      "source_location": "L3283"
     },
     {
       "_callable": true,
@@ -194644,7 +194644,7 @@
       "label": "exactCell()",
       "norm_label": "exactcell()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3188"
+      "source_location": "L3192"
     },
     {
       "_origin": "ast",
@@ -194667,7 +194667,7 @@
       "label": "findTerminalWrappedText()",
       "norm_label": "findterminalwrappedtext()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4405"
+      "source_location": "L4409"
     },
     {
       "_callable": true,
@@ -194679,7 +194679,7 @@
       "label": "flatComposerFrame()",
       "norm_label": "flatcomposerframe()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3429"
+      "source_location": "L3433"
     },
     {
       "_origin": "ast",
@@ -194690,7 +194690,7 @@
       "label": "FOOTER_EFFORTS",
       "norm_label": "footer_efforts",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3068"
+      "source_location": "L3072"
     },
     {
       "_origin": "ast",
@@ -194701,7 +194701,7 @@
       "label": "FOOTER_HINT_SLOTS",
       "norm_label": "footer_hint_slots",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3049"
+      "source_location": "L3053"
     },
     {
       "_origin": "ast",
@@ -194712,7 +194712,7 @@
       "label": "FOOTER_HINTS",
       "norm_label": "footer_hints",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3057"
+      "source_location": "L3061"
     },
     {
       "_origin": "ast",
@@ -194723,7 +194723,7 @@
       "label": "FOOTER_MODEL_FAMILIES",
       "norm_label": "footer_model_families",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3067"
+      "source_location": "L3071"
     },
     {
       "_callable": true,
@@ -194798,7 +194798,7 @@
       "label": "hasClippedTerminalFormFooter()",
       "norm_label": "hasclippedterminalformfooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3714"
+      "source_location": "L3718"
     },
     {
       "_callable": true,
@@ -194810,7 +194810,7 @@
       "label": "hasClippedTerminalFormTabs()",
       "norm_label": "hasclippedterminalformtabs()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4068"
+      "source_location": "L4072"
     },
     {
       "_callable": true,
@@ -194822,7 +194822,7 @@
       "label": "hasComposerAfter()",
       "norm_label": "hascomposerafter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2694"
+      "source_location": "L2698"
     },
     {
       "_callable": true,
@@ -194834,7 +194834,7 @@
       "label": "hasLiveTerminalComposer()",
       "norm_label": "hasliveterminalcomposer()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3552"
+      "source_location": "L3556"
     },
     {
       "_callable": true,
@@ -194846,7 +194846,7 @@
       "label": "hasPlainKeyHint()",
       "norm_label": "hasplainkeyhint()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3366"
+      "source_location": "L3370"
     },
     {
       "_callable": true,
@@ -194858,7 +194858,7 @@
       "label": "hasTerminalCommandPermissionQuestion()",
       "norm_label": "hasterminalcommandpermissionquestion()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4366"
+      "source_location": "L4370"
     },
     {
       "_callable": true,
@@ -194870,7 +194870,7 @@
       "label": "hasTerminalFormFooter()",
       "norm_label": "hasterminalformfooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3719"
+      "source_location": "L3723"
     },
     {
       "_callable": true,
@@ -194882,7 +194882,7 @@
       "label": "hasTerminalFormQuestionReflowCandidate()",
       "norm_label": "hasterminalformquestionreflowcandidate()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4049"
+      "source_location": "L4053"
     },
     {
       "_callable": true,
@@ -194894,7 +194894,7 @@
       "label": "isDownloadedUpdateFooterRows()",
       "norm_label": "isdownloadedupdatefooterrows()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3233"
+      "source_location": "L3237"
     },
     {
       "_callable": true,
@@ -194906,7 +194906,7 @@
       "label": "isFooterHintSequence()",
       "norm_label": "isfooterhintsequence()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3147"
+      "source_location": "L3151"
     },
     {
       "_callable": true,
@@ -194918,7 +194918,7 @@
       "label": "isFooterModelCell()",
       "norm_label": "isfootermodelcell()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3099"
+      "source_location": "L3103"
     },
     {
       "_callable": true,
@@ -194930,7 +194930,7 @@
       "label": "isFooterModelHint()",
       "norm_label": "isfootermodelhint()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3079"
+      "source_location": "L3083"
     },
     {
       "_callable": true,
@@ -194942,7 +194942,7 @@
       "label": "isFooterReasoningModel()",
       "norm_label": "isfooterreasoningmodel()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3109"
+      "source_location": "L3113"
     },
     {
       "_callable": true,
@@ -194954,7 +194954,7 @@
       "label": "isKnownTerminalFooterRow()",
       "norm_label": "isknownterminalfooterrow()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3308"
+      "source_location": "L3312"
     },
     {
       "_callable": true,
@@ -194966,7 +194966,7 @@
       "label": "isTerminalAgentWorking()",
       "norm_label": "isterminalagentworking()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3765"
+      "source_location": "L3769"
     },
     {
       "_callable": true,
@@ -194978,7 +194978,7 @@
       "label": "isTerminalChrome()",
       "norm_label": "isterminalchrome()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2990"
+      "source_location": "L2994"
     },
     {
       "_callable": true,
@@ -194990,7 +194990,7 @@
       "label": "isTerminalCompactHintFooter()",
       "norm_label": "isterminalcompacthintfooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3129"
+      "source_location": "L3133"
     },
     {
       "_callable": true,
@@ -195002,7 +195002,7 @@
       "label": "isTerminalComposerFooter()",
       "norm_label": "isterminalcomposerfooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3296"
+      "source_location": "L3300"
     },
     {
       "_callable": true,
@@ -195014,7 +195014,7 @@
       "label": "isTerminalContextFooter()",
       "norm_label": "isterminalcontextfooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3025"
+      "source_location": "L3029"
     },
     {
       "_callable": true,
@@ -195026,7 +195026,7 @@
       "label": "isTerminalDesktopInstallPrompt()",
       "norm_label": "isterminaldesktopinstallprompt()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2654"
+      "source_location": "L2658"
     },
     {
       "_callable": true,
@@ -195038,7 +195038,7 @@
       "label": "isTerminalHintRow()",
       "norm_label": "isterminalhintrow()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3062"
+      "source_location": "L3066"
     },
     {
       "_callable": true,
@@ -195050,7 +195050,7 @@
       "label": "isTerminalLoading()",
       "norm_label": "isterminalloading()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3779"
+      "source_location": "L3783"
     },
     {
       "_callable": true,
@@ -195062,7 +195062,7 @@
       "label": "isTerminalModelFooter()",
       "norm_label": "isterminalmodelfooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3035"
+      "source_location": "L3039"
     },
     {
       "_callable": true,
@@ -195074,7 +195074,7 @@
       "label": "isTerminalOverlay()",
       "norm_label": "isterminaloverlay()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3744"
+      "source_location": "L3748"
     },
     {
       "_callable": true,
@@ -195086,7 +195086,7 @@
       "label": "isTerminalSessionInUsePrompt()",
       "norm_label": "isterminalsessioninuseprompt()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2650"
+      "source_location": "L2654"
     },
     {
       "_callable": true,
@@ -195098,7 +195098,7 @@
       "label": "isTerminalVisiblyIdle()",
       "norm_label": "isterminalvisiblyidle()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3774"
+      "source_location": "L3778"
     },
     {
       "_callable": true,
@@ -195110,7 +195110,7 @@
       "label": "isTerminalWorkspaceFooter()",
       "norm_label": "isterminalworkspacefooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3164"
+      "source_location": "L3168"
     },
     {
       "_callable": true,
@@ -195122,7 +195122,7 @@
       "label": "isUnrecognizedFooterRow()",
       "norm_label": "isunrecognizedfooterrow()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3386"
+      "source_location": "L3390"
     },
     {
       "_callable": true,
@@ -195134,7 +195134,7 @@
       "label": "listTmuxSessions()",
       "norm_label": "listtmuxsessions()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4560"
+      "source_location": "L4564"
     },
     {
       "_callable": true,
@@ -195146,7 +195146,7 @@
       "label": "normaliseOutputLine()",
       "norm_label": "normaliseoutputline()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3792"
+      "source_location": "L3796"
     },
     {
       "_callable": true,
@@ -195158,7 +195158,7 @@
       "label": "occurrences()",
       "norm_label": "occurrences()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4870"
+      "source_location": "L4874"
     },
     {
       "_callable": true,
@@ -195170,7 +195170,7 @@
       "label": "paneEvidenceCount()",
       "norm_label": "paneevidencecount()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4686"
+      "source_location": "L4690"
     },
     {
       "_callable": true,
@@ -195182,7 +195182,7 @@
       "label": "paneShowsText()",
       "norm_label": "paneshowstext()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4730"
+      "source_location": "L4734"
     },
     {
       "_callable": true,
@@ -195194,7 +195194,7 @@
       "label": "parseTerminalFolderTrust()",
       "norm_label": "parseterminalfoldertrust()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4490"
+      "source_location": "L4494"
     },
     {
       "_callable": true,
@@ -195206,7 +195206,7 @@
       "label": "parseTerminalFormActiveField()",
       "norm_label": "parseterminalformactivefield()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4157"
+      "source_location": "L4161"
     },
     {
       "_callable": true,
@@ -195218,7 +195218,7 @@
       "label": "parseTerminalFormPrompt()",
       "norm_label": "parseterminalformprompt()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3887"
+      "source_location": "L3891"
     },
     {
       "_callable": true,
@@ -195230,7 +195230,7 @@
       "label": "parseTerminalPermission()",
       "norm_label": "parseterminalpermission()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4257"
+      "source_location": "L4261"
     },
     {
       "_callable": true,
@@ -195242,7 +195242,7 @@
       "label": "parseTerminalSessionInUse()",
       "norm_label": "parseterminalsessioninuse()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4436"
+      "source_location": "L4440"
     },
     {
       "_callable": true,
@@ -195254,7 +195254,7 @@
       "label": "parseTerminalUpdateNotice()",
       "norm_label": "parseterminalupdatenotice()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2951"
+      "source_location": "L2955"
     },
     {
       "_callable": true,
@@ -195266,7 +195266,7 @@
       "label": "parseTerminalUserInput()",
       "norm_label": "parseterminaluserinput()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4184"
+      "source_location": "L4188"
     },
     {
       "_callable": true,
@@ -195278,7 +195278,7 @@
       "label": "pasteCouldCollapse()",
       "norm_label": "pastecouldcollapse()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4849"
+      "source_location": "L4853"
     },
     {
       "_origin": "ast",
@@ -195289,7 +195289,7 @@
       "label": "PASTED_PLACEHOLDERS",
       "norm_label": "pasted_placeholders",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4847"
+      "source_location": "L4851"
     },
     {
       "_callable": true,
@@ -195301,7 +195301,7 @@
       "label": "pastedPlaceholderCount()",
       "norm_label": "pastedplaceholdercount()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4877"
+      "source_location": "L4881"
     },
     {
       "_callable": true,
@@ -195325,7 +195325,7 @@
       "label": "processAncestors()",
       "norm_label": "processancestors()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5136"
+      "source_location": "L5140"
     },
     {
       "_callable": true,
@@ -195337,7 +195337,7 @@
       "label": "processCommand()",
       "norm_label": "processcommand()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4603"
+      "source_location": "L4607"
     },
     {
       "_callable": true,
@@ -195349,7 +195349,7 @@
       "label": "processIsAlive()",
       "norm_label": "processisalive()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5126"
+      "source_location": "L5130"
     },
     {
       "_callable": true,
@@ -195361,7 +195361,7 @@
       "label": "qualifyingPasteCount()",
       "norm_label": "qualifyingpastecount()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4854"
+      "source_location": "L4858"
     },
     {
       "_callable": true,
@@ -195373,7 +195373,7 @@
       "label": "rememberComposerFocus()",
       "norm_label": "remembercomposerfocus()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3573"
+      "source_location": "L3577"
     },
     {
       "_origin": "ast",
@@ -195384,7 +195384,7 @@
       "label": "reportedUnknownShapes",
       "norm_label": "reportedunknownshapes",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3581"
+      "source_location": "L3585"
     },
     {
       "_callable": true,
@@ -195396,7 +195396,7 @@
       "label": "reportOnce()",
       "norm_label": "reportonce()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3586"
+      "source_location": "L3590"
     },
     {
       "_callable": true,
@@ -195408,7 +195408,7 @@
       "label": "reportUnrecognisedComposer()",
       "norm_label": "reportunrecognisedcomposer()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3611"
+      "source_location": "L3615"
     },
     {
       "_callable": true,
@@ -195420,7 +195420,7 @@
       "label": "reportUnrecognisedComposerParts()",
       "norm_label": "reportunrecognisedcomposerparts()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3647"
+      "source_location": "L3651"
     },
     {
       "_callable": true,
@@ -195432,7 +195432,7 @@
       "label": "reportUnrecognisedFooter()",
       "norm_label": "reportunrecognisedfooter()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3602"
+      "source_location": "L3606"
     },
     {
       "_callable": true,
@@ -195444,7 +195444,7 @@
       "label": "safeWindowName()",
       "norm_label": "safewindowname()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4592"
+      "source_location": "L4596"
     },
     {
       "_callable": true,
@@ -195456,7 +195456,7 @@
       "label": "stripOuterFrameEdge()",
       "norm_label": "stripouterframeedge()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2743"
+      "source_location": "L2747"
     },
     {
       "_callable": true,
@@ -195468,7 +195468,7 @@
       "label": "stripTerminalStatus()",
       "norm_label": "stripterminalstatus()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3681"
+      "source_location": "L3685"
     },
     {
       "_callable": true,
@@ -195480,7 +195480,7 @@
       "label": "submitTerminalForm()",
       "norm_label": "submitterminalform()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3873"
+      "source_location": "L3877"
     },
     {
       "_callable": true,
@@ -195492,7 +195492,7 @@
       "label": "tabNames()",
       "norm_label": "tabnames()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3995"
+      "source_location": "L3999"
     },
     {
       "_origin": "ast",
@@ -195503,7 +195503,7 @@
       "label": "TERMINAL_CHROME",
       "norm_label": "terminal_chrome",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2978"
+      "source_location": "L2982"
     },
     {
       "_callable": true,
@@ -195515,7 +195515,7 @@
       "label": "terminalBoxWrap()",
       "norm_label": "terminalboxwrap()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3918"
+      "source_location": "L3922"
     },
     {
       "_callable": true,
@@ -195540,7 +195540,7 @@
       "label": "terminalChecklistState()",
       "norm_label": "terminalcheckliststate()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4121"
+      "source_location": "L4125"
     },
     {
       "_callable": true,
@@ -195552,7 +195552,7 @@
       "label": "terminalCommandOutput()",
       "norm_label": "terminalcommandoutput()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3796"
+      "source_location": "L3800"
     },
     {
       "_callable": true,
@@ -195565,7 +195565,7 @@
       "label": "TerminalComposerFrame",
       "norm_label": "terminalcomposerframe",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3008"
+      "source_location": "L3012"
     },
     {
       "_callable": true,
@@ -195577,7 +195577,7 @@
       "label": "terminalControlLines()",
       "norm_label": "terminalcontrollines()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3694"
+      "source_location": "L3698"
     },
     {
       "_callable": true,
@@ -195589,7 +195589,7 @@
       "label": "terminalDialogChoices()",
       "norm_label": "terminaldialogchoices()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4376"
+      "source_location": "L4380"
     },
     {
       "_callable": true,
@@ -195650,7 +195650,7 @@
       "label": "terminalFormCommitKeys()",
       "norm_label": "terminalformcommitkeys()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3863"
+      "source_location": "L3867"
     },
     {
       "_callable": true,
@@ -195675,7 +195675,7 @@
       "label": "terminalFormQuestionEnd()",
       "norm_label": "terminalformquestionend()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3932"
+      "source_location": "L3936"
     },
     {
       "_callable": true,
@@ -195737,7 +195737,7 @@
       "label": "terminalFormShowsFields()",
       "norm_label": "terminalformshowsfields()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4141"
+      "source_location": "L4145"
     },
     {
       "_callable": true,
@@ -195762,7 +195762,7 @@
       "label": "terminalFormTabsIndex()",
       "norm_label": "terminalformtabsindex()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4028"
+      "source_location": "L4032"
     },
     {
       "_callable": true,
@@ -195774,7 +195774,7 @@
       "label": "terminalFormTabsLine()",
       "norm_label": "terminalformtabsline()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3999"
+      "source_location": "L4003"
     },
     {
       "_callable": true,
@@ -195786,7 +195786,7 @@
       "label": "terminalFormTabsMatch()",
       "norm_label": "terminalformtabsmatch()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L4040"
+      "source_location": "L4044"
     },
     {
       "_callable": true,
@@ -195798,7 +195798,7 @@
       "label": "terminalInputReady()",
       "norm_label": "terminalinputready()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L3668"
+      "source_location": "L3672"
     },
     {
       "_callable": true,
@@ -196195,7 +196195,7 @@
       "label": "bracketedTabPane",
       "norm_label": "bracketedtabpane",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4865"
+      "source_location": "L4868"
     },
     {
       "_callable": true,
@@ -196207,7 +196207,7 @@
       "label": "clearFixture()",
       "norm_label": "clearfixture()",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L2099"
+      "source_location": "L2102"
     },
     {
       "_callable": true,
@@ -196297,7 +196297,7 @@
       "label": "formPaneFirstField",
       "norm_label": "formpanefirstfield",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4819"
+      "source_location": "L4822"
     },
     {
       "_origin": "ast",
@@ -196308,7 +196308,7 @@
       "label": "formPaneLastField",
       "norm_label": "formpanelastfield",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4835"
+      "source_location": "L4838"
     },
     {
       "_callable": true,
@@ -196378,7 +196378,7 @@
       "label": "singleFieldPane",
       "norm_label": "singlefieldpane",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L4851"
+      "source_location": "L4854"
     },
     {
       "_origin": "ast",
@@ -196449,7 +196449,7 @@
       "label": "TmuxSessionInfo",
       "norm_label": "tmuxsessioninfo",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2644"
+      "source_location": "L2648"
     },
     {
       "_callable": true,
@@ -196461,7 +196461,7 @@
       "label": "tmuxTargetForPid()",
       "norm_label": "tmuxtargetforpid()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5071"
+      "source_location": "L5075"
     },
     {
       "_callable": true,
@@ -196486,7 +196486,7 @@
       "label": ".activeProcesses()",
       "norm_label": ".activeprocesses()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2432"
+      "source_location": "L2436"
     },
     {
       "_callable": true,
@@ -196510,7 +196510,7 @@
       "label": ".boundOwner()",
       "norm_label": ".boundowner()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2400"
+      "source_location": "L2404"
     },
     {
       "_callable": true,
@@ -196522,7 +196522,7 @@
       "label": ".boundTarget()",
       "norm_label": ".boundtarget()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2425"
+      "source_location": "L2429"
     },
     {
       "_callable": true,
@@ -196618,7 +196618,7 @@
       "label": ".createWindow()",
       "norm_label": ".createwindow()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2466"
+      "source_location": "L2470"
     },
     {
       "_callable": true,
@@ -196666,7 +196666,7 @@
       "label": ".finishSend()",
       "norm_label": ".finishsend()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2214"
+      "source_location": "L2218"
     },
     {
       "_callable": true,
@@ -196678,7 +196678,7 @@
       "label": ".formOwner()",
       "norm_label": ".formowner()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2383"
+      "source_location": "L2387"
     },
     {
       "_callable": true,
@@ -196738,7 +196738,7 @@
       "label": ".noPaneRemains()",
       "norm_label": ".nopaneremains()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2328"
+      "source_location": "L2332"
     },
     {
       "_callable": true,
@@ -196750,7 +196750,7 @@
       "label": ".owner()",
       "norm_label": ".owner()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2362"
+      "source_location": "L2366"
     },
     {
       "_callable": true,
@@ -196762,7 +196762,7 @@
       "label": ".ownerSettled()",
       "norm_label": ".ownersettled()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2306"
+      "source_location": "L2310"
     },
     {
       "_callable": true,
@@ -196954,7 +196954,7 @@
       "label": ".sending()",
       "norm_label": ".sending()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2623"
+      "source_location": "L2627"
     },
     {
       "_callable": true,
@@ -196990,7 +196990,7 @@
       "label": ".serialize()",
       "norm_label": ".serialize()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2627"
+      "source_location": "L2631"
     },
     {
       "_callable": true,
@@ -197014,7 +197014,7 @@
       "label": ".target()",
       "norm_label": ".target()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2314"
+      "source_location": "L2318"
     },
     {
       "_callable": true,
@@ -197038,7 +197038,7 @@
       "label": ".waitForNewOwner()",
       "norm_label": ".waitfornewowner()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2451"
+      "source_location": "L2455"
     },
     {
       "_callable": true,
@@ -197074,7 +197074,7 @@
       "label": "waitForComposerPaste()",
       "norm_label": "waitforcomposerpaste()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L5043"
+      "source_location": "L5047"
     },
     {
       "_callable": true,
@@ -197098,7 +197098,7 @@
       "label": "waitForTerminalStartup()",
       "norm_label": "waitforterminalstartup()",
       "source_file": "server/terminal-session.ts",
-      "source_location": "L2885"
+      "source_location": "L2889"
     },
     {
       "_origin": "ast",

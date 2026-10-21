@@ -551,8 +551,8 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "227c120ed82ea2aabb3698a7ad705af6c270393ef38985aa141eea5ada8e31c6",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "fe41591ef45c8e43572ba71840df7260994de5c393425b99e32ffe6c33205578",
-    "server/terminal-session.ts": "f5111b9af47b01358c581bdec41e6623370f7c7b916f96bdfc67ebda6012df8d",
+    "server/terminal-session.test.ts": "7f54b4dc3c61142c2a4a7a2574a31f1b80e9252e70e0a0b96b5d7f5a0288dba1",
+    "server/terminal-session.ts": "e62894c32fb675c832c0cfcbb893eeb7180f6651169ece66ed87583e5e12997b",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "60add8288bf056ae9e9669e9dc34eb26131c2ad0883f1287065bd41bbcaeed1d",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -761,19 +761,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "83015f9c249c8d8a6e5ac4cb60b00aeba1620669110a695d397e7ff716402055",
+    "GRAPH_REPORT.md": "e53a18c28176fbc7e689bc22cadcb29a8aa69186900f38a7301c9eca5d2aa0c5",
     "communities.json": "515c2f6f92c345ba0a6901503e0c8ffc217f2e730cbc57c16bc889155b9c36ee",
-    "graph.html": "5d9bcb784aecf1d3301f9a2910e0b128bee28307205d0eab50cf28514852510b",
-    "graph.json": "16d63158494b78f250606a38ddf7c60f9bc524620c453807d900b062e30111f4"
+    "graph.html": "7e91dcfc36458fd22deb7b199d15e5eeb1fec7f0cd7ae157a3903b9d53a62c5c",
+    "graph.json": "6c290b510f45893dd266014fad2a405fc5c9b8d1725836f0964be7c4aac015ef"
   },
   "schema_version": 1,
-  "source_commit": "e1576a9e9ffdc6fae52ad08471fd4e7397ef111f",
-  "source_fingerprint": "96f77c08250756d22609168161026aa6b85ab18a0b419d1f48b99e35ef531825",
+  "source_commit": "dca9e8d4f41410dd946b737500ea0defe3a791f7",
+  "source_fingerprint": "e6c7258e06b655212f03f859c1a7c08d2630a8f9bd23cf49ddb1254650c3cb25",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/send-matrix.integration.test.ts",
+    "server/terminal-session.test.ts",
     "server/terminal-session.ts"
   ]
 }

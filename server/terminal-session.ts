@@ -1921,8 +1921,12 @@ export class TmuxTerminalSessionController
         // that has been running a while has nothing left to open over its
         // prompt, so it is not held to the settling a fresh one needs.
         const settled = await this.ownerSettled(owner.pid)
+        // Native-queued commands keep the full wait: Copilot queues them itself.
         const boundedSteer =
-          settled && !idleOnly && options.allowDuringAgentExecution === true
+          settled &&
+          !idleOnly &&
+          !enqueue &&
+          options.allowDuringAgentExecution === true
         let startup: Awaited<ReturnType<typeof waitForTerminalStartup>>
         try {
           startup = await waitForTerminalStartup(

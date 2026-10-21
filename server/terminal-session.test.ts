@@ -869,7 +869,10 @@ process.stdin.on('data', () => undefined)
     expect(await readFile(output, 'utf8')).toBe('')
   }, 30_000)
 
-  it('still waits for a late composer when the send is not a steer', async () => {
+  it.each([
+    ['a plain send', 'Sent once the prompt is back', false, undefined, 'enter'],
+    ['a natively queued command', '/compact', true, { allowDuringAgentExecution: true }, 'queue'],
+  ] as const)('still waits for a late composer for %s', async (_case, text, enqueue, options, submit) => {
     const { controller, sessionId, output, panePid } = await deliveryFixture(
       false, undefined, undefined, '', '', 'boxed',
       '', 7_000,
@@ -878,11 +881,11 @@ process.stdin.on('data', () => undefined)
     process.kill(Number(panePid), 'SIGUSR2')
     await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('Loading terminal frame')))
     const started = performance.now()
-    expect(await controller.send(sessionId, 'Sent once the prompt is back', false)).toBe(true)
+    expect(await controller.send(sessionId, text, enqueue, options)).toBe(true)
     expect(performance.now() - started).toBeGreaterThanOrEqual(5_500)
     const received = await eventually(() => readFile(output, 'utf8'), (value) =>
       Boolean(value && JSON.parse(value).submits.length))
-    expect(JSON.parse(received)).toEqual({ pastes: ['Sent once the prompt is back'], submits: ['enter'] })
+    expect(JSON.parse(received)).toEqual({ pastes: [text], submits: [submit] })
   }, 30_000)
 
   it('still lets a Copilot that just started settle before its first message', async () => {

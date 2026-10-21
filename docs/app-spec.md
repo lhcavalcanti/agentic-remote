@@ -108,6 +108,16 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   name rather than inline beside it.
 - Every open session MUST identify whether it is tmux-backed or SDK-only. The
   UI MUST NOT imply that SDK-only sessions are available through `tmux attach`.
+- Normal Copilot SDK sessions MUST discover the owning computer's existing
+  Copilot CLI configuration, including configured plugins, MCP servers, skills,
+  custom agents, instructions, repository hooks, and host Git operations. They
+  MUST use the same local Copilot home and logged-in account as the CLI.
+- Copilot SDK clients MUST use the SDK-bundled runtime by default.
+  `COPILOT_SDK_BIN` MAY select an explicitly qualified SDK runtime;
+  `COPILOT_BIN` MUST remain exclusive to interactive tmux sessions.
+- Oracle MUST retain its isolated, skills-disabled configuration and MUST NOT
+  inherit normal-session discovery merely because it uses the same SDK client
+  factory.
 - An idle Copilot SDK session MAY be moved to tmux while preserving its session
   ID, title, working directory, transcript, queue, and runtime settings.
 - The move-to-tmux action MUST appear only when the owning computer explicitly

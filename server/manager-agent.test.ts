@@ -796,7 +796,7 @@ describe('ManagerAgent', () => {
       .not.toContain('private value')
   })
 
-  it('creates its SDK session with a pre-registered id and only management tools, then reuses it', async () => {
+  it('creates its SDK session with skills disabled and without normal-session configuration discovery', async () => {
     await start()
     await agent!.send('one')
     await settled()
@@ -807,6 +807,8 @@ describe('ManagerAgent', () => {
     expect(client.createSession).toHaveBeenCalledTimes(1)
     const config = client.createSession.mock.calls[0][0]
     expect(config.sessionId).toBe('sdk-1')
+    expect(config.enableSkills).toBe(false)
+    expect(config).not.toMatchObject({ enableConfigDiscovery: true })
     expect(config.availableTools).toContain('create_session')
     expect(config.availableTools).not.toContain('bash')
     expect(config.systemMessage.content).toContain('You are Oracle')

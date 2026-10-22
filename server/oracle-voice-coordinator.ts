@@ -643,13 +643,27 @@ export class OracleVoiceCoordinator {
         await this.consumeManagerMessage(event.message)
         return
       case 'manager.reset':
-        this.activeReplyTo = undefined
-        this.submissions.clear()
-        for (const generation of this.pendingFinalTurns.keys()) {
-          this.clearPendingFinal(generation)
+        {
+          const generation = this.currentGeneration
+          const shouldResetVoice = this.clientStarted && generation !== undefined
+          this.activeReplyTo = undefined
+          this.submissions.clear()
+          for (const pendingGeneration of this.pendingFinalTurns.keys()) {
+            this.clearPendingFinal(pendingGeneration)
+          }
+          this.speechSuppressedGeneration = undefined
+          this.clearSpeechOutput()
+          if (shouldResetVoice) {
+            await withTimeout(
+              this.requireConnection().control(
+                this.clientControl('cancel', generation, {}),
+              ),
+              this.cancelTimeoutMs,
+              'Voice reset cancellation timed out',
+            )
+            await this.sendState('listening', generation)
+          }
         }
-        this.speechSuppressedGeneration = undefined
-        this.clearSpeechOutput()
         return
       case 'manager.sessions':
       case 'manager.settings':

@@ -473,6 +473,23 @@ describe('OracleVoiceClient', () => {
     expect(client.instance.currentState).toBe('listening')
   })
 
+  it('cancels scheduled playback when the server returns to listening', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'speaking',
+    }))
+    client.sockets[0].message(encodeVoiceAudioFrame(playback(0, 0, 'segment-a')))
+
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'listening',
+    }))
+
+    await vi.waitFor(() => expect(client.playbacks[0].cancelCurrent)
+      .toHaveBeenCalledOnce())
+    expect(client.instance.currentState).toBe('listening')
+  })
+
   it('restores listening when playback drains during tentative speech', async () => {
     const client = harness()
     await client.connect('stream-1')
@@ -931,6 +948,7 @@ class FakePlayback {
   readonly enqueue = vi.fn().mockReturnValue(true)
   readonly tentativeSpeech = vi.fn()
   readonly restoreAfterMisfire = vi.fn()
+  readonly cancelCurrent = vi.fn()
   readonly confirmSpeech = vi.fn().mockReturnValue(true)
   readonly endSegment = vi.fn((generation: number, segmentId: string) => {
     if (generation !== this.options.initialGeneration) return Promise.resolve(false)

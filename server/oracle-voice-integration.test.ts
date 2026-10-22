@@ -448,6 +448,7 @@ class BrowserPlayback {
   readonly enqueue = vi.fn(() => true)
   readonly tentativeSpeech = vi.fn()
   readonly restoreAfterMisfire = vi.fn()
+  readonly cancelCurrent = vi.fn()
   readonly confirmSpeech = vi.fn(() => true)
   readonly endSegment = vi.fn()
   readonly close = vi.fn(async () => undefined)

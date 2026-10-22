@@ -167,14 +167,19 @@ export class VoicePlayback {
     this.requireOpen()
     validateGeneration(generation)
     if (generation <= this.generation) return false
+    this.cancelCurrent()
+    this.generation = generation
+    return true
+  }
+
+  cancelCurrent(): void {
+    this.requireOpen()
     this.settleSegmentDrains(false)
     this.stopAllSources()
-    this.generation = generation
     this.nextSequenceBySegment.clear()
     this.endedSegments.clear()
     this.nextStartTime = this.context.currentTime
     this.setGainImmediately(1)
-    return true
   }
 
   endSegment(generation: number, segmentId: string): Promise<boolean> {

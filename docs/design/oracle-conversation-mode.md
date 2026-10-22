@@ -309,6 +309,9 @@ models.
    advertised input backlog plus the cancellation margin reports and discards a
    missing final.
 
+Starting over in Oracle cancels the active voice generation, clears scheduled
+browser playback, and returns Conversation mode to Listening.
+
 If tentative speech is a VAD misfire, playback gain is restored without
 cancelling Oracle or losing queued audio.
 

@@ -103,6 +103,7 @@ interface OracleVoicePlayback {
   enqueue(frame: VoiceAudioFrame): boolean
   tentativeSpeech(): void
   restoreAfterMisfire(): void
+  cancelCurrent(): void
   confirmSpeech(generation: number): boolean
   endSegment(generation: number, segmentId: string): Promise<boolean>
   close(): Promise<void>
@@ -672,6 +673,9 @@ export class OracleVoiceClient {
       case 'ready':
       case 'listening':
         if (!this.captureReady) return
+        this.playbackDrainRevision += 1
+        this.currentPlaybackSegmentId = undefined
+        this.playback?.cancelCurrent()
         this.setAuthoritativeState('listening')
         return
       case 'recognizing':

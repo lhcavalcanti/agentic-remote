@@ -25,6 +25,19 @@ describe('VoicePlayback', () => {
     expect(playback.instance.currentGeneration).toBe(3)
   })
 
+  it('cancels current sources without advancing the generation', async () => {
+    const playback = harness()
+    playback.enqueue(audio(2, 'segment-a', 0))
+    const drained = playback.endSegment(2, 'segment-a')
+
+    playback.instance.cancelCurrent()
+
+    expect(playback.stoppedGenerations()).toContain(2)
+    expect(playback.instance.queuedSeconds).toBe(0)
+    expect(playback.instance.currentGeneration).toBe(2)
+    await expect(drained).resolves.toBe(false)
+  })
+
   it('requires monotonic sequence within each playback segment', () => {
     const playback = harness()
 

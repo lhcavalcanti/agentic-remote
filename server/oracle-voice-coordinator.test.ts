@@ -702,6 +702,46 @@ describe('OracleVoiceCoordinator', () => {
     }))
   })
 
+  it.each(['thinking', 'speaking'] as const)(
+    'cancels voice output and returns to listening when Oracle resets while %s',
+    async (phase) => {
+      const test = harness()
+      test.manager.send.mockResolvedValueOnce(managerMessage('voice-user', {
+        content: 'Question',
+        state: 'queued',
+      }))
+      await test.start(0)
+      await test.coordinator.receive(confirm(1, 'u1'))
+      await test.backend.emit(final(1, 'u1', 'Question'))
+      if (phase === 'speaking') {
+        await test.coordinator.managerEvent({
+          type: 'manager.message',
+          message: managerMessage('voice-user', { state: 'running' }),
+        })
+        await test.coordinator.managerEvent({
+          type: 'manager.delta',
+          messageId: 'voice-reply',
+          content: 'This response is speaking.',
+        })
+      }
+
+      await test.coordinator.managerEvent({
+        type: 'manager.reset',
+        snapshot: snapshot(),
+      })
+
+      expect(test.backend.controls).toContainEqual(expect.objectContaining({
+        type: 'cancel',
+        generation: 1,
+      }))
+      expect(test.browser).toContainEqual(expect.objectContaining({
+        type: 'state',
+        generation: 1,
+        state: 'listening',
+      }))
+    },
+  )
+
   it('returns to listening at idle when a successful voice turn has no assistant row', async () => {
     const test = harness()
     test.manager.send.mockResolvedValueOnce(managerMessage('empty-user', {

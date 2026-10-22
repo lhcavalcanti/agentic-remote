@@ -296,7 +296,8 @@ models.
    synthetic endpoint window.
 5. **Final transcript:** the hub records the utterance ID before submitting it
    once to Oracle. A duplicate final is ignored. A failed submission is shown
-   as an error and is not silently retried.
+   as a fatal error and is not restored or silently retried because the hub
+   cannot prove whether Oracle retained an ambiguously failed send.
 6. **Oracle reply:** stable completed sentences from replacement snapshots are
    synthesized. The unfinished suffix remains buffered. Starting a tool call
    confirms terminal punctuation as a stable boundary without flushing an
@@ -380,13 +381,11 @@ No failure is success-shaped:
 - queue overflow identifies a slow producer or consumer and closes the stream;
 - node loss enters Reconnecting, discards the current utterance, and creates a
   fresh generation after recovery;
-- Oracle send failure sends an explicit transcript-restore event, preserving
-  even a superseded final in the composer without changing the newer live turn;
-  restoring that earlier final does not clear a newer utterance's live partial,
-  and its recovery reason remains visible until the next speech activity;
+- Oracle send failure closes Conversation without restoring the transcript,
+  preventing replay when Oracle may have retained the message;
 - TTS failure leaves the text reply usable and stops voice output;
-- cancellation timeout closes the stream rather than submitting over an
-  uncertain prior generation.
+- failed or timed-out cancellation closes the stream rather than accepting a
+  newer final over an uncertain prior generation.
 
 Logs contain stream IDs and counters, never PCM, full transcripts, pairing
 tokens, or model output text.

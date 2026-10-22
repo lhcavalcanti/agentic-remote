@@ -593,9 +593,10 @@ export class OracleVoiceCoordinator {
         { answerOnly: true, source: 'voice' },
       )
     } catch (error) {
-      await this.returnFinalToComposer(
-        { ...output, text: transcript },
+      await this.failAfterBackendOutput(
+        'oracle_send_failed',
         `Could not send to Oracle: ${errorMessage(error, 'request failed')}`,
+        1011,
       )
       return true
     }
@@ -607,10 +608,10 @@ export class OracleVoiceCoordinator {
           'Stale Oracle message cancellation timed out',
         )
       } catch (error) {
-        await this.sendError(
+        await this.failAfterBackendOutput(
           'oracle_cancel_failed',
           errorMessage(error, 'Could not cancel the superseded Oracle response'),
-          false,
+          1011,
         )
       }
       return true
@@ -886,6 +887,18 @@ export class OracleVoiceCoordinator {
       await this.finishClose(message)
     })()
     return this.failurePromise
+  }
+
+  private async failAfterBackendOutput(
+    code: string,
+    message: string,
+    closeCode: number,
+  ): Promise<void> {
+    if (this.closed || this.closing) return
+    this.closing = true
+    await this.sendError(code, message, true).catch(() => undefined)
+    this.terminate(closeCode, message)
+    this.scheduleClose(message)
   }
 
   private async sendState(

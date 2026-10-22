@@ -1290,7 +1290,7 @@ describe('Oracle voice cross-layer integration', () => {
     )).toBe(true)
   })
 
-  it('returns one failed final for composer recovery but never echoes a successful final', async () => {
+  it('fails closed for an uncertain send and never echoes a successful final', async () => {
     const failed = await createLocalHarness()
     failed.manager.failSend = new Error('manager unavailable')
     sendControl(failed.browser, failed.streamId, 'start', 0, {
@@ -1309,6 +1309,7 @@ describe('Oracle voice cross-layer integration', () => {
       utteranceId: 'failed-1',
       text: 'Recover',
     })
+    const failedClose = closeEvent(failed.browser)
     failed.engine.emit({
       type: 'final',
       streamId: failed.streamId,
@@ -1316,20 +1317,17 @@ describe('Oracle voice cross-layer integration', () => {
       utteranceId: 'failed-1',
       text: 'Recover this transcript.',
     })
-    const returned = await failed.browserInbox.waitForControl<VoiceServerControl>(
-      (message) => message.type === 'transcript_restore',
-    )
-    expect(returned).toMatchObject({
-      type: 'transcript_restore',
-      text: 'Recover this transcript.',
-    })
-    await failed.browserInbox.waitForControl<VoiceServerControl>(
+    expect(await failed.browserInbox.waitForControl<VoiceServerControl>(
       (message) => message.type === 'error'
         && message.code === 'oracle_send_failed',
-    )
+    )).toMatchObject({ fatal: true })
+    await expect(failedClose).resolves.toEqual({
+      code: 1011,
+      reason: 'Could not send to Oracle: manager unavailable',
+    })
     expect(failed.browserInbox.controls<VoiceServerControl>(
       (message) => message.type === 'transcript_restore',
-    )).toHaveLength(1)
+    )).toEqual([])
     expect(failed.manager.send).toHaveBeenCalledOnce()
     expect(failed.manager.store.messages()).toEqual([])
 

@@ -120,9 +120,10 @@ Safari/device testing remain open.
 
 Only finalized STT text is submitted to Oracle. Partials are display-only. A
 disconnect discards the current utterance rather than replaying audio. If an
-Oracle submission fails, the finalized text returns to the composer. If TTS
-fails, Oracle's text reply remains usable and remaining queued sentences are
-not spoken. One Conversation stream is supported per hub.
+Oracle submission fails ambiguously, Conversation closes without restoring the
+text because Oracle may already have retained it. If TTS fails, Oracle's text
+reply remains usable and remaining queued sentences are not spoken. One
+Conversation stream is supported per hub.
 
 Conversation voice remains Ask-only. The Ask/Delegate switch continues to show
 and control the mode used by typed messages while Conversation is active.

@@ -1549,9 +1549,19 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.terminated).toHaveLength(1)
   })
 
-  it('returns a failed exact-once final to the composer without retrying it', async () => {
+  it('fails closed without restoring a final Oracle may have retained', async () => {
     const test = harness()
-    test.manager.send.mockRejectedValueOnce(new Error('queue unavailable'))
+    test.manager.send.mockImplementationOnce(async (content) => {
+      test.manager.setSnapshot(snapshot({
+        queued: 1,
+        messages: [managerMessage('retained-voice', {
+          content,
+          source: 'voice',
+          state: 'queued',
+        })],
+      }))
+      throw new Error('queue persistence became uncertain')
+    })
     await test.start(0, false)
     await test.coordinator.receive(confirm(1, 'u1'))
 
@@ -1564,23 +1574,21 @@ describe('OracleVoiceCoordinator', () => {
       defaults,
       { answerOnly: true, source: 'voice' },
     )
-    expect(test.browser).toContainEqual({
-      ...final(1, 'u1', 'Keep this request.'),
+    expect(test.browser).not.toContainEqual(expect.objectContaining({
       type: 'transcript_restore',
-    })
+    }))
     expect(test.browser).toContainEqual(expect.objectContaining({
       type: 'error',
       code: 'oracle_send_failed',
-      fatal: false,
+      fatal: true,
     }))
-    expect(test.browser).toContainEqual(expect.objectContaining({
-      type: 'state',
-      generation: 1,
-      state: 'listening',
-    }))
+    expect(test.terminated).toEqual([{
+      code: 1011,
+      reason: 'Could not send to Oracle: queue persistence became uncertain',
+    }])
   })
 
-  it('returns a failed superseded final without changing the current turn state', async () => {
+  it('fails closed when sending a superseded final is uncertain', async () => {
     const test = harness()
     test.manager.send.mockRejectedValueOnce(new Error('queue unavailable'))
     await test.start(0, false)
@@ -1593,21 +1601,47 @@ describe('OracleVoiceCoordinator', () => {
     await test.backend.emit(final(1, 'u1', 'Restore the earlier request.'))
 
     expect(test.manager.send).toHaveBeenCalledOnce()
-    expect(test.browser).toContainEqual({
-      ...final(1, 'u1', 'Restore the earlier request.'),
+    expect(test.browser).not.toContainEqual(expect.objectContaining({
       type: 'transcript_restore',
-    })
+    }))
     expect(test.browser).toContainEqual(expect.objectContaining({
       type: 'error',
-      generation: 2,
       code: 'oracle_send_failed',
-      fatal: false,
+      fatal: true,
     }))
-    expect(test.browser).not.toContainEqual(expect.objectContaining({
-      type: 'state',
-      generation: 2,
-      state: 'listening',
+    expect(test.terminated).toHaveLength(1)
+  })
+
+  it('fails closed when a superseded submitted final cannot be cancelled', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('superseded-voice', {
+      content: 'Superseded request.',
+      source: 'voice',
+      state: 'queued',
     }))
+    test.manager.cancelMessage.mockRejectedValueOnce(
+      new Error('Oracle cancellation unavailable'),
+    )
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+    await test.coordinator.receive(confirm(2, 'u2'))
+
+    await test.backend.emit(final(1, 'u1', 'Superseded request.'))
+    await test.backend.emit(final(2, 'u2', 'Must not be submitted.'))
+
+    expect(test.manager.send).toHaveBeenCalledOnce()
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'error',
+      code: 'oracle_cancel_failed',
+      fatal: true,
+    }))
+    expect(test.terminated).toEqual([{
+      code: 1011,
+      reason: 'Oracle cancellation unavailable',
+    }])
   })
 
   it('does not call a delivered Oracle message failed when browser state delivery fails', async () => {

@@ -125,6 +125,7 @@ export class OracleVoiceCoordinator {
   private segmenterMessageId: string | undefined
   private activeSpeech: QueuedSpeech | undefined
   private activeSpeechPlaybackThrough: number | undefined
+  private speechSuppressedGeneration: number | undefined
   private speechPumpTimer: ReturnType<typeof setTimeout> | undefined
   private readonly audioQueue: QueuedAudio[] = []
   private readonly pendingAudio = new Set<QueuedAudio>()
@@ -397,6 +398,7 @@ export class OracleVoiceCoordinator {
     nextTurn.advanceGeneration(message.generation)
     this.turn = nextTurn
     this.currentGeneration = message.generation
+    this.speechSuppressedGeneration = undefined
     const snapshot = this.manager.snapshot()
     const voiceMessageIds: string[] = []
     let capturedRunningVoice = false
@@ -501,6 +503,7 @@ export class OracleVoiceCoordinator {
         && output.generation === this.currentGeneration
         && this.activeSpeech
       ) {
+        this.speechSuppressedGeneration = output.generation
         this.clearSpeechOutput()
       }
       if (output.generation === this.currentGeneration || output.fatal) {
@@ -645,6 +648,7 @@ export class OracleVoiceCoordinator {
         for (const generation of this.pendingFinalTurns.keys()) {
           this.clearPendingFinal(generation)
         }
+        this.speechSuppressedGeneration = undefined
         this.clearSpeechOutput()
         return
       case 'manager.sessions':
@@ -660,6 +664,7 @@ export class OracleVoiceCoordinator {
     if (!replyTo) return
     const submission = this.submissions.get(replyTo)
     if (!submission || submission.generation !== this.currentGeneration) return
+    if (this.speechSuppressedGeneration === submission.generation) return
     if (this.segmenterMessageId && this.segmenterMessageId !== event.messageId) {
       return
     }
@@ -746,6 +751,12 @@ export class OracleVoiceCoordinator {
     if (!submission) return
     if (submission.generation !== this.currentGeneration) {
       this.submissions.delete(message.replyTo)
+      return
+    }
+    if (this.speechSuppressedGeneration === submission.generation) {
+      this.submissions.delete(message.replyTo)
+      if (this.activeReplyTo === message.replyTo) this.activeReplyTo = undefined
+      this.speechSuppressedGeneration = undefined
       return
     }
     if (this.segmenterMessageId && this.segmenterMessageId !== message.id) return

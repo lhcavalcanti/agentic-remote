@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "0c8ce57a7ba0ddfcad4e91957f15e34520340f9f",
+  "built_at_commit": "142d85ab25d83d59147f8d0c6e8f7df4ea8eedf0",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -87693,7 +87693,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1243",
+      "source_location": "L1254",
       "target": "server_oracle_voice_coordinator_audiocompletion",
       "weight": 1.0
     },
@@ -87715,7 +87715,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1157",
+      "source_location": "L1168",
       "target": "server_oracle_voice_coordinator_backenddisconnectfromerror",
       "weight": 1.0
     },
@@ -87726,7 +87726,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1209",
+      "source_location": "L1220",
       "target": "server_oracle_voice_coordinator_disconnectcause",
       "weight": 1.0
     },
@@ -87737,7 +87737,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1153",
+      "source_location": "L1164",
       "target": "server_oracle_voice_coordinator_errormessage",
       "weight": 1.0
     },
@@ -87748,7 +87748,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1201",
+      "source_location": "L1212",
       "target": "server_oracle_voice_coordinator_isbackenddisconnect",
       "weight": 1.0
     },
@@ -87759,7 +87759,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1125",
+      "source_location": "L1136",
       "target": "server_oracle_voice_coordinator_operationtimeouterror",
       "weight": 1.0
     },
@@ -87880,7 +87880,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1236",
+      "source_location": "L1247",
       "target": "server_oracle_voice_coordinator_resolvedaudiogate",
       "weight": 1.0
     },
@@ -87891,7 +87891,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1224",
+      "source_location": "L1235",
       "target": "server_oracle_voice_coordinator_terminalstartupclosecode",
       "weight": 1.0
     },
@@ -87924,7 +87924,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_coordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1132",
+      "source_location": "L1143",
       "target": "server_oracle_voice_coordinator_withtimeout",
       "weight": 1.0
     },
@@ -88200,7 +88200,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_backenddisconnectfromerror",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1171",
+      "source_location": "L1182",
       "target": "server_oracle_voice_coordinator_disconnectcause",
       "weight": 1.0
     },
@@ -88212,7 +88212,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_backenddisconnectfromerror",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1161",
+      "source_location": "L1172",
       "target": "server_oracle_voice_coordinator_errormessage",
       "weight": 1.0
     },
@@ -88224,7 +88224,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_backenddisconnectfromerror",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1158",
+      "source_location": "L1169",
       "target": "server_oracle_voice_coordinator_isbackenddisconnect",
       "weight": 1.0
     },
@@ -88235,7 +88235,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_operationtimeouterror",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1126",
+      "source_location": "L1137",
       "target": "server_oracle_voice_coordinator_operationtimeouterror_constructor",
       "weight": 1.0
     },
@@ -88350,7 +88350,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1054",
+      "source_location": "L1065",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_captureaudiobarrier",
       "weight": 1.0
     },
@@ -88361,7 +88361,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1044",
+      "source_location": "L1055",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearaudioinput",
       "weight": 1.0
     },
@@ -88372,7 +88372,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L229",
+      "source_location": "L230",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearpendingfinal",
       "weight": 1.0
     },
@@ -88383,7 +88383,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L933",
+      "source_location": "L944",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearspeechoutput",
       "weight": 1.0
     },
@@ -88394,7 +88394,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L893",
+      "source_location": "L904",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clientcontrol",
       "weight": 1.0
     },
@@ -88405,7 +88405,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L240",
+      "source_location": "L241",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_close",
       "weight": 1.0
     },
@@ -88416,7 +88416,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L769",
+      "source_location": "L780",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_completeassistantlesssubmissions",
       "weight": 1.0
     },
@@ -88427,7 +88427,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L379",
+      "source_location": "L380",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "weight": 1.0
     },
@@ -88438,7 +88438,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L145",
+      "source_location": "L146",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_constructor",
       "weight": 1.0
     },
@@ -88449,7 +88449,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L656",
+      "source_location": "L660",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
       "weight": 1.0
     },
@@ -88460,7 +88460,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L675",
+      "source_location": "L680",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "weight": 1.0
     },
@@ -88471,7 +88471,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L983",
+      "source_location": "L994",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_createaudiogate",
       "weight": 1.0
     },
@@ -88482,7 +88482,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1011",
+      "source_location": "L1022",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "weight": 1.0
     },
@@ -88493,7 +88493,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L309",
+      "source_location": "L310",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_enqueue",
       "weight": 1.0
     },
@@ -88504,7 +88504,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L849",
+      "source_location": "L860",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
       "weight": 1.0
     },
@@ -88515,7 +88515,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1105",
+      "source_location": "L1116",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "weight": 1.0
     },
@@ -88526,7 +88526,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L834",
+      "source_location": "L845",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackenddisconnect",
       "weight": 1.0
     },
@@ -88537,7 +88537,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L475",
+      "source_location": "L477",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "weight": 1.0
     },
@@ -88548,7 +88548,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L630",
+      "source_location": "L633",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "weight": 1.0
     },
@@ -88559,7 +88559,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L324",
+      "source_location": "L325",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "weight": 1.0
     },
@@ -88570,7 +88570,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1091",
+      "source_location": "L1102",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_isactivespeech",
       "weight": 1.0
     },
@@ -88581,7 +88581,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L236",
+      "source_location": "L237",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerevent",
       "weight": 1.0
     },
@@ -88592,7 +88592,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L161",
+      "source_location": "L162",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerlistener",
       "weight": 1.0
     },
@@ -88603,7 +88603,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L803",
+      "source_location": "L814",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "weight": 1.0
     },
@@ -88614,7 +88614,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L793",
+      "source_location": "L804",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_queuespeech",
       "weight": 1.0
     },
@@ -88625,7 +88625,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L177",
+      "source_location": "L178",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "weight": 1.0
     },
@@ -88636,7 +88636,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L945",
+      "source_location": "L956",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_receiveaudio",
       "weight": 1.0
     },
@@ -88647,7 +88647,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1077",
+      "source_location": "L1088",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_recovervoicesubmissions",
       "weight": 1.0
     },
@@ -88658,7 +88658,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L975",
+      "source_location": "L986",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_remainingplaybackdelayms",
       "weight": 1.0
     },
@@ -88669,7 +88669,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L920",
+      "source_location": "L931",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireclientstarted",
       "weight": 1.0
     },
@@ -88680,7 +88680,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L910",
+      "source_location": "L921",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireconnection",
       "weight": 1.0
     },
@@ -88691,7 +88691,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L926",
+      "source_location": "L937",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requirecurrentgeneration",
       "weight": 1.0
     },
@@ -88702,7 +88702,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L915",
+      "source_location": "L926",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireturn",
       "weight": 1.0
     },
@@ -88713,7 +88713,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L206",
+      "source_location": "L207",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_retainpendingfinal",
       "weight": 1.0
     },
@@ -88724,7 +88724,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L621",
+      "source_location": "L624",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_returnfinaltocomposer",
       "weight": 1.0
     },
@@ -88735,7 +88735,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1097",
+      "source_location": "L1108",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_scheduleclose",
       "weight": 1.0
     },
@@ -88746,7 +88746,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1066",
+      "source_location": "L1077",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_schedulespeechpump",
       "weight": 1.0
     },
@@ -88757,7 +88757,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L877",
+      "source_location": "L888",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_senderror",
       "weight": 1.0
     },
@@ -88768,7 +88768,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L864",
+      "source_location": "L875",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "weight": 1.0
     },
@@ -88779,7 +88779,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L172",
+      "source_location": "L173",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_start",
       "weight": 1.0
     },
@@ -88790,7 +88790,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1001",
+      "source_location": "L1012",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_startaudiodrain",
       "weight": 1.0
     },
@@ -88801,7 +88801,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L252",
+      "source_location": "L253",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "weight": 1.0
     },
@@ -88812,7 +88812,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L564",
+      "source_location": "L567",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "weight": 1.0
     },
@@ -88823,7 +88823,7 @@
       "relation": "method",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1118",
+      "source_location": "L1129",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_unsubscribemanager",
       "weight": 1.0
     },
@@ -88883,7 +88883,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearaudioinput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1048",
+      "source_location": "L1059",
       "target": "server_oracle_voice_coordinator_audiocompletion_settle",
       "weight": 1.0
     },
@@ -88895,7 +88895,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearaudioinput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1045",
+      "source_location": "L1056",
       "target": "server_oracle_voice_coordinator_audiogate_release",
       "weight": 1.0
     },
@@ -88907,7 +88907,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_clientcontrol",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L893",
+      "source_location": "L904",
       "target": "shared_oracle_voice_voiceclientcontrol",
       "weight": 1.0
     },
@@ -88919,7 +88919,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_close",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L244",
+      "source_location": "L245",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearaudioinput",
       "weight": 1.0
     },
@@ -88931,7 +88931,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_close",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L247",
+      "source_location": "L248",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "weight": 1.0
     },
@@ -88943,7 +88943,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_completeassistantlesssubmissions",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L789",
+      "source_location": "L800",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "weight": 1.0
     },
@@ -88955,8 +88955,56 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L441",
+      "source_location": "L443",
       "target": "server_oracle_voice_coordinator_audiogate_release",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L438",
+      "target": "server_oracle_voice_coordinator_errormessage",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L424",
+      "target": "server_oracle_voice_coordinator_oraclevoicebackendconnection_control",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L421",
+      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearspeechoutput",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L424",
+      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clientcontrol",
       "weight": 1.0
     },
     {
@@ -88968,54 +89016,6 @@
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
       "source_location": "L436",
-      "target": "server_oracle_voice_coordinator_errormessage",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L422",
-      "target": "server_oracle_voice_coordinator_oraclevoicebackendconnection_control",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L419",
-      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearspeechoutput",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L422",
-      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clientcontrol",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L434",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
       "weight": 1.0
     },
@@ -89027,7 +89027,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L385",
+      "source_location": "L386",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireclientstarted",
       "weight": 1.0
     },
@@ -89039,7 +89039,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L394",
+      "source_location": "L395",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_retainpendingfinal",
       "weight": 1.0
     },
@@ -89051,7 +89051,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L428",
+      "source_location": "L430",
       "target": "server_oracle_voice_coordinator_withtimeout",
       "weight": 1.0
     },
@@ -89063,7 +89063,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L379",
+      "source_location": "L380",
       "target": "server_oracle_voice_turn_voiceturnstate",
       "weight": 1.0
     },
@@ -89075,7 +89075,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L397",
+      "source_location": "L398",
       "target": "server_oracle_voice_turn_voiceturnstate_advancegeneration",
       "weight": 1.0
     },
@@ -89087,7 +89087,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L393",
+      "source_location": "L394",
       "target": "server_oracle_voice_turn_voiceturnstate_expectsfinal",
       "weight": 1.0
     },
@@ -89099,8 +89099,32 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L379",
+      "source_location": "L380",
       "target": "shared_oracle_voice_voiceclientcontrol",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L677",
+      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L673",
+      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_queuespeech",
       "weight": 1.0
     },
     {
@@ -89112,30 +89136,6 @@
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
       "source_file": "server/oracle-voice-coordinator.ts",
       "source_location": "L672",
-      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L668",
-      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_queuespeech",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L667",
       "target": "server_oracle_voice_segments_speakablesegmenter",
       "weight": 1.0
     },
@@ -89147,7 +89147,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L656",
+      "source_location": "L660",
       "target": "shared_manager_managerevent",
       "weight": 1.0
     },
@@ -89159,7 +89159,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L734",
+      "source_location": "L739",
       "target": "server_oracle_voice_coordinator_oraclevoicebackendconnection_control",
       "weight": 1.0
     },
@@ -89171,7 +89171,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L732",
+      "source_location": "L737",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearspeechoutput",
       "weight": 1.0
     },
@@ -89183,7 +89183,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L735",
+      "source_location": "L740",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clientcontrol",
       "weight": 1.0
     },
@@ -89195,7 +89195,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L689",
+      "source_location": "L694",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "weight": 1.0
     },
@@ -89207,7 +89207,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L685",
+      "source_location": "L690",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_queuespeech",
       "weight": 1.0
     },
@@ -89219,7 +89219,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L734",
+      "source_location": "L739",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireconnection",
       "weight": 1.0
     },
@@ -89231,7 +89231,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L713",
+      "source_location": "L718",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "weight": 1.0
     },
@@ -89243,7 +89243,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L733",
+      "source_location": "L738",
       "target": "server_oracle_voice_coordinator_withtimeout",
       "weight": 1.0
     },
@@ -89255,7 +89255,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L754",
+      "source_location": "L765",
       "target": "server_oracle_voice_segments_speakablesegmenter",
       "weight": 1.0
     },
@@ -89267,7 +89267,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L675",
+      "source_location": "L680",
       "target": "shared_manager_managermessage",
       "weight": 1.0
     },
@@ -89279,7 +89279,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1038",
+      "source_location": "L1049",
       "target": "server_oracle_voice_coordinator_audiocompletion_settle",
       "weight": 1.0
     },
@@ -89291,7 +89291,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1023",
+      "source_location": "L1034",
       "target": "server_oracle_voice_coordinator_errormessage",
       "weight": 1.0
     },
@@ -89303,7 +89303,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1028",
+      "source_location": "L1039",
       "target": "server_oracle_voice_coordinator_oraclevoicebackendconnection_audio",
       "weight": 1.0
     },
@@ -89315,20 +89315,8 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1030",
+      "source_location": "L1041",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1017",
-      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireclientstarted",
       "weight": 1.0
     },
     {
@@ -89340,6 +89328,18 @@
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
       "source_location": "L1028",
+      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireclientstarted",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L1039",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireconnection",
       "weight": 1.0
     },
@@ -89351,7 +89351,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1020",
+      "source_location": "L1031",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireturn",
       "weight": 1.0
     },
@@ -89363,7 +89363,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1022",
+      "source_location": "L1033",
       "target": "server_oracle_voice_session_voicesessionerror",
       "weight": 1.0
     },
@@ -89375,7 +89375,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L859",
+      "source_location": "L870",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "weight": 1.0
     },
@@ -89387,7 +89387,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L857",
+      "source_location": "L868",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_senderror",
       "weight": 1.0
     },
@@ -89399,7 +89399,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L858",
+      "source_location": "L869",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinatoroptions_terminate",
       "weight": 1.0
     },
@@ -89411,7 +89411,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1111",
+      "source_location": "L1122",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearaudioinput",
       "weight": 1.0
     },
@@ -89423,7 +89423,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1110",
+      "source_location": "L1121",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearspeechoutput",
       "weight": 1.0
     },
@@ -89435,7 +89435,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1115",
+      "source_location": "L1126",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_close",
       "weight": 1.0
     },
@@ -89447,7 +89447,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1109",
+      "source_location": "L1120",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_unsubscribemanager",
       "weight": 1.0
     },
@@ -89459,7 +89459,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackenddisconnect",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L846",
+      "source_location": "L857",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "weight": 1.0
     },
@@ -89471,7 +89471,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackenddisconnect",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L839",
+      "source_location": "L850",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_senderror",
       "weight": 1.0
     },
@@ -89483,7 +89483,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackenddisconnect",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L845",
+      "source_location": "L856",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinatoroptions_terminate",
       "weight": 1.0
     },
@@ -89495,7 +89495,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L539",
+      "source_location": "L542",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearpendingfinal",
       "weight": 1.0
     },
@@ -89507,7 +89507,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L504",
+      "source_location": "L507",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearspeechoutput",
       "weight": 1.0
     },
@@ -89519,7 +89519,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L481",
+      "source_location": "L483",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_isactivespeech",
       "weight": 1.0
     },
@@ -89531,7 +89531,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L554",
+      "source_location": "L557",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "weight": 1.0
     },
@@ -89543,7 +89543,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L548",
+      "source_location": "L551",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_remainingplaybackdelayms",
       "weight": 1.0
     },
@@ -89555,7 +89555,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L526",
+      "source_location": "L529",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireturn",
       "weight": 1.0
     },
@@ -89567,7 +89567,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L519",
+      "source_location": "L522",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_scheduleclose",
       "weight": 1.0
     },
@@ -89579,7 +89579,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L552",
+      "source_location": "L555",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_schedulespeechpump",
       "weight": 1.0
     },
@@ -89591,7 +89591,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L514",
+      "source_location": "L517",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "weight": 1.0
     },
@@ -89603,7 +89603,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L538",
+      "source_location": "L541",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "weight": 1.0
     },
@@ -89615,7 +89615,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L518",
+      "source_location": "L521",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinatoroptions_terminate",
       "weight": 1.0
     },
@@ -89627,7 +89627,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L646",
+      "source_location": "L649",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearpendingfinal",
       "weight": 1.0
     },
@@ -89639,7 +89639,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L648",
+      "source_location": "L652",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearspeechoutput",
       "weight": 1.0
     },
@@ -89651,7 +89651,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L633",
+      "source_location": "L636",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_completeassistantlesssubmissions",
       "weight": 1.0
     },
@@ -89663,7 +89663,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L637",
+      "source_location": "L640",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagerdelta",
       "weight": 1.0
     },
@@ -89675,7 +89675,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L640",
+      "source_location": "L643",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_consumemanagermessage",
       "weight": 1.0
     },
@@ -89687,7 +89687,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L630",
+      "source_location": "L633",
       "target": "shared_manager_managerevent",
       "weight": 1.0
     },
@@ -89699,7 +89699,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L346",
+      "source_location": "L347",
       "target": "server_oracle_voice_coordinator_oraclevoicebackendconnection_control",
       "weight": 1.0
     },
@@ -89711,7 +89711,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L354",
+      "source_location": "L355",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_confirmspeech",
       "weight": 1.0
     },
@@ -89723,7 +89723,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L370",
+      "source_location": "L371",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "weight": 1.0
     },
@@ -89735,7 +89735,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L345",
+      "source_location": "L346",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_recovervoicesubmissions",
       "weight": 1.0
     },
@@ -89747,7 +89747,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L329",
+      "source_location": "L330",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireconnection",
       "weight": 1.0
     },
@@ -89759,7 +89759,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L350",
+      "source_location": "L351",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requirecurrentgeneration",
       "weight": 1.0
     },
@@ -89771,7 +89771,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L330",
+      "source_location": "L331",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireturn",
       "weight": 1.0
     },
@@ -89783,7 +89783,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L369",
+      "source_location": "L370",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinatoroptions_terminate",
       "weight": 1.0
     },
@@ -89795,7 +89795,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L344",
+      "source_location": "L345",
       "target": "server_oracle_voice_turn_voiceturnstate_advancegeneration",
       "weight": 1.0
     },
@@ -89807,7 +89807,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L358",
+      "source_location": "L359",
       "target": "server_oracle_voice_turn_voiceturnstate_hintspeechend",
       "weight": 1.0
     },
@@ -89819,7 +89819,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L324",
+      "source_location": "L325",
       "target": "shared_oracle_voice_voiceaudioframe",
       "weight": 1.0
     },
@@ -89831,7 +89831,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L324",
+      "source_location": "L325",
       "target": "shared_oracle_voice_voiceclientcontrol",
       "weight": 1.0
     },
@@ -89843,7 +89843,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L237",
+      "source_location": "L238",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_enqueue",
       "weight": 1.0
     },
@@ -89855,7 +89855,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L237",
+      "source_location": "L238",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlemanagerevent",
       "weight": 1.0
     },
@@ -89867,7 +89867,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerevent",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L236",
+      "source_location": "L237",
       "target": "shared_manager_managerevent",
       "weight": 1.0
     },
@@ -89879,8 +89879,20 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerlistener",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L165",
+      "source_location": "L166",
       "target": "server_oracle_voice_coordinator_errormessage",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerlistener",
+      "source_file": "server/oracle-voice-coordinator.ts",
+      "source_location": "L164",
+      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
       "weight": 1.0
     },
     {
@@ -89892,18 +89904,6 @@
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerlistener",
       "source_file": "server/oracle-voice-coordinator.ts",
       "source_location": "L163",
-      "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerlistener",
-      "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L162",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_managerevent",
       "weight": 1.0
     },
@@ -89915,7 +89915,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L827",
+      "source_location": "L838",
       "target": "server_oracle_voice_coordinator_errormessage",
       "weight": 1.0
     },
@@ -89927,7 +89927,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L816",
+      "source_location": "L827",
       "target": "server_oracle_voice_coordinator_oraclevoicebackendconnection_control",
       "weight": 1.0
     },
@@ -89939,7 +89939,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L817",
+      "source_location": "L828",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clientcontrol",
       "weight": 1.0
     },
@@ -89951,7 +89951,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L816",
+      "source_location": "L827",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireconnection",
       "weight": 1.0
     },
@@ -89963,7 +89963,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L825",
+      "source_location": "L836",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_senderror",
       "weight": 1.0
     },
@@ -89975,7 +89975,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L830",
+      "source_location": "L841",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "weight": 1.0
     },
@@ -89987,7 +89987,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L200",
+      "source_location": "L201",
       "target": "server_oracle_voice_coordinator_audiogate_release",
       "weight": 1.0
     },
@@ -89999,7 +89999,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L181",
+      "source_location": "L182",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_captureaudiobarrier",
       "weight": 1.0
     },
@@ -90011,7 +90011,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L194",
+      "source_location": "L195",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_createaudiogate",
       "weight": 1.0
     },
@@ -90023,7 +90023,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L185",
+      "source_location": "L186",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_enqueue",
       "weight": 1.0
     },
@@ -90035,7 +90035,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L185",
+      "source_location": "L186",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlereceive",
       "weight": 1.0
     },
@@ -90047,7 +90047,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L179",
+      "source_location": "L180",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_receiveaudio",
       "weight": 1.0
     },
@@ -90059,7 +90059,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L187",
+      "source_location": "L188",
       "target": "server_oracle_voice_coordinator_resolvedaudiogate",
       "weight": 1.0
     },
@@ -90071,7 +90071,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L177",
+      "source_location": "L178",
       "target": "shared_oracle_voice_voiceaudioframe",
       "weight": 1.0
     },
@@ -90083,7 +90083,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receive",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L177",
+      "source_location": "L178",
       "target": "shared_oracle_voice_voiceclientcontrol",
       "weight": 1.0
     },
@@ -90095,7 +90095,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receiveaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L953",
+      "source_location": "L964",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_fail",
       "weight": 1.0
     },
@@ -90107,7 +90107,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receiveaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L948",
+      "source_location": "L959",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireconnection",
       "weight": 1.0
     },
@@ -90119,7 +90119,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receiveaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L968",
+      "source_location": "L979",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_startaudiodrain",
       "weight": 1.0
     },
@@ -90131,7 +90131,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receiveaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L945",
+      "source_location": "L956",
       "target": "shared_oracle_voice_voiceaudioframe",
       "weight": 1.0
     },
@@ -90143,7 +90143,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_receiveaudio",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L949",
+      "source_location": "L960",
       "target": "shared_oracle_voice_voiceaudioframebytelength",
       "weight": 1.0
     },
@@ -90155,7 +90155,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_requirecurrentgeneration",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L927",
+      "source_location": "L938",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireclientstarted",
       "weight": 1.0
     },
@@ -90167,7 +90167,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_requireturn",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L915",
+      "source_location": "L926",
       "target": "server_oracle_voice_turn_voiceturnstate",
       "weight": 1.0
     },
@@ -90179,7 +90179,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_retainpendingfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L210",
+      "source_location": "L211",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_clearpendingfinal",
       "weight": 1.0
     },
@@ -90191,7 +90191,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_retainpendingfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L214",
+      "source_location": "L215",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_enqueue",
       "weight": 1.0
     },
@@ -90203,7 +90203,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_retainpendingfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L217",
+      "source_location": "L218",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_senderror",
       "weight": 1.0
     },
@@ -90215,7 +90215,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_retainpendingfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L206",
+      "source_location": "L207",
       "target": "server_oracle_voice_turn_voiceturnstate",
       "weight": 1.0
     },
@@ -90227,7 +90227,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_returnfinaltocomposer",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L626",
+      "source_location": "L629",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_senderror",
       "weight": 1.0
     },
@@ -90239,7 +90239,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_returnfinaltocomposer",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L627",
+      "source_location": "L630",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "weight": 1.0
     },
@@ -90251,7 +90251,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_scheduleclose",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1101",
+      "source_location": "L1112",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_close",
       "weight": 1.0
     },
@@ -90263,7 +90263,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_schedulespeechpump",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1070",
+      "source_location": "L1081",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_enqueue",
       "weight": 1.0
     },
@@ -90275,7 +90275,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_schedulespeechpump",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1072",
+      "source_location": "L1083",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_pumpspeech",
       "weight": 1.0
     },
@@ -90287,7 +90287,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L864",
+      "source_location": "L875",
       "target": "shared_oracle_voice_voiceservercontrol",
       "weight": 1.0
     },
@@ -90299,7 +90299,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_start",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L173",
+      "source_location": "L174",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "weight": 1.0
     },
@@ -90311,7 +90311,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startaudiodrain",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1003",
+      "source_location": "L1014",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_drainaudio",
       "weight": 1.0
     },
@@ -90323,7 +90323,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L299",
+      "source_location": "L300",
       "target": "server_oracle_voice_coordinator_backenddisconnectfromerror",
       "weight": 1.0
     },
@@ -90335,7 +90335,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L265",
+      "source_location": "L266",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_enqueue",
       "weight": 1.0
     },
@@ -90347,7 +90347,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L288",
+      "source_location": "L289",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_finishclose",
       "weight": 1.0
     },
@@ -90359,7 +90359,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L267",
+      "source_location": "L268",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackenddisconnect",
       "weight": 1.0
     },
@@ -90371,7 +90371,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L265",
+      "source_location": "L266",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_handlebackendoutput",
       "weight": 1.0
     },
@@ -90383,7 +90383,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L300",
+      "source_location": "L301",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinatoroptions_terminate",
       "weight": 1.0
     },
@@ -90395,7 +90395,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L301",
+      "source_location": "L302",
       "target": "server_oracle_voice_coordinator_terminalstartupclosecode",
       "weight": 1.0
     },
@@ -90407,7 +90407,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_startconnection",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L286",
+      "source_location": "L287",
       "target": "server_oracle_voice_turn_voiceturnstate",
       "weight": 1.0
     },
@@ -90419,7 +90419,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L595",
+      "source_location": "L598",
       "target": "server_oracle_voice_coordinator_errormessage",
       "weight": 1.0
     },
@@ -90431,7 +90431,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L581",
+      "source_location": "L584",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_returnfinaltocomposer",
       "weight": 1.0
     },
@@ -90443,7 +90443,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L607",
+      "source_location": "L610",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_senderror",
       "weight": 1.0
     },
@@ -90455,7 +90455,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L617",
+      "source_location": "L620",
       "target": "server_oracle_voice_coordinator_oraclevoicecoordinator_sendstate",
       "weight": 1.0
     },
@@ -90467,7 +90467,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L601",
+      "source_location": "L604",
       "target": "server_oracle_voice_coordinator_withtimeout",
       "weight": 1.0
     },
@@ -90479,7 +90479,7 @@
       "relation": "references",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L564",
+      "source_location": "L567",
       "target": "server_oracle_voice_turn_voiceturnstate",
       "weight": 1.0
     },
@@ -90491,7 +90491,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L570",
+      "source_location": "L573",
       "target": "server_oracle_voice_turn_voiceturnstate_finalize",
       "weight": 1.0
     },
@@ -90503,7 +90503,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_oraclevoicecoordinator_submitfinal",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L579",
+      "source_location": "L582",
       "target": "server_oracle_voice_turn_voiceturnstate_remembersubmission",
       "weight": 1.0
     },
@@ -91259,7 +91259,7 @@
       "relation": "calls",
       "source": "server_oracle_voice_coordinator_withtimeout",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1138",
+      "source_location": "L1149",
       "target": "server_oracle_voice_coordinator_operationtimeouterror",
       "weight": 1.0
     },
@@ -233503,7 +233503,7 @@
       "label": "backendDisconnectFromError()",
       "norm_label": "backenddisconnectfromerror()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1157"
+      "source_location": "L1168"
     },
     {
       "_callable": true,
@@ -233515,7 +233515,7 @@
       "label": "disconnectCause()",
       "norm_label": "disconnectcause()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1209"
+      "source_location": "L1220"
     },
     {
       "_callable": true,
@@ -233527,7 +233527,7 @@
       "label": "errorMessage()",
       "norm_label": "errormessage()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1153"
+      "source_location": "L1164"
     },
     {
       "_callable": true,
@@ -233539,7 +233539,7 @@
       "label": "isBackendDisconnect()",
       "norm_label": "isbackenddisconnect()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1201"
+      "source_location": "L1212"
     },
     {
       "_callable": true,
@@ -233552,7 +233552,7 @@
       "label": "OperationTimeoutError",
       "norm_label": "operationtimeouterror",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1125"
+      "source_location": "L1136"
     },
     {
       "_callable": true,
@@ -233564,7 +233564,7 @@
       "label": ".constructor()",
       "norm_label": ".constructor()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1126"
+      "source_location": "L1137"
     },
     {
       "_callable": true,
@@ -233689,7 +233689,7 @@
       "label": ".captureAudioBarrier()",
       "norm_label": ".captureaudiobarrier()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1054"
+      "source_location": "L1065"
     },
     {
       "_callable": true,
@@ -233701,7 +233701,7 @@
       "label": ".clearAudioInput()",
       "norm_label": ".clearaudioinput()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1044"
+      "source_location": "L1055"
     },
     {
       "_callable": true,
@@ -233713,7 +233713,7 @@
       "label": ".clearPendingFinal()",
       "norm_label": ".clearpendingfinal()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L229"
+      "source_location": "L230"
     },
     {
       "_callable": true,
@@ -233725,7 +233725,7 @@
       "label": ".clearSpeechOutput()",
       "norm_label": ".clearspeechoutput()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L933"
+      "source_location": "L944"
     },
     {
       "_callable": true,
@@ -233737,7 +233737,7 @@
       "label": ".clientControl()",
       "norm_label": ".clientcontrol()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L893"
+      "source_location": "L904"
     },
     {
       "_callable": true,
@@ -233749,7 +233749,7 @@
       "label": ".close()",
       "norm_label": ".close()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L240"
+      "source_location": "L241"
     },
     {
       "_callable": true,
@@ -233761,7 +233761,7 @@
       "label": ".completeAssistantlessSubmissions()",
       "norm_label": ".completeassistantlesssubmissions()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L769"
+      "source_location": "L780"
     },
     {
       "_callable": true,
@@ -233773,7 +233773,7 @@
       "label": ".confirmSpeech()",
       "norm_label": ".confirmspeech()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L379"
+      "source_location": "L380"
     },
     {
       "_callable": true,
@@ -233785,7 +233785,7 @@
       "label": ".constructor()",
       "norm_label": ".constructor()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L145"
+      "source_location": "L146"
     },
     {
       "_callable": true,
@@ -233797,7 +233797,7 @@
       "label": ".consumeManagerDelta()",
       "norm_label": ".consumemanagerdelta()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L656"
+      "source_location": "L660"
     },
     {
       "_callable": true,
@@ -233809,7 +233809,7 @@
       "label": ".consumeManagerMessage()",
       "norm_label": ".consumemanagermessage()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L675"
+      "source_location": "L680"
     },
     {
       "_callable": true,
@@ -233821,7 +233821,7 @@
       "label": ".createAudioGate()",
       "norm_label": ".createaudiogate()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L983"
+      "source_location": "L994"
     },
     {
       "_callable": true,
@@ -233833,7 +233833,7 @@
       "label": ".drainAudio()",
       "norm_label": ".drainaudio()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1011"
+      "source_location": "L1022"
     },
     {
       "_callable": true,
@@ -233845,7 +233845,7 @@
       "label": ".enqueue()",
       "norm_label": ".enqueue()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L309"
+      "source_location": "L310"
     },
     {
       "_callable": true,
@@ -233857,7 +233857,7 @@
       "label": ".fail()",
       "norm_label": ".fail()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L849"
+      "source_location": "L860"
     },
     {
       "_callable": true,
@@ -233869,7 +233869,7 @@
       "label": ".finishClose()",
       "norm_label": ".finishclose()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1105"
+      "source_location": "L1116"
     },
     {
       "_callable": true,
@@ -233881,7 +233881,7 @@
       "label": ".handleBackendDisconnect()",
       "norm_label": ".handlebackenddisconnect()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L834"
+      "source_location": "L845"
     },
     {
       "_callable": true,
@@ -233893,7 +233893,7 @@
       "label": ".handleBackendOutput()",
       "norm_label": ".handlebackendoutput()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L475"
+      "source_location": "L477"
     },
     {
       "_callable": true,
@@ -233905,7 +233905,7 @@
       "label": ".handleManagerEvent()",
       "norm_label": ".handlemanagerevent()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L630"
+      "source_location": "L633"
     },
     {
       "_callable": true,
@@ -233917,7 +233917,7 @@
       "label": ".handleReceive()",
       "norm_label": ".handlereceive()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L324"
+      "source_location": "L325"
     },
     {
       "_callable": true,
@@ -233929,7 +233929,7 @@
       "label": ".isActiveSpeech()",
       "norm_label": ".isactivespeech()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1091"
+      "source_location": "L1102"
     },
     {
       "_callable": true,
@@ -233941,7 +233941,7 @@
       "label": ".managerEvent()",
       "norm_label": ".managerevent()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L236"
+      "source_location": "L237"
     },
     {
       "_origin": "ast",
@@ -233952,7 +233952,7 @@
       "label": ".managerListener()",
       "norm_label": ".managerlistener()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L161"
+      "source_location": "L162"
     },
     {
       "_callable": true,
@@ -233964,7 +233964,7 @@
       "label": ".pumpSpeech()",
       "norm_label": ".pumpspeech()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L803"
+      "source_location": "L814"
     },
     {
       "_callable": true,
@@ -233976,7 +233976,7 @@
       "label": ".queueSpeech()",
       "norm_label": ".queuespeech()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L793"
+      "source_location": "L804"
     },
     {
       "_callable": true,
@@ -233988,7 +233988,7 @@
       "label": ".receive()",
       "norm_label": ".receive()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L177"
+      "source_location": "L178"
     },
     {
       "_callable": true,
@@ -234000,7 +234000,7 @@
       "label": ".receiveAudio()",
       "norm_label": ".receiveaudio()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L945"
+      "source_location": "L956"
     },
     {
       "_callable": true,
@@ -234012,7 +234012,7 @@
       "label": ".recoverVoiceSubmissions()",
       "norm_label": ".recovervoicesubmissions()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1077"
+      "source_location": "L1088"
     },
     {
       "_callable": true,
@@ -234024,7 +234024,7 @@
       "label": ".remainingPlaybackDelayMs()",
       "norm_label": ".remainingplaybackdelayms()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L975"
+      "source_location": "L986"
     },
     {
       "_callable": true,
@@ -234036,7 +234036,7 @@
       "label": ".requireClientStarted()",
       "norm_label": ".requireclientstarted()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L920"
+      "source_location": "L931"
     },
     {
       "_callable": true,
@@ -234048,7 +234048,7 @@
       "label": ".requireConnection()",
       "norm_label": ".requireconnection()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L910"
+      "source_location": "L921"
     },
     {
       "_callable": true,
@@ -234060,7 +234060,7 @@
       "label": ".requireCurrentGeneration()",
       "norm_label": ".requirecurrentgeneration()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L926"
+      "source_location": "L937"
     },
     {
       "_callable": true,
@@ -234072,7 +234072,7 @@
       "label": ".requireTurn()",
       "norm_label": ".requireturn()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L915"
+      "source_location": "L926"
     },
     {
       "_callable": true,
@@ -234084,7 +234084,7 @@
       "label": ".retainPendingFinal()",
       "norm_label": ".retainpendingfinal()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L206"
+      "source_location": "L207"
     },
     {
       "_callable": true,
@@ -234096,7 +234096,7 @@
       "label": ".returnFinalToComposer()",
       "norm_label": ".returnfinaltocomposer()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L621"
+      "source_location": "L624"
     },
     {
       "_callable": true,
@@ -234108,7 +234108,7 @@
       "label": ".scheduleClose()",
       "norm_label": ".scheduleclose()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1097"
+      "source_location": "L1108"
     },
     {
       "_callable": true,
@@ -234120,7 +234120,7 @@
       "label": ".scheduleSpeechPump()",
       "norm_label": ".schedulespeechpump()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1066"
+      "source_location": "L1077"
     },
     {
       "_callable": true,
@@ -234132,7 +234132,7 @@
       "label": ".sendError()",
       "norm_label": ".senderror()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L877"
+      "source_location": "L888"
     },
     {
       "_callable": true,
@@ -234144,7 +234144,7 @@
       "label": ".sendState()",
       "norm_label": ".sendstate()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L864"
+      "source_location": "L875"
     },
     {
       "_callable": true,
@@ -234156,7 +234156,7 @@
       "label": ".start()",
       "norm_label": ".start()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L172"
+      "source_location": "L173"
     },
     {
       "_callable": true,
@@ -234168,7 +234168,7 @@
       "label": ".startAudioDrain()",
       "norm_label": ".startaudiodrain()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1001"
+      "source_location": "L1012"
     },
     {
       "_callable": true,
@@ -234180,7 +234180,7 @@
       "label": ".startConnection()",
       "norm_label": ".startconnection()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L252"
+      "source_location": "L253"
     },
     {
       "_callable": true,
@@ -234192,7 +234192,7 @@
       "label": ".submitFinal()",
       "norm_label": ".submitfinal()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L564"
+      "source_location": "L567"
     },
     {
       "_callable": true,
@@ -234204,7 +234204,7 @@
       "label": ".unsubscribeManager()",
       "norm_label": ".unsubscribemanager()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1118"
+      "source_location": "L1129"
     },
     {
       "_callable": true,
@@ -234317,7 +234317,7 @@
       "label": "resolvedAudioGate()",
       "norm_label": "resolvedaudiogate()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1236"
+      "source_location": "L1247"
     },
     {
       "_callable": true,
@@ -234329,7 +234329,7 @@
       "label": "terminalStartupCloseCode()",
       "norm_label": "terminalstartupclosecode()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1224"
+      "source_location": "L1235"
     },
     {
       "_origin": "ast",
@@ -234643,7 +234643,7 @@
       "label": "withTimeout()",
       "norm_label": "withtimeout()",
       "source_file": "server/oracle-voice-coordinator.ts",
-      "source_location": "L1132"
+      "source_location": "L1143"
     },
     {
       "_origin": "ast",

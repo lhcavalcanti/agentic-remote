@@ -1691,6 +1691,65 @@ describe('OracleVoiceCoordinator', () => {
     }))
   })
 
+  it.each(['delta', 'final'] as const)(
+    'does not resume speech from a later manager %s after synthesis fails',
+    async (eventType) => {
+      const test = harness()
+      test.manager.send.mockResolvedValueOnce(managerMessage('voice-user', {
+        content: 'Question',
+        state: 'queued',
+      }))
+      await test.start(0)
+      await test.coordinator.receive(confirm(1, 'u1'))
+      await test.backend.emit(final(1, 'u1', 'Question'))
+      await test.coordinator.managerEvent({
+        type: 'manager.message',
+        message: managerMessage('voice-user', { state: 'running' }),
+      })
+      await test.coordinator.managerEvent({
+        type: 'manager.delta',
+        messageId: 'voice-reply',
+        content: 'First sentence. Second',
+      })
+      const first = test.backend.controls.find(
+        (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+          message.type === 'synthesize',
+      )!
+
+      await test.backend.emit({
+        type: 'error',
+        protocol: ORACLE_VOICE_PROTOCOL,
+        streamId: 'stream-1',
+        generation: 1,
+        code: 'tts_failed',
+        message: 'Local synthesis failed',
+        fatal: false,
+      })
+
+      if (eventType === 'delta') {
+        await test.coordinator.managerEvent({
+          type: 'manager.delta',
+          messageId: 'voice-reply',
+          content: 'First sentence. Second sentence.',
+        })
+      } else {
+        await test.coordinator.managerEvent({
+          type: 'manager.message',
+          message: managerMessage('voice-reply', {
+            role: 'assistant',
+            replyTo: 'voice-user',
+            content: 'First sentence. Second sentence.',
+            state: undefined,
+          }),
+        })
+      }
+
+      expect(test.backend.controls.filter(
+        (message) => message.type === 'synthesize',
+      )).toEqual([first])
+    },
+  )
+
   it('paces a second sentence until twelve seconds of forwarded audio is consumed', async () => {
     vi.useFakeTimers()
     let browserPlaybackThrough = Date.now()

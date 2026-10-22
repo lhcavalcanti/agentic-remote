@@ -581,8 +581,8 @@
     "server/oracle-voice-child.ts": "28187e34d534be54ae364b1cc2b28e737d2b45eee0b35921852b260ad1c3475d",
     "server/oracle-voice-config.test.ts": "7296ef1ca0b64e1dc92818c3aadeb64dd8bedc277fb8d8fa69d9ccdafdb47c6b",
     "server/oracle-voice-config.ts": "06e0bbab5b9837cb68948da4e609194b2e8e479ab41faf4a61d5e100fdad6ad9",
-    "server/oracle-voice-coordinator.test.ts": "437a0a02bbf42681efbc4fc7e97f05a62e58ebee3420ee7c8a95f330e68d1459",
-    "server/oracle-voice-coordinator.ts": "c2c37f91c311f893c26056ebe7a8863344b759d03f27ed3ee98b86b545186796",
+    "server/oracle-voice-coordinator.test.ts": "e3f56e30aeeb95696ff71f93e2998bd2586a324230136b2b9b5e4eb5e6c8d2c7",
+    "server/oracle-voice-coordinator.ts": "ca91dfe6ec11e995f83ac19afc734563d2a3cc8ed6ebb45a7e4b29bb0874a7ed",
     "server/oracle-voice-engine.test.ts": "12acdcaa07d5bc4909bf17322603eb7e7b410cb72c9beaca12d825384bb85638",
     "server/oracle-voice-engine.ts": "3cb5b0c9a03ed07beb96473c697e710e5f6dbb842f5a1616bdb92b447c9d94fd",
     "server/oracle-voice-integration.test.ts": "47f195cdc1b1958ee2aaba7a5c4d31191dbaf1612c9d221f86a1c9faef463c03",
@@ -935,15 +935,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ce0ef1610cca8a8d20d4e6b4cadaf2d4f5732b9e789f98a29a033f6085c84d03",
+    "GRAPH_REPORT.md": "a8791479a05e58ad8a77be03f4c35d007ebf5391ce1085dab9d9a67a77b78069",
     "communities.json": "c047f7b7d2917cbc1c20ea288feb99e4bda08e8709b00cadaa9c32220d5b8a3b",
-    "graph.html": "ec26a6a6cfec81319370ca756627ef652a68b50cd0d98f7e5da5cd4d79e3c8f1",
-    "graph.json": "5e86ef723bcbb2c0e2b928667d021dede663536f0359e9ef9d764f734beeb71a"
+    "graph.html": "d2295ec81eaa02cd569ab165c80f6cf36ba924e969956cf3d3afcb3226d7cf17",
+    "graph.json": "92dc2c24f0a598bfbf8a0ae4ba2b5800f17819f40e1398b9938a61cb167057f1"
   },
   "schema_version": 1,
-  "source_commit": "0c8ce57a7ba0ddfcad4e91957f15e34520340f9f",
-  "source_fingerprint": "e81abdc3649bdc29ee968fd6cde51036ff64fff638e66b3d0a65576575587c7e",
+  "source_commit": "142d85ab25d83d59147f8d0c6e8f7df4ea8eedf0",
+  "source_fingerprint": "fbd466245728bac453ed2c2c43b1621429f2fed25a6fc27ec9b262e7e0ab019b",
   "working_tree_changes": [
-    "server/app-build.test.ts"
+    "server/oracle-voice-coordinator.test.ts",
+    "server/oracle-voice-coordinator.ts"
   ]
 }

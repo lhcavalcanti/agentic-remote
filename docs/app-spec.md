@@ -985,6 +985,11 @@ Questions and permissions are the highest-priority UI state.
 The Send button MUST request immediate delivery. While a Copilot SDK or tmux
 turn is running, immediate delivery MUST use the provider's native steering
 path so the follow-up reaches the current turn rather than waiting behind it.
+Copilot holds a message typed mid-response as pending and logs it only when the
+turn reaches it. Until the transcript has it, a message the tmux terminal took
+MUST show as the person's own message marked Pending, paired with exactly one
+later transcript message. It MUST never be resent; a session that settles
+without logging it drops the mark after a short grace.
 If immediate steering is unsupported, the app MUST surface an error and
 restore the draft; it MUST NOT silently queue. Stop remains the explicit way
 to abort the current turn; sending after Stop begins a new turn.

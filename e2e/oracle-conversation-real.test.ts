@@ -58,7 +58,9 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   await page.goto('/')
   await page.locator('main').getByRole('button', { name: /^Oracle/ }).click()
   await page.getByRole('button', { name: 'Start conversation' }).click()
-  await expect(page.getByText('Listening', { exact: true })).toBeVisible()
+  await expect(page.getByText('Listening', { exact: true })).toBeVisible({
+    timeout: 30_000,
+  })
 
   await page.waitForFunction(() => Boolean(window.__oracleVoiceE2E.vad))
   await page.evaluate(() => {

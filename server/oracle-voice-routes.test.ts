@@ -452,7 +452,7 @@ describe('Oracle voice hub routes', () => {
     })
     expect(response.json().limits).toEqual({
       maxFrameBytes: 32 * 1024,
-      maxQueueBytes: 64_000,
+      maxQueueBytes: 384_000,
       maxUtteranceMs: 30_000,
     })
   })

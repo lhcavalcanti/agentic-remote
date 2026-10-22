@@ -31,7 +31,7 @@ const MAX_INTERNAL_SEGMENT_ID_BYTES = 256
 
 export const DEFAULT_VOICE_BACKEND_LIMITS: VoiceBackendSessionLimits = {
   maxFrameBytes: 32 * 1024,
-  maxQueueBytes: ORACLE_VOICE_SAMPLE_RATE * 2 * 2,
+  maxQueueBytes: ORACLE_VOICE_SAMPLE_RATE * 2 * 12,
   maxOutputQueueBytes: voiceOutputDeliveryByteLimit(
     ORACLE_VOICE_MAX_PCM_SAMPLE_RATE,
     32 * 1024,

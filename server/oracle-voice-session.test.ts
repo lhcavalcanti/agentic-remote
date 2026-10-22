@@ -163,10 +163,10 @@ async function beginUtterance(
 }
 
 describe('VoiceBackendSession', () => {
-  it('sizes internal playback delivery independently from the 64KB transport queue', () => {
+  it('allows twelve seconds of microphone backlog independently from playback delivery', () => {
     expect(voiceOutputDeliveryByteLimit(22_050, 32 * 1024)).toBe(589_824)
     expect(DEFAULT_VOICE_BACKEND_LIMITS).toMatchObject({
-      maxQueueBytes: 64_000,
+      maxQueueBytes: 384_000,
       maxOutputQueueBytes: 4_685_824,
     })
   })

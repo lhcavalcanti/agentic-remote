@@ -197,8 +197,11 @@ timed phase then sent 180/180 unique manager submissions in 1,800,000.96 ms.
 The soak retained production `LocalVoiceBackend` and
 `EngineVoiceBackendSession` around a controlled engine. It measured 4,480
 queued input bytes, 640 pending/in-flight input bytes, 5,120 total input
-backlog against the 64,000-byte limit, and 18,186 queued output bytes, with no
-overflow. It observed 681 cancellation-triggered stale backend emissions and
+backlog against the then-current 64,000-byte limit, and 18,186 queued output
+bytes, with no overflow. The current microphone backlog cap is 384,000 bytes
+(12 seconds at 16 kHz PCM16); it remains below the 30-second utterance cap and
+absorbs CPU contention while still failing closed. It observed 681
+cancellation-triggered stale backend emissions and
 zero stale client deliveries. A fixture-owned child PID was observed during
 the run and absent afterward. RSS was 155.30 MiB initially, 272.28 MiB peak
 during lifecycle cycling, and 172.79 MiB finally; the final-half slope was

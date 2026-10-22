@@ -882,7 +882,7 @@ describe('multi-node hub', () => {
       if (hello.type !== 'hello') throw new Error('Expected node voice hello')
       expect(hello.capabilities.limits).toEqual({
         maxFrameBytes: 32 * 1024,
-        maxQueueBytes: 64_000,
+        maxQueueBytes: 384_000,
         maxUtteranceMs: 30_000,
       })
       await expect(openNodeVoiceSocket(

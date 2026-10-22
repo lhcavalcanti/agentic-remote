@@ -508,7 +508,7 @@
     "server/agent-service.test.ts": "1e5677d495b5176880cf2e91990ec4900b5629db15eed54929e2463130ae4d4e",
     "server/agent-service.ts": "008b19aa2d74d30f53359abc326a8f0888db142f8b7a4df9d8bc4d877b14962c",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
-    "server/app-build.test.ts": "ab1d4d6bdb328ac7f5080a2436ffec3f066c9436081b35d5d6f0439ab75a84e2",
+    "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
     "server/app.ts": "2d8b605f132fa455e4dc4c4e2307260eaf856ef72f9a0416274540343108ddc5",
     "server/background-task-adapter.test.ts": "63304b3d73481475147682d8f95513beffbbcc9049a43823cc39d5600f4a4760",
@@ -935,31 +935,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "753a010ce015f921058147df7ba58dd7c1ac2920d63b5f0de111c1375b79f5bd",
+    "GRAPH_REPORT.md": "ce0ef1610cca8a8d20d4e6b4cadaf2d4f5732b9e789f98a29a033f6085c84d03",
     "communities.json": "c047f7b7d2917cbc1c20ea288feb99e4bda08e8709b00cadaa9c32220d5b8a3b",
-    "graph.html": "1d352abf4e1d79afd984220afd85b0296147a84f8ac031b2cbd2b60124f73002",
-    "graph.json": "6525777d1eb504cc4cc63fb158954cc991603003b2db43b5d8fa3dcf619e964d"
+    "graph.html": "ec26a6a6cfec81319370ca756627ef652a68b50cd0d98f7e5da5cd4d79e3c8f1",
+    "graph.json": "5e86ef723bcbb2c0e2b928667d021dede663536f0359e9ef9d764f734beeb71a"
   },
   "schema_version": 1,
-  "source_commit": "5c0b6ad8099fd9da80ddb84435d12edb890537bb",
-  "source_fingerprint": "b97914cab2a4014dfcd7d42c5827fb2c364909ecb440d7670d303ab76b951d4d",
+  "source_commit": "0c8ce57a7ba0ddfcad4e91957f15e34520340f9f",
+  "source_fingerprint": "e81abdc3649bdc29ee968fd6cde51036ff64fff638e66b3d0a65576575587c7e",
   "working_tree_changes": [
-    "docs/design/oracle-conversation-mode.md",
-    "docs/oracle-conversation.md",
-    "server/app.ts",
-    "server/multi-node.test.ts",
-    "server/node-routes.ts",
-    "server/oracle-voice-coordinator.test.ts",
-    "server/oracle-voice-coordinator.ts",
-    "server/oracle-voice-security.test.ts",
-    "server/oracle-voice-session.test.ts",
-    "server/oracle-voice-session.ts",
-    "server/remote-voice-client.test.ts",
-    "server/remote-voice-client.ts",
-    "shared/oracle-voice.ts",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/oracle-voice/client.test.ts",
-    "src/oracle-voice/client.ts"
+    "server/app-build.test.ts"
   ]
 }

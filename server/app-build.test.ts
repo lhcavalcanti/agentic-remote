@@ -111,7 +111,7 @@ describe('Oracle voice app construction', () => {
     }) as unknown as ManagerAgent
   }
 
-  it('bounds WebSocket messages before route handlers receive them', async () => {
+  it('bounds WebSocket messages at the text-control limit before route handling', async () => {
     const runtime = await buildApp({
       dataDirectory: await dataDirectory(),
       logger: false,
@@ -123,7 +123,7 @@ describe('Oracle voice app construction', () => {
     await runtime.app.ready()
 
     expect(runtime.app.websocketServer.options.maxPayload)
-      .toBe(DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes)
+      .toBe(DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes)
   })
 
   it('keeps voice disabled unless explicitly enabled without starting an injected engine', async () => {

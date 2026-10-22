@@ -646,6 +646,8 @@ export class OracleVoiceCoordinator {
         {
           const generation = this.currentGeneration
           const shouldResetVoice = this.clientStarted && generation !== undefined
+          const preserveBackendUtterance = generation !== undefined
+            && this.requireTurn().requiresBackendCompletion(generation)
           this.activeReplyTo = undefined
           this.submissions.clear()
           for (const pendingGeneration of this.pendingFinalTurns.keys()) {
@@ -653,7 +655,7 @@ export class OracleVoiceCoordinator {
           }
           this.speechSuppressedGeneration = undefined
           this.clearSpeechOutput()
-          if (shouldResetVoice) {
+          if (shouldResetVoice && !preserveBackendUtterance) {
             await withTimeout(
               this.requireConnection().control(
                 this.clientControl('cancel', generation, {}),
@@ -661,8 +663,8 @@ export class OracleVoiceCoordinator {
               this.cancelTimeoutMs,
               'Voice reset cancellation timed out',
             )
-            await this.sendState('listening', generation)
           }
+          if (shouldResetVoice) await this.sendState('listening', generation)
         }
         return
       case 'manager.sessions':

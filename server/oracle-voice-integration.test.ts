@@ -1359,6 +1359,100 @@ describe('Oracle voice cross-layer integration', () => {
     )).toEqual([])
   })
 
+  it.each([
+    'mid-utterance',
+    'after-speech-end',
+    'after-early-final',
+  ] as const)(
+    'keeps the local voice session usable when Oracle resets %s',
+    async (resetPoint) => {
+      const test = await createLocalHarness()
+      sendControl(test.browser, test.streamId, 'start', 0, {
+        language: 'en',
+        defaults,
+        answerOnly: true,
+      })
+      sendControl(test.browser, test.streamId, 'speech_confirmed', 1, {
+        utteranceId: 'reset-utterance',
+      })
+      await vi.waitFor(() => expect(engineCalls(test.engine, 'stt.start'))
+        .toHaveLength(1))
+      test.browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(
+        1,
+        0,
+        new Int16Array([101, -102]),
+      ))))
+      await vi.waitFor(() => expect(engineCalls(test.engine, 'stt.accept'))
+        .toHaveLength(1))
+
+      if (resetPoint === 'after-speech-end') {
+        sendControl(test.browser, test.streamId, 'speech_end', 1, {
+          utteranceId: 'reset-utterance',
+        })
+        await vi.waitFor(() => expect(engineCalls(test.engine, 'stt.end'))
+          .toHaveLength(1))
+      } else if (resetPoint === 'after-early-final') {
+        test.engine.emit({
+          type: 'final',
+          streamId: test.streamId,
+          generation: 1,
+          utteranceId: 'reset-utterance',
+          text: 'Continue after reset.',
+        })
+        await vi.waitFor(() => expect(test.manager.send).toHaveBeenCalledOnce())
+      }
+
+      const listeningBefore = test.browserInbox.controls<VoiceServerControl>(
+        (message) => message.type === 'state' && message.state === 'listening',
+      ).length
+      test.manager.emit('event', {
+        type: 'manager.reset',
+        snapshot: test.manager.snapshot(),
+      })
+      await vi.waitFor(() => expect(
+        test.browserInbox.controls<VoiceServerControl>(
+          (message) => message.type === 'state' && message.state === 'listening',
+        ).length,
+      ).toBeGreaterThan(listeningBefore))
+
+      if (resetPoint === 'mid-utterance') {
+        test.browser.send(Buffer.from(encodeVoiceAudioFrame(microphone(
+          1,
+          1,
+          new Int16Array([103, -104]),
+        ))))
+      }
+      if (resetPoint !== 'after-speech-end') {
+        sendControl(test.browser, test.streamId, 'speech_end', 1, {
+          utteranceId: 'reset-utterance',
+        })
+        await vi.waitFor(() => expect(engineCalls(test.engine, 'stt.end'))
+          .toHaveLength(resetPoint === 'after-early-final' ? 0 : 1))
+      }
+      if (resetPoint !== 'after-early-final') {
+        test.engine.emit({
+          type: 'final',
+          streamId: test.streamId,
+          generation: 1,
+          utteranceId: 'reset-utterance',
+          text: 'Continue after reset.',
+        })
+        await vi.waitFor(() => expect(test.manager.send).toHaveBeenCalledOnce())
+      }
+
+      sendControl(test.browser, test.streamId, 'speech_confirmed', 2, {
+        utteranceId: 'next-utterance',
+      })
+      await vi.waitFor(() => expect(engineCalls(test.engine, 'stt.start')
+        .some((call) => call.generation === 2)).toBe(true))
+      expect(test.browser.readyState).toBe(WebSocket.OPEN)
+      expect(test.browserInbox.controls<VoiceServerControl>(
+        (message) => message.type === 'error'
+          && (message.fatal || message.code === 'stt_final_timeout'),
+      )).toEqual([])
+    },
+  )
+
   it('relays incrementally through an authenticated paired node without hub-local models', async () => {
     vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
     vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Speech node')

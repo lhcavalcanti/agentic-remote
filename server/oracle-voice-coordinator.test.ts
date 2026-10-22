@@ -712,6 +712,9 @@ describe('OracleVoiceCoordinator', () => {
       }))
       await test.start(0)
       await test.coordinator.receive(confirm(1, 'u1'))
+      await test.coordinator.receive(control('speech_end', 1, {
+        utteranceId: 'u1',
+      }))
       await test.backend.emit(final(1, 'u1', 'Question'))
       if (phase === 'speaking') {
         await test.coordinator.managerEvent({

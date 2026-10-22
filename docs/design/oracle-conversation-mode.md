@@ -309,8 +309,12 @@ models.
    advertised input backlog plus the cancellation margin reports and discards a
    missing final.
 
-Starting over in Oracle cancels the active voice generation, clears scheduled
-browser playback, and returns Conversation mode to Listening.
+Starting over in Oracle cancels active reply speech, clears scheduled browser
+playback, and returns Conversation mode to Listening. An utterance still
+accepting audio or awaiting either its endpoint or final is allowed to complete
+without closing the voice stream. A final accepted after the reset becomes the
+first turn of the new Oracle conversation; one accepted before the reset is
+discarded with the old conversation.
 
 If tentative speech is a VAD misfire, playback gain is restored without
 cancelling Oracle or losing queued audio.

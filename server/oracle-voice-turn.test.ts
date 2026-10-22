@@ -80,6 +80,23 @@ describe('VoiceTurnState', () => {
     expect(() => turn.hintSpeechEnd(13, 'utterance-b')).not.toThrow()
   })
 
+  it('preserves backend utterances until both endpoint and final are observed', () => {
+    const endpointFirst = new VoiceTurnState()
+    endpointFirst.confirmSpeech(14, 'endpoint-first')
+    expect(endpointFirst.requiresBackendCompletion(14)).toBe(true)
+    endpointFirst.hintSpeechEnd(14, 'endpoint-first')
+    expect(endpointFirst.requiresBackendCompletion(14)).toBe(true)
+    endpointFirst.finalize(14, 'endpoint-first', 'Finished')
+    expect(endpointFirst.requiresBackendCompletion(14)).toBe(false)
+
+    const finalFirst = new VoiceTurnState()
+    finalFirst.confirmSpeech(15, 'final-first')
+    finalFirst.finalize(15, 'final-first', 'Finished early')
+    expect(finalFirst.requiresBackendCompletion(15)).toBe(true)
+    finalFirst.hintSpeechEnd(15, 'final-first')
+    expect(finalFirst.requiresBackendCompletion(15)).toBe(false)
+  })
+
   it('drops frames and endpoint hints from obsolete generations', () => {
     const turn = new VoiceTurnState()
     turn.confirmSpeech(20, 'utterance-a')

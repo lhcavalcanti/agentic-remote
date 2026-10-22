@@ -31,6 +31,7 @@ export class VoiceTurnState {
   private phase: VoiceTurnPhase = 'idle'
   private nextSequence = 0
   private audioSamples = 0
+  private speechEndObserved = false
 
   constructor(options: VoiceTurnStateOptions = {}) {
     const maxAudioSamples = options.maxAudioSamples ?? 160_000
@@ -63,6 +64,7 @@ export class VoiceTurnState {
     this.phase = 'listening'
     this.nextSequence = 0
     this.audioSamples = 0
+    this.speechEndObserved = false
   }
 
   acceptFrame(frame: VoiceAudioFrame): VoiceFrameAcceptance {
@@ -102,6 +104,7 @@ export class VoiceTurnState {
     if (utteranceId !== this.utteranceId) {
       throw new Error('speech end does not match the active utterance')
     }
+    this.speechEndObserved = true
     if (this.phase === 'finalized') return
     if (this.phase === 'listening') {
       this.phase = 'endpoint-pending'
@@ -116,6 +119,13 @@ export class VoiceTurnState {
 
   expectsFinal(generation: number): boolean {
     return generation === this.generation && this.phase === 'endpoint-pending'
+  }
+
+  requiresBackendCompletion(generation: number): boolean {
+    if (generation !== this.generation || !this.utteranceId) return false
+    return this.phase === 'listening'
+      || this.phase === 'endpoint-pending'
+      || (this.phase === 'finalized' && !this.speechEndObserved)
   }
 
   finalize(
@@ -165,6 +175,7 @@ export class VoiceTurnState {
     this.phase = 'cancelled'
     this.nextSequence = 0
     this.audioSamples = 0
+    this.speechEndObserved = false
   }
 
   private validateGeneration(generation: number): void {

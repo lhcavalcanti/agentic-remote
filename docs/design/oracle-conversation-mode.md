@@ -191,8 +191,11 @@ Conversation admission slot until the operating system abandons TCP.
 
 The backend runs native inference in an isolated child process. A native crash
 or malformed model cannot terminate the Agentic Remote server. The child stays
-warm, creates one recognizer stream per browser speech segment, emits partial
-and final transcripts, and runs one TTS generation at a time. Internal sherpa
+warm and completes a silent recognizer decode before reporting readiness, so
+the first browser utterance does not pay lazy model initialization while its
+bounded PCM queue is filling. It then creates one recognizer stream per browser
+speech segment, emits partial and final transcripts, and runs one TTS generation
+at a time. Internal sherpa
 endpoints reset decoding and accumulate text; they do not finalize the browser
 segment. After the ordered PCM drain, one browser `speech_end` produces one
 combined final transcript. Its parent enforces:

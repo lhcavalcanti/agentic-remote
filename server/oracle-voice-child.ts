@@ -270,6 +270,7 @@ class ResidentVoiceWorker implements VoiceWorker {
       rule2MinTrailingSilence: config.endpointMs / 1_000,
       rule3MinUtteranceLength: 30,
     }) as SherpaRecognizer
+    this.warmRecognizer(config.language)
     if ('engine' in config.tts && config.tts.engine === 'sherpa-vits') {
       const OfflineTts = this.options.sherpa.OfflineTts
       if (!OfflineTts) throw new Error('sherpa-onnx OfflineTts is unavailable')
@@ -303,6 +304,19 @@ class ResidentVoiceWorker implements VoiceWorker {
       this.heartbeatTimer.unref?.()
     }
     await this.emit({ type: 'ready' })
+  }
+
+  private warmRecognizer(language: string): void {
+    const recognizer = this.requireRecognizer()
+    const stream = recognizer.createStream()
+    stream.setOption('language', language)
+    stream.acceptWaveform({
+      sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+      samples: new Float32Array(ORACLE_VOICE_SAMPLE_RATE),
+    })
+    stream.inputFinished()
+    while (recognizer.isReady(stream)) recognizer.decode(stream)
+    recognizer.reset(stream)
   }
 
   private async startUtterance(input: VoiceStartUtterance): Promise<void> {

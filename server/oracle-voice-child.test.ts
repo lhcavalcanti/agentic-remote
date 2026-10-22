@@ -266,6 +266,7 @@ describe('ChildVoiceEngine parent supervision', () => {
     finished: number
     options: Map<string, string>
     pendingDecodes: number
+    decodes: number
     reset: number
     text: string
   }
@@ -330,6 +331,7 @@ describe('ChildVoiceEngine parent supervision', () => {
           finished: 0,
           options: new Map(),
           pendingDecodes: 0,
+          decodes: 0,
           reset: 0,
           text: '',
         }
@@ -355,8 +357,15 @@ describe('ChildVoiceEngine parent supervision', () => {
 
       decode(stream: FakeSherpaStream): void {
         stream.pendingDecodes -= 1
-        stream.text = outputs.shift() ?? stream.text
-        this.decodeCount += 1
+        stream.decodes += 1
+        const warmup = this.streams[0] === stream
+          && stream.finished === 1
+          && stream.accepted.length === 1
+          && stream.accepted[0].samples.every((sample) => sample === 0)
+        if (!warmup) {
+          stream.text = outputs.shift() ?? stream.text
+          this.decodeCount += 1
+        }
       }
 
       isEndpoint(): boolean {
@@ -525,6 +534,24 @@ describe('ChildVoiceEngine parent supervision', () => {
   }
 
   describe('resident sherpa STT worker', () => {
+    it('warms the recognizer with silence before reporting ready', async () => {
+      const harness = childHarness()
+
+      await initializeWorker(harness)
+
+      const recognizer = harness.sherpa.recognizers[0]
+      expect(recognizer.streams).toHaveLength(1)
+      expect(recognizer.streams[0].options.get('language')).toBe('en')
+      expect(recognizer.streams[0].accepted).toEqual([{
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        samples: new Float32Array(ORACLE_VOICE_SAMPLE_RATE),
+      }])
+      expect(recognizer.streams[0].finished).toBe(1)
+      expect(recognizer.streams[0].decodes).toBeGreaterThan(0)
+      expect(recognizer.streams[0].reset).toBe(1)
+      expect(workerEvents(harness.messages).at(-1)).toEqual({ type: 'ready' })
+    })
+
     it('selects the validated Zipformer profile files and feature dimension', async () => {
       const harness = childHarness({
         workerConfig: {
@@ -621,7 +648,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         enableEndpoint: true,
         rule2MinTrailingSilence: 0.8,
       })
-      const stream = harness.sherpa.recognizers[0].streams[0]
+      const stream = harness.sherpa.recognizers[0].streams[1]
       expect(stream.options.get('language')).toBe('pt-BR')
       expect(stream.accepted[0]).toEqual({
         sampleRate: ORACLE_VOICE_SAMPLE_RATE,
@@ -740,7 +767,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         requestId: 'too-long',
         message: expect.stringContaining('maximum duration'),
       })
-      expect(harness.sherpa.recognizers[0].streams[0].accepted).toEqual([])
+      expect(harness.sherpa.recognizers[0].streams[1].accepted).toEqual([])
     })
 
     it('cancels STT generations without emitting a stale final', async () => {

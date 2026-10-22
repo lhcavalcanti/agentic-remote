@@ -53,9 +53,28 @@ describe('pending echoes', () => {
     const first = createPendingEcho('e1', 'same', earlier, 1_000)
     const second = createPendingEcho('e2', 'same', earlier, 1_100)
     const once = [...earlier, user('u2', 'same')]
-    expect(retainPendingEchoes([first, second], once, 'running', 2_000)).toEqual([second])
+    expect(retainPendingEchoes([first, second], once, 'running', 2_000)).toMatchObject([{ id: 'e2' }])
     const twice = [...once, user('u3', 'same')]
     expect(retainPendingEchoes([first, second], twice, 'running', 2_000)).toEqual([])
+  })
+
+  it('keeps the second identical echo pending across later prunes', () => {
+    const first = createPendingEcho('e1', 'same', earlier, 1_000)
+    const second = createPendingEcho('e2', 'same', earlier, 1_100)
+    const once = [...earlier, user('u2', 'same')]
+    const kept = retainPendingEchoes([first, second], once, 'running', 2_000)
+    expect(retainPendingEchoes(kept, once, 'running', 3_000)).toBe(kept)
+    expect(unloggedPendingEchoes(kept, once)).toBe(kept)
+    expect(retainPendingEchoes(kept, [...once, user('u3', 'same')], 'running', 4_000)).toEqual([])
+  })
+
+  it('is not confirmed by an identical message deep in a long history', () => {
+    const long = [
+      user('old', 'continue'),
+      ...Array.from({ length: 500 }, (_, index) => user(`u${index}`, `step ${index}`)),
+    ]
+    const echo = createPendingEcho('e1', 'continue', long, 1_000)
+    expect(unloggedPendingEchoes([echo], long)).toEqual([echo])
   })
 
   it('ignores agent replies and other text', () => {
@@ -129,6 +148,15 @@ describe('pending echoes across sessions', () => {
     }), 2_000)
     expect(next).toEqual({ two: [b] })
     expect(prunePendingEchoMap(next, lookup({}), 3_000)).toBe(next)
+  })
+
+  it('settles on repeated prunes once the second identical echo is alone', () => {
+    const first = createPendingEcho('e1', 'same', earlier, 1_000)
+    const second = createPendingEcho('e2', 'same', earlier, 1_100)
+    const once = lookup({ one: { messages: [...earlier, user('u2', 'same')], status: 'running' } })
+    const next = prunePendingEchoMap({ one: [first, second] }, once, 2_000)
+    expect(next.one).toMatchObject([{ id: 'e2' }])
+    expect(prunePendingEchoMap(next, once, 3_000)).toBe(next)
   })
 
   it('reports when the next settled echo is due to go', () => {

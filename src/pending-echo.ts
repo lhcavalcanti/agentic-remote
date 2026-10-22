@@ -19,7 +19,6 @@ export interface PendingEcho {
 /** How long a session may stay settled while still showing a message it never logged. */
 export const PENDING_ECHO_SETTLED_MS = 10_000
 
-const KNOWN_USER_LIMIT = 200
 const PREFIX_MATCH_MIN = 32
 
 export function createPendingEcho(
@@ -34,7 +33,6 @@ export function createPendingEcho(
     sentAt,
     knownUserIds: messages
       .filter((message) => message.role === 'user')
-      .slice(-KNOWN_USER_LIMIT)
       .map((message) => message.id),
   }
 }
@@ -50,6 +48,26 @@ function sameText(left: string, right: string): boolean {
   return shorter.length >= PREFIX_MATCH_MIN && longer.startsWith(shorter)
 }
 
+function pairEchoes(
+  echoes: PendingEcho[],
+  messages: ChatMessage[],
+): { unlogged: PendingEcho[], logged: string[] } {
+  const logged: string[] = []
+  const unlogged = echoes.filter((echo) => {
+    const known = new Set(echo.knownUserIds)
+    const content = normalize(echo.content)
+    const match = messages.find((message) =>
+      message.role === 'user' &&
+      !known.has(message.id) &&
+      !logged.includes(message.id) &&
+      sameText(content, normalize(message.content)),
+    )
+    if (match) logged.push(match.id)
+    return !match
+  })
+  return { unlogged: unlogged.length === echoes.length ? echoes : unlogged, logged }
+}
+
 /**
  * The echoes whose transcript message has not arrived yet. Each is paired with
  * at most one new user message, in order, so sending the same words twice
@@ -60,20 +78,7 @@ export function unloggedPendingEchoes(
   messages: ChatMessage[],
 ): PendingEcho[] {
   if (echoes.length === 0) return echoes
-  const used = new Set<string>()
-  const unlogged = echoes.filter((echo) => {
-    const known = new Set(echo.knownUserIds)
-    const content = normalize(echo.content)
-    const match = messages.find((message) =>
-      message.role === 'user' &&
-      !known.has(message.id) &&
-      !used.has(message.id) &&
-      sameText(content, normalize(message.content)),
-    )
-    if (match) used.add(match.id)
-    return !match
-  })
-  return unlogged.length === echoes.length ? echoes : unlogged
+  return pairEchoes(echoes, messages).unlogged
 }
 
 /**
@@ -88,11 +93,16 @@ export function retainPendingEchoes(
   status: SessionStatus,
   now: number,
 ): PendingEcho[] {
-  const unlogged = unloggedPendingEchoes(echoes, messages)
+  if (echoes.length === 0) return echoes
+  const { unlogged, logged } = pairEchoes(echoes, messages)
   const settled = status === 'idle' || status === 'error'
   let changed = unlogged !== echoes
   const retained: PendingEcho[] = []
-  for (const echo of unlogged) {
+  // A message that confirmed a retired echo can never confirm another one.
+  const carried = logged.length
+    ? unlogged.map((echo) => ({ ...echo, knownUserIds: [...echo.knownUserIds, ...logged] }))
+    : unlogged
+  for (const echo of carried) {
     if (!settled) {
       if (echo.settledAt === undefined) retained.push(echo)
       else {

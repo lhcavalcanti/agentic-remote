@@ -286,7 +286,7 @@ export async function buildApp(
 
   await app.register(fastifyWebsocket, {
     options: {
-      maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes,
+      maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
     },
   })
   const localTranscription =

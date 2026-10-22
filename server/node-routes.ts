@@ -215,7 +215,8 @@ async function receiveNodeVoiceMessage(
   isBinary: boolean,
   limits: VoiceBackendSessionLimits,
 ): Promise<void> {
-  if (rawDataByteLength(data) > limits.maxFrameBytes) {
+  const messageLimit = isBinary ? limits.maxFrameBytes : limits.maxQueueBytes
+  if (rawDataByteLength(data) > messageLimit) {
     throw new VoiceSessionError('Node voice frame is too large', 1009)
   }
   if (isBinary) {
@@ -392,7 +393,10 @@ export async function registerNodeRoutes(
               return
             }
             const bytes = rawDataByteLength(data)
-            if (bytes > voiceLimits.maxFrameBytes) {
+            const messageLimit = isBinary
+              ? voiceLimits.maxFrameBytes
+              : voiceLimits.maxQueueBytes
+            if (bytes > messageLimit) {
               inputClosed = true
               socket.close(1009, 'Node voice frame is too large')
               return

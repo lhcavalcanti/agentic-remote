@@ -315,6 +315,44 @@ describe('RemoteVoiceClient', () => {
     })).rejects.toThrow('timed out')
   })
 
+  it('allows the full cold-worker startup budget by default', async () => {
+    vi.useFakeTimers()
+    const server = createServer()
+    let stalledSocket: { destroy(): void } | undefined
+    let resolveUpgrade!: () => void
+    const upgraded = new Promise<void>((resolve) => {
+      resolveUpgrade = resolve
+    })
+    server.on('upgrade', (_request, socket) => {
+      stalledSocket = socket
+      resolveUpgrade()
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address() as AddressInfo
+    closeServers.push(async () => {
+      stalledSocket?.destroy()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+
+    let settled = false
+    const connecting = RemoteVoiceClient.connect({
+      id: 'cold-worker',
+      name: 'Cold worker',
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      token: 'secret-token',
+    }, 'stream-1').finally(() => {
+      settled = true
+    })
+    void connecting.catch(() => undefined)
+    await upgraded
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await expect(connecting).rejects.toThrow('timed out')
+    vi.useRealTimers()
+  })
+
   it('aborts a connection immediately when the node registration changes during upgrade', async () => {
     const registration = new AbortController()
     const node = await voiceNode(() => registration.abort())

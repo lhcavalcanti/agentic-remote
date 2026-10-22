@@ -1,6 +1,7 @@
 import type { ManagerClientDefaults } from '../../shared/manager'
 import {
   ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS,
+  ORACLE_VOICE_CONNECTION_TIMEOUT_MS,
   ORACLE_VOICE_PROTOCOL,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
@@ -25,7 +26,6 @@ const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000] as const
 const OPEN = 1
 const CLIENT_NORMAL_CLOSE_CODE = 1000
 const CLIENT_FATAL_CLOSE_CODE = 4000
-const HELLO_TIMEOUT_MS = 10_000
 const MAX_CLOSE_REASON_BYTES = 123
 const UTF8_ENCODER = new TextEncoder()
 
@@ -384,7 +384,7 @@ export class OracleVoiceClient {
           'Oracle voice did not send hello before the connection timed out',
           { fatal: false },
         ))
-      }, HELLO_TIMEOUT_MS)
+      }, ORACLE_VOICE_CONNECTION_TIMEOUT_MS)
       socket.onerror = () => {
         rejectBeforeHello(new OracleVoiceClientError(
           'socket-failed',

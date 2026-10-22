@@ -1109,7 +1109,21 @@ export function ManagerAssistant({
             Oracle is answering; anything you send now waits its turn.
           </p>
         ) : null}
-        {conversationActive ? (
+        {voice.recording ? (
+          <div className="recording-panel manager-composer__recording" role="status">
+            <button className="recording-panel__cancel" onClick={() => voice.stop(true)} type="button">
+              Cancel
+            </button>
+            <span className="recording-panel__status">
+              <i />
+              Recording {recordingDuration(voice.seconds)}
+            </span>
+            <button className="recording-panel__stop" onClick={() => voice.stop()} type="button">
+              <Square fill="currentColor" size={12} />
+              Stop & transcribe
+            </button>
+          </div>
+        ) : conversationActive ? (
           <div
             aria-label="Conversation status"
             className={`manager-conversation-status manager-conversation-status--${conversation.state}`}
@@ -1148,20 +1162,6 @@ export function ManagerAssistant({
                 {conversation.state === 'stopping' ? 'Stopping' : 'Stop'}
               </button>
             ) : null}
-          </div>
-        ) : voice.recording ? (
-          <div className="recording-panel manager-composer__recording" role="status">
-            <button className="recording-panel__cancel" onClick={() => voice.stop(true)} type="button">
-              Cancel
-            </button>
-            <span className="recording-panel__status">
-              <i />
-              Recording {recordingDuration(voice.seconds)}
-            </span>
-            <button className="recording-panel__stop" onClick={() => voice.stop()} type="button">
-              <Square fill="currentColor" size={12} />
-              Stop & transcribe
-            </button>
           </div>
         ) : null}
         {conversationAvailable && !conversationActive ? (

@@ -298,7 +298,7 @@ export class OracleVoiceCoordinator {
     } catch (error) {
       const failure = backendDisconnectFromError(error)
       this.terminate(
-        failure.retryable ? failure.code : terminalStartupCloseCode(failure.code),
+        failure.retryable ? 1012 : terminalStartupCloseCode(failure.code),
         failure.reason,
       )
       await this.finishClose('Oracle voice failed to start')
@@ -496,8 +496,22 @@ export class OracleVoiceCoordinator {
     }
     if (output.type === 'hello') return
     if (output.type === 'error') {
+      if (
+        output.code === 'tts_failed'
+        && output.generation === this.currentGeneration
+        && this.activeSpeech
+      ) {
+        this.clearSpeechOutput()
+      }
       if (output.generation === this.currentGeneration || output.fatal) {
         await this.sendOutput(output)
+      }
+      if (
+        output.code === 'tts_failed'
+        && output.generation === this.currentGeneration
+        && !output.fatal
+      ) {
+        await this.sendState('listening', output.generation)
       }
       if (output.fatal) {
         this.backendFatalReported = true
@@ -1164,7 +1178,7 @@ function backendDisconnectFromError(error: unknown): OracleVoiceBackendDisconnec
     return {
       code: 1013,
       reason: errorMessage(error, 'Voice backend rejected the connection'),
-      retryable: false,
+      retryable: true,
       cause: 'backpressure',
     }
   }

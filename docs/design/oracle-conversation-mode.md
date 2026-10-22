@@ -121,6 +121,9 @@ frame carries a direction, generation, sequence, sample rate, and sample
 count; playback frames also carry the active synthesis segment ID. Parsers
 reject unknown versions, impossible lengths, unsupported sample rates,
 duplicate or out-of-order frames, and frames above the configured limit.
+Binary PCM stays capped at 32 KiB per frame. JSON controls use the larger
+bounded input-queue limit so a valid `start` message can carry the existing
+per-computer folder defaults without weakening the audio-frame cap.
 
 ### Browser client
 
@@ -145,6 +148,12 @@ The browser client owns:
 Closing Oracle, stopping Conversation mode, page teardown, or a fatal error
 stops microphone tracks, closes audio contexts and sockets, and clears timers
 and queues.
+
+The browser and paired-node connector allow 35 seconds for the initial hello.
+That covers the worker's bounded 30-second cold-start window plus transport
+overhead. A temporary paired-node busy response closes the browser relay with
+retryable service-restart code `1012`; reconnect uses a fresh stream and never
+replays audio.
 
 ### Hub coordinator
 
@@ -188,6 +197,10 @@ whose delivery is waiting on that same coordinator. Relay or browser overflow
 still fails closed. Browser writes have a five-second deadline and terminate
 the socket on expiry, so a network black hole cannot retain the single
 Conversation admission slot until the operating system abandons TCP.
+If synthesis emits partial PCM and then fails, the backend reports the error
+without declaring the segment complete. The coordinator clears the remaining
+speech queue and returns to listening; it never advances to later sentences
+from the same failed reply.
 
 The backend runs native inference in an isolated child process. A native crash
 or malformed model cannot terminate the Agentic Remote server. The child stays

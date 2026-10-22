@@ -394,6 +394,15 @@ function sendControl(
   }))
 }
 
+function largeManagerDefaults(): ManagerClientDefaults {
+  return {
+    folders: Object.fromEntries(Array.from({ length: 9 }, (_, index) => [
+      `computer-${index}`,
+      `/${'voice-control-path/'.repeat(200)}${index}`,
+    ])),
+  }
+}
+
 function engineCalls<T extends FakeVoiceEngineCall['type']>(
   engine: FakeVoiceEngine,
   type: T,
@@ -582,6 +591,51 @@ describe('Oracle voice transport security and privacy', () => {
     const logText = logs.join('')
     expect(logText).not.toContain(built.identity.token)
     expect(logText).not.toContain('invalid-node-token')
+  })
+
+  it('accepts valid text controls larger than the binary frame limit', async () => {
+    const runtime = await localRuntime()
+    const ticket = await issueTicket(runtime)
+    const hub = await connect(
+      `${runtime.wsUrl}/api/oracle-voice?ticket=${ticket}`,
+      trusted,
+    )
+    const hubHello = await hub.inbox.waitFor((message) => message.type === 'hello')
+    sendControl(hub.socket, hubHello.streamId, 'start', 0, {
+      language: 'en',
+      defaults: largeManagerDefaults(),
+      answerOnly: true,
+    })
+    await expect(hub.inbox.waitFor(
+      (message) => message.type === 'state' && message.state === 'ready',
+    )).resolves.toMatchObject({ type: 'state', state: 'ready' })
+
+    const root = await testRoot('oracle-voice-node-control-limit')
+    const built = await buildApp({
+      dataDirectory: root,
+      logger: false,
+      role: 'node',
+      service: new TestSessionService() as unknown as SessionService,
+      managerAgent: false,
+      voiceBackend: voiceBackend(),
+    })
+    apps.push(built.app)
+    await built.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = built.app.server.address() as AddressInfo
+    const node = await connect(
+      `ws://127.0.0.1:${address.port}/node-api/oracle-voice`
+        + `?protocol=${ORACLE_VOICE_PROTOCOL}&streamId=large-node-control`,
+      { authorization: ['Bearer', built.identity.token].join(' ') },
+    )
+    const nodeHello = await node.inbox.waitFor((message) => message.type === 'hello')
+    sendControl(node.socket, nodeHello.streamId, 'start', 0, {
+      language: 'en',
+      defaults: largeManagerDefaults(),
+      answerOnly: true,
+    })
+    await expect(node.inbox.waitFor(
+      (message) => message.type === 'state' && message.state === 'ready',
+    )).resolves.toMatchObject({ type: 'state', state: 'ready' })
   })
 
   it('rejects oversized and malformed binary plus invalid controls over the real socket', async () => {

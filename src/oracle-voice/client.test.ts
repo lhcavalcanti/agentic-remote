@@ -388,6 +388,7 @@ describe('OracleVoiceClient', () => {
     await vi.waitFor(() => expect(client.sockets).toHaveLength(1))
     client.sockets[0].open()
 
+    expect(client.scheduledDelays()).toEqual([35_000])
     expect(client.scheduler.pending()).toBe(1)
     expect(await client.scheduler.runNext()).toBe(true)
     await expect(starting).rejects.toMatchObject({

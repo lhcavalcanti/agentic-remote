@@ -349,6 +349,31 @@ afterEach(() => {
 })
 
 describe('OracleVoiceCoordinator', () => {
+  it('maps temporary paired-node busy startup to a retryable browser close', async () => {
+    const manager = new FakeManager()
+    const terminated: Array<{ code: number; reason: string }> = []
+    const coordinator = new OracleVoiceCoordinator({
+      streamId: 'stream-1',
+      manager,
+      managerEvents: manager,
+      backend: {
+        connect: async () => {
+          throw Object.assign(new Error('Oracle voice is already in use'), {
+            statusCode: 409,
+          })
+        },
+      },
+      send: async () => undefined,
+      terminate: (code, reason) => terminated.push({ code, reason }),
+    })
+
+    await expect(coordinator.start()).rejects.toThrow('already in use')
+    expect(terminated).toEqual([{
+      code: 1012,
+      reason: 'Oracle voice is already in use',
+    }])
+  })
+
   it('submits Delegate-started voice finals as Ask only with voice provenance', async () => {
     const test = harness()
     await test.start(0, false)
@@ -1618,6 +1643,52 @@ describe('OracleVoiceCoordinator', () => {
     await test.backend.emit(audioEnd(1, second.segmentId))
     const third = test.backend.controls.filter((message) => message.type === 'synthesize')[2]
     expect(third).toMatchObject({ text: 'Final suffix' })
+  })
+
+  it('stops queued speech when synthesis fails after partial audio', async () => {
+    const test = harness()
+    test.manager.send.mockResolvedValueOnce(managerMessage('voice-user', {
+      content: 'Question',
+      state: 'queued',
+    }))
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.backend.emit(final(1, 'u1', 'Question'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('voice-user', { state: 'running' }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.delta',
+      messageId: 'voice-reply',
+      content: 'First sentence. Second sentence.',
+    })
+    const first = test.backend.controls.find(
+      (message): message is Extract<VoiceClientControl, { type: 'synthesize' }> =>
+        message.type === 'synthesize',
+    )!
+    await test.backend.emit(audio(1, first.segmentId, 0))
+
+    await test.backend.emit({
+      type: 'error',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId: 'stream-1',
+      generation: 1,
+      code: 'tts_failed',
+      message: 'Piper exited after emitting audio',
+      fatal: false,
+    })
+    await test.backend.emit(audioEnd(1, first.segmentId))
+
+    expect(test.backend.controls.filter(
+      (message) => message.type === 'synthesize',
+    )).toHaveLength(1)
+    expect(test.browser).not.toContainEqual(audioEnd(1, first.segmentId))
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'state',
+      generation: 1,
+      state: 'listening',
+    }))
   })
 
   it('paces a second sentence until twelve seconds of forwarded audio is consumed', async () => {

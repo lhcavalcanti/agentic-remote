@@ -119,8 +119,8 @@ Safari/device testing remain open.
 Only finalized STT text is submitted to Oracle. Partials are display-only. A
 disconnect discards the current utterance rather than replaying audio. If an
 Oracle submission fails, the finalized text returns to the composer. If TTS
-fails, Oracle's text reply remains usable. One Conversation stream is supported
-per hub.
+fails, Oracle's text reply remains usable and remaining queued sentences are
+not spoken. One Conversation stream is supported per hub.
 
 Conversation voice remains Ask-only. The Ask/Delegate switch continues to show
 and control the mode used by typed messages while Conversation is active.
@@ -130,6 +130,11 @@ that boundary the browser sends one endpoint, submits the bounded prefix, and
 shows a nonfatal warning; audio after the boundary is ignored until VAD observes
 the next speech segment. This avoids losing the whole utterance to a backend
 limit while keeping memory and transport bounded.
+
+Cold local or paired workers have up to 30 seconds to initialize. The browser
+and hub-to-node connector allow 35 seconds for the initial hello; a temporary
+paired-node busy response remains reconnectable. PCM frames stay capped at
+32 KiB, while JSON controls may use the bounded 384,000-byte input queue.
 
 Silero VAD detects speech activity; it does not authenticate a speaker.
 Nearby, replayed, or injected speech can be transcribed. Agentic Remote does
@@ -218,9 +223,9 @@ not engine-incremental within a sentence. The worker validates that complete
 result before splitting it into protocol-safe frames. Speakable segments are
 capped at 150 characters and completed list lines are synthesized separately.
 A segment remains bounded to 12 seconds at the native voice sample rate and
-fails explicitly before playback when the bound is exceeded. That segment is
-skipped without closing Conversation; later segments continue, and Oracle text
-remains available.
+fails explicitly before playback when the bound is exceeded. A synthesis
+failure stops the remaining speech queue without closing Conversation; Oracle
+text remains available.
 
 The native VITS binding cannot stop `generateAsync()` mid-call. Barge-in marks
 that generation stale immediately, clears browser playback, and lets new speech

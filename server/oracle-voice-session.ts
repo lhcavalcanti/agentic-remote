@@ -509,11 +509,6 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       message: asSessionError(error, 1011).message,
       fatal: false,
     })
-    await this.sendControl({
-      type: 'audio_end',
-      generation: message.generation,
-      segmentId: message.segmentId,
-    })
   }
 
   private async drainAudio(): Promise<void> {

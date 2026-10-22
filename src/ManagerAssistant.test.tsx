@@ -977,7 +977,9 @@ describe('ManagerAssistant', () => {
 
       expect(screen.getByText('Error')).toBeVisible()
       expect(screen.getByRole('alert')).toHaveTextContent(message)
-      expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+      expect(await screen.findByText(/Recording 0:00/)).toBeVisible()
+      expect(screen.getByRole('button', { name: /Stop & transcribe/ })).toBeEnabled()
     })
 
     it('keeps the typed mode visible and switchable while voice remains Ask-only', async () => {

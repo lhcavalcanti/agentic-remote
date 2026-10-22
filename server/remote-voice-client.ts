@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import {
   ORACLE_VOICE_PROTOCOL,
+  ORACLE_VOICE_CONNECTION_TIMEOUT_MS,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
   isVoiceClientControl,
@@ -23,7 +24,6 @@ import {
   type VoiceBackendOutput,
 } from './oracle-voice-session.js'
 
-const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_BUFFERED_BYTES = 64 * 1024
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
@@ -157,7 +157,8 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
         'transport',
       ))
     }
-    const connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
+    const connectTimeoutMs = options.connectTimeoutMs
+      ?? ORACLE_VOICE_CONNECTION_TIMEOUT_MS
     if (!Number.isSafeInteger(connectTimeoutMs) || connectTimeoutMs <= 0) {
       return Promise.reject(new RangeError('connectTimeoutMs must be a positive safe integer'))
     }

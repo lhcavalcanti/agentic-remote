@@ -656,19 +656,15 @@ describe('VoiceBackendSession', () => {
     release()
   })
 
-  it('reports one failed synthesis segment without closing the conversation', async () => {
-    class RejectOnceEngine extends FakeVoiceEngine {
-      private attempts = 0
-
+  it('reports a failed synthesis without marking partial audio complete', async () => {
+    class RejectingEngine extends FakeVoiceEngine {
       override async synthesize(
-        input: Parameters<FakeVoiceEngine['synthesize']>[0],
+        _input: Parameters<FakeVoiceEngine['synthesize']>[0],
       ): Promise<void> {
-        this.attempts += 1
-        if (this.attempts === 1) throw new Error('segment is too long')
-        await super.synthesize(input)
+        throw new Error('segment is too long')
       }
     }
-    const { engine, sent, session, terminated } = harness(new RejectOnceEngine())
+    const { sent, session, terminated } = harness(new RejectingEngine())
     await session.control(control('start', 2, { language: 'en' }))
     await session.control(control('synthesize', 2, {
       segmentId: 'segment-2',
@@ -681,21 +677,12 @@ describe('VoiceBackendSession', () => {
         code: 'tts_failed',
         fatal: false,
       }))
-      expect(sent).toContainEqual(expect.objectContaining({
-        type: 'audio_end',
-        segmentId: 'segment-2',
-      }))
     })
-    expect(terminated).toEqual([])
-
-    await expect(session.control(control('synthesize', 2, {
-      segmentId: 'segment-3',
-      text: 'The next segment still runs.',
-    }))).resolves.toBeUndefined()
-    expect(engine.calls).toContainEqual(expect.objectContaining({
-      type: 'tts.synthesize',
-      segmentId: 'segment-3',
+    expect(sent).not.toContainEqual(expect.objectContaining({
+      type: 'audio_end',
+      segmentId: 'segment-2',
     }))
+    expect(terminated).toEqual([])
   })
 
   it('clears stale synthesis identity when speech confirmation advances the generation', async () => {

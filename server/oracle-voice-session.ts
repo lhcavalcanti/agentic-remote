@@ -174,6 +174,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
   private readonly audioQueue: AudioReservation[] = []
   private readonly audioReservations = new Set<AudioReservation>()
   private readonly outputQueue: QueuedOutput[] = []
+  private readonly generationCancellations = new Map<number, Promise<void>>()
   private controlTail: Promise<void> = Promise.resolve()
   private audioIngressTail: Promise<void> = Promise.resolve()
   private audioDrainPromise: Promise<void> = Promise.resolve()
@@ -351,10 +352,7 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
         }
         if (this.generation !== undefined && message.generation > this.generation) {
           this.activeSegmentId = undefined
-          await this.engine.cancelGeneration({
-            streamId: this.streamId,
-            generation: this.generation,
-          })
+          this.startGenerationCancellation(this.generation)
         }
         this.generation = message.generation
         this.activeUtterance = {
@@ -402,6 +400,10 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
           streamId: this.streamId,
           ...utterance,
         })
+        if (this.finalForwarded) {
+          this.activeUtterance = undefined
+          return
+        }
         await this.sendControl({
           type: 'state',
           generation: message.generation,
@@ -436,12 +438,9 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
       case 'cancel':
         this.requireStarted()
         if (this.generation !== undefined && message.generation < this.generation) return
-        await this.engine.cancelGeneration({
-          streamId: this.streamId,
-          generation: message.generation,
-        })
         this.generation = message.generation
         this.clearCurrentWork()
+        this.startGenerationCancellation(message.generation)
         await this.sendControl({
           type: 'state',
           generation: message.generation,
@@ -475,6 +474,22 @@ class EngineVoiceBackendSession implements VoiceBackendSession {
     if (this.drainingAudio) return
     this.drainingAudio = true
     this.audioDrainPromise = this.drainAudio()
+  }
+
+  private startGenerationCancellation(generation: number): void {
+    if (this.generationCancellations.has(generation)) return
+    const cancellation = this.engine.cancelGeneration({
+      streamId: this.streamId,
+      generation,
+    }).catch(async (error: unknown) => {
+      if (this.closed) return
+      await this.fail(asSessionError(error, 1011), 'internal')
+    }).finally(() => {
+      if (this.generationCancellations.get(generation) === cancellation) {
+        this.generationCancellations.delete(generation)
+      }
+    })
+    this.generationCancellations.set(generation, cancellation)
   }
 
   private async handleSynthesisFailure(

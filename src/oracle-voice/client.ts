@@ -48,6 +48,7 @@ export type OracleVoiceClientErrorCode =
   | 'socket-failed'
   | 'slow-consumer'
   | 'slow-producer'
+  | 'utterance-limit'
   | 'capture-failed'
   | 'playback-failed'
   | 'server-error'
@@ -309,11 +310,19 @@ export class OracleVoiceClient {
       streamId: hello.streamId,
       initialGeneration: this.generation,
       maxQueueBytes: hello.capabilities.limits.maxQueueBytes,
+      maxUtteranceMs: hello.capabilities.limits.maxUtteranceMs,
       sendControl: (control) => this.sendControl(control),
       sendAudio: (frame) => this.sendAudio(frame),
       onTentativeSpeech: () => this.handleTentativeSpeech(),
       onSpeechConfirmed: (generation) => this.handleConfirmedSpeech(generation),
       onVadMisfire: () => this.handleVadMisfire(),
+      onUtteranceLimit: (maxUtteranceMs) => {
+        this.report(new OracleVoiceClientError(
+          'utterance-limit',
+          `Conversation submitted the first ${Math.floor(maxUtteranceMs / 1_000)} seconds of speech.`,
+          { fatal: false },
+        ))
+      },
       onError: (error) => {
         void this.failFatal(captureClientError(error))
       },
@@ -500,7 +509,6 @@ export class OracleVoiceClient {
           control.message,
           { fatal: false },
         ))
-        this.setState('error')
         return
       case 'heartbeat':
         if (control.timestamp === this.lastAcknowledgedHeartbeat) return

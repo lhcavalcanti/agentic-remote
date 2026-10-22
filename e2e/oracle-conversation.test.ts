@@ -138,6 +138,27 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   expect(afterReconnect.audioFrames).toBe(beforeDrop.audioFrames)
   expect(afterReconnect.managerSends).toEqual(beforeDrop.managerSends)
 
+  await voice.beginSpeech('Keep only the bounded prefix.')
+  await page.evaluate(async () => {
+    await window.__oracleVoiceE2E.vad?.pushAudio(
+      new Array(16_000 * 30 + 1).fill(0.25),
+    )
+  })
+  await expect(page.locator('p[aria-live="polite"]')).toContainText(
+    'submitted the first 30 seconds of speech',
+  )
+  await expect.poll(() => voice.managerSends()).toContain(
+    'Keep only the bounded prefix.',
+  )
+  await voice.endSpeech()
+  expect((await voice.managerSends()).filter(
+    (text) => text === 'Keep only the bounded prefix.',
+  )).toHaveLength(1)
+  await voice.speak('Continue after the bounded segment.')
+  await expect.poll(() => voice.managerSends()).toContain(
+    'Continue after the bounded segment.',
+  )
+
   const status = page.getByRole('group', { name: 'Conversation status' })
   await expect(status).toBeInViewport({ ratio: 1 })
   const bounds = await status.boundingBox()

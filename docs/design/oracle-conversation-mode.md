@@ -135,6 +135,7 @@ The browser client owns:
 - microphone permission and track lifetime;
 - a bounded pre-roll ring and bounded outbound frame queue;
 - reconnect with a fresh generation and no audio replay;
+- end and submit the bounded prefix at the advertised utterance duration;
 - partial transcript display;
 - streamed PCM playback through a separate `AudioContext`;
 - bounded playback scheduling and slow-consumer rejection;
@@ -263,17 +264,29 @@ models.
 4. **Endpoint:** client VAD supplies the segment-end hint after its redemption
    window. Internal recognizer endpoints are decoding boundaries only. The
    server drains all accepted PCM before finalization and enforces the maximum
-   utterance and operation limits.
+   utterance and operation limits. Browser VAD has already supplied trailing
+   silence, so the worker calls `inputFinished()` without appending another
+   synthetic endpoint window.
 5. **Final transcript:** the hub records the utterance ID before submitting it
    once to Oracle. A duplicate final is ignored. A failed submission is shown
    as an error and is not silently retried.
 6. **Oracle reply:** stable completed sentences from replacement snapshots are
-   synthesized. The unfinished suffix remains buffered.
+   synthesized. The unfinished suffix remains buffered. Starting a tool call
+   confirms terminal punctuation as a stable boundary without flushing an
+   unfinished phrase.
 7. **New speech or stop:** generation advances. All older STT, TTS, and audio
-   is stale and discarded at each boundary.
+   is stale and discarded at each boundary. A prior segment already waiting
+   for its STT final remains eligible for exactly-once submission; if it arrives
+   after the next generation starts, Oracle records it and immediately cancels
+   its superseded reply. A bounded timeout reports and discards a missing final.
 
 If tentative speech is a VAD misfire, playback gain is restored without
 cancelling Oracle or losing queued audio.
+
+The pinned native VITS binding cannot preempt `generateAsync()`. Confirmed
+barge-in therefore marks its output stale and releases the STT/control path
+immediately rather than waiting for native compute. A replacement speech
+segment waits behind that one native call; no cancelled audio is forwarded.
 
 ## Text segmentation
 
@@ -281,7 +294,9 @@ The segmenter consumes replacement snapshots, not append-only deltas. It emits
 only text that is both new and terminated by stable sentence punctuation or a
 paragraph boundary. Punctuation at the transient snapshot suffix is held until
 a later snapshot confirms following content or the final assistant message
-arrives; completed list lines are confirmed by their line break. It strips
+arrives. A tool-call activity also confirms terminal punctuation at that suffix
+but does not flush an unterminated phrase. Completed list lines are confirmed
+by their line break. It strips
 markdown control syntax, skips fenced code, tables, URLs, and activity-only
 messages, and caps segments at 150 characters. On the final assistant message
 it may flush a short remaining sentence.

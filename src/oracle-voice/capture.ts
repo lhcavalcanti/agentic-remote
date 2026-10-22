@@ -14,6 +14,7 @@ import {
 
 const DEFAULT_PRE_ROLL_BYTES = ORACLE_VOICE_SAMPLE_RATE * 2 * 3 / 2
 const DEFAULT_QUEUE_BYTES = ORACLE_VOICE_SAMPLE_RATE * 2 * 2
+const DEFAULT_MAX_UTTERANCE_MS = 30_000
 
 export type VoiceCaptureErrorCode =
   | 'permission-denied'
@@ -73,12 +74,14 @@ export interface VoiceCaptureOptions {
   inputSampleRate?: number
   maxPreRollBytes?: number
   maxQueueBytes?: number
+  maxUtteranceMs?: number
   dependencies?: Partial<VoiceCaptureDependencies>
   sendControl(control: VoiceClientControl): void
   sendAudio(frame: VoiceAudioFrame): void | Promise<void>
   onTentativeSpeech?(): void
   onSpeechConfirmed?(generation: number): void
   onVadMisfire?(): void
+  onUtteranceLimit?(maxUtteranceMs: number): void
   onError?(error: VoiceCaptureError): void
 }
 
@@ -97,23 +100,28 @@ export class VoiceCapture {
   private readonly inputSampleRate: number
   private readonly maxPreRollBytes: number
   private readonly maxQueueBytes: number
+  private readonly maxUtteranceMs: number
+  private readonly maxUtteranceSamples: number
   private readonly dependencies: VoiceCaptureDependencies
   private readonly sendControl: (control: VoiceClientControl) => void
   private readonly sendAudio: (frame: VoiceAudioFrame) => void | Promise<void>
   private readonly onTentativeSpeech: () => void
   private readonly onSpeechConfirmed: (generation: number) => void
   private readonly onVadMisfire: () => void
+  private readonly onUtteranceLimit: (maxUtteranceMs: number) => void
   private readonly onError: (error: VoiceCaptureError) => void
   private readonly resampler: Pcm16Resampler
   private readonly preRoll: BufferedFrame[] = []
   private readonly audioQueue: QueuedAudio[] = []
   private generation: number
   private sequence = 0
+  private utteranceSamples = 0
   private preRollBytes = 0
   private pendingAudioBytes = 0
   private utteranceId: string | undefined
   private tentative = false
   private confirmed = false
+  private suppressUntilVadEnd = false
   private pumping = false
   private wanted = false
   private running = false
@@ -138,6 +146,13 @@ export class VoiceCapture {
       options.maxQueueBytes ?? DEFAULT_QUEUE_BYTES,
       'maxQueueBytes',
     )
+    this.maxUtteranceMs = positiveLimit(
+      options.maxUtteranceMs ?? DEFAULT_MAX_UTTERANCE_MS,
+      'maxUtteranceMs',
+    )
+    this.maxUtteranceSamples = Math.floor(
+      ORACLE_VOICE_SAMPLE_RATE * this.maxUtteranceMs / 1_000,
+    )
     this.dependencies = {
       mediaDevices: options.dependencies?.mediaDevices
         ?? globalThis.navigator?.mediaDevices,
@@ -154,6 +169,7 @@ export class VoiceCapture {
     this.onTentativeSpeech = options.onTentativeSpeech ?? (() => undefined)
     this.onSpeechConfirmed = options.onSpeechConfirmed ?? (() => undefined)
     this.onVadMisfire = options.onVadMisfire ?? (() => undefined)
+    this.onUtteranceLimit = options.onUtteranceLimit ?? (() => undefined)
     this.onError = options.onError ?? (() => undefined)
     this.resampler = new Pcm16Resampler(
       this.inputSampleRate,
@@ -185,8 +201,10 @@ export class VoiceCapture {
     this.runId += 1
     this.tentative = false
     this.confirmed = false
+    this.suppressUntilVadEnd = false
     this.utteranceId = undefined
     this.sequence = 0
+    this.utteranceSamples = 0
     this.resampler.reset()
     this.clearPreRoll()
     this.clearQueuedAudio()
@@ -303,7 +321,7 @@ export class VoiceCapture {
   }
 
   private processFrame(frame: Float32Array): void {
-    if (!this.wanted) return
+    if (!this.wanted || this.suppressUntilVadEnd) return
     try {
       const samples = this.resampler.push(frame)
       if (samples.length === 0) return
@@ -318,7 +336,12 @@ export class VoiceCapture {
   }
 
   private speechTentative(): void {
-    if (!this.wanted || this.tentative || this.confirmed) return
+    if (
+      !this.wanted
+      || this.suppressUntilVadEnd
+      || this.tentative
+      || this.confirmed
+    ) return
     this.tentative = true
     try {
       this.onTentativeSpeech()
@@ -329,7 +352,7 @@ export class VoiceCapture {
   }
 
   private speechConfirmed(): void {
-    if (!this.wanted || this.confirmed) return
+    if (!this.wanted || this.suppressUntilVadEnd || this.confirmed) return
     if (this.generation === 0xffff_ffff) {
       this.fail(new VoiceCaptureError(
         'capture-failed',
@@ -339,6 +362,7 @@ export class VoiceCapture {
     }
     this.generation += 1
     this.sequence = 0
+    this.utteranceSamples = 0
     this.confirmed = true
     this.tentative = false
     this.utteranceId = this.dependencies.createUtteranceId()
@@ -358,6 +382,12 @@ export class VoiceCapture {
   }
 
   private vadMisfire(): void {
+    if (this.suppressUntilVadEnd) {
+      this.suppressUntilVadEnd = false
+      this.resampler.reset()
+      this.clearPreRoll()
+      return
+    }
     if (!this.wanted || this.confirmed || !this.tentative) return
     this.tentative = false
     this.clearPreRoll()
@@ -369,6 +399,16 @@ export class VoiceCapture {
   }
 
   private speechEnded(): void {
+    if (this.suppressUntilVadEnd) {
+      this.suppressUntilVadEnd = false
+      this.resampler.reset()
+      this.clearPreRoll()
+      return
+    }
+    this.finishConfirmedSpeech()
+  }
+
+  private finishConfirmedSpeech(): void {
     if (!this.wanted || !this.confirmed || !this.utteranceId) return
     try {
       this.sendControl(this.control('speech_end', this.generation, {
@@ -405,12 +445,18 @@ export class VoiceCapture {
   }
 
   private enqueueAudio(samples: Int16Array): void {
+    if (!this.confirmed) return
+    const remaining = this.maxUtteranceSamples - this.utteranceSamples
+    if (remaining <= 0) return
+    const accepted = samples.length > remaining
+      ? samples.slice(0, remaining)
+      : samples
     const frame: VoiceAudioFrame = {
       direction: 'microphone',
       generation: this.generation,
       sequence: this.sequence,
       sampleRate: ORACLE_VOICE_SAMPLE_RATE,
-      samples,
+      samples: accepted,
     }
     const bytes = voiceAudioFrameByteLength(frame)
     if (bytes > this.maxQueueBytes || this.pendingAudioBytes > this.maxQueueBytes - bytes) {
@@ -421,9 +467,16 @@ export class VoiceCapture {
       return
     }
     this.sequence += 1
+    this.utteranceSamples += accepted.length
     this.audioQueue.push({ frame, bytes })
     this.pendingAudioBytes += bytes
     void this.pumpAudio()
+    if (this.utteranceSamples >= this.maxUtteranceSamples) {
+      this.finishConfirmedSpeech()
+      this.suppressUntilVadEnd = true
+      this.resampler.reset()
+      this.onUtteranceLimit(this.maxUtteranceMs)
+    }
   }
 
   private async pumpAudio(): Promise<void> {

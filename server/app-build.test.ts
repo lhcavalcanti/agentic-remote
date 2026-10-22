@@ -70,6 +70,8 @@ describe('production app build identity', () => {
       expect(voiceNotices).toContain('Copyright (c) 2020-present Silero Team')
       expect(voiceNotices).toContain('onnxruntime-web')
       expect(voiceNotices).toContain('Copyright (c) Microsoft Corporation')
+      expect(voiceNotices).toContain('THIRD PARTY SOFTWARE NOTICES AND INFORMATION')
+      expect(voiceNotices).toContain('protocolbuffers/protobuf')
       return identity
     }
 

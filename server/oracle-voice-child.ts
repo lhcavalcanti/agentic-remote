@@ -370,26 +370,12 @@ class ResidentVoiceWorker implements VoiceWorker {
       throw new Error('STT utterance identity does not match')
     }
     if (utterance.finalized || this.isCancelled(input)) return
-    await this.finalizeUtterance(utterance, true)
+    await this.finalizeUtterance(utterance)
   }
 
-  private async finalizeUtterance(
-    utterance: ActiveUtterance,
-    addTailSilence: boolean,
-  ): Promise<void> {
+  private async finalizeUtterance(utterance: ActiveUtterance): Promise<void> {
     if (utterance.finalized) return
     utterance.finalized = true
-    if (addTailSilence) {
-      const config = this.requireConfig()
-      const tailSamples = Math.min(
-        ORACLE_VOICE_SAMPLE_RATE * 3,
-        Math.ceil(ORACLE_VOICE_SAMPLE_RATE * config.endpointMs / 1_000),
-      )
-      utterance.stream.acceptWaveform({
-        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
-        samples: new Float32Array(tailSamples),
-      })
-    }
     utterance.stream.inputFinished()
     await this.decodeAvailable(utterance)
     const recognizer = this.requireRecognizer()
@@ -454,7 +440,16 @@ class ResidentVoiceWorker implements VoiceWorker {
     if (this.isCancelled(input)) {
       throw new Error('TTS generation is cancelled')
     }
-    if (this.synthesis) throw new Error('TTS synthesis is already active')
+    if (this.synthesis) {
+      const active = this.synthesis
+      if (!active.cancelled) throw new Error('TTS synthesis is already active')
+      if (active.kind === 'piper') {
+        await this.terminatePiper(active)
+      } else {
+        await active.completion
+      }
+      if (this.synthesis === active) this.synthesis = undefined
+    }
     if (!('binary' in ttsConfig)) {
       await this.synthesizeWithSherpa(input, ttsConfig.speaker ?? 0)
       return

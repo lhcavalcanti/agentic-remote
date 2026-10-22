@@ -52,6 +52,7 @@ describe('OracleVoiceClient', () => {
       'POST /api/oracle-voice/tickets',
     ])
     expect(client.captures[0].start).toHaveBeenCalledOnce()
+    expect(client.captures[0].options.maxUtteranceMs).toBe(30_000)
     expect(client.startControls(0)).toEqual([
       expect.objectContaining({
         type: 'start',
@@ -76,6 +77,20 @@ describe('OracleVoiceClient', () => {
     expect(client.sockets[0].jsonMessages().filter(
       (message) => message.type === 'heartbeat',
     )).toEqual([heartbeat])
+  })
+
+  it('reports the negotiated utterance limit without replacing live state', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+
+    client.captures[0].options.onUtteranceLimit?.(30_000)
+
+    expect(client.errors()).toContainEqual(expect.objectContaining({
+      code: 'utterance-limit',
+      message: 'Conversation submitted the first 30 seconds of speech.',
+      fatal: false,
+    }))
+    expect(client.instance.currentState).toBe('listening')
   })
 
   it('creates and resumes the separate playback context in the start gesture', async () => {
@@ -575,9 +590,12 @@ describe('OracleVoiceClient', () => {
   it.each([
     ['oracle_send_failed', 'Could not send to Oracle'],
     ['voice_synthesis_failed', 'Oracle speech synthesis failed'],
-  ])('maps nonfatal %s turn failures to recoverable Error', async (code, message) => {
+  ])('reports nonfatal %s turn failures without replacing the live state', async (code, message) => {
     const client = harness()
     await client.connect('stream-1')
+    client.sockets[0].message(control('state', 'stream-1', 0, {
+      state: 'thinking',
+    }))
 
     client.sockets[0].message(control('error', 'stream-1', 0, {
       code,
@@ -585,18 +603,14 @@ describe('OracleVoiceClient', () => {
       fatal: false,
     }))
 
-    await vi.waitFor(() => expect(client.instance.currentState).toBe('error'))
+    await vi.waitFor(() => expect(client.errors()).toHaveLength(1))
+    expect(client.instance.currentState).toBe('thinking')
     expect(client.errors()).toContainEqual(expect.objectContaining({
       code: 'server-error',
       message,
       fatal: false,
     }))
     expect(client.captures[0].stop).not.toHaveBeenCalled()
-
-    client.sockets[0].message(control('state', 'stream-1', 0, {
-      state: 'listening',
-    }))
-    await vi.waitFor(() => expect(client.instance.currentState).toBe('listening'))
   })
 
   it('treats server stopped as terminal cleanup without a later close error', async () => {

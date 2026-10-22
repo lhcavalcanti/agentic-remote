@@ -434,6 +434,78 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.send).toHaveBeenCalledTimes(2)
   })
 
+  it('preserves an endpoint-pending final when the next utterance starts first', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+    await test.coordinator.receive(confirm(2, 'u2'))
+
+    await test.backend.emit(final(1, 'u1', 'First request.'))
+    await test.coordinator.receive(control('speech_end', 2, {
+      utteranceId: 'u2',
+    }))
+    await test.backend.emit(final(2, 'u2', 'Second request.'))
+    await test.backend.emit(final(1, 'u1', 'First request.'))
+
+    expect(test.manager.send.mock.calls.map(([content]) => content)).toEqual([
+      'First request.',
+      'Second request.',
+    ])
+    expect(test.manager.cancelMessage).toHaveBeenCalledWith('user-1')
+  })
+
+  it('expires a superseded endpoint-pending final explicitly', async () => {
+    const test = harness(snapshot(), 10)
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+    vi.useFakeTimers()
+    await test.coordinator.receive(confirm(2, 'u2'))
+
+    await vi.advanceTimersByTimeAsync(10)
+    await test.backend.emit(final(1, 'u1', 'Too late.'))
+
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'error',
+      generation: 2,
+      code: 'stt_final_timeout',
+      fatal: false,
+    }))
+    expect(test.manager.send).not.toHaveBeenCalled()
+  })
+
+  it('speaks a completed terminal sentence when Oracle starts a tool call', async () => {
+    const test = harness()
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.backend.emit(final(1, 'u1', 'Check the service.'))
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('user-1', { state: 'running', source: 'voice' }),
+    })
+    await test.coordinator.managerEvent({
+      type: 'manager.delta',
+      messageId: 'assistant-1',
+      content: 'I will check that now.',
+    })
+    expect(test.backend.calls).not.toContain('tts.synthesize:I will check that now.')
+
+    await test.coordinator.managerEvent({
+      type: 'manager.message',
+      message: managerMessage('activity-1', {
+        role: 'activity',
+        content: 'Running health check',
+      }),
+    })
+
+    expect(test.backend.calls).toContain('tts.synthesize:I will check that now.')
+  })
+
   it('cancels stale queued voice work by ID before accepting the next utterance', async () => {
     const test = harness()
     test.manager.send.mockResolvedValueOnce(managerMessage('voice-queued', {
@@ -1378,6 +1450,11 @@ describe('OracleVoiceCoordinator', () => {
       type: 'error',
       code: 'oracle_send_failed',
       fatal: false,
+    }))
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'state',
+      generation: 1,
+      state: 'listening',
     }))
   })
 

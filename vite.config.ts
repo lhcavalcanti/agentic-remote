@@ -147,6 +147,12 @@ const packageVersion = JSON.parse(
 const oracleVoiceThirdPartyNotices = readFileSync(
   new URL('./docs/licenses/oracle-voice-browser.txt', import.meta.url),
   'utf8',
+) + '\n\n' + readFileSync(
+  new URL(
+    './docs/licenses/onnxruntime-1.24.2-third-party-notices.txt',
+    import.meta.url,
+  ),
+  'utf8',
 )
 
 // https://vite.dev/config/

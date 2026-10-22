@@ -7,10 +7,13 @@ access, downloads only checksum-pinned files from
 beside the installed assets.
 
 The browser release does bundle `@ricky0123/vad-web`, Silero VAD, and
-`onnxruntime-web` runtime assets. Every production build emits their complete
-ISC/MIT redistribution notices at
-`oracle-voice-assets/THIRD_PARTY_NOTICES.txt`; the checked-in source is
-[`oracle-voice-browser.txt`](oracle-voice-browser.txt).
+`onnxruntime-web` runtime assets. Every production build emits their
+redistribution notices and ONNX Runtime's pinned upstream third-party notice
+inventory at `oracle-voice-assets/THIRD_PARTY_NOTICES.txt`; the checked-in
+sources are [`oracle-voice-browser.txt`](oracle-voice-browser.txt) and
+[`onnxruntime-1.24.2-third-party-notices.txt`](onnxruntime-1.24.2-third-party-notices.txt).
+The latter is the unmodified file from ONNX Runtime tag `v1.24.2` (SHA-256
+`0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`).
 
 | Asset | Upstream terms and provenance |
 | --- | --- |

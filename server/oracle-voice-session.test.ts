@@ -374,6 +374,72 @@ describe('VoiceBackendSession', () => {
     )).map((call) => call.type)).toEqual(['stt.accept', 'stt.end'])
   })
 
+  it('does not overwrite a synchronous final with a recognizing state', async () => {
+    class FinalizingEngine extends FakeVoiceEngine {
+      override async end(input: Parameters<FakeVoiceEngine['end']>[0]): Promise<void> {
+        this.emit({
+          type: 'final',
+          ...input,
+          text: 'Final transcript',
+        })
+        await super.end(input)
+      }
+    }
+    const { sent, session } = harness(new FinalizingEngine())
+    await beginUtterance(session)
+
+    await session.control(control('speech_end', 2, {
+      utteranceId: 'u2',
+    }))
+
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: 'final',
+      text: 'Final transcript',
+    }))
+    expect(sent).not.toContainEqual(expect.objectContaining({
+      type: 'state',
+      state: 'recognizing',
+    }))
+  })
+
+  it('starts a new utterance without waiting for old native synthesis to cancel', async () => {
+    let releaseCancellation!: () => void
+    const cancellationGate = new Promise<void>((resolve) => {
+      releaseCancellation = resolve
+    })
+    class SlowCancellationEngine extends FakeVoiceEngine {
+      override async cancelGeneration(
+        input: Parameters<FakeVoiceEngine['cancelGeneration']>[0],
+      ): Promise<void> {
+        await super.cancelGeneration(input)
+        await cancellationGate
+      }
+    }
+    const { engine, session } = harness(new SlowCancellationEngine())
+    await beginUtterance(session)
+    await session.control(control('synthesize', 2, {
+      segmentId: 'slow-segment',
+      text: 'A deliberately slow native segment.',
+    }))
+
+    const cancelling = session.control(control('cancel', 2))
+    const confirming = session.control(control('speech_confirmed', 3, {
+      utteranceId: 'u3',
+    }))
+    await vi.waitFor(() => {
+      expect(engine.calls).toContainEqual(expect.objectContaining({
+        type: 'stt.start',
+        generation: 3,
+        utteranceId: 'u3',
+      }))
+    })
+    await expect(cancelling).resolves.toBeUndefined()
+    await expect(confirming).resolves.toBeUndefined()
+
+    releaseCancellation()
+    await session.close('test complete')
+  })
+
   it('does not end an utterance finalized while queued audio drains', async () => {
     let acceptStarted!: () => void
     let release!: () => void

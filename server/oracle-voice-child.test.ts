@@ -627,7 +627,7 @@ describe('ChildVoiceEngine parent supervision', () => {
         sampleRate: ORACLE_VOICE_SAMPLE_RATE,
         samples: Float32Array.of(-1, 0, 32_767 / 32_768),
       })
-      expect(stream.accepted.at(-1)?.samples).toHaveLength(12_800)
+      expect(stream.accepted.map(({ samples }) => samples.length)).toEqual([3, 2])
       expect(stream.finished).toBe(1)
       expect(stream.reset).toBe(1)
       expect(workerEvents(harness.messages)
@@ -1143,7 +1143,7 @@ describe('ChildVoiceEngine parent supervision', () => {
       await backend.close('test complete')
     })
 
-    it('waits for cancelled sherpa VITS generation before accepting another segment', async () => {
+    it('queues a replacement sherpa VITS segment behind cancelled native synthesis', async () => {
       let release!: () => void
       const gate = new Promise<void>((resolve) => {
         release = resolve
@@ -1183,13 +1183,32 @@ describe('ChildVoiceEngine parent supervision', () => {
       }).then(() => {
         cancellationFinished = true
       })
+      let replacementFinished = false
+      const replacement = harness.worker.handle({
+        type: 'tts_synthesize',
+        requestId: 'replacement-synthesis',
+        input: {
+          streamId: 'native-stream',
+          generation: 5,
+          segmentId: 'replacement-segment',
+          text: 'Speak this next.',
+        },
+      }).then(() => {
+        replacementFinished = true
+      })
 
       await new Promise((resolve) => setImmediate(resolve))
       expect(cancellationFinished).toBe(false)
+      expect(replacementFinished).toBe(false)
       release()
-      await Promise.all([synthesis, cancellation])
+      await Promise.all([synthesis, cancellation, replacement])
       expect(workerEvents(harness.messages)
-        .filter((event) => event.type === 'audio_end')).toEqual([])
+        .filter((event) => event.type === 'audio_end')).toEqual([
+        expect.objectContaining({
+          generation: 5,
+          segmentId: 'replacement-segment',
+        }),
+      ])
     })
 
     it('suppresses sherpa VITS audio_end when cancelled during final frame delivery', async () => {

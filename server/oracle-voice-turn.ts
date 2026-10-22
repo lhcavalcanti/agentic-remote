@@ -114,6 +114,10 @@ export class VoiceTurnState {
       && (this.phase === 'listening' || this.phase === 'endpoint-pending')
   }
 
+  expectsFinal(generation: number): boolean {
+    return generation === this.generation && this.phase === 'endpoint-pending'
+  }
+
   finalize(
     generation: number,
     utteranceId: string,

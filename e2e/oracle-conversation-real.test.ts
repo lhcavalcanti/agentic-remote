@@ -1,4 +1,8 @@
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { promisify } from 'node:util'
 import { expect, test } from '@playwright/test'
 import { parsePcm16Wave } from '../scripts/oracle-voice-benchmark'
 import { installFakeBrowserVoice } from './fixtures/fake-voice'
@@ -29,13 +33,16 @@ interface RealVoiceState {
   }
 }
 
+const execFileAsync = promisify(execFile)
+
 test('real sherpa transport submits, speaks, and rejects interrupted audio', async ({
   page,
 }) => {
   test.setTimeout(180_000)
   const wavPath = process.env.AGENTIC_REMOTE_REAL_E2E_WAV
   if (!wavPath) throw new Error('AGENTIC_REMOTE_REAL_E2E_WAV is required')
-  const wave = parsePcm16Wave(await readFile(wavPath))
+  const wav = await readFile(wavPath)
+  const wave = parsePcm16Wave(wav)
   expect(wave.sampleRate).toBe(16_000)
   expect(wave.channels).toBe(1)
   const samples = Array.from(wave.samples, (sample) => sample / 32_768)
@@ -43,6 +50,7 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
     ...samples,
     ...new Array<number>(Math.round(wave.sampleRate * 1.3)).fill(0),
     ...samples,
+    ...new Array<number>(Math.round(wave.sampleRate * 1.4)).fill(0),
   ]
 
   await installFakeBrowserVoice(page)
@@ -169,8 +177,24 @@ test('real sherpa transport submits, speaks, and rejects interrupted audio', asy
   expect(oldAudioStartsAfterInterruption).toBe(0)
   const outputPath = process.env.AGENTIC_REMOTE_REAL_E2E_OUTPUT
   if (outputPath) {
+    const { stdout: gitSha } = await execFileAsync('git', ['rev-parse', 'HEAD'])
     await writeFile(outputPath, `${JSON.stringify({
       generatedAt: new Date().toISOString(),
+      provenance: {
+        gitSha: gitSha.trim(),
+        fixture: {
+          basename: path.basename(wavPath),
+          sha256: createHash('sha256').update(wav).digest('hex'),
+          sampleRate: wave.sampleRate,
+          channels: wave.channels,
+          durationMs: wave.samples.length / wave.sampleRate * 1_000,
+        },
+        language: process.env.AGENTIC_REMOTE_VOICE_LANGUAGE ?? 'en',
+        sttProfile: process.env.AGENTIC_REMOTE_VOICE_STT_PROFILE ?? 'nemotron',
+        endpointMs: Number(process.env.AGENTIC_REMOTE_VOICE_ENDPOINT_MS ?? 800),
+        intraUtterancePauseMs: 1_300,
+        trailingVadSilenceMs: 1_400,
+      },
       managerSendCount: finalState.managerSends.length,
       managerCancellationCount: finalState.managerCancellations,
       workerPid: finalState.workerPid,

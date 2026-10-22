@@ -2095,7 +2095,7 @@ describe('Oracle voice cross-layer integration', () => {
     expect(ordering.manager.send).not.toHaveBeenCalled()
   })
 
-  it('retains current microphone ingress while local synthesis cancellation is blocked', async () => {
+  it('continues current microphone ingress while local synthesis cancellation is blocked', async () => {
     let releaseCancel!: () => void
     const cancelGate = new Promise<void>((resolve) => {
       releaseCancel = resolve
@@ -2147,13 +2147,6 @@ describe('Oracle voice cross-layer integration', () => {
         new Int16Array(1_280),
       ))))
     }
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(closed).toBe(false)
-    expect(engineCalls(engine, 'stt.accept').filter(
-      (call) => call.generation === 2,
-    )).toEqual([])
-
-    releaseCancel()
     await vi.waitFor(() => {
       expect(engineCalls(engine, 'stt.accept').filter(
         (call) => call.generation === 2,
@@ -2161,6 +2154,11 @@ describe('Oracle voice cross-layer integration', () => {
         Array.from({ length: 30 }, (_, sequence) => sequence),
       )
     })
+    expect(closed).toBe(false)
+
+    releaseCancel()
+    await vi.waitFor(() => expect(engineCalls(engine, 'cancel'))
+      .toContainEqual(expect.objectContaining({ generation: 1 })))
     expect(closed).toBe(false)
   })
 

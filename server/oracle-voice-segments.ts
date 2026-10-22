@@ -33,6 +33,7 @@ export class SpeakableSegmenter {
   private messageId: string
   private readonly maxSegmentCharacters: number
   private readonly emittedCandidates: EmittedCandidate[] = []
+  private latestSnapshot = ''
 
   constructor(messageId: string, maxSegmentCharacters = 150) {
     validateMessageId(messageId)
@@ -44,23 +45,35 @@ export class SpeakableSegmenter {
   }
 
   update(replacementSnapshot: string): string[] {
-    return this.consume(replacementSnapshot, false)
+    this.latestSnapshot = replacementSnapshot
+    return this.consume(replacementSnapshot, false, false)
+  }
+
+  confirmBoundary(): string[] {
+    return this.consume(this.latestSnapshot, true, false)
   }
 
   finalize(finalSnapshot: string): string[] {
-    return this.consume(finalSnapshot, true)
+    this.latestSnapshot = finalSnapshot
+    return this.consume(finalSnapshot, true, true)
   }
 
   reset(messageId: string): void {
     validateMessageId(messageId)
     this.messageId = messageId
     this.emittedCandidates.length = 0
+    this.latestSnapshot = ''
   }
 
-  private consume(snapshot: string, includeUnfinishedSuffix: boolean): string[] {
+  private consume(
+    snapshot: string,
+    confirmTerminalSuffix: boolean,
+    includeFinalRemainder: boolean,
+  ): string[] {
     const candidates = extractSpeakableSegments(
       snapshot,
-      includeUnfinishedSuffix,
+      confirmTerminalSuffix,
+      includeFinalRemainder,
       this.maxSegmentCharacters,
     )
     const alignments = alignCandidateSequences(this.emittedCandidates, candidates)
@@ -95,7 +108,8 @@ export class SpeakableSegmenter {
 
 function extractSpeakableSegments(
   snapshot: string,
-  includeUnfinishedSuffix: boolean,
+  confirmTerminalSuffix: boolean,
+  includeFinalRemainder: boolean,
   maxSegmentCharacters: number,
 ): SpeakableCandidate[] {
   const blocks = collectProseBlocks(snapshot)
@@ -103,9 +117,18 @@ function extractSpeakableSegments(
 
   for (const [index, block] of blocks.entries()) {
     const isLastBlock = index === blocks.length - 1
-    const allowUnfinished = block.hasBoundary || (includeUnfinishedSuffix && isLastBlock)
+    const terminalBoundary = block.hasBoundary || (
+      confirmTerminalSuffix && isLastBlock
+    )
+    const includeRemainder = block.hasBoundary || (
+      includeFinalRemainder && isLastBlock
+    )
     let sourceCursor = block.sourceStart
-    for (const segment of splitCompletedProse(block.text, allowUnfinished)) {
+    for (const segment of splitCompletedProse(
+      block.text,
+      terminalBoundary,
+      includeRemainder,
+    )) {
       if (isActivityOnly(segment.text)) continue
       for (const chunk of capSegment(segment, maxSegmentCharacters)) {
         const sourceRange = locateSourceRange(snapshot, block, chunk.text, sourceCursor)
@@ -190,7 +213,11 @@ function collectProseBlocks(snapshot: string): ProseBlock[] {
   return blocks
 }
 
-function splitCompletedProse(text: string, allowUnfinished: boolean): ProseSegment[] {
+function splitCompletedProse(
+  text: string,
+  terminalBoundary: boolean,
+  includeRemainder: boolean,
+): ProseSegment[] {
   const segments: ProseSegment[] = []
   let consumed = 0
   let tokenStart = 0
@@ -211,7 +238,7 @@ function splitCompletedProse(text: string, allowUnfinished: boolean): ProseSegme
     const followedByWhitespace = (
       boundaryEnd < text.length && /\s/.test(text[boundaryEnd])
     )
-    if (!followedByWhitespace && !(allowUnfinished && boundaryEnd === text.length)) {
+    if (!followedByWhitespace && !(terminalBoundary && boundaryEnd === text.length)) {
       index = boundaryEnd - 1
       continue
     }
@@ -232,7 +259,7 @@ function splitCompletedProse(text: string, allowUnfinished: boolean): ProseSegme
   }
 
   const remainder = normalizeProse(text.slice(consumed))
-  if (allowUnfinished && remainder.length > 0) {
+  if (includeRemainder && remainder.length > 0) {
     segments.push({ text: remainder, start: consumed, end: text.length })
   }
   return segments

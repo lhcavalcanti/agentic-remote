@@ -1019,6 +1019,35 @@ describe('ManagerAgent', () => {
       sessionRefs: [{ computerId: 'hub', sessionId: 'worker-1', title: 'Docs' }],
     })
     expect(agent!.snapshot().managedSessions).toEqual(['hub:worker-1'])
+  })
+
+  it('flushes streamed reply text before publishing its tool activity boundary', async () => {
+    sdk.behaviors.push(async (fakeSession) => {
+      fakeSession.emit({
+        type: 'assistant.message_delta',
+        data: {
+          messageId: 'r',
+          deltaContent: 'I will check that now.',
+        },
+      })
+      await fakeSession.tool('create_session')({
+        title: 'Docs',
+        prompt: 'Write the docs',
+      })
+      reply('Done.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('start docs work')
+    await settled()
+
+    const deltaIndex = events.findIndex((event) =>
+      event.type === 'manager.delta'
+      && event.content === 'I will check that now.')
+    const activityIndex = events.findIndex((event) =>
+      event.type === 'manager.message'
+      && event.message.role === 'activity')
+    expect(deltaIndex).toBeGreaterThanOrEqual(0)
+    expect(activityIndex).toBeGreaterThan(deltaIndex)
     expect(events.some((event) => event.type === 'manager.sessions')).toBe(true)
     expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'worker-1', { content: 'Write the docs', enqueue: true })
   })

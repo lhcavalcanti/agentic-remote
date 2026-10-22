@@ -89,6 +89,11 @@ interface AudioCompletion {
   settle(): void
 }
 
+interface PendingFinalTurn {
+  turn: VoiceTurnState
+  timer: ReturnType<typeof setTimeout>
+}
+
 type VoiceFinalControl = Extract<
   VoiceServerControl,
   { type: 'partial' | 'final' }
@@ -110,6 +115,8 @@ export class OracleVoiceCoordinator {
   private closePromise: Promise<void> | undefined
   private connection: OracleVoiceBackendConnection | undefined
   private turn: VoiceTurnState | undefined
+  private readonly pendingFinalTurns = new Map<number, PendingFinalTurn>()
+  private maxAudioSamples = 0
   private defaults: ManagerClientDefaults | undefined
   private currentGeneration: number | undefined
   private activeReplyTo: string | undefined
@@ -194,6 +201,36 @@ export class OracleVoiceCoordinator {
     })
   }
 
+  private retainPendingFinal(
+    generation: number,
+    turn: VoiceTurnState,
+  ): void {
+    this.clearPendingFinal(generation)
+    const pending = {
+      turn,
+      timer: setTimeout(() => {
+        void this.enqueue(async () => {
+          if (this.pendingFinalTurns.get(generation) !== pending) return
+          this.pendingFinalTurns.delete(generation)
+          await this.sendError(
+            'stt_final_timeout',
+            'The superseded speech segment did not produce a final transcript in time.',
+            false,
+          )
+        })
+      }, this.cancelTimeoutMs),
+    }
+    pending.timer.unref?.()
+    this.pendingFinalTurns.set(generation, pending)
+  }
+
+  private clearPendingFinal(generation: number): void {
+    const pending = this.pendingFinalTurns.get(generation)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    this.pendingFinalTurns.delete(generation)
+  }
+
   managerEvent(event: ManagerEvent): Promise<void> {
     return this.enqueue(() => this.handleManagerEvent(event))
   }
@@ -229,14 +266,14 @@ export class OracleVoiceCoordinator {
         signal: this.startAbortController.signal,
       })
       this.connection = connection
-      const maxAudioSamples = Math.floor(
+      this.maxAudioSamples = Math.floor(
         connection.capabilities.sampleRate
         * connection.capabilities.limits.maxUtteranceMs
         / 1_000,
       )
-      this.maxPendingAudioBytes = maxAudioSamples * Int16Array.BYTES_PER_ELEMENT
+      this.maxPendingAudioBytes = this.maxAudioSamples * Int16Array.BYTES_PER_ELEMENT
         + connection.capabilities.limits.maxQueueBytes
-      this.turn = new VoiceTurnState({ maxAudioSamples })
+      this.turn = new VoiceTurnState({ maxAudioSamples: this.maxAudioSamples })
       if (this.closing) {
         await this.finishClose('Oracle voice connection closed while starting')
         return
@@ -343,8 +380,13 @@ export class OracleVoiceCoordinator {
     ) {
       throw new Error('Voice generation must increase by one for confirmed speech')
     }
+    if (turn.expectsFinal(previousGeneration)) {
+      this.retainPendingFinal(previousGeneration, turn)
+    }
+    const nextTurn = new VoiceTurnState({ maxAudioSamples: this.maxAudioSamples })
+    nextTurn.advanceGeneration(message.generation)
+    this.turn = nextTurn
     this.currentGeneration = message.generation
-    turn.advanceGeneration(message.generation)
     const snapshot = this.manager.snapshot()
     const voiceMessageIds: string[] = []
     let capturedRunningVoice = false
@@ -365,7 +407,7 @@ export class OracleVoiceCoordinator {
     }
     const speakingVoice = this.activeSpeech !== undefined || this.speechQueue.length > 0
     this.clearSpeechOutput()
-    turn.confirmSpeech(message.generation, message.utteranceId)
+    nextTurn.confirmSpeech(message.generation, message.utteranceId)
     const backendCancellation = voiceMessageIds.length > 0 || speakingVoice
       ? connection.control(this.clientControl('cancel', previousGeneration, {}))
       : Promise.resolve()
@@ -454,9 +496,9 @@ export class OracleVoiceCoordinator {
       }
       return
     }
-    if (output.generation !== this.currentGeneration) return
     switch (output.type) {
       case 'partial':
+        if (output.generation !== this.currentGeneration) return
         if (!this.requireTurn().isActiveUtterance(
           output.generation,
           output.utteranceId,
@@ -464,7 +506,15 @@ export class OracleVoiceCoordinator {
         await this.sendOutput(output)
         return
       case 'final':
-        await this.submitFinal({ ...output, type: 'final' })
+        {
+          const finalTurn = output.generation === this.currentGeneration
+            ? this.requireTurn()
+            : this.pendingFinalTurns.get(output.generation)?.turn
+          if (!finalTurn) return
+          if (await this.submitFinal({ ...output, type: 'final' }, finalTurn)) {
+            this.clearPendingFinal(output.generation)
+          }
+        }
         return
       case 'audio_end':
         if (!this.isActiveSpeech(output.generation, output.segmentId)) return
@@ -480,14 +530,15 @@ export class OracleVoiceCoordinator {
         return
       case 'state':
       case 'heartbeat':
+        if (output.generation !== this.currentGeneration) return
         await this.sendOutput(output)
     }
   }
 
   private async submitFinal(
     output: VoiceFinalControl,
-  ): Promise<void> {
-    const turn = this.requireTurn()
+    turn: VoiceTurnState,
+  ): Promise<boolean> {
     let finalTranscript: ReturnType<VoiceTurnState['finalize']>
     try {
       finalTranscript = turn.finalize(
@@ -496,13 +547,13 @@ export class OracleVoiceCoordinator {
         output.text,
       )
     } catch {
-      return
+      return false
     }
     const transcript = finalTranscript.transcript.trim()
-    if (!turn.rememberSubmission(finalTranscript.utteranceId)) return
+    if (!turn.rememberSubmission(finalTranscript.utteranceId)) return false
     if (!transcript) {
       await this.returnFinalToComposer(output, 'The final transcript was empty')
-      return
+      return true
     }
     const defaults = structuredClone(this.defaults ?? {})
     let message: ManagerMessage
@@ -517,11 +568,28 @@ export class OracleVoiceCoordinator {
         { ...output, text: transcript },
         `Could not send to Oracle: ${errorMessage(error, 'request failed')}`,
       )
-      return
+      return true
+    }
+    if (output.generation !== this.currentGeneration) {
+      try {
+        await withTimeout(
+          this.manager.cancelMessage(message.id),
+          this.cancelTimeoutMs,
+          'Stale Oracle message cancellation timed out',
+        )
+      } catch (error) {
+        await this.sendError(
+          'oracle_cancel_failed',
+          errorMessage(error, 'Could not cancel the superseded Oracle response'),
+          false,
+        )
+      }
+      return true
     }
     this.submissions.set(message.id, { generation: output.generation })
     if (message.state === 'running') this.activeReplyTo = message.id
     await this.sendState('thinking', output.generation)
+    return true
   }
 
   private async returnFinalToComposer(
@@ -530,6 +598,7 @@ export class OracleVoiceCoordinator {
   ): Promise<void> {
     await this.sendOutput(output)
     await this.sendError('oracle_send_failed', message, false)
+    await this.sendState('listening', output.generation)
   }
 
   private async handleManagerEvent(event: ManagerEvent): Promise<void> {
@@ -547,6 +616,9 @@ export class OracleVoiceCoordinator {
       case 'manager.reset':
         this.activeReplyTo = undefined
         this.submissions.clear()
+        for (const generation of this.pendingFinalTurns.keys()) {
+          this.clearPendingFinal(generation)
+        }
         this.clearSpeechOutput()
         return
       case 'manager.sessions':
@@ -575,6 +647,23 @@ export class OracleVoiceCoordinator {
   }
 
   private async consumeManagerMessage(message: ManagerMessage): Promise<void> {
+    if (message.role === 'activity') {
+      const replyTo = this.activeReplyTo
+      const submission = replyTo ? this.submissions.get(replyTo) : undefined
+      const generation = submission?.generation
+      if (
+        generation !== undefined
+        && generation === this.currentGeneration
+        && this.segmenter
+      ) {
+        this.queueSpeech(
+          this.segmenter.confirmBoundary(),
+          generation,
+        )
+        await this.pumpSpeech()
+      }
+      return
+    }
     if (message.role === 'user') {
       if (message.state === 'running') {
         if (this.submissions.has(message.id)) {
@@ -712,6 +801,7 @@ export class OracleVoiceCoordinator {
         errorMessage(error, 'Oracle speech synthesis failed'),
         false,
       )
+      await this.sendState('listening', next.generation)
     }
   }
 

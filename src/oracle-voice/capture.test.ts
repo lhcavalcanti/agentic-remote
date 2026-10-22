@@ -186,6 +186,36 @@ describe('VoiceCapture', () => {
     expect(capture.track.stop).toHaveBeenCalledOnce()
   })
 
+  it('submits the bounded prefix when speech exceeds the advertised duration', async () => {
+    const capture = harness({
+      inputRate: ORACLE_VOICE_SAMPLE_RATE,
+      maxUtteranceMs: 1,
+    })
+    await capture.start()
+    capture.confirmed()
+
+    capture.frame(constantFrame(10, 0.25))
+    capture.frame(constantFrame(10, 0.5))
+    capture.frame(constantFrame(10, 0.75))
+
+    await vi.waitFor(() => expect(capture.sentAudio()).toHaveLength(2))
+    expect(capture.sentAudio().map((frame) => frame.samples.length)).toEqual([10, 6])
+    expect(capture.sentControls()).toContainEqual(expect.objectContaining({
+      type: 'speech_end',
+      generation: 1,
+      utteranceId: 'utterance-1',
+    }))
+    expect(capture.utteranceLimit).toHaveBeenCalledWith(1)
+    expect(capture.errors()).toEqual([])
+
+    capture.speechEnd()
+    capture.tentative()
+    capture.confirmed()
+    capture.frame(constantFrame(4, 0.5))
+    await vi.waitFor(() => expect(capture.sentAudio()).toHaveLength(3))
+    expect(capture.sentAudio().at(-1)?.samples).toHaveLength(4)
+  })
+
   it('sends an endpoint for the current utterance and releases every microphone resource', async () => {
     const capture = harness()
     await capture.start()
@@ -230,6 +260,7 @@ function harness({
   inputRate = ORACLE_VOICE_SAMPLE_RATE,
   maxPreRollBytes = 64 * 1024,
   maxQueueBytes = 256 * 1024,
+  maxUtteranceMs = 30_000,
   audioWorkletSupported = true,
   mediaDevices,
   getUserMedia,
@@ -240,6 +271,7 @@ function harness({
   inputRate?: number
   maxPreRollBytes?: number
   maxQueueBytes?: number
+  maxUtteranceMs?: number
   audioWorkletSupported?: boolean
   mediaDevices?: Pick<MediaDevices, 'getUserMedia'>
   getUserMedia?: ReturnType<typeof vi.fn>
@@ -278,6 +310,7 @@ function harness({
   const errors: VoiceCaptureError[] = []
   const tentativeSpeech = vi.fn()
   const restorePlayback = vi.fn()
+  const utteranceLimit = vi.fn()
   const audioSink = sendAudio ?? vi.fn(async (frame: VoiceAudioFrame) => {
     audio.push(frame)
   })
@@ -294,11 +327,13 @@ function harness({
     inputSampleRate: inputRate,
     maxPreRollBytes,
     maxQueueBytes,
+    maxUtteranceMs,
     dependencies,
     sendControl: (control) => controls.push(control as CaptureControl),
     sendAudio: audioSink,
     onTentativeSpeech: tentativeSpeech,
     onVadMisfire: restorePlayback,
+    onUtteranceLimit: utteranceLimit,
     onError: (error) => errors.push(error),
   })
 
@@ -322,6 +357,7 @@ function harness({
     getUserMedia: request,
     tentativeSpeech,
     restorePlayback,
+    utteranceLimit,
   }
 }
 

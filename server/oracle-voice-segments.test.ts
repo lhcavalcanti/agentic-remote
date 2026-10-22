@@ -90,6 +90,17 @@ describe('SpeakableSegmenter', () => {
     expect(segmenter.finalize('The final thought')).toEqual([])
   })
 
+  it('confirms terminal punctuation at a tool boundary without speaking an unfinished phrase', () => {
+    const completed = new SpeakableSegmenter('completed')
+    expect(completed.update('I will check that now.')).toEqual([])
+    expect(completed.confirmBoundary()).toEqual(['I will check that now.'])
+    expect(completed.confirmBoundary()).toEqual([])
+
+    const unfinished = new SpeakableSegmenter('unfinished')
+    expect(unfinished.update('I will check that now')).toEqual([])
+    expect(unfinished.confirmBoundary()).toEqual([])
+  })
+
   it('caps long completed prose at word boundaries', () => {
     const segmenter = new SpeakableSegmenter('message-1', 20)
     expect(segmenter.update('Alpha beta gamma delta epsilon. Next')).toEqual([

@@ -118,6 +118,12 @@ Oracle submission fails, the finalized text returns to the composer. If TTS
 fails, Oracle's text reply remains usable. One Conversation stream is supported
 per hub.
 
+A continuous speech segment is capped at the server-advertised 30 seconds. At
+that boundary the browser sends one endpoint, submits the bounded prefix, and
+shows a nonfatal warning; audio after the boundary is ignored until VAD observes
+the next speech segment. This avoids losing the whole utterance to a backend
+limit while keeping memory and transport bounded.
+
 Silero VAD detects speech activity; it does not authenticate a speaker.
 Nearby, replayed, or injected speech can be transcribed. Agentic Remote does
 not add a partial speaker-authentication claim. Before Start and while active,
@@ -157,29 +163,33 @@ WER on the long clean clip, but its CPU RTF and memory miss the `<0.2` and
 low-resource targets. The corpus cannot establish multi-speaker Portuguese or
 perceptual TTS quality.
 
-The real browser/hub/WebSocket/resident-child run used the session-only NASA
-JFK clip, Zipformer, and resident LJSpeech VITS. It measured 1,140 ms to first
-partial, 88 ms from explicit speech end to final, 0.173 STT RTF, 174 ms from
-manager delta to first audio, 0.093 TTS RTF, 296 MiB peak worker RSS, and 69.5%
-sustained worker CPU.
-Barge-in occurred with three generation-1 browser sources scheduled but held by
-a controlled 1.5-second slow-consumer delay. Resident VITS had already emitted
-all three real audio frames and `audio_end`, so the run proves pending
-delivery/playback cancellation rather than native synthesis preemption.
-Generation 1 was cancelled, all three pending starts were stopped, generation 2
-scheduled three real frames and started playback, and observed old-generation
-starts after interruption remained zero through test completion. The
-first-partial target therefore missed; finalization, warm short-sentence TTS,
-and RTF targets passed in that run.
+The latest real browser/hub/WebSocket/resident-child run used the committed
+`pt-BR-short-male-clean.wav` fixture (SHA-256
+`ea350ee4e045b127aa38bbb000b00975065b7cd30c6f3fef46f3a2d449575fcc`),
+Nemotron, and resident Faber VITS. One browser segment repeated the 5.52-second
+fixture around 1.3 seconds of silence, crossing the configured 1.2-second
+internal endpoint, then supplied 1.4 seconds of browser-VAD trailing silence.
+It produced one combined Oracle submission per browser segment without adding
+another synthetic worker-side silence window.
+
+The run measured 2,498 ms to first partial, 0.8 ms from explicit speech end to
+final, 1.113 wall-clock paced STT RTF, 165 ms from manager delta to first
+audio, 0.101 TTS RTF, 1,166 MiB peak worker RSS, and 130.7% sustained worker
+CPU. Its STT RTF includes real-time browser pacing and is not comparable to the
+corpus compute RTF table. Generation 1 was cancelled during a controlled
+1.5-second playback delay; generation 2 synthesized three separate list/prose
+segments. The browser started zero old-generation sources after interruption.
+The first-partial target missed; finalization, warm short-sentence TTS, TTS
+RTF, and stale-audio rejection passed.
 
 The required real-time soak passed 30 minutes at six turns/minute after 500
 actual conversation WebSocket/session lifecycle cycles. Those cycles opened
-520 sockets and completed 520 socket cleanup checks in 8,028.07 ms. Twenty
+520 sockets and completed 520 socket cleanup checks in 7,406.61 ms. Twenty
 explicit acquisition-gated races closed the old browser while backend startup
 was unresolved, started the replacement before releasing that gate, cancelled
 all 20 old acquisitions, leaked zero old hellos or stream messages, created
 exactly 20 replacement hellos/sessions, and cleaned all 20 gated workers. The
-timed phase then sent 180/180 unique manager submissions in 1,800,000.09 ms.
+timed phase then sent 180/180 unique manager submissions in 1,800,000.96 ms.
 
 The soak retained production `LocalVoiceBackend` and
 `EngineVoiceBackendSession` around a controlled engine. It measured 4,480
@@ -187,9 +197,9 @@ queued input bytes, 640 pending/in-flight input bytes, 5,120 total input
 backlog against the 64,000-byte limit, and 18,186 queued output bytes, with no
 overflow. It observed 681 cancellation-triggered stale backend emissions and
 zero stale client deliveries. A fixture-owned child PID was observed during
-the run and absent afterward. RSS across 182 samples was 150.6 MiB initially,
-261.6 MiB peak during lifecycle cycling, and 166.0 MiB finally; the final-half
-slope was 0.0011 MiB/minute. All 23 assertions passed, including zero active
+the run and absent afterward. RSS was 155.30 MiB initially, 272.28 MiB peak
+during lifecycle cycling, and 172.79 MiB finally; the final-half slope was
+0.04440 MiB/minute. All 23 assertions passed, including zero active
 backend sessions, orphan child PIDs, unhandled rejections, or uncaught
 exceptions after stop.
 
@@ -201,6 +211,11 @@ A segment remains bounded to 12 seconds at the native voice sample rate and
 fails explicitly before playback when the bound is exceeded. That segment is
 skipped without closing Conversation; later segments continue, and Oracle text
 remains available.
+
+The native VITS binding cannot stop `generateAsync()` mid-call. Barge-in marks
+that generation stale immediately, clears browser playback, and lets new speech
+reach STT without waiting; a replacement TTS segment waits for the cancelled
+native call to return. No old-generation audio is forwarded.
 
 ## Remove or replace
 

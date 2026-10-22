@@ -776,6 +776,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   private async requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void> {
     this.attemptActivities.push(`Asked to close "${session.title}"`)
+    this.flushDelta()
     await this.updateMessage({
       id: randomUUID(),
       role: 'activity',
@@ -914,6 +915,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   private recordActivity(activity: ManagerToolActivity): void {
     this.attemptActivities.push(activity.content)
+    this.flushDelta()
     const timestamp = this.now().toISOString()
     void this.updateMessage({
       id: randomUUID(),

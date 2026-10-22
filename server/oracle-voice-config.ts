@@ -6,6 +6,8 @@ import {
   isVoicePlaybackSampleRate,
 } from '../shared/oracle-voice.js'
 
+const MAX_ESPEAK_DATA_DIRECTORY_BYTES = 251
+
 export type OracleVoiceSttProfile = 'zipformer' | 'nemotron'
 
 export interface ExternalPiperVoiceConfig {
@@ -120,12 +122,7 @@ export async function readOracleVoiceConfig(
           'AGENTIC_REMOTE_VOICE_TTS_TOKENS',
           'file',
         ),
-        dataDir: await canonicalPath(
-          dataDirectory,
-          env,
-          'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR',
-          'directory',
-        ),
+        dataDir: await espeakDataDirectory(dataDirectory, env),
         sampleRate: await readPiperSampleRate(ttsConfig),
         ...speaker,
       }
@@ -158,6 +155,25 @@ export async function readOracleVoiceConfig(
     },
     tts,
   }
+}
+
+async function espeakDataDirectory(
+  dataDirectory: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  const directory = await canonicalPath(
+    dataDirectory,
+    env,
+    'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR',
+    'directory',
+  )
+  if (Buffer.byteLength(directory) > MAX_ESPEAK_DATA_DIRECTORY_BYTES) {
+    throw new Error(
+      'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR path must not exceed '
+      + `${MAX_ESPEAK_DATA_DIRECTORY_BYTES} bytes`,
+    )
+  }
+  return directory
 }
 
 export async function readPiperSampleRate(configPath: string): Promise<number> {

@@ -107,6 +107,7 @@ export class OracleVoiceCoordinator {
   private readonly sendOutput: (message: OracleVoiceBackendOutput) => Promise<void>
   private readonly terminate: (code: number, reason: string) => void
   private readonly cancelTimeoutMs: number
+  private pendingFinalTimeoutMs: number
   private readonly managerListener: (event: ManagerEvent) => void
   private readonly submissions = new Map<string, VoiceSubmission>()
   private readonly speechQueue: QueuedSpeech[] = []
@@ -156,6 +157,7 @@ export class OracleVoiceCoordinator {
     this.sendOutput = options.send
     this.terminate = options.terminate
     this.cancelTimeoutMs = cancelTimeoutMs
+    this.pendingFinalTimeoutMs = cancelTimeoutMs
     this.managerListener = (event) => {
       void this.managerEvent(event).catch((error: unknown) => {
         void this.fail(
@@ -218,7 +220,7 @@ export class OracleVoiceCoordinator {
             false,
           )
         })
-      }, this.cancelTimeoutMs),
+      }, this.pendingFinalTimeoutMs),
     }
     pending.timer.unref?.()
     this.pendingFinalTurns.set(generation, pending)
@@ -270,6 +272,14 @@ export class OracleVoiceCoordinator {
         connection.capabilities.sampleRate
         * connection.capabilities.limits.maxUtteranceMs
         / 1_000,
+      )
+      this.pendingFinalTimeoutMs = this.cancelTimeoutMs + Math.ceil(
+        connection.capabilities.limits.maxQueueBytes
+        / (
+          connection.capabilities.sampleRate
+          * Int16Array.BYTES_PER_ELEMENT
+        )
+        * 1_000,
       )
       this.maxPendingAudioBytes = this.maxAudioSamples * Int16Array.BYTES_PER_ELEMENT
         + connection.capabilities.limits.maxQueueBytes

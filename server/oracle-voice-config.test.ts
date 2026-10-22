@@ -21,9 +21,12 @@ afterEach(async () => {
   ))
 })
 
-async function fixture() {
-  const dataDirectory = await mkdtemp(path.join(tmpdir(), 'oracle-voice-config-'))
-  directories.push(dataDirectory)
+async function fixture(padded = false) {
+  const root = await mkdtemp(path.join(tmpdir(), 'oracle-voice-config-'))
+  directories.push(root)
+  const dataDirectory = padded
+    ? path.join(root, ...Array.from({ length: 5 }, () => 'path-padding-'.repeat(4)))
+    : root
   await mkdir(path.join(dataDirectory, 'models', 'stt'), { recursive: true })
   await mkdir(path.join(dataDirectory, 'bin'), { recursive: true })
   await writeFile(path.join(dataDirectory, 'models', 'stt', 'encoder.onnx'), 'model')
@@ -128,6 +131,19 @@ describe('readOracleVoiceConfig', () => {
         speaker: 2,
       },
     })
+  })
+
+  it('rejects an eSpeak data path that can abort the resident TTS runtime', async () => {
+    const dataDirectory = await fixture(true)
+
+    await expect(readOracleVoiceConfig(dataDirectory, enabledEnv({
+      AGENTIC_REMOTE_VOICE_TTS_ENGINE: 'sherpa-vits',
+      AGENTIC_REMOTE_VOICE_TTS_BIN: undefined,
+      AGENTIC_REMOTE_VOICE_TTS_TOKENS: 'models/tokens.txt',
+      AGENTIC_REMOTE_VOICE_TTS_DATA_DIR: 'models/espeak-ng-data',
+    }))).rejects.toThrow(
+      'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR path must not exceed 251 bytes',
+    )
   })
 
   it('still requires local engine paths when the selected process is a node', async () => {

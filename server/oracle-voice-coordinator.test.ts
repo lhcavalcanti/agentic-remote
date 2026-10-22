@@ -132,7 +132,10 @@ class FakeBackend implements OracleVoiceBackendConnector {
   private readonly resolveCloseStarted: () => void
   private deliveryTail: Promise<void> = Promise.resolve()
 
-  constructor(private readonly timeline: string[] = []) {
+  constructor(
+    private readonly timeline: string[] = [],
+    private readonly capability: VoiceCapabilities = capabilities,
+  ) {
     let resolveCloseStarted!: () => void
     this.closeStarted = new Promise<void>((resolve) => {
       resolveCloseStarted = resolve
@@ -144,7 +147,7 @@ class FakeBackend implements OracleVoiceBackendConnector {
     this.output = options.output
     this.disconnect = options.disconnect
     return {
-      capabilities,
+      capabilities: this.capability,
       control: async (message: VoiceClientControl) => {
         this.controls.push(structuredClone(message))
         if (message.type === 'cancel') {
@@ -218,10 +221,11 @@ function harness(
   cancelTimeoutMs = 1_000,
   sendFailure?: (message: OracleVoiceBackendOutput) => Error | undefined,
   observeSend?: (message: OracleVoiceBackendOutput) => void | Promise<void>,
+  capability: VoiceCapabilities = capabilities,
 ): Harness {
   const timeline: string[] = []
   const manager = new FakeManager(managerSnapshot, timeline)
-  const backend = new FakeBackend(timeline)
+  const backend = new FakeBackend(timeline, capability)
   const browser: OracleVoiceBackendOutput[] = []
   const terminated: Array<{ code: number; reason: string }> = []
   const coordinator = new OracleVoiceCoordinator({
@@ -457,8 +461,55 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.manager.cancelMessage).toHaveBeenCalledWith('user-1')
   })
 
+  it('retains a paired-node final for the advertised input backlog plus cancellation margin', async () => {
+    vi.useFakeTimers()
+    const test = harness(
+      snapshot(),
+      5_000,
+      undefined,
+      undefined,
+      {
+        ...capabilities,
+        limits: {
+          ...capabilities.limits,
+          maxQueueBytes: 384_000,
+        },
+      },
+    )
+    await test.start(0)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+    await test.coordinator.receive(confirm(2, 'u2'))
+
+    await vi.advanceTimersByTimeAsync(7_000)
+    await test.backend.emit(final(1, 'u1', 'Delayed paired request.'))
+
+    expect(test.browser).not.toContainEqual(expect.objectContaining({
+      code: 'stt_final_timeout',
+    }))
+    expect(test.manager.send).toHaveBeenCalledWith(
+      'Delayed paired request.',
+      defaults,
+      { source: 'voice', answerOnly: true },
+    )
+  })
+
   it('expires a superseded endpoint-pending final explicitly', async () => {
-    const test = harness(snapshot(), 10)
+    const test = harness(
+      snapshot(),
+      10,
+      undefined,
+      undefined,
+      {
+        ...capabilities,
+        limits: {
+          ...capabilities.limits,
+          maxQueueBytes: 2,
+        },
+      },
+    )
     await test.start(0)
     await test.coordinator.receive(confirm(1, 'u1'))
     await test.coordinator.receive(control('speech_end', 1, {
@@ -467,7 +518,7 @@ describe('OracleVoiceCoordinator', () => {
     vi.useFakeTimers()
     await test.coordinator.receive(confirm(2, 'u2'))
 
-    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(11)
     await test.backend.emit(final(1, 'u1', 'Too late.'))
 
     expect(test.browser).toContainEqual(expect.objectContaining({

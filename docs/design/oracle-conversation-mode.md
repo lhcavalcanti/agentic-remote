@@ -288,7 +288,9 @@ models.
    is stale and discarded at each boundary. A prior segment already waiting
    for its STT final remains eligible for exactly-once submission; if it arrives
    after the next generation starts, Oracle records it and immediately cancels
-   its superseded reply. A bounded timeout reports and discards a missing final.
+   its superseded reply. A bounded timeout derived from the selected backend's
+   advertised input backlog plus the cancellation margin reports and discards a
+   missing final.
 
 If tentative speech is a VAD misfire, playback gain is restored without
 cancelling Oracle or losing queued audio.

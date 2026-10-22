@@ -73,6 +73,10 @@ AGENTIC_REMOTE_ORACLE_VOICE=on
 AGENTIC_REMOTE_VOICE_COMPUTER=worker-node
 ```
 
+For resident sherpa VITS, the canonical eSpeak data-directory path must be no
+more than 251 bytes. Startup rejects deeper custom data roots explicitly rather
+than allowing eSpeak NG to abort the worker.
+
 Do not copy the node's local model paths to the hub. On the node, use the
 installer's complete printed configuration and enable voice locally.
 

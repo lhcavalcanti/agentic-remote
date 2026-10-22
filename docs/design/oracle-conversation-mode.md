@@ -180,7 +180,12 @@ replaying PCM or finalized transcripts.
 
 Both hub and node roles can own speech compute. The node exposes an
 authenticated `/node-api/oracle-voice` WebSocket. A local backend uses the same
-session implementation without network relay.
+session implementation without network relay. Its bounded output relay
+acknowledges backend frames when the relay accepts them, not after the
+serialized coordinator finishes browser delivery. This prevents a heartbeat,
+barge-in confirmation, or cancellation response from waiting behind the audio
+whose delivery is waiting on that same coordinator. Relay or browser overflow
+still fails closed.
 
 The backend runs native inference in an isolated child process. A native crash
 or malformed model cannot terminate the Agentic Remote server. The child stays
@@ -326,6 +331,9 @@ are visible text, not color alone:
 The control exposes Stop at all times. Dictation remains available when
 Conversation mode is stopped or unavailable. The panel describes processing
 as “Speech stays on your selected computer; Oracle uses remote Copilot.”
+The Ask/Delegate switch continues to show and control the typed-message mode
+while a separate notice states that Conversation voice itself is always
+Ask-only.
 
 Announcements use the existing polite live region. Meter animation honors
 `prefers-reduced-motion`. Controls remain usable at the repository's supported
@@ -341,7 +349,8 @@ No failure is success-shaped:
 - queue overflow identifies a slow producer or consumer and closes the stream;
 - node loss enters Reconnecting, discards the current utterance, and creates a
   fresh generation after recovery;
-- Oracle send failure preserves the final text in the composer for manual send;
+- Oracle send failure sends an explicit transcript-restore event, preserving
+  even a superseded final in the composer without changing the newer live turn;
 - TTS failure leaves the text reply usable and stops voice output;
 - cancellation timeout closes the stream rather than submitting over an
   uncertain prior generation.

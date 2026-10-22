@@ -5,9 +5,11 @@ import {
   VOICE_AUDIO_HEADER_BYTES,
   voiceAudioFrameByteLength,
   type VoiceAudioFrame,
+  type VoiceClientControl,
 } from '../shared/oracle-voice.js'
 import {
   backendOutputRelay,
+  localConnector,
   sendBrowserOutput,
   shutdownBackendOutput,
 } from './oracle-voice-routes.js'
@@ -16,7 +18,9 @@ import {
 } from './node-routes.js'
 import {
   voiceOutputDeliveryByteLimit,
+  type VoiceBackend,
   type VoiceBackendOutput,
+  type VoiceBackendSessionOpenOptions,
   type VoiceBackendSessionLimits,
 } from './oracle-voice-session.js'
 
@@ -75,6 +79,109 @@ function outputBytes(output: VoiceBackendOutput): number {
 }
 
 describe('Oracle voice output delivery', () => {
+  it.each([
+    ['heartbeat', {
+      type: 'heartbeat',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId,
+      generation: 2,
+      timestamp: 1,
+    }],
+    ['interruption confirmation', {
+      type: 'speech_confirmed',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId,
+      generation: 2,
+      utteranceId: 'interrupt-2',
+    }],
+    ['Oracle cancellation', {
+      type: 'cancel',
+      protocol: ORACLE_VOICE_PROTOCOL,
+      streamId,
+      generation: 2,
+    }],
+  ] satisfies Array<[string, VoiceClientControl]>)(
+    'keeps hub-local controls moving during %s while accepted audio is still delivering',
+    async (_label, selectedControl) => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let opened!: VoiceBackendSessionOpenOptions
+      let outputTail = Promise.resolve()
+      const emit = (output: VoiceBackendOutput): Promise<void> => {
+        const delivery = outputTail.catch(() => undefined).then(() => opened.send(output))
+        outputTail = delivery
+        return delivery
+      }
+      const backend: VoiceBackend = {
+        capability: () => ({
+          available: true,
+          sampleRate: 16_000,
+          playbackSampleRate: sampleRate,
+          languages: ['en'],
+          sttProfile: 'test',
+          ttsVoice: 'test',
+          resourceClass: 'low',
+        }),
+        limits,
+        busy: () => false,
+        open: vi.fn(async (options) => {
+          opened = options
+          return {
+            control: async (message: VoiceClientControl) => emit(
+              message.type === 'heartbeat'
+                ? {
+                    type: 'heartbeat',
+                    protocol: ORACLE_VOICE_PROTOCOL,
+                    streamId: message.streamId,
+                    generation: message.generation,
+                    timestamp: message.timestamp,
+                  }
+                : {
+                    type: 'state',
+                    protocol: ORACLE_VOICE_PROTOCOL,
+                    streamId: message.streamId,
+                    generation: message.generation,
+                    state: message.type === 'cancel' ? 'ready' : 'listening',
+                  },
+            ),
+            audio: async () => undefined,
+            close: async () => undefined,
+          }
+        }),
+        stop: async () => undefined,
+      }
+      const connector = localConnector(backend, {
+        id: 'local',
+        name: 'local',
+        version: 'test',
+      })
+      const connection = await connector.connect({
+        streamId,
+        output: async () => {
+          await gate
+        },
+        disconnect: async () => undefined,
+        signal: new AbortController().signal,
+      })
+      const audio = emit(playbackSequence(1)[0])
+      let controlSettled = false
+      const control = connection.control(selectedControl).then(() => {
+        controlSettled = true
+      })
+
+      try {
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(controlSettled).toBe(true)
+      } finally {
+        release()
+        await Promise.allSettled([audio, control])
+        await connection.close('test complete')
+      }
+    },
+  )
+
   it('returns the actual local delivery promise so backpressure propagates', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {

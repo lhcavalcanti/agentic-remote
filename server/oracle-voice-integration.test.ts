@@ -1316,10 +1316,10 @@ describe('Oracle voice cross-layer integration', () => {
       text: 'Recover this transcript.',
     })
     const returned = await failed.browserInbox.waitForControl<VoiceServerControl>(
-      (message) => message.type === 'final',
+      (message) => message.type === 'transcript_restore',
     )
     expect(returned).toMatchObject({
-      type: 'final',
+      type: 'transcript_restore',
       text: 'Recover this transcript.',
     })
     await failed.browserInbox.waitForControl<VoiceServerControl>(
@@ -1327,7 +1327,7 @@ describe('Oracle voice cross-layer integration', () => {
         && message.code === 'oracle_send_failed',
     )
     expect(failed.browserInbox.controls<VoiceServerControl>(
-      (message) => message.type === 'final',
+      (message) => message.type === 'transcript_restore',
     )).toHaveLength(1)
     expect(failed.manager.send).toHaveBeenCalledOnce()
     expect(failed.manager.store.messages()).toEqual([])
@@ -1352,6 +1352,9 @@ describe('Oracle voice cross-layer integration', () => {
     await vi.waitFor(() => expect(successful.manager.send).toHaveBeenCalledOnce())
     expect(successful.browserInbox.controls<VoiceServerControl>(
       (message) => message.type === 'final',
+    )).toEqual([])
+    expect(successful.browserInbox.controls<VoiceServerControl>(
+      (message) => message.type === 'transcript_restore',
     )).toEqual([])
   })
 

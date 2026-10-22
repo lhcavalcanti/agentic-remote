@@ -516,6 +516,8 @@ export class OracleVoiceCoordinator {
           }
         }
         return
+      case 'transcript_restore':
+        throw new Error('Voice backends may not restore transcripts')
       case 'audio_end':
         if (!this.isActiveSpeech(output.generation, output.segmentId)) return
         await this.sendOutput(output)
@@ -596,7 +598,7 @@ export class OracleVoiceCoordinator {
     output: VoiceFinalControl,
     message: string,
   ): Promise<void> {
-    await this.sendOutput(output)
+    await this.sendOutput({ ...output, type: 'transcript_restore' })
     await this.sendError('oracle_send_failed', message, false)
     await this.sendState('listening', output.generation)
   }

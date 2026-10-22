@@ -123,6 +123,12 @@ export type VoiceServerControl =
     text: string
   })
   | (VoiceControlBase & {
+    type: 'transcript_restore'
+    generation: number
+    utteranceId: string
+    text: string
+  })
+  | (VoiceControlBase & {
     type: 'state'
     generation: number
     state: 'ready' | 'listening' | 'recognizing' | 'thinking' | 'speaking' | 'stopped'
@@ -326,6 +332,7 @@ export function isVoiceServerControl(value: unknown): value is VoiceServerContro
       ]) && isUint32(value.generation) && isVoiceCapabilities(value.capabilities)
     case 'partial':
     case 'final':
+    case 'transcript_restore':
       return hasExactKeys(value, [
         'type', 'protocol', 'streamId', 'generation', 'utteranceId', 'text',
       ]) && isUint32(value.generation)

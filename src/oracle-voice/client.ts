@@ -481,13 +481,17 @@ export class OracleVoiceClient {
       ))
       return
     }
-    if (control.generation < this.generation) return
     if (control.generation > this.generation) {
       throw new OracleVoiceClientError(
         'protocol-mismatch',
         'Oracle voice control generation is ahead of the browser',
       )
     }
+    if (control.type === 'transcript_restore') {
+      this.onFinal(transcriptEvent(control))
+      return
+    }
+    if (control.generation < this.generation) return
     switch (control.type) {
       case 'partial':
         this.setState('transcribing')
@@ -1030,7 +1034,10 @@ function parseHello(data: unknown): Extract<VoiceServerControl, { type: 'hello' 
 }
 
 function transcriptEvent(
-  control: Extract<VoiceServerControl, { type: 'partial' | 'final' }>,
+  control: Extract<
+    VoiceServerControl,
+    { type: 'partial' | 'final' | 'transcript_restore' }
+  >,
 ): OracleVoiceTranscriptEvent {
   return {
     generation: control.generation,

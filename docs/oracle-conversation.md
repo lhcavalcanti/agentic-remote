@@ -118,6 +118,9 @@ Oracle submission fails, the finalized text returns to the composer. If TTS
 fails, Oracle's text reply remains usable. One Conversation stream is supported
 per hub.
 
+Conversation voice remains Ask-only. The Ask/Delegate switch continues to show
+and control the mode used by typed messages while Conversation is active.
+
 A continuous speech segment is capped at the server-advertised 30 seconds. At
 that boundary the browser sends one endpoint, submits the bounded prefix, and
 shows a nonfatal warning; audio after the boundary is ignored until VAD observes

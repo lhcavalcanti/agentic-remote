@@ -613,6 +613,27 @@ describe('OracleVoiceClient', () => {
     expect(client.captures[0].stop).not.toHaveBeenCalled()
   })
 
+  it('restores a failed earlier final without replacing the current live state', async () => {
+    const client = harness()
+    await client.connect('stream-1')
+    client.captures[0].options.onSpeechConfirmed?.(1)
+    client.sockets[0].message(control('state', 'stream-1', 1, {
+      state: 'listening',
+    }))
+
+    client.sockets[0].message(control('transcript_restore', 'stream-1', 0, {
+      utteranceId: 'earlier-final',
+      text: 'Restore the earlier transcript.',
+    }))
+
+    await vi.waitFor(() => expect(client.finals()).toContainEqual({
+      generation: 0,
+      utteranceId: 'earlier-final',
+      text: 'Restore the earlier transcript.',
+    }))
+    expect(client.instance.currentState).toBe('listening')
+  })
+
   it('treats server stopped as terminal cleanup without a later close error', async () => {
     const client = harness()
     await client.connect('stream-1')
@@ -1079,7 +1100,7 @@ function hello(streamId: string): VoiceServerControl {
 }
 
 function control(
-  type: 'partial' | 'final',
+  type: 'partial' | 'final' | 'transcript_restore',
   streamId: string,
   generation: number,
   rest: { utteranceId: string; text: string },
@@ -1109,7 +1130,7 @@ function control(
   rest: { segmentId: string },
 ): VoiceServerControl
 function control(
-  type: 'partial' | 'final' | 'error' | 'state' | 'heartbeat' | 'audio_end',
+  type: 'partial' | 'final' | 'transcript_restore' | 'error' | 'state' | 'heartbeat' | 'audio_end',
   streamId: string,
   generation: number,
   rest:

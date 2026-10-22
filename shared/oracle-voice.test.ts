@@ -174,6 +174,7 @@ describe('Oracle voice control protocol', () => {
     { type: 'hello', capabilities },
     { type: 'partial', utteranceId: 'utterance-3', text: 'Hel' },
     { type: 'final', utteranceId: 'utterance-3', text: 'Hello' },
+    { type: 'transcript_restore', utteranceId: 'utterance-2', text: 'Try again' },
     { type: 'state', state: 'ready' },
     { type: 'audio_end', segmentId: 'segment-3' },
     { type: 'error', code: 'failed', message: 'Failed', fatal: false },

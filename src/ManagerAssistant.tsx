@@ -533,7 +533,6 @@ export function ManagerAssistant({
   const { recording: voiceRecording, stop: stopVoice } = voice
   const conversationAvailable = conversation.capability?.available === true
   const conversationActive = conversation.state !== 'off'
-  const displayedAnswerOnly = conversationActive || answerOnly
   const conversationOwnsMicrophone = conversation.ownsResources
   const liveAnnouncement = [
     announcement,
@@ -1179,7 +1178,7 @@ export function ManagerAssistant({
             </p>
           </div>
         ) : null}
-        <div className={`manager-composer__row${displayedAnswerOnly ? ' manager-composer__row--only' : ''}${
+        <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}${
           conversationAvailable ? ' manager-composer__row--conversation' : ''
         }`}>
           <textarea
@@ -1247,8 +1246,7 @@ export function ManagerAssistant({
           <div className="oracle-mode-field">
             <div aria-describedby="oracle-mode-hint" aria-label="Oracle mode" className="oracle-mode" role="group">
               <button
-                aria-pressed={displayedAnswerOnly}
-                disabled={conversation.ownsResources}
+                aria-pressed={answerOnly}
                 onClick={() => changeAnswerOnly(true)}
                 title="Oracle answers from the current state of your sessions and never starts, messages, stops, or changes one"
                 type="button"
@@ -1256,8 +1254,7 @@ export function ManagerAssistant({
                 Ask
               </button>
               <button
-                aria-pressed={!displayedAnswerOnly}
-                disabled={conversation.ownsResources}
+                aria-pressed={!answerOnly}
                 onClick={() => changeAnswerOnly(false)}
                 title="Oracle can also start sessions for work you hand it, and message, rename, stop, or close them"
                 type="button"
@@ -1267,7 +1264,7 @@ export function ManagerAssistant({
             </div>
             <span className="oracle-mode__hint" id="oracle-mode-hint">
               {conversationActive
-                ? `Conversation enforces Ask; typed messages remain ${answerOnly ? 'Ask' : 'Delegate'} after stop`
+                ? `Conversation voice is Ask-only; typed messages use ${answerOnly ? 'Ask' : 'Delegate'}`
                 : answerOnly ? 'Running work is left alone' : 'Can start and steer sessions'}
             </span>
           </div>

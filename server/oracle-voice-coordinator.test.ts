@@ -1445,7 +1445,10 @@ describe('OracleVoiceCoordinator', () => {
       defaults,
       { answerOnly: true, source: 'voice' },
     )
-    expect(test.browser).toContainEqual(final(1, 'u1', 'Keep this request.'))
+    expect(test.browser).toContainEqual({
+      ...final(1, 'u1', 'Keep this request.'),
+      type: 'transcript_restore',
+    })
     expect(test.browser).toContainEqual(expect.objectContaining({
       type: 'error',
       code: 'oracle_send_failed',
@@ -1454,6 +1457,36 @@ describe('OracleVoiceCoordinator', () => {
     expect(test.browser).toContainEqual(expect.objectContaining({
       type: 'state',
       generation: 1,
+      state: 'listening',
+    }))
+  })
+
+  it('returns a failed superseded final without changing the current turn state', async () => {
+    const test = harness()
+    test.manager.send.mockRejectedValueOnce(new Error('queue unavailable'))
+    await test.start(0, false)
+    await test.coordinator.receive(confirm(1, 'u1'))
+    await test.coordinator.receive(control('speech_end', 1, {
+      utteranceId: 'u1',
+    }))
+    await test.coordinator.receive(confirm(2, 'u2'))
+
+    await test.backend.emit(final(1, 'u1', 'Restore the earlier request.'))
+
+    expect(test.manager.send).toHaveBeenCalledOnce()
+    expect(test.browser).toContainEqual({
+      ...final(1, 'u1', 'Restore the earlier request.'),
+      type: 'transcript_restore',
+    })
+    expect(test.browser).toContainEqual(expect.objectContaining({
+      type: 'error',
+      generation: 2,
+      code: 'oracle_send_failed',
+      fatal: false,
+    }))
+    expect(test.browser).not.toContainEqual(expect.objectContaining({
+      type: 'state',
+      generation: 2,
       state: 'listening',
     }))
   })

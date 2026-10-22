@@ -980,7 +980,7 @@ describe('ManagerAssistant', () => {
       expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeEnabled()
     })
 
-    it('locks the active mode while Conversation owns resources, then makes it switchable', async () => {
+    it('keeps the typed mode visible and switchable while voice remains Ask-only', async () => {
       localStorage.setItem('agentic-remote:oracle-answer-only', 'false')
       let current = conversationState('listening', { ownsResources: true })
       vi.mocked(useOracleConversation).mockImplementation(() => current)
@@ -989,13 +989,13 @@ describe('ManagerAssistant', () => {
 
       const ask = screen.getByRole('button', { name: 'Ask' })
       const delegate = screen.getByRole('button', { name: 'Delegate' })
-      expect(ask).toBeDisabled()
+      expect(ask).toBeEnabled()
+      expect(ask).toHaveAttribute('aria-pressed', 'false')
+      expect(delegate).toBeEnabled()
+      expect(delegate).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('Conversation voice is Ask-only; typed messages use Delegate')).toBeVisible()
+      fireEvent.click(ask)
       expect(ask).toHaveAttribute('aria-pressed', 'true')
-      expect(delegate).toBeDisabled()
-      expect(delegate).toHaveAttribute('aria-pressed', 'false')
-      expect(screen.getByText('Conversation enforces Ask; typed messages remain Delegate after stop')).toBeVisible()
-      fireEvent.click(delegate)
-      expect(delegate).toHaveAttribute('aria-pressed', 'false')
       expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeDisabled()
 
       fireEvent.click(screen.getByRole('button', { name: 'Stop conversation' }))

@@ -14,6 +14,9 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/')
   await page.locator('main').getByRole('button', { name: /^Oracle/ }).click()
+  const delegate = page.getByRole('button', { name: 'Delegate' })
+  await delegate.tap()
+  await expect(delegate).toHaveAttribute('aria-pressed', 'true')
 
   const voice = new FakeVoiceController(page)
   await voice.setPermission('denied')
@@ -27,6 +30,11 @@ test('Oracle Conversation handles permission, turns, interruption, reconnect, mo
   await expect(start).toBeFocused()
   await start.tap()
   await expect(page.getByText('Listening', { exact: true })).toBeVisible()
+  await expect(delegate).toBeEnabled()
+  await expect(delegate).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByText(
+    'Conversation voice is Ask-only; typed messages use Delegate',
+  )).toBeVisible()
 
   await voice.speak('What is running?', {
     partial: 'What is run',

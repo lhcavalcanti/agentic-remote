@@ -350,7 +350,7 @@ function selectBackend(options: OracleVoiceRouteOptions): SelectedVoiceBackend {
   }
 }
 
-function localConnector(
+export function localConnector(
   backend: VoiceBackend,
   info: NodeInfo,
 ): OracleVoiceBackendConnector {
@@ -368,7 +368,6 @@ function localConnector(
         signal: options.signal,
         send: (output) => {
           const delivery = relay.accept(output)
-          if ('direction' in output) return delivery
           void delivery.catch(() => undefined)
           return Promise.resolve()
         },

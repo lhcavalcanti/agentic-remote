@@ -149,6 +149,7 @@ export function useOracleConversation(options: {
     seenFinalsRef.current.clear()
 
     const current = callbacksRef.current
+    let lastClientState: OracleVoiceUiState = 'starting'
     const deliverFinal = (
       event: OracleVoiceTranscriptEvent,
       clearPartial: boolean,
@@ -175,6 +176,8 @@ export function useOracleConversation(options: {
           || disposedRef.current
           || stoppingRef.current
         ) return
+        const previous = lastClientState
+        lastClientState = next
         if (next === 'off') {
           clientRef.current = undefined
           fatalErrorRef.current = false
@@ -195,7 +198,11 @@ export function useOracleConversation(options: {
         ) {
           setPartial('')
         }
-        if (next !== 'error' && next !== 'reconnecting') clearError()
+        if (
+          next !== 'error'
+          && next !== 'reconnecting'
+          && (next !== 'listening' || previous === 'reconnecting')
+        ) clearError()
       },
       onPartial: (event) => {
         if (clientRef.current !== client || disposedRef.current) return

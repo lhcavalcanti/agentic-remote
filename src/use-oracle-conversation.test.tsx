@@ -285,6 +285,9 @@ describe('useOracleConversation', () => {
 
     act(() => client.state('listening'))
     expect(result.current.state).toBe('listening')
+    expect(result.current.error).toBe('Could not send to Oracle: request failed')
+
+    act(() => client.state('speech'))
     expect(result.current.error).toBeUndefined()
 
     act(() => {

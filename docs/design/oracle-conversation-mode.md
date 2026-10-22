@@ -353,7 +353,8 @@ No failure is success-shaped:
   fresh generation after recovery;
 - Oracle send failure sends an explicit transcript-restore event, preserving
   even a superseded final in the composer without changing the newer live turn;
-  restoring that earlier final does not clear a newer utterance's live partial;
+  restoring that earlier final does not clear a newer utterance's live partial,
+  and its recovery reason remains visible until the next speech activity;
 - TTS failure leaves the text reply usable and stops voice output;
 - cancellation timeout closes the stream rather than submitting over an
   uncertain prior generation.

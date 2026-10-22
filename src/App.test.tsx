@@ -7570,6 +7570,90 @@ describe('App', () => {
     )
   })
 
+  describe('a steer the terminal took but has not logged yet', () => {
+    const running: ManagedSession = {
+      ...session,
+      status: 'running',
+      executionMode: 'tmux',
+      provider: 'copilot',
+    }
+    const steer = 'End the story with the word mango'
+    const pendingBubble = () =>
+      screen.queryByRole('article', { name: 'Your message, pending in the terminal' })
+    const emit = (event: unknown) => act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify(event),
+    } as MessageEvent))
+
+    it('shows as sent, marked pending, until the transcript has it', async () => {
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      vi.mocked(sendMessage).mockResolvedValue(running)
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+      const bubble = await screen.findByRole('article', {
+        name: 'Your message, pending in the terminal',
+      })
+      expect(bubble).toHaveTextContent(steer)
+      expect(bubble).toHaveTextContent('Pending')
+      expect(textarea).toHaveValue('')
+      expect(sendMessage).toHaveBeenCalledOnce()
+
+      emit({
+        type: 'session.upserted',
+        session: {
+          ...running,
+          updatedAt: new Date().toISOString(),
+          messages: [
+            ...running.messages,
+            { id: 'message-4', role: 'user', content: steer, createdAt: new Date().toISOString() },
+          ],
+        },
+      })
+      await waitFor(() => expect(pendingBubble()).toBeNull())
+      expect(screen.getAllByText(steer)).toHaveLength(1)
+      expect(sendMessage).toHaveBeenCalledOnce()
+    })
+
+    it('is not shown for a send the app queued instead', async () => {
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      vi.mocked(sendMessage).mockResolvedValue({
+        ...running,
+        queuedPrompts: [{ id: 'q1', content: steer, createdAt: new Date().toISOString() }],
+      })
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+      await waitFor(() => expect(textarea).not.toBeDisabled())
+      expect(pendingBubble()).toBeNull()
+    })
+
+    it('is not shown for a failed send, which goes back to the composer', async () => {
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      vi.mocked(sendMessage).mockRejectedValue(
+        Object.assign(new Error('The terminal is showing a full-screen view.'), { status: 409 }),
+      )
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(textarea).toHaveValue(steer))
+      expect(pendingBubble()).toBeNull()
+    })
+  })
+
   it('sends a recovered prompt with guarded replacement and its current token', async () => {
     const oldToken = 'resend:old-terminal-conflict'
     const content = 'Recovered prompt blocked by stale tmux text'

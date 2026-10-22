@@ -194,6 +194,13 @@ import {
 } from '../shared/background-tasks'
 import { terminalSendOptions } from '../shared/send-policy'
 import {
+  createPendingEcho,
+  nextPendingEchoDeadline,
+  prunePendingEchoMap,
+  unloggedPendingEchoes,
+  type PendingEcho,
+} from './pending-echo'
+import {
   knowledgeAbsolutePath,
   normalizeKnowledgeRelativePath,
 } from '../shared/knowledge-path'
@@ -4772,6 +4779,31 @@ const TranscriptMessage = memo(function TranscriptMessage({
 }, (previous, next) => sameMessage(previous.message, next.message))
 
 /**
+ * A message the terminal took that Copilot has not logged yet. Typed while it
+ * is mid-response, Copilot holds it as pending and logs it only when the turn
+ * reaches it, so it is shown here, sent, until the transcript has it.
+ */
+function PendingEchoMessage({ content }: { content: string }) {
+  return (
+    <article
+      aria-label="Your message, pending in the terminal"
+      className="message message--user message--pending"
+    >
+      <div className="message__metadata">
+        <span className="message__label">You</span>
+        <span
+          className="message__pending"
+          title="Sent to the terminal. Copilot takes it in when the current step finishes."
+        >
+          Pending
+        </span>
+      </div>
+      <div className="message__content message__content--plain">{content}</div>
+    </article>
+  )
+}
+
+/**
  * The transcript is the largest thing on screen and does not change while the
  * composer is typed into, so it is kept out of that render. Rebuilding a few
  * thousand rows for every keystroke is what made typing lag.
@@ -7148,6 +7180,8 @@ function App() {
   const [sessionLoadError, setSessionLoadError] = useState<string>()
   const [sessionLoadAttempt, setSessionLoadAttempt] = useState(0)
   const [sending, setSending] = useState(false)
+  // Messages the terminal took that its CLI has not logged yet, per session.
+  const [pendingEchoes, setPendingEchoes] = useState<Record<string, PendingEcho[]>>({})
   const [cancelling, setCancelling] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [uploadingFile, setUploadingFile] = useState(false)
@@ -7777,6 +7811,31 @@ function App() {
     [selectedKey, sessions],
   )
   const hasSelectedSession = Boolean(selected)
+  // Drops a pending message once its session's transcript has it, or once the
+  // session has settled for a while without ever logging it.
+  useEffect(() => {
+    if (Object.keys(pendingEchoes).length === 0) return
+    const owner = (key: string) => sessions.find((session) => sessionKey(session) === key)
+    const prune = () => setPendingEchoes((current) =>
+      prunePendingEchoMap(current, owner, Date.now()))
+    const now = Date.now()
+    const pruned = prunePendingEchoMap(pendingEchoes, owner, now)
+    const deadline = nextPendingEchoDeadline(pruned)
+    if (pruned === pendingEchoes && deadline === undefined) return
+    const timer = window.setTimeout(
+      prune,
+      pruned === pendingEchoes ? Math.max(0, deadline! - now) : 0,
+    )
+    return () => window.clearTimeout(timer)
+  }, [pendingEchoes, sessions])
+  const selectedPendingEchoes = useMemo(
+    // Whatever the transcript has already logged is hidden at once, so the
+    // message never shows twice; the effect above retires the rest.
+    () => selected
+      ? unloggedPendingEchoes(pendingEchoes[sessionKey(selected)] || [], selected.messages)
+      : [],
+    [pendingEchoes, selected],
+  )
   const acceptKnowledgeRoot = useCallback((binding: SessionKnowledgeBinding) => {
     if (!binding.rootId) return
     if (!binding.available) {
@@ -12837,6 +12896,24 @@ function App() {
         return
       }
       const liveKey = followReplacementsRef.current(targetKey)
+      // The terminal took it, but Copilot may hold it as pending and log it
+      // only later. A send the app queued instead is already shown in the queue.
+      const queuedInstead =
+        (updated.queuedPrompts?.length || 0) > (selected.queuedPrompts?.length || 0) ||
+        Boolean(updated.queuedPrompts?.some((prompt) => prompt.content === content))
+      if (
+        !isCommand &&
+        !shouldEnqueue &&
+        !appLocalCommand &&
+        selected.executionMode === 'tmux' &&
+        !queuedInstead
+      ) {
+        const echo = createPendingEcho(submission.id, content, selected.messages, Date.now())
+        setPendingEchoes((current) => ({
+          ...current,
+          [liveKey]: [...(current[liveKey] || []), echo],
+        }))
+      }
       updateComposerDrafts([], (current) => {
         const draft = current[liveKey]
         if (draft?.pendingSubmission?.id !== submission.id) {
@@ -15291,6 +15368,9 @@ function App() {
               messages={selected.messages}
             />
           )}
+          {selectedPendingEchoes.map((echo) => (
+            <PendingEchoMessage content={echo.content} key={echo.id} />
+          ))}
           {selectedHasStaleInteraction && selectedShowsRecovery ? (
             <StaleInteractionRecoveryCard
               disabled={!selectedCanRecover || recovering}

@@ -217,6 +217,31 @@ describe('RemoteVoiceClient', () => {
     }
   })
 
+  it('keeps hub-only defaults out of paired-node start controls', async () => {
+    const node = await voiceNode()
+    const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')
+    const privateFolder = `/private/${'x'.repeat(4_000)}`
+    const folders = Object.fromEntries(Array.from(
+      { length: 18 },
+      (_, index) => [`computer-${index}`, `${privateFolder}-${index}`],
+    ))
+    try {
+      await expect(remote.send(control('start', 1, 'stream-1', {
+        ...startFields,
+        defaults: { ...startFields.defaults, folders },
+      }))).resolves.toBeUndefined()
+
+      await vi.waitFor(() => expect(node.received).toHaveLength(1))
+      expect(node.received[0]).toEqual(control('start', 1, 'stream-1', {
+        ...startFields,
+        defaults: {},
+      }))
+      expect(JSON.stringify(node.received[0])).not.toContain(privateFolder)
+    } finally {
+      await remote.stop('test complete')
+    }
+  })
+
   it('validates and exposes ordered node controls plus native-rate playback frames', async () => {
     const node = await voiceNode()
     const remote = await RemoteVoiceClient.connect(node.computer, 'stream-1')

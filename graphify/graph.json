@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "142d85ab25d83d59147f8d0c6e8f7df4ea8eedf0",
+  "built_at_commit": "905597754add5801f17f5128116ea927690a60bb",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -92555,7 +92555,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_integration_test",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L2107",
+      "source_location": "L2116",
       "target": "server_oracle_voice_integration_test_blockingcancelengine",
       "weight": 1.0
     },
@@ -92962,7 +92962,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_integration_test",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1820",
+      "source_location": "L1829",
       "target": "server_oracle_voice_integration_test_rejectingnodeengine",
       "weight": 1.0
     },
@@ -93006,7 +93006,7 @@
       "relation": "contains",
       "source": "server_oracle_voice_integration_test",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1915",
+      "source_location": "L1924",
       "target": "server_oracle_voice_integration_test_slownodeengine",
       "weight": 1.0
     },
@@ -93410,7 +93410,7 @@
       "relation": "inherits",
       "source": "server_oracle_voice_integration_test_blockingcancelengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L2107",
+      "source_location": "L2116",
       "target": "server_oracle_voice_engine_fakevoiceengine",
       "weight": 1.0
     },
@@ -93421,7 +93421,7 @@
       "relation": "method",
       "source": "server_oracle_voice_integration_test_blockingcancelengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L2108",
+      "source_location": "L2117",
       "target": "server_oracle_voice_integration_test_blockingcancelengine_cancelgeneration",
       "weight": 1.0
     },
@@ -93433,7 +93433,7 @@
       "relation": "references",
       "source": "server_oracle_voice_integration_test_blockingcancelengine_cancelgeneration",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L2108",
+      "source_location": "L2117",
       "target": "server_oracle_voice_engine_fakevoiceengine",
       "weight": 1.0
     },
@@ -94053,7 +94053,7 @@
       "relation": "inherits",
       "source": "server_oracle_voice_integration_test_rejectingnodeengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1820",
+      "source_location": "L1829",
       "target": "server_oracle_voice_engine_fakevoiceengine",
       "weight": 1.0
     },
@@ -94064,7 +94064,7 @@
       "relation": "method",
       "source": "server_oracle_voice_integration_test_rejectingnodeengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1821",
+      "source_location": "L1830",
       "target": "server_oracle_voice_integration_test_rejectingnodeengine_accept",
       "weight": 1.0
     },
@@ -94076,7 +94076,7 @@
       "relation": "references",
       "source": "server_oracle_voice_integration_test_rejectingnodeengine_accept",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1821",
+      "source_location": "L1830",
       "target": "server_oracle_voice_engine_fakevoiceengine",
       "weight": 1.0
     },
@@ -94112,7 +94112,7 @@
       "relation": "inherits",
       "source": "server_oracle_voice_integration_test_slownodeengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1915",
+      "source_location": "L1924",
       "target": "server_oracle_voice_engine_fakevoiceengine",
       "weight": 1.0
     },
@@ -94123,7 +94123,7 @@
       "relation": "method",
       "source": "server_oracle_voice_integration_test_slownodeengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1916",
+      "source_location": "L1925",
       "target": "server_oracle_voice_integration_test_slownodeengine_accept",
       "weight": 1.0
     },
@@ -94135,7 +94135,7 @@
       "relation": "references",
       "source": "server_oracle_voice_integration_test_slownodeengine_accept",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1916",
+      "source_location": "L1925",
       "target": "server_oracle_voice_engine_fakevoiceengine",
       "weight": 1.0
     },
@@ -116579,7 +116579,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L597",
+      "source_location": "L599",
       "target": "server_remote_voice_client_closereason",
       "weight": 1.0
     },
@@ -116590,7 +116590,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L589",
+      "source_location": "L591",
       "target": "server_remote_voice_client_exactarraybuffer",
       "weight": 1.0
     },
@@ -116601,7 +116601,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L583",
+      "source_location": "L585",
       "target": "server_remote_voice_client_rawdatabuffer",
       "weight": 1.0
     },
@@ -116623,7 +116623,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L601",
+      "source_location": "L603",
       "target": "server_remote_voice_client_remotesocketcloseerror",
       "weight": 1.0
     },
@@ -116634,7 +116634,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L649",
+      "source_location": "L651",
       "target": "server_remote_voice_client_remotesocketerror",
       "weight": 1.0
     },
@@ -116689,7 +116689,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L574",
+      "source_location": "L576",
       "target": "server_remote_voice_client_sendsocket",
       "weight": 1.0
     },
@@ -116833,7 +116833,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_exactarraybuffer",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L590",
+      "source_location": "L592",
       "target": "server_remote_voice_client_rawdatabuffer",
       "weight": 1.0
     },
@@ -116845,7 +116845,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotesocketcloseerror",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L607",
+      "source_location": "L609",
       "target": "server_remote_voice_client_remotevoicedisconnecterror",
       "weight": 1.0
     },
@@ -116857,7 +116857,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotesocketerror",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L652",
+      "source_location": "L654",
       "target": "server_remote_voice_client_remotevoicedisconnecterror",
       "weight": 1.0
     },
@@ -116868,7 +116868,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L399",
+      "source_location": "L401",
       "target": "server_remote_voice_client_remotevoiceclient_audio",
       "weight": 1.0
     },
@@ -116879,7 +116879,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L520",
+      "source_location": "L522",
       "target": "server_remote_voice_client_remotevoiceclient_awaitprotocolstop",
       "weight": 1.0
     },
@@ -116890,7 +116890,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L567",
+      "source_location": "L569",
       "target": "server_remote_voice_client_remotevoiceclient_clearheartbeat",
       "weight": 1.0
     },
@@ -116901,7 +116901,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L429",
+      "source_location": "L431",
       "target": "server_remote_voice_client_remotevoiceclient_close",
       "weight": 1.0
     },
@@ -116934,7 +116934,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L395",
+      "source_location": "L397",
       "target": "server_remote_voice_client_remotevoiceclient_control",
       "weight": 1.0
     },
@@ -116945,7 +116945,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L471",
+      "source_location": "L473",
       "target": "server_remote_voice_client_remotevoiceclient_disconnect",
       "weight": 1.0
     },
@@ -116956,7 +116956,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L545",
+      "source_location": "L547",
       "target": "server_remote_voice_client_remotevoiceclient_markstopped",
       "weight": 1.0
     },
@@ -116967,7 +116967,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L433",
+      "source_location": "L435",
       "target": "server_remote_voice_client_remotevoiceclient_receive",
       "weight": 1.0
     },
@@ -116978,7 +116978,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L552",
+      "source_location": "L554",
       "target": "server_remote_voice_client_remotevoiceclient_refreshheartbeat",
       "weight": 1.0
     },
@@ -116989,7 +116989,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L514",
+      "source_location": "L516",
       "target": "server_remote_voice_client_remotevoiceclient_removeregistrationabort",
       "weight": 1.0
     },
@@ -117000,7 +117000,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L483",
+      "source_location": "L485",
       "target": "server_remote_voice_client_remotevoiceclient_requireconnected",
       "weight": 1.0
     },
@@ -117022,7 +117022,7 @@
       "relation": "method",
       "source": "server_remote_voice_client_remotevoiceclient",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L403",
+      "source_location": "L405",
       "target": "server_remote_voice_client_remotevoiceclient_stop",
       "weight": 1.0
     },
@@ -117046,7 +117046,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_audio",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L400",
+      "source_location": "L402",
       "target": "server_remote_voice_client_remotevoiceclient_send",
       "weight": 1.0
     },
@@ -117058,7 +117058,7 @@
       "relation": "references",
       "source": "server_remote_voice_client_remotevoiceclient_audio",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L399",
+      "source_location": "L401",
       "target": "shared_oracle_voice_voiceaudioframe",
       "weight": 1.0
     },
@@ -117070,7 +117070,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_awaitprotocolstop",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L533",
+      "source_location": "L535",
       "target": "server_remote_voice_client_remotesocketcloseerror",
       "weight": 1.0
     },
@@ -117082,7 +117082,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_awaitprotocolstop",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L539",
+      "source_location": "L541",
       "target": "server_remote_voice_client_remotevoiceclient_markstopped",
       "weight": 1.0
     },
@@ -117094,7 +117094,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_close",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L430",
+      "source_location": "L432",
       "target": "server_remote_voice_client_remotevoiceclient_stop",
       "weight": 1.0
     },
@@ -117310,7 +117310,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_control",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L396",
+      "source_location": "L398",
       "target": "server_remote_voice_client_remotevoiceclient_send",
       "weight": 1.0
     },
@@ -117322,7 +117322,7 @@
       "relation": "references",
       "source": "server_remote_voice_client_remotevoiceclient_control",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L395",
+      "source_location": "L397",
       "target": "shared_oracle_voice_voiceclientcontrol",
       "weight": 1.0
     },
@@ -117334,7 +117334,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_disconnect",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L478",
+      "source_location": "L480",
       "target": "server_remote_voice_client_closereason",
       "weight": 1.0
     },
@@ -117346,7 +117346,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_disconnect",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L475",
+      "source_location": "L477",
       "target": "server_remote_voice_client_remotevoiceclient_clearheartbeat",
       "weight": 1.0
     },
@@ -117358,7 +117358,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_disconnect",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L476",
+      "source_location": "L478",
       "target": "server_remote_voice_client_remotevoiceclient_removeregistrationabort",
       "weight": 1.0
     },
@@ -117370,7 +117370,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_markstopped",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L548",
+      "source_location": "L550",
       "target": "server_remote_voice_client_remotevoiceclient_clearheartbeat",
       "weight": 1.0
     },
@@ -117382,7 +117382,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_markstopped",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L549",
+      "source_location": "L551",
       "target": "server_remote_voice_client_remotevoiceclient_removeregistrationabort",
       "weight": 1.0
     },
@@ -117394,7 +117394,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L440",
+      "source_location": "L442",
       "target": "server_oracle_voice_session_voicesessionerror",
       "weight": 1.0
     },
@@ -117406,7 +117406,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L442",
+      "source_location": "L444",
       "target": "server_remote_voice_client_exactarraybuffer",
       "weight": 1.0
     },
@@ -117418,7 +117418,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L438",
+      "source_location": "L440",
       "target": "server_remote_voice_client_rawdatabuffer",
       "weight": 1.0
     },
@@ -117430,7 +117430,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L459",
+      "source_location": "L461",
       "target": "server_remote_voice_client_remotevoiceclient_disconnect",
       "weight": 1.0
     },
@@ -117442,7 +117442,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L435",
+      "source_location": "L437",
       "target": "server_remote_voice_client_remotevoiceclient_refreshheartbeat",
       "weight": 1.0
     },
@@ -117454,7 +117454,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L459",
+      "source_location": "L461",
       "target": "server_remote_voice_client_remotevoicedisconnecterror",
       "weight": 1.0
     },
@@ -117466,7 +117466,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L442",
+      "source_location": "L444",
       "target": "shared_oracle_voice_decodevoiceaudioframe",
       "weight": 1.0
     },
@@ -117478,7 +117478,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_receive",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L451",
+      "source_location": "L453",
       "target": "shared_oracle_voice_isvoiceservercontrol",
       "weight": 1.0
     },
@@ -117490,7 +117490,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_refreshheartbeat",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L553",
+      "source_location": "L555",
       "target": "server_remote_voice_client_remotevoiceclient_clearheartbeat",
       "weight": 1.0
     },
@@ -117502,7 +117502,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_refreshheartbeat",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L562",
+      "source_location": "L564",
       "target": "server_remote_voice_client_remotevoiceclient_disconnect",
       "weight": 1.0
     },
@@ -117514,7 +117514,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_refreshheartbeat",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L555",
+      "source_location": "L557",
       "target": "server_remote_voice_client_remotevoicedisconnecterror",
       "weight": 1.0
     },
@@ -117526,7 +117526,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_requireconnected",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L485",
+      "source_location": "L487",
       "target": "server_remote_voice_client_remotevoicedisconnecterror",
       "weight": 1.0
     },
@@ -117550,7 +117550,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_send",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L388",
+      "source_location": "L390",
       "target": "server_remote_voice_client_remotevoiceclient_awaitprotocolstop",
       "weight": 1.0
     },
@@ -117562,7 +117562,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_send",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L338",
+      "source_location": "L340",
       "target": "server_remote_voice_client_remotevoiceclient_disconnect",
       "weight": 1.0
     },
@@ -117586,7 +117586,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_send",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L338",
+      "source_location": "L340",
       "target": "server_remote_voice_client_remotevoicedisconnecterror",
       "weight": 1.0
     },
@@ -117598,7 +117598,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_send",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L368",
+      "source_location": "L370",
       "target": "server_remote_voice_client_sendsocket",
       "weight": 1.0
     },
@@ -117610,7 +117610,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_send",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L347",
+      "source_location": "L349",
       "target": "shared_oracle_voice_encodevoiceaudioframe",
       "weight": 1.0
     },
@@ -117646,7 +117646,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_send",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L335",
+      "source_location": "L337",
       "target": "shared_oracle_voice_voiceaudioframebytelength",
       "weight": 1.0
     },
@@ -117670,7 +117670,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_stop",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L425",
+      "source_location": "L427",
       "target": "server_remote_voice_client_closereason",
       "weight": 1.0
     },
@@ -117682,7 +117682,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_stop",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L407",
+      "source_location": "L409",
       "target": "server_remote_voice_client_remotevoiceclient_clearheartbeat",
       "weight": 1.0
     },
@@ -117694,7 +117694,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_stop",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L411",
+      "source_location": "L413",
       "target": "server_remote_voice_client_remotevoiceclient_markstopped",
       "weight": 1.0
     },
@@ -117706,7 +117706,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_remotevoiceclient_stop",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L408",
+      "source_location": "L410",
       "target": "server_remote_voice_client_remotevoiceclient_removeregistrationabort",
       "weight": 1.0
     },
@@ -117753,7 +117753,7 @@
       "relation": "calls",
       "source": "server_remote_voice_client_sendsocket",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L576",
+      "source_location": "L578",
       "target": "server_remote_voice_client_remotevoiceclient_send",
       "weight": 1.0
     },
@@ -117870,7 +117870,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client_test",
       "source_file": "server/remote-voice-client.test.ts",
-      "source_location": "L321",
+      "source_location": "L346",
       "target": "server_remote_voice_client_test_destroy",
       "weight": 1.0
     },
@@ -117881,7 +117881,7 @@
       "relation": "contains",
       "source": "server_remote_voice_client_test",
       "source_file": "server/remote-voice-client.test.ts",
-      "source_location": "L585",
+      "source_location": "L610",
       "target": "server_remote_voice_client_test_exactarraybuffer",
       "weight": 1.0
     },
@@ -235324,7 +235324,7 @@
       "label": "BlockingCancelEngine",
       "norm_label": "blockingcancelengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L2107"
+      "source_location": "L2116"
     },
     {
       "_callable": true,
@@ -235336,7 +235336,7 @@
       "label": ".cancelGeneration()",
       "norm_label": ".cancelgeneration()",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L2108"
+      "source_location": "L2117"
     },
     {
       "_callable": true,
@@ -235982,7 +235982,7 @@
       "label": "RejectingNodeEngine",
       "norm_label": "rejectingnodeengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1820"
+      "source_location": "L1829"
     },
     {
       "_callable": true,
@@ -235994,7 +235994,7 @@
       "label": ".accept()",
       "norm_label": ".accept()",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1821"
+      "source_location": "L1830"
     },
     {
       "_callable": true,
@@ -236042,7 +236042,7 @@
       "label": "SlowNodeEngine",
       "norm_label": "slownodeengine",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1915"
+      "source_location": "L1924"
     },
     {
       "_callable": true,
@@ -236054,7 +236054,7 @@
       "label": ".accept()",
       "norm_label": ".accept()",
       "source_file": "server/oracle-voice-integration.test.ts",
-      "source_location": "L1916"
+      "source_location": "L1925"
     },
     {
       "_callable": true,
@@ -244580,7 +244580,7 @@
       "label": "closeReason()",
       "norm_label": "closereason()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L597"
+      "source_location": "L599"
     },
     {
       "_callable": true,
@@ -244592,7 +244592,7 @@
       "label": "exactArrayBuffer()",
       "norm_label": "exactarraybuffer()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L589"
+      "source_location": "L591"
     },
     {
       "_callable": true,
@@ -244604,7 +244604,7 @@
       "label": "rawDataBuffer()",
       "norm_label": "rawdatabuffer()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L583"
+      "source_location": "L585"
     },
     {
       "_origin": "ast",
@@ -244627,7 +244627,7 @@
       "label": "remoteSocketCloseError()",
       "norm_label": "remotesocketcloseerror()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L601"
+      "source_location": "L603"
     },
     {
       "_callable": true,
@@ -244639,7 +244639,7 @@
       "label": "remoteSocketError()",
       "norm_label": "remotesocketerror()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L649"
+      "source_location": "L651"
     },
     {
       "_callable": true,
@@ -244664,7 +244664,7 @@
       "label": ".audio()",
       "norm_label": ".audio()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L399"
+      "source_location": "L401"
     },
     {
       "_callable": true,
@@ -244676,7 +244676,7 @@
       "label": ".awaitProtocolStop()",
       "norm_label": ".awaitprotocolstop()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L520"
+      "source_location": "L522"
     },
     {
       "_callable": true,
@@ -244688,7 +244688,7 @@
       "label": ".clearHeartbeat()",
       "norm_label": ".clearheartbeat()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L567"
+      "source_location": "L569"
     },
     {
       "_callable": true,
@@ -244700,7 +244700,7 @@
       "label": ".close()",
       "norm_label": ".close()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L429"
+      "source_location": "L431"
     },
     {
       "_callable": true,
@@ -244736,7 +244736,7 @@
       "label": ".control()",
       "norm_label": ".control()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L395"
+      "source_location": "L397"
     },
     {
       "_callable": true,
@@ -244748,7 +244748,7 @@
       "label": ".disconnect()",
       "norm_label": ".disconnect()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L471"
+      "source_location": "L473"
     },
     {
       "_callable": true,
@@ -244760,7 +244760,7 @@
       "label": ".markStopped()",
       "norm_label": ".markstopped()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L545"
+      "source_location": "L547"
     },
     {
       "_callable": true,
@@ -244772,7 +244772,7 @@
       "label": ".receive()",
       "norm_label": ".receive()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L433"
+      "source_location": "L435"
     },
     {
       "_callable": true,
@@ -244784,7 +244784,7 @@
       "label": ".refreshHeartbeat()",
       "norm_label": ".refreshheartbeat()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L552"
+      "source_location": "L554"
     },
     {
       "_callable": true,
@@ -244796,7 +244796,7 @@
       "label": ".removeRegistrationAbort()",
       "norm_label": ".removeregistrationabort()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L514"
+      "source_location": "L516"
     },
     {
       "_callable": true,
@@ -244808,7 +244808,7 @@
       "label": ".requireConnected()",
       "norm_label": ".requireconnected()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L483"
+      "source_location": "L485"
     },
     {
       "_callable": true,
@@ -244832,7 +244832,7 @@
       "label": ".stop()",
       "norm_label": ".stop()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L403"
+      "source_location": "L405"
     },
     {
       "_callable": true,
@@ -244895,7 +244895,7 @@
       "label": "sendSocket()",
       "norm_label": "sendsocket()",
       "source_file": "server/remote-voice-client.ts",
-      "source_location": "L574"
+      "source_location": "L576"
     },
     {
       "_origin": "ast",
@@ -244952,7 +244952,7 @@
       "label": "destroy()",
       "norm_label": "destroy()",
       "source_file": "server/remote-voice-client.test.ts",
-      "source_location": "L297"
+      "source_location": "L322"
     },
     {
       "_callable": true,
@@ -244964,7 +244964,7 @@
       "label": "exactArrayBuffer()",
       "norm_label": "exactarraybuffer()",
       "source_file": "server/remote-voice-client.test.ts",
-      "source_location": "L585"
+      "source_location": "L610"
     },
     {
       "_callable": true,

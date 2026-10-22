@@ -326,7 +326,9 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
         if (!isVoiceClientControl(message) || message.streamId !== this.streamId) {
           throw new VoiceSessionError('Invalid remote voice control message', 1008)
         }
-        payload = JSON.stringify(message)
+        payload = JSON.stringify(message.type === 'start'
+          ? { ...message, defaults: {} }
+          : message)
       } else {
         if (message.direction !== 'microphone') {
           throw new VoiceSessionError('Remote voice accepts microphone audio only', 1008)

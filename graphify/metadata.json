@@ -429,7 +429,7 @@
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
     "docs/deployment-promotion.md": "e2b4bdd37fd6398bb342edb8b5c89334146a0058086cdf3ad3b3af2ebffeb71d",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
-    "docs/design/oracle-conversation-mode.md": "194f0512ca6295df208a5c87d0680703a9f25f1bb1cf933ea61eb8a8ea40285b",
+    "docs/design/oracle-conversation-mode.md": "cdc39521ac22389bdd61be2823367bb12dbb3d17a0a9beaa933a23020ab4daee",
     "docs/design/session-manager.md": "801cb712de84d82c60b8b6d7694c0a6e17b61b89a1db4262696e3161048b6b95",
     "docs/design/settings-profile.md": "55cbb79747e67bf7fb637c8446d514ae815998733602979898f9cf51826848b3",
     "docs/licenses/onnxruntime-1.24.2-third-party-notices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
@@ -438,7 +438,7 @@
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
     "docs/mockups/brand-logo.html": "1a1a3efd305260cfba6c2cf5d6eb0f5ec5a68472a010a0eaf9dfd426436766c1",
     "docs/native-shell.md": "bc434b4a881ec432c84c6744ab0ab0f73d8d023ceff73d0baffd60c6bccc7a9f",
-    "docs/oracle-conversation.md": "6f2947b6b7fec72fa1ecbc0270cc9960d0cfab375d22c396a90b86ead8e0a09d",
+    "docs/oracle-conversation.md": "3005cfeaf147a63c1418196414a588a0f588c1dff32f73b980f2b735d249d1ed",
     "docs/provider-compatibility.md": "06acbbaffd1b69c572f0988d205f4071159b18cda946f384601723bccfb1cc7d",
     "docs/sdk-architecture-roadmap.md": "108720c64bee7a4eda6cf7b0021414de4a5b7bb84cd1b914a8e14c709df1bd39",
     "docs/session-retention.md": "86a4b60ce293f288a1dd12edc0cdba940dff7a58867d9490a26a0799a0f6a4f9",
@@ -585,7 +585,7 @@
     "server/oracle-voice-coordinator.ts": "ca91dfe6ec11e995f83ac19afc734563d2a3cc8ed6ebb45a7e4b29bb0874a7ed",
     "server/oracle-voice-engine.test.ts": "12acdcaa07d5bc4909bf17322603eb7e7b410cb72c9beaca12d825384bb85638",
     "server/oracle-voice-engine.ts": "3cb5b0c9a03ed07beb96473c697e710e5f6dbb842f5a1616bdb92b447c9d94fd",
-    "server/oracle-voice-integration.test.ts": "47f195cdc1b1958ee2aaba7a5c4d31191dbaf1612c9d221f86a1c9faef463c03",
+    "server/oracle-voice-integration.test.ts": "2d6b52b903fe51930b9075073f0b94704cf3ce6fc3c4246a31afccaf54a757ea",
     "server/oracle-voice-output-delivery.test.ts": "6a1016be5add33353720101f72512cb6d2cf03ca602cc2f3c7f6077558a5b2dd",
     "server/oracle-voice-routes.test.ts": "3dc6a697ea462928b84a23eb32dc533751b106b3b0ab2edf668ae52f1357abbe",
     "server/oracle-voice-routes.ts": "cdee34f2e3e29c1ca89eb394970269c72d6d9b0633b27351deb284c9a2660290",
@@ -629,8 +629,8 @@
     "server/remote-node-client.test.ts": "221bdc1ca70639fb5a28598401aeb531e33ad23ca8c5221b653969e5711b9c4a",
     "server/remote-node-client.ts": "704f85a8c74de8e9ff27ff5ec2f06a15df100d310ca9d5434b189ef69407a840",
     "server/remote-node-errors.ts": "a51ec71966101e131f656a398c56baced793ed943f7f7a4cc342061f6c2e6c5c",
-    "server/remote-voice-client.test.ts": "e8f349cd908bca32dac01117174c3b59d371192b9448df4440e1ad5e682afbcf",
-    "server/remote-voice-client.ts": "a427f7f6afb91205b5f25f97ac7c7a9f02f7af4e1c7511376bc37fe39f760215",
+    "server/remote-voice-client.test.ts": "16e8c31f055a519f64cd0760e8c5c979113dc344c4d7435630211a92ed3f7856",
+    "server/remote-voice-client.ts": "a240dec15c9d4778373260b2025a5a2b77629fa26615019ee3da59e9a96ebfc4",
     "server/safe-area.test.ts": "528bbfad9c5cf4dca776d0e5e35933790d0a283de02acbc3cb7e88ffcbdf325c",
     "server/send-matrix.integration.test.ts": "f94de9ea4834af9f9b08e007d578bfc79afb11bb82d4cd0f1a39104e89e39216",
     "server/service-unit.test.ts": "7b78bab1401fe1ebeec3cedee090e354c4c28b0adabd92c7c1f5e9e9a1803601",
@@ -935,16 +935,19 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "a8791479a05e58ad8a77be03f4c35d007ebf5391ce1085dab9d9a67a77b78069",
+    "GRAPH_REPORT.md": "b4fa3659ec9c4a13dcc51b1162452579569e7a8fc2ec2f2e783f19e131309961",
     "communities.json": "c047f7b7d2917cbc1c20ea288feb99e4bda08e8709b00cadaa9c32220d5b8a3b",
-    "graph.html": "d2295ec81eaa02cd569ab165c80f6cf36ba924e969956cf3d3afcb3226d7cf17",
-    "graph.json": "92dc2c24f0a598bfbf8a0ae4ba2b5800f17819f40e1398b9938a61cb167057f1"
+    "graph.html": "33e21fd1224d59a01698e6b6157dfba03d337a3f61a086bdb982defdfc5416ff",
+    "graph.json": "cb387fc4f3a783bb8f380678b5434dc8220775c87481e35672b8af88b2c43454"
   },
   "schema_version": 1,
-  "source_commit": "142d85ab25d83d59147f8d0c6e8f7df4ea8eedf0",
-  "source_fingerprint": "fbd466245728bac453ed2c2c43b1621429f2fed25a6fc27ec9b262e7e0ab019b",
+  "source_commit": "905597754add5801f17f5128116ea927690a60bb",
+  "source_fingerprint": "a6b8c880ce45205467465d06603ca93f37454babb21c6773806a02ffbb59c1f0",
   "working_tree_changes": [
-    "server/oracle-voice-coordinator.test.ts",
-    "server/oracle-voice-coordinator.ts"
+    "docs/design/oracle-conversation-mode.md",
+    "docs/oracle-conversation.md",
+    "server/oracle-voice-integration.test.ts",
+    "server/remote-voice-client.test.ts",
+    "server/remote-voice-client.ts"
   ]
 }

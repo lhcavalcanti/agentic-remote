@@ -1361,6 +1361,14 @@ describe('Oracle voice cross-layer integration', () => {
   it('relays incrementally through an authenticated paired node without hub-local models', async () => {
     vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'on')
     vi.stubEnv('AGENTIC_REMOTE_VOICE_COMPUTER', 'Speech node')
+    const privateFolder = `/private/${'x'.repeat(4_000)}`
+    const pairedDefaults: ManagerClientDefaults = {
+      ...defaults,
+      folders: Object.fromEntries(Array.from(
+        { length: 18 },
+        (_, index) => [`computer-${index}`, `${privateFolder}-${index}`],
+      )),
+    }
     const nodeLogs: string[] = []
     const hubLogs: string[] = []
     const capturedLogger = (lines: string[]) => ({
@@ -1437,7 +1445,7 @@ describe('Oracle voice cross-layer integration', () => {
 
     sendControl(browser, hello.streamId, 'start', 20, {
       language: 'en',
-      defaults,
+      defaults: pairedDefaults,
       answerOnly: false,
     })
     sendControl(browser, hello.streamId, 'speech_confirmed', 21, {
@@ -1499,7 +1507,7 @@ describe('Oracle voice cross-layer integration', () => {
     await vi.waitFor(() => expect(manager.send).toHaveBeenCalledOnce())
     expect(manager.send).toHaveBeenCalledWith(
       transcriptSentinel,
-      defaults,
+      pairedDefaults,
       { answerOnly: true, source: 'voice' },
     )
     const user = manager.submitted[0]
@@ -1613,6 +1621,7 @@ describe('Oracle voice cross-layer integration', () => {
       ticket,
       hello.streamId,
       nodeBuilt.identity.token,
+      privateFolder,
       pcmSentinel.join(','),
       pcmBytes.toString('hex'),
       pcmBytes.toString('base64'),

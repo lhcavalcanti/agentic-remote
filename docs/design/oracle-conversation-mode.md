@@ -62,7 +62,9 @@ Each finalized transcript is submitted exactly once through normal
 regardless of the browser's Ask/Delegate value. Conversation voice therefore
 cannot delegate work, steer sessions, answer permission or trust prompts, or
 approve destructive confirmation actions. Typed/manual Delegate messages keep
-their existing behavior.
+their existing behavior. Browser session defaults, including per-computer
+folder paths, terminate at the hub and are not forwarded to a paired speech
+node; the hub retains them only for the finalized Oracle submission.
 
 `ManagerMessage.source` is the durable authority for that decision. New user
 messages persist either `typed` or `voice`; old records without `source` load
@@ -123,7 +125,9 @@ reject unknown versions, impossible lengths, unsupported sample rates,
 duplicate or out-of-order frames, and frames above the configured limit.
 Binary PCM stays capped at 32 KiB per frame. JSON controls use the larger
 bounded input-queue limit so a valid `start` message can carry the existing
-per-computer folder defaults without weakening the audio-frame cap.
+per-computer folder defaults from the browser to the hub without weakening the
+audio-frame cap. The hub strips those defaults before relaying `start` to a
+paired speech node.
 
 ### Browser client
 

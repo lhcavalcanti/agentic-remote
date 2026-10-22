@@ -10,6 +10,8 @@ unsupported, or fails.
 The browser sends 16 kHz mono PCM only to the Agentic Remote hub. Speech
 recognition and synthesis run on the selected hub or paired node. Conversation
 mode never persists raw PCM, synthesized audio, or partial transcripts.
+Browser session defaults, including per-computer folder paths, remain on the
+hub and are not forwarded to a paired speech node.
 
 The privacy boundary ends at finalized text: the hub submits each final exactly
 once through normal `ManagerAgent.send` with voice provenance and forced

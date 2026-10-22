@@ -12897,10 +12897,11 @@ function App() {
       }
       const liveKey = followReplacementsRef.current(targetKey)
       // The terminal took it, but Copilot may hold it as pending and log it
-      // only later. A send the app queued instead is already shown in the queue.
-      const queuedInstead =
-        (updated.queuedPrompts?.length || 0) > (selected.queuedPrompts?.length || 0) ||
-        Boolean(updated.queuedPrompts?.some((prompt) => prompt.content === content))
+      // only later. A send the app queued instead is already shown in the
+      // queue, as a prompt that was not there before this send.
+      const queuedBefore = new Set((selected.queuedPrompts || []).map((prompt) => prompt.id))
+      const queuedInstead = Boolean(updated.queuedPrompts?.some((prompt) =>
+        !queuedBefore.has(prompt.id) && prompt.content.trim() === content.trim()))
       if (
         !isCommand &&
         !shouldEnqueue &&

@@ -7619,6 +7619,23 @@ describe('App', () => {
       expect(sendMessage).toHaveBeenCalledOnce()
     })
 
+    it('is shown for an accepted steer while the same words already wait in the queue', async () => {
+      const waiting = { id: 'q0', content: steer, createdAt: new Date().toISOString() }
+      const queued = { ...running, queuedPrompts: [waiting] }
+      vi.mocked(listSessions).mockResolvedValue([queued])
+      vi.mocked(getSession).mockResolvedValue(queued)
+      vi.mocked(sendMessage).mockResolvedValue(queued)
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      expect(await screen.findByRole('article', {
+        name: 'Your message, pending in the terminal',
+      })).toHaveTextContent(steer)
+    })
+
     it('is not shown for a send the app queued instead', async () => {
       vi.mocked(listSessions).mockResolvedValue([running])
       vi.mocked(getSession).mockResolvedValue(running)

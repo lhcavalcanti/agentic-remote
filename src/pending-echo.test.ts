@@ -139,15 +139,16 @@ describe('pending echoes across sessions', () => {
   const lookup = (sessions: Record<string, { messages: ChatMessage[], status: 'idle' | 'running' }>) =>
     (key: string) => sessions[key]
 
-  it('keeps an unknown session’s echoes and drops emptied sessions', () => {
+  it('lets go of the echoes of a session that is gone and drops emptied sessions', () => {
     const a = createPendingEcho('e1', 'Use mango', earlier, 1_000)
     const b = createPendingEcho('e2', 'Use kiwi', earlier, 1_000)
     const map = { one: [a], two: [b] }
     const next = prunePendingEchoMap(map, lookup({
       one: { messages: [...earlier, user('u2', 'Use mango')], status: 'running' },
+      two: { messages: earlier, status: 'running' },
     }), 2_000)
     expect(next).toEqual({ two: [b] })
-    expect(prunePendingEchoMap(next, lookup({}), 3_000)).toBe(next)
+    expect(prunePendingEchoMap(next, lookup({}), 3_000)).toEqual({})
   })
 
   it('settles on repeated prunes once the second identical echo is alone', () => {

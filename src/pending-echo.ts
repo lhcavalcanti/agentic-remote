@@ -128,8 +128,8 @@ export interface PendingEchoOwner {
 }
 
 /**
- * Applies {@link retainPendingEchoes} to every session's echoes. A session the
- * app does not currently know keeps its echoes untouched.
+ * Applies {@link retainPendingEchoes} to every session's echoes, and lets go
+ * of the echoes of a session the app no longer has.
  */
 export function prunePendingEchoMap(
   map: Record<string, PendingEcho[]>,
@@ -139,8 +139,9 @@ export function prunePendingEchoMap(
   let next: Record<string, PendingEcho[]> | undefined
   for (const [key, echoes] of Object.entries(map)) {
     const session = owner(key)
-    if (!session) continue
-    const kept = retainPendingEchoes(echoes, session.messages, session.status, now)
+    const kept = session
+      ? retainPendingEchoes(echoes, session.messages, session.status, now)
+      : []
     if (kept === echoes) continue
     next ??= { ...map }
     if (kept.length) next[key] = kept

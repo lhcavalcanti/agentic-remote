@@ -397,4 +397,23 @@ describe('Oracle voice output delivery', () => {
       .rejects.toMatchObject({ closeCode: 1013 })
     expect(socket.send).not.toHaveBeenCalled()
   })
+
+  it('times out a browser WebSocket write that never completes', async () => {
+    const output = playbackSequence(1)[0] as VoiceAudioFrame
+    const socket = {
+      OPEN: 1,
+      readyState: 1,
+      bufferedAmount: 0,
+      send: vi.fn(),
+      terminate: vi.fn(),
+    } as unknown as WebSocket
+
+    await expect(sendBrowserOutput(socket, output, limits(), 5))
+      .rejects.toMatchObject({
+        closeCode: 1001,
+        message: 'Browser voice output timed out',
+      })
+    expect(socket.send).toHaveBeenCalledOnce()
+    expect(socket.terminate).toHaveBeenCalledOnce()
+  })
 })

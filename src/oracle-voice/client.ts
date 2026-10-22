@@ -129,6 +129,7 @@ export interface OracleVoiceClientOptions {
   onState?(state: OracleVoiceUiState): void
   onPartial?(event: OracleVoiceTranscriptEvent): void
   onFinal?(event: OracleVoiceTranscriptEvent): void
+  onRestore?(event: OracleVoiceTranscriptEvent): void
   onError?(error: OracleVoiceClientError): void
 }
 
@@ -149,6 +150,7 @@ export class OracleVoiceClient {
   private readonly onState: (state: OracleVoiceUiState) => void
   private readonly onPartial: (event: OracleVoiceTranscriptEvent) => void
   private readonly onFinal: (event: OracleVoiceTranscriptEvent) => void
+  private readonly onRestore: (event: OracleVoiceTranscriptEvent) => void
   private readonly onError: (error: OracleVoiceClientError) => void
   private state: OracleVoiceUiState = 'off'
   private generation = 0
@@ -196,6 +198,7 @@ export class OracleVoiceClient {
     this.onState = options.onState ?? (() => undefined)
     this.onPartial = options.onPartial ?? (() => undefined)
     this.onFinal = options.onFinal ?? (() => undefined)
+    this.onRestore = options.onRestore ?? (() => undefined)
     this.onError = options.onError ?? (() => undefined)
   }
 
@@ -488,7 +491,7 @@ export class OracleVoiceClient {
       )
     }
     if (control.type === 'transcript_restore') {
-      this.onFinal(transcriptEvent(control))
+      this.onRestore(transcriptEvent(control))
       return
     }
     if (control.generation < this.generation) return

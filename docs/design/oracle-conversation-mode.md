@@ -185,7 +185,9 @@ acknowledges backend frames when the relay accepts them, not after the
 serialized coordinator finishes browser delivery. This prevents a heartbeat,
 barge-in confirmation, or cancellation response from waiting behind the audio
 whose delivery is waiting on that same coordinator. Relay or browser overflow
-still fails closed.
+still fails closed. Browser writes have a five-second deadline and terminate
+the socket on expiry, so a network black hole cannot retain the single
+Conversation admission slot until the operating system abandons TCP.
 
 The backend runs native inference in an isolated child process. A native crash
 or malformed model cannot terminate the Agentic Remote server. The child stays
@@ -351,6 +353,7 @@ No failure is success-shaped:
   fresh generation after recovery;
 - Oracle send failure sends an explicit transcript-restore event, preserving
   even a superseded final in the composer without changing the newer live turn;
+  restoring that earlier final does not clear a newer utterance's live partial;
 - TTS failure leaves the text reply usable and stops voice output;
 - cancellation timeout closes the stream rather than submitting over an
   uncertain prior generation.

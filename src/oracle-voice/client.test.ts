@@ -626,11 +626,12 @@ describe('OracleVoiceClient', () => {
       text: 'Restore the earlier transcript.',
     }))
 
-    await vi.waitFor(() => expect(client.finals()).toContainEqual({
+    await vi.waitFor(() => expect(client.restores()).toContainEqual({
       generation: 0,
       utteranceId: 'earlier-final',
       text: 'Restore the earlier transcript.',
     }))
+    expect(client.finals()).toEqual([])
     expect(client.instance.currentState).toBe('listening')
   })
 
@@ -765,6 +766,7 @@ function harness({
   const errors: OracleVoiceClientError[] = []
   const partials: Array<{ generation: number; utteranceId: string; text: string }> = []
   const finals: Array<{ generation: number; utteranceId: string; text: string }> = []
+  const restores: Array<{ generation: number; utteranceId: string; text: string }> = []
   const scheduler = new FakeScheduler()
   let releaseCapabilities: () => void = () => undefined
   const capabilitiesReady = deferCapabilities
@@ -844,6 +846,7 @@ function harness({
     onError: (error) => errors.push(error),
     onPartial: (event) => partials.push(event),
     onFinal: (event) => finals.push(event),
+    onRestore: (event) => restores.push(event),
   })
 
   const api = {
@@ -855,6 +858,7 @@ function harness({
     errors: () => errors,
     partials: () => partials,
     finals: () => finals,
+    restores: () => restores,
     requestPaths: () => requests,
     ticketRequests: () => requests.filter((request) =>
       request === 'POST /api/oracle-voice/tickets').length,

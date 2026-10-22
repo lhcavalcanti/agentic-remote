@@ -43,6 +43,7 @@ import type {
 } from './remote-voice-client.js'
 
 const VOICE_OUTPUT_DRAIN_TIMEOUT_MS = 1_000
+const VOICE_BROWSER_SEND_TIMEOUT_MS = 5_000
 
 export interface OracleVoiceComputerManager {
   listComputers(): ComputerSummary[]
@@ -482,6 +483,7 @@ export function sendBrowserOutput(
   socket: WebSocket,
   output: OracleVoiceBackendOutput,
   limits: VoiceBackendSessionLimits,
+  timeoutMs = VOICE_BROWSER_SEND_TIMEOUT_MS,
 ): Promise<void> {
   if (
     'direction' in output
@@ -502,11 +504,27 @@ export function sendBrowserOutput(
   ) {
     return Promise.reject(new VoiceSessionError('Browser voice output queue is full', 1013))
   }
-  return new Promise((resolve, reject) => {
+  const delivery = new Promise<void>((resolve, reject) => {
     socket.send(payload, (error) => {
       if (error) reject(error)
       else resolve()
     })
+  })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<void>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      try {
+        socket.terminate()
+      } catch (error) {
+        reject(error)
+        return
+      }
+      reject(new VoiceSessionError('Browser voice output timed out', 1001))
+    }, timeoutMs)
+    timer.unref()
+  })
+  return Promise.race([delivery, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
   })
 }
 

@@ -77,6 +77,10 @@ class FakeVoiceClient {
     this.options.onFinal?.(transcript(text, utteranceId, generation))
   }
 
+  restore(text: string, utteranceId = 'utterance-1', generation = 3) {
+    this.options.onRestore?.(transcript(text, utteranceId, generation))
+  }
+
   error(
     message: string,
     options: { fatal?: boolean; dictationFallback?: boolean } = {},
@@ -216,6 +220,23 @@ describe('useOracleConversation', () => {
     expect(onError).toHaveBeenCalledWith(
       'Microphone permission was denied. Dictation is still available.',
     )
+  })
+
+  it('restores an earlier failed final without clearing newer live speech', async () => {
+    vi.mocked(getOracleVoiceCapabilities).mockResolvedValue(availableCapability)
+    const { result, onFinalTranscript } = renderConversation()
+    await waitFor(() => expect(result.current.capability).toEqual(availableCapability))
+    await act(async () => result.current.start())
+    const client = clients[0]
+
+    act(() => client.partial('newer live speech', 'utterance-2'))
+    expect(result.current.partial).toBe('newer live speech')
+
+    act(() => client.restore('restore earlier speech', 'utterance-1', 2))
+
+    expect(onFinalTranscript).toHaveBeenCalledOnce()
+    expect(onFinalTranscript).toHaveBeenCalledWith('restore earlier speech')
+    expect(result.current.partial).toBe('newer live speech')
   })
 
   it('keeps ownership until an explicit stop resolves and blocks an immediate restart', async () => {

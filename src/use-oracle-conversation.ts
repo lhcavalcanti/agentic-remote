@@ -5,6 +5,7 @@ import { getOracleVoiceCapabilities } from './api'
 import {
   OracleVoiceClient,
   type OracleVoiceClientError,
+  type OracleVoiceTranscriptEvent,
   type OracleVoiceUiState,
 } from './oracle-voice/client'
 
@@ -148,6 +149,22 @@ export function useOracleConversation(options: {
     seenFinalsRef.current.clear()
 
     const current = callbacksRef.current
+    const deliverFinal = (
+      event: OracleVoiceTranscriptEvent,
+      clearPartial: boolean,
+    ) => {
+      if (clientRef.current !== client || disposedRef.current) return
+      if (clearPartial) setPartial('')
+      const text = event.text.trim()
+      const key = `${event.generation}:${event.utteranceId}`
+      if (!text || seenFinalsRef.current.has(key)) return
+      if (seenFinalsRef.current.size >= MAX_REMEMBERED_FINALS) {
+        const oldest = seenFinalsRef.current.values().next().value
+        if (oldest) seenFinalsRef.current.delete(oldest)
+      }
+      seenFinalsRef.current.add(key)
+      callbacksRef.current.onFinalTranscript(text)
+    }
     const client = new OracleVoiceClient({
       language: capability.languages[0] ?? 'auto',
       defaults: current.defaults,
@@ -184,19 +201,8 @@ export function useOracleConversation(options: {
         if (clientRef.current !== client || disposedRef.current) return
         setPartial(event.text)
       },
-      onFinal: (event) => {
-        if (clientRef.current !== client || disposedRef.current) return
-        setPartial('')
-        const text = event.text.trim()
-        const key = `${event.generation}:${event.utteranceId}`
-        if (!text || seenFinalsRef.current.has(key)) return
-        if (seenFinalsRef.current.size >= MAX_REMEMBERED_FINALS) {
-          const oldest = seenFinalsRef.current.values().next().value
-          if (oldest) seenFinalsRef.current.delete(oldest)
-        }
-        seenFinalsRef.current.add(key)
-        callbacksRef.current.onFinalTranscript(text)
-      },
+      onFinal: (event) => deliverFinal(event, true),
+      onRestore: (event) => deliverFinal(event, false),
       onError: (failure: OracleVoiceClientError) => {
         if (clientRef.current !== client || disposedRef.current) return
         if (failure.fatal) {

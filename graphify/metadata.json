@@ -378,9 +378,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 204,
+  "communities": 205,
   "community_algorithm": "louvain-seed-42",
-  "edges": 17401,
+  "edges": 17407,
   "generator_fingerprint": "76c8a4dae92413974ae3b048e38524a366cf7e12def9dc9dba51fb15eb01be0d",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -427,7 +427,7 @@
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
     "docs/deployment-promotion.md": "e2b4bdd37fd6398bb342edb8b5c89334146a0058086cdf3ad3b3af2ebffeb71d",
     "docs/design/agent-workspace.md": "930cc277b8b16908d5a7f0bebca08470aa911372138db665ae5642088354335a",
-    "docs/design/oracle-conversation-mode.md": "f303e3e2ce7e5e91e14ffd269ab082257e9b711c2aeeaaf3a13ed9b24969456c",
+    "docs/design/oracle-conversation-mode.md": "aefcaa60e8ca47a66330aed726d1118200f662b6054c7394820f98f63a9a7aea",
     "docs/design/session-manager.md": "801cb712de84d82c60b8b6d7694c0a6e17b61b89a1db4262696e3161048b6b95",
     "docs/design/settings-profile.md": "55cbb79747e67bf7fb637c8446d514ae815998733602979898f9cf51826848b3",
     "docs/licenses/onnxruntime-1.24.2-third-party-notices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
@@ -584,9 +584,9 @@
     "server/oracle-voice-engine.test.ts": "12acdcaa07d5bc4909bf17322603eb7e7b410cb72c9beaca12d825384bb85638",
     "server/oracle-voice-engine.ts": "3cb5b0c9a03ed07beb96473c697e710e5f6dbb842f5a1616bdb92b447c9d94fd",
     "server/oracle-voice-integration.test.ts": "47f195cdc1b1958ee2aaba7a5c4d31191dbaf1612c9d221f86a1c9faef463c03",
-    "server/oracle-voice-output-delivery.test.ts": "a2ed42b7fc70bb342d949a658246b94e778c518f33ea3cde100f7901bb76c048",
+    "server/oracle-voice-output-delivery.test.ts": "6a1016be5add33353720101f72512cb6d2cf03ca602cc2f3c7f6077558a5b2dd",
     "server/oracle-voice-routes.test.ts": "5ed1bbdb5fbd3910494c1f8a5bbd9c04f24d207466ff24a888cae6db5571d5ea",
-    "server/oracle-voice-routes.ts": "9c0bd86be70e06eb2835c68099603c2a4901c4beb22608b338602598db5449ff",
+    "server/oracle-voice-routes.ts": "cdee34f2e3e29c1ca89eb394970269c72d6d9b0633b27351deb284c9a2660290",
     "server/oracle-voice-security.test.ts": "3a0e5309b9b3f6674a327f3ec6546c6d1946826dfd126c1bf7b3078d6a9c6b0d",
     "server/oracle-voice-segments.test.ts": "0bd9d73806a04c2ba603843b7f1b38dc18a127f06daa38f87ae50ecffd71b879",
     "server/oracle-voice-segments.ts": "9541b455998c8461a628762046d67618d8551c9276a957030fe1b9b124c5b57e",
@@ -801,8 +801,8 @@
     "src/oracle-voice/bounded-queue.ts": "cb21a48b711c4dcc7a974c697ff0d414a576bd1636cabefaa47d7bbba9214121",
     "src/oracle-voice/capture.test.ts": "c0084291770d544a494ec93f23a48d73d149c48856c618819b76af052fc74c84",
     "src/oracle-voice/capture.ts": "6670514f83eb79be90ba68e863d9e64e262aed3d32763a7a483db58b97476200",
-    "src/oracle-voice/client.test.ts": "3213b4854fb6a01338c91ddda00221cfc2d1a9497c08894c0a9daa50ef78cc97",
-    "src/oracle-voice/client.ts": "859cbe55454863b61dfa1d1b8fb840fca107e11cebe30562776cbbf7690bceff",
+    "src/oracle-voice/client.test.ts": "37489b8fe27e5f2a5444f2430e039940b31bd394569b7d2ff03604714ad18fd0",
+    "src/oracle-voice/client.ts": "7f0ed55dd8b3c7b57a5e737d7faf1a1761cff9158da7c02ed7bc270d01c4538d",
     "src/oracle-voice/pcm.test.ts": "9dffc1ece91e7bdd961573f29fee14378dfd057c3991f574cc6b22a9b6957be0",
     "src/oracle-voice/pcm.ts": "48d88b01e79eba03dd067e35906d8b7a8c66843ecb06ccdfe88022e100371b36",
     "src/oracle-voice/playback.test.ts": "de173dfca2131506170944b61d2daadc734d84c7e80b2150d7baa77f14cf44cb",
@@ -831,8 +831,8 @@
     "src/side-question-command.test.ts": "1be636aeb04f2cfcfa5824f33343905fb7cdc187b58cbb5050008d0c35b8752c",
     "src/side-question-command.ts": "9395ad3d98ef416fca1c48c67fdea57257a8d7b0c52af35a49a7d6d54b75a232",
     "src/theme-contrast.test.ts": "32256cb050b00f969ff35398a209979917fcab42204ce19c8dc8c1d737c0b985",
-    "src/use-oracle-conversation.test.tsx": "a41f10ee8a15bb02bd63270d2c506679c9016c88544ca7895981bd30c28660ce",
-    "src/use-oracle-conversation.ts": "d73b3d40112d83b1904363e6555539076c3d458b534d45c4396ce2b702dd09fd",
+    "src/use-oracle-conversation.test.tsx": "3ed588cbc84b806eb5067d2c3d79fc94549e05d2b9e59bd29439cacd24a02409",
+    "src/use-oracle-conversation.ts": "c721a17ddd25265c080ff508b56ddae1f6aa6ffd29fbbc6aecac00dd36c8e09a",
     "src/use-oracle-settings.ts": "50bf29586c1bdf5c4137b1311fb743490c0f32981f7ee522130441d93e7a1ac7",
     "src/use-session-knowledge-root.test.tsx": "4f80b53683ee9b270982608b2de9a8f7aa5b03baa03be3ce2a29f073317349c4",
     "src/use-session-knowledge-root.ts": "931caaf6414ed837536b35bd930f257c9365b675dbd35ec641d70cf71b192b7e",
@@ -845,7 +845,7 @@
     "vite.config.ts": "500edc67bf70b5f6f030d7e757b73dc71b0088e2df8d98d9da607d0918bb369f"
   },
   "mode": "local-ast-only",
-  "nodes": 6332,
+  "nodes": 6334,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -931,28 +931,21 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "c383628e4d8fb8b184a30eafdb17e9031a5f36949f7c365ae2a7def9a099258e",
-    "communities.json": "d91e8f94ed75c2cae3848fc1b68683cdc40699dd387578950a5616005534c63b",
-    "graph.html": "5926ac2ebcd3e353008cd5be65f8b40a35bf55800aff9d01dd482c290510dfab",
-    "graph.json": "1958fe1ebb955d013e50c536e69c7f3a509167a690f2ad5ca8b98bacfd39ad39"
+    "GRAPH_REPORT.md": "49c5a4321406d094520b69dd45ef8e97878094849fe17342a442b1c93389eded",
+    "communities.json": "a2c7894793ead6d442b9e39c565c7e675928a54670f18a27fa4f59b7c5567e25",
+    "graph.html": "78d921c8715cac973069c33f6a1e0a1ce55a7388ba9360f928d308d1c4619b6c",
+    "graph.json": "6fbc52110e645da219a798716ed59cfedf97a82d06271b63673d0072400459bc"
   },
   "schema_version": 1,
-  "source_commit": "a3b28d953045058669b7572c9284583400b856a3",
-  "source_fingerprint": "019f87c59dc18eb1d01abee3ba6eeeb2f076635472bfe5926627860615bb3c0c",
+  "source_commit": "b215c154ec81d578c91e82ed9b3a1d577d4985f3",
+  "source_fingerprint": "a4cdbe58bacb930f36e9008b57f9bc1c0235385b4d7296c87544c98368793daf",
   "working_tree_changes": [
     "docs/design/oracle-conversation-mode.md",
-    "docs/oracle-conversation.md",
-    "e2e/oracle-conversation.test.ts",
-    "server/oracle-voice-coordinator.test.ts",
-    "server/oracle-voice-coordinator.ts",
-    "server/oracle-voice-integration.test.ts",
     "server/oracle-voice-output-delivery.test.ts",
     "server/oracle-voice-routes.ts",
-    "shared/oracle-voice.test.ts",
-    "shared/oracle-voice.ts",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
     "src/oracle-voice/client.test.ts",
-    "src/oracle-voice/client.ts"
+    "src/oracle-voice/client.ts",
+    "src/use-oracle-conversation.test.tsx",
+    "src/use-oracle-conversation.ts"
   ]
 }

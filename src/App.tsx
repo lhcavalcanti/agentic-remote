@@ -292,6 +292,7 @@ import {
 } from '../shared/notifications'
 import type {
   AppearanceSetting,
+  NewSessionBackendSetting,
   OracleResponseStyle,
   SettingsProfileKey,
   SettingsProfileValues,
@@ -546,6 +547,7 @@ const settingNames: Record<SettingsProfileKey, string> = {
   statusline: 'Status line',
   newSessionRuntimes: 'New-session models',
   newSessionFolders: 'New-session folders',
+  newSessionBackend: 'New-session backend',
   sessionSort: 'Session sort',
   computerOrder: 'Computer order',
   oracleResponseStyle: 'Oracle’s response style',
@@ -2119,6 +2121,7 @@ function NewSessionDialog({
   defaultComputerId,
   defaultRuntimes,
   defaultSessionFolders,
+  defaultBackend,
   creationError,
   onClose,
   onCreating,
@@ -2130,6 +2133,7 @@ function NewSessionDialog({
   defaultComputerId?: string
   defaultRuntimes: DefaultRuntimeSettings
   defaultSessionFolders: DefaultSessionFolders
+  defaultBackend: NewSessionBackendSetting
   creationError?: string
   onClose: () => void
   onCreating: (
@@ -2211,7 +2215,7 @@ function NewSessionDialog({
     setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
     setDirectoryComputerId(initialComputerId)
     setDirectoryListing(undefined)
-    setTerminalBacked(true)
+    setTerminalBacked(defaultBackend !== 'sdk')
     setAllowAllPermissions(true)
     setMode('new')
     setHistoryKey('')
@@ -2223,7 +2227,7 @@ function NewSessionDialog({
         setError(caught instanceof Error ? caught.message : String(caught))
       })
       .finally(() => setLoadingHistory(false))
-  }, [open, defaultComputerId, defaultSessionFolders, available])
+  }, [open, defaultComputerId, defaultSessionFolders, defaultBackend, available])
 
   // The chosen computer can be unpaired, or go offline, while the dialog is
   // still open. Left alone the selection stays truthy and Create stays
@@ -3691,6 +3695,8 @@ function AppSettingsDialog({
   onDefaultRuntimesChange,
   defaultSessionFolders,
   onDefaultSessionFoldersChange,
+  newSessionBackend,
+  onNewSessionBackendChange,
   accentTheme,
   onAccentThemeChange,
   appearance,
@@ -3718,6 +3724,8 @@ function AppSettingsDialog({
   onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
   defaultSessionFolders: DefaultSessionFolders
   onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
+  newSessionBackend: NewSessionBackendSetting
+  onNewSessionBackendChange: (backend: NewSessionBackendSetting) => void
   accentTheme: AccentTheme
   onAccentThemeChange: (theme: AccentTheme) => void
   appearance: AppearanceSetting
@@ -4101,6 +4109,23 @@ function AppSettingsDialog({
                 selection={defaultRuntimes[provider]}
               />
             ))}
+            <label className="field">
+              <span>Start new sessions in</span>
+              <select
+                aria-label="How new sessions start"
+                className="dialog-select"
+                onChange={(event) =>
+                  onNewSessionBackendChange(event.target.value as NewSessionBackendSetting)}
+                value={newSessionBackend}
+              >
+                <option value="terminal">Terminal (tmux)</option>
+                <option value="sdk">Copilot SDK</option>
+              </select>
+            </label>
+            <p className="dialog-message">
+              New Session starts here, and you can still change it for one
+              session. Oracle has its own setting.
+            </p>
           </section>
           {/* One column, so Oracle's answers sit under its model. */}
           <div className="app-settings-stack">
@@ -7312,6 +7337,13 @@ function App() {
   )
   const setDefaultRuntimes = useCallback(
     (next: DefaultRuntimeSettings) => saveSetting('newSessionRuntimes', next),
+    [saveSetting],
+  )
+  const newSessionBackend: NewSessionBackendSetting =
+    profile.newSessionBackend ?? 'terminal'
+  const setNewSessionBackend = useCallback(
+    (next: NewSessionBackendSetting) =>
+      saveSetting('newSessionBackend', next === 'sdk' ? next : null),
     [saveSetting],
   )
   const defaultSessionFolders = useMemo<DefaultSessionFolders>(
@@ -16267,6 +16299,7 @@ function App() {
         defaultComputerId={defaultComputerId}
         defaultRuntimes={defaultRuntimes}
         defaultSessionFolders={defaultSessionFolders}
+        defaultBackend={newSessionBackend}
         onClose={closeNewSession}
         onCreating={sessionCreationStarted}
         onCreationFailed={sessionCreationFailed}
@@ -16354,6 +16387,8 @@ function App() {
         defaultSessionFolders={defaultSessionFolders}
         onDefaultRuntimesChange={setDefaultRuntimes}
         onDefaultSessionFoldersChange={setDefaultSessionFolders}
+        newSessionBackend={newSessionBackend}
+        onNewSessionBackendChange={setNewSessionBackend}
         onShortcutsChange={setShortcutOverrides}
         onStatuslineChange={setStatusline}
         shortcutOverrides={shortcutOverrides}

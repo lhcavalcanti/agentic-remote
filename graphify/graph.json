@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "7109b145fe3604bf9c2d9fefb76ca50d5ac7c6a7",
+  "built_at_commit": "c06eb8c3f58201fee44236b64ceeb81861743e66",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -120864,7 +120864,7 @@
       "relation": "contains",
       "source": "shared_manager",
       "source_file": "shared/manager.ts",
-      "source_location": "L174",
+      "source_location": "L175",
       "target": "shared_manager_ismanagerevent",
       "weight": 1.0
     },
@@ -120919,7 +120919,7 @@
       "relation": "contains",
       "source": "shared_manager",
       "source_file": "shared/manager.ts",
-      "source_location": "L161",
+      "source_location": "L162",
       "target": "shared_manager_managerevent",
       "weight": 1.0
     },
@@ -121007,7 +121007,7 @@
       "relation": "contains",
       "source": "shared_manager",
       "source_file": "shared/manager.ts",
-      "source_location": "L124",
+      "source_location": "L125",
       "target": "shared_manager_managersnapshot",
       "weight": 1.0
     },
@@ -121029,7 +121029,7 @@
       "relation": "contains",
       "source": "shared_manager",
       "source_file": "shared/manager.ts",
-      "source_location": "L139",
+      "source_location": "L140",
       "target": "shared_manager_resolvemanagerconfirmationinput",
       "weight": 1.0
     },
@@ -121040,7 +121040,7 @@
       "relation": "contains",
       "source": "shared_manager",
       "source_file": "shared/manager.ts",
-      "source_location": "L143",
+      "source_location": "L144",
       "target": "shared_manager_sendmanagermessageinput",
       "weight": 1.0
     },
@@ -121051,7 +121051,7 @@
       "relation": "contains",
       "source": "shared_manager",
       "source_file": "shared/manager.ts",
-      "source_location": "L150",
+      "source_location": "L151",
       "target": "shared_manager_updatemanagersettingsinput",
       "weight": 1.0
     },
@@ -121510,7 +121510,7 @@
       "relation": "references",
       "source": "shared_manager_updatemanagersettingsinput",
       "source_file": "shared/manager.ts",
-      "source_location": "L154",
+      "source_location": "L155",
       "target": "shared_contracts_runtimereasoningeffort",
       "weight": 1.0
     },
@@ -159982,7 +159982,7 @@
       "relation": "calls",
       "source": "src_use_oracle_settings_useoraclesettings",
       "source_file": "src/use-oracle-settings.ts",
-      "source_location": "L78",
+      "source_location": "L80",
       "target": "src_api_updatemanagersettings",
       "weight": 1.0
     },
@@ -166832,7 +166832,7 @@
       "source_file": "shell/src-tauri/Cargo.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "1.28.4"
+      "version": "1.29.0"
     },
     {
       "_origin": "ast",
@@ -203520,7 +203520,7 @@
       "label": "isManagerEvent()",
       "norm_label": "ismanagerevent()",
       "source_file": "shared/manager.ts",
-      "source_location": "L174"
+      "source_location": "L175"
     },
     {
       "_origin": "ast",
@@ -203581,7 +203581,7 @@
       "label": "ManagerEvent",
       "norm_label": "managerevent",
       "source_file": "shared/manager.ts",
-      "source_location": "L161"
+      "source_location": "L162"
     },
     {
       "_callable": true,
@@ -203685,7 +203685,7 @@
       "label": "ManagerSnapshot",
       "norm_label": "managersnapshot",
       "source_file": "shared/manager.ts",
-      "source_location": "L124"
+      "source_location": "L125"
     },
     {
       "_callable": true,
@@ -203711,7 +203711,7 @@
       "label": "ResolveManagerConfirmationInput",
       "norm_label": "resolvemanagerconfirmationinput",
       "source_file": "shared/manager.ts",
-      "source_location": "L139"
+      "source_location": "L140"
     },
     {
       "_callable": true,
@@ -203724,7 +203724,7 @@
       "label": "SendManagerMessageInput",
       "norm_label": "sendmanagermessageinput",
       "source_file": "shared/manager.ts",
-      "source_location": "L143"
+      "source_location": "L144"
     },
     {
       "_origin": "ast",
@@ -204153,7 +204153,7 @@
       "label": "UpdateManagerSettingsInput",
       "norm_label": "updatemanagersettingsinput",
       "source_file": "shared/manager.ts",
-      "source_location": "L150"
+      "source_location": "L151"
     },
     {
       "_origin": "ast",

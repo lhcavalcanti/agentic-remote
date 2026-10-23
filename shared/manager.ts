@@ -116,7 +116,8 @@ export interface ManagerSettingsSnapshot extends ManagerSettings {
   /**
    * How Oracle opens the sessions it starts. The Copilot SDK unless set to a
    * terminal; a provider without a terminal always uses its SDK. A hub from
-   * before this setting omits it and opens Copilot sessions in a terminal.
+   * before this setting omits it and opens Copilot sessions in a terminal, so
+   * a client MUST NOT read its absence as the SDK.
    */
   sessionBackend?: ManagerSessionBackend
 }

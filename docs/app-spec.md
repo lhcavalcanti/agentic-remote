@@ -530,6 +530,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   when you ask it to, which App settings then shows. A session's task can
   still name another folder, and a computer without one uses your default
   session folder, else its home directory.
+- **App settings → Oracle → Opens new sessions with** chooses how Oracle opens
+  the sessions it starts: the Copilot SDK, which is the default, or a terminal
+  (tmux). It is kept on the hub with Oracle's settings, Oracle changes it when
+  you ask, and existing sessions are unaffected. A provider without a terminal
+  always uses its SDK, and the New session dialog keeps its own choice.
 - Every turn MUST start with a context block the hub generates: computers, open
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.

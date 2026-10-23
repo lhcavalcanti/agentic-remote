@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { RuntimeReasoningEffort } from '../shared/contracts'
-import type { ManagerSettingsSnapshot } from '../shared/manager'
+import type { ManagerSessionBackend, ManagerSettingsSnapshot } from '../shared/manager'
 import { getManager, updateManagerSettings } from './api'
 
 /** Which part of App settings a change came from, so its result shows there. */
-export type OracleSettingsPart = 'model' | 'folders'
+export type OracleSettingsPart = 'model' | 'folders' | 'backend'
 
 export interface OracleSettingsState {
   settings?: ManagerSettingsSnapshot
@@ -16,6 +16,7 @@ export interface OracleSettingsState {
   error?: { part: OracleSettingsPart; message: string }
   saveModel(model: string, reasoningEffort?: RuntimeReasoningEffort): Promise<void>
   saveFolder(computerId: string, path?: string): Promise<void>
+  saveBackend(backend: ManagerSessionBackend): Promise<void>
 }
 
 /**
@@ -94,5 +95,13 @@ export function useOracleSettings(active = true): OracleSettingsState {
     path ? 'Saved. Oracle starts new sessions there.' : 'Saved. Oracle uses your folder for new sessions there.',
   ), [update])
 
-  return { settings, unavailable, loading, saving, saved, error, saveModel, saveFolder }
+  const saveBackend = useCallback((backend: ManagerSessionBackend) => update(
+    { sessionBackend: backend },
+    'backend',
+    backend === 'terminal'
+      ? 'Saved. Oracle opens its next sessions in a terminal.'
+      : 'Saved. Oracle opens its next sessions with the Copilot SDK.',
+  ), [update])
+
+  return { settings, unavailable, loading, saving, saved, error, saveModel, saveFolder, saveBackend }
 }

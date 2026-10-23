@@ -489,6 +489,17 @@ describe('manager routes', () => {
       method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { reasoningEffort: 'extreme' },
     })
     expect(invalid.statusCode).toBe(400)
+    const badBackend = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionBackend: 'pty' },
+    })
+    expect(badBackend.statusCode).toBe(400)
+    const backend = vi.spyOn(managerAgent!, 'updateSettings').mockResolvedValueOnce({ sessionBackend: 'terminal' })
+    const savedBackend = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionBackend: 'terminal' },
+    })
+    expect(savedBackend.statusCode).toBe(200)
+    expect(backend).toHaveBeenLastCalledWith({ sessionBackend: 'terminal' })
+    backend.mockRestore()
     const badFolders = await app.inject({
       method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: 42 } },
     })

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
+import type { ManagerSessionBackend } from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import {
@@ -38,6 +39,7 @@ describe('manager tools', () => {
   let tools: Map<string, ManagerTool>
   let answerOnly: boolean
   let oracleFolders: Record<string, string>
+  let backend: ManagerSessionBackend
 
   const call = async (name: string, args: unknown, toolCallId = 't') => {
     const tool = tools.get(name)
@@ -50,6 +52,7 @@ describe('manager tools', () => {
     activities = []
     answerOnly = false
     oracleFolders = {}
+    backend = 'sdk'
     const created = session('new1', { cwd: '/home/me/src/web' })
     host = {
       computers: () => computers,
@@ -83,6 +86,11 @@ describe('manager tools', () => {
         else oracleFolders = Object.fromEntries(Object.entries(oracleFolders).filter(([id]) => id !== computerId))
         return normalized
       }),
+      sessionBackend: () => backend,
+      setSessionBackend: vi.fn(async (next: ManagerSessionBackend) => {
+        backend = next
+        return next
+      }),
       memory: new ManagerMemory(path.join(root, 'memory')),
       defaults: () => ({ computerId: 'hub', mode: 'autopilot', provider: 'copilot', model: 'gpt-6-sol', folders: { hub: '~/src/web' } }),
       now: () => new Date('2026-10-15T12:00:00.000Z'),
@@ -100,7 +108,7 @@ describe('manager tools', () => {
       'answer_session', 'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
       'list_computers', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
       'memory_list', 'memory_read', 'memory_write', 'rename_session', 'send_to_session',
-      'set_session_folder',
+      'set_session_backend', 'set_session_folder',
     ])
     for (const tool of tools.values()) {
       expect(tool.skipPermission).toBe(true)
@@ -112,8 +120,9 @@ describe('manager tools', () => {
   it('starts a session from the user defaults, names it, hands it the task, and reports it', async () => {
     const result = await call('create_session', { title: 'Fix "login"\nbug', prompt: 'Fix the login bug. Use the systematic-debugging skill.' })
 
+    // Oracle opens its sessions with the Copilot SDK unless its setting says a terminal.
     expect(host.createSession).toHaveBeenCalledWith('hub', {
-      cwd: '~/src/web', provider: 'copilot', terminalBacked: true, allowAllPermissions: true,
+      cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true,
       mode: 'autopilot', model: 'gpt-6-sol',
     })
     expect(host.renameSession).toHaveBeenCalledWith('hub', 'new1', "Fix 'login' bug")
@@ -126,6 +135,30 @@ describe('manager tools', () => {
       content: 'Started "Fix \'login\' bug" on development',
       sessionRefs: [{ computerId: 'hub', sessionId: 'new1', title: "Fix 'login' bug" }],
     }])
+  })
+
+  it('opens a terminal session when its setting says so, for a provider that has one', async () => {
+    backend = 'terminal'
+    await call('create_session', { title: 'Fix', prompt: 'Fix it' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({
+      provider: 'copilot', terminalBacked: true,
+    }))
+    await call('create_session', { title: 'Review', prompt: 'Review it', provider: 'claude' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({
+      provider: 'claude', terminalBacked: false,
+    }))
+  })
+
+  it('changes how Oracle opens sessions when the user asks, even in Ask mode', async () => {
+    answerOnly = true
+    expect(String(await call('set_session_backend', { backend: 'terminal' }))).toContain('terminal (tmux)')
+    expect(host.setSessionBackend).toHaveBeenLastCalledWith('terminal')
+    expect(activities.at(-1)).toMatchObject({ tool: 'set_session_backend', content: 'Now opening new sessions in a terminal (tmux)' })
+    expect(String(await call('set_session_backend', { backend: 'sdk' }))).toContain('Copilot SDK')
+    expect(activities.at(-1)).toMatchObject({ content: 'Now opening new sessions with the Copilot SDK' })
+    expect(await call('set_session_backend', { backend: 'pty' })).toMatchObject({ resultType: 'failure' })
+    expect(host.setSessionBackend).toHaveBeenCalledTimes(2)
+    expect(host.createSession).not.toHaveBeenCalled()
   })
 
   it('uses an SDK session for a provider without tmux and drops a model meant for another provider', async () => {

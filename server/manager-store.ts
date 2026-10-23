@@ -32,6 +32,8 @@ export interface ManagerState {
   sessionRuntime?: ManagerSettings
   /** Where Oracle starts new sessions, by computer ID, as validated on that computer. */
   sessionFolders?: Record<string, string>
+  /** Set only to open Oracle's sessions in a terminal; unset opens them with the Copilot SDK. */
+  sessionBackend?: 'terminal'
   /** A model and effort that could not start; Copilot's default answers until the choice changes. */
   unavailableRuntime?: ManagerSettings
   /** The newest journal entry a completed turn has shown the agent. */

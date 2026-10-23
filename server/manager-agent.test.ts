@@ -1553,6 +1553,51 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().settings?.model).toBe('gpt-6-sol')
   })
 
+  it('opens its sessions with the Copilot SDK by default, and in a terminal once set to', async () => {
+    await start()
+    expect(agent!.snapshot().settings?.sessionBackend).toBe('sdk')
+    sdk.behaviors.push(async (fakeSession, prompt) => {
+      expect(prompt).toContain('Your new sessions open with the Copilot SDK.')
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Started.')(fakeSession, '')
+    })
+    await agent!.send('Start the docs work')
+    await settled()
+    expect(hub.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ terminalBacked: false }))
+
+    const settings = await agent!.updateSettings({ model: 'gpt-6-sol', sessionBackend: 'terminal' })
+    expect(settings).toMatchObject({ model: 'gpt-6-sol', sessionBackend: 'terminal' })
+    expect(events.at(-1)).toMatchObject({ type: 'manager.settings', settings: { sessionBackend: 'terminal' } })
+    // A change of model alone leaves it as it is.
+    expect(await agent!.updateSettings({ model: null })).toMatchObject({ sessionBackend: 'terminal' })
+    sdk.behaviors.push(async (fakeSession, prompt) => {
+      expect(prompt).toContain('Your new sessions open in a terminal (tmux).')
+      await fakeSession.tool('create_session')({ title: 'Fix', prompt: 'Fix it' })
+      reply('Started.')(fakeSession, '')
+    })
+    await agent!.send('Fix it')
+    await settled()
+    expect(hub.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ terminalBacked: true }))
+
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    expect(agent!.snapshot().settings?.sessionBackend).toBe('terminal')
+
+    // Asked to, Oracle switches back, and App settings sees the change.
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('set_session_backend')({ backend: 'sdk' })
+      reply('Done.')(fakeSession, '')
+    })
+    await agent!.send('Open new sessions with the SDK again')
+    await settled()
+    expect(agent!.snapshot().settings?.sessionBackend).toBe('sdk')
+    expect(events.some((event) => event.type === 'manager.settings' && event.settings.sessionBackend === 'sdk')).toBe(true)
+    // The default is not stored, so a later default change would apply.
+    expect(store.state().sessionBackend).toBeUndefined()
+  })
+
   it('keeps queued messages in order and lets you take one out before it starts', async () => {
     sdk.behaviors.push(async (fakeSession) => {
       await new Promise((resolve) => setTimeout(resolve, 80))

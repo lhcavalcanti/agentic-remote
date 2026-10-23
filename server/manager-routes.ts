@@ -47,6 +47,7 @@ const settingsSchema = z.object({
   reasoningEffort: effort.nullable().optional(),
   // Null clears a folder; a blank one is a mistake, not a way to clear it.
   sessionFolders: z.record(z.string().trim().min(1).max(200), z.string().trim().min(1).max(4096).nullable()).optional(),
+  sessionBackend: z.enum(['sdk', 'terminal']).optional(),
 })
 
 const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })

@@ -202,8 +202,9 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | `list_sessions` | Open sessions, or recent history with `includeClosed` |
 | `get_session` | Detail and the last N messages (default 6, maximum 30, each truncated), read as recorded: the session is never opened or resumed. A waiting session's request shows its `requestId`, options, choices, and form fields, so it can be answered |
 | `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
-| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder |
+| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK |
 | `set_session_folder` | Change Oracle's session folder for a computer when you ask; checked on that computer, kept with Oracle's settings, and allowed in Ask mode since it touches no session |
+| `set_session_backend` | Change how Oracle opens new sessions (`sdk` or `terminal`) when you ask; kept with Oracle's settings and allowed in Ask mode |
 | `send_to_session` | Send or queue a follow-up to any session; always queued, so a busy session does not refuse it. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |
 | `answer_session` | Answer what a session waits on, so it carries on without you: a permission request (option by name, or approve/deny), including Copilot's folder trust; a question (a choice or free text), several choices, or a form's values; or dismiss it. An optional `requestId` stops an answer reaching a different prompt |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
@@ -258,11 +259,13 @@ end the turn.
   `startedAt` records through restarts and Retry; 400 blank; 413 too long), keeping its id and its place,
   which is its first line in `conversation.jsonl`; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
   the hub default) chooses Oracle's model, and with `{ sessionFolders: { <computer id>: path | null } }`
-  its session folders; each part is optional and leaves the rest as it is.
+  its session folders, and with `{ sessionBackend: 'sdk' | 'terminal' }` how
+  it opens new sessions; each part is optional and leaves the rest as it is.
   Only `null` clears a folder (a blank one is a 400), and a computer that is
   not paired is a 404 unless a folder kept for it is being removed.
   The snapshot reports them as `settings` and the socket as
-  `manager.settings`. `state.json` keeps `sessionFolders`, the model the SDK
+  `manager.settings`; `sessionBackend` is always reported, `sdk` by default. `state.json` keeps `sessionFolders`,
+  `sessionBackend` only when it is `terminal`, the model the SDK
   conversation runs on (`sessionRuntime`), and the model and effort that
   could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.

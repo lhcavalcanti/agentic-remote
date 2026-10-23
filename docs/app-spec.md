@@ -788,8 +788,9 @@ Questions and permissions are the highest-priority UI state.
   timeout or fail: nothing is typed, and the message joins the app FIFO
   exactly once while the session is `running`, marked as a steer. A queued
   steer at the head of the FIFO MUST be typed into the running turn as soon as
-  the composer is ready and empty again, not held until the turn ends; one
-  behind an older queued prompt keeps its place. A steer the terminal refuses
+  the composer is ready and empty again, not held until the turn ends. This
+  includes a turn that outlived a hub restart. A steer behind an older queued
+  prompt keeps its place and steers the turn that prompt starts. A steer the terminal refuses
   again before anything was typed stays at the head without a new error; an
   uncertain one is never retyped. Steers that would replace a terminal draft,
   and refusals for any other reason, still return a 409.

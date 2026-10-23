@@ -7963,9 +7963,9 @@ describe('AgentService deletion', () => {
       }
     })
 
-    it('stays behind an older queued prompt until the turn ends', async () => {
+    it('stays behind an older queued prompt, then steers the turn that prompt starts', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-      const { service, terminal, pane, sessionId } = await busyTerminal([
+      const { service, terminal, pane, errors, sessionId } = await busyTerminal([
         () => { throw notReady() },
         () => true,
       ], { olderQueued: true })
@@ -7979,6 +7979,32 @@ describe('AgentService deletion', () => {
           { content: 'Older queued prompt' },
           { content: 'Steer when you can', steer: true },
         ])
+
+        // The turn ends; the older prompt starts the next one.
+        pane.current = composerBack.replace(' ◉ Working · esc interrupt', ' / commands')
+        terminal.sendWhenIdle.mockImplementationOnce(async () => {
+          pane.current = noComposer
+          return true
+        })
+        await service.store.update(sessionId, (session) => {
+          session.status = 'idle'
+          session.activity = undefined
+        })
+        await vi.waitFor(() => expect(terminal.sendWhenIdle).toHaveBeenCalledExactlyOnceWith(
+          sessionId, 'Older queued prompt',
+        ), { timeout: 5_000 })
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([
+          { content: 'Steer when you can', steer: true },
+        ]), { timeout: 5_000 })
+        expect(service.store.get(sessionId)?.status).toBe('running')
+
+        // That turn shows its composer: the steer goes in without waiting for it to end.
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        expect(terminal.send.mock.calls[1]).toEqual(steerSend(sessionId, 'Steer when you can'))
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts ?? []).toEqual([]), { timeout: 5_000 })
+        expect(terminal.sendWhenIdle).toHaveBeenCalledOnce()
+        expect(errors).toEqual([])
       } finally {
         warn.mockRestore()
         await service.stop()

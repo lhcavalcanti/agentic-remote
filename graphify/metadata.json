@@ -358,7 +358,7 @@
     "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "d1ac3c5526f6fed6828554aecc7be0c4ca78137839dfec33af67892167e8560c",
+    "docs/app-spec.md": "f2db6529cb3d5e62380453921331eb9d06c0d5801d6bb1fb9a733af9e14e9b1b",
     "docs/architecture.md": "419a152af98ca8dc2eeac6333db161fb40fe4921f9cac64e1443ce1325af307a",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -409,10 +409,10 @@
     "server/active-sessions.test.ts": "94b5ae9e40f621ff6faee27de76df8da70e86c4724843e71dad15c97a1a276c4",
     "server/active-sessions.ts": "dfbfcdb228e5f664e5a94afd39b1eab8570f7dbe72f913cf6da921f1337d8eb3",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
-    "server/agent-service-recovery.test.ts": "895a8a0cbd6aa9916d48842eb047644ab0220140a361547f19da54f0e94b4dc7",
+    "server/agent-service-recovery.test.ts": "54846ab1808aaf1f9185119ba02e6623abf9fd3992dcb5e4115c8ef10d3340b1",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "3e86ba2053fae7dbdb25d99c43ff8188bf3edc6342a69c12055a4ee523fee79e",
-    "server/agent-service.ts": "0f1f9c7a742531dbb5f364a34ef6f3ac87f7044a420394070a55a76523c66dba",
+    "server/agent-service.test.ts": "232e417be303fbdd98aa0c3bed709b51b58031dbff2a3414feb3b2889f7fd8ba",
+    "server/agent-service.ts": "1f4dd06fb258aad7a2c7ce225e0f555f0ee16c741aaae7016f5ee187d62dfb61",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -777,19 +777,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "fe12f24ea849bee45364c98e20a60405318445cfa8b7f898ce8bd8a8e55cbe0a",
+    "GRAPH_REPORT.md": "9ad5cc3bfc45168caa50164d56917315d241e1ae824da3e88f560e69b56f9870",
     "communities.json": "f661e0b12e6bbba1ee7fe6619196fbd6c240bc20dee12db8ffad9f814be0846f",
-    "graph.html": "ad443cbe0bbd54c16cf2a062df7bce07b61761e8a370c9a8f90c54ac90d661cd",
-    "graph.json": "df632371bbc7bb7bc33d605029ccff2b25a05bcfd370538d0c5a1f342f7a146a"
+    "graph.html": "e3cc1bea41933ba269aee424c019980fd8033b1ec5f352bd59cc86f773849caa",
+    "graph.json": "bfd6b1ca2bfd1f3abfbbfee6ec4a16bd537880780df7107363799f47e64e26e0"
   },
   "schema_version": 1,
-  "source_commit": "2c0170775680a23ebbe5e5c9757b8a3b0be6bfd1",
-  "source_fingerprint": "e1c1c047fd5709a491c3ef8299a7b871d2a08410bae798d7b5ea3040cbd245af",
+  "source_commit": "d4cfa5e546cebf1a83077442271a5ac92567fa2c",
+  "source_fingerprint": "77cb9f3c51c69288fb6ca94431c1be93457f903da23b88833b8ed10f81e10368",
   "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "docs/app-spec.md",
+    "server/agent-service-recovery.test.ts",
+    "server/agent-service.test.ts",
+    "server/agent-service.ts"
   ]
 }

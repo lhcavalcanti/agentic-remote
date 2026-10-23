@@ -10012,10 +10012,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       // A steer at the head goes into the running turn once the composer is
-      // back. Anything queued before it still waits for the turn to end, and
-      // the steer waits behind it.
+      // back, including a turn that outlived a hub restart. Anything queued
+      // before it still waits for the turn to end, and the steer waits behind it.
       const midTurnSteer =
-        next.steer === true && !startup && !next.command &&
+        next.steer === true && !next.command &&
         stored.status === 'running' &&
         !stored.pendingPermission && !stored.pendingUserInput
       if ((stored.status !== 'idle' && !midTurnSteer) || !isCurrent()) {
@@ -10042,9 +10042,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       let claimed: Awaited<ReturnType<SessionStore['claimTerminalQueuedPrompt']>>
       try {
-        claimed = startup
-          ? await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, true)
-          : await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, false, midTurnSteer)
+        claimed = await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, startup, midTurnSteer)
       } catch (error) {
         if (!isRetainedRefusal(error)) throw error
         this.pendingTerminalQueueClaims.delete(sessionId)
@@ -10102,13 +10100,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         retryDelay: 750,
         ...(quiet ? { quiet } : {}),
       })
-      const again = await this.settleTerminalQueue(sessionId)
-      // A delivered steer leaves the turn running, so the next steer behind it
-      // is polled for in the same way.
-      if (midTurnSteer && !this.pendingTerminalQueueSettlements.has(sessionId)) {
-        this.retryTerminalQueueClaim(sessionId)
-      }
-      return again
+      return await this.settleTerminalQueue(sessionId)
     })
   }
 
@@ -10307,7 +10299,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       return false
     }
-    if (pending.overlayOpen) this.retryTerminalQueueClaim(sessionId)
+    // A steer now at the head is polled for while the turn runs: the one this
+    // delivery started, or the one a delivered steer joined.
+    if (pending.overlayOpen || settled.queuedPrompts?.[0]?.steer) this.retryTerminalQueueClaim(sessionId)
     return !pending.overlayOpen && settled.status === 'idle' && !settled.suspended
   }
 

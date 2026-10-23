@@ -1334,6 +1334,18 @@ describe('ManagerAgent', () => {
     expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'closed-1', { content: 'Pick it back up.', enqueue: true })
   })
 
+  it('steers a busy session rather than queueing it after the turn', async () => {
+    vi.mocked(hub.listSessions).mockResolvedValue([session('busy-1', { status: 'running' })])
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('send_to_session')({ sessionId: 'busy-1', message: 'Stop and fix the build first.' })
+      reply('Done.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('Tell it to fix the build now')
+    await settled()
+    expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'busy-1', { content: 'Stop and fix the build first.', enqueue: false })
+  })
+
   it('applies a chosen model in place from the next answer, and starts afresh for the default', async () => {
     await start({ model: 'hub-default' })
     await agent!.send('first')

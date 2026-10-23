@@ -7850,6 +7850,211 @@ describe('AgentService deletion', () => {
     }
   })
 
+  describe('a steer the busy terminal could not take yet', () => {
+    const notReady = () => Object.assign(new Error('The terminal is not ready for this input.'), {
+      statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.steer',
+    })
+    const noComposer = ' ◉ Working · esc interrupt'
+    const composerBack = [
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ◉ Working · esc interrupt',
+    ].join('\n')
+
+    async function busyTerminal(
+      sends: Array<() => boolean>,
+      options: { olderQueued?: boolean } = {},
+    ) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      client.nextSessionList = Promise.resolve([{
+        sessionId: client.session.sessionId, startTime: new Date(), modifiedTime: new Date(),
+        summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+      }])
+      const pane = { current: noComposer }
+      let call = 0
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => {
+          const next = sends[Math.min(call, sends.length - 1)]
+          call += 1
+          return next()
+        }),
+        sendWhenIdle: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+        capture: vi.fn(async () => pane.current),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')), client,
+        async () => [{ id: client.session.sessionId, cwd: directory, title: 'External session', updatedAt: new Date().toISOString() }],
+        async () => undefined, async () => [], async () => 'v1', terminal,
+      )
+      await service.start()
+      await service.store.update(client.session.sessionId, (session) => {
+        session.status = 'running'
+        session.activity = 'Working in terminal'
+        if (options.olderQueued) {
+          session.queuedPrompts = [{ id: randomUUID(), content: 'Older queued prompt', createdAt: new Date().toISOString() }]
+          session.queuedCount = 1
+        }
+      })
+      const errors: unknown[] = []
+      service.on('event', (event: { type: string }) => {
+        if (event.type === 'error') errors.push(event)
+      })
+      return { service, terminal, pane, errors, sessionId: client.session.sessionId, client }
+    }
+
+    const steerSend = (sessionId: string, content: string) =>
+      [sessionId, content, false, { allowDuringAgentExecution: true }]
+
+    it('marks it as a steer and types it into the turn once the composer is back', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, errors, sessionId, client } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+      ])
+      try {
+        const sent = await service.sendMessage(sessionId, 'Steer when you can')
+        expect(sent.queuedPrompts).toMatchObject([{ content: 'Steer when you can', steer: true }])
+        // Still no composer: nothing more is typed.
+        await new Promise((resolve) => setTimeout(resolve, 1_600))
+        expect(terminal.send).toHaveBeenCalledTimes(1)
+
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        expect(terminal.send.mock.calls[1]).toEqual(steerSend(sessionId, 'Steer when you can'))
+        expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+        await vi.waitFor(() => {
+          const stored = service.store.get(sessionId)
+          expect(stored?.queuedPrompts ?? []).toEqual([])
+          expect(service.store.terminalQueueDispatch(sessionId)).toBeUndefined()
+          expect(stored?.failedPrompt).toBeUndefined()
+        }, { timeout: 5_000 })
+        // The turn it steered is still the one running.
+        expect(service.store.get(sessionId)?.status).toBe('running')
+        await new Promise((resolve) => setTimeout(resolve, 1_600))
+        expect(terminal.send).toHaveBeenCalledTimes(2)
+        expect(errors).toEqual([])
+        expect(client.session.sentPrompts).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('does not type it over text already in the composer', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+      ])
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack.replace('\n┃\n', '\n┃ something typed in the terminal\n')
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+        expect(terminal.send).toHaveBeenCalledTimes(1)
+        expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([{ content: 'Steer when you can', steer: true }])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('stays behind an older queued prompt, then steers the turn that prompt starts', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, errors, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+      ], { olderQueued: true })
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+        expect(terminal.send).toHaveBeenCalledTimes(1)
+        expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+        expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([
+          { content: 'Older queued prompt' },
+          { content: 'Steer when you can', steer: true },
+        ])
+
+        // The turn ends; the older prompt starts the next one.
+        pane.current = composerBack.replace(' ◉ Working · esc interrupt', ' / commands')
+        terminal.sendWhenIdle.mockImplementationOnce(async () => {
+          pane.current = noComposer
+          return true
+        })
+        await service.store.update(sessionId, (session) => {
+          session.status = 'idle'
+          session.activity = undefined
+        })
+        await vi.waitFor(() => expect(terminal.sendWhenIdle).toHaveBeenCalledExactlyOnceWith(
+          sessionId, 'Older queued prompt',
+        ), { timeout: 5_000 })
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([
+          { content: 'Steer when you can', steer: true },
+        ]), { timeout: 5_000 })
+        expect(service.store.get(sessionId)?.status).toBe('running')
+
+        // That turn shows its composer: the steer goes in without waiting for it to end.
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        expect(terminal.send.mock.calls[1]).toEqual(steerSend(sessionId, 'Steer when you can'))
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts ?? []).toEqual([]), { timeout: 5_000 })
+        expect(terminal.sendWhenIdle).toHaveBeenCalledOnce()
+        expect(errors).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('puts it back quietly when the composer goes again before it is typed', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, errors, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => { throw notReady() },
+        () => true,
+      ])
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(3), { timeout: 8_000 })
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts ?? []).toEqual([]), { timeout: 5_000 })
+        expect(service.store.get(sessionId)?.failedPrompt).toBeUndefined()
+        expect(errors).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('never types it twice when delivery is uncertain', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => { throw Object.assign(new Error('The paste may have landed'), { statusCode: 500, uncertainDelivery: true }) },
+        () => true,
+      ])
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.failedPrompt).toMatchObject({
+          content: 'Steer when you can', uncertain: true,
+        }), { timeout: 5_000 })
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+        expect(terminal.send).toHaveBeenCalledTimes(2)
+        expect(service.store.get(sessionId)?.queuedPrompts ?? []).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+  })
+
   it('sends an explicit enqueue immediately when an idle terminal has no event log', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

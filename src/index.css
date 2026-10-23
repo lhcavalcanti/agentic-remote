@@ -3449,6 +3449,11 @@ button {
   -webkit-line-clamp: 2;
 }
 
+.queued-prompt__steer {
+  color: #9ec5fe;
+  font-weight: 650;
+}
+
 .queued-prompt .icon-button {
   width: 30px;
   height: 30px;

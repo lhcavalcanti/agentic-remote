@@ -762,8 +762,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       askSession: (computerId, sessionId, question) => hub.askSession(computerId, sessionId, question),
       createSession: (computerId, input) => hub.createSession(computerId, input),
       renameSession: (computerId, sessionId, title) => hub.renameSession(computerId, sessionId, { title }),
-      sendMessage: (computerId, sessionId, content) =>
-        hub.sendMessage(computerId, sessionId, { content, enqueue: true }),
+      sendMessage: (computerId, sessionId, content, options) =>
+        hub.sendMessage(computerId, sessionId, { content, enqueue: !options?.steer }),
       replyPermission: (computerId, sessionId, requestId, optionId) =>
         hub.replyPermission(computerId, sessionId, requestId, { optionId }),
       replyUserInput: (computerId, sessionId, requestId, input) =>

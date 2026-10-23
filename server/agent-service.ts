@@ -152,6 +152,7 @@ import {
   composerHoldsText,
   isTerminalAgentWorking,
   isTerminalOverlay,
+  terminalInputReady,
   isTerminalSessionInUsePrompt,
   isTerminalVisiblyIdle,
   terminalCommandOutput,
@@ -219,6 +220,9 @@ interface PendingTerminalQueueSettlement {
   failureMessage?: string
   retryAt: number
   retryDelay: number
+  // A mid-turn steer refused before anything was typed goes back to the head
+  // of the queue and waits for the composer again, without an error.
+  quiet?: boolean
 }
 
 type UserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
@@ -5180,8 +5184,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.canQueueRefusedSteer(sessionId) &&
         (await this.shouldEnqueueTerminalPrompt(sessionId))
       ) {
-        console.warn('A steer found the terminal not ready, so it was queued instead')
-        return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery)
+        console.warn('A steer found the terminal not ready, so it waits for the composer')
+        return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
       }
       throw error
     }
@@ -5267,7 +5271,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.has(sessionId) ||
       this.drainingSessions.has(sessionId)
     ) {
-      throw new Error('This session is already responding')
+      throw Object.assign(new Error('This session is already responding'), {
+        statusCode: 409,
+        uncertainDelivery: false,
+      })
     }
 
     return this.startMessage(sessionId, content, false, undefined, answers, delivery)
@@ -5285,7 +5292,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         new Error(
           'This SDK runtime does not support immediate follow-up prompts. Use Queue instead.',
         ),
-        { statusCode: 409 },
+        { statusCode: 409, uncertainDelivery: false },
       )
     }
     const active = this.activePrompts.get(sessionId)
@@ -5718,12 +5725,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     command = false,
     answers?: string,
     delivery?: DeliveryBoundary,
+    steer = false,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
       content,
       createdAt: new Date().toISOString(),
       ...(command ? { command: true } : {}),
+      ...(steer ? { steer: true } : {}),
     }
     return this.serializeQueue(sessionId, async () => {
       // One write when this is the answer to a failure. Queued first and the
@@ -5748,10 +5757,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     command = false,
     answers?: string,
     delivery?: DeliveryBoundary,
+    steer = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content, command, answers, delivery)
+    const queued = await this.enqueuePrompt(sessionId, content, command, answers, delivery, steer)
     if (!wasIdle) {
+      // Nothing else drains mid-turn, so the queue is polled for the composer.
+      if (steer) this.retryTerminalQueueClaim(sessionId)
       return queued
     }
     await this.drainTerminalQueue(sessionId, true)
@@ -9999,7 +10011,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.retryTerminalQueueClaim(sessionId, true)
         return false
       }
-      if (stored.status !== 'idle' || !isCurrent()) {
+      // A steer at the head goes into the running turn once the composer is
+      // back, including a turn that outlived a hub restart. Anything queued
+      // before it still waits for the turn to end, and the steer waits behind it.
+      const midTurnSteer =
+        next.steer === true && !next.command &&
+        stored.status === 'running' &&
+        !stored.pendingPermission && !stored.pendingUserInput
+      if ((stored.status !== 'idle' && !midTurnSteer) || !isCurrent()) {
         this.retryTerminalQueueClaim(sessionId)
         return false
       }
@@ -10015,15 +10034,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (next.command && !before?.trim()) {
         throw new Error('The terminal could not be read before command delivery; the command remains queued')
       }
-      if (before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
+      if (midTurnSteer
+        ? !before || !terminalInputReady(before, true) || composerHoldsText(before)
+        : before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
         this.retryTerminalQueueClaim(sessionId)
         return false
       }
       let claimed: Awaited<ReturnType<SessionStore['claimTerminalQueuedPrompt']>>
       try {
-        claimed = startup
-          ? await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, true)
-          : await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent)
+        claimed = await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, startup, midTurnSteer)
       } catch (error) {
         if (!isRetainedRefusal(error)) throw error
         this.pendingTerminalQueueClaims.delete(sessionId)
@@ -10040,23 +10059,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // process restart can put the externally delivered action back in FIFO.
       let outcome: PendingTerminalQueueSettlement['outcome']
       let failureMessage: string | undefined
+      let quiet = false
       try {
         if (this.suspendingSessions.has(sessionId)) {
           throw new Error('The session began suspending before queued delivery; nothing was sent')
         }
         const handedAt = Date.now()
-        const sent = this.terminalController.sendWhenIdle
-          ? await this.terminalController.sendWhenIdle(sessionId, next.content)
-          : await this.terminalController.send(sessionId, next.content, false)
+        const sent = midTurnSteer
+          ? await this.terminalController.send(sessionId, next.content, false, { allowDuringAgentExecution: true })
+          : this.terminalController.sendWhenIdle
+            ? await this.terminalController.sendWhenIdle(sessionId, next.content)
+            : await this.terminalController.send(sessionId, next.content, false)
         if (!sent) {
           throw new Error('External terminal is no longer available')
         }
         this.awaitTranscriptEcho(sessionId, handedAt)
         outcome = next.command
           ? { kind: 'feedback', command: next.content, before }
-          : { kind: 'accepted', startedTurn: true }
+          // A steer joins the turn already running rather than starting one.
+          : { kind: 'accepted', startedTurn: !midTurnSteer }
       } catch (error) {
         const uncertain = isUncertainDelivery(error)
+        quiet = midTurnSteer && !uncertain && isTerminalNotReadyRefusal(error)
         outcome = {
           kind: 'failed',
           uncertain,
@@ -10074,8 +10098,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         failureMessage,
         retryAt: 0,
         retryDelay: 750,
+        ...(quiet ? { quiet } : {}),
       })
-      return this.settleTerminalQueue(sessionId)
+      return await this.settleTerminalQueue(sessionId)
     })
   }
 
@@ -10260,6 +10285,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.stopped) return false
     this.publish(settled)
+    if (pending.outcome.kind === 'failed' && pending.quiet) {
+      this.retryTerminalQueueClaim(sessionId)
+      return false
+    }
     if (pending.outcome.kind === 'failed') {
       this.emit('event', {
         type: 'error',
@@ -10270,7 +10299,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       return false
     }
-    if (pending.overlayOpen) this.retryTerminalQueueClaim(sessionId)
+    // A steer now at the head is polled for while the turn runs: the one this
+    // delivery started, or the one a delivered steer joined.
+    if (pending.overlayOpen || settled.queuedPrompts?.[0]?.steer) this.retryTerminalQueueClaim(sessionId)
     return !pending.overlayOpen && settled.status === 'idle' && !settled.suspended
   }
 

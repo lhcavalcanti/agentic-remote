@@ -13,6 +13,7 @@ import type {
 } from '../shared/contracts.js'
 import type { ManagerClientDefaults, ManagerSessionBackend, ManagerSessionRef } from '../shared/manager.js'
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
+import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { rosterLine } from './manager-context.js'
 import { ManagerMemoryError, type ManagerMemory } from './manager-memory.js'
 import {
@@ -38,7 +39,8 @@ export interface ManagerToolHost {
   askSession(computerId: string, sessionId: string, question: string): Promise<string>
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
   renameSession(computerId: string, sessionId: string, title: string): Promise<ManagedSession>
-  sendMessage(computerId: string, sessionId: string, content: string): Promise<ManagedSession>
+  /** A steer is typed into the turn a busy session is running instead of waiting in its queue. */
+  sendMessage(computerId: string, sessionId: string, content: string, options?: { steer?: boolean }): Promise<ManagedSession>
   /** Answers a permission request, such as folder trust, with one of its options. */
   replyPermission(computerId: string, sessionId: string, requestId: string, optionId: string): Promise<ManagedSession>
   /** Answers a question or form the session is waiting on. */
@@ -239,6 +241,21 @@ export function createManagerTools(
     } catch (error) {
       if (!(await trustFolder(session, trustWaitMs))) throw error
       await host.sendMessage(session.computerId, session.id, content)
+    }
+  }
+
+  /**
+   * Steers a busy session. Only a refusal that certainly sent nothing falls back to its queue, so
+   * a steer that may have been typed is never sent a second time.
+   */
+  async function steer(session: ManagedSession, content: string): Promise<'steered' | 'queued'> {
+    try {
+      await host.sendMessage(session.computerId, session.id, content, { steer: true })
+      return 'steered'
+    } catch (error) {
+      if (deliveryUncertaintyFromError(error) !== false) throw error
+      await host.sendMessage(session.computerId, session.id, content)
+      return 'queued'
     }
   }
 
@@ -755,7 +772,7 @@ export function createManagerTools(
     ),
     define(
       'send_to_session',
-      'Send a message or follow-up instruction to any session. A closed session is reopened and a suspended one resumed first; a folder-trust prompt is answered. If it is busy the message waits in its queue.',
+      'Send a message or follow-up instruction to any session. A closed session is reopened and a suspended one resumed first; a folder-trust prompt is answered. If it is busy the message steers the work it is doing, and waits in its queue only if the session cannot take it.',
       z.object({
         sessionId: sessionIdField,
         computer: computerField.optional(),
@@ -770,9 +787,15 @@ export function createManagerTools(
           session = { ...session, ...(await host.resumeSession(session.computerId, session.id)), title: session.title }
           onActivity({ tool: 'send_to_session', content: `Resumed "${session.title}"`, sessionRefs: [ref(session)] })
         }
-        await deliver(session, message)
+        // Claude sessions have no way to take a message mid-turn, so theirs is queued as before.
+        const busy = session.status === 'running' && (session.provider ?? 'copilot') === 'copilot'
+        const outcome = busy
+          ? await steer(session, message)
+          : (await deliver(session, message), session.status === 'running' ? 'queued' : 'sent')
         onActivity({ tool: 'send_to_session', content: `Sent a message to "${session.title}"`, sessionRefs: [ref(session)] })
-        return `Sent to ${link(session)}${session.status === 'running' ? ' (it was busy, so the message is queued)' : ''}.`
+        if (outcome === 'steered') return `Sent to ${link(session)}; it was busy, so the message was steered into the work it is doing.`
+        if (outcome === 'queued') return `Sent to ${link(session)}; it was busy and could not take the message yet, so it is queued for when it can.`
+        return `Sent to ${link(session)}.`
       },
       { actsOnSessions: true }
     ),

@@ -1987,3 +1987,34 @@ describe('Session retention safety', () => {
     expect(f.service.getSession('pending')?.archivedAt).toBeUndefined()
   })
 })
+
+describe('A steer persisted across a restart', () => {
+  const workingComposer = ['Synthetic busy owner', '╻▄▄▄▄▄▄▄▄▄▄', '┃ ', '╹▀▀▀▀▀▀▀▀▀▀', ' ◉ Working · esc interrupt'].join('\n')
+
+  it('is typed into the turn still running once its composer is ready, not held until idle', async () => {
+    const f = await fixture()
+    await f.store.enqueuePrompt('pending', { ...prompt('Steer after restart'), steer: true })
+    f.ownership.aggregateError = undefined
+    f.ownership.owners.add('pending')
+    f.terminal.capture.mockResolvedValue(workingComposer)
+    // The provider's log still has the turn open when the hub comes back.
+    f.eventVersion.mockResolvedValue('1:1')
+    f.readEvents.mockResolvedValue([{
+      id: 'unfinished-turn', type: 'assistant.turn_start', parentId: null, timestamp, data: {},
+    }] as SessionEvent[])
+    await f.service.start()
+    await f.service.refreshDiscovery()
+    await f.service.refreshTranscripts()
+    expect(f.store.get('pending')?.status).toBe('running')
+    await f.drainNow()
+
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith(
+      'pending', 'Steer after restart', false, { allowDuringAgentExecution: true },
+    )
+    expect(f.store.get('pending')).toMatchObject({ status: 'running', queuedCount: 0 })
+    expect(f.store.get('pending')?.failedPrompt).toBeUndefined()
+    expect(f.store.terminalQueueDispatch('pending')).toBeUndefined()
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledOnce()
+  })
+})

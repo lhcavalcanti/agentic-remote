@@ -473,6 +473,14 @@ describe('manager tools', () => {
     expect(host.sendMessage).toHaveBeenCalledTimes(1)
   })
 
+  it('queues for a busy Claude session, which has no steering', async () => {
+    vi.mocked(host.listSessions).mockResolvedValue([session('cla12345-dddd', { status: 'running', provider: 'claude' })])
+    const result = String(await call('send_to_session', { sessionId: 'cla12345', message: 'Next step' }))
+    expect(vi.mocked(host.sendMessage).mock.calls).toEqual([['hub', 'cla12345-dddd', 'Next step']])
+    expect(result).not.toContain('steered')
+    expect(result).toContain('queued')
+  })
+
   it('sends to an idle session as before, with nothing to steer', async () => {
     const result = String(await call('send_to_session', { sessionId: 'abc12345', message: 'Next step' }))
     expect(host.sendMessage).toHaveBeenCalledWith('hub', 'abc12345-aaaa', 'Next step')

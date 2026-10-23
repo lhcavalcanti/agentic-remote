@@ -5271,7 +5271,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.has(sessionId) ||
       this.drainingSessions.has(sessionId)
     ) {
-      throw new Error('This session is already responding')
+      throw Object.assign(new Error('This session is already responding'), {
+        statusCode: 409,
+        uncertainDelivery: false,
+      })
     }
 
     return this.startMessage(sessionId, content, false, undefined, answers, delivery)
@@ -5289,7 +5292,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         new Error(
           'This SDK runtime does not support immediate follow-up prompts. Use Queue instead.',
         ),
-        { statusCode: 409 },
+        { statusCode: 409, uncertainDelivery: false },
       )
     }
     const active = this.activePrompts.get(sessionId)

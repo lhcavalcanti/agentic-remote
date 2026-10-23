@@ -787,8 +787,11 @@ export function createManagerTools(
           session = { ...session, ...(await host.resumeSession(session.computerId, session.id)), title: session.title }
           onActivity({ tool: 'send_to_session', content: `Resumed "${session.title}"`, sessionRefs: [ref(session)] })
         }
-        const busy = session.status === 'running'
-        const outcome = busy ? await steer(session, message) : (await deliver(session, message), 'sent')
+        // Claude sessions have no way to take a message mid-turn, so theirs is queued as before.
+        const busy = session.status === 'running' && (session.provider ?? 'copilot') === 'copilot'
+        const outcome = busy
+          ? await steer(session, message)
+          : (await deliver(session, message), session.status === 'running' ? 'queued' : 'sent')
         onActivity({ tool: 'send_to_session', content: `Sent a message to "${session.title}"`, sessionRefs: [ref(session)] })
         if (outcome === 'steered') return `Sent to ${link(session)}; it was busy, so the message was steered into the work it is doing.`
         if (outcome === 'queued') return `Sent to ${link(session)}; it was busy and could not take the message yet, so it is queued for when it can.`

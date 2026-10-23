@@ -7673,6 +7673,24 @@ describe('App', () => {
       expect(pendingBubble()).toBeNull()
     })
 
+    it('labels a steer the busy terminal will take as soon as it can', async () => {
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      vi.mocked(sendMessage).mockResolvedValue({
+        ...running,
+        queuedPrompts: [{ id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true }],
+      })
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      const label = await screen.findByTitle('Typed into the running turn as soon as the terminal is ready')
+      expect(label).toHaveTextContent('Steer')
+      expect(label.parentElement).toHaveTextContent(steer)
+    })
+
     it('is not shown for a failed send, which goes back to the composer', async () => {
       vi.mocked(listSessions).mockResolvedValue([running])
       vi.mocked(getSession).mockResolvedValue(running)

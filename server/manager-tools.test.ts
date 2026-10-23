@@ -186,7 +186,7 @@ describe('manager tools', () => {
 
   it('finds a session by id or unique prefix and sends it a follow-up', async () => {
     await call('send_to_session', { sessionId: 'def67890', message: 'Also add tests' })
-    expect(host.sendMessage).toHaveBeenCalledWith('hub', 'def67890-bbbb', 'Also add tests')
+    expect(host.sendMessage).toHaveBeenCalledWith('hub', 'def67890-bbbb', 'Also add tests', { steer: true })
     expect(activities.at(-1)).toMatchObject({ tool: 'send_to_session', content: 'Sent a message to "Session def67890-bbbb"' })
 
     const missing = await call('send_to_session', { sessionId: 'zzz', message: 'hi' })
@@ -441,6 +441,42 @@ describe('manager tools', () => {
     }))
     const form = String(await call('get_session', { sessionId: 'abc12345' }))
     expect(form).toContain('Form fields: port (integer, required, 1–65535); tier (string, one of free, pro).')
+  })
+
+  it('steers a busy session instead of queueing behind its turn', async () => {
+    const result = String(await call('send_to_session', { sessionId: 'def67890', message: 'Focus on the failing test' }))
+    expect(host.sendMessage).toHaveBeenCalledTimes(1)
+    expect(host.sendMessage).toHaveBeenCalledWith('hub', 'def67890-bbbb', 'Focus on the failing test', { steer: true })
+    expect(result).toContain('steered into the work it is doing')
+    expect(result).not.toContain('queued')
+  })
+
+  it('queues for a busy session only when the steer was refused before anything was sent', async () => {
+    vi.mocked(host.sendMessage).mockRejectedValueOnce(Object.assign(
+      new Error('A follow-up prompt is already being sent.'), { statusCode: 409, uncertainDelivery: false },
+    ))
+    const result = String(await call('send_to_session', { sessionId: 'def67890', message: 'Focus on the failing test' }))
+    expect(vi.mocked(host.sendMessage).mock.calls).toEqual([
+      ['hub', 'def67890-bbbb', 'Focus on the failing test', { steer: true }],
+      ['hub', 'def67890-bbbb', 'Focus on the failing test'],
+    ])
+    expect(result).toContain('queued')
+  })
+
+  it.each([
+    ['may have been delivered', { statusCode: 409, uncertainDelivery: true }],
+    ['says nothing about delivery', { statusCode: 500 }],
+  ])('never sends a steer twice when it %s', async (_name, fields) => {
+    vi.mocked(host.sendMessage).mockRejectedValueOnce(Object.assign(new Error('Lost the terminal'), fields))
+    const result = await call('send_to_session', { sessionId: 'def67890', message: 'Focus on the failing test' })
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(host.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends to an idle session as before, with nothing to steer', async () => {
+    const result = String(await call('send_to_session', { sessionId: 'abc12345', message: 'Next step' }))
+    expect(host.sendMessage).toHaveBeenCalledWith('hub', 'abc12345-aaaa', 'Next step')
+    expect(result).not.toContain('steered')
   })
 
   it('reopens a closed session and resumes a suspended one to steer it', async () => {

@@ -786,8 +786,13 @@ Questions and permissions are the highest-priority UI state.
   working Copilot that shows no usable composer (within five seconds after a
   restart, or at once otherwise) MUST NOT hold the send lock for the startup
   timeout or fail: nothing is typed, and the message joins the app FIFO
-  exactly once while the session is `running`. Steers that would replace a
-  terminal draft, and refusals for any other reason, still return a 409.
+  exactly once while the session is `running`, marked as a steer. A queued
+  steer at the head of the FIFO MUST be typed into the running turn as soon as
+  the composer is ready and empty again, not held until the turn ends; one
+  behind an older queued prompt keeps its place. A steer the terminal refuses
+  again before anything was typed stays at the head without a new error; an
+  uncertain one is never retyped. Steers that would replace a terminal draft,
+  and refusals for any other reason, still return a 409.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject

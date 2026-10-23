@@ -1781,6 +1781,8 @@ export class SessionStore {
     expected: QueuedPrompt,
     isCurrent: () => boolean,
     requireManagedTerminal = false,
+    // A steer typed into the running turn: the turn's status is left alone.
+    midTurnSteer = false,
   ): Promise<{ session: SessionDetail; dispatch: TerminalQueueDispatch }> {
     this.lastTerminalQueueDispatchAt = Math.max(Date.now(), this.lastTerminalQueueDispatchAt + 1)
     const dispatch = {
@@ -1793,12 +1795,14 @@ export class SessionStore {
       assertSessionNotRetained(stored, 'dispatching its queue')
       const head = stored.queuedPrompts?.[0]
       if (
-        !isCurrent() || stored.suspended || stored.status !== 'idle' ||
+        !isCurrent() || stored.suspended ||
+        (midTurnSteer ? stored.status !== 'running' || head?.steer !== true : stored.status !== 'idle') ||
         (requireManagedTerminal && (!stored.isOpen || stored.managedOpen !== true || stored.backend !== 'terminal')) ||
         stored.pendingPermission || stored.pendingUserInput || stored.recoverySeed ||
         stored.terminalQueueDispatch || stored.failedPrompt || stored.recoverySeed ||
         !head || head.id !== expected.id || head.content !== expected.content ||
-        head.createdAt !== expected.createdAt || head.command !== expected.command
+        head.createdAt !== expected.createdAt || head.command !== expected.command ||
+        head.steer !== expected.steer
       ) {
         throw Object.assign(new Error('The queued prompt changed before delivery; nothing was sent'), { statusCode: 409 })
       }
@@ -1807,6 +1811,7 @@ export class SessionStore {
       // Existing recovery state also protects against automatic replay by older runtimes.
       stored.failedPrompt = { content: head.content, failedAt: dispatch.startedAt, uncertain: true }
       stored.terminalQueueDispatch = dispatch
+      if (midTurnSteer) return
       stored.queueDispatchAt = dispatch.startedAt
       stored.status = 'running'
       stored.activity = 'Dispatching queued prompt'

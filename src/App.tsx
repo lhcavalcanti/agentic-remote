@@ -5063,7 +5063,17 @@ function SortableQueuedPrompt({
       >
         <GripVertical size={13} />
       </span>
-      <span>{prompt.content}</span>
+      <span>
+        {prompt.steer && (
+          <strong
+            className="queued-prompt__steer"
+            title="Typed into the running turn as soon as the terminal is ready"
+          >
+            Steer ·{' '}
+          </strong>
+        )}
+        {prompt.content}
+      </span>
       <button
         aria-label={`Edit queued prompt ${index + 1}`}
         className={`icon-button${editing ? ' icon-button--active' : ''}`}

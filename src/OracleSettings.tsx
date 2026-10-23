@@ -111,6 +111,27 @@ export function OracleModelSettings({
         </>
       ) : null}
       <OracleSettingsStatus oracle={oracle} part="model" />
+      {!loading && !unavailable && settings && !settings.sessionBackend ? (
+        <p className="dialog-message">
+          This hub opens Oracle&apos;s sessions in a terminal. Update it to choose the Copilot SDK.
+        </p>
+      ) : null}
+      {!loading && !unavailable && settings?.sessionBackend ? (
+        <label className="field">
+          <span>Opens new sessions with</span>
+          <select
+            aria-label="How Oracle opens sessions"
+            className="dialog-select"
+            disabled={saving}
+            onChange={(event) => void oracle.saveBackend(event.target.value === 'terminal' ? 'terminal' : 'sdk')}
+            value={settings.sessionBackend}
+          >
+            <option value="sdk">Copilot SDK (default)</option>
+            <option value="terminal">Terminal (tmux)</option>
+          </select>
+        </label>
+      ) : null}
+      <OracleSettingsStatus oracle={oracle} part="backend" />
     </section>
   )
 }

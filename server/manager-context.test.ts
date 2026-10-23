@@ -94,6 +94,18 @@ describe('manager turn context', () => {
     expect(context).toContain('Computers: development (hub, this hub, online, new sessions start in /home/me/src/oracle) · production (node, offline)')
   })
 
+  it('says how Oracle\'s new sessions open, the Copilot SDK unless set to a terminal', () => {
+    const base = { now, computers, sessions: [], registry: {}, changes: [] }
+    expect(buildTurnContext(base)).toContain('Your new sessions open with the Copilot SDK.')
+    expect(buildTurnContext({ ...base, sessionBackend: 'sdk' })).toContain('Your new sessions open with the Copilot SDK.')
+    expect(buildTurnContext({ ...base, sessionBackend: 'terminal' })).toContain('Your new sessions open in a terminal (tmux).')
+  })
+
+  it('tells Oracle how to change how its sessions open', () => {
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(/set_session_backend/)
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(/Ask mode[^\n]*set_session_backend/)
+  })
+
   it('lets Oracle answer waiting sessions in Delegate, and only leaves them to the user in Ask mode', () => {
     expect(MANAGER_SYSTEM_PROMPT).not.toContain('you cannot answer for them')
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/waiting for the user[^\n]*answer_session[^\n]*Ask mode/)

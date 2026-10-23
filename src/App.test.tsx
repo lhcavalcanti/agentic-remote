@@ -1528,6 +1528,25 @@ describe('App', () => {
       expect(style).toHaveValue('detailed')
     })
 
+    it('chooses how new sessions start, separately from Oracle', async () => {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      const backend = await within(dialog).findByRole('combobox', { name: 'How new sessions start' })
+      // Unset starts in tmux, as new sessions always have.
+      expect(backend).toHaveValue('terminal')
+      expect(within(backend).getAllByRole('option').map((option) => option.textContent))
+        .toEqual(['Terminal (tmux)', 'Copilot SDK'])
+      const { updateManagerSettings } = await import('./api')
+      fireEvent.change(backend, { target: { value: 'sdk' } })
+      expect(backend).toHaveValue('sdk')
+      await waitFor(() => expect(hubSettings.values).toEqual({ newSessionBackend: 'sdk' }))
+      expect(updateManagerSettings).not.toHaveBeenCalled()
+      fireEvent.change(backend, { target: { value: 'terminal' } })
+      await waitFor(() => expect(hubSettings.values).toEqual({}))
+    })
+
     it('leaves out the response style when Oracle is off on this hub', async () => {
       vi.mocked(getManager).mockResolvedValue({
         available: false,
@@ -8634,6 +8653,42 @@ describe('App', () => {
         allowAllPermissions: true,
       }),
     )
+  })
+
+  it('starts new sessions with the saved default backend', async () => {
+    hubSettings.values = { newSessionBackend: 'sdk' }
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    const checkbox = screen.getByRole('checkbox', { name: /Create in tmux/ })
+    expect(checkbox).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: false,
+        allowAllPermissions: true,
+      }),
+    )
+  })
+
+  it('lets one session override the saved default backend', async () => {
+    hubSettings.values = { newSessionBackend: 'sdk' }
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('checkbox', { name: /Create in tmux/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+    expect(hubSettings.values).toEqual({ newSessionBackend: 'sdk' })
   })
 
   it('keeps every computer visible after creating a remote session', async () => {

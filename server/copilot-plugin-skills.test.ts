@@ -362,6 +362,27 @@ describe('Copilot installed-plugin skill roots', () => {
     ).rejects.toThrow('nested-link@market has a symlink in its skill contributions')
 
     f.plugins.splice(0)
+    const defaultLinkRoot = await f.add('market', 'default-link', {
+      skills: [],
+    })
+    await symlink(outside, path.join(defaultLinkRoot, 'skills'))
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).rejects.toThrow('default-link@market has an unsafe or missing skill contribution directory')
+
+    f.plugins.splice(0)
+    const rootSkill = await f.add('market', 'root-skill-link', {
+      skills: [],
+    })
+    await writeFile(path.join(rootSkill, 'SKILL.md'), 'Legacy root skill.')
+    await symlink(outside, path.join(rootSkill, 'reference'))
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).rejects.toThrow('root-skill-link@market has a symlink in its skill contributions')
+
+    f.plugins.splice(0)
     const manifestRoot = await f.add('market', 'manifest-link', {
       skills: ['skills', 'outside-skills'],
     })

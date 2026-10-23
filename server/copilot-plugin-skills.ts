@@ -278,8 +278,16 @@ async function validatePluginRoot(
   const roots: string[] = []
   for (const relative of configured.roots) {
     const target = path.resolve(root, relative)
-    const exists = await regularDirectory(target)
-    if (!exists && !configured.explicit) continue
+    if (!configured.explicit) {
+      try {
+        await lstat(target)
+      } catch (cause) {
+        if (isMissing(cause)) continue
+        throw pluginError(plugin, 'skill contribution could not be inspected', {
+          cause,
+        })
+      }
+    }
     roots.push(await validateSkillDirectory(plugin, root, relative))
   }
   if (!roots.length && descriptor.format === 'legacy') {
@@ -289,7 +297,9 @@ async function validatePluginRoot(
       if (metadata.isSymbolicLink()) {
         throw pluginError(plugin, 'has a symlinked root skill file')
       }
-      if (metadata.isFile()) roots.push(root)
+      if (metadata.isFile()) {
+        roots.push(await validateSkillDirectory(plugin, root, '.'))
+      }
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Copilot plugin ')) {
         throw error

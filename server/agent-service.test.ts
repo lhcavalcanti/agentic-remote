@@ -272,6 +272,8 @@ class FakeCopilotClient implements CopilotClientLike {
   readonly deletedSessionIds: string[] = []
   readonly resumedConfigs: ResumeSessionConfig[] = []
   readonly resumedSessionIds: string[] = []
+  pluginDirectories: string[] = []
+  pluginSkillDirectories = vi.fn(async () => [...this.pluginDirectories])
   retireMissingSession?: (sessionId: string) => Promise<void>
   deleteError?: Error
   stopErrors: Error[] = []
@@ -337,6 +339,7 @@ const cliDiscovery = {
   enableOnDemandInstructionDiscovery: true,
   enableFileHooks: true,
   enableHostGitOperations: true,
+  skillDirectories: [],
 }
 
 function configurableModel(): ModelInfo {
@@ -500,6 +503,89 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('adds enabled plugin skill roots without replacing CLI MCP discovery', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.pluginDirectories = ['/copilot/plugins/first/skills']
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await service.createSession(directory, false)
+
+    expect(client.createdConfigs[0]).toMatchObject({
+      ...cliDiscovery,
+      skillDirectories: ['/copilot/plugins/first/skills'],
+      enableConfigDiscovery: true,
+    })
+    expect(client.createdConfigs[0]).not.toHaveProperty('mcpServers')
+    await service.stop()
+  })
+
+  it('resolves plugin updates again for each new SDK session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    let created = 0
+    vi.spyOn(client, 'createSession').mockImplementation(async (config) => {
+      client.createdConfigs.push(config)
+      created += 1
+      return new DeferredSession(`plugin-refresh-${created}`)
+    })
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    client.pluginDirectories = ['/copilot/plugins/v1/skills']
+    await service.createSession(directory, false)
+    client.pluginDirectories = ['/copilot/plugins/v2/skills']
+    await service.createSession(directory, false)
+
+    expect(client.createdConfigs.map((config) => config.skillDirectories))
+      .toEqual([
+        ['/copilot/plugins/v1/skills'],
+        ['/copilot/plugins/v2/skills'],
+      ])
+    expect(client.pluginSkillDirectories).toHaveBeenCalledTimes(2)
+    await service.stop()
+  })
+
+  it('fails SDK startup explicitly when plugin skill discovery fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.pluginSkillDirectories.mockRejectedValueOnce(
+      new Error('Copilot plugin fixture has an unsafe cache root'),
+    )
+    const terminalCreate = vi.spyOn(
+      TmuxTerminalSessionController.prototype,
+      'create',
+    )
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await expect(service.createSession(directory, false)).rejects.toThrow(
+      'Copilot plugin fixture has an unsafe cache root',
+    )
+    expect(client.createdConfigs).toEqual([])
+    expect(terminalCreate).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
   it('enables CLI configuration discovery when resuming a persisted SDK session', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -519,6 +605,7 @@ describe('AgentService deletion', () => {
       { managedOpen: true, backend: 'sdk' },
     )
     const client = new FakeCopilotClient()
+    client.pluginDirectories = ['/copilot/plugins/resumed/skills']
     const service = new AgentService(
       store,
       client,
@@ -529,7 +616,11 @@ describe('AgentService deletion', () => {
 
     await service.activateSession(sessionId)
 
-    expect(client.resumedConfigs[0]).toMatchObject(cliDiscovery)
+    expect(client.resumedConfigs[0]).toMatchObject({
+      ...cliDiscovery,
+      skillDirectories: ['/copilot/plugins/resumed/skills'],
+    })
+    expect(client.pluginSkillDirectories).toHaveBeenCalled()
     await service.stop()
   })
 

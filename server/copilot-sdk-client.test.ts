@@ -80,6 +80,7 @@ describe('retireMissingCopilotSdkSession', () => {
     const client = createCopilotSdkClient({})
 
     expect(client.retireMissingSession).toEqual(expect.any(Function))
+    expect(client.pluginSkillDirectories).toEqual(expect.any(Function))
   })
 })
 

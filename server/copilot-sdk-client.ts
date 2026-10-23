@@ -6,6 +6,7 @@ import {
   type GetStatusResponse,
   type SessionConfig,
 } from '@github/copilot-sdk'
+import { resolveCopilotPluginSkillDirectories } from './copilot-plugin-skills.js'
 
 export interface CopilotSdkRuntimeDiagnostic {
   runtimeVersion: string
@@ -21,6 +22,10 @@ interface CopilotSdkRuntimeDiagnosticClient {
 
 export interface CopilotSdkMissingSessionRetirement {
   retireMissingSession(sessionId: string): Promise<void>
+}
+
+export interface CopilotSdkPluginSkillDiscovery {
+  pluginSkillDirectories(): Promise<string[]>
 }
 
 export const COPILOT_SDK_SESSION_DISCOVERY = {
@@ -93,11 +98,15 @@ export async function retireMissingCopilotSdkSession(
 
 export function createCopilotSdkClient(
   environment: NodeJS.ProcessEnv = process.env,
-): CopilotClient & CopilotSdkMissingSessionRetirement {
+): CopilotClient & CopilotSdkMissingSessionRetirement & CopilotSdkPluginSkillDiscovery {
   const client = new CopilotClient(copilotSdkClientOptions(environment))
   Object.defineProperty(client, 'retireMissingSession', {
     value: (sessionId: string) =>
       retireMissingCopilotSdkSession(client, sessionId),
   })
-  return client as CopilotClient & CopilotSdkMissingSessionRetirement
+  Object.defineProperty(client, 'pluginSkillDirectories', {
+    value: () => resolveCopilotPluginSkillDirectories(client, environment),
+  })
+  return client as CopilotClient & CopilotSdkMissingSessionRetirement &
+    CopilotSdkPluginSkillDiscovery
 }

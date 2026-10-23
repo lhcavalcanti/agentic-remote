@@ -624,6 +624,62 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('does not add refreshed SDK plugin skills to a tmux command catalog', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = '12345678-aaaa-bbbb-cccc-123456789abf'
+    const discovered = {
+      id: sessionId,
+      cwd: directory,
+      title: 'Terminal session',
+      updatedAt: '2026-10-20T00:00:00.000Z',
+    }
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        ...discovered,
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    const client = new FakeCopilotClient()
+    client.pluginDirectories = ['/copilot/plugins/new/skills']
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      store,
+      client,
+      async () => [discovered],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    client.createdConfigs.splice(0)
+    client.pluginSkillDirectories.mockClear()
+
+    await service.listCommands(sessionId)
+
+    expect(client.createdConfigs).toHaveLength(1)
+    expect(client.createdConfigs[0]).toMatchObject({
+      enableConfigDiscovery: true,
+      enableSkills: true,
+      enableOnDemandInstructionDiscovery: true,
+      enableFileHooks: true,
+      enableHostGitOperations: true,
+    })
+    expect(client.createdConfigs[0]).not.toHaveProperty('skillDirectories')
+    expect(client.pluginSkillDirectories).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
   it('deletes an SDK session without detaching it first', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

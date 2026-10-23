@@ -6,15 +6,28 @@ import type { CopilotClient } from '@github/copilot-sdk'
 const MAX_PLUGINS = 128
 const MAX_STRING_LENGTH = 4_096
 const MAX_CONTRIBUTION_ENTRIES = 10_000
-const manifestCandidates = [
-  'plugin.json',
+const AGENT_PLUGIN_SCHEMA_PREFIX = 'https://agent-plugins.org/schemas/'
+const agentPluginSchemas = new Set([
+  `${AGENT_PLUGIN_SCHEMA_PREFIX}1.0.0/plugin.schema.json`,
+  `${AGENT_PLUGIN_SCHEMA_PREFIX}1.1.0/plugin.schema.json`,
+])
+const legacyManifestCandidates = [
   '.plugin/plugin.json',
+  'plugin.json',
   '.github/plugin/plugin.json',
   '.claude-plugin/plugin.json',
+] as const
+const marketplaceManifestCandidates = [
+  'marketplace.json',
+  '.plugin/marketplace.json',
+  '.github/plugin/marketplace.json',
+  '.claude-plugin/marketplace.json',
 ] as const
 
 type PluginListResult = Awaited<ReturnType<CopilotClient['rpc']['plugins']['list']>>
 type InstalledPlugin = PluginListResult['plugins'][number]
+type PluginIdentity = Pick<InstalledPlugin, 'name' | 'marketplace'> &
+  Partial<Pick<InstalledPlugin, 'directSourceId'>>
 
 export interface CopilotPluginClient {
   rpc: {
@@ -22,85 +35,29 @@ export interface CopilotPluginClient {
   }
 }
 
-interface StoredPlugin {
-  name: string
-  marketplace: string
-  cache_path?: string
-  enabled?: boolean
+interface PluginManifest {
+  format: 'agent' | 'legacy'
+  manifest?: Record<string, unknown>
 }
 
-function pluginLabel(plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>): string {
+function pluginLabel(plugin: PluginIdentity): string {
   return plugin.marketplace
     ? `${plugin.name}@${plugin.marketplace}`
     : plugin.name
 }
 
-function pluginKey(plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>): string {
-  return `${plugin.marketplace}\0${plugin.name}`.toLocaleLowerCase('en-US')
+function pluginKey(plugin: PluginIdentity): string {
+  const source = plugin.marketplace || plugin.directSourceId || ''
+  return `${plugin.marketplace}\0${plugin.name}\0${source}`
+    .toLocaleLowerCase('en-US')
 }
 
 function pluginError(
-  plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>,
+  plugin: PluginIdentity,
   detail: string,
   options?: ErrorOptions,
 ): Error {
   return new Error(`Copilot plugin ${pluginLabel(plugin)} ${detail}`, options)
-}
-
-function stripJsonComments(contents: string): string {
-  let output = ''
-  let string = false
-  let escaped = false
-  let lineComment = false
-  let blockComment = false
-  for (let index = 0; index < contents.length; index += 1) {
-    const current = contents[index]
-    const next = contents[index + 1]
-    if (lineComment) {
-      if (current === '\n') {
-        lineComment = false
-        output += current
-      }
-      continue
-    }
-    if (blockComment) {
-      if (current === '*' && next === '/') {
-        blockComment = false
-        index += 1
-      } else if (current === '\n') {
-        output += current
-      }
-      continue
-    }
-    if (string) {
-      output += current
-      if (escaped) {
-        escaped = false
-      } else if (current === '\\') {
-        escaped = true
-      } else if (current === '"') {
-        string = false
-      }
-      continue
-    }
-    if (current === '"') {
-      string = true
-      output += current
-      continue
-    }
-    if (current === '/' && next === '/') {
-      lineComment = true
-      index += 1
-      continue
-    }
-    if (current === '/' && next === '*') {
-      blockComment = true
-      index += 1
-      continue
-    }
-    output += current
-  }
-  return output
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -114,55 +71,13 @@ function requiredString(value: unknown): string | undefined {
     : undefined
 }
 
-function isMissing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === 'ENOENT'
+function safePathSegment(value: string): boolean {
+  return value !== '.' && value !== '..' &&
+    !value.includes('/') && !value.includes('\\')
 }
 
-async function readStoredPlugins(configPath: string): Promise<Map<string, StoredPlugin>> {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(stripJsonComments(await readFile(configPath, 'utf8')))
-  } catch (cause) {
-    throw new Error('Copilot installed-plugin state could not be read', { cause })
-  }
-  if (!isRecord(parsed) || !Array.isArray(parsed.installedPlugins)) {
-    throw new Error('Copilot installed-plugin state is malformed')
-  }
-  if (parsed.installedPlugins.length > MAX_PLUGINS) {
-    throw new Error('Copilot installed-plugin state exceeds the supported plugin limit')
-  }
-  const plugins = new Map<string, StoredPlugin>()
-  for (const value of parsed.installedPlugins) {
-    if (!isRecord(value)) {
-      throw new Error('Copilot installed-plugin state contains a malformed plugin')
-    }
-    const name = requiredString(value.name)
-    const marketplace =
-      typeof value.marketplace === 'string' &&
-        value.marketplace.length <= MAX_STRING_LENGTH &&
-        !value.marketplace.includes('\0')
-        ? value.marketplace
-        : undefined
-    const cachePath =
-      value.cache_path === undefined
-        ? undefined
-        : requiredString(value.cache_path)
-    if (!name || marketplace === undefined || value.cache_path !== undefined && !cachePath) {
-      throw new Error('Copilot installed-plugin state contains a malformed plugin')
-    }
-    const plugin = {
-      name,
-      marketplace,
-      ...(cachePath ? { cache_path: cachePath } : {}),
-      ...(typeof value.enabled === 'boolean' ? { enabled: value.enabled } : {}),
-    }
-    const key = pluginKey(plugin)
-    if (plugins.has(key)) {
-      throw new Error(`Copilot installed-plugin state lists ${pluginLabel(plugin)} twice`)
-    }
-    plugins.set(key, plugin)
-  }
-  return plugins
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT'
 }
 
 function isWithin(parent: string, candidate: string): boolean {
@@ -184,13 +99,87 @@ async function regularDirectory(candidate: string): Promise<string | undefined> 
   }
 }
 
+async function assertNoSymlinkPath(
+  plugin: PluginIdentity,
+  base: string,
+  candidate: string,
+  detail: string,
+): Promise<void> {
+  const relative = path.relative(base, candidate)
+  if (!isWithin(base, candidate)) throw pluginError(plugin, detail)
+  let current = base
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment)
+    let metadata
+    try {
+      metadata = await lstat(current)
+    } catch (cause) {
+      throw pluginError(plugin, detail, { cause })
+    }
+    if (metadata.isSymbolicLink()) throw pluginError(plugin, detail)
+  }
+}
+
+async function readManifest(
+  plugin: PluginIdentity,
+  root: string,
+  relative: string,
+): Promise<Record<string, unknown> | undefined> {
+  const candidate = path.join(root, relative)
+  try {
+    const metadata = await lstat(candidate)
+    if (metadata.isSymbolicLink()) {
+      throw pluginError(plugin, 'has a symlinked manifest')
+    }
+    if (!metadata.isFile()) return undefined
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Copilot plugin ')) {
+      throw error
+    }
+    if (isMissing(error)) return undefined
+    throw pluginError(plugin, 'manifest could not be inspected', { cause: error })
+  }
+  try {
+    const parsed: unknown = JSON.parse(await readFile(candidate, 'utf8'))
+    if (!isRecord(parsed)) throw new Error('manifest is not an object')
+    return parsed
+  } catch (cause) {
+    throw pluginError(plugin, 'has a malformed manifest', { cause })
+  }
+}
+
+async function pluginManifest(
+  plugin: PluginIdentity,
+  root: string,
+): Promise<PluginManifest> {
+  const rootManifest = await readManifest(plugin, root, 'plugin.json')
+  const schema = rootManifest && requiredString(rootManifest.$schema)
+  if (schema?.startsWith(AGENT_PLUGIN_SCHEMA_PREFIX)) {
+    if (!agentPluginSchemas.has(schema)) {
+      throw pluginError(plugin, 'uses an unsupported Agent Plugins schema')
+    }
+    return { format: 'agent', manifest: rootManifest }
+  }
+  for (const relative of legacyManifestCandidates) {
+    const manifest = relative === 'plugin.json'
+      ? rootManifest
+      : await readManifest(plugin, root, relative)
+    if (manifest) return { format: 'legacy', manifest }
+  }
+  return { format: 'legacy' }
+}
+
 function configuredSkillRoots(
-  plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>,
-  manifest: Record<string, unknown> | undefined,
+  plugin: PluginIdentity,
+  descriptor: PluginManifest,
 ): {
   explicit: boolean
   roots: string[]
 } {
+  if (descriptor.format === 'agent') {
+    return { explicit: false, roots: ['skills'] }
+  }
+  const manifest = descriptor.manifest
   if (!manifest || manifest.skills === undefined) {
     return { explicit: false, roots: ['skills'] }
   }
@@ -205,38 +194,8 @@ function configuredSkillRoots(
   return { explicit: true, roots: values as string[] }
 }
 
-async function pluginManifest(
-  plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>,
-  root: string,
-): Promise<Record<string, unknown> | undefined> {
-  for (const relative of manifestCandidates) {
-    const candidate = path.join(root, relative)
-    try {
-      const metadata = await lstat(candidate)
-      if (metadata.isSymbolicLink()) {
-        throw pluginError(plugin, 'has a symlinked manifest')
-      }
-      if (!metadata.isFile()) continue
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith('Copilot plugin ')) {
-        throw error
-      }
-      if (isMissing(error)) continue
-      throw pluginError(plugin, 'manifest could not be inspected', { cause: error })
-    }
-    try {
-      const parsed: unknown = JSON.parse(await readFile(candidate, 'utf8'))
-      if (!isRecord(parsed)) throw new Error('manifest is not an object')
-      return parsed
-    } catch (cause) {
-      throw pluginError(plugin, 'has a malformed manifest', { cause })
-    }
-  }
-  return undefined
-}
-
 async function validateSkillDirectory(
-  plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>,
+  plugin: PluginIdentity,
   pluginRoot: string,
   candidate: string,
 ): Promise<string> {
@@ -244,6 +203,12 @@ async function validateSkillDirectory(
     throw pluginError(plugin, 'has an unsafe skill contribution path')
   }
   const joined = path.resolve(pluginRoot, candidate)
+  await assertNoSymlinkPath(
+    plugin,
+    pluginRoot,
+    joined,
+    'has an unsafe or missing skill contribution directory',
+  )
   const resolved = await regularDirectory(joined)
   if (!resolved || !isWithin(pluginRoot, resolved)) {
     throw pluginError(plugin, 'has an unsafe or missing skill contribution directory')
@@ -272,44 +237,33 @@ async function validateSkillDirectory(
 }
 
 async function validatePluginRoot(
-  plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>,
-  cachePath: string,
-  installedRoot: string,
-  installedFrom?: string,
+  plugin: PluginIdentity,
+  candidate: string,
+  allowedRoot: string,
 ): Promise<string[]> {
-  if (!path.isAbsolute(cachePath)) {
-    throw pluginError(plugin, 'has a non-absolute cache path')
+  if (!path.isAbsolute(candidate)) {
+    throw pluginError(plugin, 'has a non-absolute plugin root')
   }
-  if (installedFrom && !path.isAbsolute(installedFrom)) {
-    throw pluginError(plugin, 'has a non-absolute live marketplace root')
+  await assertNoSymlinkPath(
+    plugin,
+    allowedRoot,
+    candidate,
+    'has an unsafe or missing plugin root',
+  )
+  const root = await regularDirectory(candidate)
+  if (!root || !isWithin(allowedRoot, root)) {
+    throw pluginError(plugin, 'has an unsafe or missing plugin root')
   }
-  const root = await regularDirectory(cachePath)
-  const liveRoot = installedFrom
-    ? await regularDirectory(installedFrom)
-    : undefined
-  const allowedRoot = liveRoot || installedRoot
-  if (!root || !allowedRoot || !isWithin(allowedRoot, root)) {
-    throw pluginError(plugin, 'has an unsafe or missing cache root')
-  }
-  if (!liveRoot && plugin.marketplace) {
-    const expected = path.join(installedRoot, plugin.marketplace, plugin.name)
-    const expectedRoot = await regularDirectory(expected)
-    if (!expectedRoot || expectedRoot !== root) {
-      throw pluginError(plugin, 'does not match its managed install location')
-    }
-  } else if (!liveRoot && !isWithin(path.join(installedRoot, '_direct'), root)) {
-    throw pluginError(plugin, 'does not match a managed direct-install location')
-  }
-  const manifest = await pluginManifest(plugin, root)
-  const configured = configuredSkillRoots(plugin, manifest)
+  const descriptor = await pluginManifest(plugin, root)
+  const configured = configuredSkillRoots(plugin, descriptor)
   const roots: string[] = []
   for (const relative of configured.roots) {
-    const candidate = path.resolve(root, relative)
-    const exists = await regularDirectory(candidate)
+    const target = path.resolve(root, relative)
+    const exists = await regularDirectory(target)
     if (!exists && !configured.explicit) continue
     roots.push(await validateSkillDirectory(plugin, root, relative))
   }
-  if (!roots.length) {
+  if (!roots.length && descriptor.format === 'legacy') {
     const rootSkill = path.join(root, 'SKILL.md')
     try {
       const metadata = await lstat(rootSkill)
@@ -332,9 +286,9 @@ async function validatePluginRoot(
 }
 
 async function resolveLivePluginRoot(
-  plugin: Pick<InstalledPlugin, 'name' | 'marketplace'>,
+  plugin: PluginIdentity,
   installedFrom: string,
-): Promise<string> {
+): Promise<{ allowedRoot: string; pluginRoot: string }> {
   if (!path.isAbsolute(installedFrom)) {
     throw pluginError(plugin, 'has a non-absolute live marketplace root')
   }
@@ -342,11 +296,7 @@ async function resolveLivePluginRoot(
   if (!marketplaceRoot) {
     throw pluginError(plugin, 'has an unsafe or missing live marketplace root')
   }
-  for (const relative of [
-    '.claude-plugin/marketplace.json',
-    '.plugin/marketplace.json',
-    'marketplace.json',
-  ]) {
+  for (const relative of marketplaceManifestCandidates) {
     const manifestPath = path.join(marketplaceRoot, relative)
     let metadata
     try {
@@ -380,11 +330,18 @@ async function resolveLivePluginRoot(
       source.split(/[\\/]/u).includes('..')) {
       throw pluginError(plugin, 'has an unsafe live marketplace source')
     }
-    const root = await regularDirectory(path.resolve(marketplaceRoot, source))
+    const candidate = path.resolve(marketplaceRoot, source)
+    await assertNoSymlinkPath(
+      plugin,
+      marketplaceRoot,
+      candidate,
+      'has an unsafe or missing live plugin root',
+    )
+    const root = await regularDirectory(candidate)
     if (!root || !isWithin(marketplaceRoot, root)) {
       throw pluginError(plugin, 'has an unsafe or missing live plugin root')
     }
-    return root
+    return { allowedRoot: marketplaceRoot, pluginRoot: root }
   }
   throw pluginError(plugin, 'has no readable live marketplace manifest')
 }
@@ -410,15 +367,18 @@ export async function resolveCopilotPluginSkillDirectories(
   if (!Array.isArray(result.plugins) || result.plugins.length > MAX_PLUGINS) {
     throw new Error('Copilot SDK returned malformed installed-plugin state')
   }
-  const home = copilotHome(environment)
-  const installedRoot = await regularDirectory(path.join(home, 'installed-plugins'))
   const enabled = result.plugins.filter((plugin) =>
     plugin.enabled && plugin.source !== 'builtin')
   if (!enabled.length) return []
-  if (!installedRoot) {
-    throw new Error('Copilot installed-plugin root is missing or unsafe')
+  const home = copilotHome(environment)
+  let installedRoot: string | undefined
+  const managedRoot = async () => {
+    installedRoot ??= await regularDirectory(path.join(home, 'installed-plugins'))
+    if (!installedRoot) {
+      throw new Error('Copilot installed-plugin root is missing or unsafe')
+    }
+    return installedRoot
   }
-  const stored = await readStoredPlugins(path.join(home, 'config.json'))
   const seen = new Set<string>()
   const directories: string[] = []
   for (const plugin of enabled) {
@@ -429,33 +389,43 @@ export async function resolveCopilotPluginSkillDirectories(
         !plugin.marketplace.includes('\0')
         ? plugin.marketplace
         : undefined
-    if (!name || marketplace === undefined) {
+    const installedFrom = requiredString(plugin.installedFrom)
+    const directSourceId = requiredString(plugin.directSourceId)
+    if (!name || marketplace === undefined || !safePathSegment(name) ||
+      marketplace && !safePathSegment(marketplace) ||
+      installedFrom && !marketplace ||
+      !marketplace && !installedFrom &&
+        (!directSourceId || !safePathSegment(directSourceId))) {
       throw new Error('Copilot SDK returned a malformed enabled plugin')
     }
-    const normalized = { ...plugin, name, marketplace }
+    const normalized = {
+      ...plugin,
+      name,
+      marketplace,
+      ...(directSourceId ? { directSourceId } : {}),
+    }
     const key = pluginKey(normalized)
     if (seen.has(key)) {
       throw new Error(`Copilot SDK returned ${pluginLabel(normalized)} twice`)
     }
     seen.add(key)
-    const record = stored.get(key)
-    const installedFrom = requiredString(plugin.installedFrom)
-    if (!installedFrom && (!record || record.enabled === false)) {
-      throw pluginError(normalized, 'is enabled at runtime but missing from managed install state')
+    if (installedFrom) {
+      const live = await resolveLivePluginRoot(normalized, installedFrom)
+      directories.push(
+        ...await validatePluginRoot(
+          normalized,
+          live.pluginRoot,
+          live.allowedRoot,
+        ),
+      )
+      continue
     }
-    const cachePath = installedFrom
-      ? await resolveLivePluginRoot(normalized, installedFrom)
-      : record?.cache_path
-    if (!cachePath) {
-      throw pluginError(normalized, 'has no managed cache path')
-    }
+    const root = await managedRoot()
+    const pluginRoot = marketplace
+      ? path.join(root, marketplace, name)
+      : path.join(root, '_direct', directSourceId!)
     directories.push(
-      ...await validatePluginRoot(
-        normalized,
-        cachePath,
-        installedRoot,
-        installedFrom,
-      ),
+      ...await validatePluginRoot(normalized, pluginRoot, root),
     )
   }
   return [...new Set(directories)]

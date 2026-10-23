@@ -3153,8 +3153,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : this.createSdkSession(cwd, allowAllPermissions, runtime, mode)))
   }
 
-  private async sdkSessionDiscovery(): Promise<Partial<SessionConfig>> {
-    if (!this.client.pluginSkillDirectories) {
+  private async sdkSessionDiscovery(
+    pluginSkills = true,
+  ): Promise<Partial<SessionConfig>> {
+    if (!pluginSkills || !this.client.pluginSkillDirectories) {
       return COPILOT_SDK_SESSION_DISCOVERY
     }
     return {
@@ -6186,7 +6188,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return cached.commands
       }
       const temporarySession = await this.client.createSession({
-        ...await this.sdkSessionDiscovery(),
+        ...await this.sdkSessionDiscovery(false),
         workingDirectory: stored.cwd,
         streaming: false,
         infiniteSessions: { enabled: false },

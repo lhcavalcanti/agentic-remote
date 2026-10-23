@@ -50,13 +50,17 @@ history is not transferred between providers.
   configuration for MCP servers, repository and personal skills, custom agents,
   instructions, repository hooks, and host Git operations. Before every SDK
   create or cold resume, Agentic Remote asks the Copilot runtime for its enabled
-  installed plugins, validates their managed contribution roots, and supplies
-  the plugin skill directories explicitly. This preserves project and personal
-  skill precedence while giving SDK sessions the same enabled plugin skills as
-  interactive CLI sessions. Active SDK sessions retain their current plugin
-  skill catalog until a supported restart or cold resume; new sessions see
-  plugin installs and updates immediately. Plugin skill roots and MCP
-  registration remain separate discovery inputs.
+  installed plugins, derives marketplace and direct-install roots from
+  Copilot's managed layout, resolves live marketplaces with Copilot's manifest
+  precedence, validates their contribution roots, and supplies the plugin skill
+  directories explicitly. Agent Plugins use the fixed `skills/` contribution;
+  legacy manifests retain their declared skill paths and fallback behavior.
+  This preserves project and personal skill precedence while giving SDK
+  sessions the same enabled plugin skills as interactive CLI sessions. Active
+  SDK sessions retain their current plugin skill catalog until a supported
+  restart or cold resume; new sessions see plugin installs and updates
+  immediately. Plugin skill roots and MCP registration remain separate
+  discovery inputs.
 - SDK clients use the runtime bundled with `@github/copilot-sdk` by default.
   `COPILOT_SDK_BIN` is an advanced compatibility override for a separately
   qualified SDK runtime; `COPILOT_BIN` remains the interactive tmux executable.

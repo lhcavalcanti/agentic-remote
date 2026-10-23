@@ -22,8 +22,30 @@ async function fixture() {
   const copilotHome = path.join(home, '.copilot')
   const installed = path.join(copilotHome, 'installed-plugins')
   await mkdir(installed, { recursive: true })
-  const records: Array<Record<string, unknown>> = []
   const plugins: Array<Record<string, unknown>> = []
+
+  const addSkills = async (
+    root: string,
+    name: string,
+    skillRoots: string[] = ['skills'],
+  ) => {
+    for (const skillRoot of skillRoots) {
+      await mkdir(path.join(root, skillRoot, `${name}-skill`), { recursive: true })
+      await writeFile(
+        path.join(root, skillRoot, `${name}-skill`, 'SKILL.md'),
+        `---\nname: ${name}-skill\ndescription: Fixture\n---\nFixture.\n`,
+      )
+    }
+  }
+
+  const writeManifest = async (
+    root: string,
+    relative: string,
+    manifest: unknown,
+  ) => {
+    await mkdir(path.dirname(path.join(root, relative)), { recursive: true })
+    await writeFile(path.join(root, relative), JSON.stringify(manifest))
+  }
 
   const add = async (
     marketplace: string,
@@ -32,43 +54,43 @@ async function fixture() {
       enabled?: boolean
       skills?: string[]
       manifest?: unknown
+      manifestPath?: string
     } = {},
   ) => {
     const root = path.join(installed, marketplace, name)
     await mkdir(root, { recursive: true })
-    const skillRoots = options.skills ?? ['skills']
-    for (const skillRoot of skillRoots) {
-      await mkdir(path.join(root, skillRoot, `${name}-skill`), { recursive: true })
-      await writeFile(
-        path.join(root, skillRoot, `${name}-skill`, 'SKILL.md'),
-        `---\nname: ${name}-skill\ndescription: Fixture\n---\nFixture.\n`,
-      )
-    }
+    await addSkills(root, name, options.skills)
     if (options.manifest !== undefined) {
-      await mkdir(path.join(root, '.claude-plugin'), { recursive: true })
-      await writeFile(
-        path.join(root, '.claude-plugin', 'plugin.json'),
-        JSON.stringify(options.manifest),
+      await writeManifest(
+        root,
+        options.manifestPath ?? '.claude-plugin/plugin.json',
+        options.manifest,
       )
     }
-    const enabled = options.enabled ?? true
-    records.push({
-      name, marketplace, cache_path: root, enabled,
-      installed_at: '2026-10-23T00:00:00Z',
-    })
     plugins.push({
-      name, marketplace, enabled,
-      installed_at: '2026-10-23T00:00:00Z',
+      name,
+      marketplace,
+      enabled: options.enabled ?? true,
     })
     return root
   }
 
-  const writeConfig = async () =>
-    writeFile(
-      path.join(copilotHome, 'config.json'),
-      `// Managed by Copilot.\n${JSON.stringify({ installedPlugins: records }, null, 2)}\n`,
-      { mode: 0o600 },
-    )
+  const addDirect = async (
+    name: string,
+    directSourceId: string,
+    options: { skills?: string[] } = {},
+  ) => {
+    const root = path.join(installed, '_direct', directSourceId)
+    await mkdir(root, { recursive: true })
+    await addSkills(root, `${name}-${directSourceId}`, options.skills)
+    plugins.push({
+      name,
+      marketplace: '',
+      directSourceId,
+      enabled: true,
+    })
+    return root
+  }
 
   const list = vi.fn(async () => ({ plugins }))
   const client = {
@@ -78,18 +100,19 @@ async function fixture() {
     home,
     copilotHome,
     installed,
-    records,
     plugins,
     client,
     list,
     add,
-    writeConfig,
+    addDirect,
+    addSkills,
+    writeManifest,
     environment: { HOME: home, COPILOT_HOME: copilotHome },
   }
 }
 
 describe('Copilot installed-plugin skill roots', () => {
-  it('returns enabled plugin skill roots in Copilot order and excludes disabled plugins', async () => {
+  it('derives enabled managed roots in Copilot order and excludes disabled plugins', async () => {
     const f = await fixture()
     const first = await f.add('market', 'first')
     await f.add('market', 'disabled', { enabled: false })
@@ -100,7 +123,6 @@ describe('Copilot installed-plugin skill roots', () => {
       enabled: true,
       source: 'builtin',
     })
-    await f.writeConfig()
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
@@ -111,48 +133,129 @@ describe('Copilot installed-plugin skill roots', () => {
     expect(f.list).toHaveBeenCalledOnce()
   })
 
-  it('honours manifest skill roots without copying plugin content', async () => {
+  it('honours legacy manifest skill roots without copying plugin content', async () => {
     const f = await fixture()
     const root = await f.add('market', 'custom', {
       skills: ['contributions/skills'],
       manifest: { name: 'custom', skills: 'contributions/skills' },
     })
-    await f.writeConfig()
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
     ).resolves.toEqual([path.join(root, 'contributions/skills')])
   })
 
-  it('accepts a live plugin root only when Copilot reports its marketplace boundary', async () => {
+  it('uses Copilot manifest precedence and Agent Plugins skill semantics', async () => {
     const f = await fixture()
+    const legacy = await f.add('market', 'legacy', {
+      skills: ['skills', 'legacy-skills', 'root-skills'],
+    })
+    await f.writeManifest(
+      legacy,
+      'plugin.json',
+      { name: 'legacy', skills: 'root-skills' },
+    )
+    await f.writeManifest(
+      legacy,
+      '.plugin/plugin.json',
+      { name: 'legacy', skills: 'legacy-skills' },
+    )
+    const agent = await f.add('market', 'agent', {
+      skills: ['skills', 'legacy-skills'],
+    })
+    await f.writeManifest(
+      agent,
+      '.plugin/plugin.json',
+      { name: 'agent', skills: 'legacy-skills' },
+    )
+    await f.writeManifest(agent, 'plugin.json', {
+      $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
+      name: 'agent',
+    })
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).resolves.toEqual([
+      path.join(legacy, 'legacy-skills'),
+      path.join(agent, 'skills'),
+    ])
+  })
+
+  it('does not apply the legacy root SKILL fallback to Agent Plugins', async () => {
+    const f = await fixture()
+    const root = await f.add('market', 'agent-root', { skills: [] })
+    await f.writeManifest(root, 'plugin.json', {
+      $schema: 'https://agent-plugins.org/schemas/1.1.0/plugin.schema.json',
+      name: 'agent-root',
+    })
+    await writeFile(path.join(root, 'SKILL.md'), 'Agent Plugins ignore this.')
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).resolves.toEqual([])
+  })
+
+  it('accepts a live-only home and uses marketplace manifest precedence', async () => {
+    const f = await fixture()
+    await rm(f.installed, { recursive: true })
     const marketplace = path.join(f.home, 'live-marketplace')
-    const root = path.join(marketplace, 'plugins', 'live')
-    await mkdir(path.join(root, 'skills', 'live-skill'), { recursive: true })
-    await writeFile(
-      path.join(root, 'skills', 'live-skill', 'SKILL.md'),
-      '---\nname: live-skill\ndescription: Live fixture\n---\n',
-    )
-    await mkdir(path.join(marketplace, '.claude-plugin'), { recursive: true })
-    await writeFile(
-      path.join(marketplace, '.claude-plugin', 'marketplace.json'),
-      JSON.stringify({
-        name: 'local',
-        plugins: [{ name: 'live', source: './plugins/live' }],
-      }),
-    )
+    const preferred = path.join(marketplace, 'plugins', 'preferred')
+    const fallback = path.join(marketplace, 'plugins', 'fallback')
+    await f.addSkills(preferred, 'preferred')
+    await f.addSkills(fallback, 'fallback')
+    await f.writeManifest(marketplace, 'marketplace.json', {
+      name: 'local',
+      plugins: [{ name: 'live', source: './plugins/preferred' }],
+    })
+    await f.writeManifest(marketplace, '.github/plugin/marketplace.json', {
+      name: 'local',
+      plugins: [{ name: 'live', source: './plugins/fallback' }],
+    })
     f.plugins.push({
       name: 'live',
       marketplace: 'local',
       enabled: true,
-      installed_at: '2026-10-23T00:00:00Z',
       installedFrom: marketplace,
     })
-    await f.writeConfig()
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).resolves.toEqual([path.join(preferred, 'skills')])
+  })
+
+  it('resolves live plugins from the supported GitHub marketplace location', async () => {
+    const f = await fixture()
+    await rm(f.installed, { recursive: true })
+    const marketplace = path.join(f.home, 'github-marketplace')
+    const root = path.join(marketplace, 'plugins', 'live')
+    await f.addSkills(root, 'live')
+    await f.writeManifest(marketplace, '.github/plugin/marketplace.json', {
+      name: 'local',
+      plugins: [{ name: 'live', source: './plugins/live' }],
+    })
+    f.plugins.push({
+      name: 'live',
+      marketplace: 'local',
+      enabled: true,
+      installedFrom: marketplace,
+    })
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
     ).resolves.toEqual([path.join(root, 'skills')])
+  })
+
+  it('uses direct source identities for same-name direct installs', async () => {
+    const f = await fixture()
+    const first = await f.addDirect('direct', 'source-a')
+    const second = await f.addDirect('direct', 'source-b')
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).resolves.toEqual([
+      path.join(first, 'skills'),
+      path.join(second, 'skills'),
+    ])
   })
 
   it('fails explicitly when the runtime plugin listing is unavailable', async () => {
@@ -162,26 +265,28 @@ describe('Copilot installed-plugin skill roots', () => {
     ).rejects.toThrow('does not expose installed-plugin discovery')
   })
 
-  it('rejects an enabled plugin missing from managed install state', async () => {
-    const f = await fixture()
-    await f.add('market', 'missing')
-    f.records.splice(0)
-    await f.writeConfig()
-
-    await expect(
-      resolveCopilotPluginSkillDirectories(f.client, f.environment),
-    ).rejects.toThrow('missing@market is enabled at runtime but missing')
-  })
-
   it('rejects duplicate runtime plugin identities deterministically', async () => {
     const f = await fixture()
-    await f.add('market', 'duplicate')
+    await f.addDirect('duplicate', 'same-source')
     f.plugins.push({ ...f.plugins[0] })
-    await f.writeConfig()
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
-    ).rejects.toThrow('duplicate@market twice')
+    ).rejects.toThrow('duplicate twice')
+  })
+
+  it('rejects a live plugin without a marketplace identity', async () => {
+    const f = await fixture()
+    f.plugins.push({
+      name: 'live',
+      marketplace: '',
+      enabled: true,
+      installedFrom: path.join(f.home, 'marketplace'),
+    })
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).rejects.toThrow('malformed enabled plugin')
   })
 
   it('rejects missing and malformed plugin roots with sanitized errors', async () => {
@@ -189,7 +294,6 @@ describe('Copilot installed-plugin skill roots', () => {
     const root = await f.add('market', 'broken', {
       manifest: { name: 'broken', skills: 12 },
     })
-    await f.writeConfig()
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
@@ -198,7 +302,22 @@ describe('Copilot installed-plugin skill roots', () => {
     await rm(root, { recursive: true })
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
-    ).rejects.toThrow('broken@market has an unsafe or missing cache root')
+    ).rejects.toThrow('broken@market has an unsafe or missing plugin root')
+  })
+
+  it('rejects unsupported Agent Plugins schemas', async () => {
+    const f = await fixture()
+    await f.add('market', 'future', {
+      manifestPath: 'plugin.json',
+      manifest: {
+        $schema: 'https://agent-plugins.org/schemas/2.0.0/plugin.schema.json',
+        name: 'future',
+      },
+    })
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).rejects.toThrow('future@market uses an unsupported Agent Plugins schema')
   })
 
   it('rejects symlinks in plugin skill contributions', async () => {
@@ -210,41 +329,33 @@ describe('Copilot installed-plugin skill roots', () => {
     const symlinked = path.join(f.installed, 'market', 'linked')
     await mkdir(path.dirname(symlinked), { recursive: true })
     await symlink(outside, symlinked)
-    f.records.push({
-      name: 'linked', marketplace: 'market', cache_path: symlinked,
-      enabled: true, installed_at: '2026-10-23T00:00:00Z',
-    })
     f.plugins.push({
-      name: 'linked', marketplace: 'market',
-      enabled: true, installed_at: '2026-10-23T00:00:00Z',
+      name: 'linked',
+      marketplace: 'market',
+      enabled: true,
     })
-    await f.writeConfig()
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
-    ).rejects.toThrow('linked@market has an unsafe or missing cache root')
+    ).rejects.toThrow('linked@market has an unsafe or missing plugin root')
 
-    f.records.splice(0)
     f.plugins.splice(0)
     const root = await f.add('market', 'escape', {
       skills: [],
       manifest: { name: 'escape', skills: 'skills' },
     })
     await symlink(outside, path.join(root, 'skills'))
-    await f.writeConfig()
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
     ).rejects.toThrow('escape@market has an unsafe or missing skill contribution directory')
 
-    f.records.splice(0)
     f.plugins.splice(0)
     const nestedRoot = await f.add('market', 'nested-link')
     await symlink(
       outside,
       path.join(nestedRoot, 'skills', 'nested-link-skill', 'reference'),
     )
-    await f.writeConfig()
 
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),

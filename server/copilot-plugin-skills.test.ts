@@ -360,5 +360,45 @@ describe('Copilot installed-plugin skill roots', () => {
     await expect(
       resolveCopilotPluginSkillDirectories(f.client, f.environment),
     ).rejects.toThrow('nested-link@market has a symlink in its skill contributions')
+
+    f.plugins.splice(0)
+    const manifestRoot = await f.add('market', 'manifest-link', {
+      skills: ['skills', 'outside-skills'],
+    })
+    await writeFile(
+      path.join(outside, 'plugin.json'),
+      JSON.stringify({ name: 'manifest-link', skills: 'outside-skills' }),
+    )
+    await symlink(outside, path.join(manifestRoot, '.plugin'))
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).rejects.toThrow('manifest-link@market has a symlinked manifest path')
+
+    f.plugins.splice(0)
+    const marketplace = path.join(f.home, 'linked-marketplace')
+    const liveRoot = path.join(marketplace, 'plugins', 'live')
+    const outsideMarketplace = path.join(f.home, 'outside-marketplace')
+    await f.addSkills(liveRoot, 'live')
+    await mkdir(path.join(outsideMarketplace, 'plugin'), { recursive: true })
+    await writeFile(
+      path.join(outsideMarketplace, 'plugin', 'marketplace.json'),
+      JSON.stringify({
+        name: 'linked-marketplace',
+        plugins: [{ name: 'live', source: './plugins/live' }],
+      }),
+    )
+    await mkdir(marketplace, { recursive: true })
+    await symlink(outsideMarketplace, path.join(marketplace, '.github'))
+    f.plugins.push({
+      name: 'live',
+      marketplace: 'linked-marketplace',
+      enabled: true,
+      installedFrom: marketplace,
+    })
+
+    await expect(
+      resolveCopilotPluginSkillDirectories(f.client, f.environment),
+    ).rejects.toThrow('live@linked-marketplace has a symlinked marketplace manifest path')
   })
 })

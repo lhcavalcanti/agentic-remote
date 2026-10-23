@@ -99,12 +99,12 @@ async function regularDirectory(candidate: string): Promise<string | undefined> 
   }
 }
 
-async function assertNoSymlinkPath(
+async function hasNoSymlinkPath(
   plugin: PluginIdentity,
   base: string,
   candidate: string,
   detail: string,
-): Promise<void> {
+): Promise<boolean> {
   const relative = path.relative(base, candidate)
   if (!isWithin(base, candidate)) throw pluginError(plugin, detail)
   let current = base
@@ -114,9 +114,22 @@ async function assertNoSymlinkPath(
     try {
       metadata = await lstat(current)
     } catch (cause) {
+      if (isMissing(cause)) return false
       throw pluginError(plugin, detail, { cause })
     }
     if (metadata.isSymbolicLink()) throw pluginError(plugin, detail)
+  }
+  return true
+}
+
+async function assertNoSymlinkPath(
+  plugin: PluginIdentity,
+  base: string,
+  candidate: string,
+  detail: string,
+): Promise<void> {
+  if (!await hasNoSymlinkPath(plugin, base, candidate, detail)) {
+    throw pluginError(plugin, detail)
   }
 }
 
@@ -126,6 +139,12 @@ async function readManifest(
   relative: string,
 ): Promise<Record<string, unknown> | undefined> {
   const candidate = path.join(root, relative)
+  if (!await hasNoSymlinkPath(
+    plugin,
+    root,
+    candidate,
+    'has a symlinked manifest path',
+  )) return undefined
   try {
     const metadata = await lstat(candidate)
     if (metadata.isSymbolicLink()) {
@@ -298,6 +317,12 @@ async function resolveLivePluginRoot(
   }
   for (const relative of marketplaceManifestCandidates) {
     const manifestPath = path.join(marketplaceRoot, relative)
+    if (!await hasNoSymlinkPath(
+      plugin,
+      marketplaceRoot,
+      manifestPath,
+      'has a symlinked marketplace manifest path',
+    )) continue
     let metadata
     try {
       metadata = await lstat(manifestPath)

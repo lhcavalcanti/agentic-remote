@@ -1017,7 +1017,7 @@ export class SessionStore {
           (session.suspended === true && !session.archivedAt) ||
           session.managedOpen === true ||
           (session.isOpen === true && protectedRecord))
-        const interruption = present ? undefined
+        const interruption = present && !session.sdkRestartRecovery ? undefined
           : isOpen && session.backend === 'terminal' && !session.suspended
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
@@ -1065,6 +1065,8 @@ export class SessionStore {
             backend: 'terminal',
             isOpen: true,
             interruption: undefined,
+            sdkRestartRecovery: undefined,
+            sdkAcceptedReply: undefined,
             archivedAt: undefined,
           }
         } else if (
@@ -1127,6 +1129,8 @@ export class SessionStore {
           session.activity = 'Previous provider runtime stopped. Send a new prompt or recover to continue.'
         }
         session.interruption = undefined
+        session.sdkRestartRecovery = undefined
+        session.sdkAcceptedReply = undefined
         session.archivedAt = undefined
       }
       if (managedOpen) {
@@ -1195,13 +1199,14 @@ export class SessionStore {
       ) {
         throw new Error('SDK session is not eligible for restart recovery')
       }
+      const interruption = existing.interruption
       const session = structuredClone(existing)
       const previous = session.sdkRestartRecovery
       session.sdkRestartRecovery = {
         generation: (previous?.generation ?? 0) + 1,
         state: 'recovering',
-        detectedAt: previous?.detectedAt ?? session.interruption.detectedAt,
-        previousStatus: previous?.previousStatus ?? session.interruption.previousStatus,
+        detectedAt: previous?.detectedAt ?? interruption.detectedAt,
+        previousStatus: previous?.previousStatus ?? interruption.previousStatus,
       }
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session
@@ -1368,6 +1373,10 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.backend = backend
+      if (backend === 'terminal') {
+        session.sdkRestartRecovery = undefined
+        session.sdkAcceptedReply = undefined
+      }
       session.managedOpen = true
       session.isOpen = true
       session.updatedAt = new Date().toISOString()

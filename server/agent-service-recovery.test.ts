@@ -25,6 +25,7 @@ it('retains interrupted SDK queues across restart and requires explicit continua
   await f.service.start()
   expect(f.service.getSession('pending')).toMatchObject({
     isOpen: true, status: 'error', interruption: { previousStatus: 'running' },
+    restartRecovery: { state: 'interrupted' },
     queuedPrompts: [prompt('first'), prompt('second')],
   })
   expect(owner.send).not.toHaveBeenCalled()
@@ -33,11 +34,12 @@ it('retains interrupted SDK queues across restart and requires explicit continua
   expect(await f.service.listCommands('pending')).toEqual([])
   await f.service['discoverSessions']()
   expect(f.service.getSession('pending')?.interruption).toBeDefined()
-  expect(f.client.resumeSession).not.toHaveBeenCalled()
+  expect(f.client.resumeSession).toHaveBeenCalledTimes(1)
   await expect(f.service.sendMessage('pending', 'Not yet reopened')).rejects.toMatchObject({ statusCode: 409 })
   const reopened = await f.service.activateSession('pending')
   expect(reopened.status).toBe('error')
   expect(reopened.interruption).toBeUndefined()
+  expect(reopened.restartRecovery).toBeUndefined()
   expect(reopened.queuedPrompts).toEqual([prompt('first'), prompt('second')])
   expect(owner.send).not.toHaveBeenCalled()
   await f.service.sendMessage('pending', 'Explicit continuation')
@@ -113,6 +115,204 @@ it('ignores events from a stale SDK owner generation even when the session objec
   } as SessionEvent)
   expect(f.store.get('pending')?.messages.at(-1)?.content).toBe('current')
 })
+
+it('recovers a completed SDK turn under the same provider identity during startup', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.client.resumeSession).toHaveBeenCalledWith(
+    'pending',
+    expect.objectContaining({
+      suppressResumeEvent: true,
+      continuePendingWork: true,
+    }),
+  )
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'idle',
+    isOpen: true,
+  })
+  expect(f.service.getSession('pending')?.interruption).toBeUndefined()
+  expect(f.service.getSession('pending')?.restartRecovery).toBeUndefined()
+  expect(f.service.getSession('pending')?.messages.map((message) => message.content))
+    .toEqual(['Retain pending', 'Recovered answer'])
+})
+
+it('keeps an open SDK model turn explicitly interrupted after startup recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.queuedPrompts = [prompt('first'), prompt('second')]
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(false))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    interruption: { previousStatus: 'running' },
+    restartRecovery: {
+      state: 'interrupted',
+      message: expect.stringMatching(/stream|turn/i),
+    },
+    queuedPrompts: [prompt('first'), prompt('second')],
+  })
+  expect(owner.send).not.toHaveBeenCalled()
+})
+
+it('fails closed when a populated SDK provider identity is missing', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  f.client.resumeSession = vi.fn(async () => {
+    throw new Error('Session not found')
+  })
+
+  await f.service.start()
+
+  expect(f.client.createSession).not.toHaveBeenCalled()
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: {
+      state: 'failed',
+      message: expect.stringMatching(/provider identity/i),
+    },
+  })
+})
+
+it('coalesces duplicate SDK startup recovery attempts into one provider resume', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  await f.store.markInterrupted('pending')
+  const events = gate<SessionEvent[]>(sdkRecoveryEvents(true))
+  const entered = gate(undefined)
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => {
+    entered.finish(undefined)
+    return events.pending
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  const first = f.service['recoverSdkSessionOnce']('pending')
+  await entered.pending
+  const second = f.service['recoverSdkSessionOnce']('pending')
+  events.finish(sdkRecoveryEvents(true))
+  await Promise.all([first, second])
+
+  expect(f.client.resumeSession).toHaveBeenCalledTimes(1)
+  expect(f.service.getSession('pending')?.restartRecovery).toBeUndefined()
+})
+
+it('releases a preserved SDK FIFO in order only after completed-turn recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.queuedPrompts = [prompt('first'), prompt('second')]
+    session.queuedCount = 2
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  await vi.waitFor(() => {
+    expect(vi.mocked(owner.send)?.mock.calls.map(([input]) => input.prompt))
+      .toEqual(['first', 'second'])
+  })
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'idle',
+    queuedPrompts: [],
+    queuedCount: 0,
+  })
+})
+
+it('does not treat provider shutdown during a model turn as completed recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => [
+    ...sdkRecoveryEvents(false),
+    {
+      type: 'session.shutdown',
+      id: 'shutdown',
+      parentId: 'turn-start',
+      timestamp: '2026-10-24T00:00:03.000Z',
+      data: {},
+    } as SessionEvent,
+  ])
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: { state: 'interrupted' },
+  })
+})
+
+function sdkRecoveryEvents(completed: boolean): SessionEvent[] {
+  const events = [
+    {
+      type: 'session.start',
+      id: 'start',
+      parentId: null,
+      timestamp: '2026-10-24T00:00:00.000Z',
+      data: { context: { cwd: '/tmp/project' } },
+    },
+    {
+      type: 'user.message',
+      id: 'user',
+      parentId: 'start',
+      timestamp: '2026-10-24T00:00:01.000Z',
+      data: { content: 'Retain pending' },
+    },
+    {
+      type: 'assistant.turn_start',
+      id: 'turn-start',
+      parentId: 'user',
+      timestamp: '2026-10-24T00:00:02.000Z',
+      data: { turnId: 'turn' },
+    },
+  ] as SessionEvent[]
+  if (completed) {
+    events.push(
+      {
+        type: 'assistant.message',
+        id: 'assistant',
+        parentId: 'turn-start',
+        timestamp: '2026-10-24T00:00:03.000Z',
+        data: { messageId: 'assistant', content: 'Recovered answer' },
+      } as SessionEvent,
+      {
+        type: 'assistant.turn_end',
+        id: 'turn-end',
+        parentId: 'assistant',
+        timestamp: '2026-10-24T00:00:04.000Z',
+        data: { turnId: 'turn' },
+      } as SessionEvent,
+    )
+  }
+  return events
+}
 
 function prompt(id: string) {
   return { id, content: id, createdAt: timestamp }

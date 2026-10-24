@@ -1835,6 +1835,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly startupTerminalQueues = new Set<string>()
   private nativeStartupDiscoveryReady = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
+  private readonly sdkRecoveryRuns = new Map<string, Promise<void>>()
   private readonly terminalDrainRequested = new Set<string>()
   private readonly terminalQueueWakeups = new Map<string, Promise<void>>()
   private readonly pendingSdkQueueAdmissions = new Map<string, PendingQueueAdmission>()
@@ -2404,6 +2405,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       recovered > 0 &&
       !(await phases.run('copilot.recovery.discovery', () => this.discoverSessions()))
     ) return
+    if (this.stopped) return
+    await phases.run('copilot.recovery.sdk', () => this.recoverSdkSessions())
     if (this.stopped) return
     if (this.startupRecoveryPending) {
       // Terminal recovery reconciles each confirmed owner before admitting it.
@@ -8059,6 +8062,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async attachSdkSession(
     sessionId: string,
     ownerGeneration = 0,
+    continuePendingWork = false,
   ): Promise<CopilotSessionLike> {
     this.assertTerminalQueueSettled(sessionId)
     const stored = this.store.get(sessionId)
@@ -8079,6 +8083,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.requestUserInput(invocation.sessionId, request),
         onElicitationRequest: (context) => this.requestElicitation(context),
         suppressResumeEvent: true,
+        continuePendingWork,
       })
     } catch (error) {
       if (this.stopped || stored.messages.length > 0 || !isMissingSessionError(error)) {
@@ -8134,6 +8139,106 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.installSdkOwner(sdkSession, sessionId, ownerGeneration)
     return sdkSession
+  }
+
+  private async recoverSdkSessions(): Promise<void> {
+    const candidates = this.store.list().filter((session) =>
+      session.isOpen &&
+      !session.suspended &&
+      !session.archivedAt &&
+      Boolean(session.interruption) &&
+      this.store.backend(session.id) === 'sdk' &&
+      !this.externalSessionIds.has(session.id) &&
+      !this.hiddenSessionIds.has(session.id))
+    await Promise.all(candidates.map((session) => this.recoverSdkSessionOnce(session.id)))
+  }
+
+  private recoverSdkSessionOnce(sessionId: string): Promise<void> {
+    const existing = this.sdkRecoveryRuns.get(sessionId)
+    if (existing) return existing
+    const run = this.admissions.run(
+      sessionId,
+      () => this.serializeLifecycle(sessionId, () => this.recoverSdkSession(sessionId)),
+    ).finally(() => {
+      if (this.sdkRecoveryRuns.get(sessionId) === run) {
+        this.sdkRecoveryRuns.delete(sessionId)
+      }
+    })
+    this.sdkRecoveryRuns.set(sessionId, run)
+    return run
+  }
+
+  private async recoverSdkSession(sessionId: string): Promise<void> {
+    const stored = await this.store.readAfterWrites(sessionId)
+    if (
+      this.stopped ||
+      !stored.interruption ||
+      stored.archivedAt ||
+      stored.suspended ||
+      this.store.backend(sessionId) !== 'sdk' ||
+      this.externalSessionIds.has(sessionId) ||
+      this.hiddenSessionIds.has(sessionId)
+    ) {
+      return
+    }
+    const recovery = await this.store.claimSdkRecovery(sessionId)
+    const claimed = this.store.get(sessionId)
+    if (claimed) this.publish(claimed)
+    try {
+      const sdkSession = await this.attachSdkSession(
+        sessionId,
+        recovery.generation,
+        true,
+      )
+      if (!this.isCurrentSdkOwner(sessionId, sdkSession, recovery.generation)) {
+        return
+      }
+      const observation = this.store.observeTranscript(
+        sessionId,
+        () => this.isCurrentSdkOwner(sessionId, sdkSession, recovery.generation),
+      )
+      const events = await sdkSession.getEvents()
+      if (!this.isCurrentSdkOwner(sessionId, sdkSession, recovery.generation)) {
+        return
+      }
+      if (events.length) {
+        const reconciled = await this.store.replaceMessages(
+          sessionId,
+          messagesFromHistory(events),
+          observation,
+        )
+        if (!reconciled ||
+            !this.isCurrentSdkOwner(sessionId, sdkSession, recovery.generation)) {
+          return
+        }
+      }
+      this.hydratedSessions.add(sessionId)
+      const lastLifecycle = events.findLast(isForegroundLifecycleEvent)
+      const completed =
+        lastLifecycle?.type === 'assistant.turn_end' ||
+        lastLifecycle?.type === 'session.idle'
+      const settled = await this.store.settleSdkRecovery(
+        sessionId,
+        recovery.generation,
+        completed
+          ? { state: 'ready' }
+          : {
+              state: 'interrupted',
+              message: 'The provider history was restored, but the active model turn or stream could not be resumed. Queued work was not sent.',
+            },
+      )
+      if (settled) this.publish(settled)
+    } catch {
+      const failed = await this.store.settleSdkRecovery(
+        sessionId,
+        recovery.generation,
+        {
+          state: 'failed',
+          message: 'The saved provider identity could not be resumed. History and queued work remain retained.',
+        },
+      )
+      if (failed) this.publish(failed)
+    }
   }
 
   private async recoverTerminalSessions(): Promise<number> {

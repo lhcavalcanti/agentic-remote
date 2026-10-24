@@ -360,7 +360,7 @@ describe('session navigation', () => {
       .toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('keeps task access inline with session metadata', () => {
+  it('keeps the session time and opens background tasks from the status chip', () => {
     render(navigation())
     const task = screen.getByRole('button', { name: 'View background tasks for Build docs' })
     const open = screen.getByRole('button', { name: /^Build docs,/ })
@@ -368,12 +368,17 @@ describe('session navigation', () => {
     expect(task.closest('.session-item__body')).not.toBeNull()
     expect(task.closest('.session-item__where')).toBeNull()
     expect(open).not.toContainElement(task)
-    expect(task).toHaveTextContent('1 task')
+    expect(task).toHaveTextContent('Tasks')
+    expect(task).toHaveClass('session-state', 'session-state--tasks')
+    expect(open.querySelector('.session-item__time')).toBeVisible()
+    expect(task.closest('.session-item__body')).not.toHaveClass('session-item__body--tasks')
     fireEvent.click(within(open).getByText('~/notes'))
     expect(actions.onSelectSession).toHaveBeenCalledWith(worker)
+    fireEvent.click(task)
+    expect(actions.onOpenSessionTasks).toHaveBeenCalledWith(worker)
   })
 
-  it('shows Working alongside the task count until foreground work ends', () => {
+  it('shows Working alongside the Tasks status until foreground work ends', () => {
     const running = { ...worker, status: 'running' as const }
     const sessions = new Map(sessionsByComputer)
     sessions.set('worker', [running])
@@ -382,19 +387,20 @@ describe('session navigation', () => {
     const open = screen.getByRole('button', { name: /^Build docs,/ })
 
     expect(within(open).getByText('Working')).toBeVisible()
-    expect(within(open).queryByText('Tasks')).toBeNull()
     expect(open).toHaveAccessibleName(/Working/)
     expect(open.closest('.session-item')).toHaveClass('session-item--background-running')
-    expect(task).toHaveTextContent('1 task')
+    expect(task).toHaveTextContent('Tasks')
     fireEvent.click(task)
     expect(actions.onOpenSessionTasks).toHaveBeenCalledWith(running)
 
     rendered.rerender(navigation())
     const idleOpen = screen.getByRole('button', { name: /^Build docs,/ })
-    expect(within(idleOpen).getByText('Tasks')).toBeVisible()
     expect(idleOpen.closest('.session-item')).toHaveClass('session-item--background-running')
-    expect(screen.getByRole('button', { name: 'View background tasks for Build docs' }))
-      .toHaveTextContent('1 task')
+    const idleTasks = screen.getByRole('button', {
+      name: 'View background tasks for Build docs',
+    })
+    expect(idleTasks).toBeVisible()
+    expect(idleTasks).toHaveTextContent('Tasks')
 
     rendered.rerender(<NavigationHarness sessions={sessions} snapshots={{}} />)
     const foregroundOnly = screen.getByRole('button', { name: /^Build docs,/ })
@@ -431,7 +437,7 @@ describe('session navigation', () => {
     expect(screen.getByRole('button', { name: 'Suspend Choose a direction' })).toBeDisabled()
   })
 
-  it('keeps empty computers and qualifies cached offline task counts', () => {
+  it('keeps empty computers and qualifies cached offline task status', () => {
     const offlineTasks = {
       ...backgroundTasks,
       'travel:offline': { tasks: [], runningCount: 2, supported: true },
@@ -444,7 +450,7 @@ describe('session navigation', () => {
     )
     expect(screen.getByRole('region', { name: 'Empty computer' })).toHaveTextContent('No open sessions')
     const cachedTasks = screen.getByRole('button', { name: 'View background tasks for Last known work' })
-    expect(cachedTasks).toHaveTextContent('2 tasks · last known')
+    expect(cachedTasks).toHaveTextContent('Tasks')
     expect(cachedTasks).toHaveAttribute('title', 'Last known background tasks; reconnect to refresh their state')
     fireEvent.click(screen.getByRole('button', { name: 'Working' }))
     expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('1 of 4 sessions')

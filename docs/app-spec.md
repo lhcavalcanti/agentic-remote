@@ -189,10 +189,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   background task is running. With no running background task, the existing
   green and gray session treatments MUST remain unchanged.
 - A foreground response in progress MUST show Working rather than Tasks,
-  even while background tasks run. The existing X tasks action MUST retain
-  the running count and task access. An idle foreground with running background
-  tasks MUST still show Tasks; attention, suspension, and offline states retain
-  their existing precedence.
+  even while background tasks run. A separate Tasks status action MUST retain
+  touch and keyboard access to the task panel without replacing the session's
+  activity time. An idle foreground with running background tasks MUST still
+  show Tasks; attention, suspension, and offline states retain their existing
+  precedence.
 - A running SDK background agent MUST make the session row read as active even
   when no foreground turn is open. The composer MUST keep immediate Send
   available and MUST offer Queue; queued text waits for the tracked background
@@ -455,12 +456,23 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   or open at all on a phone), in an open document's header on a phone, and in
   the phone's session list beside **Manage computers**. The button shows a
   working ring, an unread dot, and every current state in its accessible name,
-  such as "Oracle, working, new reply". It opens a non-modal drawer on a
-  desktop, resizable from its left edge by drag or arrow keys (Home or a
-  double-click resets it) and remembered per browser. Widening stops where the
-  conversation would have less than 360px beside the sessions list; the panel
-  is never narrower than 340px, so a window without room for both shows it at
-  340px over more of the conversation. On a phone it is a full-height sheet. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
+  such as "Oracle, working, new reply". `Ctrl+Alt+O` on Windows/Linux and
+  `Cmd+Alt+O` on Apple keyboards opens or closes Oracle. Opening focuses
+  Oracle's message field; closing focuses the active writable session message
+  field. With Oracle pinned beside the session, the shortcut instead moves
+  focus between those two fields while either one owns focus. It MUST NOT take
+  a key from another field, a dialog, a pending permission or question, or an
+  IME composition.
+- On desktop, Oracle opens as a non-modal overlay by default and MAY be pinned
+  beside the working session from **App settings → Oracle**. Both placements
+  are resizable from the panel's left edge by drag or arrow keys (Home or a
+  double-click resets it) and the placement and width are remembered on this
+  device. Widening stops where the conversation would have less than 360px
+  beside the sessions list; the panel is never narrower than 340px, so a
+  window without room for both shows it at 340px over more of the
+  conversation. At 960px or narrower it is always a full-height overlay sheet,
+  without changing the saved desktop preference. A hub with
+  `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
   now waits its turn, and Send becomes **Queue message**. **Dictate to
@@ -1460,11 +1472,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
 ### 9.2 App settings layout
 
 - App settings MUST group settings by what they are about, in this order:
-  - **Models**: new sessions' defaults per provider, then Oracle's model and
-    effort, then Oracle's response style.
+  - **Models**: new sessions' defaults per provider.
   - **Folders**: one card per computer with the folder new sessions start in,
     then Oracle's (blank means the same as new sessions).
-  - **Notifications**.
+  - **Oracle**: Oracle's model and effort, desktop placement and keyboard
+    shortcut, response style, and which activity notifies you.
+  - **Notifications**: this device's notification permission and subscription.
   - **Interface**: Appearance, Status line, Keyboard shortcuts.
   - **App**: Settings sync, Hub connection (native app only), App updates.
 - Each section whose scope is not obvious MUST say whether it is **Synced** or
@@ -1483,7 +1496,7 @@ people sharing a hub share its profile. See
 | Scope | Settings |
 |---|---|
 | **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
-| **This device** | Keyboard shortcuts, panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
+| **This device** | Keyboard shortcuts, panel placement and widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
 | **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
 
 - A change MUST apply at once, persist on the hub before it is reported, and

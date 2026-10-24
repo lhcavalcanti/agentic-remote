@@ -413,8 +413,9 @@ describe('ManagerAssistant', () => {
   })
 
   it('resizes the desktop panel from its left edge and remembers the width', async () => {
-    setup()
+    setup(empty, { placement: 'docked' })
     const panel = await openPanel()
+    expect(panel).toHaveAttribute('data-placement', 'docked')
     const edge = screen.getByRole('separator', { name: 'Resize Oracle' })
     expect(edge).toHaveAttribute('aria-valuenow', '440')
     expect(panel.style.getPropertyValue('--oracle-width')).toBe('440px')

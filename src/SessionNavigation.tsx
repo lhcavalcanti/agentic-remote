@@ -174,7 +174,7 @@ function SortableSessionItem({
       </span>
       <div
         className={`session-item__body${
-          runningBackgroundTasks > 0 ? ' session-item__body--tasks' : ''
+          runningBackgroundTasks > 0 ? ' session-item__body--task-status' : ''
         }`}
       >
         <button
@@ -212,7 +212,9 @@ function SortableSessionItem({
               {session.retention?.pinned ? (
                 <em className="provider-badge" title="Protected from automatic archival">For review</em>
               ) : null}
-              <SessionState presentation={presentation} />
+              {presentation.state === 'tasks' && runningBackgroundTasks > 0
+                ? null
+                : <SessionState presentation={presentation} />}
             </span>
             <strong>{session.title}</strong>
             <small className="session-item__where">
@@ -230,12 +232,13 @@ function SortableSessionItem({
         {runningBackgroundTasks > 0 ? (
           <button
             aria-label={`View background tasks for ${session.title}`}
-            className={`session-item__tasks session-item__tasks--interactive${online ? '' : ' session-item__tasks--offline'}`}
+            className={`session-item__tasks session-state session-state--tasks${online ? '' : ' session-item__tasks--offline'}`}
             onClick={() => onOpenSessionTasks(session)}
             title={online ? undefined : 'Last known background tasks; reconnect to refresh their state'}
             type="button"
           >
-            {runningBackgroundTasks} task{runningBackgroundTasks === 1 ? '' : 's'}{online ? '' : ' · last known'}
+            <span aria-hidden="true" className="status-dot status-dot--running" />
+            Tasks
           </button>
         ) : null}
       </div>

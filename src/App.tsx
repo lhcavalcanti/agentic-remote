@@ -9,10 +9,11 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import ReaderWorkspace from './ReaderWorkspace'
+import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { oracleCommand } from './oracle-command'
+import { oracleShortcutBinding } from './app-shortcuts'
 import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import { isManagerEvent } from '../shared/manager'
@@ -1509,6 +1510,7 @@ type ShortcutBinding = {
 type ShortcutId =
   | 'nextSession'
   | 'previousSession'
+  | 'toggleOracle'
   | 'toggleKnowledge'
   | 'expandKnowledge'
   | 'backgroundTasks'
@@ -1543,6 +1545,11 @@ const shortcutDefaults: ShortcutDefinition[] = [
     binding: binding('ArrowUp', { alt: true }),
   },
   {
+    id: 'toggleOracle',
+    label: 'Open, close, or focus Oracle',
+    binding: oracleShortcutBinding(),
+  },
+  {
     id: 'toggleKnowledge',
     label: 'Open or close knowledge',
     binding: binding('KeyK', { alt: true }),
@@ -1560,6 +1567,20 @@ const shortcutDefaults: ShortcutDefinition[] = [
 ]
 
 const shortcutsStorageKey = 'agentic-remote:shortcuts'
+const oraclePlacementStorageKey = 'agentic-remote:oracle-placement'
+type OraclePlacement = 'overlay' | 'docked'
+
+function readOraclePlacement(): OraclePlacement {
+  try {
+    const stored = localStorage.getItem(oraclePlacementStorageKey)
+    if (!stored || stored === 'overlay') return 'overlay'
+    if (stored === 'docked') return 'docked'
+    clearStored(oraclePlacementStorageKey)
+    return 'overlay'
+  } catch {
+    return 'overlay'
+  }
+}
 
 function sameBinding(left: ShortcutBinding, right: ShortcutBinding): boolean {
   return (
@@ -1618,6 +1639,9 @@ function keyLabel(code: string): string {
 
 function bindingLabel(value: ShortcutBinding): string {
   const parts: string[] = []
+  if (value.meta) {
+    parts.push('Cmd')
+  }
   if (value.ctrl) {
     parts.push('Ctrl')
   }
@@ -1626,9 +1650,6 @@ function bindingLabel(value: ShortcutBinding): string {
   }
   if (value.shift) {
     parts.push('Shift')
-  }
-  if (value.meta) {
-    parts.push('Cmd')
   }
   parts.push(keyLabel(value.code))
   return parts.join(' + ')
@@ -1720,6 +1741,10 @@ function usableBinding(value: unknown): value is ShortcutBinding {
   return Boolean(candidate.alt || candidate.ctrl || candidate.meta)
 }
 
+function shortcutAcceptsBinding(id: ShortcutId, value: ShortcutBinding): boolean {
+  return id !== 'toggleOracle' || value.code !== 'Enter'
+}
+
 function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
   const stored: unknown = readStoredOrder<unknown>(shortcutsStorageKey, {})
   // `null` parses happily out of storage and is an object to `typeof`, so
@@ -1730,10 +1755,15 @@ function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
   const known = new Map(shortcutDefaults.map((entry) => [entry.id, entry]))
   const clean: Partial<Record<ShortcutId, ShortcutBinding>> = {}
   for (const [id, value] of Object.entries(stored)) {
-    if (!known.has(id as ShortcutId) || !usableBinding(value)) {
+    const shortcutId = id as ShortcutId
+    if (
+      !known.has(shortcutId) ||
+      !usableBinding(value) ||
+      !shortcutAcceptsBinding(shortcutId, value)
+    ) {
       continue
     }
-    clean[id as ShortcutId] = binding(value.code, {
+    clean[shortcutId] = binding(value.code, {
       alt: Boolean(value.alt),
       shift: Boolean(value.shift),
       ctrl: Boolean(value.ctrl),
@@ -3548,6 +3578,10 @@ function ShortcutEditor({
       setRefused('That key cannot be used for a shortcut.')
       return
     }
+    if (!shortcutAcceptsBinding(id, chosen)) {
+      setRefused('Enter sends from a composer, so Oracle needs another key.')
+      return
+    }
     // A bare letter would be swallowed the moment it was typed anywhere
     // outside a text box, so the shortcut has to be held with something.
     if (!chosen.alt && !chosen.ctrl && !chosen.meta) {
@@ -3680,6 +3714,7 @@ const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown']
 const settingsGroups = [
   { id: 'settings-models', label: 'Models' },
   { id: 'settings-folders', label: 'Folders' },
+  { id: 'settings-oracle', label: 'Oracle' },
   { id: 'settings-notifications', label: 'Notifications' },
   { id: 'settings-interface', label: 'Interface' },
   { id: 'settings-app', label: 'App' },
@@ -3704,6 +3739,8 @@ function AppSettingsDialog({
   settingsSync,
   oracleResponseStyle,
   onOracleResponseStyleChange,
+  oraclePlacement,
+  onOraclePlacementChange,
   notificationScope,
   onNotificationScopeChange,
   statusline,
@@ -3733,6 +3770,8 @@ function AppSettingsDialog({
   settingsSync: SettingsProfileState
   oracleResponseStyle: OracleResponseStyle
   onOracleResponseStyleChange: (style: OracleResponseStyle) => void
+  oraclePlacement: OraclePlacement
+  onOraclePlacementChange: (placement: OraclePlacement) => void
   notificationScope: NotificationScope
   onNotificationScopeChange: (scope: NotificationScope) => void
   statusline: StatuslineSettings
@@ -4127,42 +4166,6 @@ function AppSettingsDialog({
               session. Oracle has its own setting.
             </p>
           </section>
-          {/* One column, so Oracle's answers sit under its model. */}
-          <div className="app-settings-stack">
-          <OracleModelSettings
-            models={hubCopilotModels}
-            modelsError={hubCopilotError}
-            onRetryModels={retryHubCopilotModels}
-            oracle={oracle}
-          />
-          {oracle.settings && !oracle.unavailable ? (
-            <section className="app-settings-section" id="settings-oracle-style">
-              <div className="app-settings-section__title">
-                <h4>Oracle&apos;s answers</h4>
-                <SettingScope synced />
-              </div>
-              <p className="dialog-message">
-                How much Oracle writes. Every style keeps errors, uncertainty,
-                what Oracle did, and anything waiting for you. Ask for more or
-                less in a message to change one answer.
-              </p>
-              <label className="field">
-                <span>Response style</span>
-                <select
-                  aria-label="Oracle response style"
-                  className="dialog-select"
-                  onChange={(event) =>
-                    onOracleResponseStyleChange(event.target.value as OracleResponseStyle)}
-                  value={oracleResponseStyle}
-                >
-                  <option value="concise">Concise</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="detailed">Detailed</option>
-                </select>
-              </label>
-            </section>
-          ) : null}
-          </div>
         </div>
       </section>
       <section
@@ -4225,37 +4228,119 @@ function AppSettingsDialog({
         <OracleSettingsStatus oracle={oracle} part="folders" />
       </section>
       <section
+        aria-labelledby="settings-oracle-heading"
+        className="app-settings-group"
+        id="settings-oracle"
+      >
+        <h3 id="settings-oracle-heading" tabIndex={-1}>Oracle</h3>
+        <div className="app-settings-group__body">
+          <OracleModelSettings
+            models={hubCopilotModels}
+            modelsError={hubCopilotError}
+            onRetryModels={retryHubCopilotModels}
+            oracle={oracle}
+          />
+          <section className="app-settings-section">
+            <div className="app-settings-section__title">
+              <h4>Desktop panel</h4>
+              <SettingScope synced={false} />
+            </div>
+            <p className="dialog-message">
+              Open Oracle over the session or keep both side by side. Phones
+              always use the full-screen panel. The keyboard shortcut is{' '}
+              <kbd>{bindingLabel(shortcuts.find((entry) => entry.id === 'toggleOracle')!.binding)}</kbd>.
+            </p>
+            <fieldset className="notification-scope-options" aria-label="Oracle placement">
+              <legend>Oracle placement</legend>
+              {([
+                {
+                  id: 'overlay' as const,
+                  name: 'Overlay the session',
+                  description: 'Oracle opens over the right side of the session.',
+                },
+                {
+                  id: 'docked' as const,
+                  name: 'Pinned beside the session',
+                  description: 'Oracle and the working session stay visible together.',
+                },
+              ]).map((option) => (
+                <label className="notification-scope-option" key={option.id}>
+                  <input
+                    aria-describedby={`oracle-placement-${option.id}`}
+                    aria-label={option.name}
+                    checked={oraclePlacement === option.id}
+                    name="oracle-placement"
+                    onChange={() => onOraclePlacementChange(option.id)}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>{option.name}</strong>
+                    <small id={`oracle-placement-${option.id}`}>{option.description}</small>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+          </section>
+          {oracle.settings && !oracle.unavailable ? (
+            <section className="app-settings-section" id="settings-oracle-style">
+              <div className="app-settings-section__title">
+                <h4>Response style</h4>
+                <SettingScope synced />
+              </div>
+              <p className="dialog-message">
+                How much Oracle writes. Every style keeps errors, uncertainty,
+                what Oracle did, and anything waiting for you.
+              </p>
+              <label className="field">
+                <span>Response style</span>
+                <select
+                  aria-label="Oracle response style"
+                  className="dialog-select"
+                  onChange={(event) =>
+                    onOracleResponseStyleChange(event.target.value as OracleResponseStyle)}
+                  value={oracleResponseStyle}
+                >
+                  <option value="concise">Concise</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="detailed">Detailed</option>
+                </select>
+              </label>
+            </section>
+          ) : null}
+          <section className="app-settings-section">
+            <div className="app-settings-section__title">
+              <h4>Notify me about</h4>
+              <SettingScope synced />
+            </div>
+            <fieldset className="notification-scope-options">
+              <legend>What notifies you</legend>
+              {notificationScopeOptions.map((option) => (
+                <label className="notification-scope-option" key={option.id}>
+                  <input
+                    aria-describedby={`notification-scope-${option.id}`}
+                    aria-label={option.name}
+                    checked={notificationScope === option.id}
+                    name="notification-scope"
+                    onChange={() => onNotificationScopeChange(option.id)}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>{option.name}</strong>
+                    <small id={`notification-scope-${option.id}`}>{option.description}</small>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+          </section>
+        </div>
+      </section>
+      <section
         aria-labelledby="settings-notifications-heading"
         className="app-settings-group"
         id="settings-notifications"
       >
         <h3 id="settings-notifications-heading" tabIndex={-1}>Notifications</h3>
         <div className="app-settings-group__body">
-        <section className="app-settings-section">
-          <div className="app-settings-section__title">
-            <h4>What notifies you</h4>
-            <SettingScope synced />
-          </div>
-          <fieldset className="notification-scope-options">
-            <legend>What notifies you</legend>
-            {notificationScopeOptions.map((option) => (
-              <label className="notification-scope-option" key={option.id}>
-                <input
-                  aria-describedby={`notification-scope-${option.id}`}
-                  aria-label={option.name}
-                  checked={notificationScope === option.id}
-                  name="notification-scope"
-                  onChange={() => onNotificationScopeChange(option.id)}
-                  type="radio"
-                />
-                <span>
-                  <strong>{option.name}</strong>
-                  <small id={`notification-scope-${option.id}`}>{option.description}</small>
-                </span>
-              </label>
-            ))}
-          </fieldset>
-        </section>
         <section className="app-settings-section">
           <div className="app-settings-section__title">
             <h4>This device</h4>
@@ -4435,7 +4520,8 @@ function AppSettingsDialog({
             <p className="dialog-message">
               Appearance, accent, status line, new-session models and folders,
               session sort, computer order, Oracle&apos;s response style, and
-              what notifies you follow you to every device that opens this hub. Keyboard shortcuts, panel widths, and drafts stay
+              what notifies you follow you to every device that opens this hub.
+              Keyboard shortcuts, panel placement and widths, and drafts stay
               on this device.
             </p>
             <p className="app-settings-section__result" role="status">
@@ -6859,6 +6945,11 @@ function App() {
   const [oracleOpen, setOracleOpen] = useState(
     () => new URLSearchParams(window.location.search).get('oracle') === 'open',
   )
+  const [oraclePlacement, setOraclePlacement] = useState<OraclePlacement>(
+    readOraclePlacement,
+  )
+  const [oracleFocusRequest, setOracleFocusRequest] = useState(0)
+  const [desktopLayout, setDesktopLayout] = useState(() => window.innerWidth > 960)
   // The open Oracle panel's width; the timeline dock moves beside it.
   const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
@@ -6869,6 +6960,15 @@ function App() {
   })
   const oracleControlRef = useRef<OracleControl | undefined>(undefined)
   const toggleOracle = useCallback(() => setOracleOpen((current) => !current), [])
+  const changeOraclePlacement = useCallback((next: OraclePlacement) => {
+    setOraclePlacement(next)
+    writeStored(oraclePlacementStorageKey, next)
+  }, [])
+  useEffect(() => {
+    const measureDesktop = () => setDesktopLayout(window.innerWidth > 960)
+    window.addEventListener('resize', measureDesktop)
+    return () => window.removeEventListener('resize', measureDesktop)
+  }, [])
   const changeManagedSessions = useCallback((keys: string[]) => {
     setManagedSessionKeys(new Set(keys))
   }, [])
@@ -8770,8 +8870,9 @@ function App() {
       if (
         event.defaultPrevented ||
         event.isComposing ||
-        hasBlockingUi ||
-        isEditableTarget(event.target)
+        event.getModifierState('AltGraph') ||
+        document.querySelector('.dialog[aria-modal="true"], [role="alertdialog"]') ||
+        hasBlockingUi
       ) {
         return
       }
@@ -8781,6 +8882,42 @@ function App() {
         bindingMatches(event, entry.binding),
       )
       if (!pressed) {
+        return
+      }
+      if (pressed.id === 'toggleOracle') {
+        if (!oracleIndicator.available) return
+        const sessionComposer = composerRef.current
+        const oracleComposer =
+          event.target instanceof HTMLTextAreaElement &&
+          event.target.getAttribute('aria-label') === 'Message Oracle'
+        const fromSessionComposer = event.target === sessionComposer
+        if (
+          isEditableTarget(event.target) &&
+          !fromSessionComposer &&
+          !oracleComposer
+        ) {
+          return
+        }
+        event.preventDefault()
+        if (oracleOpen && oraclePlacement === 'docked' && desktopLayout) {
+          if (oracleComposer) focusActiveSessionComposer()
+          else if (fromSessionComposer) oracleControlRef.current?.focusComposer()
+          else {
+            setOracleOpen(false)
+            focusActiveSessionComposer()
+          }
+          return
+        }
+        if (oracleOpen) {
+          setOracleOpen(false)
+          focusActiveSessionComposer()
+        } else {
+          setOracleFocusRequest((request) => request + 1)
+          setOracleOpen(true)
+        }
+        return
+      }
+      if (isEditableTarget(event.target)) {
         return
       }
       event.preventDefault()
@@ -11327,26 +11464,52 @@ function App() {
     )
   }
 
-  function focusComposer(targetKey: string | undefined, cursor?: number) {
+  function focusComposer(targetKey: string | undefined, cursor?: number): boolean {
+    const current = selectedRef.current
+    if (
+      !targetKey ||
+      !current ||
+      sessionKey(current) !== targetKey ||
+      document.querySelector('.dialog[aria-modal="true"]')
+    ) {
+      return false
+    }
+
+    const textarea = composerRef.current
+    if (!textarea || textarea.disabled || textarea.readOnly) return false
     window.requestAnimationFrame(() => {
-      const current = selectedRef.current
+      const latest = selectedRef.current
       if (
-        !targetKey ||
-        !current ||
-        sessionKey(current) !== targetKey ||
+        !latest ||
+        sessionKey(latest) !== targetKey ||
+        latest.pendingPermission ||
+        latest.pendingUserInput ||
+        composerRef.current !== textarea ||
+        !textarea.isConnected ||
+        textarea.disabled ||
+        textarea.readOnly ||
         document.querySelector('.dialog[aria-modal="true"]')
       ) {
         return
       }
-      const textarea = composerRef.current
-      textarea?.focus({ preventScroll: true })
+
+      textarea.focus({ preventScroll: true })
       const end = cursor === undefined
-        ? textarea?.value.length || 0
+        ? textarea.value.length
         : composerInputValue(
             (composerDraftsRef.current[targetKey]?.text || '').slice(0, cursor),
           ).length
-      textarea?.setSelectionRange(end, end)
+      textarea.setSelectionRange(end, end)
     })
+    return true
+  }
+
+  function focusActiveSessionComposer(): boolean {
+    const current = selectedRef.current
+    if (!current || current.pendingPermission || current.pendingUserInput) {
+      return false
+    }
+    return focusComposer(sessionKey(current))
   }
 
   const activeCatalogRoot =
@@ -14690,6 +14853,13 @@ function App() {
     <div
       className={`app-shell ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
+      } ${
+        oracleOpen &&
+        oracleIndicator.available &&
+        oraclePlacement === 'docked' &&
+        desktopLayout
+          ? 'app-shell--oracle-docked'
+          : ''
       }`}
       data-accent-theme={accentTheme}
       data-appearance={appearance}
@@ -14705,6 +14875,7 @@ function App() {
           '--visual-viewport-height': `${viewportHeight}px`,
           '--visual-viewport-top': `${viewportOffsetTop}px`,
           '--sidebar-width': `${sidebarWidth}px`,
+          '--oracle-panel-width': `${oraclePanelWidth ?? 440}px`,
         } as CSSProperties
       }
     >
@@ -15071,6 +15242,7 @@ function App() {
             offscreen={!sidebarOpen}
             onToggle={toggleOracle}
             open={oracleOpen}
+            shortcutLabel={shortcutKeys('toggleOracle')}
           />
           <button
             aria-label="Manage computers"
@@ -15477,7 +15649,12 @@ function App() {
             Oracle's panel covers that corner, the dock sits just left of it. */}
         <div
           className="timeline-dock"
-          data-oracle-open={oraclePanelWidth === undefined ? undefined : ''}
+          data-oracle-open={
+            oraclePanelWidth === undefined ||
+            (oraclePlacement === 'docked' && desktopLayout)
+              ? undefined
+              : ''
+          }
           style={oraclePanelWidth === undefined
             ? undefined
             : { '--oracle-panel-width': `${oraclePanelWidth}px` } as CSSProperties}
@@ -15493,7 +15670,13 @@ function App() {
               <ChevronDown size={18} />
             </button>
           ) : null}
-          <OracleButton floating indicator={oracleIndicator} onToggle={toggleOracle} open={oracleOpen} />
+          <OracleButton
+            floating
+            indicator={oracleIndicator}
+            onToggle={toggleOracle}
+            open={oracleOpen}
+            shortcutLabel={shortcutKeys('toggleOracle')}
+          />
         </div>
 
         {selected && statusline.enabled ? (
@@ -16136,6 +16319,7 @@ function App() {
             indicator={oracleIndicator}
             onToggle={toggleOracle}
             open={oracleOpen}
+            shortcutLabel={shortcutKeys('toggleOracle')}
           />
           <button
             aria-label="Close knowledge panel"
@@ -16207,6 +16391,7 @@ function App() {
                     indicator={oracleIndicator}
                     onToggle={toggleOracle}
                     open={oracleOpen}
+                    shortcutLabel={shortcutKeys('toggleOracle')}
                   />
                 }
                 sessionTitle={selected?.title}
@@ -16396,6 +16581,8 @@ function App() {
         settingsSync={settingsProfile}
         oracleResponseStyle={profile.oracleResponseStyle ?? 'balanced'}
         onOracleResponseStyleChange={(next) => saveSetting('oracleResponseStyle', next)}
+        oraclePlacement={oraclePlacement}
+        onOraclePlacementChange={changeOraclePlacement}
         notificationScope={profile.notificationScope ?? 'all'}
         onNotificationScopeChange={(next) => saveSetting('notificationScope', next)}
         onClose={() => setSettingsOpen(false)}
@@ -16544,12 +16731,26 @@ function App() {
         onOpenChange={setOracleOpen}
         onOpenSession={openManagedSession}
         onOpenSettings={() => {
-          setSettingsSection('settings-oracle')
+          setSettingsSection('settings-oracle-model')
           setSettingsOpen(true)
         }}
         onWidthChange={setOraclePanelWidth}
         open={oracleOpen}
-        reservedLeft={sidebarWidth}
+        focusRequest={oracleFocusRequest}
+        onRequestSessionFocus={focusActiveSessionComposer}
+        placement={
+          oraclePlacement === 'docked' && desktopLayout ? 'docked' : 'overlay'
+        }
+        reservedLeft={
+          sidebarWidth +
+          (
+            oraclePlacement === 'docked' &&
+            desktopLayout &&
+            knowledgeMode === 'docked'
+              ? READER_WIDTH_MIN
+              : 0
+          )
+        }
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}
       />

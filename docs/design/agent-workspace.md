@@ -276,7 +276,7 @@ On a phone, Send is explicitly labeled and header actions have 40px targets.
 The desktop sidebar gives sessions more space while retaining an independently
 scrollable Knowledge tree. Offline sessions cannot be suspended or resumed
 until their computer reconnects.
-Cached task counts are identified as last known while offline. Short viewports
+Cached task status is identified as last known while offline. Short viewports
 remain scrollable; phone session and file navigation do not compete for the
 same visible height. The session-actions disclosure is bounded by the
 conversation's actual width, including a wide sidebar and a resized reader.
@@ -352,7 +352,7 @@ state rather than being recreated for the visuals.
 | --- | --- |
 | Search by computer + provider, then clear | Matching rows only; all computer groups persist; current draft and selection remain unchanged. |
 | Needs you -> waiting session | Existing actionable card is reached through the existing selection path. No automatic approval. |
-| Working with foreground idle + active tasks | The row is included and its task count still opens the task panel. |
+| Working with foreground idle + active tasks | The row is included, its activity time remains visible, and its Tasks status opens the task panel. |
 | Session actions -> Rename; Escape | Original action works; Escape dismisses only the top disclosure, not Knowledge or a pending answer. |
 | Knowledge -> expand -> Ask agent | Existing draft gains a file reference; desktop docks, phone returns to chat; nothing is sent. |
 | Root on another computer | Reader remains usable; Ask agent is disabled with the owning-computer explanation. |

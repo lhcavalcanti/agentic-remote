@@ -7970,6 +7970,33 @@ describe('App', () => {
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
+  it('shows SDK recovery as active without offering an unsafe manual reopen', async () => {
+    const recovering = {
+      ...session,
+      status: 'error' as const,
+      interruption: {
+        detectedAt: '2026-10-24T00:00:00Z',
+        previousStatus: 'running' as const,
+      },
+      restartRecovery: {
+        state: 'recovering' as const,
+        detectedAt: '2026-10-24T00:00:00Z',
+        message: 'Restoring provider history before queued work can continue.',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([recovering])
+    vi.mocked(getSession).mockResolvedValue(recovering)
+
+    render(<App />)
+
+    expect(await screen.findByText(
+      'Restoring provider history before queued work can continue.',
+    )).toBeInTheDocument()
+    expect(screen.getByLabelText('Message')).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Reopen session' })).toBeNull()
+    expect(screen.getByText('Recovering')).toBeInTheDocument()
+  })
+
   it('removes an archived row without deleting the selected transcript or draft', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.mocked(activateSession).mockResolvedValue(session)

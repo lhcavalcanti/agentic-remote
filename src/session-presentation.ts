@@ -55,6 +55,7 @@ type SessionState =
   | 'error'
   | 'suspended'
   | 'tasks'
+  | 'recovering'
   | 'running'
   | 'idle'
   | 'offline'
@@ -75,6 +76,7 @@ const stateLabels: Record<SessionState, string> = {
   error: 'Error',
   suspended: 'Suspended',
   tasks: 'Tasks',
+  recovering: 'Recovering',
   running: 'Working',
   idle: 'Idle',
   offline: 'Offline',
@@ -90,6 +92,8 @@ export function sessionPresentation(
     ? 'question'
     : session.pendingPermission
       ? 'permission'
+      : session.restartRecovery?.state === 'recovering'
+        ? 'recovering'
       : session.status === 'waiting'
         ? 'waiting'
         : session.queuedDispatch?.state === 'uncertain'
@@ -110,10 +114,10 @@ export function sessionPresentation(
     state: online ? state : 'offline',
     label: online && state === 'error' && session.interruption ? 'Interrupted' : stateLabels[online ? state : 'offline'],
     description: online
-      ? stateLabels[state]
+      ? session.restartRecovery?.message || stateLabels[state]
       : `Computer offline. Last known state: ${stateLabels[state].toLowerCase()}.`,
     needsAttention,
-    working: online && (state === 'running' || state === 'tasks'),
+    working: online && (state === 'running' || state === 'tasks' || state === 'recovering'),
   }
 }
 
@@ -150,6 +154,7 @@ const attentionRank: Record<SessionState, number> = {
   unconfirmed: 3,
   error: 3,
   tasks: 4,
+  recovering: 4,
   running: 4,
   idle: 5,
   suspended: 6,

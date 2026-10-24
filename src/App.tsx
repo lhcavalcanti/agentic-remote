@@ -15337,9 +15337,17 @@ function App() {
             </button>
           </div>
         ) : null}
-        {selected?.interruption || selected?.archivedAt ? (
+        {selected?.restartRecovery?.state === 'recovering' ? (
+          <div className="error-banner error-banner--recovery" role="status">
+            <span>{selected.restartRecovery.message || 'Recovering the SDK session. Queued work will wait until recovery finishes.'}</span>
+          </div>
+        ) : selected?.restartRecovery?.state === 'waiting-permission' ? null
+          : selected?.interruption || selected?.archivedAt ? (
           <div className="error-banner" role="status">
-            <span>Session {selected.archivedAt ? 'archived' : 'interrupted'}. History, folder, and queued work are retained.</span>
+            <span>
+              {selected.restartRecovery?.message ||
+                `Session ${selected.archivedAt ? 'archived' : 'interrupted'}. History, folder, and queued work are retained.`}
+            </span>
             <button
               className="error-banner__retry"
               disabled={!selectedComputerOnline || reopening}

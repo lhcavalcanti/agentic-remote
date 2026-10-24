@@ -40,6 +40,45 @@ describe('session presentation', () => {
     }, tasks)).toMatchObject({ working: false, needsAttention: true, label: 'Interrupted' })
   })
 
+  it('distinguishes active SDK recovery from an interrupted session', () => {
+    expect(sessionPresentation({
+      ...session,
+      status: 'error',
+      interruption: { detectedAt: '2026-10-24T00:00:00Z', previousStatus: 'running' },
+      restartRecovery: {
+        state: 'recovering',
+        detectedAt: '2026-10-24T00:00:00Z',
+        message: 'Restoring provider history.',
+      },
+    })).toMatchObject({
+      state: 'recovering',
+      label: 'Recovering',
+      description: 'Restoring provider history.',
+      needsAttention: false,
+      working: true,
+    })
+
+    expect(sessionPresentation({
+      ...session,
+      status: 'waiting',
+      interruption: { detectedAt: '2026-10-24T00:00:00Z', previousStatus: 'waiting' },
+      restartRecovery: {
+        state: 'waiting-permission',
+        detectedAt: '2026-10-24T00:00:00Z',
+      },
+      pendingPermission: {
+        requestId: 'permission',
+        title: 'Run a controlled command',
+        options: [],
+      },
+    })).toMatchObject({
+      state: 'permission',
+      label: 'Permission',
+      needsAttention: true,
+      working: false,
+    })
+  })
+
   it('keeps identity scoped to the computer and preserves legacy provider labels', () => {
     expect(sessionKey(session)).toBe('studio:same-id')
     expect(sessionKey({ ...session, computerId: 'worker' })).toBe('worker:same-id')

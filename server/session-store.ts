@@ -62,6 +62,7 @@ export interface SdkAcceptedReplyInput {
   requestId: string
   kind: 'permission' | 'user-input' | 'elicitation'
   optionId?: string
+  providerRequestId?: string
   input?: UserInputReplyInput
 }
 
@@ -508,6 +509,9 @@ export class SessionStore {
         !Number.isFinite(Date.parse(sdkAcceptedReply.acceptedAt)) ||
         (sdkAcceptedReply.optionId !== undefined &&
           typeof sdkAcceptedReply.optionId !== 'string') ||
+        (sdkAcceptedReply.providerRequestId !== undefined &&
+          (typeof sdkAcceptedReply.providerRequestId !== 'string' ||
+            !sdkAcceptedReply.providerRequestId)) ||
         (sdkAcceptedReply.input !== undefined &&
           (!sdkAcceptedReply.input || typeof sdkAcceptedReply.input !== 'object' ||
             typeof sdkAcceptedReply.input.answer !== 'string' ||

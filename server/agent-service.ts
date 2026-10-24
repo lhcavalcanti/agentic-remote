@@ -1855,6 +1855,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private nativeStartupDiscoveryReady = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
   private readonly sdkRecoveryRuns = new Map<string, Promise<void>>()
+  private readonly recoveredPermissionReplies = new Map<
+    string,
+    { optionId: string; completion: Promise<SessionDetail> }
+  >()
   private readonly terminalDrainRequested = new Set<string>()
   private readonly terminalQueueWakeups = new Map<string, Promise<void>>()
   private readonly pendingSdkQueueAdmissions = new Map<string, PendingQueueAdmission>()
@@ -3428,6 +3432,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     generation: number,
     providerRequestId: string,
   ): Promise<SessionDetail> {
+    const key = `${sessionId}:${requestId}`
+    const inFlight = this.recoveredPermissionReplies.get(key)
+    if (inFlight) {
+      if (inFlight.optionId !== optionId) {
+        throw Object.assign(
+          new Error('A different permission response is already being delivered.'),
+          { statusCode: 409 },
+        )
+      }
+      return inFlight.completion
+    }
+    const completion = this.deliverRecoveredSdkPermission(
+      sessionId,
+      requestId,
+      optionId,
+      generation,
+      providerRequestId,
+    ).finally(() => {
+      if (this.recoveredPermissionReplies.get(key)?.completion === completion) {
+        this.recoveredPermissionReplies.delete(key)
+      }
+    })
+    this.recoveredPermissionReplies.set(key, { optionId, completion })
+    return completion
+  }
+
+  private async deliverRecoveredSdkPermission(
+    sessionId: string,
+    requestId: string,
+    optionId: string,
+    generation: number,
+    providerRequestId: string,
+  ): Promise<SessionDetail> {
     const sdkSession = this.sessions.get(sessionId)
     const permissionApi = sdkSession?.rpc.permissions
     if (
@@ -3458,6 +3495,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         requestId,
         kind: 'permission',
         optionId,
+        providerRequestId,
       })
       if (!accepted) {
         throw Object.assign(
@@ -3466,12 +3504,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
       }
     }
-    await permissionApi.handlePendingPermissionRequest({
+    const delivery = await permissionApi.handlePendingPermissionRequest({
       requestId: providerRequestId,
       result: optionId === 'allow-once'
         ? { kind: 'approve-once', approvedInteractively: true }
         : { kind: 'reject', feedback: 'Rejected from Agentic Remote' },
     })
+    if (!delivery.success) {
+      throw Object.assign(
+        new Error('The provider no longer owns this permission request. The saved response was not confirmed.'),
+        { statusCode: 409, uncertainDelivery: true },
+      )
+    }
     if (!this.isCurrentSdkOwner(sessionId, sdkSession, generation)) {
       throw Object.assign(
         new Error('The SDK runtime changed while the permission response was being delivered.'),
@@ -8302,6 +8346,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !session.archivedAt &&
       Boolean(session.interruption) &&
       this.store.backend(session.id) === 'sdk' &&
+      !this.sessions.has(session.id) &&
       !this.externalSessionIds.has(session.id) &&
       !this.hiddenSessionIds.has(session.id))
     await Promise.all(candidates.map((session) => this.recoverSdkSessionOnce(session.id)))
@@ -8398,8 +8443,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         const recoveredPermission = pending.items[0]
         if (recoveredPermission) {
+          const acceptedMatches = acceptedReply?.kind === 'permission' &&
+            acceptedReply.providerRequestId === recoveredPermission.requestId
+          if (acceptedReply?.kind === 'permission' && !acceptedMatches) {
+            await this.store.clearSdkReply(
+              sessionId,
+              recovery.generation,
+              acceptedReply.requestId,
+            )
+          }
           const requestId =
-            acceptedReply?.requestId ||
+            (acceptedMatches ? acceptedReply.requestId : undefined) ||
             this.store.get(sessionId)?.pendingPermission?.requestId ||
             randomUUID()
           const request = recordValue(recoveredPermission.request)
@@ -8419,7 +8473,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             },
           )
           if (bound) this.publish(bound)
-          if (bound && acceptedReply?.kind === 'permission' && acceptedReply.optionId) {
+          if (bound && acceptedMatches && acceptedReply.optionId) {
             await this.replyRecoveredSdkPermission(
               sessionId,
               requestId,
@@ -8430,7 +8484,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
           return
         }
-      } else if (lastLifecycle?.type === 'permission.requested') {
+      } else if (
+        lastLifecycle?.type === 'permission.requested' ||
+        this.store.get(sessionId)?.pendingPermission
+      ) {
         const interrupted = await this.store.settleSdkRecovery(
           sessionId,
           recovery.generation,
@@ -9637,7 +9694,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return
       }
       this.handleSessionEvent(sessionId, event)
+      if (event.type === 'assistant.turn_end' || event.type === 'session.idle') {
+        void this.settleAttachedSdkRecovery(
+          sessionId,
+          session,
+          ownerGeneration,
+        ).catch((error: unknown) => this.publishError(sessionId, error))
+      }
     })
+  }
+
+  private async settleAttachedSdkRecovery(
+    sessionId: string,
+    session: CopilotSessionLike,
+    generation: number,
+  ): Promise<void> {
+    if (
+      !this.isCurrentSdkOwner(sessionId, session, generation) ||
+      this.store.sdkRecovery(sessionId)?.state !== 'recovering'
+    ) {
+      return
+    }
+    const settled = await this.store.settleSdkRecovery(
+      sessionId,
+      generation,
+      { state: 'ready' },
+    )
+    if (!settled) return
+    this.publish(settled)
+    this.wakeSdkQueue(sessionId)
   }
 
   private installSdkOwner(

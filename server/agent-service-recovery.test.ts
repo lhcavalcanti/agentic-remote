@@ -312,20 +312,21 @@ it('reconstructs and answers a durable SDK permission after restart', async () =
 
   await f.service.start()
 
-  const waiting = f.service.getSession('pending')
+  const waiting = f.service.getSession('pending')!
   expect(waiting).toMatchObject({
     status: 'waiting',
     restartRecovery: { state: 'waiting-permission' },
     pendingPermission: {
-      requestId: 'agentic-permission',
       stale: false,
     },
   })
+  const recoveredRequestId = waiting.pendingPermission!.requestId
+  expect(recoveredRequestId).not.toBe('agentic-permission')
   expect(JSON.stringify(waiting)).not.toContain('provider-permission')
 
   const answered = await f.service.replyPermission(
     'pending',
-    'agentic-permission',
+    recoveredRequestId,
     'allow-once',
   )
 
@@ -410,24 +411,26 @@ it('retains an accepted recovered permission reply until provider delivery is co
   })
   f.client.resumeSession = vi.fn(async () => owner)
   await f.service.start()
+  const recoveredRequestId =
+    f.service.getSession('pending')!.pendingPermission!.requestId
 
   await expect(f.service.replyPermission(
     'pending',
-    'agentic-permission',
+    recoveredRequestId,
     'reject',
   )).rejects.toThrow('synthetic provider outage')
   expect(f.store.sdkAcceptedReply('pending')).toMatchObject({
-    requestId: 'agentic-permission',
+    requestId: recoveredRequestId,
     kind: 'permission',
     optionId: 'reject',
   })
   await expect(f.service.replyPermission(
     'pending',
-    'agentic-permission',
+    recoveredRequestId,
     'allow-once',
   )).rejects.toMatchObject({ statusCode: 409 })
 
-  await f.service.replyPermission('pending', 'agentic-permission', 'reject')
+  await f.service.replyPermission('pending', recoveredRequestId, 'reject')
 
   expect(handlePendingPermissionRequest).toHaveBeenLastCalledWith({
     requestId: 'provider-permission',

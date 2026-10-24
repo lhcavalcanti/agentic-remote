@@ -1240,6 +1240,12 @@ export class SessionStore {
       }
       const session = structuredClone(existing)
       if (outcome.state === 'ready') {
+        if (
+          session.sdkRestartRecovery?.state !== 'recovering' &&
+          session.sdkRestartRecovery?.state !== 'waiting-permission'
+        ) {
+          return () => undefined
+        }
         session.sdkRestartRecovery = undefined
         session.sdkAcceptedReply = undefined
         session.interruption = undefined
@@ -1267,6 +1273,13 @@ export class SessionStore {
           session.sdkAcceptedReply.kind !== 'permission'
         ) {
           session.pendingUserInput = undefined
+        }
+        if (
+          outcome.state === 'interrupted' &&
+          session.sdkAcceptedReply?.kind === 'permission' &&
+          session.pendingPermission
+        ) {
+          session.pendingPermission.stale = true
         }
       }
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1

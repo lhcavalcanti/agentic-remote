@@ -307,6 +307,10 @@ export interface CopilotSessionLike {
     model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
     ui?: Pick<CopilotSession['rpc']['ui'], 'ephemeralQuery'>
+    permissions?: Pick<
+      CopilotSession['rpc']['permissions'],
+      'pendingRequests' | 'handlePendingPermissionRequest'
+    >
   }
 }
 
@@ -1779,6 +1783,21 @@ function permissionTitle(request: PermissionRequest): string {
       return `Allow extension ${request.extensionName}`
   }
   return 'Permission required'
+}
+
+function recoveredPermissionTitle(request: Record<string, unknown>): string {
+  return stringValue(request.intention) ||
+    stringValue(request.toolTitle) ||
+    stringValue(request.toolDescription) ||
+    stringValue(request.hookMessage) ||
+    (stringValue(request.fileName) ? `Write ${stringValue(request.fileName)}` : undefined) ||
+    (stringValue(request.path) ? `Access ${stringValue(request.path)}` : undefined) ||
+    (stringValue(request.url) ? `Open ${stringValue(request.url)}` : undefined) ||
+    (stringValue(request.toolName) ? `Use ${stringValue(request.toolName)}` : undefined) ||
+    (stringValue(request.extensionName)
+      ? `Allow extension ${stringValue(request.extensionName)}`
+      : undefined) ||
+    'Permission required'
 }
 
 export class AgentService extends EventEmitter<AgentServiceEvents> {
@@ -3359,6 +3378,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(updated)
       return this.publicSession(updated)
     }
+
     if (this.externalSessionIds.has(id)) {
       if (!this.terminalController.configure) {
         throw new Error('Terminal runtime configuration is not available')
@@ -3399,6 +3419,114 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     return this.publicSession(await persistRuntime(mode))
+  }
+
+  private async replyRecoveredSdkPermission(
+    sessionId: string,
+    requestId: string,
+    optionId: string,
+    generation: number,
+    providerRequestId: string,
+  ): Promise<SessionDetail> {
+    const sdkSession = this.sessions.get(sessionId)
+    const permissionApi = sdkSession?.rpc.permissions
+    if (
+      !sdkSession ||
+      !permissionApi ||
+      !this.isCurrentSdkOwner(sessionId, sdkSession, generation)
+    ) {
+      throw Object.assign(
+        new Error('The recovered permission belongs to an older SDK runtime. Nothing was sent.'),
+        { statusCode: 409 },
+      )
+    }
+    const previous = this.store.sdkAcceptedReply(sessionId)
+    if (
+      previous &&
+      (previous.generation !== generation ||
+        previous.requestId !== requestId ||
+        previous.kind !== 'permission' ||
+        previous.optionId !== optionId)
+    ) {
+      throw Object.assign(
+        new Error('A different permission response was already accepted. Nothing was sent.'),
+        { statusCode: 409 },
+      )
+    }
+    if (!previous) {
+      const accepted = await this.store.acceptSdkReply(sessionId, generation, {
+        requestId,
+        kind: 'permission',
+        optionId,
+      })
+      if (!accepted) {
+        throw Object.assign(
+          new Error('The recovered permission changed before the response was saved. Nothing was sent.'),
+          { statusCode: 409 },
+        )
+      }
+    }
+    await permissionApi.handlePendingPermissionRequest({
+      requestId: providerRequestId,
+      result: optionId === 'allow-once'
+        ? { kind: 'approve-once', approvedInteractively: true }
+        : { kind: 'reject', feedback: 'Rejected from Agentic Remote' },
+    })
+    if (!this.isCurrentSdkOwner(sessionId, sdkSession, generation)) {
+      throw Object.assign(
+        new Error('The SDK runtime changed while the permission response was being delivered.'),
+        { statusCode: 409 },
+      )
+    }
+    const remaining = await permissionApi.pendingRequests()
+    if (remaining.items.some((item) => item.requestId === providerRequestId)) {
+      throw Object.assign(
+        new Error('The provider has not confirmed the permission response yet. Retry the same response.'),
+        { statusCode: 409 },
+      )
+    }
+    await this.store.clearPendingRequest(
+      sessionId,
+      'pendingPermission',
+      requestId,
+      { status: 'running', activity: 'Continuing recovered turn' },
+    )
+    await this.store.clearSdkReply(sessionId, generation, requestId)
+    const observation = this.store.observeTranscript(
+      sessionId,
+      () => this.isCurrentSdkOwner(sessionId, sdkSession, generation),
+    )
+    const events = await sdkSession.getEvents()
+    if (events.length) {
+      await this.store.replaceMessages(
+        sessionId,
+        messagesFromHistory(events),
+        observation,
+      )
+    }
+    const lastLifecycle = events.findLast(isForegroundLifecycleEvent)
+    const completed =
+      lastLifecycle?.type === 'assistant.turn_end' ||
+      lastLifecycle?.type === 'session.idle'
+    const settled = await this.store.settleSdkRecovery(
+      sessionId,
+      generation,
+      completed
+        ? { state: 'ready' }
+        : {
+            state: 'recovering',
+            message: 'Permission answered. Recovering the provider turn before queued work can continue.',
+          },
+    )
+    if (!settled) {
+      throw Object.assign(
+        new Error('The SDK recovery generation changed before the response settled.'),
+        { statusCode: 409 },
+      )
+    }
+    this.publish(settled)
+    if (completed) this.wakeSdkQueue(sessionId)
+    return this.publicSession(settled)
   }
 
   private async reconcileRuntimeStatus(
@@ -7339,6 +7467,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!request.options.some((option) => option.optionId === optionId)) {
       throw new Error('The selected permission option is not available')
     }
+    const restartRecovery = this.store.sdkRecovery(sessionId)
+    if (
+      restartRecovery?.state === 'waiting-permission' &&
+      restartRecovery.providerRequestId
+    ) {
+      return this.replyRecoveredSdkPermission(
+        sessionId,
+        requestId,
+        optionId,
+        restartRecovery.generation,
+        restartRecovery.providerRequestId,
+      )
+    }
     const sdkPending = this.permissions.get(requestId)
     let terminalReplied = false
     if (sdkPending) {
@@ -8214,6 +8355,57 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.hydratedSessions.add(sessionId)
       const lastLifecycle = events.findLast(isForegroundLifecycleEvent)
+      const permissionApi = sdkSession.rpc.permissions
+      if (permissionApi) {
+        const pending = await permissionApi.pendingRequests()
+        if (pending.items.length > 1) {
+          const failed = await this.store.settleSdkRecovery(
+            sessionId,
+            recovery.generation,
+            {
+              state: 'failed',
+              message: 'More than one provider permission is pending. Recovery cannot safely choose which request to present.',
+            },
+          )
+          if (failed) this.publish(failed)
+          return
+        }
+        const recoveredPermission = pending.items[0]
+        if (recoveredPermission) {
+          const requestId =
+            this.store.get(sessionId)?.pendingPermission?.requestId ||
+            randomUUID()
+          const request = recordValue(recoveredPermission.request)
+          const bound = await this.store.bindRecoveredPermission(
+            sessionId,
+            recovery.generation,
+            requestId,
+            recoveredPermission.requestId,
+            {
+              requestId,
+              title: recoveredPermissionTitle(request),
+              kind: stringValue(request.kind),
+              options: [
+                { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+                { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+              ],
+            },
+          )
+          if (bound) this.publish(bound)
+          return
+        }
+      } else if (lastLifecycle?.type === 'permission.requested') {
+        const interrupted = await this.store.settleSdkRecovery(
+          sessionId,
+          recovery.generation,
+          {
+            state: 'interrupted',
+            message: 'A provider permission was pending, but permission recovery is not available in this runtime. Queued work was not sent.',
+          },
+        )
+        if (interrupted) this.publish(interrupted)
+        return
+      }
       const completed =
         lastLifecycle?.type === 'assistant.turn_end' ||
         lastLifecycle?.type === 'session.idle'

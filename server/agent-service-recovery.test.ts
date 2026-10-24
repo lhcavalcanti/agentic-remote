@@ -269,6 +269,246 @@ it('does not treat provider shutdown during a model turn as completed recovery',
   })
 })
 
+it('reconstructs and answers a durable SDK permission after restart', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      kind: 'shell',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  let events = sdkPermissionEvents()
+  let pending = [{
+    requestId: 'provider-permission',
+    request: {
+      kind: 'commands',
+      fullCommandText: 'printf safe',
+      intention: 'Run a controlled command',
+      commandIdentifiers: ['printf'],
+      canOfferSessionApproval: false,
+    },
+  }]
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => events)
+  const handlePendingPermissionRequest = vi.fn(async () => {
+    pending = []
+    events = sdkRecoveryEvents(true)
+    return { success: true }
+  })
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({ items: pending })),
+      handlePendingPermissionRequest,
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  const waiting = f.service.getSession('pending')
+  expect(waiting).toMatchObject({
+    status: 'waiting',
+    restartRecovery: { state: 'waiting-permission' },
+    pendingPermission: {
+      requestId: 'agentic-permission',
+      stale: false,
+    },
+  })
+  expect(JSON.stringify(waiting)).not.toContain('provider-permission')
+
+  const answered = await f.service.replyPermission(
+    'pending',
+    'agentic-permission',
+    'allow-once',
+  )
+
+  expect(handlePendingPermissionRequest).toHaveBeenCalledWith({
+    requestId: 'provider-permission',
+    result: { kind: 'approve-once', approvedInteractively: true },
+  })
+  expect(answered).toMatchObject({ status: 'idle' })
+  expect(answered.pendingPermission).toBeUndefined()
+  expect(answered.interruption).toBeUndefined()
+  expect(answered.restartRecovery).toBeUndefined()
+  expect(f.store.sdkAcceptedReply('pending')).toBeUndefined()
+})
+
+it('keeps a recovered permission interrupted when its low-level RPC is unavailable', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    pendingPermission: { requestId: 'agentic-permission', stale: true },
+    restartRecovery: {
+      state: 'interrupted',
+      message: expect.stringMatching(/permission.*not available/i),
+    },
+  })
+})
+
+it('retains an accepted recovered permission reply until provider delivery is confirmed', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  let pending = [{
+    requestId: 'provider-permission',
+    request: {
+      kind: 'commands',
+      fullCommandText: 'printf safe',
+      intention: 'Run a controlled command',
+      commandIdentifiers: ['printf'],
+      canOfferSessionApproval: false,
+    },
+  }]
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  const handlePendingPermissionRequest = vi.fn()
+    .mockRejectedValueOnce(new Error('synthetic provider outage'))
+    .mockImplementationOnce(async () => {
+      pending = []
+      return { success: true }
+    })
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({ items: pending })),
+      handlePendingPermissionRequest,
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+  await f.service.start()
+
+  await expect(f.service.replyPermission(
+    'pending',
+    'agentic-permission',
+    'reject',
+  )).rejects.toThrow('synthetic provider outage')
+  expect(f.store.sdkAcceptedReply('pending')).toMatchObject({
+    requestId: 'agentic-permission',
+    kind: 'permission',
+    optionId: 'reject',
+  })
+  await expect(f.service.replyPermission(
+    'pending',
+    'agentic-permission',
+    'allow-once',
+  )).rejects.toMatchObject({ statusCode: 409 })
+
+  await f.service.replyPermission('pending', 'agentic-permission', 'reject')
+
+  expect(handlePendingPermissionRequest).toHaveBeenLastCalledWith({
+    requestId: 'provider-permission',
+    result: { kind: 'reject', feedback: 'Rejected from Agentic Remote' },
+  })
+  expect(f.store.sdkAcceptedReply('pending')).toBeUndefined()
+})
+
+it('fails closed when multiple provider permissions are pending after restart', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({
+        items: [
+          { requestId: 'provider-permission-1', request: { kind: 'commands' } },
+          { requestId: 'provider-permission-2', request: { kind: 'commands' } },
+        ],
+      })),
+      handlePendingPermissionRequest: vi.fn(),
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: {
+      state: 'failed',
+      message: expect.stringMatching(/more than one provider permission/i),
+    },
+  })
+})
+
+function sdkPermissionEvents(): SessionEvent[] {
+  return [
+    ...sdkRecoveryEvents(false),
+    {
+      type: 'permission.requested',
+      id: 'permission',
+      parentId: 'turn-start',
+      timestamp: '2026-10-24T00:00:03.000Z',
+      data: {
+        requestId: 'provider-permission',
+        permissionRequest: {
+          kind: 'shell',
+          fullCommandText: 'printf safe',
+          intention: 'Run a controlled command',
+          commandIdentifiers: ['printf'],
+          canOfferSessionApproval: false,
+          commands: [{ identifier: 'printf', readOnly: true }],
+          hasWriteFileRedirection: false,
+          possiblePaths: [],
+          possibleUrls: [],
+        },
+        promptRequest: {
+          kind: 'commands',
+          fullCommandText: 'printf safe',
+          intention: 'Run a controlled command',
+          commandIdentifiers: ['printf'],
+          canOfferSessionApproval: false,
+        },
+      },
+    } as SessionEvent,
+  ]
+}
+
 function sdkRecoveryEvents(completed: boolean): SessionEvent[] {
   const events = [
     {

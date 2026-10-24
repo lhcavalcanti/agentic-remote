@@ -322,9 +322,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 166,
+  "communities": 177,
   "community_algorithm": "louvain-seed-42",
-  "edges": 13934,
+  "edges": 13946,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -414,7 +414,7 @@
     "server/agent-service-recovery.test.ts": "da532f4a23ffaee67d808ec6f4bf1cd96cc7fba60f6d47fc073ac4a5c23074a5",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "232e417be303fbdd98aa0c3bed709b51b58031dbff2a3414feb3b2889f7fd8ba",
-    "server/agent-service.ts": "c787edcf2791662f623e84ee448434fe3861dd83eccf119d9856c11adb1d325a",
+    "server/agent-service.ts": "ef01985ee9d88ccc8cde1cfbcdc53b1dff385d980b937f96521a94622fb537ae",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -550,7 +550,7 @@
     "server/session-store-providers.test.ts": "f5c3153fcd1928b9c51d44c9fb97386d1ec41ccdc3fc093de38cdfaef5713a35",
     "server/session-store-serialization.test.ts": "71282d420e93f3c58082becfd38e0f5b7698f303412db76eb9c65a2b5853016c",
     "server/session-store.test.ts": "da70443559723cfa05bf49e417f4ee22de9aec667151f7b1a705bb482fa3a2d5",
-    "server/session-store.ts": "2c40ee61f465379a2c5ca31ce9f9b3fa021b2d25158076cd7fdc6b4720254a54",
+    "server/session-store.ts": "b6a0d55763bbdea300c79937a27b055068488544c163bf933a484c9060631ff6",
     "server/settings-profile-routes.test.ts": "8418e3a4c4b86a7d596bd2e24ada31d04027d74f30d38aeee5b25d4e58bae812",
     "server/settings-profile-routes.ts": "ba8a58b447078a89855dab2b69c10b06d5458b00799ec16eb072c85430356543",
     "server/settings-profile-store.test.ts": "8474b0ae54bec25b62e7ff3ad639e0278aee0c973b25b52caba220066a046808",
@@ -714,7 +714,7 @@
     "vite.config.ts": "eacee8590f9e87d8336de9f3e98b332be04929d839e845192f13aeed6dc89643"
   },
   "mode": "local-ast-only",
-  "nodes": 4932,
+  "nodes": 4934,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -781,13 +781,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ec171b20f415494189755fb881354b502719b0bbf45c1daf741df54edbf1d8f4",
-    "communities.json": "97c52c1c344a118732a40518a5f5d690ae56674127f8fc350073fa00e73de337",
-    "graph.html": "ce705819f585d61b751c0a4f330533207d66591762a7daab4d266a304822d356",
-    "graph.json": "4bc5e47310942ed6599ca5f8a01f5ef26c6e210b4aa280a123adbcb34c5a294a"
+    "GRAPH_REPORT.md": "81d3314359aa4909c6d50f2e534f054110aaab2764a8626ca692c51bfb5dcc6e",
+    "communities.json": "14ea516782b348b8c80f360bc0f0a6320f8332a5e4f576794c01879bc0fded8e",
+    "graph.html": "990497d88324215009b8d0b370e47088b493f232be9475c8f81b71fad904bcdc",
+    "graph.json": "03f1c792db6a0cd1f9fdc3e388681726549b1e921482c2ec5d9b6e0f665cb952"
   },
   "schema_version": 1,
-  "source_commit": "69264ab639a707faaf324d6adc66c67079000ada",
-  "source_fingerprint": "a27606db3b231f9ec6db3104f4944c22a7b533bc86c8d3a3ab0e24d77df5764c",
+  "source_commit": "8389eadccf38dcbbe47648bada1460fdbb6d3cf3",
+  "source_fingerprint": "6004b015f5ad8ecfc9a8a1bf1814b6e975417127c0e0f7e816a88a03d98a1f3b",
   "working_tree_changes": []
 }

@@ -137,6 +137,8 @@ interface StoredState {
   version: 1
   sessions: Record<string, StoredSession>
   retiredSessionIds?: string[]
+  sdkRestartRecoveries?: Record<string, SdkRestartRecovery>
+  sdkAcceptedReplies?: Record<string, SdkAcceptedReply>
 }
 
 interface StoredSession extends SessionDetail {
@@ -184,6 +186,37 @@ const emptyRetirements: ReadonlySet<string> = new Set()
 function isSessionIdList(value: unknown): value is string[] {
   return Array.isArray(value) &&
     value.every((id) => typeof id === 'string' && id.length > 0)
+}
+
+function validateSdkRestartRecovery(recovery: SdkRestartRecovery): void {
+  if (
+    !recovery || typeof recovery !== 'object' || Array.isArray(recovery) ||
+    !Number.isSafeInteger(recovery.generation) || recovery.generation < 0 ||
+    !['pending', 'recovering', 'waiting-permission', 'interrupted', 'failed']
+      .includes(recovery.state) ||
+    !Number.isFinite(Date.parse(recovery.detectedAt)) ||
+    !['idle', 'running', 'waiting', 'error'].includes(recovery.previousStatus) ||
+    (recovery.providerRequestId !== undefined &&
+      (typeof recovery.providerRequestId !== 'string' || !recovery.providerRequestId)) ||
+    (recovery.message !== undefined && typeof recovery.message !== 'string')
+  ) throw new Error('Invalid SDK restart recovery metadata')
+}
+
+function validateSdkAcceptedReply(reply: SdkAcceptedReply): void {
+  if (
+    !reply || typeof reply !== 'object' || Array.isArray(reply) ||
+    !Number.isSafeInteger(reply.generation) || reply.generation < 0 ||
+    typeof reply.requestId !== 'string' || !reply.requestId ||
+    !['permission', 'user-input', 'elicitation'].includes(reply.kind) ||
+    !Number.isFinite(Date.parse(reply.acceptedAt)) ||
+    (reply.optionId !== undefined && typeof reply.optionId !== 'string') ||
+    (reply.providerRequestId !== undefined &&
+      (typeof reply.providerRequestId !== 'string' || !reply.providerRequestId)) ||
+    (reply.input !== undefined &&
+      (!reply.input || typeof reply.input !== 'object' ||
+        typeof reply.input.answer !== 'string' ||
+        typeof reply.input.wasFreeform !== 'boolean'))
+  ) throw new Error('Invalid SDK accepted reply metadata')
 }
 
 function activityDuration(startedAt: string, completedAt: string): number | undefined {
@@ -252,7 +285,7 @@ function encode(value: unknown): Buffer | undefined {
   return serialized === undefined ? undefined : Buffer.from(serialized, 'utf8')
 }
 
-/** Byte-for-byte the UTF-8 encoding of `JSON.stringify(state)`. */
+/** Canonical state JSON with SDK-only metadata in rollback-safe top-level maps. */
 export function serializeState(state: StoredState): Buffer {
   return Buffer.concat(serializeStateChunks(state))
 }
@@ -273,12 +306,31 @@ export function serializeStateChunks(state: StoredState): Buffer[] {
   const chunks: Buffer[] = [Buffer.from('{')]
   let first = true
   for (const [key, value] of Object.entries(state)) {
+    if (key === 'sdkRestartRecoveries' || key === 'sdkAcceptedReplies') continue
     const serialized = key === 'sessions' && value && typeof value === 'object' && !Array.isArray(value)
       ? serializeSessions(value as Record<string, StoredSession>)
       : encode(value)
     if (serialized === undefined) continue
     chunks.push(Buffer.from(`${first ? '' : ','}${JSON.stringify(key)}:`, 'utf8'))
     chunks.push(...(Array.isArray(serialized) ? serialized : [serialized]))
+    first = false
+  }
+  const privateMaps = {
+    sdkRestartRecoveries: Object.fromEntries(
+      Object.entries(state.sessions).flatMap(([id, session]) =>
+        session?.sdkRestartRecovery ? [[id, session.sdkRestartRecovery]] : []),
+    ),
+    sdkAcceptedReplies: Object.fromEntries(
+      Object.entries(state.sessions).flatMap(([id, session]) =>
+        session?.sdkAcceptedReply ? [[id, session.sdkAcceptedReply]] : []),
+    ),
+  }
+  for (const [key, value] of Object.entries(privateMaps)) {
+    if (!Object.keys(value).length) continue
+    chunks.push(
+      Buffer.from(`${first ? '' : ','}${JSON.stringify(key)}:`, 'utf8'),
+      encode(value)!,
+    )
     first = false
   }
   chunks.push(Buffer.from('}'))
@@ -319,7 +371,16 @@ function serializeSessions(sessions: Record<string, StoredSession>): Buffer[] {
     const cacheable = session !== null && typeof session === 'object'
     let serialized = cacheable ? serializedSessions.get(session) : undefined
     if (serialized === undefined) {
-      serialized = encode(session)
+      if (cacheable) {
+        const {
+          sdkRestartRecovery: _sdkRestartRecovery,
+          sdkAcceptedReply: _sdkAcceptedReply,
+          ...publiclySafeSession
+        } = session
+        serialized = encode(publiclySafeSession)
+      } else {
+        serialized = encode(session)
+      }
       if (serialized === undefined) continue
       if (cacheable) serializedSessions.set(session, serialized)
     }
@@ -456,6 +517,14 @@ export class SessionStore {
         parsed.sessions === null ||
         typeof parsed.sessions !== 'object' ||
         Array.isArray(parsed.sessions) ||
+        (parsed.sdkRestartRecoveries !== undefined &&
+          (!parsed.sdkRestartRecoveries ||
+            typeof parsed.sdkRestartRecoveries !== 'object' ||
+            Array.isArray(parsed.sdkRestartRecoveries))) ||
+        (parsed.sdkAcceptedReplies !== undefined &&
+          (!parsed.sdkAcceptedReplies ||
+            typeof parsed.sdkAcceptedReplies !== 'object' ||
+            Array.isArray(parsed.sdkAcceptedReplies))) ||
         (parsed.retiredSessionIds !== undefined && !isSessionIdList(parsed.retiredSessionIds))
       ) {
         throw new Error('Unsupported Agentic Remote state format')
@@ -470,9 +539,14 @@ export class SessionStore {
       loaded = structuredClone(this.state)
     }
 
+    const recoveries = loaded.sdkRestartRecoveries || {}
+    const replies = loaded.sdkAcceptedReplies || {}
+    for (const recovery of Object.values(recoveries)) validateSdkRestartRecovery(recovery)
+    for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
-    let staleSdkInteractionMarked = false
-    for (const session of Object.values(loaded.sessions)) {
+    let staleSdkInteractionMarked = Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
+      Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
+    for (const [id, session] of Object.entries(loaded.sessions)) {
       if (session.retention !== undefined && !sessionRetentionSchema.safeParse(session.retention).success) {
         throw new Error('Invalid session retention metadata')
       }
@@ -484,39 +558,16 @@ export class SessionStore {
         !Number.isFinite(Date.parse(session.interruption.detectedAt)) ||
         !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus)
       )) throw new Error('Invalid session interruption metadata')
-      const sdkRestartRecovery = session.sdkRestartRecovery
-      if (sdkRestartRecovery !== undefined && (
-        !sdkRestartRecovery || typeof sdkRestartRecovery !== 'object' ||
-        !Number.isSafeInteger(sdkRestartRecovery.generation) ||
-        sdkRestartRecovery.generation < 0 ||
-        !['pending', 'recovering', 'waiting-permission', 'interrupted', 'failed']
-          .includes(sdkRestartRecovery.state) ||
-        !Number.isFinite(Date.parse(sdkRestartRecovery.detectedAt)) ||
-        !['idle', 'running', 'waiting', 'error'].includes(sdkRestartRecovery.previousStatus) ||
-        (sdkRestartRecovery.providerRequestId !== undefined &&
-          (typeof sdkRestartRecovery.providerRequestId !== 'string' ||
-            !sdkRestartRecovery.providerRequestId)) ||
-        (sdkRestartRecovery.message !== undefined &&
-          typeof sdkRestartRecovery.message !== 'string')
-      )) throw new Error('Invalid SDK restart recovery metadata')
-      const sdkAcceptedReply = session.sdkAcceptedReply
-      if (sdkAcceptedReply !== undefined && (
-        !sdkAcceptedReply || typeof sdkAcceptedReply !== 'object' ||
-        !Number.isSafeInteger(sdkAcceptedReply.generation) ||
-        sdkAcceptedReply.generation < 0 ||
-        typeof sdkAcceptedReply.requestId !== 'string' || !sdkAcceptedReply.requestId ||
-        !['permission', 'user-input', 'elicitation'].includes(sdkAcceptedReply.kind) ||
-        !Number.isFinite(Date.parse(sdkAcceptedReply.acceptedAt)) ||
-        (sdkAcceptedReply.optionId !== undefined &&
-          typeof sdkAcceptedReply.optionId !== 'string') ||
-        (sdkAcceptedReply.providerRequestId !== undefined &&
-          (typeof sdkAcceptedReply.providerRequestId !== 'string' ||
-            !sdkAcceptedReply.providerRequestId)) ||
-        (sdkAcceptedReply.input !== undefined &&
-          (!sdkAcceptedReply.input || typeof sdkAcceptedReply.input !== 'object' ||
-            typeof sdkAcceptedReply.input.answer !== 'string' ||
-            typeof sdkAcceptedReply.input.wasFreeform !== 'boolean'))
-      )) throw new Error('Invalid SDK accepted reply metadata')
+      if (session.sdkRestartRecovery !== undefined) {
+        validateSdkRestartRecovery(session.sdkRestartRecovery)
+        staleSdkInteractionMarked = true
+      }
+      if (session.sdkAcceptedReply !== undefined) {
+        validateSdkAcceptedReply(session.sdkAcceptedReply)
+        staleSdkInteractionMarked = true
+      }
+      if (Object.hasOwn(recoveries, id)) session.sdkRestartRecovery = recoveries[id]
+      if (Object.hasOwn(replies, id)) session.sdkAcceptedReply = replies[id]
       if (session.replacedSessionIds !== undefined) {
         if (!isSessionIdList(session.replacedSessionIds)) {
           throw new Error('Invalid session retirement metadata')
@@ -538,8 +589,12 @@ export class SessionStore {
         session.pendingUserInput || session.failedPrompt || session.recoverySeed ||
         session.queuedDispatch || session.terminalQueueDispatch || session.sdkQueueAdmission,
       ))
-      if (session.managedOpen && !session.interruption &&
-          (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) {
+      if (!session.interruption && (
+        (session.managedOpen &&
+          (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) ||
+        (session.backend === 'sdk' && session.provider === 'copilot' &&
+          session.isOpen && Boolean(session.sdkAcceptedReply))
+      )) {
         session.interruption = {
           detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
         }
@@ -664,16 +719,18 @@ export class SessionStore {
         }
       }
     }
+    delete loaded.sdkRestartRecoveries
+    delete loaded.sdkAcceptedReplies
     this.retire(loaded, legacyRetirements)
+    if (staleSdkInteractionMarked) {
+      const temporaryPath = `${this.statePath}.tmp`
+      await writeFile(temporaryPath, serializeState(loaded), { mode: 0o600 })
+      await rename(temporaryPath, this.statePath)
+    }
     freezeCommitted(loaded)
     this.state = loaded
     this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
-    if (staleSdkInteractionMarked) {
-      const temporaryPath = `${this.statePath}.tmp`
-      await writeFile(temporaryPath, JSON.stringify(loaded), { mode: 0o600 })
-      await rename(temporaryPath, this.statePath)
-    }
   }
 
   list(): SessionDetail[] {
@@ -1270,9 +1327,10 @@ export class SessionStore {
         if (
           outcome.state === 'interrupted' &&
           session.sdkAcceptedReply &&
-          session.sdkAcceptedReply.kind !== 'permission'
+          session.sdkAcceptedReply.kind !== 'permission' &&
+          session.pendingUserInput?.requestId === session.sdkAcceptedReply.requestId
         ) {
-          session.pendingUserInput = undefined
+          session.pendingUserInput.stale = true
         }
         if (
           outcome.state === 'interrupted' &&
@@ -1337,6 +1395,36 @@ export class SessionStore {
       session.sdkAcceptedReply = {
         ...structuredClone(reply),
         generation,
+        acceptedAt: new Date(this.now()).toISOString(),
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  async acceptLiveSdkReply(
+    sessionId: string,
+    reply: SdkAcceptedReplyInput,
+    kind: 'pendingPermission' | 'pendingUserInput',
+  ): Promise<SessionDetail> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing[kind]?.requestId !== reply.requestId) {
+        throw new Error('Provider request is no longer pending')
+      }
+      if (existing.sdkAcceptedReply) {
+        throw Object.assign(new Error('Another SDK reply is waiting for confirmation'), {
+          statusCode: 409,
+        })
+      }
+      const session = structuredClone(existing)
+      session.sdkAcceptedReply = {
+        ...structuredClone(reply),
+        generation: 0,
         acceptedAt: new Date(this.now()).toISOString(),
       }
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
@@ -2769,11 +2857,13 @@ export class SessionStore {
       | ((session: Readonly<SessionDetail>) => { status: SessionStatus; activity?: string }),
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      session[kind] = undefined
-      if (session.sdkAcceptedReply?.requestId === requestId) {
+      const ownsCard = session[kind]?.requestId === requestId
+      if (ownsCard) session[kind] = undefined
+      if (session.sdkAcceptedReply?.generation === 0 &&
+          session.sdkAcceptedReply.requestId === requestId) {
         session.sdkAcceptedReply = undefined
       }
-      if (continuation) {
+      if (continuation && ownsCard) {
         const next = typeof continuation === 'function' ? continuation(session) : continuation
         session.status = session.pendingPermission || session.pendingUserInput
           ? 'waiting'
@@ -2782,7 +2872,9 @@ export class SessionStore {
           session.pendingUserInput?.question ||
           next.activity
       }
-    }, (session) => session[kind]?.requestId === requestId)
+    }, (session) => session[kind]?.requestId === requestId ||
+      (session.sdkAcceptedReply?.generation === 0 &&
+        session.sdkAcceptedReply.requestId === requestId))
   }
 
   async update(

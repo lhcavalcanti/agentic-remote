@@ -111,9 +111,17 @@ interface SdkAcceptedReply {
   kind: 'permission' | 'user-input' | 'elicitation'
   acceptedAt: string
   optionId?: string
+  providerRequestId?: string
   input?: UserInputReplyInput
 }
 ```
+
+These records are serialized in top-level `sdkRestartRecoveries` and
+`sdkAcceptedReplies` maps keyed by session ID, never inside `sessions`. The
+store hydrates them privately at startup and validates/migrates older branch
+files that nested them. Canonical top-level values take precedence when both
+forms exist. An older release preserves unknown top-level maps when saving
+state without exposing provider request IDs through its session projection.
 
 `providerRequestId` is private. The browser continues to use Agentic Remote's
 opaque request ID. `SdkAcceptedReply` contains no token or runtime state; it is
@@ -151,13 +159,15 @@ ready  waiting-permission  interrupted
                           \ failed
 ```
 
-- `ready`: provider events prove the prior turn is terminal and no durable
-  request is pending. Transcript is reconciled, recovery metadata and
-  interruption are cleared, and the session becomes idle.
+- `ready`: provider events prove the prior turn is terminal, no durable
+  request is pending, and no accepted reply remains delivery-uncertain.
+  Transcript is reconciled, recovery metadata and interruption are cleared,
+  and the session becomes idle.
 - `waiting-permission`: exactly one provider permission is pending. The session
   remains fenced from prompts but accepts that permission response.
 - `interrupted`: provider history exists, but an active model turn or transient
-  interaction has no resumable callback.
+  interaction has no resumable callback, or an accepted reply remains
+  delivery-uncertain.
 - `failed`: provider state is missing, corrupt, or recovery RPCs failed.
 
 A process crash while `recovering` leaves a reclaimable record. The next
@@ -184,7 +194,9 @@ After SDK startup and provider discovery, before SDK queue drainage:
 6. Reconcile transcript history through the existing transcript epoch guard.
 7. Classify the result:
    - a pending permission becomes a live recovered card;
-   - a terminal foreground event becomes `ready`;
+   - a terminal foreground event with no unconfirmed answer becomes `ready`;
+   - an accepted transient answer remains explicitly uncertain even if a
+     later turn-end event exists;
    - an open foreground turn, stale question, or stale elicitation remains
      `interrupted`;
    - missing/corrupt state or RPC failure becomes `failed`.
@@ -206,11 +218,10 @@ Reply handling:
 2. Persist `SdkAcceptedReply`.
 3. Call `handlePendingPermissionRequest()` with the private provider request ID
    and either interactive `approve-once` or `reject`.
-4. Re-read pending requests and durable events.
-5. If the request is gone, clear the card and accepted reply, then either
-   reconcile a completed turn or leave the session `recovering`.
-6. If the RPC reports the request was already resolved, reconcile rather than
-   issuing another decision.
+4. If the RPC confirms delivery, verify that the exact request is gone, clear
+   its card and accepted reply, then reconcile durable events.
+5. If delivery is not confirmed, retain the decision and mark it uncertain;
+   a generic turn-end event cannot prove which permission choice took effect.
 
 This route is idempotent because the provider request ID identifies one
 request and the pending list establishes whether delivery remains possible.
@@ -221,8 +232,11 @@ Pending question and elicitation cards survive as stale evidence. Their SDK
 events are ephemeral, and the high-level handler does not expose a recoverable
 provider request ID. Agentic Remote must not claim those callbacks survived.
 
-An accepted answer is written before its in-memory resolver is called. If the
-service restarts before the normal settlement write:
+An accepted answer is written before its in-memory resolver is called. A
+refused acceptance write cannot deliver a callback. After a successful
+acceptance write, the card remains until a separate settlement write succeeds;
+if settlement fails, only the original choice can retry without sending the
+callback twice. If the service restarts before that settlement:
 
 - the original card remains visible;
 - the accepted values remain durable;
@@ -230,6 +244,11 @@ service restarts before the normal settlement write:
 - the old callback is never invoked or recreated;
 - continuing uses the existing explicit conversation-recovery boundary or a
   new user turn.
+
+Even a later durable turn completion cannot prove that a transient callback
+received the saved answer. Only confirmation of the exact provider request,
+such as a successful recovered-permission RPC, clears its accepted receipt;
+otherwise restart retains the explicit uncertainty and blocks the queue.
 
 The accepted answer is not automatically inserted into the provider
 conversation. That would be indistinguishable from duplicate delivery.

@@ -161,6 +161,211 @@ describe('SessionStore', () => {
       expect(reloaded.sdkAcceptedReply('sdk-recovery')).toBeUndefined()
     })
 
+    it('keeps provider identities in rollback-safe root maps across an older writer', async () => {
+      const { directory, reopened } = await interruptedSdkStore()
+      const recovery = await reopened.claimSdkRecovery('sdk-recovery')
+      await reopened.bindRecoveredPermission(
+        'sdk-recovery', recovery.generation, 'public-permission', 'private-provider-id',
+        {
+          requestId: 'public-permission',
+          title: 'Allow tool',
+          options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+        },
+      )
+      await reopened.acceptSdkReply('sdk-recovery', recovery.generation, {
+        requestId: 'public-permission',
+        kind: 'permission',
+        optionId: 'allow-once',
+        providerRequestId: 'private-provider-id',
+      })
+      await reopened.close()
+
+      const filename = path.join(directory, 'state.json')
+      const saved = JSON.parse(await readFile(filename, 'utf8'))
+      expect(saved.sdkRestartRecoveries['sdk-recovery']).toMatchObject({
+        generation: recovery.generation, providerRequestId: 'private-provider-id',
+      })
+      expect(saved.sdkAcceptedReplies['sdk-recovery']).toMatchObject({
+        requestId: 'public-permission', providerRequestId: 'private-provider-id',
+      })
+      expect(saved.sessions['sdk-recovery']).not.toHaveProperty('sdkRestartRecovery')
+      expect(saved.sessions['sdk-recovery']).not.toHaveProperty('sdkAcceptedReply')
+      expect(JSON.stringify(saved.sessions)).not.toContain('private-provider-id')
+
+      // An older release saves unknown top-level keys unchanged but projects
+      // every unknown session field to clients. Its round trip must be safe.
+      saved.sessions['sdk-recovery'].title = 'Renamed during rollback'
+      await writeFile(filename, JSON.stringify(saved))
+      const rolledForward = new SessionStore(directory)
+      await rolledForward.initialize()
+      expect(rolledForward.get('sdk-recovery')?.title).toBe('Renamed during rollback')
+      expect(rolledForward.sdkRecovery('sdk-recovery')?.providerRequestId).toBe('private-provider-id')
+      expect(rolledForward.sdkAcceptedReply('sdk-recovery')?.providerRequestId).toBe('private-provider-id')
+      expect(JSON.stringify(rolledForward.get('sdk-recovery'))).not.toContain('private-provider-id')
+    })
+
+    it('keeps an accepted SDK reply explicitly interrupted when the turn became idle before restart', async () => {
+      const { directory, store } = await createStore()
+      await store.create({
+        id: 'finished-before-reply-settlement',
+        cwd: directory,
+        title: 'Finished turn',
+        updatedAt: '2026-10-24T00:00:00.000Z',
+        status: 'waiting',
+        isOpen: true,
+        messages: [],
+        pendingUserInput: {
+          requestId: 'public-question', question: 'Choose?',
+          choices: ['Left'], allowFreeform: false,
+        },
+      }, { backend: 'sdk', managedOpen: true })
+      await store.acceptLiveSdkReply('finished-before-reply-settlement', {
+        requestId: 'public-question',
+        kind: 'user-input',
+        input: { answer: 'Left', wasFreeform: false },
+      }, 'pendingUserInput')
+      await store.updateStatus('finished-before-reply-settlement', 'idle')
+      await store.close()
+
+      const restarted = new SessionStore(directory)
+      await restarted.initialize()
+      expect(restarted.get('finished-before-reply-settlement')).toMatchObject({
+        status: 'error',
+        interruption: { previousStatus: 'idle' },
+        restartRecovery: { state: 'interrupted' },
+        pendingUserInput: { requestId: 'public-question', stale: true },
+      })
+      expect(restarted.sdkAcceptedReply('finished-before-reply-settlement')).toMatchObject({
+        requestId: 'public-question', input: { answer: 'Left' },
+      })
+    })
+
+    it('migrates validated nested branch metadata to root maps on startup', async () => {
+      const { directory, reopened } = await interruptedSdkStore()
+      const recovery = await reopened.claimSdkRecovery('sdk-recovery')
+      await reopened.bindRecoveredPermission(
+        'sdk-recovery', recovery.generation, 'public-permission', 'private-provider-id',
+        {
+          requestId: 'public-permission',
+          title: 'Allow tool',
+          options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
+        },
+      )
+      await reopened.acceptSdkReply('sdk-recovery', recovery.generation, {
+        requestId: 'public-permission',
+        kind: 'permission',
+        optionId: 'reject',
+        providerRequestId: 'private-provider-id',
+      })
+      await reopened.close()
+
+      const filename = path.join(directory, 'state.json')
+      const legacy = JSON.parse(await readFile(filename, 'utf8'))
+      legacy.sessions['sdk-recovery'].sdkRestartRecovery =
+        legacy.sdkRestartRecoveries['sdk-recovery']
+      legacy.sessions['sdk-recovery'].sdkAcceptedReply =
+        legacy.sdkAcceptedReplies['sdk-recovery']
+      delete legacy.sdkRestartRecoveries
+      delete legacy.sdkAcceptedReplies
+      await writeFile(filename, JSON.stringify(legacy))
+
+      const migrated = new SessionStore(directory)
+      await migrated.initialize()
+      expect(migrated.sdkRecovery('sdk-recovery')?.providerRequestId).toBe('private-provider-id')
+      expect(migrated.sdkAcceptedReply('sdk-recovery')?.optionId).toBe('reject')
+      const saved = JSON.parse(await readFile(filename, 'utf8'))
+      expect(saved.sdkRestartRecoveries['sdk-recovery'].providerRequestId).toBe('private-provider-id')
+      expect(saved.sdkAcceptedReplies['sdk-recovery'].optionId).toBe('reject')
+      expect(saved.sessions['sdk-recovery']).not.toHaveProperty('sdkRestartRecovery')
+      expect(saved.sessions['sdk-recovery']).not.toHaveProperty('sdkAcceptedReply')
+    })
+
+    it('prefers canonical root maps to conflicting but valid nested branch values', async () => {
+      const { directory, reopened } = await interruptedSdkStore()
+      const recovery = await reopened.claimSdkRecovery('sdk-recovery')
+      await reopened.bindRecoveredPermission(
+        'sdk-recovery', recovery.generation, 'public-permission', 'canonical-provider-id',
+        {
+          requestId: 'public-permission',
+          title: 'Allow tool',
+          options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
+        },
+      )
+      await reopened.acceptSdkReply('sdk-recovery', recovery.generation, {
+        requestId: 'public-permission',
+        kind: 'permission',
+        optionId: 'reject',
+        providerRequestId: 'canonical-provider-id',
+      })
+      await reopened.close()
+      const filename = path.join(directory, 'state.json')
+      const saved = JSON.parse(await readFile(filename, 'utf8'))
+      saved.sessions['sdk-recovery'].sdkRestartRecovery = {
+        ...saved.sdkRestartRecoveries['sdk-recovery'],
+        generation: recovery.generation + 2,
+        providerRequestId: 'obsolete-provider-id',
+      }
+      saved.sessions['sdk-recovery'].sdkAcceptedReply = {
+        ...saved.sdkAcceptedReplies['sdk-recovery'],
+        optionId: 'allow-once',
+      }
+      await writeFile(filename, JSON.stringify(saved))
+      const reloaded = new SessionStore(directory)
+      await reloaded.initialize()
+      expect(reloaded.sdkRecovery('sdk-recovery')?.providerRequestId).toBe('canonical-provider-id')
+      expect(reloaded.sdkAcceptedReply('sdk-recovery')?.optionId).toBe('reject')
+      const canonical = JSON.parse(await readFile(filename, 'utf8'))
+      expect(JSON.stringify(canonical.sessions)).not.toContain('obsolete-provider-id')
+      expect(canonical.sessions['sdk-recovery']).not.toHaveProperty('sdkAcceptedReply')
+    })
+
+    it.each([
+      ['root', 'recovery'],
+      ['nested', 'recovery'],
+      ['root', 'reply'],
+      ['nested', 'reply'],
+    ] as const)(
+      'rejects invalid %s SDK %s metadata without rewriting state',
+      async (location, kind) => {
+        const { directory, reopened } = await interruptedSdkStore()
+        await reopened.close()
+        const filename = path.join(directory, 'state.json')
+        const saved = JSON.parse(await readFile(filename, 'utf8'))
+        const invalid = kind === 'recovery'
+          ? {
+              generation: -1,
+              state: 'waiting-permission',
+              detectedAt: '2026-10-24T00:01:00.000Z',
+              previousStatus: 'waiting',
+              providerRequestId: 'private-provider-id',
+            }
+          : {
+              generation: -1,
+              requestId: 'public-permission',
+              kind: 'permission',
+              optionId: 'allow-once',
+              acceptedAt: '2026-10-24T00:01:00.000Z',
+            }
+        const field = kind === 'recovery' ? 'sdkRestartRecovery' : 'sdkAcceptedReply'
+        const map = kind === 'recovery' ? 'sdkRestartRecoveries' : 'sdkAcceptedReplies'
+        if (location === 'root') {
+          saved[map] = { 'sdk-recovery': invalid }
+        } else {
+          saved.sessions['sdk-recovery'][field] = invalid
+        }
+        const original = JSON.stringify(saved)
+        await writeFile(filename, original)
+        const reloaded = new SessionStore(directory)
+        await expect(reloaded.initialize()).rejects.toThrow(
+          kind === 'recovery'
+            ? 'Invalid SDK restart recovery metadata'
+            : 'Invalid SDK accepted reply metadata',
+        )
+        expect(await readFile(filename, 'utf8')).toBe(original)
+        expect(reloaded.list()).toEqual([])
+      },
+    )
+
     it('cancels only the currently claimed SDK recovery generation', async () => {
       const { reopened } = await interruptedSdkStore()
       const first = await reopened.claimSdkRecovery('sdk-recovery')

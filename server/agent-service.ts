@@ -3525,25 +3525,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         : { kind: 'reject', feedback: 'Rejected from Agentic Remote' },
     })
     if (!delivery.success) {
-      const events = await sdkSession.getEvents()
       const pending = await permissionApi.pendingRequests()
-      const lastLifecycle = events.findLast(isForegroundLifecycleEvent)
-      const completed =
-        pending.items.length === 0 &&
-        (lastLifecycle?.type === 'assistant.turn_end' ||
-          lastLifecycle?.type === 'session.idle')
       const settled = await this.store.settleSdkRecovery(
         sessionId,
         generation,
-        completed
-          ? { state: 'ready' }
-          : {
-              state: 'interrupted',
-              message: 'The provider no longer reports this permission request, so the saved response could not be confirmed or resent.',
-            },
+        {
+          state: 'interrupted',
+          message: pending.items.some((item) => item.requestId === providerRequestId)
+            ? 'The provider did not confirm the saved permission response. Delivery is uncertain; it was not sent again.'
+            : 'The provider no longer reports this permission request. The saved response remains unconfirmed and was not sent again.',
+        },
       )
       if (settled) this.publish(settled)
-      if (completed) this.wakeSdkQueue(sessionId)
       if (settled) return this.publicSession(settled)
       throw Object.assign(
         new Error('The recovered permission changed while its provider state was reconciled.'),
@@ -7519,14 +7512,69 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     choice: SdkReplyChoice,
     resolve: () => void,
   ): Promise<SessionDetail> {
-    // A provider resolution cannot be rolled back with a refused state write.
-    this.acceptedSdkReplies.set(requestId, {
+    const accepted: AcceptedSdkReply = {
       sessionId,
       choice: structuredClone(choice),
       promptId: this.activePrompts.get(sessionId)?.assistantMessageId,
+    }
+    this.acceptedSdkReplies.set(requestId, accepted)
+    const persisted = choice.kind === 'permission'
+      ? { requestId, kind: choice.kind, optionId: choice.optionId } as const
+      : choice.kind === 'input'
+        ? {
+            requestId,
+            kind: 'user-input' as const,
+            input: {
+              answer: choice.response.answer,
+              wasFreeform: choice.response.wasFreeform,
+              action: choice.action,
+            },
+          }
+        : {
+            requestId,
+            kind: choice.kind,
+            input: {
+              answer: '',
+              wasFreeform: false,
+              action: choice.response.action,
+              values: choice.response.action === 'accept'
+                ? choice.response.content
+                : undefined,
+            },
+          }
+    let delivered = false
+    const completion = this.store.acceptLiveSdkReply(
+      sessionId,
+      persisted,
+      choice.kind === 'permission' ? 'pendingPermission' : 'pendingUserInput',
+    ).then(() => {
+      if (
+        this.stopped || this.deletingSessions.has(sessionId) ||
+        this.acceptedSdkReplies.get(requestId) !== accepted ||
+        !this.store.get(sessionId) ||
+        (choice.kind === 'permission'
+          ? !this.permissions.has(requestId)
+          : choice.kind === 'input'
+            ? !this.userInputs.has(requestId)
+            : !this.elicitations.has(requestId))
+      ) {
+        throw new Error('Session is no longer available')
+      }
+      if (choice.kind === 'permission') this.permissions.delete(requestId)
+      else if (choice.kind === 'input') this.userInputs.delete(requestId)
+      else this.elicitations.delete(requestId)
+      resolve()
+      delivered = true
+      accepted.completion = undefined
+      return this.settleSdkReply(sessionId, requestId, choice)
+    }).catch((error: unknown) => {
+      if (!delivered && this.acceptedSdkReplies.get(requestId) === accepted) {
+        this.acceptedSdkReplies.delete(requestId)
+      }
+      throw error
     })
-    resolve()
-    return this.settleSdkReply(sessionId, requestId, choice)
+    accepted.completion = completion
+    return completion
   }
 
   async replyPermission(
@@ -7585,7 +7633,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         optionId === 'allow-once'
           ? { kind: 'approve-once' }
           : { kind: 'reject', feedback: 'Rejected from Agentic Remote' }
-      this.permissions.delete(requestId)
       return this.acceptSdkReply(
         sessionId, requestId, { kind: 'permission', optionId },
         () => sdkPending.resolve(result),
@@ -8011,7 +8058,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         validateUserInputForm(request.form, input.values)
       }
-      this.elicitations.delete(requestId)
       return this.acceptSdkReply(
         sessionId, requestId, this.sdkInputChoice(input, 'elicitation'),
         () => sdkElicitation.resolve(action === 'accept'
@@ -8092,7 +8138,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (sdkPending.sessionId !== sessionId) {
         throw new Error('User input request belongs to another session')
       }
-      this.userInputs.delete(requestId)
       return this.acceptSdkReply(
         sessionId, requestId, this.sdkInputChoice(input, 'input'),
         () => sdkPending.resolve({ answer, wasFreeform: input.wasFreeform }),
@@ -8453,13 +8498,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.hydratedSessions.add(sessionId)
       const lastLifecycle = events.findLast(isForegroundLifecycleEvent)
       const acceptedReply = this.store.sdkAcceptedReply(sessionId)
-      if (acceptedReply && acceptedReply.kind !== 'permission') {
+      if (acceptedReply &&
+          (acceptedReply.kind !== 'permission' || !acceptedReply.providerRequestId)) {
         const interrupted = await this.store.settleSdkRecovery(
           sessionId,
           recovery.generation,
           {
             state: 'interrupted',
-            message: 'Your answer was saved before the restart, but the provider callback could not be restored. It was not sent again.',
+            message: `Your ${acceptedReply.kind === 'permission'
+              ? 'permission choice' : 'answer'} was saved before the restart, but delivery to the lost provider callback is uncertain. It was not sent again.`,
           },
         )
         if (interrupted) this.publish(interrupted)
@@ -8487,11 +8534,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const existingCardMatches =
             previousProviderRequestId === recoveredPermission.requestId
           if (acceptedReply?.kind === 'permission' && !acceptedMatches) {
-            await this.store.clearSdkReply(
+            const interrupted = await this.store.settleSdkRecovery(
               sessionId,
               recovery.generation,
-              acceptedReply.requestId,
+              {
+                state: 'interrupted',
+                message: 'The saved permission response no longer matches the pending provider request. Delivery is uncertain; it was not sent again.',
+              },
             )
+            if (interrupted) this.publish(interrupted)
+            return
           }
           const requestId =
             (acceptedMatches ? acceptedReply.requestId : undefined) ||
@@ -8527,7 +8579,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
           return
         }
+        if (acceptedReply?.kind === 'permission') {
+          const interrupted = await this.store.settleSdkRecovery(
+            sessionId,
+            recovery.generation,
+            {
+              state: 'interrupted',
+              message: 'The provider no longer reports the saved permission request. Delivery is uncertain; the response was not sent again.',
+            },
+          )
+          if (interrupted) this.publish(interrupted)
+          return
+        }
       } else if (
+        acceptedReply?.kind === 'permission' ||
         lastLifecycle?.type === 'permission.requested' ||
         this.store.get(sessionId)?.pendingPermission ||
         hasUnresolvedPermissionEvent(events)
@@ -8537,7 +8602,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           recovery.generation,
           {
             state: 'interrupted',
-            message: 'A provider permission was pending, but permission recovery is not available in this runtime. Queued work was not sent.',
+            message: acceptedReply?.kind === 'permission'
+              ? 'A permission response was saved, but provider recovery is unavailable. Delivery is uncertain; the response was not sent again.'
+              : 'A provider permission was pending, but permission recovery is not available in this runtime. Queued work was not sent.',
           },
         )
         if (interrupted) this.publish(interrupted)
@@ -9764,6 +9831,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return
     }
+    if (this.store.sdkAcceptedReply(sessionId)) return
     const permissionApi = session.rpc.permissions
     if (permissionApi) {
       const pending = await permissionApi.pendingRequests()
@@ -9771,6 +9839,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (!terminalObserved) {
       const events = await session.getEvents()
+      if (!this.isCurrentSdkOwner(sessionId, session, generation)) return
       const lastLifecycle = events.findLast(isForegroundLifecycleEvent)
       if (
         lastLifecycle?.type !== 'assistant.turn_end' &&

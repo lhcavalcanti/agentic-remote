@@ -557,7 +557,7 @@
     "server/settings-profile-store.ts": "a3f24526e1f2d3a30dbf4af191b02e3976276f50881a24a86db065350b601fe7",
     "server/side-question.test.ts": "bb7fe56de6bf5ed357ca35929523244836eecd39fa6abceffeeb1f5a36548ac8",
     "server/side-question.ts": "ff75273c172f073bc9cc7a7cd40d2697ad26041068714e543a84dfbcaa760b8e",
-    "server/startup-phases.test.ts": "1c3b5d3130173ec4781b483d24404004602051931ccdd5fc73c8e54ce2b71c5b",
+    "server/startup-phases.test.ts": "a17ce08d9f4902e10f4ea77506e63989a2af680eb4eb988fed6e499820667641",
     "server/startup-phases.ts": "c819e686ff91fed16463d5022f04685d659d9fd012d4631ff84d4d2b133e68ec",
     "server/submission-error-http.test.ts": "4e575bc36df1c861a90b30fced64147af534723abcc00f1985f36e1104e27162",
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
@@ -781,13 +781,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d2095f8c2147f516a596b1af71d4b3156c0d9415a142ee9705ecb84b772021d0",
+    "GRAPH_REPORT.md": "ec171b20f415494189755fb881354b502719b0bbf45c1daf741df54edbf1d8f4",
     "communities.json": "97c52c1c344a118732a40518a5f5d690ae56674127f8fc350073fa00e73de337",
-    "graph.html": "a927c24961b034df9757bc78948909f514682094684a3e666e36b226adddc00f",
-    "graph.json": "b4ac9829973e885303f130946f69a2d847250f6021cbc05cbf7d6ae87054d4d1"
+    "graph.html": "ce705819f585d61b751c0a4f330533207d66591762a7daab4d266a304822d356",
+    "graph.json": "4bc5e47310942ed6599ca5f8a01f5ef26c6e210b4aa280a123adbcb34c5a294a"
   },
   "schema_version": 1,
-  "source_commit": "85e182f81e13d3fcd7dc0bb0c80991257211ef96",
-  "source_fingerprint": "347c1dbfbf3847d7ddf36546f9c54cf47af12606acf7c1748fa19923153ff143",
+  "source_commit": "69264ab639a707faaf324d6adc66c67079000ada",
+  "source_fingerprint": "a27606db3b231f9ec6db3104f4944c22a7b533bc86c8d3a3ab0e24d77df5764c",
   "working_tree_changes": []
 }

@@ -67,6 +67,53 @@ it('does not count unconfirmed boot recovery candidates as live owners or archiv
   })
 })
 
+it('ignores events from a stale SDK owner generation even when the session object is reused', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.messages.push({
+      id: 'assistant',
+      role: 'assistant',
+      content: '',
+      createdAt: timestamp,
+      streaming: true,
+    })
+    session.status = 'running'
+  })
+  const listeners: Array<(event: SessionEvent) => void> = []
+  const owner = {
+    ...sdkSession('pending'),
+    on: (listener: (event: SessionEvent) => void) => {
+      listeners.push(listener)
+      return () => undefined
+    },
+  }
+  f.service['sessions'].set('pending', owner)
+  Reflect.set(f.service, 'sdkOwnerGenerations', new Map([['pending', 1]]))
+  f.service['activePrompts'].set('pending', { assistantMessageId: 'assistant' })
+  f.service['attachSession'](owner, 'pending', 1)
+  const staleListener = listeners[0]!
+
+  Reflect.get(f.service, 'sdkOwnerGenerations').set('pending', 2)
+  f.service['attachSession'](owner, 'pending', 2)
+  staleListener({
+    type: 'assistant.message_delta',
+    id: 'stale-delta',
+    parentId: null,
+    timestamp,
+    data: { messageId: 'assistant', deltaContent: 'stale' },
+  } as SessionEvent)
+  expect(f.store.get('pending')?.messages.at(-1)?.content).toBe('')
+
+  listeners[1]!({
+    type: 'assistant.message_delta',
+    id: 'current-delta',
+    parentId: null,
+    timestamp,
+    data: { messageId: 'assistant', deltaContent: 'current' },
+  } as SessionEvent)
+  expect(f.store.get('pending')?.messages.at(-1)?.content).toBe('current')
+})
+
 function prompt(id: string) {
   return { id, content: id, createdAt: timestamp }
 }

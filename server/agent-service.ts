@@ -1784,6 +1784,7 @@ function permissionTitle(request: PermissionRequest): string {
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly client: CopilotClientLike
   private readonly sessions = new Map<string, CopilotSessionLike>()
+  private readonly sdkOwnerGenerations = new Map<string, number>()
   private readonly queuedDispatches: QueuedDispatches
   private readonly queuedPromptStops = new Map<string, () => void>()
   private readonly queuedPromptRuns = new Map<string, Promise<void>>()
@@ -1943,7 +1944,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!isMissingSessionError(error)) throw error
       await this.client.retireMissingSession?.(id)
     }
-    this.sessions.delete(id)
+    this.removeSdkOwner(id)
     this.hydratedSessions.delete(id)
     this.loadingSessions.delete(id)
     this.hydratingSessions.delete(id)
@@ -2700,7 +2701,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const session = this.sessions.get(sessionId)
         if (!session) return
         await session.disconnect()
-        this.sessions.delete(sessionId)
+        this.removeSdkOwner(sessionId, session)
       }),
     )
     await this.admissions.wait()
@@ -3178,9 +3179,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let committed = false
     try {
       if (this.stopped) throw new Error('The session service is stopping')
-      this.sessions.set(sdkSession.sessionId, sdkSession)
+      this.installSdkOwner(sdkSession)
       this.hydratedSessions.add(sdkSession.sessionId)
-      this.attachSession(sdkSession)
       // The SDK has no initial mode, so it is set before the session is kept;
       // a refusal discards the new session like any other creation failure.
       if (mode) await sdkSession.rpc.mode.set({ mode })
@@ -3622,7 +3622,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const active = this.sessions.get(id)
       if (active) {
         await active.disconnect()
-        this.sessions.delete(id)
+        this.removeSdkOwner(id, active)
       }
       this.activePrompts.delete(id)
       this.hydratedSessions.delete(id)
@@ -3876,7 +3876,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const active = this.sessions.get(id)
       if (active) {
         await active.disconnect()
-        this.sessions.delete(id)
+        this.removeSdkOwner(id, active)
       }
       this.activePrompts.delete(id)
       const previousTasks = this.backgroundTaskTracker.get(id)
@@ -3890,7 +3890,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } catch (error) {
         if (this.sessions.get(id) === attached) {
           await attached.disconnect()
-          this.sessions.delete(id)
+          this.removeSdkOwner(id, attached)
         }
         throw error
       }
@@ -3966,7 +3966,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const active = this.sessions.get(id)
     if (active) {
       await active.disconnect()
-      this.sessions.delete(id)
+      this.removeSdkOwner(id, active)
     }
     this.hydratedSessions.delete(id)
     this.backgroundTaskTracker.remove(id)
@@ -4230,9 +4230,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.publishError(replacementId, error)
         }
         if (fresh) {
-          this.sessions.set(replacementId, fresh)
+          this.installSdkOwner(fresh, replacementId)
           this.hydratedSessions.add(replacementId)
-          this.attachSession(fresh, replacementId)
         }
         if (fresh && runtime) {
           await fresh.rpc.model
@@ -7039,7 +7038,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         if (terminalBacked) {
           await active.disconnect()
-          this.sessions.delete(sessionId)
+          this.removeSdkOwner(sessionId, active)
         }
       }
       for (const [requestId, permission] of this.permissions) {
@@ -8052,12 +8051,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     await active.disconnect()
     if (this.sessions.get(sessionId) === active) {
-      this.sessions.delete(sessionId)
+      this.removeSdkOwner(sessionId, active)
       this.hydratedSessions.delete(sessionId)
     }
   }
 
-  private async attachSdkSession(sessionId: string): Promise<CopilotSessionLike> {
+  private async attachSdkSession(
+    sessionId: string,
+    ownerGeneration = 0,
+  ): Promise<CopilotSessionLike> {
     this.assertTerminalQueueSettled(sessionId)
     const stored = this.store.get(sessionId)
     if (!stored) {
@@ -8113,8 +8115,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await sdkSession.disconnect()
       } catch (error) {
         if (!this.sessions.has(sessionId)) {
-          this.sessions.set(sessionId, sdkSession)
-          this.attachSession(sdkSession, sessionId)
+          this.installSdkOwner(sdkSession, sessionId, ownerGeneration)
         }
         throw Object.assign(
           new Error(
@@ -8131,8 +8132,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await sdkSession.disconnect()
       return current
     }
-    this.sessions.set(sessionId, sdkSession)
-    this.attachSession(sdkSession, sessionId)
+    this.installSdkOwner(sdkSession, sessionId, ownerGeneration)
     return sdkSession
   }
 
@@ -9293,10 +9293,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private attachSession(
     session: CopilotSessionLike,
     sessionId = session.sessionId,
+    ownerGeneration = this.sdkOwnerGenerations.get(sessionId) ?? 0,
   ): void {
     session.on((event) => {
       if (
-        this.sessions.get(sessionId) !== session ||
+        !this.isCurrentSdkOwner(sessionId, session, ownerGeneration) ||
         (this.deletedSessionIds.has(sessionId) &&
           !this.pendingSessionMetadata.has(sessionId))
       ) {
@@ -9304,6 +9305,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.handleSessionEvent(sessionId, event)
     })
+  }
+
+  private installSdkOwner(
+    session: CopilotSessionLike,
+    sessionId = session.sessionId,
+    generation = 0,
+  ): void {
+    this.sessions.set(sessionId, session)
+    this.sdkOwnerGenerations.set(sessionId, generation)
+    this.attachSession(session, sessionId, generation)
+  }
+
+  private removeSdkOwner(
+    sessionId: string,
+    expected?: CopilotSessionLike,
+  ): boolean {
+    if (expected && this.sessions.get(sessionId) !== expected) return false
+    const removed = this.sessions.delete(sessionId)
+    if (removed) this.sdkOwnerGenerations.delete(sessionId)
+    return removed
+  }
+
+  private isCurrentSdkOwner(
+    sessionId: string,
+    session: CopilotSessionLike,
+    generation: number,
+  ): boolean {
+    return this.sessions.get(sessionId) === session &&
+      this.sdkOwnerGenerations.get(sessionId) === generation
   }
 
   private flushSessionMetadata(sessionId: string): void {

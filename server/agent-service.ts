@@ -29,7 +29,6 @@ import {
   createCopilotSdkClient,
   readCopilotSdkRuntimeDiagnostic,
   type CopilotSdkMissingSessionRetirement,
-  type CopilotSdkPluginSkillDiscovery,
 } from './copilot-sdk-client.js'
 import type {
   AgentProvider,
@@ -317,7 +316,6 @@ export interface CopilotClientLike extends CopilotResourceClient {
   getStatus?: CopilotClient['getStatus']
   getAuthStatus?: CopilotClient['getAuthStatus']
   retireMissingSession?: CopilotSdkMissingSessionRetirement['retireMissingSession']
-  pluginSkillDirectories?: CopilotSdkPluginSkillDiscovery['pluginSkillDirectories']
   createSession(config: SessionConfig): Promise<CopilotSessionLike>
   resumeSession(
     sessionId: string,
@@ -3153,18 +3151,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : this.createSdkSession(cwd, allowAllPermissions, runtime, mode)))
   }
 
-  private async sdkSessionDiscovery(
-    pluginSkills = true,
-  ): Promise<Partial<SessionConfig>> {
-    if (!pluginSkills || !this.client.pluginSkillDirectories) {
-      return COPILOT_SDK_SESSION_DISCOVERY
-    }
-    return {
-      ...COPILOT_SDK_SESSION_DISCOVERY,
-      skillDirectories: await this.client.pluginSkillDirectories(),
-    }
-  }
-
   private async createSdkSession(
     cwd: string,
     allowAllPermissions: boolean,
@@ -3172,7 +3158,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     mode?: AgentMode,
   ): Promise<SessionDetail> {
     const sdkSession = await this.client.createSession({
-      ...await this.sdkSessionDiscovery(),
+      ...COPILOT_SDK_SESSION_DISCOVERY,
       workingDirectory: cwd,
       streaming: true,
       ...runtime,
@@ -4226,7 +4212,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         original = this.sessions.get(id)
         try {
           fresh = await this.client.createSession({
-            ...await this.sdkSessionDiscovery(),
+            ...COPILOT_SDK_SESSION_DISCOVERY,
             sessionId: replacementId,
             workingDirectory: stored.cwd,
             streaming: true,
@@ -6188,7 +6174,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return cached.commands
       }
       const temporarySession = await this.client.createSession({
-        ...await this.sdkSessionDiscovery(false),
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         workingDirectory: stored.cwd,
         streaming: false,
         infiniteSessions: { enabled: false },
@@ -8131,7 +8117,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let sdkSession: CopilotSessionLike
     try {
       sdkSession = await this.client.resumeSession(sessionId, {
-        ...await this.sdkSessionDiscovery(),
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         workingDirectory: stored.cwd,
         streaming: true,
         onPermissionRequest: stored.runtime?.allowAllPermissions
@@ -8148,7 +8134,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw error
       }
       sdkSession = await this.client.createSession({
-        ...await this.sdkSessionDiscovery(),
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         sessionId,
         workingDirectory: stored.cwd,
         streaming: true,

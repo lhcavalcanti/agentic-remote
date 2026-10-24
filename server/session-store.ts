@@ -1208,6 +1208,9 @@ export class SessionStore {
         detectedAt: previous?.detectedAt ?? interruption.detectedAt,
         previousStatus: previous?.previousStatus ?? interruption.previousStatus,
       }
+      if (session.sdkAcceptedReply) {
+        session.sdkAcceptedReply.generation = session.sdkRestartRecovery.generation
+      }
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session
       const recovery = structuredClone(session.sdkRestartRecovery)
@@ -1254,6 +1257,13 @@ export class SessionStore {
           (outcome.state === 'recovering'
             ? 'Recovering the saved provider conversation.'
             : 'Provider continuity could not be restored.')
+        if (
+          outcome.state === 'interrupted' &&
+          session.sdkAcceptedReply &&
+          session.sdkAcceptedReply.kind !== 'permission'
+        ) {
+          session.pendingUserInput = undefined
+        }
       }
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session
@@ -2743,6 +2753,9 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session[kind] = undefined
+      if (session.sdkAcceptedReply?.requestId === requestId) {
+        session.sdkAcceptedReply = undefined
+      }
       if (continuation) {
         const next = typeof continuation === 'function' ? continuation(session) : continuation
         session.status = session.pendingPermission || session.pendingUserInput

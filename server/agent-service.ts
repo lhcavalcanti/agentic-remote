@@ -8368,6 +8368,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.hydratedSessions.add(sessionId)
       const lastLifecycle = events.findLast(isForegroundLifecycleEvent)
+      const acceptedReply = this.store.sdkAcceptedReply(sessionId)
+      if (acceptedReply && acceptedReply.kind !== 'permission') {
+        const interrupted = await this.store.settleSdkRecovery(
+          sessionId,
+          recovery.generation,
+          {
+            state: 'interrupted',
+            message: 'Your answer was saved before the restart, but the provider callback could not be restored. It was not sent again.',
+          },
+        )
+        if (interrupted) this.publish(interrupted)
+        return
+      }
       const permissionApi = sdkSession.rpc.permissions
       if (permissionApi) {
         const pending = await permissionApi.pendingRequests()
@@ -8386,6 +8399,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const recoveredPermission = pending.items[0]
         if (recoveredPermission) {
           const requestId =
+            acceptedReply?.requestId ||
             this.store.get(sessionId)?.pendingPermission?.requestId ||
             randomUUID()
           const request = recordValue(recoveredPermission.request)
@@ -8405,6 +8419,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             },
           )
           if (bound) this.publish(bound)
+          if (bound && acceptedReply?.kind === 'permission' && acceptedReply.optionId) {
+            await this.replyRecoveredSdkPermission(
+              sessionId,
+              requestId,
+              acceptedReply.optionId,
+              recovery.generation,
+              recoveredPermission.requestId,
+            )
+          }
           return
         }
       } else if (lastLifecycle?.type === 'permission.requested') {

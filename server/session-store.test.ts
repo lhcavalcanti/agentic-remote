@@ -145,14 +145,17 @@ describe('SessionStore', () => {
         input: { answer: 'second', answers: ['second'], wasFreeform: false },
       })
       expect(reloaded.get('sdk-recovery')).not.toHaveProperty('sdkAcceptedReply')
+      const reclaimed = await reloaded.claimSdkRecovery('sdk-recovery')
+      expect(reloaded.sdkAcceptedReply('sdk-recovery')?.generation)
+        .toBe(reclaimed.generation)
       expect(await reloaded.clearSdkReply(
         'sdk-recovery',
-        recovery.generation + 1,
+        recovery.generation,
         'question',
       )).toBeUndefined()
       expect(await reloaded.clearSdkReply(
         'sdk-recovery',
-        recovery.generation,
+        reclaimed.generation,
         'question',
       )).toBeDefined()
       expect(reloaded.sdkAcceptedReply('sdk-recovery')).toBeUndefined()

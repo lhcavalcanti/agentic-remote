@@ -1342,6 +1342,40 @@ export class SessionStore {
     })
   }
 
+  async cancelSdkRecovery(
+    sessionId: string,
+    generation: number,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing.sdkRestartRecovery?.generation !== generation) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      session.sdkRestartRecovery = {
+        ...session.sdkRestartRecovery!,
+        state: 'interrupted',
+        providerRequestId: undefined,
+        message: 'The recovered provider turn was cancelled. Queued work was not sent.',
+      }
+      session.sdkAcceptedReply = undefined
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.status = 'error'
+      session.activity = undefined
+      session.interruption = {
+        detectedAt: session.sdkRestartRecovery.detectedAt,
+        previousStatus: session.sdkRestartRecovery.previousStatus,
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
   async setSuspended(
     sessionId: string,
     suspended: boolean,

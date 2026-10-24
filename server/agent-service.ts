@@ -7038,9 +7038,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     const session = this.sessions.get(sessionId)
-    if (!session || !this.activePrompts.has(sessionId)) {
+    if (!session) {
       return
     }
+    const recovery = this.store.sdkRecovery(sessionId)
+    if (recovery) {
+      if (!this.isCurrentSdkOwner(sessionId, session, recovery.generation)) return
+      await session.abort()
+      if (!this.isCurrentSdkOwner(sessionId, session, recovery.generation)) return
+      const cancelled = await this.store.cancelSdkRecovery(
+        sessionId,
+        recovery.generation,
+      )
+      if (cancelled) this.publish(cancelled)
+      return
+    }
+    if (!this.activePrompts.has(sessionId)) return
     // Marked before the abort, so an idle that arrives straight after it
     // cannot reach the tracker while it is still waiting for output. A
     // follow-up still being handed over has no tracker yet, so the stop is

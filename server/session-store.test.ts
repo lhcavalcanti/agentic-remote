@@ -157,6 +157,30 @@ describe('SessionStore', () => {
       )).toBeDefined()
       expect(reloaded.sdkAcceptedReply('sdk-recovery')).toBeUndefined()
     })
+
+    it('cancels only the currently claimed SDK recovery generation', async () => {
+      const { reopened } = await interruptedSdkStore()
+      const first = await reopened.claimSdkRecovery('sdk-recovery')
+      const second = await reopened.claimSdkRecovery('sdk-recovery')
+
+      expect(await reopened.cancelSdkRecovery(
+        'sdk-recovery',
+        first.generation,
+      )).toBeUndefined()
+
+      const cancelled = await reopened.cancelSdkRecovery(
+        'sdk-recovery',
+        second.generation,
+      )
+      expect(cancelled).toMatchObject({
+        status: 'error',
+        pendingUserInput: undefined,
+        restartRecovery: {
+          state: 'interrupted',
+          message: expect.stringMatching(/cancelled/i),
+        },
+      })
+    })
   })
 
   it('keeps archived recovery history across transcript replacement and reload', async () => {

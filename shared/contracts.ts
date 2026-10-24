@@ -162,6 +162,12 @@ export interface SessionRecoveryInfo {
   reason: SessionRecoveryReason
 }
 
+export interface SessionRestartRecovery {
+  state: 'recovering' | 'waiting-permission' | 'interrupted' | 'failed'
+  detectedAt: string
+  message?: string
+}
+
 export interface QueuedPrompt {
   id: string
   content: string
@@ -373,6 +379,8 @@ export interface SessionSummary {
    */
   replacedSessionIds?: string[]
   recovery?: SessionRecoveryInfo
+  /** Recovery of the durable part of an SDK session after its runtime stopped. */
+  restartRecovery?: SessionRestartRecovery
   /** A recovery brief that still owns the session and must settle first. */
   recoverySeedState?: 'pending' | 'dispatching' | 'failed'
   /**

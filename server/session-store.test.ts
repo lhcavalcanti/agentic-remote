@@ -27,6 +27,138 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  describe('SDK restart recovery', () => {
+    async function interruptedSdkStore() {
+      const { directory, store } = await createStore()
+      await store.create({
+        id: 'sdk-recovery',
+        cwd: '/tmp/project',
+        title: 'SDK recovery',
+        updatedAt: '2026-10-24T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [{
+          id: 'history',
+          role: 'user',
+          content: 'Keep this turn',
+          createdAt: '2026-10-24T00:00:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued',
+          content: 'Send after recovery',
+          createdAt: '2026-10-24T00:00:01.000Z',
+        }],
+        pendingUserInput: {
+          requestId: 'question',
+          question: 'Which option?',
+          choices: ['first', 'second'],
+          allowFreeform: false,
+        },
+      }, { backend: 'sdk', managedOpen: true })
+      await store.update('sdk-recovery', (session) => {
+        session.status = 'waiting'
+        session.activity = 'Which option?'
+      })
+      await store.close()
+      const reopened = new SessionStore(
+        directory,
+        () => Date.parse('2026-10-24T00:01:00.000Z'),
+      )
+      await reopened.initialize()
+      return { directory, reopened }
+    }
+
+    it('persists a restart boundary and monotonically reclaims abandoned recovery', async () => {
+      const { directory, reopened } = await interruptedSdkStore()
+
+      expect(reopened.get('sdk-recovery')).toMatchObject({
+        status: 'error',
+        interruption: {
+          detectedAt: '2026-10-24T00:01:00.000Z',
+          previousStatus: 'waiting',
+        },
+        restartRecovery: {
+          state: 'interrupted',
+          detectedAt: '2026-10-24T00:01:00.000Z',
+        },
+        pendingUserInput: { requestId: 'question', stale: true },
+        queuedPrompts: [{ id: 'queued', content: 'Send after recovery' }],
+      })
+
+      const first = await reopened.claimSdkRecovery('sdk-recovery')
+      expect(first).toMatchObject({ generation: 1, state: 'recovering' })
+      expect(reopened.get('sdk-recovery')?.restartRecovery?.state).toBe('recovering')
+      await reopened.close()
+
+      const reclaimed = new SessionStore(
+        directory,
+        () => Date.parse('2026-10-24T00:02:00.000Z'),
+      )
+      await reclaimed.initialize()
+      const second = await reclaimed.claimSdkRecovery('sdk-recovery')
+      expect(second).toMatchObject({ generation: 2, state: 'recovering' })
+    })
+
+    it('rejects stale generation settlement without changing the current owner', async () => {
+      const { reopened } = await interruptedSdkStore()
+      const first = await reopened.claimSdkRecovery('sdk-recovery')
+      await reopened.settleSdkRecovery('sdk-recovery', first.generation, {
+        state: 'interrupted',
+        message: 'The model stream could not be restored.',
+      })
+      const second = await reopened.claimSdkRecovery('sdk-recovery')
+
+      const stale = await reopened.settleSdkRecovery(
+        'sdk-recovery',
+        first.generation,
+        { state: 'ready' },
+      )
+
+      expect(stale).toBeUndefined()
+      expect(reopened.sdkRecovery('sdk-recovery')).toMatchObject({
+        generation: second.generation,
+        state: 'recovering',
+      })
+      expect(reopened.get('sdk-recovery')?.interruption).toBeDefined()
+    })
+
+    it('retains an accepted SDK answer until its exact generation settles', async () => {
+      const { directory, reopened } = await interruptedSdkStore()
+      const recovery = await reopened.claimSdkRecovery('sdk-recovery')
+      await reopened.acceptSdkReply('sdk-recovery', recovery.generation, {
+        requestId: 'question',
+        kind: 'user-input',
+        input: {
+          answer: 'second',
+          answers: ['second'],
+          wasFreeform: false,
+        },
+      })
+      await reopened.close()
+
+      const reloaded = new SessionStore(directory)
+      await reloaded.initialize()
+      expect(reloaded.sdkAcceptedReply('sdk-recovery')).toMatchObject({
+        generation: recovery.generation,
+        requestId: 'question',
+        kind: 'user-input',
+        input: { answer: 'second', answers: ['second'], wasFreeform: false },
+      })
+      expect(reloaded.get('sdk-recovery')).not.toHaveProperty('sdkAcceptedReply')
+      expect(await reloaded.clearSdkReply(
+        'sdk-recovery',
+        recovery.generation + 1,
+        'question',
+      )).toBeUndefined()
+      expect(await reloaded.clearSdkReply(
+        'sdk-recovery',
+        recovery.generation,
+        'question',
+      )).toBeDefined()
+      expect(reloaded.sdkAcceptedReply('sdk-recovery')).toBeUndefined()
+    })
+  })
+
   it('keeps archived recovery history across transcript replacement and reload', async () => {
     const { directory, store } = await createStore()
     await store.create({

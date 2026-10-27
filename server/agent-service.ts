@@ -7547,6 +7547,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sessionId,
       persisted,
       choice.kind === 'permission' ? 'pendingPermission' : 'pendingUserInput',
+      (currentRequestId) => choice.kind === 'permission'
+        ? this.permissions.has(currentRequestId)
+        : this.userInputs.has(currentRequestId) || this.elicitations.has(currentRequestId),
     ).then(() => {
       if (
         this.stopped || this.deletingSessions.has(sessionId) ||

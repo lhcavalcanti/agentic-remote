@@ -414,7 +414,7 @@
     "server/agent-service-recovery.test.ts": "bf1c78aa1fe34b43e6eaef9d207a9b514e8c63df56d2e42a6103d8d1d3187887",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "232e417be303fbdd98aa0c3bed709b51b58031dbff2a3414feb3b2889f7fd8ba",
-    "server/agent-service.ts": "4bffbf14f1f37cc3d998d65ed2a71fad7f012155c258246f851484d3687542be",
+    "server/agent-service.ts": "ed7938638faaab15d3e1b886ee053cd80e960fcf642bbc28345df82ff7cdd431",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -550,7 +550,7 @@
     "server/session-store-providers.test.ts": "f5c3153fcd1928b9c51d44c9fb97386d1ec41ccdc3fc093de38cdfaef5713a35",
     "server/session-store-serialization.test.ts": "71282d420e93f3c58082becfd38e0f5b7698f303412db76eb9c65a2b5853016c",
     "server/session-store.test.ts": "60525b863c4ed9b3ace379580a1d23e71dc418c01a0321efb312eee8fb2e2732",
-    "server/session-store.ts": "e5898244060f391a5f4fd2f658c8be5650eb7be3396cb8d18bbea736e354de58",
+    "server/session-store.ts": "13bfe47ce4dbd81f716718fa02001494d5e6d2fe9f0f455e2e99759a1e3beeb3",
     "server/settings-profile-routes.test.ts": "8418e3a4c4b86a7d596bd2e24ada31d04027d74f30d38aeee5b25d4e58bae812",
     "server/settings-profile-routes.ts": "ba8a58b447078a89855dab2b69c10b06d5458b00799ec16eb072c85430356543",
     "server/settings-profile-store.test.ts": "8474b0ae54bec25b62e7ff3ad639e0278aee0c973b25b52caba220066a046808",
@@ -781,13 +781,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5c7bbc8fca387449164ebf61f06a3cb31d6eaf967a800d39971a71a6ad4120be",
+    "GRAPH_REPORT.md": "5c749868d2a6cac7b1029c90413f5fc197e6dc9db50985501a71c7bc631dd427",
     "communities.json": "3e4bcc7fe5982ffd9c48de9d694b26c64e8c0e105d3d2bddb8ba239e24bf38e5",
-    "graph.html": "95a49a545a0bb751bac171afa8fa54e68e4f4c2e0d5868e6fa04ac55ae2b8c2e",
-    "graph.json": "7f52921234d572ded5294a957f1ee78874b3d8753ce943defb84704891ac40b0"
+    "graph.html": "0cbb78efc9be22032fe4088e7537cbed8066e7550a667e5111a89536f0258e28",
+    "graph.json": "fde7cdc03c63a12274c873469577dfd02ed5b53763ef81e6b9d68bd7ef337721"
   },
   "schema_version": 1,
-  "source_commit": "65075f12478e6524ec2a8094255c3c6ba2e79981",
-  "source_fingerprint": "ff56fc7694d83a2dc5a9a7a7992480212c4f17c1a89f8183b3818cdce4afbdb4",
-  "working_tree_changes": []
+  "source_commit": "0c4fcfc5947978a5e049ecc2b77ada55d157ff70",
+  "source_fingerprint": "53517693d5a3f10469c5a2f9d2563bf4dba65e07e0057de2f06d2bd718da769a",
+  "working_tree_changes": [
+    "server/agent-service.ts",
+    "server/session-store.ts"
+  ]
 }

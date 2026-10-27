@@ -1407,13 +1407,19 @@ export class SessionStore {
     sessionId: string,
     reply: SdkAcceptedReplyInput,
     kind: 'pendingPermission' | 'pendingUserInput',
+    providerOwnsRequest: (requestId: string) => boolean,
   ): Promise<SessionDetail> {
     return this.change((state) => {
       const existing = state.sessions[sessionId]
       if (!existing || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
       }
-      if (existing[kind]?.requestId !== reply.requestId) {
+      const currentRequestId = existing[kind]?.requestId
+      if (
+        currentRequestId !== reply.requestId &&
+        currentRequestId &&
+        providerOwnsRequest(currentRequestId)
+      ) {
         throw new Error('Provider request is no longer pending')
       }
       if (existing.sdkAcceptedReply) {

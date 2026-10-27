@@ -7638,6 +7638,27 @@ describe('App', () => {
       expect(sendMessage).toHaveBeenCalledOnce()
     })
 
+    it('uses the transcript stack spacing before any message has been logged', async () => {
+      const emptyRunning = { ...running, messages: [] }
+      vi.mocked(listSessions).mockResolvedValue([emptyRunning])
+      vi.mocked(getSession).mockResolvedValue(emptyRunning)
+      vi.mocked(sendMessage).mockResolvedValue(emptyRunning)
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+      const bubble = await screen.findByRole('article', {
+        name: 'Your message, pending in the terminal',
+      })
+      expect(bubble.parentElement).toHaveClass('message-stack')
+      expect(
+        screen.queryByRole('heading', { name: 'What should we work on?' }),
+      ).not.toBeInTheDocument()
+    })
+
     it('is shown for an accepted steer while the same words already wait in the queue', async () => {
       const waiting = { id: 'q0', content: steer, createdAt: new Date().toISOString() }
       const queued = { ...running, queuedPrompts: [waiting] }

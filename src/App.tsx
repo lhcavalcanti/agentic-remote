@@ -4842,11 +4842,13 @@ const RENDERED_HISTORY = 250
 
 const ConversationMessages = memo(function ConversationMessages({
   messages: allMessages,
+  pendingEchoes,
   currentToolId,
   showAll,
   onShowAll,
 }: {
   messages: ChatMessage[]
+  pendingEchoes: PendingEcho[]
   currentToolId?: string
   // Held by the conversation rather than here. A snapshot refresh installs
   // session summaries, which carry no messages on purpose, so this component
@@ -4982,6 +4984,11 @@ const ConversationMessages = memo(function ConversationMessages({
     }
     rendered.push(
       <TranscriptMessage key={message.id} message={message} />,
+    )
+  }
+  for (const echo of pendingEchoes) {
+    rendered.push(
+      <PendingEchoMessage content={echo.content} key={echo.id} />,
     )
   }
   return <div className="message-stack">{rendered}</div>
@@ -15378,7 +15385,9 @@ function App() {
               onCreate={openNewSession}
               onKnowledge={() => setKnowledgeMode('docked')}
             />
-          ) : loadingTranscript && selected.messages.length === 0 ? (
+          ) : loadingTranscript &&
+          selected.messages.length === 0 &&
+          selectedPendingEchoes.length === 0 ? (
             <div className="empty-chat">
               <span className="typing-indicator" aria-label="Loading conversation">
                 <i />
@@ -15386,7 +15395,7 @@ function App() {
                 <i />
               </span>
             </div>
-          ) : selected.messages.length === 0 ? (
+          ) : selected.messages.length === 0 && selectedPendingEchoes.length === 0 ? (
             <div className="empty-chat">
               <span className="empty-chat__icon">
                 <Bot size={24} />
@@ -15409,11 +15418,9 @@ function App() {
               // carrying an expanded transcript across.
               key={sessionKey(selected)}
               messages={selected.messages}
+              pendingEchoes={selectedPendingEchoes}
             />
           )}
-          {selectedPendingEchoes.map((echo) => (
-            <PendingEchoMessage content={echo.content} key={echo.id} />
-          ))}
           {selectedHasStaleInteraction && selectedShowsRecovery ? (
             <StaleInteractionRecoveryCard
               disabled={!selectedCanRecover || recovering}

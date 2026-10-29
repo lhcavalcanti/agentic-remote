@@ -39,7 +39,9 @@ type SessionActions = {
   managedSessions?: ReadonlySet<string>
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
+  onCloseSession: (session: ManagedSession) => void
   onToggleSessionSuspended: (session: ManagedSession) => void
+  deleting: boolean
   suspending: boolean
 }
 
@@ -122,7 +124,9 @@ function SortableSessionItem({
   sorting,
   onSelectSession,
   onOpenSessionTasks,
+  onCloseSession,
   onToggleSessionSuspended,
+  deleting,
   suspending,
   managedSessions,
 }: SessionActions & {
@@ -148,6 +152,7 @@ function SortableSessionItem({
   const presentation = sessionPresentation(session, backgroundTasks, online)
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
+  const closeUnavailable = !online || deleting
   const suspendUnavailable =
     !online || suspending || (!session.suspended && (
       session.status !== 'idle' || Boolean(session.pendingUserInput || session.pendingPermission)
@@ -242,29 +247,47 @@ function SortableSessionItem({
           </button>
         ) : null}
       </div>
-      <button
-        aria-label={
-          session.suspended ? `Resume ${session.title}` : `Suspend ${session.title}`
-        }
-        aria-pressed={session.suspended ? true : undefined}
-        className={`session-item__suspend${
-          session.suspended ? ' session-item__suspend--active' : ''
-        }`}
-        disabled={suspendUnavailable}
-        onClick={() => onToggleSessionSuspended(session)}
-        title={
-          !online
-            ? `Reconnect ${computerName} to manage this session`
-            : session.suspended
-            ? 'Start this session up again'
-            : suspendUnavailable
-              ? 'Wait for the session to finish before suspending it'
-              : 'Keep this session but stop what is running for it'
-        }
-        type="button"
-      >
-        {session.suspended ? <Play size={13} /> : <Pause size={13} />}
-      </button>
+      <div className="session-item__controls">
+        <button
+          aria-label={`Close ${session.title}`}
+          className="session-item__close"
+          disabled={closeUnavailable}
+          onClick={() => onCloseSession(session)}
+          title={
+            !online
+              ? `Reconnect ${computerName} to manage this session`
+              : deleting
+                ? 'Wait for the session to finish closing'
+                : 'Permanently delete this session and its history'
+          }
+          type="button"
+        >
+          <X aria-hidden="true" size={13} />
+        </button>
+        <button
+          aria-label={
+            session.suspended ? `Resume ${session.title}` : `Suspend ${session.title}`
+          }
+          aria-pressed={session.suspended ? true : undefined}
+          className={`session-item__suspend${
+            session.suspended ? ' session-item__suspend--active' : ''
+          }`}
+          disabled={suspendUnavailable}
+          onClick={() => onToggleSessionSuspended(session)}
+          title={
+            !online
+              ? `Reconnect ${computerName} to manage this session`
+              : session.suspended
+              ? 'Start this session up again'
+              : suspendUnavailable
+                ? 'Wait for the session to finish before suspending it'
+                : 'Keep this session but stop what is running for it'
+          }
+          type="button"
+        >
+          {session.suspended ? <Play aria-hidden="true" size={13} /> : <Pause aria-hidden="true" size={13} />}
+        </button>
+      </div>
     </div>
   )
 }

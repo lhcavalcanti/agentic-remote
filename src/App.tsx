@@ -6950,6 +6950,7 @@ function App() {
   )
   const [oracleFocusRequest, setOracleFocusRequest] = useState(0)
   const [desktopLayout, setDesktopLayout] = useState(() => window.innerWidth > 960)
+  const previousDesktopLayout = useRef(desktopLayout)
   // The open Oracle panel's width; the timeline dock moves beside it.
   const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
@@ -6969,6 +6970,18 @@ function App() {
     window.addEventListener('resize', measureDesktop)
     return () => window.removeEventListener('resize', measureDesktop)
   }, [])
+  useEffect(() => {
+    const wasDesktop = previousDesktopLayout.current
+    previousDesktopLayout.current = desktopLayout
+    if (
+      wasDesktop &&
+      !desktopLayout &&
+      oracleOpen &&
+      oraclePlacement === 'docked'
+    ) {
+      setOracleFocusRequest((request) => request + 1)
+    }
+  }, [desktopLayout, oracleOpen, oraclePlacement])
   const changeManagedSessions = useCallback((keys: string[]) => {
     setManagedSessionKeys(new Set(keys))
   }, [])
@@ -8900,7 +8913,9 @@ function App() {
         }
         event.preventDefault()
         if (oracleOpen && oraclePlacement === 'docked' && desktopLayout) {
-          if (oracleComposer) focusActiveSessionComposer()
+          if (oracleComposer) {
+            if (!focusActiveSessionComposer()) setOracleOpen(false)
+          }
           else if (fromSessionComposer) oracleControlRef.current?.focusComposer()
           else {
             setOracleOpen(false)
@@ -11476,7 +11491,14 @@ function App() {
     }
 
     const textarea = composerRef.current
-    if (!textarea || textarea.disabled || textarea.readOnly) return false
+    if (
+      !textarea ||
+      textarea.disabled ||
+      textarea.readOnly ||
+      textarea.closest('[hidden], [inert]')
+    ) {
+      return false
+    }
     window.requestAnimationFrame(() => {
       const latest = selectedRef.current
       if (
@@ -11488,6 +11510,7 @@ function App() {
         !textarea.isConnected ||
         textarea.disabled ||
         textarea.readOnly ||
+        textarea.closest('[hidden], [inert]') ||
         document.querySelector('.dialog[aria-modal="true"]')
       ) {
         return
@@ -11506,7 +11529,12 @@ function App() {
 
   function focusActiveSessionComposer(): boolean {
     const current = selectedRef.current
-    if (!current || current.pendingPermission || current.pendingUserInput) {
+    if (
+      !current ||
+      current.pendingPermission ||
+      current.pendingUserInput ||
+      (sidebarOpen && drawerIsOverlay())
+    ) {
       return false
     }
     return focusComposer(sessionKey(current))
@@ -14647,21 +14675,23 @@ function App() {
     }
   }
 
-  async function closeSelectedSession() {
+  async function closeSelectedSession(session?: ManagedSession) {
+    const target = session || selected
     if (
-      !selected ||
+      !target ||
+      deleting ||
       !window.confirm(
-        `Close "${selected.title}" on ${selected.computerName}?\n\nThis permanently deletes the ${providerName(selected.provider)} session and its history from that computer.`,
+        `Close "${target.title}" on ${target.computerName}?\n\nThis permanently deletes the ${providerName(target.provider)} session and its history from that computer.`,
       )
     ) {
       return
     }
 
-    const closedKey = sessionKey(selected)
+    const closedKey = sessionKey(target)
     setDeleting(true)
     setError(undefined)
     try {
-      await deleteSession(selected.computerId, selected.id)
+      await deleteSession(target.computerId, target.id)
       removedSessions.current.add(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
@@ -14986,6 +15016,9 @@ function App() {
                 loading={loading}
                 pendingCreations={placedSessionCreations}
                 onOpenSessionTasks={openTasksForSession}
+                onCloseSession={(session) =>
+                  void closeSelectedSession(session)
+                }
                 onSelectSession={selectSession}
                 onToggleSessionSuspended={(session) =>
                   void toggleSelectedSessionSuspended(session)
@@ -14993,6 +15026,7 @@ function App() {
                 selectedKey={selectedKey}
                 sort={sessionSort}
                 onSortChange={changeSessionSort}
+                deleting={deleting}
                 suspending={suspending}
               />
             </DndContext>

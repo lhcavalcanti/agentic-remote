@@ -95,6 +95,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   session listing MUST NOT be treated as evidence that an entry is gone. A
   browser-local order from before the hub owned it MAY seed an empty hub once,
   after which the hub snapshot is authoritative.
+- Each session row MUST place **Close** above **Pause**/**Resume** in its
+  lifecycle controls. Close MUST use the same confirmed, permanently deleting
+  close lifecycle and owning-computer route as **Close session**; Pause and
+  Resume retain their existing suspend lifecycle, availability, and labels.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors, including queued delivery that requires confirmation. Pending actions
   MUST take precedence over passive runtime status.

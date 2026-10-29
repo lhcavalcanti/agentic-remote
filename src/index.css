@@ -1726,7 +1726,7 @@ button {
   position: relative;
 }
 
-/* The whole row apart from the handle and the suspend control opens the
+/* The whole row apart from the handle and lifecycle controls opens the
    session, so it carries the padding-free bulk of the row. */
 .session-item__open {
   display: block;
@@ -7273,13 +7273,19 @@ button {
 }
 
 /* Sits at the end of the row, out of the way of the title but reachable
-   without opening the conversation. It only asks for room when the pointer is
-   near or the session is already resting, so a list of running work reads as
-   work rather than as a row of controls. */
-.session-item__suspend {
+   without opening the conversation. Close stays above Pause so the destructive
+   and reversible lifecycle actions keep a stable order. */
+.session-item__controls {
   grid-column: 3;
   grid-row: 1;
   align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-item__close,
+.session-item__suspend {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -7300,11 +7306,19 @@ button {
   transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
 }
 
+.session-item:hover .session-item__close,
 .session-item:hover .session-item__suspend,
+.session-item:focus-within .session-item__close,
 .session-item:focus-within .session-item__suspend,
+.session-item__close:focus-visible,
 .session-item__suspend:focus-visible,
 .session-item__suspend--active {
   opacity: 1;
+}
+
+.session-item__close:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 .session-item__suspend:hover {
@@ -7316,6 +7330,7 @@ button {
   color: #6ea8fe;
 }
 
+.session-item__close:focus-visible,
 .session-item__suspend:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
@@ -7323,12 +7338,16 @@ button {
 
 /* Still hidden until the pointer is near. Fading a disabled control in on its
    own left every busy session showing a faint pause button at all times. */
+.session-item__close:disabled,
 .session-item__suspend:disabled {
   cursor: not-allowed;
 }
 
+.session-item:hover .session-item__close:disabled,
 .session-item:hover .session-item__suspend:disabled,
+.session-item:focus-within .session-item__close:disabled,
 .session-item:focus-within .session-item__suspend:disabled,
+.session-item__close:disabled:focus-visible,
 .session-item__suspend:disabled:focus-visible {
   opacity: 0.35;
 }
@@ -7337,12 +7356,14 @@ button {
    completely there -- and tapping the row opens the session rather than
    finding an invisible target. It stays visible, and large enough to hit. */
 @media (hover: none) {
+  .session-item__close,
   .session-item__suspend {
     opacity: 1;
     width: 40px;
     height: 40px;
   }
 
+  .session-item__close:disabled,
   .session-item__suspend:disabled {
     opacity: 0.3;
   }

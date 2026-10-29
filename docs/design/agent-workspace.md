@@ -270,6 +270,9 @@ background tasks, and computer identity colors.
 Computer groups are labels rather than nested cards. Provider and runtime
 badges remain above the title; folder context stays visible. Drag handles are
 quiet for a mouse but revealed on focus and remain available on touch.
+Each session card stacks Close above Pause/Resume at its trailing edge. Close
+reuses the confirmed permanent-delete lifecycle; Pause/Resume keeps the
+existing suspend behavior and disabled states.
 New session is a compact action in the Sessions heading, leaving Send visually
 primary. Computer management remains directly reachable in the sidebar footer.
 On a phone, Send is explicitly labeled and header actions have 40px targets.

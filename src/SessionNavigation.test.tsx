@@ -61,7 +61,9 @@ const backgroundTasks: Record<string, BackgroundTaskSnapshot> = {
 const actions = {
   onSelectSession: vi.fn(),
   onOpenSessionTasks: vi.fn(),
+  onCloseSession: vi.fn(),
   onToggleSessionSuspended: vi.fn(),
+  deleting: false,
   suspending: false,
   onSortChange: vi.fn(),
   onNewSession: vi.fn(),
@@ -422,17 +424,28 @@ describe('session navigation', () => {
     )
   })
 
-  it('retains separate, accessible session, suspend, and task actions', () => {
+  it('keeps accessible Close above Pause without changing either action', () => {
     render(navigation())
     const open = screen.getByRole('button', { name: /^Review the release,/ })
     expect(within(open).queryByRole('button')).toBeNull()
     fireEvent.click(open)
     expect(actions.onSelectSession).toHaveBeenCalledWith(session)
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Review the release' }))
+    const close = screen.getByRole('button', { name: 'Close Review the release' })
+    const pause = screen.getByRole('button', { name: 'Suspend Review the release' })
+    expect(close.compareDocumentPosition(pause) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(close).toHaveAttribute(
+      'title',
+      'Permanently delete this session and its history',
+    )
+    fireEvent.click(close)
+    expect(actions.onCloseSession).toHaveBeenCalledWith(session)
+    fireEvent.click(pause)
     expect(actions.onToggleSessionSuspended).toHaveBeenCalledWith(session)
     expect(screen.getByText('2/3 online')).toBeVisible()
     expect(within(screen.getByRole('region', { name: 'Travel laptop' }))
       .getAllByText('Offline')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Close Last known work' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Suspend Last known work' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Suspend Choose a direction' })).toBeDisabled()
   })

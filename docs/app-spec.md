@@ -651,7 +651,8 @@ Questions and permissions are the highest-priority UI state.
 
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot
-  runtimes.
+  runtimes. Normal SDK sessions MUST select Copilot's elicitation `ask_user`
+  variant when they register the structured-form handler.
 - Structured question cards MUST remain within the phone timeline width.
   Checkboxes MUST keep their intrinsic control size, option and heading text
   MUST wrap inside the card, and long forms MUST remain vertically reachable

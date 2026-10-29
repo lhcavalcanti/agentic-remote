@@ -1,6 +1,6 @@
 # Provider compatibility
 
-Status: Current implementation study, 2026-09-05
+Status: Current implementation study, 2026-10-29
 
 Agentic Remote supports GitHub Copilot and Claude Agent as separate providers
 behind the same `SessionService` contract. They can run concurrently on one
@@ -50,6 +50,10 @@ history is not transferred between providers.
   configuration for plugins, MCP servers, skills, custom agents, instructions,
   repository hooks, and host Git operations. They use the same local Copilot
   home and logged-in GitHub account as interactive CLI sessions.
+- Normal Copilot SDK sessions select the elicitation `ask_user` variant, so
+  current runtimes send structured forms through Agentic Remote's existing
+  elicitation handler instead of limiting model questions to the legacy
+  single-question callback.
 - SDK clients use the runtime bundled with `@github/copilot-sdk` by default.
   `COPILOT_SDK_BIN` is an advanced compatibility override for a separately
   qualified SDK runtime; `COPILOT_BIN` remains the interactive tmux executable.

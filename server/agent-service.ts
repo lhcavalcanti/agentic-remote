@@ -26,6 +26,7 @@ import {
 } from '@github/copilot-sdk'
 import {
   COPILOT_SDK_SESSION_DISCOVERY,
+  COPILOT_SDK_SESSION_INTERACTION,
   createCopilotSdkClient,
   readCopilotSdkRuntimeDiagnostic,
   type CopilotSdkMissingSessionRetirement,
@@ -3159,6 +3160,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<SessionDetail> {
     const sdkSession = await this.client.createSession({
       ...COPILOT_SDK_SESSION_DISCOVERY,
+      ...COPILOT_SDK_SESSION_INTERACTION,
       workingDirectory: cwd,
       streaming: true,
       ...runtime,
@@ -4213,6 +4215,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         try {
           fresh = await this.client.createSession({
             ...COPILOT_SDK_SESSION_DISCOVERY,
+            ...COPILOT_SDK_SESSION_INTERACTION,
             sessionId: replacementId,
             workingDirectory: stored.cwd,
             streaming: true,
@@ -8067,6 +8070,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       sdkSession = await this.client.resumeSession(sessionId, {
         ...COPILOT_SDK_SESSION_DISCOVERY,
+        ...COPILOT_SDK_SESSION_INTERACTION,
         workingDirectory: stored.cwd,
         streaming: true,
         onPermissionRequest: stored.runtime?.allowAllPermissions
@@ -8084,6 +8088,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       sdkSession = await this.client.createSession({
         ...COPILOT_SDK_SESSION_DISCOVERY,
+        ...COPILOT_SDK_SESSION_INTERACTION,
         sessionId,
         workingDirectory: stored.cwd,
         streaming: true,

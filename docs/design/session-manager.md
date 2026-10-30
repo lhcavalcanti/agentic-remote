@@ -298,6 +298,14 @@ end the turn.
   starts on it. An edit Oracle overtakes goes back to the message bar.
 - **Dictate to Oracle** records and transcribes through `/api/transcriptions`
   (`src/voice-recorder.ts`), adding the words to the message.
+- **Conversation** is a separate, explicit mode beside dictation. It streams
+  microphone PCM to the configured local or paired-computer speech backend,
+  shows partials without submitting them, sends each finalized utterance once
+  to Oracle, and speaks stable reply segments. Stop remains available in every
+  state. Unsupported AudioWorklet, denied permission, model failure, or TTS
+  failure leaves typed messages and dictation usable. An ambiguously failed
+  final submission or unconfirmed cancellation closes Conversation without
+  returning or retrying the text because Oracle may already have retained it.
 - The message field reads "Ask me anything"; while Oracle answers, a separate
   line says that anything sent now waits its turn.
 - **Ask | Delegate**, a two-way switch under the message bar remembered per
@@ -333,6 +341,66 @@ end the turn.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
 - Sessions Oracle started get a small **Oracle** badge in the session list.
+
+## Conversation-mode operations
+
+Conversation mode is off unless `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete
+profile is configured. `agentic-remote voice-install <profile>` is the only
+model installation path; ordinary setup and startup do not download assets.
+The selected speech computer performs STT and TTS locally without persisting
+raw PCM, synthesized audio, or partial transcripts. Each finalized transcript
+is submitted exactly once through normal `ManagerAgent.send` with hub-trusted
+voice provenance and forced Ask-only semantics. The panel's Ask/Delegate
+selection applies to typed messages only; it cannot make Conversation voice
+delegate work, steer sessions, answer permission or trust prompts, or approve
+destructive confirmation actions.
+
+The normal persisted `ManagerMessage` stores immutable `source: 'voice'`;
+historical user messages without a source load as typed. The store preserves
+the first source for a message ID across queued edits, retries, event updates,
+restart recovery, and compaction. At the manager tool handler, a centralized
+read-only allowlist permits voice to inspect computers, sessions, skills, and
+memory and to ask read-only side questions. Every other current or future tool
+fails closed for voice, including memory changes and `set_session_folder`.
+Typed Ask keeps its intentional memory/settings behavior and typed Delegate
+remains unchanged.
+
+The current transcript is escaped and delimited as acoustically untrusted in
+the model prompt. It cannot be promoted into memory or settings, and a fresh
+runtime's recovery brief excludes the voice message and its linked exchange.
+Before every voice prompt enters Copilot, durable manager state binds the voice
+taint to that exact SDK session ID. Queue recovery retires that session before
+selecting any typed or retried work, and retirement clears the active session
+pointer and matching taint in one persisted state update before best-effort SDK
+deletion. Thus a crash after prompt entry cannot let a later typed Delegate turn
+resume acoustically influenced context, even when remote deletion fails.
+The message still appears as exactly one normal Oracle user message in visible
+history and goes with the generated current-turn context to Oracle's remote
+Copilot model. No separate voice transcript or recording artifact is
+persisted. The panel warns both before Start and while active that speaker
+identity is unverified, nearby or replayed audio may be submitted, Ask can read
+session information, and finalized text is sent to remote Copilot.
+
+A hub with `AGENTIC_REMOTE_VOICE_COMPUTER` needs only enablement and the paired
+computer selection; it does not validate or load local speech paths. The node
+advertises availability only after validating its own local profile. Local hub
+mode still requires every configured path. The retained pt-BR Faber profile is
+explicitly research-only and installation requires
+`--accept-research-only`.
+
+One stream per hub is supported initially. Local VAD can duck playback, but
+the server owns endpoint and finalization decisions. Confirmed interruption
+advances generation, cancels backend TTS first, then cancels each captured
+voice-owned manager message by ID whether it is still queued or has become
+running, without stopping unrelated typed work. It rejects stale STT, deltas,
+and audio, and reconnect restores ownership only for queued/running voice
+messages. Browser state returns to Listening only after the current generation
+and segment have actually drained from Web Audio; stale drain callbacks from a
+new segment, interruption, generation change, or close are ignored. A completed
+reply with no speakable segment returns to Listening directly. Reconnect never
+replays microphone frames. See
+[Oracle Conversation mode](../oracle-conversation.md) for profile evidence,
+browser requirements, topology, and licences.
 
 ## Testing
 

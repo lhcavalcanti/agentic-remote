@@ -143,6 +143,7 @@ def environment() -> dict[str, str]:
         "GRAPHIFY_OUT": "graphify",
         "GRAPHIFY_QUERY_LOG_DISABLE": "1",
         "GRAPHIFY_NO_BACKUP": "1",
+        "GRAPHIFY_VIZ_NODE_LIMIT": "10000",
         "PYTHONNOUSERSITE": "1",
         "PYTHONHASHSEED": "0",
     })
@@ -156,7 +157,7 @@ def require_tool_environment() -> None:
         raise ValueError("Graphify is not installed. Run: python3 graphify/manage.py setup")
     expected = environment()
     controlled = ("GRAPHIFY_OUT", "GRAPHIFY_QUERY_LOG_DISABLE", "GRAPHIFY_NO_BACKUP",
-                  "PYTHONNOUSERSITE", "PYTHONHASHSEED")
+                  "GRAPHIFY_VIZ_NODE_LIMIT", "PYTHONNOUSERSITE", "PYTHONHASHSEED")
     if (
         Path(sys.prefix).resolve() != prefix.resolve()
         or any(os.environ.get(key) != expected[key] for key in controlled)
@@ -224,6 +225,22 @@ def validate_graph(data: dict) -> None:
             raise ValueError("Graph contains a non-portable source path.")
 
 
+def partition_extraction_results(
+    root: Path,
+    code: list[Path],
+    represented: set[str],
+    data_json: set[str],
+) -> tuple[list[Path], list[str], list[str]]:
+    names = {path: path.relative_to(root).as_posix() for path in code}
+    inventory = sorted(name for name in names.values() if name in data_json)
+    parsed = [path for path, name in names.items() if name in represented]
+    missing = sorted(
+        name for name in names.values()
+        if name not in represented and name not in data_json
+    )
+    return parsed, inventory, missing
+
+
 def offline_html(path: Path, scope: dict, fingerprint: str) -> None:
     asset = scope["javascript_asset"]
     vendor = (ROOT / "graphify" / asset["file"]).read_bytes()
@@ -265,7 +282,7 @@ def update(force: bool) -> None:
     from graphify.cluster import cluster, label_communities_by_hub, score_all
     from graphify.detect import FileType, classify_file
     from graphify.export import to_html, to_json
-    from graphify.extract import extract
+    from graphify.extract import extract, extract_json
     from graphify.report import generate
     import fcntl
 
@@ -299,9 +316,20 @@ def update(force: bool) -> None:
         if extraction.get("failed_sources"):
             raise ValueError(f"AST extraction failed: {extraction['failed_sources']}")
         graph = build_from_json(extraction, root=ROOT, directed=True)
-        code_names = {path.relative_to(ROOT).as_posix() for path in code}
         represented = {data.get("source_file") for _, data in graph.nodes(data=True)}
-        missing = sorted(code_names - represented)
+        unrepresented = {
+            path.relative_to(ROOT).as_posix() for path in code
+        } - represented
+        data_json = {
+            name for name in unrepresented
+            if Path(name).suffix.lower() == ".json"
+            and str(extract_json(ROOT / name).get("skipped", "")).startswith("data json")
+        }
+        code, json_inventory, missing = partition_extraction_results(
+            ROOT, code, represented, data_json,
+        )
+        code_names = {path.relative_to(ROOT).as_posix() for path in code}
+        not_parsed.extend(json_inventory)
         if missing:
             raise ValueError(f"Tracked code files missing from the graph: {', '.join(missing)}")
         communities = cluster(graph)

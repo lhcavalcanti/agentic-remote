@@ -50,6 +50,9 @@ describe('mobile safe areas', () => {
     expect(css).toContain('top: var(--visual-viewport-top, 0px);')
     expect(css).toContain('height: var(--visual-viewport-height, 100dvh);')
     expect(css).toMatch(
+      /\.manager-composer\s*\{[^}]*padding:[^;]*env\(safe-area-inset-right\)[^;]*env\(safe-area-inset-bottom\)[^;]*env\(safe-area-inset-left\)/s,
+    )
+    expect(css).toMatch(
       /\.conversation-header\s*\{[^}]*var\(--app-content-safe-area-top\)/s,
     )
     expect(css).toMatch(

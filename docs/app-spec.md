@@ -487,6 +487,87 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   transcribe**; at most 15 minutes), transcribes on the hub as a session's
   recording does, and adds the words to the message rather than sending them.
   Closing the panel discards a recording in progress.
+- A separate **Conversation** control MAY stream speech continuously only when
+  `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete explicitly installed profile
+  is available. There MUST be no automatic/default profile, and setup and
+  startup MUST NOT download models or enable the feature.
+- Conversation microphone PCM MUST travel only to the hub and, when selected,
+  one authenticated paired node. The selected computer MUST perform STT and
+  TTS locally. Conversation mode MUST NOT persist raw PCM, synthesized audio,
+  or partial transcripts. Each non-empty finalized transcript MUST be submitted
+  exactly once through the normal `ManagerAgent.send` path with trusted voice
+  provenance and `answerOnly: true`, regardless of the browser's current
+  Ask/Delegate selection. That provenance MUST remain immutable on the normal
+  persisted `ManagerMessage` through queueing, events, edits, retries, restart
+  recovery, and compaction; historical messages without provenance MUST retain
+  typed/manual semantics. The hub MUST enforce the same policy for hub-local
+  and paired-node speech.
+- A voice final MUST be read-only at the manager tool-handler boundary. It MAY
+  use explicitly classified read/query tools needed to answer, including
+  session reads and side questions, but MUST NOT delegate or steer sessions,
+  answer permissions, trust prompts, or questions, request destructive
+  confirmation, change the Oracle session folder, or write, append, or delete
+  Oracle memory. Tools not explicitly classified as read-only MUST fail closed
+  for voice. Typed Ask and typed Delegate policy MUST remain unchanged.
+- The model prompt MUST delimit the current finalized transcript as
+  acoustically untrusted, with speaker identity unverified. Voice text MUST NOT
+  be promoted into Oracle memory, settings, trusted instructions, or recovery
+  briefs, and recovery MUST omit the voice exchange linked to that message.
+  This is a provenance and authorization boundary, not speaker authentication.
+  Finalized text remains exactly one visible normal Oracle user message in
+  conversation history and is sent with Oracle's generated context to remote
+  Copilot inference. No separate voice transcript or recording artifact may be
+  persisted.
+- Before Conversation starts and while it is active, the UI MUST visibly state
+  that speaker identity is not verified, nearby or replayed audio may be
+  submitted, Ask can read session information, and finalized text is sent to
+  remote Copilot. It MUST also state that Conversation voice is Ask-only and
+  MUST NOT describe the complete experience as offline.
+- Partials MUST remain display-only. If normal-message submission fails, or
+  cancellation of a superseded submitted message cannot be confirmed,
+  Conversation MUST fail closed without restoring or retrying the final text
+  because Oracle may already have retained it. A disconnect MUST discard the
+  current utterance rather than replay PCM or a finalized transcript. TTS
+  failure MUST leave the text reply usable, and typed input plus **Dictate to
+  Oracle** MUST remain available.
+- Oracle replacement snapshots MAY start TTS for each stable completed
+  sentence before the full reply finishes. This sentence-level early playback
+  MUST NOT be described as engine-incremental synthesis unless the selected
+  engine has measured evidence that it emits audio before finishing that
+  sentence. Every engine callback or fallback result MUST be split into
+  monotonic PCM frames that fit the advertised maximum encoded frame size;
+  cancellation, output overflow, or delivery failure MUST stop further frames
+  and MUST NOT emit `audio_end`.
+- Conversation mode MUST require microphone permission, `getUserMedia`,
+  `AudioWorklet`, Web Audio playback, and WebSocket support. If a required
+  browser primitive is unavailable, it MUST refuse to start and offer
+  dictation instead of using a deprecated capture fallback.
+- Enablement and the selected speech computer MUST be parsed independently
+  from local engine paths. A hub selecting a paired node MUST NOT require local
+  STT/TTS assets; the selected node MUST validate its own complete local engine
+  configuration. Hub-local mode MUST remain strict. A missing, offline, or
+  incapable selected computer MUST advertise an explicit unavailable reason
+  and MUST NOT silently fall back to another computer.
+- Voice installation MUST stage below
+  `<data>/models/oracle-voice/.staging-*`, show applicable licenses before any
+  download, permit HTTPS for initial and redirected requests only, enforce the
+  exact pinned byte count while streaming with bounded timeout/retry behavior,
+  and verify SHA-256 before extraction or use. Every archive MUST pin expanded
+  bytes and entry count. The manifest compression type MUST select the exact
+  streaming decoder, and extraction MUST process one header at a time without
+  materializing the complete member list. It MUST abort before extracting an
+  entry that would exceed either pin and reject compression mismatch, corrupt
+  streams, traversal, duplicate paths, path-type conflicts, sparse files,
+  links, devices, FIFOs, and every type except regular files/directories. The
+  final staged tree MUST be revalidated for containment, type, count, and bytes.
+  Publication MUST serialize per profile, recheck installed content while
+  locked, clean failed/conflicting staging, and atomically activate only a
+  confirmed complete version. Failure MUST leave the prior active profile
+  unchanged. A research-only profile MUST print its full notices and require
+  explicit noninteractive acknowledgement before network access. Existing
+  `AGENTIC_REMOTE_ORACLE_VOICE` and
+  `AGENTIC_REMOTE_VOICE_*` values MUST survive setup in the mode-`0600`
+  environment file without being printed.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process
   of its own. Its tools only manage sessions and its own memory, so it MUST NOT
   run commands or edit files; work it accepts becomes a normal session on a
@@ -1673,6 +1754,8 @@ Persistent state MAY include:
 - Knowledge bookmark metadata
 - The settings profile (§9.3)
 - Paired node registry and encrypted/external secret references
+- Oracle conversation history, including finalized speech submitted as normal
+  Oracle user messages through `ManagerAgent.send`
 
 Persistent state MUST NOT include:
 
@@ -1683,6 +1766,8 @@ Persistent state MUST NOT include:
 - Voice recordings
 - Temporary transcription artifacts
 - Live `.env` files or credentials
+- Conversation-mode PCM, synthesized audio, partial transcripts, or separate
+  voice transcript/recording artifacts
 
 Awaited session mutations MUST become visible only after their state write
 commits. A refused write MUST NOT leave the mutation in memory, subsequent

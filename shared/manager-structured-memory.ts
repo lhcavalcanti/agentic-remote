@@ -84,6 +84,30 @@ export interface ManagerStructuredMemoryTombstone {
   sourceManagerMessageId?: string
 }
 
+export type ManagerStructuredMemoryMetadataRecord = Pick<
+  ManagerStructuredMemoryRecord,
+  | 'id'
+  | 'kind'
+  | 'scope'
+  | 'authority'
+  | 'confidence'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'validFrom'
+  | 'validUntil'
+  | 'supersededById'
+>
+
+export type ManagerStructuredMemoryMetadataTombstone = Pick<
+  ManagerStructuredMemoryTombstone,
+  'recordId'
+>
+
+export interface ManagerStructuredMemoryMetadataSnapshot {
+  records: ManagerStructuredMemoryMetadataRecord[]
+  tombstones: ManagerStructuredMemoryMetadataTombstone[]
+}
+
 export type ManagerStructuredMemoryOperation =
   | 'remember'
   | 'correct'

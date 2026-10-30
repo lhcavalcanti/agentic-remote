@@ -617,8 +617,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "9ea6a0dbc3f79a2328269b9a1cf2a49f19c307fbfa0ff8a53d56304d6ffec1d4",
-    "src/App.tsx": "024291f8d24727d5d0cb8d0eaf4642d833b9260f30681bd10b85c3e8e578bf57",
+    "src/App.test.tsx": "901c8b6c9764ecb2197599e18df68fb2da3a20bb4c08fb83c9c2f2c5bfa740c4",
+    "src/App.tsx": "59f74f6e8c152cf8a15216f999956ecd2d2bfac72654943177726c3ac204654a",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -781,20 +781,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "0e94fab23321e46c165033df76c449f1f64186b06636c0a38b37170c9e6334e1",
+    "GRAPH_REPORT.md": "b4f06049ac3cc5bb2b8b93db502f7128ed57dfd38fe909e35df1678f6c8f0f04",
     "communities.json": "97a35419082b23eb27b62005759e5c73e3b66fe865aae4af25201d9777cb19cd",
-    "graph.html": "d47a1e7855405479da185d382b2531ae333cc92be8731ae2b392c3795c2e4742",
-    "graph.json": "2910b14fe3743788e2c140d72a947dce85624baf9d5f6cdf5978d75b5eb70dad"
+    "graph.html": "b25a1e9c8703ee0f297c76adb6cd1416dd01284e2737cf9b2a80eab8c5c7423e",
+    "graph.json": "7b5f3069972421548948e5a90fdfe094422d346b06bbe38720953d17bfc300e0"
   },
   "schema_version": 1,
-  "source_commit": "5d84cc30b87e708bafede9d954e1995f78e1c4f6",
-  "source_fingerprint": "0ea8b8ce42fe8634e1f54920a3af55d8f3604b07c6418a34c0f6e2bab0af4517",
+  "source_commit": "b8a54ed4ec3574044146d6704e96117a401814ce",
+  "source_fingerprint": "069e35f7c1b22bb02a6cd487fc8989cf03354f740b1e4fbe15816fbdd3d2305d",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/provider-compatibility.md",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/copilot-sdk-client.test.ts",
-    "server/copilot-sdk-client.ts"
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

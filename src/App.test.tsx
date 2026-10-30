@@ -2710,6 +2710,57 @@ describe('App', () => {
     expect(confirmation).toBeVisible()
   })
 
+  it('preserves Oracle confirmation focus when docking falls back to overlay', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [{
+        id: 'oracle-answer',
+        role: 'assistant',
+        content: 'Current answer',
+        createdAt: '2026-10-22T00:00:00.000Z',
+      }],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      fireEvent.click(
+        await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+          .findByRole('button', { name: 'Oracle' }),
+      )
+      fireEvent.click(
+        await screen.findByTitle('Start a new conversation (memory is kept)'),
+      )
+      const keep = within(
+        screen.getByRole('alertdialog', { name: 'Start a new conversation' }),
+      ).getByRole('button', { name: 'Keep this one' })
+      keep.focus()
+
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', {
+          configurable: true,
+          value: 1000,
+        })
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(keep).toHaveFocus())
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth,
+      })
+    }
+  })
+
   it('focuses the active session composer when a shortcut-opened overlay closes', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true,
@@ -3162,6 +3213,54 @@ describe('App', () => {
       expect(sessionComposer).not.toHaveFocus()
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('focuses Oracle when docking falls back over the session composer', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', {
+        name: 'Message Oracle',
+      })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      sessionComposer.focus()
+
+      fireEvent.keyDown(sessionComposer, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      expect(sessionComposer).not.toHaveFocus()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth,
+      })
     }
   })
 
@@ -18787,6 +18886,7 @@ describe('App', () => {
         toggleKnowledge: { code: 'KeyG', alt: false, shift: false, ctrl: false, meta: false },
         backgroundTasks: { code: 'ArrowDown', alt: true, shift: false, ctrl: false, meta: false },
         toggleOracle: { code: 'Enter', alt: false, shift: false, ctrl: true, meta: false },
+        toggleOracleDock: { code: 'Enter', alt: false, shift: false, ctrl: true, meta: false },
         nonsense: { code: 'KeyZ', alt: true },
       }),
     )
@@ -18811,6 +18911,9 @@ describe('App', () => {
     expect(
       screen.getByLabelText('Change the keys for Open, close, or focus Oracle'),
     ).toHaveTextContent('Ctrl + Alt + O')
+    expect(
+      screen.getByLabelText('Change the keys for Dock or undock Oracle'),
+    ).toHaveTextContent('Ctrl + Alt + P')
   })
 
   it('refuses Enter as the Oracle shortcut because composers use it to send', async () => {
@@ -18833,6 +18936,30 @@ describe('App', () => {
     expect(
       screen.getByLabelText(
         'Press the new keys for Open, close, or focus Oracle',
+      ),
+    ).toBeVisible()
+  })
+
+  it('refuses Enter as the Oracle dock shortcut because composers use it to send', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(
+      await screen.findByLabelText(
+        'Change the keys for Dock or undock Oracle',
+      ),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText(
+        'Press the new keys for Dock or undock Oracle',
+      ),
+      { key: 'Enter', code: 'Enter', ctrlKey: true },
+    )
+
+    expect(await screen.findByText(/Enter sends from a composer/i)).toBeVisible()
+    expect(
+      screen.getByLabelText(
+        'Press the new keys for Dock or undock Oracle',
       ),
     ).toBeVisible()
   })

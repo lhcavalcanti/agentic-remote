@@ -1756,7 +1756,10 @@ function usableBinding(value: unknown): value is ShortcutBinding {
 }
 
 function shortcutAcceptsBinding(id: ShortcutId, value: ShortcutBinding): boolean {
-  return id !== 'toggleOracle' || value.code !== 'Enter'
+  return (
+    (id !== 'toggleOracle' && id !== 'toggleOracleDock') ||
+    value.code !== 'Enter'
+  )
 }
 
 function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
@@ -7329,11 +7332,12 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const oracleDockReservedLeft =
     sidebarWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
-  const effectiveOraclePlacement =
-    oraclePlacement === 'docked' &&
+  const oracleDockAvailable =
     desktopLayout &&
     viewportWidth - oracleDockReservedLeft >=
       ORACLE_PANEL_WIDTH_MIN + ORACLE_CONVERSATION_WIDTH_MIN
+  const effectiveOraclePlacement =
+    oraclePlacement === 'docked' && oracleDockAvailable
       ? 'docked'
       : 'overlay'
   const previousEffectiveOraclePlacement = useRef(effectiveOraclePlacement)
@@ -7350,6 +7354,12 @@ function App() {
       responsiveOracleFocusPending.current = true
     }
     if (!oracleOpen || effectiveOraclePlacement === 'docked') {
+      responsiveOracleFocusPending.current = false
+      return
+    }
+    if (
+      document.getElementById('oracle-panel')?.contains(document.activeElement)
+    ) {
       responsiveOracleFocusPending.current = false
       return
     }
@@ -8947,7 +8957,11 @@ function App() {
         const nextPlacement =
           oraclePlacement === 'docked' ? 'overlay' : 'docked'
         changeOraclePlacement(nextPlacement)
-        if (nextPlacement === 'overlay' && fromSessionComposer) {
+        const nextEffectivePlacement =
+          nextPlacement === 'docked' && oracleDockAvailable
+            ? 'docked'
+            : 'overlay'
+        if (nextEffectivePlacement === 'overlay' && fromSessionComposer) {
           setOracleFocusRequest((request) => request + 1)
         }
         return

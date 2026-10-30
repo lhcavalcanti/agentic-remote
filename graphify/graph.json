@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "c43bf7b61e94ca10d406da03b04234835cdadb7d",
+  "built_at_commit": "b6fcbc88d8da8edf2699be56b33dfe993bbecf66",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -50798,7 +50798,7 @@
       "relation": "imports_from",
       "source": "server_copilot_sdk_client_test",
       "source_file": "server/copilot-sdk-client.test.ts",
-      "source_location": "L2",
+      "source_location": "L3",
       "target": "server_copilot_sdk_client",
       "weight": 1.0
     },
@@ -50810,7 +50810,7 @@
       "relation": "imports",
       "source": "server_copilot_sdk_client_test",
       "source_file": "server/copilot-sdk-client.test.ts",
-      "source_location": "L2",
+      "source_location": "L3",
       "target": "server_copilot_sdk_client_copilot_sdk_session_discovery",
       "weight": 1.0
     },
@@ -50822,7 +50822,7 @@
       "relation": "imports",
       "source": "server_copilot_sdk_client_test",
       "source_file": "server/copilot-sdk-client.test.ts",
-      "source_location": "L2",
+      "source_location": "L3",
       "target": "server_copilot_sdk_client_copilot_sdk_session_interaction",
       "weight": 1.0
     },
@@ -50834,7 +50834,7 @@
       "relation": "imports",
       "source": "server_copilot_sdk_client_test",
       "source_file": "server/copilot-sdk-client.test.ts",
-      "source_location": "L2",
+      "source_location": "L3",
       "target": "server_copilot_sdk_client_copilotsdkclientoptions",
       "weight": 1.0
     },
@@ -50846,7 +50846,7 @@
       "relation": "imports",
       "source": "server_copilot_sdk_client_test",
       "source_file": "server/copilot-sdk-client.test.ts",
-      "source_location": "L2",
+      "source_location": "L3",
       "target": "server_copilot_sdk_client_createcopilotsdkclient",
       "weight": 1.0
     },
@@ -50858,7 +50858,7 @@
       "relation": "imports",
       "source": "server_copilot_sdk_client_test",
       "source_file": "server/copilot-sdk-client.test.ts",
-      "source_location": "L2",
+      "source_location": "L3",
       "target": "server_copilot_sdk_client_readcopilotsdkruntimediagnostic",
       "weight": 1.0
     },
@@ -50870,7 +50870,7 @@
       "relation": "imports",
       "source": "server_copilot_sdk_client_test",
       "source_file": "server/copilot-sdk-client.test.ts",
-      "source_location": "L2",
+      "source_location": "L3",
       "target": "server_copilot_sdk_client_retiremissingcopilotsdksession",
       "weight": 1.0
     },
@@ -174433,7 +174433,7 @@
       "source_file": "shell/src-tauri/Cargo.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "1.34.0"
+      "version": "1.34.1"
     },
     {
       "_origin": "ast",

@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'react'
 
 const WIDTH_KEY = 'agentic-remote:reader-width'
-const WIDTH_MIN = 320
+export const READER_WIDTH_MIN = 320
 const WIDTH_MAX = 960
 const CONVERSATION_MIN = 360
 
@@ -10,7 +10,7 @@ function readWidth(): number | undefined {
   try {
     const value = Number(localStorage.getItem(WIDTH_KEY))
     return Number.isFinite(value) && value > 0
-      ? Math.min(WIDTH_MAX, Math.max(WIDTH_MIN, Math.round(value)))
+      ? Math.min(WIDTH_MAX, Math.max(READER_WIDTH_MIN, Math.round(value)))
       : undefined
   } catch {
     return undefined
@@ -47,17 +47,18 @@ export default function ReaderWorkspace({
     delta: number
   } | undefined>(undefined)
 
-  // Preserve 360px for chat where possible. With a wide sidebar on a small
-  // desktop, the reader may take at most half the remaining workspace.
+  // Preserve 360px for chat whenever the reader can keep its own minimum.
+  // Below that combined width, split the constrained workspace evenly.
+  const conversationReserve = workspaceWidth - READER_WIDTH_MIN >= CONVERSATION_MIN
+    ? CONVERSATION_MIN
+    : workspaceWidth / 2
   const maximum = workspaceWidth > 0
-    ? Math.min(WIDTH_MAX, Math.floor(
-      workspaceWidth - Math.min(CONVERSATION_MIN, workspaceWidth / 2),
-    ))
+    ? Math.min(WIDTH_MAX, Math.floor(workspaceWidth - conversationReserve))
     : WIDTH_MAX
-  const minimum = Math.min(WIDTH_MIN, maximum)
+  const minimum = Math.min(READER_WIDTH_MIN, maximum)
   const clamp = (value: number) =>
     Math.min(maximum, Math.max(minimum, Math.round(value)))
-  const defaultWidth = workspaceWidth > 0 ? workspaceWidth / 2 : WIDTH_MIN
+  const defaultWidth = workspaceWidth > 0 ? workspaceWidth / 2 : READER_WIDTH_MIN
   const width = clamp(preferredWidth ?? defaultWidth)
 
   const finishResize = useCallback(() => {

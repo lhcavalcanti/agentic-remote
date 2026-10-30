@@ -182,6 +182,13 @@ function finishQueueReorder(from: string, to: string) {
   finishReorder('prompt-queue', `queued:${from}`, `queued:${to}`)
 }
 
+vi.mock('./dreamer-api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./dreamer-api')>(),
+  getDreamer: vi.fn(async () => ({
+    available: true, revision: 0, settings: { enabled: false, timeZone: 'UTC' },
+  })),
+}))
+
 vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   getManager: vi.fn(),

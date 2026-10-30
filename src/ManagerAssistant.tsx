@@ -39,6 +39,7 @@ import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { remarkSafeBreaks } from './remark-safe-breaks'
 import { recordingDuration, useVoiceRecorder } from './voice-recorder'
+import { DreamerMorningPlan } from './OracleDreamer'
 
 const suggestions = [
   'What is running right now?',
@@ -859,6 +860,7 @@ export function ManagerAssistant({
           <X aria-hidden="true" size={19} />
         </button>
       </header>
+      <DreamerMorningPlan active={open} />
       {confirmReset ? (
         <div className="manager-panel__confirm" role="alertdialog" aria-label="Start a new conversation">
           <p>Start a new conversation? Oracle keeps its notes and memory.</p>

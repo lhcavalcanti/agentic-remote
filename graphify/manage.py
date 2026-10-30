@@ -324,7 +324,8 @@ def update(force: bool) -> None:
             ))
             validate_graph(data)
             (stage / "graph.json").write_bytes(json_bytes(data))
-            if not to_html(graph, communities, str(stage / "graph.html"), community_labels=labels):
+            if not to_html(graph, communities, str(stage / "graph.html"),
+                           community_labels=labels, node_limit=10_000):
                 raise ValueError("Graphify did not generate a visualization.")
             offline_html(stage / "graph.html", scope, before["source_fingerprint"])
             report = generate(

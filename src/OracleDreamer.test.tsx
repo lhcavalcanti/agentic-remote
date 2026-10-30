@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DreamerMorningPlan, DreamerSettings } from './OracleDreamer'
 import { DreamerApiError, getDreamer, saveDreamerSettings, updateDreamerPlan } from './dreamer-api'
@@ -43,7 +43,10 @@ describe('Dreamer settings and morning review', () => {
     vi.mocked(saveDreamerSettings).mockReset()
     vi.mocked(updateDreamerPlan).mockReset()
   })
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
 
   it('saves explicit enablement and the edited timezone at the loaded revision', async () => {
     vi.mocked(saveDreamerSettings).mockResolvedValue({ ...ready, revision: 4 })
@@ -200,5 +203,55 @@ describe('Dreamer settings and morning review', () => {
     expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Move Review failed session down' })).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent('Dreamer storage is unavailable.')
+  })
+
+  it('updates an already open morning view after settings enable Dreamer', async () => {
+    render(<><DreamerSettings /><DreamerMorningPlan /></>)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Enable Dreamer' }))
+    vi.mocked(getDreamer).mockResolvedValue(ready)
+    vi.mocked(saveDreamerSettings).mockResolvedValue(ready)
+    fireEvent.click(screen.getByRole('button', { name: 'Save Dreamer' }))
+    fireEvent.click(await screen.findByText('Morning plan'))
+    expect(await screen.findByText('Review failed session')).toBeInTheDocument()
+  })
+
+  it('refreshes overnight plans while Oracle stays open without executing an action', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getDreamer).mockResolvedValue({ ...ready, plan: undefined })
+    render(<DreamerMorningPlan />)
+    await act(async () => undefined)
+    vi.mocked(getDreamer).mockResolvedValue({ ...ready, revision: 4 })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(screen.getByText('Review failed session')).toBeInTheDocument()
+    expect(updateDreamerPlan).not.toHaveBeenCalled()
+  })
+
+  it('does not replace a saved edit with an older delayed refresh response', async () => {
+    vi.mocked(getDreamer).mockResolvedValue(ready)
+    render(<DreamerMorningPlan />)
+    fireEvent.click(await screen.findByText('Morning plan'))
+    let release!: (snapshot: typeof ready) => void
+    vi.mocked(getDreamer).mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh morning plan' }))
+    vi.mocked(updateDreamerPlan).mockResolvedValue({
+      ...ready, revision: 4, plan: { ...plan, items: [{ ...plan.items[0], status: 'done' }, plan.items[1]] },
+    })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Done' })[0])
+    await screen.findByRole('button', { name: 'Restore Review failed session' })
+    await act(async () => { release(ready) })
+    expect(screen.getByRole('button', { name: 'Restore Review failed session' })).toBeInTheDocument()
+  })
+
+  it('locks stale edits after 503 and clears the error only after successful refresh', async () => {
+    vi.mocked(getDreamer).mockResolvedValue(ready)
+    vi.mocked(updateDreamerPlan).mockRejectedValue(new DreamerApiError('Storage offline.', 503))
+    render(<DreamerMorningPlan />)
+    fireEvent.click(await screen.findByText('Morning plan'))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Done' })[0])
+    expect(await screen.findByRole('alert')).toHaveTextContent('Storage offline.')
+    expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh morning plan' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeEnabled()
   })
 })

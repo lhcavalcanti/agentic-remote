@@ -71,7 +71,19 @@ function safeRunError(error: unknown): string {
 
 function publicSnapshot(
   storeSnapshot: DreamerStoreSnapshot,
+  now: Date,
 ): DreamerSnapshot {
+  let lastError = storeSnapshot.lastError
+  if (!lastError && storeSnapshot.settings.enabled) {
+    const decision = dreamerScheduleDecision(now, storeSnapshot.settings.timeZone)
+    if (
+      decision.reason === 'window-expired' &&
+      !storeSnapshot.runs.some(({ key }) =>
+        key === dreamerRunKey(storeSnapshot.settings.timeZone, decision.localDate))
+    ) {
+      lastError = 'Dreamer missed the current review window.'
+    }
+  }
   return {
     available: true,
     revision: storeSnapshot.revision,
@@ -80,7 +92,7 @@ function publicSnapshot(
       timeZone: storeSnapshot.settings.timeZone,
     },
     ...(storeSnapshot.plan ? { plan: storeSnapshot.plan } : {}),
-    ...(storeSnapshot.lastError ? { lastError: storeSnapshot.lastError } : {}),
+    ...(lastError ? { lastError } : {}),
   }
 }
 
@@ -137,6 +149,7 @@ export class DreamerService {
   private lifecycleGeneration = 0
   private activeRun?: Promise<DreamerSnapshot>
   private activeCommit?: Promise<void>
+  private memoryReconciliation?: Promise<void>
   private runtimeError?: string
 
   constructor(
@@ -190,7 +203,7 @@ export class DreamerService {
 
   snapshot(): DreamerSnapshot {
     this.requireAvailable()
-    return publicSnapshot(this.store.snapshot())
+    return publicSnapshot(this.store.snapshot(), this.now())
   }
 
   async snapshotForApi(): Promise<DreamerSnapshot> {
@@ -228,7 +241,7 @@ export class DreamerService {
     if (!settings.enabled) {
       this.lifecycleGeneration += 1
       this.stopTimer()
-      return publicSnapshot(after)
+      return publicSnapshot(after, this.now())
     }
     if (before.settings.timeZone !== settings.timeZone) {
       this.lifecycleGeneration += 1
@@ -257,15 +270,36 @@ export class DreamerService {
   ): Promise<DreamerSnapshot> {
     await this.initialize()
     this.requireAvailable()
+    await this.reconcileStaleMemory()
     const edit = {
       revision: input.revision,
       planId: input.planId,
       ...(input.order ? { order: [...input.order] } : {}),
       ...(input.item ? { item: { ...input.item } } : {}),
     }
+    let activeMemoryIds: Set<string> | undefined
+    if (edit.item?.status === 'pending') {
+      const current = this.store.snapshot()
+      const item = current.plan?.items.find(({ id }) => id === edit.item!.id)
+      if (item?.memoryId) {
+        const memory = this.captureMemory()
+        if (!memory || memory.mode !== 'on' || !memory.available) {
+          throw new DreamerUnavailableError(
+            'Structured memory metadata is unavailable.',
+          )
+        }
+        activeMemoryIds = activeDreamerMemoryIds(memory, this.now())
+        if (!activeMemoryIds.has(item.memoryId)) {
+          throw new DreamerConflictError(
+            'Dreamer memory item is no longer available; refresh and retry.',
+          )
+        }
+      }
+    }
     await this.store.editPlan(edit.revision, edit.planId, {
       ...(edit.order ? { order: edit.order } : {}),
       ...(edit.item ? { item: edit.item } : {}),
+      ...(activeMemoryIds ? { activeMemoryIds } : {}),
     })
     return this.snapshot()
   }
@@ -293,9 +327,9 @@ export class DreamerService {
   private async runIfDueInternal(): Promise<DreamerSnapshot> {
     const lifecycle = this.lifecycleGeneration
     const current = this.store.snapshot()
-    if (!current.settings.enabled) return publicSnapshot(current)
+    if (!current.settings.enabled) return publicSnapshot(current, this.now())
     const decision = dreamerScheduleDecision(this.now(), current.settings.timeZone)
-    if (!decision.due) return publicSnapshot(current)
+    if (!decision.due) return publicSnapshot(current, this.now())
     const key = dreamerRunKey(current.settings.timeZone, decision.localDate)
     const claimed = await this.store.claimRun({
       key,
@@ -304,20 +338,22 @@ export class DreamerService {
       generation: current.settings.generation,
     })
     if (!this.started || lifecycle !== this.lifecycleGeneration) {
-      return publicSnapshot(this.store.snapshot())
+      return publicSnapshot(this.store.snapshot(), this.now())
     }
     if (claimed.kind !== 'claimed') {
       if (claimed.kind === 'capacity') {
         await this.store.recordError('Dreamer run history is full; no new run was started.')
       }
-      return publicSnapshot(this.store.snapshot())
+      return publicSnapshot(this.store.snapshot(), this.now())
     }
     const claim = claimed.claim
     try {
       const input = this.capturePlannerInput()
       const defaultPlan = planDreamer(input)
       const draft = await this.planner({ ...input, defaultPlan })
-      if (!this.isCurrent(lifecycle, claim)) return publicSnapshot(this.store.snapshot())
+      if (!this.isCurrent(lifecycle, claim)) {
+        return publicSnapshot(this.store.snapshot(), this.now())
+      }
       if (draft.items.length > DREAMER_MAX_ITEMS) {
         throw new DreamerCapacityError('Dreamer plans may contain at most 20 items.')
       }
@@ -345,18 +381,18 @@ export class DreamerService {
       return this.snapshot()
     } catch (error) {
       if (error instanceof DreamerConflictError || !this.isCurrent(lifecycle, claim)) {
-        return publicSnapshot(this.store.snapshot())
+        return publicSnapshot(this.store.snapshot(), this.now())
       }
       const safeError = safeRunError(error)
       try {
         await this.store.failRun(claim, safeError)
       } catch (failure: unknown) {
         if (failure instanceof DreamerConflictError) {
-          return publicSnapshot(this.store.snapshot())
+          return publicSnapshot(this.store.snapshot(), this.now())
         }
         return this.handleScheduledFailure(failure)
       }
-      return publicSnapshot(this.store.snapshot())
+      return publicSnapshot(this.store.snapshot(), this.now())
     }
   }
 
@@ -394,7 +430,13 @@ export class DreamerService {
   private captureMemory(): DreamerMemoryMetadata | undefined {
     if (this.memory) {
       try {
-        return structuredClone(this.memory())
+        const supplied = this.memory()
+        return projectDreamerMemory(
+          supplied.mode,
+          supplied.available,
+          supplied.mode === 'on' && supplied.available ? supplied : undefined,
+          supplied.lastError,
+        )
       } catch {
         return projectDreamerMemory(
           'on',
@@ -419,28 +461,27 @@ export class DreamerService {
     return projectDreamerMemory(
       this.structuredMemory.mode,
       true,
-      this.structuredMemory.store.snapshot(),
+      this.structuredMemory.store.metadataSnapshot(),
     )
   }
 
   private async reconcileStaleMemory(): Promise<void> {
+    if (this.memoryReconciliation) return this.memoryReconciliation
+    const operation = this.reconcileStaleMemoryInternal()
+    this.memoryReconciliation = operation
+    operation.finally(() => {
+      if (this.memoryReconciliation === operation) this.memoryReconciliation = undefined
+    }).catch(() => undefined)
+    return operation
+  }
+
+  private async reconcileStaleMemoryInternal(): Promise<void> {
     const current = this.store.snapshot()
-    if (!current.settings.enabled || !current.plan) return
+    if (!current.plan) return
     const memory = this.captureMemory()
     if (!memory || memory.mode !== 'on' || !memory.available) return
     const activeIds = activeDreamerMemoryIds(memory, this.now())
-    const staleIds = current.plan.items
-      .filter(({ memoryId, status }) => memoryId && status === 'pending' && !activeIds.has(memoryId))
-      .map(({ id }) => id)
-    for (const id of staleIds) {
-      const latest = this.store.snapshot()
-      if (!latest.plan) return
-      const item = latest.plan.items.find(({ id: itemId }) => itemId === id)
-      if (!item || item.status !== 'pending') continue
-      await this.store.editPlan(latest.revision, latest.plan.id, {
-        item: { id, status: 'skipped' },
-      })
-    }
+    await this.store.reconcileMemory(activeIds)
   }
 
   private isCurrent(lifecycle: number, claim: DreamerRunClaim): boolean {

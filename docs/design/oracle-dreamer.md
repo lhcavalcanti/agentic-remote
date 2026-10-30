@@ -45,6 +45,8 @@ turn shadow retrieval into visible memory authority. Use active on-mode records
 only, excluding forgotten, superseded, low-confidence, not-yet-valid and expired
 records. The planner need not parse any text to prioritize. All metadata is data,
 not instructions. Source IDs must be bounded and encoded, never executable URLs.
+The structured-memory store projects metadata before it leaves the store;
+Dreamer does not obtain a full memory snapshot and redact it afterwards.
 
 Single trusted hub owner and single process writer; this does not add hostile
 multi-user isolation. APIs inherit hub Host/Origin checks and no-store responses;
@@ -96,6 +98,9 @@ candidate commits, sync staged data and directory entries before publication.
 Refuse malformed, foreign, oversized, symlinked state and stale edits rather than
 resetting. Clean recognized abandoned staging files without touching unrelated
 files; failures remain visible. New directories must be durably/private created.
+Retain at most 16 timezone fences; refuse admission to a new timezone at that
+bound without preventing disable or a switch to an already known timezone.
+Prune run records only when their replay authority is covered by a fence.
 
 Morning writes carry snapshot revision plus run/item IDs; reject concurrent
 stale reorder/status requests with 409 and refresh. Reorder requires the exact

@@ -195,6 +195,118 @@ function isSafeIdentifier(value: unknown): value is string {
   return isSafeString(value, 200) && /^[A-Za-z0-9._:@-]+$/.test(value)
 }
 
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
+function validTimestamp(value: unknown): value is string {
+  return isSafeString(value, 64) && Number.isFinite(Date.parse(value))
+}
+
+function assertUniqueJsonKeys(serialized: string): void {
+  let index = 0
+
+  const fail = (): never => {
+    throw new DreamerRecoveryError('Dreamer state contains malformed or duplicate JSON keys.')
+  }
+  const skipWhitespace = (): void => {
+    while (index < serialized.length && /\s/.test(serialized[index])) index += 1
+  }
+  const scanString = (): string => {
+    if (serialized[index] !== '"') fail()
+    const start = index
+    index += 1
+    while (index < serialized.length) {
+      const character = serialized[index]
+      index += 1
+      if (character === '"') {
+        return JSON.parse(serialized.slice(start, index)) as string
+      }
+      if (character === '\\') {
+        if (index >= serialized.length) fail()
+        const escape = serialized[index]
+        index += 1
+        if (escape === 'u') {
+          if (!/^[0-9A-Fa-f]{4}$/.test(serialized.slice(index, index + 4))) fail()
+          index += 4
+        } else if (!'"\\/bfnrt'.includes(escape)) {
+          return fail()
+        }
+      } else if (character < ' ') {
+        fail()
+      }
+    }
+    return fail()
+  }
+  const scanValue = (): void => {
+    skipWhitespace()
+    const character = serialized[index]
+    if (character === '{') {
+      index += 1
+      skipWhitespace()
+      const keys = new Set<string>()
+      if (serialized[index] === '}') {
+        index += 1
+        return
+      }
+      for (;;) {
+        skipWhitespace()
+        const key = scanString()
+        if (keys.has(key)) fail()
+        keys.add(key)
+        skipWhitespace()
+        if (serialized[index] !== ':') fail()
+        index += 1
+        scanValue()
+        skipWhitespace()
+        if (serialized[index] === '}') {
+          index += 1
+          return
+        }
+        if (serialized[index] !== ',') fail()
+        index += 1
+      }
+    }
+    if (character === '[') {
+      index += 1
+      skipWhitespace()
+      if (serialized[index] === ']') {
+        index += 1
+        return
+      }
+      for (;;) {
+        scanValue()
+        skipWhitespace()
+        if (serialized[index] === ']') {
+          index += 1
+          return
+        }
+        if (serialized[index] !== ',') fail()
+        index += 1
+      }
+    }
+    if (character === '"') {
+      scanString()
+      return
+    }
+    for (const literal of ['true', 'false', 'null']) {
+      if (serialized.startsWith(literal, index)) {
+        index += literal.length
+        return
+      }
+    }
+    const number = serialized.slice(index).match(
+      /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/,
+    )
+    if (!number) return fail()
+    index += number[0].length
+  }
+
+  scanValue()
+  skipWhitespace()
+  if (index !== serialized.length) fail()
+}
+
 function isLocalDate(value: unknown): value is string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const [year, month, day] = value.split('-').map(Number)
@@ -344,6 +456,9 @@ function validateState(raw: unknown): DreamerStoreState {
     }
     const entry = run as Record<string, unknown>
     assertInteger(entry.generation, 'run generation')
+    if ((entry.generation as number) > (settings.generation as number)) {
+      throw new DreamerRecoveryError('Dreamer run generation is newer than settings.')
+    }
     if (
       !isSafeIdentifier(entry.key) ||
       !isLocalDate(entry.localDate) ||
@@ -357,21 +472,76 @@ function validateState(raw: unknown): DreamerStoreState {
     ) {
       throw new DreamerRecoveryError('Dreamer state has an invalid run record.')
     }
+    const status = entry.status as DreamerRunRecord['status']
+    const hasClaimFields = hasOwn(entry, 'claimToken') ||
+      hasOwn(entry, 'claimedAt') ||
+      hasOwn(entry, 'expiresAt')
+    const hasTerminalFields = hasOwn(entry, 'committedAt') ||
+      hasOwn(entry, 'planId')
+    const hasRetry = hasOwn(entry, 'retryAt')
+    let claimToken: string | undefined
+    let claimedAt: string | undefined
+    let expiresAt: string | undefined
+    let retryAt: string | undefined
+    let committedAt: string | undefined
+    let planId: string | undefined
+    if (status === 'claimed') {
+      if (
+        !isSafeIdentifier(entry.claimToken) ||
+        !validTimestamp(entry.claimedAt) ||
+        !validTimestamp(entry.expiresAt) ||
+        Date.parse(entry.expiresAt) <= Date.parse(entry.claimedAt) ||
+        Date.parse(entry.expiresAt) - Date.parse(entry.claimedAt) > DREAMER_LEASE_MS ||
+        hasRetry ||
+        hasTerminalFields
+      ) {
+        throw new DreamerRecoveryError('Dreamer claimed run has invalid lease fields.')
+      }
+      claimToken = entry.claimToken
+      claimedAt = entry.claimedAt
+      expiresAt = entry.expiresAt
+    } else if (status === 'committed') {
+      if (
+        hasClaimFields ||
+        hasRetry ||
+        !validTimestamp(entry.committedAt) ||
+        !isSafeIdentifier(entry.planId)
+      ) {
+        throw new DreamerRecoveryError('Dreamer committed run has invalid terminal fields.')
+      }
+      committedAt = entry.committedAt
+      planId = entry.planId
+    } else {
+      if (hasClaimFields || hasTerminalFields) {
+        throw new DreamerRecoveryError('Dreamer failed run has invalid terminal fields.')
+      }
+      if ((entry.attempts as number) < 3) {
+        if (!validTimestamp(entry.retryAt)) {
+          throw new DreamerRecoveryError('Dreamer retryable failure has no valid retry time.')
+        }
+        retryAt = entry.retryAt
+      } else if (hasRetry) {
+        throw new DreamerRecoveryError('Dreamer exhausted failure has an invalid retry time.')
+      }
+    }
     return {
       key: entry.key as string,
       localDate: entry.localDate as string,
       timeZone: entry.timeZone as string,
       generation: entry.generation as number,
-      status: entry.status as DreamerRunRecord['status'],
+      status,
       attempts: entry.attempts as number,
-      ...(entry.claimToken ? { claimToken: String(entry.claimToken) } : {}),
-      ...(entry.claimedAt ? { claimedAt: String(entry.claimedAt) } : {}),
-      ...(entry.expiresAt ? { expiresAt: String(entry.expiresAt) } : {}),
-      ...(entry.retryAt ? { retryAt: String(entry.retryAt) } : {}),
-      ...(entry.committedAt ? { committedAt: String(entry.committedAt) } : {}),
-      ...(entry.planId ? { planId: String(entry.planId) } : {}),
+      ...(claimToken ? { claimToken } : {}),
+      ...(claimedAt ? { claimedAt } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(retryAt ? { retryAt } : {}),
+      ...(committedAt ? { committedAt } : {}),
+      ...(planId ? { planId } : {}),
     }
   })
+  if (new Set(runs.map(({ key }) => key)).size !== runs.length) {
+    throw new DreamerRecoveryError('Dreamer state has duplicate run keys.')
+  }
   if (!Array.isArray(value.history) || value.history.length > DREAMER_MAX_HISTORY) {
     throw new DreamerRecoveryError('Dreamer state has too much review history.')
   }
@@ -516,6 +686,7 @@ export class DreamerStore {
       }
       let parsed: DreamerStoreState
       try {
+        assertUniqueJsonKeys(serialized)
         parsed = validateState(JSON.parse(serialized))
       } catch (error) {
         if (error instanceof DreamerRecoveryError) throw error
@@ -568,6 +739,16 @@ export class DreamerStore {
       const changed = candidate.settings.enabled !== nextSettings.enabled ||
         candidate.settings.timeZone !== nextSettings.timeZone
       if (!changed) return { result: undefined, changed: false }
+      const knownZone = candidate.zoneFences.some(
+        ({ timeZone }) => timeZone === nextSettings.timeZone,
+      )
+      if (
+        nextSettings.enabled &&
+        !knownZone &&
+        candidate.zoneFences.length >= DREAMER_MAX_ZONES
+      ) {
+        throw new DreamerCapacityError('Dreamer reached its timezone fence capacity.')
+      }
       candidate.settings = {
         enabled: nextSettings.enabled,
         timeZone: nextSettings.timeZone,
@@ -612,7 +793,13 @@ export class DreamerStore {
       const fence = candidate.zoneFences.find(
         ({ timeZone }) => timeZone === claimInput.timeZone,
       )
-      if (fence && claimInput.localDate <= fence.highWaterDate) {
+      if (
+        fence &&
+        (
+          claimInput.localDate < fence.highWaterDate ||
+          (claimInput.localDate === fence.highWaterDate && !existing)
+        )
+      ) {
         return { result: { kind: 'retired' }, changed: false }
       }
       if (
@@ -659,6 +846,15 @@ export class DreamerStore {
         if (candidate.runs.length >= DREAMER_MAX_RUNS) {
           return { result: { kind: 'capacity' }, changed: false }
         }
+      }
+      if (!fence) {
+        if (candidate.zoneFences.length >= DREAMER_MAX_ZONES) {
+          return { result: { kind: 'capacity' }, changed: false }
+        }
+        candidate.zoneFences.push({
+          timeZone: claimInput.timeZone,
+          highWaterDate: claimInput.localDate,
+        })
       }
       const token = this.nextUUID()
       const expiresAt = new Date(now.getTime() + DREAMER_LEASE_MS).toISOString()
@@ -759,10 +955,45 @@ export class DreamerStore {
     })
   }
 
+  async reconcileMemory(activeMemoryIds: ReadonlySet<string>): Promise<void> {
+    const activeIds = new Set(activeMemoryIds)
+    return this.enqueue((candidate) => {
+      if (!candidate.plan) return { result: undefined, changed: false }
+      const next = clone(candidate.plan)
+      const history = new Map(candidate.history.map((entry) => [entry.fingerprint, entry.status]))
+      let changed = false
+      for (const item of next.items) {
+        if (
+          item.status === 'pending' &&
+          item.memoryId &&
+          !activeIds.has(item.memoryId)
+        ) {
+          item.status = 'skipped'
+          const fingerprint = next.fingerprints[item.id]
+          if (!fingerprint) {
+            throw new DreamerRecoveryError('Dreamer plan item fingerprint is missing.')
+          }
+          history.set(fingerprint, 'skipped')
+          changed = true
+        }
+      }
+      if (!changed) return { result: undefined, changed: false }
+      if (history.size > DREAMER_MAX_HISTORY) throw new DreamerCapacityError()
+      candidate.plan = next
+      candidate.history = [...history.entries()]
+        .map(([fingerprint, status]) => ({ fingerprint, status }))
+      return { result: undefined, changed: true }
+    })
+  }
+
   async editPlan(
     revision: number,
     planId: string,
-    input: { order?: string[]; item?: { id: string; status: DreamerPlanItemStatus } },
+    input: {
+      order?: string[]
+      item?: { id: string; status: DreamerPlanItemStatus }
+      activeMemoryIds?: ReadonlySet<string>
+    },
   ): Promise<void> {
     const expectedRevision = revision
     const expectedPlanId = planId
@@ -770,6 +1001,9 @@ export class DreamerStore {
       ...(input.order ? { order: [...input.order] } : {}),
       ...(input.item ? { item: { ...input.item } } : {}),
     }
+    const activeMemoryIds = input.activeMemoryIds
+      ? new Set(input.activeMemoryIds)
+      : undefined
     return this.enqueue((candidate) => {
       this.requireRevision(candidate, expectedRevision)
       if (!candidate.plan || candidate.plan.id !== expectedPlanId) {
@@ -789,6 +1023,14 @@ export class DreamerStore {
       if (edit.item) {
         const item = next.items.find(({ id }) => id === edit.item!.id)
         if (!item) throw new DreamerConflictError('Dreamer plan item changed; refresh and retry.')
+        if (
+          edit.item.status === 'pending' &&
+          item.memoryId &&
+          activeMemoryIds &&
+          !activeMemoryIds.has(item.memoryId)
+        ) {
+          throw new DreamerConflictError('Dreamer memory item is no longer available; refresh and retry.')
+        }
         item.status = edit.item.status
         const fingerprint = next.fingerprints[item.id]
         if (!fingerprint) {

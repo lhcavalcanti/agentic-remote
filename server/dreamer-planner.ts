@@ -174,11 +174,11 @@ function validMemoryScope(scope: ManagerStructuredMemoryScope): boolean {
 
 function activeMemoryRecord(
   record: DreamerMemoryMetadataRecord,
-  memory: DreamerMemoryMetadata,
   nowMs: number,
+  tombstoneIds: ReadonlySet<string>,
 ): boolean {
   if (!safeIdentifier(record.id) || !validMemoryScope(record.scope)) return false
-  if (memory.tombstones.some(({ recordId }) => recordId === record.id)) return false
+  if (tombstoneIds.has(record.id)) return false
   if (
     !['preference', 'fact', 'procedure', 'decision', 'outcome'].includes(record.kind) ||
     ![
@@ -209,9 +209,10 @@ export function activeDreamerMemoryIds(
 ): Set<string> {
   if (memory.mode !== 'on' || !memory.available) return new Set()
   const nowMs = now.getTime()
+  const tombstoneIds = new Set(memory.tombstones.map(({ recordId }) => recordId))
   return new Set(
     memory.records
-      .filter((record) => activeMemoryRecord(record, memory, nowMs))
+      .filter((record) => activeMemoryRecord(record, nowMs, tombstoneIds))
       .map(({ id }) => id),
   )
 }
@@ -317,6 +318,10 @@ function candidateForMemory(
   }
 }
 
+function sessionIdentityKey(computerId: string, sessionId: string): string {
+  return JSON.stringify([computerId, sessionId])
+}
+
 function carryItem(item: DreamerPreviousItem): DreamerStoredPlanItem {
   return {
     id: item.id,
@@ -370,7 +375,16 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
       .filter((item) => item.status === 'pending' && !item.memoryId)
       .map((item) => item.fingerprint),
   )
-  const candidates: DreamerStoredPlanItem[] = []
+  const sessionPriorityByIdentity = new Map(
+    input.sessions.map((session) => [
+      sessionIdentityKey(session.computerId, session.sessionId),
+      SESSION_PRIORITY[session.status ?? 'idle'] ?? 98,
+    ]),
+  )
+  const candidates: Array<{
+    item: DreamerStoredPlanItem
+    priority: number
+  }> = []
   const sessions = [...input.sessions].sort((left, right) => {
     const leftRank = SESSION_PRIORITY[left.status ?? 'idle'] ?? 98
     const rightRank = SESSION_PRIORITY[right.status ?? 'idle'] ?? 98
@@ -411,7 +425,12 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
     }
     const fingerprint = sessionFingerprint(session)
     if (carriedFingerprints.has(fingerprint) || previousHistory.has(fingerprint)) continue
-    candidates.push(candidateForSession(session, fingerprint))
+    candidates.push({
+      item: candidateForSession(session, fingerprint),
+      priority: sessionPriorityByIdentity.get(
+        sessionIdentityKey(session.computerId, session.sessionId),
+      ) ?? 98,
+    })
   }
 
   const currentMemoryIds = new Set<string>()
@@ -467,7 +486,10 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
       currentMemoryIds.add(record.id)
       const fingerprint = memoryFingerprint(record)
       if (previousHistory.has(fingerprint)) continue
-      candidates.push(candidateForMemory(record, fingerprint))
+      candidates.push({
+        item: candidateForMemory(record, fingerprint),
+        priority: 4,
+      })
     }
   }
 
@@ -482,29 +504,13 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
   }
   if (carry.length > DREAMER_MAX_ITEMS) throw new DreamerPlannerCapacityError()
   const selectedCandidates = candidates.filter(
-    (candidate) => !carriedFingerprints.has(candidate.fingerprint),
+    ({ item }) => !carriedFingerprints.has(item.fingerprint),
   )
 
   selectedCandidates.sort((left, right) => {
-    const leftSession = left.source === 'session'
-      ? `${left.computerId ?? ''}:${left.sessionId ?? ''}`
-      : ''
-    const rightSession = right.source === 'session'
-      ? `${right.computerId ?? ''}:${right.sessionId ?? ''}`
-      : ''
-    const leftPriority = left.source === 'session'
-      ? SESSION_PRIORITY[
-          input.sessions.find((session) =>
-            `${session.computerId}:${session.sessionId}` === leftSession)?.status ?? 'idle'
-        ] ?? 98
-      : 4
-    const rightPriority = right.source === 'session'
-      ? SESSION_PRIORITY[
-          input.sessions.find((session) =>
-            `${session.computerId}:${session.sessionId}` === rightSession)?.status ?? 'idle'
-        ] ?? 98
-      : 4
-    return leftPriority - rightPriority || left.id.localeCompare(right.id)
+    const leftPriority = left.priority
+    const rightPriority = right.priority
+    return leftPriority - rightPriority || left.item.id.localeCompare(right.item.id)
   })
 
   const availableSlots = Math.max(0, DREAMER_MAX_ITEMS - carry.length)
@@ -512,7 +518,7 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
   const omitted = selectedCandidates.length - selected.length
   if (omitted > 0) addCoverage(coverage, 'overflow')
   return {
-    items: [...carry, ...selected],
+    items: [...carry, ...selected.map(({ item }) => item)],
     coverage,
     omitted,
   }

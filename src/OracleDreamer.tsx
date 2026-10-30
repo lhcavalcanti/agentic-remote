@@ -5,39 +5,68 @@ import type { DreamerPlanEdit } from './dreamer-api'
 import './dreamer.css'
 
 const reason = (error: unknown) => error instanceof Error ? error.message : 'Dreamer could not be reached.'
+const dreamerChanged = 'oracle-dreamer-changed'
 
 function useDreamer(active: boolean) {
-  const [snapshot, setSnapshot] = useState<DreamerSnapshot>()
+  const [snapshot, publishSnapshot] = useState<DreamerSnapshot>()
   const [error, setError] = useState<string>()
+  const [unavailable, setUnavailable] = useState(false)
+  const latest = useRef<DreamerSnapshot | undefined>(undefined)
   const current = useRef(0)
+  const acceptSnapshot = useCallback((next: DreamerSnapshot) => {
+    if (latest.current && next.revision < latest.current.revision) return false
+    latest.current = next
+    publishSnapshot(next)
+    setUnavailable(!next.available)
+    setError(undefined)
+    return true
+  }, [])
+  const setSnapshot = useCallback((next: DreamerSnapshot) => {
+    current.current += 1
+    acceptSnapshot(next)
+  }, [acceptSnapshot])
+  const failMutation = useCallback((caught: unknown) => {
+    current.current += 1
+    if (!(caught instanceof DreamerApiError) || caught.status >= 500) setUnavailable(true)
+  }, [])
   const refresh = useCallback(async () => {
     const request = ++current.current
     try {
       const next = await getDreamer()
       if (request === current.current) {
-        setSnapshot(next)
-        setError(undefined)
+        acceptSnapshot(next)
+        return latest.current
       }
-      return next
+      return undefined
     } catch (caught) {
-      if (request === current.current) setError(reason(caught))
+      if (request === current.current) {
+        setError(reason(caught))
+        if (!(caught instanceof DreamerApiError) || caught.status >= 500) setUnavailable(true)
+      }
       return undefined
     }
-  }, [])
+  }, [acceptSnapshot])
   useEffect(() => {
     if (!active) return
     let disposed = false
     void Promise.resolve().then(() => { if (!disposed) void refresh() })
+    const update = () => { if (!disposed) void refresh() }
+    const timer = window.setInterval(update, 30_000)
+    window.addEventListener(dreamerChanged, update)
+    window.addEventListener('focus', update)
     return () => {
       disposed = true
       current.current += 1
+      window.clearInterval(timer)
+      window.removeEventListener(dreamerChanged, update)
+      window.removeEventListener('focus', update)
     }
   }, [active, refresh])
-  return { snapshot, setSnapshot, error, refresh }
+  return { snapshot, setSnapshot, error, unavailable, failMutation, refresh }
 }
 
 export function DreamerSettings({ active = true }: { active?: boolean }) {
-  const { snapshot, setSnapshot, error: loadError, refresh } = useDreamer(active)
+  const { snapshot, setSnapshot, error: loadError, failMutation, refresh } = useDreamer(active)
   const [draft, setDraft] = useState<{ enabled: boolean; timeZone: string }>()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
@@ -58,7 +87,9 @@ export function DreamerSettings({ active = true }: { active?: boolean }) {
       setSnapshot(await saveDreamerSettings({ revision: snapshot.revision, enabled, timeZone: timeZone.trim() }))
       setDraft(undefined)
       setSaved(true)
+      window.dispatchEvent(new Event(dreamerChanged))
     } catch (caught) {
+      failMutation(caught)
       if (caught instanceof DreamerApiError && caught.status === 409) {
         if (await refresh()) {
           setDraft(undefined)
@@ -130,12 +161,12 @@ export function DreamerSettings({ active = true }: { active?: boolean }) {
 }
 
 export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
-  const { snapshot, setSnapshot, error: loadError, refresh } = useDreamer(active)
+  const { snapshot, setSnapshot, error: loadError, unavailable, failMutation, refresh } = useDreamer(active)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [saved, setSaved] = useState(false)
   const plan = snapshot?.plan
-  const readOnly = saving || !snapshot?.available
+  const readOnly = saving || unavailable || !snapshot?.available
 
   async function edit(change: Pick<DreamerPlanEdit, 'order' | 'item'>) {
     if (!snapshot || !plan || readOnly) return
@@ -146,6 +177,7 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
       setSnapshot(await updateDreamerPlan({ revision: snapshot.revision, planId: plan.id, ...change }))
       setSaved(true)
     } catch (caught) {
+      failMutation(caught)
       if (caught instanceof DreamerApiError && caught.status === 409) {
         if (await refresh()) {
           setError('The morning plan changed elsewhere. Review the refreshed plan before trying again.')
@@ -207,7 +239,10 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
             </details>
           </>
         ) : snapshot ? <p>No morning plan yet. When enabled, Dreamer runs at 02:00 in its saved timezone; same-day catch-up ends at 08:00.</p> : !loadError ? <p>Loading Dreamer...</p> : null}
-        <button className="secondary-button" disabled={saving} onClick={() => { setSaved(false); void refresh() }} type="button">Refresh morning plan</button>
+        <button className="secondary-button" disabled={saving} onClick={() => {
+          setSaved(false)
+          void refresh().then((next) => { if (next) setError(undefined) })
+        }} type="button">Refresh morning plan</button>
         {saved ? <p className="dialog-message" role="status">Plan saved.</p> : null}
       </div>
     </details>

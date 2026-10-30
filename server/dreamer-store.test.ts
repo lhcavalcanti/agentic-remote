@@ -6,6 +6,7 @@ import type { DreamerPlan } from '../shared/dreamer.js'
 import {
   DreamerCapacityError,
   DreamerConflictError,
+  DREAMER_MAX_ZONES,
   DreamerRecoveryError,
   DreamerStore,
   dreamerRunKey,
@@ -163,6 +164,78 @@ describe('DreamerStore', () => {
       timeZone: 'UTC',
       generation: second.snapshot().settings.generation,
     })).resolves.toMatchObject({ kind: 'already-committed' })
+  })
+
+  it('refuses a new timezone at fence capacity without blocking disable or known zones', async () => {
+    const root = await directory()
+    const zones = [
+      'UTC',
+      'Europe/Berlin',
+      'Asia/Kathmandu',
+      'America/New_York',
+      'Australia/Sydney',
+      'Africa/Cairo',
+      'Pacific/Auckland',
+      'America/Los_Angeles',
+      'America/Sao_Paulo',
+      'Europe/London',
+      'Asia/Tokyo',
+      'Africa/Johannesburg',
+      'America/Chicago',
+      'Europe/Paris',
+      'Asia/Singapore',
+      'Pacific/Honolulu',
+    ]
+    expect(zones).toHaveLength(DREAMER_MAX_ZONES)
+    let now = new Date('2026-10-29T02:00:00.000Z')
+    const store = new DreamerStore(root, { now: () => now })
+    await store.initialize()
+
+    for (const [index, timeZone] of zones.entries()) {
+      const current = store.snapshot()
+      await store.updateSettings(current.revision, { enabled: true, timeZone })
+      const runDate = localDate(29 + index)
+      const claim = await store.claimRun({
+        key: dreamerRunKey(timeZone, runDate),
+        localDate: runDate,
+        timeZone,
+        generation: store.snapshot().settings.generation,
+      })
+      expect(claim.kind).toBe('claimed')
+      if (claim.kind !== 'claimed') throw new Error(`expected ${timeZone} claim`)
+      await store.commitRun(claim.claim, {
+        ...plan,
+        id: `plan-${index}`,
+        localDate: runDate,
+        timeZone,
+      }, [])
+      now = new Date(`${runDate}T03:00:00.000Z`)
+    }
+
+    const beforeNewZone = store.snapshot()
+    await expect(store.updateSettings(beforeNewZone.revision, {
+      enabled: true,
+      timeZone: 'Etc/GMT+1',
+    })).rejects.toBeInstanceOf(DreamerCapacityError)
+    expect(store.snapshot()).toEqual(beforeNewZone)
+
+    const disabled = store.snapshot()
+    await expect(store.updateSettings(disabled.revision, {
+      enabled: false,
+      timeZone: zones.at(-1)!,
+    })).resolves.toBeUndefined()
+    const reenabled = store.snapshot()
+    await expect(store.updateSettings(reenabled.revision, {
+      enabled: true,
+      timeZone: zones[0],
+    })).resolves.toBeUndefined()
+    const recovered = await store.claimRun({
+      key: dreamerRunKey(zones[0], '2027-01-01'),
+      localDate: '2027-01-01',
+      timeZone: zones[0],
+      generation: store.snapshot().settings.generation,
+    })
+    expect(recovered.kind).toBe('claimed')
   })
 
   it('snapshots mutable settings input before serialized persistence begins', async () => {
@@ -604,4 +677,110 @@ describe('DreamerStore', () => {
         .toBe('replacement-sentinel')
     },
   )
+
+  it.each([
+    ['missing expiry', (run: Record<string, unknown>) => {
+      delete run.expiresAt
+    }],
+    ['invalid expiry', (run: Record<string, unknown>) => {
+      run.expiresAt = '2026-10-29T01:59:59.000Z'
+    }],
+    ['overlong expiry', (run: Record<string, unknown>) => {
+      run.expiresAt = '2026-10-29T12:01:00.000Z'
+    }],
+    ['invalid token type', (run: Record<string, unknown>) => {
+      run.claimToken = 42
+    }],
+    ['generation newer than settings', (run: Record<string, unknown>) => {
+      run.generation = 2
+    }],
+    ['committed run without terminal fields', (run: Record<string, unknown>) => {
+      run.status = 'committed'
+      delete run.claimToken
+      delete run.claimedAt
+      delete run.expiresAt
+      run.committedAt = '2026-10-29T02:00:00.000Z'
+    }],
+    ['retryable failure without retry time', (run: Record<string, unknown>) => {
+      run.status = 'failed'
+      delete run.claimToken
+      delete run.claimedAt
+      delete run.expiresAt
+      delete run.retryAt
+    }],
+  ])('rejects corrupt run state with %s and preserves primary bytes', async (_label, mutate) => {
+    const root = await directory()
+    const key = dreamerRunKey('UTC', '2026-10-29')
+    const run: Record<string, unknown> = {
+      key,
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: 1,
+      status: 'claimed',
+      attempts: 1,
+      claimToken: 'claim-token',
+      claimedAt: '2026-10-29T02:00:00.000Z',
+      expiresAt: '2026-10-29T02:10:00.000Z',
+    }
+    mutate(run)
+    const serialized = JSON.stringify({
+      version: 1,
+      revision: 1,
+      settings: { enabled: true, timeZone: 'UTC', generation: 1 },
+      runs: [run],
+      zoneFences: [],
+      history: [],
+    })
+    const statePath = path.join(root, 'dreamer.json')
+    await writeFile(statePath, serialized)
+    await expect(new DreamerStore(root).initialize())
+      .rejects.toBeInstanceOf(DreamerRecoveryError)
+    expect(await readFile(statePath, 'utf8')).toBe(serialized)
+  })
+
+  it('rejects duplicate run keys and duplicate JSON object keys without resetting state', async () => {
+    const root = await directory()
+    const key = dreamerRunKey('UTC', '2026-10-29')
+    const run = {
+      key,
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: 1,
+      status: 'claimed',
+      attempts: 1,
+      claimToken: 'claim-token',
+      claimedAt: '2026-10-29T02:00:00.000Z',
+      expiresAt: '2026-10-29T02:10:00.000Z',
+    }
+    const duplicateRunState = JSON.stringify({
+      version: 1,
+      revision: 1,
+      settings: { enabled: true, timeZone: 'UTC', generation: 1 },
+      runs: [run, { ...run }],
+      zoneFences: [],
+      history: [],
+    })
+    const statePath = path.join(root, 'dreamer.json')
+    await writeFile(statePath, duplicateRunState)
+    await expect(new DreamerStore(root).initialize())
+      .rejects.toBeInstanceOf(DreamerRecoveryError)
+    expect(await readFile(statePath, 'utf8')).toBe(duplicateRunState)
+
+    const validState = JSON.stringify({
+      version: 1,
+      revision: 1,
+      settings: { enabled: true, timeZone: 'UTC', generation: 1 },
+      runs: [run],
+      zoneFences: [],
+      history: [],
+    })
+    const duplicatePropertyState = validState.replace(
+      `"key":"${key}","localDate"`,
+      `"key":"${key}","key":"${key}","localDate"`,
+    )
+    await writeFile(statePath, duplicatePropertyState)
+    const reopened = new DreamerStore(root)
+    await expect(reopened.initialize()).rejects.toBeInstanceOf(DreamerRecoveryError)
+    expect(await readFile(statePath, 'utf8')).toBe(duplicatePropertyState)
+  })
 })

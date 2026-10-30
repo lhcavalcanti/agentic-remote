@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { planDreamer } from './dreamer-planner.js'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  activeDreamerMemoryIds,
+  planDreamer,
+} from './dreamer-planner.js'
 
 describe('Dreamer planner', () => {
   it('prioritizes metadata-only session evidence and never persists source text', () => {
@@ -211,5 +214,85 @@ describe('Dreamer planner', () => {
     })
     expect(result.items).toEqual([])
     expect(result.coverage).toContain('memory-reference-stale')
+  })
+
+  it('preindexes large tombstone metadata instead of scanning tombstones per record', () => {
+    const records = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `memory-${index}`,
+      kind: 'fact' as const,
+      scope: { type: 'user' as const },
+      authority: 'direct-user' as const,
+      confidence: 1,
+      createdAt: '2026-10-28T00:00:00.000Z',
+      updatedAt: '2026-10-29T03:00:00.000Z',
+    }))
+    const tombstones = Array.from(
+      { length: 20_000 },
+      (_, index) => ({ recordId: `forgotten-${index}` }),
+    )
+    Object.defineProperty(tombstones, 'some', {
+      value: () => {
+        throw new Error('per-record tombstone scan')
+      },
+    })
+
+    expect(() => activeDreamerMemoryIds({
+      mode: 'on',
+      available: true,
+      records,
+      tombstones,
+    }, new Date('2026-10-29T04:00:00.000Z'))).not.toThrow()
+  })
+
+  it('precomputes session ranks without scanning all sessions during candidate sorting', () => {
+    const sessions = Array.from({ length: 10_000 }, (_, index) => ({
+      computerId: `computer-${index % 10}`,
+      sessionId: `session-${index}`,
+      status: index === 9_999 ? 'error' as const : 'running' as const,
+      lastSeenAt: '2026-10-29T03:00:00.000Z',
+    }))
+    const find = vi.spyOn(sessions, 'find').mockImplementation(() => {
+      throw new Error('candidate comparator scanned all sessions')
+    })
+
+    const result = planDreamer({
+      now: new Date('2026-10-29T04:00:00.000Z'),
+      registryAvailable: true,
+      sessions,
+    })
+
+    expect(find).not.toHaveBeenCalled()
+    expect(result.items).toHaveLength(20)
+    expect(result.items[0].sessionId).toBe('session-9999')
+  })
+
+  it('keeps session identities distinct when IDs contain the delimiter characters', () => {
+    const result = planDreamer({
+      now: new Date('2026-10-29T04:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [
+        {
+          computerId: 'a',
+          sessionId: 'b:c',
+          status: 'running',
+          lastSeenAt: '2026-10-29T03:00:00.000Z',
+        },
+        {
+          computerId: 'a:b',
+          sessionId: 'c',
+          status: 'error',
+          lastSeenAt: '2026-10-29T03:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(result.items.map(({ computerId, sessionId, status }) => ({
+      computerId,
+      sessionId,
+      status,
+    }))).toEqual([
+      { computerId: 'a:b', sessionId: 'c', status: 'pending' },
+      { computerId: 'a', sessionId: 'b:c', status: 'pending' },
+    ])
   })
 })

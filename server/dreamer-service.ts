@@ -78,8 +78,11 @@ function publicSnapshot(
     const decision = dreamerScheduleDecision(now, storeSnapshot.settings.timeZone)
     if (
       decision.reason === 'window-expired' &&
-      !storeSnapshot.runs.some(({ key }) =>
-        key === dreamerRunKey(storeSnapshot.settings.timeZone, decision.localDate))
+      !storeSnapshot.runs.some(({ key, status }) =>
+        status === 'committed' &&
+        key === dreamerRunKey(storeSnapshot.settings.timeZone, decision.localDate)) &&
+      !(storeSnapshot.plan?.localDate === decision.localDate &&
+        storeSnapshot.plan.timeZone === storeSnapshot.settings.timeZone)
     ) {
       lastError = 'Dreamer missed the current review window.'
     }

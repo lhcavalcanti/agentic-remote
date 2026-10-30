@@ -499,6 +499,32 @@ describe('DreamerService', () => {
     })
   })
 
+  it('reports an abandoned overnight claim as missed after restart outside the window', async () => {
+    const directory = await root()
+    let now = new Date('2026-10-29T02:00:00.000Z')
+    const store = new DreamerStore(directory, { now: () => now })
+    await store.initialize()
+    await store.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    await store.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: 1,
+    })
+    now = new Date('2026-10-29T09:00:00.000Z')
+    const registry = vi.fn(() => ({}))
+    const restarted = new DreamerService(directory, { now: () => now, registry })
+    await restarted.start()
+    try {
+      await expect(restarted.snapshotForApi()).resolves.toMatchObject({
+        lastError: 'Dreamer missed the current review window.',
+      })
+      expect(registry).not.toHaveBeenCalled()
+    } finally {
+      await restarted.stop()
+    }
+  })
+
   it('coalesces concurrent stale-memory GET reconciliation without losing revisions', async () => {
     const directory = await root()
     let memory = activeMemory()

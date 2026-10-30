@@ -37,6 +37,11 @@ const plan = {
 }
 const ready = { ...initial, settings: { ...initial.settings, enabled: true }, plan }
 
+async function openMorningPlan() {
+  fireEvent.click(await screen.findByText('Morning plan'))
+  await screen.findByRole('list', { name: 'Dreamer priorities' })
+}
+
 describe('Dreamer settings and morning review', () => {
   beforeEach(() => {
     vi.mocked(getDreamer).mockReset().mockResolvedValue(initial)
@@ -132,7 +137,7 @@ describe('Dreamer settings and morning review', () => {
   it('shows a dated priority list and honest coverage without claiming task completion', async () => {
     vi.mocked(getDreamer).mockResolvedValue(ready)
     render(<DreamerMorningPlan />)
-    fireEvent.click(await screen.findByText('Morning plan'))
+    await openMorningPlan()
     expect(screen.getByText(/2026-10-29/)).toBeInTheDocument()
     expect(screen.getByText('Durable todos unavailable.')).toBeInTheDocument()
     expect(screen.getByText(/2 additional candidates/)).toBeInTheDocument()
@@ -148,7 +153,7 @@ describe('Dreamer settings and morning review', () => {
       ...ready, revision: 4, plan: { ...plan, items: [plan.items[1], plan.items[0]] },
     })
     render(<DreamerMorningPlan />)
-    fireEvent.click(await screen.findByText('Morning plan'))
+    await openMorningPlan()
     fireEvent.click(screen.getByRole('button', { name: 'Move Review remembered decision up' }))
     await waitFor(() => {
       expect(within(screen.getByRole('list', { name: 'Dreamer priorities' })).getAllByRole('listitem')[0])
@@ -163,7 +168,7 @@ describe('Dreamer settings and morning review', () => {
       ...ready, revision: 4, plan: { ...plan, items: [{ ...plan.items[0], status }, plan.items[1]] },
     })
     render(<DreamerMorningPlan />)
-    fireEvent.click(await screen.findByText('Morning plan'))
+    await openMorningPlan()
     const first = within(screen.getByRole('list', { name: 'Dreamer priorities' })).getAllByRole('listitem')[0]
     fireEvent.click(within(first).getByRole('button', { name: status === 'done' ? 'Done' : 'Skip' }))
     await screen.findByRole('button', { name: 'Restore Review failed session' })
@@ -181,7 +186,7 @@ describe('Dreamer settings and morning review', () => {
     vi.mocked(getDreamer).mockResolvedValue(ready)
     vi.mocked(updateDreamerPlan).mockRejectedValue(new DreamerApiError('Stale plan.', 409))
     render(<DreamerMorningPlan />)
-    fireEvent.click(await screen.findByText('Morning plan'))
+    await openMorningPlan()
     vi.mocked(getDreamer).mockResolvedValue({ ...ready, revision: 8, plan: { ...plan, items: [plan.items[1]] } })
     fireEvent.click(screen.getAllByRole('button', { name: 'Done' })[0])
     expect(await screen.findByRole('alert')).toHaveTextContent(/changed elsewhere/)
@@ -199,7 +204,7 @@ describe('Dreamer settings and morning review', () => {
   it('keeps a retained plan read-only when storage becomes unavailable', async () => {
     vi.mocked(getDreamer).mockResolvedValue({ ...ready, available: false, lastError: 'Dreamer storage is unavailable.' })
     render(<DreamerMorningPlan />)
-    fireEvent.click(await screen.findByText('Morning plan'))
+    await openMorningPlan()
     expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Move Review failed session down' })).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent('Dreamer storage is unavailable.')
@@ -226,10 +231,27 @@ describe('Dreamer settings and morning review', () => {
     expect(updateDreamerPlan).not.toHaveBeenCalled()
   })
 
+  it('keeps the original settings revision on a draft across background refresh', async () => {
+    vi.useFakeTimers()
+    render(<DreamerSettings />)
+    await act(async () => undefined)
+    fireEvent.change(screen.getByLabelText('Dreamer timezone'), { target: { value: 'Asia/Kathmandu' } })
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...initial, revision: 4, settings: { enabled: true, timeZone: 'UTC' },
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    vi.mocked(saveDreamerSettings).mockRejectedValue(new DreamerApiError('Stale settings.', 409))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save Dreamer' })) })
+    expect(saveDreamerSettings).toHaveBeenCalledWith({
+      revision: 3, enabled: false, timeZone: 'Asia/Kathmandu',
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(/changed elsewhere/)
+  })
+
   it('does not replace a saved edit with an older delayed refresh response', async () => {
     vi.mocked(getDreamer).mockResolvedValue(ready)
     render(<DreamerMorningPlan />)
-    fireEvent.click(await screen.findByText('Morning plan'))
+    await openMorningPlan()
     let release!: (snapshot: typeof ready) => void
     vi.mocked(getDreamer).mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
     fireEvent.click(screen.getByRole('button', { name: 'Refresh morning plan' }))
@@ -246,7 +268,7 @@ describe('Dreamer settings and morning review', () => {
     vi.mocked(getDreamer).mockResolvedValue(ready)
     vi.mocked(updateDreamerPlan).mockRejectedValue(new DreamerApiError('Storage offline.', 503))
     render(<DreamerMorningPlan />)
-    fireEvent.click(await screen.findByText('Morning plan'))
+    await openMorningPlan()
     fireEvent.click(screen.getAllByRole('button', { name: 'Done' })[0])
     expect(await screen.findByRole('alert')).toHaveTextContent('Storage offline.')
     expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeDisabled()

@@ -67,14 +67,14 @@ function useDreamer(active: boolean) {
 
 export function DreamerSettings({ active = true }: { active?: boolean }) {
   const { snapshot, setSnapshot, error: loadError, failMutation, refresh } = useDreamer(active)
-  const [draft, setDraft] = useState<{ enabled: boolean; timeZone: string }>()
+  const [draft, setDraft] = useState<{ revision: number; enabled: boolean; timeZone: string }>()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [saved, setSaved] = useState(false)
   const enabled = draft?.enabled ?? snapshot?.settings.enabled ?? false
   const timeZone = draft?.timeZone ?? snapshot?.settings.timeZone ?? ''
   function change(input: Partial<{ enabled: boolean; timeZone: string }>) {
-    setDraft({ enabled, timeZone, ...input })
+    setDraft({ revision: draft?.revision ?? snapshot?.revision ?? 0, enabled, timeZone, ...input })
     setSaved(false)
   }
 
@@ -84,7 +84,7 @@ export function DreamerSettings({ active = true }: { active?: boolean }) {
     setError(undefined)
     setSaved(false)
     try {
-      setSnapshot(await saveDreamerSettings({ revision: snapshot.revision, enabled, timeZone: timeZone.trim() }))
+      setSnapshot(await saveDreamerSettings({ revision: draft?.revision ?? snapshot.revision, enabled, timeZone: timeZone.trim() }))
       setDraft(undefined)
       setSaved(true)
       window.dispatchEvent(new Event(dreamerChanged))

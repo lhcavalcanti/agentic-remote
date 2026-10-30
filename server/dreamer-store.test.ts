@@ -688,6 +688,13 @@ describe('DreamerStore', () => {
     ['overlong expiry', (run: Record<string, unknown>) => {
       run.expiresAt = '2026-10-29T12:01:00.000Z'
     }],
+    ['normalized impossible date', (run: Record<string, unknown>) => {
+      run.claimedAt = '2026-02-30T02:00:00.000Z'
+      run.expiresAt = '2026-02-30T02:10:00.000Z'
+    }],
+    ['noncanonical expiry', (run: Record<string, unknown>) => {
+      run.expiresAt = '2026-10-29 02:10:00Z'
+    }],
     ['invalid token type', (run: Record<string, unknown>) => {
       run.claimToken = 42
     }],

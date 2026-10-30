@@ -200,7 +200,9 @@ function hasOwn(value: Record<string, unknown>, key: string): boolean {
 }
 
 function validTimestamp(value: unknown): value is string {
-  return isSafeString(value, 64) && Number.isFinite(Date.parse(value))
+  return isSafeString(value, 64) &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString() === value
 }
 
 function assertUniqueJsonKeys(serialized: string): void {

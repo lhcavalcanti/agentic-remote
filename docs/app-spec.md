@@ -95,6 +95,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   session listing MUST NOT be treated as evidence that an entry is gone. A
   browser-local order from before the hub owned it MAY seed an empty hub once,
   after which the hub snapshot is authoritative.
+- Each session row MUST place **Close** above **Pause**/**Resume** in its
+  lifecycle controls. Close MUST use the same confirmed, permanently deleting
+  close lifecycle and owning-computer route as **Close session**; Pause and
+  Resume retain their existing suspend lifecycle, availability, and labels.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors, including queued delivery that requires confirmation. Pending actions
   MUST take precedence over passive runtime status.
@@ -189,10 +193,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   background task is running. With no running background task, the existing
   green and gray session treatments MUST remain unchanged.
 - A foreground response in progress MUST show Working rather than Tasks,
-  even while background tasks run. The existing X tasks action MUST retain
-  the running count and task access. An idle foreground with running background
-  tasks MUST still show Tasks; attention, suspension, and offline states retain
-  their existing precedence.
+  even while background tasks run. A separate Tasks status action MUST retain
+  touch and keyboard access to the task panel without replacing the session's
+  activity time. An idle foreground with running background tasks MUST still
+  show Tasks; attention, suspension, and offline states retain their existing
+  precedence.
 - A running SDK background agent MUST make the session row read as active even
   when no foreground turn is open. The composer MUST keep immediate Send
   available and MUST offer Queue; queued text waits for the tracked background
@@ -455,12 +460,26 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   or open at all on a phone), in an open document's header on a phone, and in
   the phone's session list beside **Manage computers**. The button shows a
   working ring, an unread dot, and every current state in its accessible name,
-  such as "Oracle, working, new reply". It opens a non-modal drawer on a
-  desktop, resizable from its left edge by drag or arrow keys (Home or a
-  double-click resets it) and remembered per browser. Widening stops where the
+  such as "Oracle, working, new reply". `Ctrl+Alt+O` on Windows/Linux and
+  `Cmd+Alt+O` on Apple keyboards opens or closes Oracle. Opening focuses
+  Oracle's message field; closing focuses the active writable session message
+  field. With Oracle pinned beside the session, the shortcut instead moves
+  focus between those two fields while either one owns focus. It MUST NOT take
+  a key from another field, a dialog, a pending permission or question, or an
+  IME composition.
+- On desktop, Oracle opens as a non-modal overlay by default and MAY be pinned
+  beside the working session with the visible **Dock Oracle** control in its
+  header; the same control becomes **Undock Oracle** while pinned.
+  `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles
+  that choice while Oracle is open. App settings MUST NOT expose a second
+  placement control. Both placements are resizable from the panel's left edge
+  by drag or arrow keys (Home or a double-click resets it) and the placement
+  and width are remembered on this device. Widening stops where the
   conversation would have less than 360px beside the sessions list; the panel
-  is never narrower than 340px, so a window without room for both shows it at
-  340px over more of the conversation. On a phone it is a full-height sheet. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
+  is never narrower than 340px, so a window without room for both falls back
+  to the overlay without changing the saved desktop preference. At 960px or
+  narrower it is always a full-height overlay sheet. A hub with
+  `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
   now waits its turn, and Send becomes **Queue message**. **Dictate to
@@ -619,6 +638,30 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   session. Your default folder, mode, and model for new sessions are sent with
   each message and apply to the sessions Oracle starts.
 
+### 3.8 Oracle Dreamer foundation
+
+- Dreamer MUST be disabled by default and enabled explicitly in App settings
+  with a saved hub-wide IANA timezone. Its fixed schedule is 02:00 local time;
+  same-day catch-up ends at 08:00. DST repeats MUST NOT duplicate a daily run,
+  and a missing 02:00 MUST use the first later valid local time.
+- This first slice MUST perform only deterministic local metadata review:
+  journal-observed session state and eligible structured-memory metadata, not
+  transcripts, prompts, titles, memory contents or external inference.
+  Unavailable durable todos, incomplete history and source freshness limits
+  MUST be visible rather than represented as a complete review.
+- Daily run claims, generation/lease fences, plans and user edits MUST persist
+  before success. Disable, expiry, shutdown and restart MUST prevent stale
+  workers from replacing a committed plan. Bounds and storage failures MUST
+  be reported without silently resetting state.
+- Oracle MUST present a dated morning plan with priority reorder, skip, done
+  and restore. These explicit user actions MUST change only plan review state,
+  never session/task completion, prompts, permissions or memory. Concurrent
+  stale edits MUST be refused and refreshed.
+- Dreamer MUST NOT raise overnight notifications, send speech, execute work
+  or add model calls. Semantic planning, authoritative todo/history adapters
+  and optional morning delivery are separate follow-ups described in
+  [Oracle Dreamer](design/oracle-dreamer.md).
+
 ## 4. Conversation timeline
 
 - User messages, assistant messages, notices, and tool activity MUST remain in
@@ -651,7 +694,8 @@ Questions and permissions are the highest-priority UI state.
 
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot
-  runtimes.
+  runtimes. Normal SDK sessions MUST select Copilot's elicitation `ask_user`
+  variant when they register the structured-form handler.
 - Structured question cards MUST remain within the phone timeline width.
   Checkboxes MUST keep their intrinsic control size, option and heading text
   MUST wrap inside the card, and long forms MUST remain vertically reachable
@@ -1460,11 +1504,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
 ### 9.2 App settings layout
 
 - App settings MUST group settings by what they are about, in this order:
-  - **Models**: new sessions' defaults per provider, then Oracle's model and
-    effort, then Oracle's response style.
+  - **Models**: new sessions' defaults per provider.
   - **Folders**: one card per computer with the folder new sessions start in,
     then Oracle's (blank means the same as new sessions).
-  - **Notifications**.
+  - **Oracle**: Oracle's model and effort, response style, and which activity
+    notifies you.
+  - **Notifications**: this device's notification permission and subscription.
   - **Interface**: Appearance, Status line, Keyboard shortcuts.
   - **App**: Settings sync, Hub connection (native app only), App updates.
 - Each section whose scope is not obvious MUST say whether it is **Synced** or
@@ -1483,7 +1528,7 @@ people sharing a hub share its profile. See
 | Scope | Settings |
 |---|---|
 | **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
-| **This device** | Keyboard shortcuts, panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
+| **This device** | Keyboard shortcuts, panel placement and widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
 | **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
 
 - A change MUST apply at once, persist on the hub before it is reported, and

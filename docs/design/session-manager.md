@@ -307,18 +307,29 @@ end the turn.
   stop, or close a session for that message. Ask questions queue behind
   Oracle's own work only, never behind sessions. **Delegate** lets Oracle start
   and steer sessions.
-- The model under the message bar opens **App settings** at **Models →
-  Oracle**, where the model and effort are chosen; each computer's Oracle
+- The model under the message bar opens **App settings → Oracle → Model**,
+  where the model and effort are chosen; each computer's Oracle
   folder sits under **Folders**, beside the folder new sessions use. Both are
   kept on the hub (`useOracleSettings` in `src/use-oracle-settings.ts` holds
   the one copy both parts read).
-- The panel is a right-hand drawer on desktop, resizable from its left edge
-  (340px up to whatever leaves the conversation 360px beside the sessions
-  list, at most 960px; remembered per browser, and shown narrower without
-  forgetting the choice when the window narrows). The 340px minimum wins on a
-  window without room for both, where the panel overlays more of the
-  conversation. On a phone it is a full-height sheet. It shows the transcript (Markdown), tool activity chips, and a
-  composer whose Return behaviour follows the session composer.
+- `Ctrl+Alt+O` on Windows/Linux and `Cmd+Alt+O` on Apple keyboards opens or
+  closes Oracle without colliding with the browser's history/bookmark
+  shortcuts. It focuses Oracle when opening and the active writable session
+  composer when closing. While a pinned Oracle and session composer are both
+  visible, it moves focus between them instead; unrelated fields, dialogs,
+  pending questions and permissions, and IME composition keep their keys.
+- The desktop panel defaults to a right-hand overlay and can instead be pinned
+  beside the working session from the Dock/Undock control in its header.
+  `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles the
+  same choice while Oracle is open; App settings has no duplicate placement
+  control. It is resizable from its left edge (340px up to whatever leaves the
+  conversation 360px beside the sessions list, at most 960px; placement and
+  width are remembered per browser, and shown narrower without forgetting the
+  choice when the window narrows). The panel falls back to overlay when the
+  340px panel and 360px conversation minimums cannot both fit. At 960px or
+  narrower it is always a full-height sheet. It shows the transcript
+  (Markdown), tool activity chips, and a composer whose Return behaviour
+  follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
 - Sessions Oracle started get a small **Oracle** badge in the session list.

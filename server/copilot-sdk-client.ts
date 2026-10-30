@@ -31,6 +31,10 @@ export const COPILOT_SDK_SESSION_DISCOVERY = {
   enableHostGitOperations: true,
 } as const satisfies Partial<SessionConfig>
 
+export const COPILOT_SDK_SESSION_INTERACTION = {
+  askUserVariant: 'elicitation',
+} as const satisfies Partial<SessionConfig>
+
 export async function readCopilotSdkRuntimeDiagnostic(
   client: CopilotSdkRuntimeDiagnosticClient,
 ): Promise<CopilotSdkRuntimeDiagnostic | undefined> {

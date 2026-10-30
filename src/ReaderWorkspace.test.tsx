@@ -83,6 +83,14 @@ describe('reader resizing', () => {
     expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
   })
 
+  it('keeps 360px for the conversation whenever the reader minimum allows it', () => {
+    workspaceWidth = 680
+    render(workspace())
+    expect(handle()).toHaveAttribute('aria-valuemin', '320')
+    expect(handle()).toHaveAttribute('aria-valuemax', '320')
+    expect(handle()).toHaveAttribute('aria-valuenow', '320')
+  })
+
   it.each(['pointerup', 'pointercancel', 'lostpointercapture'])(
     'keeps the responsive default after %s without an effective resize',
     (ending) => {

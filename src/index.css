@@ -147,6 +147,17 @@ button {
   --inline-code-text: var(--accent-foreground);
 }
 
+.app-shell--oracle-docked {
+  grid-template-columns:
+    var(--sidebar-width)
+    minmax(0, 1fr)
+    var(--oracle-panel-width);
+}
+
+.app-shell--oracle-docked > .workspace {
+  grid-column: 2;
+}
+
 .app-shell[data-accent-theme='ocean'] {
   --accent: #6eb7ff;
   --accent-deep: #4a93dc;
@@ -1715,7 +1726,7 @@ button {
   position: relative;
 }
 
-/* The whole row apart from the handle and the suspend control opens the
+/* The whole row apart from the handle and lifecycle controls opens the
    session, so it carries the padding-free bulk of the row. */
 .session-item__open {
   display: block;
@@ -2024,9 +2035,7 @@ button {
   }
 }
 
-/* The folder and what is running in it read as one line. The count sits to
-   the right of the path because it is the thing worth catching at a glance,
-   and the path gives way first when there is not enough room for both. */
+/* The folder and its activity time read as one line. */
 .session-item__where {
   display: flex;
   align-items: baseline;
@@ -2050,33 +2059,28 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* The task action shares the metadata line without nesting inside the session
-   button or squeezing the session title. Its absolute hit area is deliberately
-   kept out of the row's height calculation. */
+/* The Tasks status remains a separate action without replacing the activity
+   time or nesting a button inside the session button. */
 .session-item__tasks {
   display: inline-flex;
   position: absolute;
   right: 0;
-  bottom: 0;
-  align-items: flex-end;
+  top: 0;
+  align-items: center;
   justify-content: center;
   min-height: 28px;
   flex: 0 0 auto;
-  max-width: 50%;
-  overflow: hidden;
-  padding: 0 2px;
+  margin-left: 0;
+  padding: 1px 5px;
   color: var(--task);
-  font-size: 11px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   border: 0;
   border-radius: 4px;
-  background: transparent;
+  background: color-mix(in srgb, var(--task) 8%, var(--panel));
 }
 
-.session-item__body--tasks .session-item__where {
-  padding-right: calc(50% + 6px);
+.session-item__body--task-status .session-item__badges,
+.session-item__body--task-status .session-item__text > strong {
+  padding-right: 56px;
 }
 
 .session-item__tasks--offline {
@@ -7269,13 +7273,19 @@ button {
 }
 
 /* Sits at the end of the row, out of the way of the title but reachable
-   without opening the conversation. It only asks for room when the pointer is
-   near or the session is already resting, so a list of running work reads as
-   work rather than as a row of controls. */
-.session-item__suspend {
+   without opening the conversation. Close stays above Pause so the destructive
+   and reversible lifecycle actions keep a stable order. */
+.session-item__controls {
   grid-column: 3;
   grid-row: 1;
   align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-item__close,
+.session-item__suspend {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -7296,11 +7306,19 @@ button {
   transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
 }
 
+.session-item:hover .session-item__close,
 .session-item:hover .session-item__suspend,
+.session-item:focus-within .session-item__close,
 .session-item:focus-within .session-item__suspend,
+.session-item__close:focus-visible,
 .session-item__suspend:focus-visible,
 .session-item__suspend--active {
   opacity: 1;
+}
+
+.session-item__close:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 .session-item__suspend:hover {
@@ -7312,6 +7330,7 @@ button {
   color: #6ea8fe;
 }
 
+.session-item__close:focus-visible,
 .session-item__suspend:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
@@ -7319,12 +7338,16 @@ button {
 
 /* Still hidden until the pointer is near. Fading a disabled control in on its
    own left every busy session showing a faint pause button at all times. */
+.session-item__close:disabled,
 .session-item__suspend:disabled {
   cursor: not-allowed;
 }
 
+.session-item:hover .session-item__close:disabled,
 .session-item:hover .session-item__suspend:disabled,
+.session-item:focus-within .session-item__close:disabled,
 .session-item:focus-within .session-item__suspend:disabled,
+.session-item__close:disabled:focus-visible,
 .session-item__suspend:disabled:focus-visible {
   opacity: 0.35;
 }
@@ -7333,25 +7356,28 @@ button {
    completely there -- and tapping the row opens the session rather than
    finding an invisible target. It stays visible, and large enough to hit. */
 @media (hover: none) {
+  .session-item__close,
   .session-item__suspend {
     opacity: 1;
     width: 40px;
     height: 40px;
   }
 
+  .session-item__close:disabled,
   .session-item__suspend:disabled {
     opacity: 0.3;
   }
 }
 
-.session-item__tasks--interactive {
+.session-item__tasks {
   cursor: pointer;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
 }
 
-.session-item__tasks--interactive:focus-visible {
+.session-item__tasks:hover {
+  background: color-mix(in srgb, var(--task) 15%, var(--panel));
+}
+
+.session-item__tasks:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
   border-radius: 4px;
@@ -7536,6 +7562,15 @@ button {
   border-left: 1px solid var(--border);
   background: var(--bg);
   box-shadow: var(--shadow-popover);
+}
+
+.manager-panel--docked {
+  position: relative;
+  grid-row: 1;
+  grid-column: 3;
+  width: var(--oracle-width, 440px);
+  min-width: 0;
+  box-shadow: none;
 }
 
 .manager-panel__header {

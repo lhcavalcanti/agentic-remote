@@ -10,6 +10,8 @@ import {
   LoaderCircle,
   Mic,
   Orbit,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   RotateCcw,
   SlidersHorizontal,
@@ -221,13 +223,13 @@ function readAnswerOnly(): boolean {
 
 const widthStorageKey = 'agentic-remote:oracle-width'
 const WIDTH_DEFAULT = 440
-const WIDTH_MIN = 340
+export const ORACLE_PANEL_WIDTH_MIN = 340
 const WIDTH_MAX = 960
 /** The conversation keeps at least this much beside the panel. */
-const CONVERSATION_MIN = 360
+export const ORACLE_CONVERSATION_WIDTH_MIN = 360
 
 function boundWidth(value: number, limit = WIDTH_MAX): number {
-  return Math.min(limit, Math.max(WIDTH_MIN, Math.round(value)))
+  return Math.min(limit, Math.max(ORACLE_PANEL_WIDTH_MIN, Math.round(value)))
 }
 
 /** The width chosen, which a narrow window may show narrower without forgetting it. */
@@ -270,7 +272,9 @@ function usePanelWidth(reservedLeft: number) {
     return () => window.removeEventListener('resize', measure)
   }, [])
 
-  const limit = boundWidth(viewport - reservedLeft - CONVERSATION_MIN)
+  const limit = boundWidth(
+    viewport - reservedLeft - ORACLE_CONVERSATION_WIDTH_MIN,
+  )
   const clampWidth = (value: number) => boundWidth(value, limit)
   const width = clampWidth(preferred)
 
@@ -288,7 +292,7 @@ function usePanelWidth(reservedLeft: number) {
       'aria-label': 'Resize Oracle',
       'aria-orientation': 'vertical' as const,
       'aria-valuemax': limit,
-      'aria-valuemin': WIDTH_MIN,
+      'aria-valuemin': ORACLE_PANEL_WIDTH_MIN,
       'aria-valuenow': width,
       'data-resizing': resizing,
       onDoubleClick: () => commit(undefined),
@@ -372,6 +376,7 @@ function visibleTrigger(): HTMLElement | undefined {
 /** Lets the rest of the app hand Oracle a prompt, as `/oracle` does. */
 export interface OracleControl {
   ask(text: string, options: { answerOnly: boolean }): Promise<void>
+  focusComposer(): boolean
 }
 
 /**
@@ -382,6 +387,7 @@ export function OracleButton({
   indicator,
   open,
   onToggle,
+  shortcutLabel,
   compact = false,
   floating = false,
   className = '',
@@ -390,6 +396,7 @@ export function OracleButton({
   indicator: OracleIndicator
   open: boolean
   onToggle: () => void
+  shortcutLabel?: string
   compact?: boolean
   /** The round bubble that sits with Scroll to latest. */
   floating?: boolean
@@ -414,7 +421,9 @@ export function OracleButton({
         working ? ' oracle-toggle--working' : ''
       }${indicator.status === 'offline' ? ' oracle-toggle--offline' : ''}${className ? ` ${className}` : ''}`}
       onClick={onToggle}
-      title="Oracle: ask about your sessions or hand off work"
+      title={`Oracle: ask about your sessions or hand off work${
+        shortcutLabel ? ` (${shortcutLabel})` : ''
+      }`}
       type="button"
     >
       <span className="oracle-toggle__mark">
@@ -440,6 +449,12 @@ export function ManagerAssistant({
   controlRef,
   reservedLeft = 0,
   onWidthChange,
+  placement = 'overlay',
+  placementShortcutLabel,
+  preferredPlacement = 'overlay',
+  onPlacementChange,
+  focusRequest = 0,
+  onRequestSessionFocus,
 }: {
   /** Changes each time the event socket reconnects, so the snapshot is reread. */
   connectionEpoch: number
@@ -457,6 +472,18 @@ export function ManagerAssistant({
   reservedLeft?: number
   /** The open panel's width, or undefined while it is closed, for whatever it covers to move beside it. */
   onWidthChange?: (width: number | undefined) => void
+  /** Desktop placement. Narrow layouts always pass overlay. */
+  placement?: 'overlay' | 'docked'
+  /** Shortcut shown with the placement action. */
+  placementShortcutLabel?: string
+  /** Stored desktop choice, even while a narrow layout falls back to overlay. */
+  preferredPlacement?: 'overlay' | 'docked'
+  /** Changes the stored desktop placement from the panel header. */
+  onPlacementChange?: (placement: 'overlay' | 'docked') => void
+  /** Changes when a keyboard shortcut explicitly requests the composer. */
+  focusRequest?: number
+  /** Lets App focus the active writable session composer after Oracle closes. */
+  onRequestSessionFocus?: () => boolean
 }) {
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
   const [draft, setDraft] = useState('')
@@ -477,6 +504,8 @@ export function ManagerAssistant({
   const listRef = useRef<HTMLOListElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const focusRequestRef = useRef(focusRequest)
+  const sessionFocusRef = useRef(onRequestSessionFocus)
   const panelWidth = usePanelWidth(reservedLeft)
   const voice = useVoiceRecorder({
     onTranscript: (text) => {
@@ -600,16 +629,36 @@ export function ManagerAssistant({
   const wasOpenRef = useRef(false)
   useEffect(() => {
     const wasOpen = wasOpenRef.current
+    const focusRequested = focusRequestRef.current !== focusRequest
+    focusRequestRef.current = focusRequest
     wasOpenRef.current = open
     if (open) {
       const active = document.activeElement
       returnFocusRef.current = active instanceof HTMLElement && active !== document.body ? active : null
-      if (!phoneEnterCreatesNewline()) inputRef.current?.focus()
+      if (focusRequested || !phoneEnterCreatesNewline()) {
+        const input = inputRef.current
+        input?.focus()
+        input?.setSelectionRange(input.value.length, input.value.length)
+      }
       return
     }
     // Only a panel that was open hands focus back; the first render must not take it.
     if (!wasOpen) return
-    const target = returnFocusRef.current
+    const sessionFocus = sessionFocusRef.current
+    if (sessionFocus?.()) {
+      window.requestAnimationFrame(() => {
+        const active = document.activeElement
+        if (
+          !(active instanceof HTMLElement) ||
+          active === document.body ||
+          !active.isConnected
+        ) {
+          visibleTrigger()?.focus()
+        }
+      })
+      return
+    }
+    const target = sessionFocus ? null : returnFocusRef.current
     returnFocusRef.current = null
     // Safari does not focus a button on click, so the trigger is the fallback.
     const trigger = visibleTrigger()
@@ -617,7 +666,11 @@ export function ManagerAssistant({
     if (destination && document.activeElement !== destination && !document.querySelector('[role="dialog"]:focus-within')) {
       destination.focus()
     }
-  }, [open])
+  }, [focusRequest, open])
+
+  useEffect(() => {
+    sessionFocusRef.current = onRequestSessionFocus
+  }, [onRequestSessionFocus])
 
   const close = useCallback(() => {
     setConfirmReset(false)
@@ -671,6 +724,14 @@ export function ManagerAssistant({
           const reason = (caught instanceof Error ? caught.message : String(caught)).replace(/[.\s]+$/, '')
           setSendError(`Could not send to Oracle: ${reason}. Your question is in the message bar to send again.`)
         }
+      },
+      focusComposer: () => {
+        const input = inputRef.current
+        if (!openRef.current || !input || input.disabled || input.readOnly) return false
+        input.focus({ preventScroll: true })
+        const end = input.value.length
+        input.setSelectionRange(end, end)
+        return document.activeElement === input
       },
     }
     return () => {
@@ -823,7 +884,8 @@ export function ManagerAssistant({
   return (
     <section
       aria-label="Oracle"
-      className="manager-panel"
+      className={`manager-panel manager-panel--${placement}`}
+      data-placement={placement}
       data-resizing={panelWidth.resizing}
       id="oracle-panel"
       onKeyDown={(event) => {
@@ -856,6 +918,29 @@ export function ManagerAssistant({
         >
           <RotateCcw aria-hidden="true" size={17} />
         </button>
+        {onPlacementChange ? (
+          <button
+            aria-label={
+              preferredPlacement === 'docked' ? 'Undock Oracle' : 'Dock Oracle'
+            }
+            className="icon-button"
+            onClick={() =>
+              onPlacementChange(
+                preferredPlacement === 'docked' ? 'overlay' : 'docked',
+              )
+            }
+            title={`${preferredPlacement === 'docked' ? 'Undock' : 'Dock'} Oracle${
+              placementShortcutLabel ? ` (${placementShortcutLabel})` : ''
+            }`}
+            type="button"
+          >
+            {preferredPlacement === 'docked' ? (
+              <PanelRightOpen aria-hidden="true" size={18} />
+            ) : (
+              <PanelRightClose aria-hidden="true" size={18} />
+            )}
+          </button>
+        ) : null}
         <button aria-label="Close Oracle" className="icon-button" onClick={close} title="Close (Esc)" type="button">
           <X aria-hidden="true" size={19} />
         </button>

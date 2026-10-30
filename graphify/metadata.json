@@ -407,7 +407,7 @@
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
     "e2e/workspace-fixtures.ts": "17f3951213ccee0d20db5bf2ef49bed3c353b29472a9d80ad43a38403c30a087",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "64d15606a087e7c0430a6b6de3bdf2ad27e5de1d409673582fa2cfb9bd09ea8d",
+    "package.json": "7479e493916c65aa7619134069db182f65cd55527a84b14f01d18b6324bf0873",
     "playwright.config.ts": "2df0d0bd82a6ed9e40e6ff3fbf938b5d1f8b5b747a22273b739bcb5ea943503d",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -452,7 +452,7 @@
     "server/computer-registry.test.ts": "e0616b92fdfb650b523100af4a8f7b8e4f31b99764ec4ab71502d3b69b1bf55b",
     "server/computer-registry.ts": "0b7670e11309f21891b15e5a5265a4d8fae8cadbc3262b4484686bfe7caff15f",
     "server/conversation-recovery.test.ts": "61e33a22980e0897b02f2c9df1e130c79d3ce6474c4bdd5b7970ca2e8a5fe9b5",
-    "server/copilot-sdk-client.test.ts": "d17e21ca2a6a8f594a61aaf33f33cbcaffc44a59a92b5fd3259ec60521b3811e",
+    "server/copilot-sdk-client.test.ts": "a6c8705de67941610f956512c54bb205a31213d57e5ce6dd999a17aa068ffd6c",
     "server/copilot-sdk-client.ts": "50fc9074ceaef59bdd9d4234a79a52c36fea198d2df91fd0a6fe02e20d5757fe",
     "server/delegated-transcription-service.test.ts": "a34fed74712fa98c501e7ed21e31b452ed201360cf0e784169a28fde124a9f1a",
     "server/delegated-transcription-service.ts": "875a5d15fb582e7d836b6d3f5d1cc7328480fa793d63f272aa3c163b1c07afb7",
@@ -628,10 +628,10 @@
     "shared/side-question.ts": "026d2e3fae18f5348da782057d669400bb67ed91b7623fe3975c1f2d788ea855",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "07d7e5862134d4c5cb065ba25a81828450b0add204692ebb3e601c6491d65fb9",
+    "shell/README.md": "896294399aed0d3f1945c712896060ef4f0ef1bd036816cfbcd8d192acd7af03",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "6492ba2425e678218c342aa3d7dc5f05a05e9ea6d7bb2b36067ec7e424ae85aa",
-    "shell/src-tauri/Cargo.toml": "40436d7b3778dbee611852ee712862dbaf28178a4c3925077225f475ce9dc883",
+    "shell/package.json": "3fa8e0497f490dde74a478790da8c1af123d2c273609d3750f9d926b3f228ac9",
+    "shell/src-tauri/Cargo.toml": "ba2ba761205b98736e6c9ec317b747b9df7c5cc39439178e38c6377901ea2ccb",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -639,7 +639,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "147c038aa8fe36be999ad381b289ba89e2083b1ca45b36a2201cfec391ac0299",
+    "shell/src-tauri/tauri.conf.json": "baabbfeb81600f48a2d081edaafcc9399f6b3983ae0ea8bd03e6de02bdc2bb96",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -813,16 +813,20 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "991ea1b176e66400216c278cd2c299efd08c96d831b41663370ff72234f3ae0c",
+    "GRAPH_REPORT.md": "e78f2341357ebd0f4c663c7ac84b970673f90b342bcfe642e513a692687f5aaf",
     "communities.json": "5b43ab7ef650cf8464a619a80f924911cf001429857ed9a6a70f01d98eccef09",
-    "graph.html": "56e4bebce8944482e8eb68a6221e8d0a1667792171fa7a658440dc12e10301fb",
-    "graph.json": "2ebf003af816bb8d0604cf50e12cbc9e5bb94a25ebef2f8293c6c73e56bc66d9"
+    "graph.html": "62ec6d5dc8a2609a76e5402c2c12daa8dc91c9f55a432dec18f228401c5cc6a9",
+    "graph.json": "75e4659b6e416bc1e7e1ba0d8904a49395433e15eb35a1d96687694431deb32a"
   },
   "schema_version": 1,
-  "source_commit": "c836b2cfb87c05bc3a127a25d106ec2a3b01ec6d",
-  "source_fingerprint": "e57b2a791759dd6e2a19b325389c270ce80f5d58e6cf466bcab28a8cf551b718",
+  "source_commit": "6158ddf1cc659506d2ca309f1cc3b347a235bac1",
+  "source_fingerprint": "5c35b49dbb8537e9b1fd43e9ceb66dc8699e927cb4fb890951c74294c1c28ad6",
   "working_tree_changes": [
-    "src/OracleDreamer.test.tsx",
-    "src/OracleDreamer.tsx"
+    "package.json",
+    "server/copilot-sdk-client.test.ts",
+    "shell/README.md",
+    "shell/package.json",
+    "shell/src-tauri/Cargo.toml",
+    "shell/src-tauri/tauri.conf.json"
   ]
 }

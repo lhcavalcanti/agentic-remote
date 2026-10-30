@@ -494,7 +494,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "974e9204ea645f7ba7531f88ac8a54285fd4903e306c9a5b0bc4950696af9df4",
+    "package.json": "81eaaed951173e7f404bfb0ad3b77784617e0ffe0b2fb78170e32c9869eecda9",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "3fd03facc1f69300d8a98a951f6d2d7d74146d0ed2228a258f8a411e36069274",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -975,16 +975,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b3eece33c73715270ada0b2efb194b8746a4ede5899a3f386ed7590deb251e0f",
+    "GRAPH_REPORT.md": "9acd41d9b666af8880fdd9cf06c17b2b94e6933fd846da865620260226972d4a",
     "communities.json": "fcccc2b097687c6e70c1c38ec4d76bb004471430a671ee8eb9d6f415d5cf2a94",
-    "graph.html": "a0cb71566bd3b8eb69cca5ffad07192d61f7d542c144714549d9085c357af9ff",
-    "graph.json": "70b0bf51c4cda836a581b7ceaa976c454ba5a1b46ab44992ea22def311ea2677"
+    "graph.html": "9a3a227e3251d1125300b0852b27209bfe9a961d6a2b47decfee086cd1e7bfd6",
+    "graph.json": "007fc290eff054d69a7b0e8acf345d0f59ed7139214c91c21b604de1052e4424"
   },
   "schema_version": 1,
-  "source_commit": "8d9800d5f01f68479abd0ba16a90e6e98694e0f7",
-  "source_fingerprint": "f49c32881e14d7f50a04658e6dd578852b9be411981bf8eafe4b59f2e7ee8f0f",
-  "working_tree_changes": [
-    "package.json",
-    "server/copilot-sdk-client.test.ts"
-  ]
+  "source_commit": "e8a7ca2f6c70479066e2d9f05c976df053a19fc2",
+  "source_fingerprint": "26bae186e0cf1bc76c319604da5553eea8a4c14f570baa8bd8d8f29be3788bee",
+  "working_tree_changes": []
 }

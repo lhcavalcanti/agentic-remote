@@ -331,12 +331,13 @@ class FakeCopilotClient implements CopilotClientLike {
 const directories: string[] = []
 const services = new Set<AgentService>()
 const startService = AgentService.prototype.start
-const cliDiscovery = {
+const normalSdkSessionConfiguration = {
   enableConfigDiscovery: true,
   enableSkills: true,
   enableOnDemandInstructionDiscovery: true,
   enableFileHooks: true,
   enableHostGitOperations: true,
+  askUserVariant: 'elicitation',
 }
 
 function configurableModel(): ModelInfo {
@@ -496,7 +497,7 @@ describe('AgentService deletion', () => {
 
     await service.createSession(directory, false)
 
-    expect(client.createdConfigs[0]).toMatchObject(cliDiscovery)
+    expect(client.createdConfigs[0]).toMatchObject(normalSdkSessionConfiguration)
     await service.stop()
   })
 
@@ -529,7 +530,7 @@ describe('AgentService deletion', () => {
 
     await service.activateSession(sessionId)
 
-    expect(client.resumedConfigs[0]).toMatchObject(cliDiscovery)
+    expect(client.resumedConfigs[0]).toMatchObject(normalSdkSessionConfiguration)
     await service.stop()
   })
 
@@ -4195,7 +4196,7 @@ describe('AgentService deletion', () => {
     expect(service.store.get(created.id)).toBeUndefined()
     expect(client.deletedSessionIds).toContain(created.id)
     expect(client.createdConfigs.at(-1)).toMatchObject({
-      ...cliDiscovery,
+      ...normalSdkSessionConfiguration,
       sessionId: cleared.id,
       workingDirectory: directory,
     })
@@ -5712,7 +5713,7 @@ describe('AgentService deletion', () => {
     expect(client.createdConfigs.at(-1)).toMatchObject({
       sessionId,
       workingDirectory: directory,
-      ...cliDiscovery,
+      ...normalSdkSessionConfiguration,
     })
     expect(client.session.modeSwitches).toEqual([])
     await service.stop()

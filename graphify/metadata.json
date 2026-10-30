@@ -324,9 +324,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 185,
+  "communities": 184,
   "community_algorithm": "louvain-seed-42",
-  "edges": 13847,
+  "edges": 13850,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -360,7 +360,7 @@
     "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "04681bf8b2b8206acde3d153bfa5c8ba785f121aa9ca4a6915c65f821af4f8fd",
+    "docs/app-spec.md": "e32c24fff0f12321daa6e8c1f8e42c20a77f84a3dbad4b090dd5c0a76df01f82",
     "docs/architecture.md": "419a152af98ca8dc2eeac6333db161fb40fe4921f9cac64e1443ce1325af307a",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -373,7 +373,7 @@
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
     "docs/mockups/brand-logo.html": "1a1a3efd305260cfba6c2cf5d6eb0f5ec5a68472a010a0eaf9dfd426436766c1",
     "docs/native-shell.md": "bc434b4a881ec432c84c6744ab0ab0f73d8d023ceff73d0baffd60c6bccc7a9f",
-    "docs/provider-compatibility.md": "06acbbaffd1b69c572f0988d205f4071159b18cda946f384601723bccfb1cc7d",
+    "docs/provider-compatibility.md": "bc8bdbfa0f0302417b96a7450de54af2379da2a4eacc15389f2c3f79dfbb069b",
     "docs/sdk-architecture-roadmap.md": "108720c64bee7a4eda6cf7b0021414de4a5b7bb84cd1b914a8e14c709df1bd39",
     "docs/session-retention.md": "86a4b60ce293f288a1dd12edc0cdba940dff7a58867d9490a26a0799a0f6a4f9",
     "docs/slash-command-feedback.md": "7c9b801169b4bd9961ee9987859d77e17784169bc373f274895cd62cffc49f13",
@@ -413,8 +413,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "54846ab1808aaf1f9185119ba02e6623abf9fd3992dcb5e4115c8ef10d3340b1",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "232e417be303fbdd98aa0c3bed709b51b58031dbff2a3414feb3b2889f7fd8ba",
-    "server/agent-service.ts": "1f4dd06fb258aad7a2c7ce225e0f555f0ee16c741aaae7016f5ee187d62dfb61",
+    "server/agent-service.test.ts": "918d46c65cd839e0abbb81e08f3744d23b4a1b869613820ed06dbcddb4275dce",
+    "server/agent-service.ts": "88c914c2d9b3004ffc6a6e57fa0581e7a4e1f63b96173dad78dbf213b52bcafd",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -437,8 +437,8 @@
     "server/computer-registry.test.ts": "e0616b92fdfb650b523100af4a8f7b8e4f31b99764ec4ab71502d3b69b1bf55b",
     "server/computer-registry.ts": "0b7670e11309f21891b15e5a5265a4d8fae8cadbc3262b4484686bfe7caff15f",
     "server/conversation-recovery.test.ts": "61e33a22980e0897b02f2c9df1e130c79d3ce6474c4bdd5b7970ca2e8a5fe9b5",
-    "server/copilot-sdk-client.test.ts": "fd2c3f0440f6e4f273e99aa7adf52227071ee71113523f24776a648d57798e71",
-    "server/copilot-sdk-client.ts": "e17ac67d03ddc23bc2d5cd8eed3459bd13af64a0f1d6760eb1ea57871768ae04",
+    "server/copilot-sdk-client.test.ts": "d17e21ca2a6a8f594a61aaf33f33cbcaffc44a59a92b5fd3259ec60521b3811e",
+    "server/copilot-sdk-client.ts": "50fc9074ceaef59bdd9d4234a79a52c36fea198d2df91fd0a6fe02e20d5757fe",
     "server/delegated-transcription-service.test.ts": "a34fed74712fa98c501e7ed21e31b452ed201360cf0e784169a28fde124a9f1a",
     "server/delegated-transcription-service.ts": "875a5d15fb582e7d836b6d3f5d1cc7328480fa793d63f272aa3c163b1c07afb7",
     "server/directory-browser.test.ts": "9952e56f0dbc161daaa8e5ad8da3498629d83e2b934963266f6ee87ab9385ccb",
@@ -716,7 +716,7 @@
     "vite.config.ts": "eacee8590f9e87d8336de9f3e98b332be04929d839e845192f13aeed6dc89643"
   },
   "mode": "local-ast-only",
-  "nodes": 4922,
+  "nodes": 4923,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -781,22 +781,20 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "631bf9c55c6bd679d2d3b5fe9773ed560e8fef301c933fe90116d091b571a22a",
-    "communities.json": "121c66ed8ab1b3ac85d4b5f496c9001b27f287511f5d0b904b62e2a175e17289",
-    "graph.html": "dfbee05c6b3f47f45e0e924ab9359ac84bdaef56fac67a1f63da8c9ed85ce9cb",
-    "graph.json": "26599a3c33cbd85dac4025f18a2b7287b29948ac9613522f64d8fe92c7700ea1"
+    "GRAPH_REPORT.md": "0e94fab23321e46c165033df76c449f1f64186b06636c0a38b37170c9e6334e1",
+    "communities.json": "97a35419082b23eb27b62005759e5c73e3b66fe865aae4af25201d9777cb19cd",
+    "graph.html": "d47a1e7855405479da185d382b2531ae333cc92be8731ae2b392c3795c2e4742",
+    "graph.json": "2910b14fe3743788e2c140d72a947dce85624baf9d5f6cdf5978d75b5eb70dad"
   },
   "schema_version": 1,
-  "source_commit": "f9da16f529e1512cdaf9fe178adf9408fa3efb13",
-  "source_fingerprint": "a3c8330b8cacf9a8e8efbdcba950251cc713b342c912877ab91a798d966418bf",
+  "source_commit": "5d84cc30b87e708bafede9d954e1995f78e1c4f6",
+  "source_fingerprint": "0ea8b8ce42fe8634e1f54920a3af55d8f3604b07c6418a34c0f6e2bab0af4517",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "docs/design/session-manager.md",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/app-shortcuts.test.ts",
-    "src/app-shortcuts.ts"
+    "docs/provider-compatibility.md",
+    "server/agent-service.test.ts",
+    "server/agent-service.ts",
+    "server/copilot-sdk-client.test.ts",
+    "server/copilot-sdk-client.ts"
   ]
 }

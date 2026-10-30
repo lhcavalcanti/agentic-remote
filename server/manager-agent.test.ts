@@ -1583,6 +1583,18 @@ describe('ManagerAgent', () => {
     expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'closed-1', { content: 'Pick it back up.', enqueue: true })
   })
 
+  it('steers a busy session rather than queueing it after the turn', async () => {
+    vi.mocked(hub.listSessions).mockResolvedValue([session('busy-1', { status: 'running' })])
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('send_to_session')({ sessionId: 'busy-1', message: 'Stop and fix the build first.' })
+      reply('Done.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('Tell it to fix the build now')
+    await settled()
+    expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'busy-1', { content: 'Stop and fix the build first.', enqueue: false })
+  })
+
   it('applies a chosen model in place from the next answer, and starts afresh for the default', async () => {
     await start({ model: 'hub-default' })
     await agent!.send('first')
@@ -1800,6 +1812,51 @@ describe('ManagerAgent', () => {
     await agent!.updateSettings({ sessionFolders: { hub: null } })
     expect(agent!.snapshot().settings?.sessionFolders).toBeUndefined()
     expect(agent!.snapshot().settings?.model).toBe('gpt-6-sol')
+  })
+
+  it('opens its sessions with the Copilot SDK by default, and in a terminal once set to', async () => {
+    await start()
+    expect(agent!.snapshot().settings?.sessionBackend).toBe('sdk')
+    sdk.behaviors.push(async (fakeSession, prompt) => {
+      expect(prompt).toContain('Your new sessions open with the Copilot SDK.')
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Started.')(fakeSession, '')
+    })
+    await agent!.send('Start the docs work')
+    await settled()
+    expect(hub.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ terminalBacked: false }))
+
+    const settings = await agent!.updateSettings({ model: 'gpt-6-sol', sessionBackend: 'terminal' })
+    expect(settings).toMatchObject({ model: 'gpt-6-sol', sessionBackend: 'terminal' })
+    expect(events.at(-1)).toMatchObject({ type: 'manager.settings', settings: { sessionBackend: 'terminal' } })
+    // A change of model alone leaves it as it is.
+    expect(await agent!.updateSettings({ model: null })).toMatchObject({ sessionBackend: 'terminal' })
+    sdk.behaviors.push(async (fakeSession, prompt) => {
+      expect(prompt).toContain('Your new sessions open in a terminal (tmux).')
+      await fakeSession.tool('create_session')({ title: 'Fix', prompt: 'Fix it' })
+      reply('Started.')(fakeSession, '')
+    })
+    await agent!.send('Fix it')
+    await settled()
+    expect(hub.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ terminalBacked: true }))
+
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    expect(agent!.snapshot().settings?.sessionBackend).toBe('terminal')
+
+    // Asked to, Oracle switches back, and App settings sees the change.
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('set_session_backend')({ backend: 'sdk' })
+      reply('Done.')(fakeSession, '')
+    })
+    await agent!.send('Open new sessions with the SDK again')
+    await settled()
+    expect(agent!.snapshot().settings?.sessionBackend).toBe('sdk')
+    expect(events.some((event) => event.type === 'manager.settings' && event.settings.sessionBackend === 'sdk')).toBe(true)
+    // The default is not stored, so a later default change would apply.
+    expect(store.state().sessionBackend).toBeUndefined()
   })
 
   it('keeps queued messages in order and lets you take one out before it starts', async () => {

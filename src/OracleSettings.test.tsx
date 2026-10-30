@@ -148,6 +148,48 @@ describe('OracleSettings', () => {
     expect(within(folders).getByText('Saved. Oracle uses your folder for new sessions there.')).toBeInTheDocument()
   })
 
+  it('opens Oracle\'s sessions with the Copilot SDK by default and lets you choose a terminal', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { defaultModel: 'hub-default', sessionBackend: 'sdk' },
+    })
+    vi.mocked(updateManagerSettings)
+      .mockResolvedValueOnce({ defaultModel: 'hub-default', sessionBackend: 'terminal' })
+      .mockResolvedValueOnce({ defaultModel: 'hub-default', sessionBackend: 'sdk' })
+    render(<OracleSettings models={models} />)
+    const backend = await screen.findByRole('combobox', { name: 'How Oracle opens sessions' })
+    expect(backend).toHaveValue('sdk')
+    expect(screen.getByRole('option', { name: 'Copilot SDK (default)' })).toBeInTheDocument()
+    fireEvent.change(backend, { target: { value: 'terminal' } })
+    await waitFor(() => expect(updateManagerSettings).toHaveBeenCalledWith({ sessionBackend: 'terminal' }))
+    expect(await screen.findByText('Saved. Oracle opens its next sessions in a terminal.')).toBeInTheDocument()
+    expect(backend).toHaveValue('terminal')
+    fireEvent.change(backend, { target: { value: 'sdk' } })
+    await waitFor(() => expect(updateManagerSettings).toHaveBeenLastCalledWith({ sessionBackend: 'sdk' }))
+    expect(await screen.findByText('Saved. Oracle opens its next sessions with the Copilot SDK.')).toBeInTheDocument()
+    expect(backend).toHaveValue('sdk')
+  })
+
+  it('does not offer the choice on a hub from before it, which opens terminals', async () => {
+    render(<OracleSettings models={models} />)
+    expect(await screen.findByText("This hub opens Oracle's sessions in a terminal. Update it to choose the Copilot SDK.")).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'How Oracle opens sessions' })).toBeNull()
+  })
+
+  it('says so when the hub does not keep the choice, rather than that it saved', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { sessionBackend: 'terminal' },
+    })
+    // A hub rolled back mid-change answers without the setting.
+    vi.mocked(updateManagerSettings).mockResolvedValueOnce({})
+    render(<OracleSettings models={models} />)
+    fireEvent.change(await screen.findByRole('combobox', { name: 'How Oracle opens sessions' }), { target: { value: 'sdk' } })
+    expect(await screen.findByText('This hub did not keep that choice; update it to choose how Oracle opens sessions.')).toBeInTheDocument()
+    expect(screen.queryByText('Saved. Oracle opens its next sessions with the Copilot SDK.')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'How Oracle opens sessions' })).toBeNull()
+  })
+
   it('shows a model change where the model is chosen', async () => {
     vi.mocked(updateManagerSettings).mockResolvedValueOnce({ model: 'gpt-6-sol', defaultModel: 'hub-default' })
     render(<OracleSettings computers={[{ id: 'hub', name: 'development' }]} models={models} />)

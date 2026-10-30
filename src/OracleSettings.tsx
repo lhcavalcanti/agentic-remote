@@ -20,8 +20,8 @@ export function OracleSettingsStatus({ oracle, part }: { oracle: OracleSettingsS
 }
 
 /**
- * Oracle's model and effort, beside the models new sessions use. `models` is
- * the hub's own Copilot catalog, which App settings already loads; it is
+ * Oracle's model and effort in Oracle's App settings group. `models` is the
+ * hub's own Copilot catalog, which App settings already loads; it is
  * undefined while that catalog is still loading.
  */
 export function OracleModelSettings({
@@ -45,8 +45,8 @@ export function OracleModelSettings({
     : 'Copilot default'
 
   return (
-    <section aria-label="Oracle settings" className="app-settings-section" id="settings-oracle">
-      <h4 tabIndex={-1}>Oracle</h4>
+    <section aria-label="Oracle settings" className="app-settings-section" id="settings-oracle-model">
+      <h4 tabIndex={-1}>Model</h4>
       <p className="dialog-message">
         The model Oracle answers with. It is kept on this hub for every browser and
         applies from Oracle&apos;s next answer.
@@ -111,6 +111,27 @@ export function OracleModelSettings({
         </>
       ) : null}
       <OracleSettingsStatus oracle={oracle} part="model" />
+      {!loading && !unavailable && settings && !settings.sessionBackend ? (
+        <p className="dialog-message">
+          This hub opens Oracle&apos;s sessions in a terminal. Update it to choose the Copilot SDK.
+        </p>
+      ) : null}
+      {!loading && !unavailable && settings?.sessionBackend ? (
+        <label className="field">
+          <span>Opens new sessions with</span>
+          <select
+            aria-label="How Oracle opens sessions"
+            className="dialog-select"
+            disabled={saving}
+            onChange={(event) => void oracle.saveBackend(event.target.value === 'terminal' ? 'terminal' : 'sdk')}
+            value={settings.sessionBackend}
+          >
+            <option value="sdk">Copilot SDK (default)</option>
+            <option value="terminal">Terminal (tmux)</option>
+          </select>
+        </label>
+      ) : null}
+      <OracleSettingsStatus oracle={oracle} part="backend" />
     </section>
   )
 }

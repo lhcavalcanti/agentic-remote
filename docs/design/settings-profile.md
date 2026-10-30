@@ -55,10 +55,14 @@ Some related state is already hub-owned and is unchanged:
 | `statusline` | Partial map of the known status-line items to booleans | all shown except session ID |
 | `newSessionRuntimes` | `{copilot?, claude?}`, each `{model, reasoningEffort, contextTier, mode}` | provider defaults |
 | `newSessionFolders` | Computer ID → folder, at most 64 entries | home directory |
+| `newSessionBackend` | `terminal` \| `sdk` — where New Session starts; one session can still override it | `terminal` |
 | `sessionSort` | `custom` \| `recent` \| `attention` \| `name` | `custom` |
 | `computerOrder` | Unique computer IDs, at most 200 | pairing order |
 | `oracleResponseStyle` | `concise` \| `balanced` \| `detailed` | `balanced` |
 | `notificationScope` | `all` \| `oracle` \| `off` | `all` |
+
+`newSessionBackend` covers sessions you create. Oracle's sessions follow its
+own hub setting (`/api/manager/settings` `sessionBackend`).
 
 Oracle runs on the hub, so it reads `oracleResponseStyle` from the same store as
 each turn's prompt is built; no browser relays it.

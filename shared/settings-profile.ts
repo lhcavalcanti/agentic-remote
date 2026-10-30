@@ -12,6 +12,7 @@ export const settingsProfileKeys = [
   'statusline',
   'newSessionRuntimes',
   'newSessionFolders',
+  'newSessionBackend',
   'sessionSort',
   'computerOrder',
   'oracleResponseStyle',
@@ -57,6 +58,10 @@ export type NewSessionRuntimesSetting = Partial<Record<AgentProvider, NewSession
 /** Computer ID to the folder new sessions start in there. */
 export type NewSessionFoldersSetting = Record<string, string>
 
+/** Where new sessions run. Unset starts them in a terminal (tmux). */
+export const newSessionBackendSettings = ['terminal', 'sdk'] as const
+export type NewSessionBackendSetting = (typeof newSessionBackendSettings)[number]
+
 export const sessionSortSettings = ['custom', 'recent', 'attention', 'name'] as const
 export type SessionSortSetting = (typeof sessionSortSettings)[number]
 
@@ -70,6 +75,7 @@ export interface SettingsProfileValues {
   statusline?: StatuslineSetting
   newSessionRuntimes?: NewSessionRuntimesSetting
   newSessionFolders?: NewSessionFoldersSetting
+  newSessionBackend?: NewSessionBackendSetting
   sessionSort?: SessionSortSetting
   computerOrder?: string[]
   oracleResponseStyle?: OracleResponseStyle
@@ -161,6 +167,8 @@ export function parseSettingValue<K extends SettingsProfileKey>(
       return oneOf(appearanceSettings, value) ? valid(value) : invalid('is not a known appearance')
     case 'accent':
       return oneOf(accentSettings, value) ? valid(value) : invalid('is not a known accent')
+    case 'newSessionBackend':
+      return oneOf(newSessionBackendSettings, value) ? valid(value) : invalid('is not a known backend')
     case 'sessionSort':
       return oneOf(sessionSortSettings, value) ? valid(value) : invalid('is not a known sort')
     case 'oracleResponseStyle':

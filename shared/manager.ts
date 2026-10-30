@@ -108,6 +108,9 @@ export interface ManagerSubmissionOptions {
 }
 
 /** Oracle's own runtime settings, kept on the hub. */
+/** How Oracle opens the sessions it starts: the Copilot SDK, or a terminal (tmux). */
+export type ManagerSessionBackend = 'sdk' | 'terminal'
+
 export interface ManagerSettings {
   /** Unset uses the hub's default: AGENTIC_REMOTE_MANAGER_MODEL, else Copilot's. */
   model?: string
@@ -126,6 +129,13 @@ export interface ManagerSettingsSnapshot extends ManagerSettings {
    * default session folder.
    */
   sessionFolders?: Record<string, string>
+  /**
+   * How Oracle opens the sessions it starts. The Copilot SDK unless set to a
+   * terminal; a provider without a terminal always uses its SDK. A hub from
+   * before this setting omits it and opens Copilot sessions in a terminal, so
+   * a client MUST NOT read its absence as the SDK.
+   */
+  sessionBackend?: ManagerSessionBackend
 }
 
 export interface ManagerSnapshot {
@@ -161,6 +171,8 @@ export interface UpdateManagerSettingsInput {
   reasoningEffort?: RuntimeReasoningEffort | null
   /** Folders to change, by computer ID; null returns that computer to its default. */
   sessionFolders?: Record<string, string | null>
+  /** How Oracle opens the sessions it starts; absent leaves it as it is. */
+  sessionBackend?: ManagerSessionBackend
 }
 
 export type ManagerEvent =

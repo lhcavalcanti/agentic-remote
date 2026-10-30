@@ -210,6 +210,8 @@ describe('SettingsProfileStore', () => {
       { oracleResponseStyle: { value: 'verbose', baseRevision: 0 } },
       { notificationScope: { value: 'sessions', baseRevision: 0 } },
       { notificationScope: { value: true, baseRevision: 0 } },
+      { newSessionBackend: { value: 'tmux', baseRevision: 0 } },
+      { newSessionBackend: { value: true, baseRevision: 0 } },
       { oracleResponseStyle: { value: 'Answer in one word.', baseRevision: 0 } },
       { computerOrder: { value: ['a', 'a'], baseRevision: 0 } },
       { computerOrder: { value: ['a', ''], baseRevision: 0 } },
@@ -262,6 +264,7 @@ describe('SettingsProfileStore', () => {
       sessionSort: { value: 'attention', baseRevision: 0 },
       oracleResponseStyle: { value: 'concise', baseRevision: 0 },
       notificationScope: { value: 'oracle', baseRevision: 0 },
+      newSessionBackend: { value: 'sdk', baseRevision: 0 },
       computerOrder: {
         value: Array.from({ length: 200 }, (_, index) => `computer-${index}`),
         baseRevision: 0,
@@ -269,7 +272,7 @@ describe('SettingsProfileStore', () => {
     })
     expect(result.conflicts).toEqual([])
     expect(Object.keys(result.settings.values).sort()).toEqual([
-      'accent', 'appearance', 'computerOrder', 'newSessionFolders',
+      'accent', 'appearance', 'computerOrder', 'newSessionBackend', 'newSessionFolders',
       'newSessionRuntimes', 'notificationScope', 'oracleResponseStyle', 'sessionSort', 'statusline',
     ])
     expect(

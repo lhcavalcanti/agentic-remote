@@ -3678,7 +3678,7 @@ function reportUnrecognisedComposerParts(rows: readonly string[]): void {
   }
 }
 
-function terminalInputReady(pane: string, allowWorking = false): boolean {
+export function terminalInputReady(pane: string, allowWorking = false): boolean {
   return (
     hasLiveTerminalComposer(pane) &&
     (allowWorking || !isTerminalAgentWorking(pane)) &&

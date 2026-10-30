@@ -81,6 +81,8 @@ import {
   transcriptionMultipartOptions,
 } from './transcription-routes.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
+import { registerDreamerRoutes } from './dreamer-routes.js'
+import { DreamerService } from './dreamer-service.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -148,6 +150,7 @@ export async function buildApp(
   voiceConfig: OracleVoiceConfig
   voiceEngineFactory?: VoiceEngineFactory
   voiceCapability: VoiceBackendCapability
+  dreamerService?: DreamerService
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -309,6 +312,10 @@ export async function buildApp(
   let sessionOrderStore: SessionOrderStore | undefined
   let settingsProfileStore: SettingsProfileStore | undefined
   let managerAgent: ManagerAgent | undefined
+  let managerStore: ManagerStore | undefined
+  let managerStoreReady = false
+  let dreamerService: DreamerService | undefined
+  let dreamerUnavailable: string | undefined
   let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
@@ -360,7 +367,7 @@ export async function buildApp(
     } else if (!agent) {
       managerUnavailable = 'Oracle needs the built-in Copilot session service.'
     } else {
-      const managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
       // The manager is an addition to the hub; a hub whose manager cannot
       // start still serves everything else.
       const initialized = await managerStore.initialize().then(() => true, (error: unknown) => {
@@ -368,6 +375,7 @@ export async function buildApp(
         managerUnavailable = `Oracle could not start: ${error instanceof Error ? error.message : String(error)}`
         return false
       })
+      managerStoreReady = initialized
       const recorder = initialized ? new JournalRecorder(managerStore) : undefined
       if (recorder) {
         forwardToJournal = (event) => recorder.handle(event)
@@ -388,6 +396,24 @@ export async function buildApp(
       // Before the session service starts, so its first discovery already
       // leaves the manager's own conversations out.
       if (managerAgent) agent.excludeFromDiscovery(managerAgent.hiddenSessionIds())
+    }
+    if (managerStoreReady && managerStore) {
+      dreamerService = new DreamerService(
+        path.join(dataDirectory, 'manager', 'dreamer'),
+        {
+          registry: () => managerStore!.registry(),
+          structuredMemory: managerStructuredMemory,
+        },
+      )
+      try {
+        await dreamerService.initialize()
+      } catch (error) {
+        app.log.error({ err: error }, 'Dreamer could not initialize')
+        dreamerService = undefined
+        dreamerUnavailable = 'Dreamer storage is unavailable on this hub.'
+      }
+    } else {
+      dreamerUnavailable = 'Dreamer is unavailable because Oracle is not running on this hub.'
     }
     await registerHubRoutes(
       app,
@@ -419,6 +445,11 @@ export async function buildApp(
       managerAgent,
       managerUnavailable,
       managerStructuredMemory,
+    )
+    await registerDreamerRoutes(
+      app,
+      dreamerService,
+      dreamerUnavailable ?? 'Dreamer is unavailable on this hub.',
     )
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
@@ -484,16 +515,23 @@ export async function buildApp(
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
     const starting = managerAgent
-    if (!starting) return
-    await startupPhases.run('manager.start', () => starting.start()).catch((error: unknown) => {
-      app.log.error({ err: error }, 'The manager agent could not start')
-    })
+    if (starting) {
+      await startupPhases.run('manager.start', () => starting.start()).catch((error: unknown) => {
+        app.log.error({ err: error }, 'The manager agent could not start')
+      })
+    }
+    if (dreamerService) {
+      await dreamerService.start().catch((error: unknown) => {
+        app.log.error({ err: error }, 'Dreamer could not start')
+      })
+    }
   })
 
   app.addHook('onClose', async () => {
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     await voiceService?.stop()
+    await dreamerService?.stop()
     await managerAgent?.stop()
     manager?.stop()
     pushService?.stop()
@@ -517,5 +555,6 @@ export async function buildApp(
     voiceConfig,
     voiceEngineFactory,
     voiceCapability,
+    dreamerService,
   }
 }

@@ -1071,6 +1071,26 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(session.id)?.messages.length).toBe(before)
   })
 
+  it('refuses a send during a running turn as definite, so a caller can queue it instead', async () => {
+    let finish = () => {}
+    const finishing = new Promise<void>((resolve) => { finish = resolve })
+    const { directory, service } = await fixture(async function* () {
+      yield textResult('fixture-session')[0]
+      await finishing
+    })
+    const session = await service.createSession(directory, false, true, 'claude')
+    try {
+      await service.sendMessage(session.id, 'First turn')
+      await vi.waitFor(() => expect(service.getSession(session.id)?.status).toBe('running'))
+      await expect(service.sendMessage(session.id, 'A steer', false))
+        .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+      expect(service.getSession(session.id)?.queuedPrompts ?? []).toEqual([])
+    } finally {
+      finish()
+      await service.stop()
+    }
+  })
+
   it('refuses to rewrite a queued message into a command', async () => {
     // Claude has no commands of its own, and the store marks slash-prefixed
     // text as one. Stored that way it reaches a drain that refuses every

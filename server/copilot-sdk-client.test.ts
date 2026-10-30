@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   COPILOT_SDK_SESSION_DISCOVERY,
+  COPILOT_SDK_SESSION_INTERACTION,
   copilotSdkClientOptions,
   createCopilotSdkClient,
   readCopilotSdkRuntimeDiagnostic,
@@ -8,13 +9,21 @@ import {
 } from './copilot-sdk-client.js'
 
 describe('COPILOT_SDK_SESSION_DISCOVERY', () => {
-  it('defines the normal-session CLI configuration discovery options', () => {
+  it('defines normal-session CLI configuration discovery', () => {
     expect(COPILOT_SDK_SESSION_DISCOVERY).toEqual({
       enableConfigDiscovery: true,
       enableSkills: true,
       enableOnDemandInstructionDiscovery: true,
       enableFileHooks: true,
       enableHostGitOperations: true,
+    })
+  })
+})
+
+describe('COPILOT_SDK_SESSION_INTERACTION', () => {
+  it('selects structured questions for sessions with an elicitation handler', () => {
+    expect(COPILOT_SDK_SESSION_INTERACTION).toEqual({
+      askUserVariant: 'elicitation',
     })
   })
 })

@@ -38,6 +38,13 @@ vi.mock('./use-oracle-conversation', () => ({
   useOracleConversation: vi.fn(),
 }))
 
+vi.mock('./dreamer-api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./dreamer-api')>(),
+  getDreamer: vi.fn(async () => ({
+    available: true, revision: 0, settings: { enabled: false, timeZone: 'UTC' },
+  })),
+}))
+
 type Props = Parameters<typeof ManagerAssistant>[0]
 
 /** The header button and the panel, wired the way App wires them. */
@@ -506,8 +513,9 @@ describe('ManagerAssistant', () => {
   })
 
   it('resizes the desktop panel from its left edge and remembers the width', async () => {
-    setup()
+    setup(empty, { placement: 'docked' })
     const panel = await openPanel()
+    expect(panel).toHaveAttribute('data-placement', 'docked')
     const edge = screen.getByRole('separator', { name: 'Resize Oracle' })
     expect(edge).toHaveAttribute('aria-valuenow', '440')
     expect(panel.style.getPropertyValue('--oracle-width')).toBe('440px')
@@ -530,6 +538,36 @@ describe('ManagerAssistant', () => {
     // Escape on the edge still closes the panel.
     fireEvent.keyDown(edge, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+  })
+
+  it('offers the dock action in the Oracle header with its shortcut', async () => {
+    const onPlacementChange = vi.fn()
+    setup(empty, {
+      onPlacementChange,
+      placementShortcutLabel: 'Ctrl+Alt+P',
+      preferredPlacement: 'overlay',
+    })
+    await openPanel()
+
+    const dock = screen.getByRole('button', { name: 'Dock Oracle' })
+    expect(dock).toHaveAttribute('title', 'Dock Oracle (Ctrl+Alt+P)')
+    fireEvent.click(dock)
+    expect(onPlacementChange).toHaveBeenCalledWith('docked')
+  })
+
+  it('offers the undock action when docked mode is preferred', async () => {
+    setup(empty, {
+      onPlacementChange: vi.fn(),
+      placement: 'docked',
+      placementShortcutLabel: 'Ctrl+Alt+P',
+      preferredPlacement: 'docked',
+    })
+    await openPanel()
+
+    expect(screen.getByRole('button', { name: 'Undock Oracle' })).toHaveAttribute(
+      'title',
+      'Undock Oracle (Ctrl+Alt+P)',
+    )
   })
 
   it('keeps the conversation beside the sessions list wide enough', async () => {

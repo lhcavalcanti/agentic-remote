@@ -661,8 +661,8 @@
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
     "src/MermaidDiagram.test.tsx": "db09c107f11b4c5f22c69cc6f8d50ae6bcc25944ec5601a535986122f5dc1281",
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
-    "src/OracleDreamer.test.tsx": "73aa8b629d2f0e0f7e89fe146eb0f055f8a22f5d9b6f6180d4aa01121dc993b5",
-    "src/OracleDreamer.tsx": "3eeb6258e9efe141d131d97d157dcb32c6ad2aeba9a23784a806ca1868e97ba2",
+    "src/OracleDreamer.test.tsx": "ba7344c1fd0a639a4422504fb510d2f5192f69dd7e85be65b4be6e2dbd51aeb1",
+    "src/OracleDreamer.tsx": "88ea377ae08d31a4ac5f370acb9ac2d4adf1cb7003eda48c72d2e7c4af34eb5c",
     "src/OracleSettings.test.tsx": "47686b06ba92476b6cb628a89c5772fcd71358cb121bd173321f4dc541e641eb",
     "src/OracleSettings.tsx": "e100e1c19eaf33401819d39ec66849b557a8cb00403d19eb19d7f4caf2e3ab95",
     "src/ReaderWorkspace.test.tsx": "277b32e4513b76bbd69245a32c43d90597fbd65e69fd63c01b88e8b4ae60f849",
@@ -813,19 +813,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "a72c1c50c596b493d3b4352d47254b704c791b51b28f8227a3c907b8c5252d76",
+    "GRAPH_REPORT.md": "991ea1b176e66400216c278cd2c299efd08c96d831b41663370ff72234f3ae0c",
     "communities.json": "5b43ab7ef650cf8464a619a80f924911cf001429857ed9a6a70f01d98eccef09",
-    "graph.html": "466f731cb683c10c9616843402bf471c7a32fd496dc5f92cc6aa953e3f099917",
-    "graph.json": "0e4e7c696e191b0890271fd7120bb67d2b901c4c9de3f3d8b10ed1291794e37e"
+    "graph.html": "56e4bebce8944482e8eb68a6221e8d0a1667792171fa7a658440dc12e10301fb",
+    "graph.json": "2ebf003af816bb8d0604cf50e12cbc9e5bb94a25ebef2f8293c6c73e56bc66d9"
   },
   "schema_version": 1,
-  "source_commit": "35973a5adc3605470eefa849193913b15f2b3f58",
-  "source_fingerprint": "9bbc96caaf5a200f3698961bacfdd93be420cd56802d578ddbba15cd40ccc96b",
+  "source_commit": "c836b2cfb87c05bc3a127a25d106ec2a3b01ec6d",
+  "source_fingerprint": "e57b2a791759dd6e2a19b325389c270ce80f5d58e6cf466bcab28a8cf551b718",
   "working_tree_changes": [
-    "server/dreamer-service.test.ts",
-    "server/dreamer-service.ts",
-    "server/dreamer-store.test.ts",
-    "server/dreamer-store.ts",
     "src/OracleDreamer.test.tsx",
     "src/OracleDreamer.tsx"
   ]

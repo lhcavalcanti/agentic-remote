@@ -276,4 +276,22 @@ describe('Dreamer settings and morning review', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
     expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeEnabled()
   })
+
+  it.each(['timer', 'focus'])('clears a recovered action error after %s refresh', async (trigger) => {
+    vi.useFakeTimers()
+    vi.mocked(getDreamer).mockResolvedValue(ready)
+    vi.mocked(updateDreamerPlan).mockRejectedValue(new DreamerApiError('Storage offline.', 503))
+    render(<DreamerMorningPlan />)
+    await act(async () => undefined)
+    fireEvent.click(screen.getByText('Morning plan'))
+    await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'Done' })[0]) })
+    expect(screen.getByRole('alert')).toHaveTextContent('Storage offline.')
+    await act(async () => {
+      if (trigger === 'timer') await vi.advanceTimersByTimeAsync(30_000)
+      else window.dispatchEvent(new Event('focus'))
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeEnabled()
+    expect(updateDreamerPlan).toHaveBeenCalledTimes(1)
+  })
 })

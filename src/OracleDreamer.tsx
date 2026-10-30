@@ -7,7 +7,7 @@ import './dreamer.css'
 const reason = (error: unknown) => error instanceof Error ? error.message : 'Dreamer could not be reached.'
 const dreamerChanged = 'oracle-dreamer-changed'
 
-function useDreamer(active: boolean) {
+function useDreamer(active: boolean, onRefreshed?: () => void) {
   const [snapshot, publishSnapshot] = useState<DreamerSnapshot>()
   const [error, setError] = useState<string>()
   const [unavailable, setUnavailable] = useState(false)
@@ -34,7 +34,7 @@ function useDreamer(active: boolean) {
     try {
       const next = await getDreamer()
       if (request === current.current) {
-        acceptSnapshot(next)
+        if (acceptSnapshot(next) && next.available) onRefreshed?.()
         return latest.current
       }
       return undefined
@@ -45,7 +45,7 @@ function useDreamer(active: boolean) {
       }
       return undefined
     }
-  }, [acceptSnapshot])
+  }, [acceptSnapshot, onRefreshed])
   useEffect(() => {
     if (!active) return
     let disposed = false
@@ -161,10 +161,11 @@ export function DreamerSettings({ active = true }: { active?: boolean }) {
 }
 
 export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
-  const { snapshot, setSnapshot, error: loadError, unavailable, failMutation, refresh } = useDreamer(active)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [saved, setSaved] = useState(false)
+  const onRefreshed = useCallback(() => setError(undefined), [])
+  const { snapshot, setSnapshot, error: loadError, unavailable, failMutation, refresh } = useDreamer(active, onRefreshed)
   const plan = snapshot?.plan
   const readOnly = saving || unavailable || !snapshot?.available
 

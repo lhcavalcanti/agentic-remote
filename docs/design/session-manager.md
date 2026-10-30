@@ -319,14 +319,17 @@ end the turn.
   visible, it moves focus between them instead; unrelated fields, dialogs,
   pending questions and permissions, and IME composition keep their keys.
 - The desktop panel defaults to a right-hand overlay and can instead be pinned
-  beside the working session from App settings. It is resizable from its left
-  edge (340px up to whatever leaves the conversation 360px beside the sessions
-  list, at most 960px; placement and width are remembered per browser, and
-  shown narrower without forgetting the choice when the window narrows). The
-  340px minimum wins on a window without room for both, where the panel
-  overlays more of the conversation. At 960px or narrower it is always a
-  full-height sheet. It shows the transcript (Markdown), tool activity chips,
-  and a composer whose Return behaviour follows the session composer.
+  beside the working session from the Dock/Undock control in its header.
+  `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles the
+  same choice while Oracle is open; App settings has no duplicate placement
+  control. It is resizable from its left edge (340px up to whatever leaves the
+  conversation 360px beside the sessions list, at most 960px; placement and
+  width are remembered per browser, and shown narrower without forgetting the
+  choice when the window narrows). The panel falls back to overlay when the
+  340px panel and 360px conversation minimums cannot both fit. At 960px or
+  narrower it is always a full-height sheet. It shows the transcript
+  (Markdown), tool activity chips, and a composer whose Return behaviour
+  follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
 - Sessions Oracle started get a small **Oracle** badge in the session list.

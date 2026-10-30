@@ -10,6 +10,8 @@ import {
   LoaderCircle,
   Mic,
   Orbit,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   RotateCcw,
   SlidersHorizontal,
@@ -220,13 +222,13 @@ function readAnswerOnly(): boolean {
 
 const widthStorageKey = 'agentic-remote:oracle-width'
 const WIDTH_DEFAULT = 440
-const WIDTH_MIN = 340
+export const ORACLE_PANEL_WIDTH_MIN = 340
 const WIDTH_MAX = 960
 /** The conversation keeps at least this much beside the panel. */
-const CONVERSATION_MIN = 360
+export const ORACLE_CONVERSATION_WIDTH_MIN = 360
 
 function boundWidth(value: number, limit = WIDTH_MAX): number {
-  return Math.min(limit, Math.max(WIDTH_MIN, Math.round(value)))
+  return Math.min(limit, Math.max(ORACLE_PANEL_WIDTH_MIN, Math.round(value)))
 }
 
 /** The width chosen, which a narrow window may show narrower without forgetting it. */
@@ -269,7 +271,9 @@ function usePanelWidth(reservedLeft: number) {
     return () => window.removeEventListener('resize', measure)
   }, [])
 
-  const limit = boundWidth(viewport - reservedLeft - CONVERSATION_MIN)
+  const limit = boundWidth(
+    viewport - reservedLeft - ORACLE_CONVERSATION_WIDTH_MIN,
+  )
   const clampWidth = (value: number) => boundWidth(value, limit)
   const width = clampWidth(preferred)
 
@@ -287,7 +291,7 @@ function usePanelWidth(reservedLeft: number) {
       'aria-label': 'Resize Oracle',
       'aria-orientation': 'vertical' as const,
       'aria-valuemax': limit,
-      'aria-valuemin': WIDTH_MIN,
+      'aria-valuemin': ORACLE_PANEL_WIDTH_MIN,
       'aria-valuenow': width,
       'data-resizing': resizing,
       onDoubleClick: () => commit(undefined),
@@ -445,6 +449,9 @@ export function ManagerAssistant({
   reservedLeft = 0,
   onWidthChange,
   placement = 'overlay',
+  placementShortcutLabel,
+  preferredPlacement = 'overlay',
+  onPlacementChange,
   focusRequest = 0,
   onRequestSessionFocus,
 }: {
@@ -466,6 +473,12 @@ export function ManagerAssistant({
   onWidthChange?: (width: number | undefined) => void
   /** Desktop placement. Narrow layouts always pass overlay. */
   placement?: 'overlay' | 'docked'
+  /** Shortcut shown with the placement action. */
+  placementShortcutLabel?: string
+  /** Stored desktop choice, even while a narrow layout falls back to overlay. */
+  preferredPlacement?: 'overlay' | 'docked'
+  /** Changes the stored desktop placement from the panel header. */
+  onPlacementChange?: (placement: 'overlay' | 'docked') => void
   /** Changes when a keyboard shortcut explicitly requests the composer. */
   focusRequest?: number
   /** Lets App focus the active writable session composer after Oracle closes. */
@@ -904,6 +917,29 @@ export function ManagerAssistant({
         >
           <RotateCcw aria-hidden="true" size={17} />
         </button>
+        {onPlacementChange ? (
+          <button
+            aria-label={
+              preferredPlacement === 'docked' ? 'Undock Oracle' : 'Dock Oracle'
+            }
+            className="icon-button"
+            onClick={() =>
+              onPlacementChange(
+                preferredPlacement === 'docked' ? 'overlay' : 'docked',
+              )
+            }
+            title={`${preferredPlacement === 'docked' ? 'Undock' : 'Dock'} Oracle${
+              placementShortcutLabel ? ` (${placementShortcutLabel})` : ''
+            }`}
+            type="button"
+          >
+            {preferredPlacement === 'docked' ? (
+              <PanelRightOpen aria-hidden="true" size={18} />
+            ) : (
+              <PanelRightClose aria-hidden="true" size={18} />
+            )}
+          </button>
+        ) : null}
         <button aria-label="Close Oracle" className="icon-button" onClick={close} title="Close (Esc)" type="button">
           <X aria-hidden="true" size={19} />
         </button>

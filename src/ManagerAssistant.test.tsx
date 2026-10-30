@@ -440,6 +440,36 @@ describe('ManagerAssistant', () => {
     expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
   })
 
+  it('offers the dock action in the Oracle header with its shortcut', async () => {
+    const onPlacementChange = vi.fn()
+    setup(empty, {
+      onPlacementChange,
+      placementShortcutLabel: 'Ctrl+Alt+P',
+      preferredPlacement: 'overlay',
+    })
+    await openPanel()
+
+    const dock = screen.getByRole('button', { name: 'Dock Oracle' })
+    expect(dock).toHaveAttribute('title', 'Dock Oracle (Ctrl+Alt+P)')
+    fireEvent.click(dock)
+    expect(onPlacementChange).toHaveBeenCalledWith('docked')
+  })
+
+  it('offers the undock action when docked mode is preferred', async () => {
+    setup(empty, {
+      onPlacementChange: vi.fn(),
+      placement: 'docked',
+      placementShortcutLabel: 'Ctrl+Alt+P',
+      preferredPlacement: 'docked',
+    })
+    await openPanel()
+
+    expect(screen.getByRole('button', { name: 'Undock Oracle' })).toHaveAttribute(
+      'title',
+      'Undock Oracle (Ctrl+Alt+P)',
+    )
+  })
+
   it('keeps the conversation beside the sessions list wide enough', async () => {
     const width = window.innerWidth
     try {

@@ -468,14 +468,17 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   a key from another field, a dialog, a pending permission or question, or an
   IME composition.
 - On desktop, Oracle opens as a non-modal overlay by default and MAY be pinned
-  beside the working session from **App settings → Oracle**. Both placements
-  are resizable from the panel's left edge by drag or arrow keys (Home or a
-  double-click resets it) and the placement and width are remembered on this
-  device. Widening stops where the conversation would have less than 360px
-  beside the sessions list; the panel is never narrower than 340px, so a
-  window without room for both shows it at 340px over more of the
-  conversation. At 960px or narrower it is always a full-height overlay sheet,
-  without changing the saved desktop preference. A hub with
+  beside the working session with the visible **Dock Oracle** control in its
+  header; the same control becomes **Undock Oracle** while pinned.
+  `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles
+  that choice while Oracle is open. App settings MUST NOT expose a second
+  placement control. Both placements are resizable from the panel's left edge
+  by drag or arrow keys (Home or a double-click resets it) and the placement
+  and width are remembered on this device. Widening stops where the
+  conversation would have less than 360px beside the sessions list; the panel
+  is never narrower than 340px, so a window without room for both falls back
+  to the overlay without changing the saved desktop preference. At 960px or
+  narrower it is always a full-height overlay sheet. A hub with
   `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
@@ -1479,8 +1482,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
   - **Models**: new sessions' defaults per provider.
   - **Folders**: one card per computer with the folder new sessions start in,
     then Oracle's (blank means the same as new sessions).
-  - **Oracle**: Oracle's model and effort, desktop placement and keyboard
-    shortcut, response style, and which activity notifies you.
+  - **Oracle**: Oracle's model and effort, response style, and which activity
+    notifies you.
   - **Notifications**: this device's notification permission and subscription.
   - **Interface**: Appearance, Status line, Keyboard shortcuts.
   - **App**: Settings sync, Hub connection (native app only), App updates.

@@ -10,10 +10,18 @@ import {
   useSyncExternalStore,
 } from 'react'
 import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
-import { ManagerAssistant, OracleButton } from './ManagerAssistant'
+import {
+  ManagerAssistant,
+  ORACLE_CONVERSATION_WIDTH_MIN,
+  ORACLE_PANEL_WIDTH_MIN,
+  OracleButton,
+} from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { oracleCommand } from './oracle-command'
-import { oracleShortcutBinding } from './app-shortcuts'
+import {
+  oracleDockShortcutBinding,
+  oracleShortcutBinding,
+} from './app-shortcuts'
 import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import { isManagerEvent } from '../shared/manager'
@@ -1511,6 +1519,7 @@ type ShortcutId =
   | 'nextSession'
   | 'previousSession'
   | 'toggleOracle'
+  | 'toggleOracleDock'
   | 'toggleKnowledge'
   | 'expandKnowledge'
   | 'backgroundTasks'
@@ -1548,6 +1557,11 @@ const shortcutDefaults: ShortcutDefinition[] = [
     id: 'toggleOracle',
     label: 'Open, close, or focus Oracle',
     binding: oracleShortcutBinding(),
+  },
+  {
+    id: 'toggleOracleDock',
+    label: 'Dock or undock Oracle',
+    binding: oracleDockShortcutBinding(),
   },
   {
     id: 'toggleKnowledge',
@@ -3739,8 +3753,6 @@ function AppSettingsDialog({
   settingsSync,
   oracleResponseStyle,
   onOracleResponseStyleChange,
-  oraclePlacement,
-  onOraclePlacementChange,
   notificationScope,
   onNotificationScopeChange,
   statusline,
@@ -3770,8 +3782,6 @@ function AppSettingsDialog({
   settingsSync: SettingsProfileState
   oracleResponseStyle: OracleResponseStyle
   onOracleResponseStyleChange: (style: OracleResponseStyle) => void
-  oraclePlacement: OraclePlacement
-  onOraclePlacementChange: (placement: OraclePlacement) => void
   notificationScope: NotificationScope
   onNotificationScopeChange: (scope: NotificationScope) => void
   statusline: StatuslineSettings
@@ -4240,47 +4250,6 @@ function AppSettingsDialog({
             onRetryModels={retryHubCopilotModels}
             oracle={oracle}
           />
-          <section className="app-settings-section">
-            <div className="app-settings-section__title">
-              <h4>Desktop panel</h4>
-              <SettingScope synced={false} />
-            </div>
-            <p className="dialog-message">
-              Open Oracle over the session or keep both side by side. Phones
-              always use the full-screen panel. The keyboard shortcut is{' '}
-              <kbd>{bindingLabel(shortcuts.find((entry) => entry.id === 'toggleOracle')!.binding)}</kbd>.
-            </p>
-            <fieldset className="notification-scope-options" aria-label="Oracle placement">
-              <legend>Oracle placement</legend>
-              {([
-                {
-                  id: 'overlay' as const,
-                  name: 'Overlay the session',
-                  description: 'Oracle opens over the right side of the session.',
-                },
-                {
-                  id: 'docked' as const,
-                  name: 'Pinned beside the session',
-                  description: 'Oracle and the working session stay visible together.',
-                },
-              ]).map((option) => (
-                <label className="notification-scope-option" key={option.id}>
-                  <input
-                    aria-describedby={`oracle-placement-${option.id}`}
-                    aria-label={option.name}
-                    checked={oraclePlacement === option.id}
-                    name="oracle-placement"
-                    onChange={() => onOraclePlacementChange(option.id)}
-                    type="radio"
-                  />
-                  <span>
-                    <strong>{option.name}</strong>
-                    <small id={`oracle-placement-${option.id}`}>{option.description}</small>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-          </section>
           {oracle.settings && !oracle.unavailable ? (
             <section className="app-settings-section" id="settings-oracle-style">
               <div className="app-settings-section__title">
@@ -6949,8 +6918,8 @@ function App() {
     readOraclePlacement,
   )
   const [oracleFocusRequest, setOracleFocusRequest] = useState(0)
-  const [desktopLayout, setDesktopLayout] = useState(() => window.innerWidth > 960)
-  const previousDesktopLayout = useRef(desktopLayout)
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
+  const desktopLayout = viewportWidth > 960
   // The open Oracle panel's width; the timeline dock moves beside it.
   const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
@@ -6966,22 +6935,10 @@ function App() {
     writeStored(oraclePlacementStorageKey, next)
   }, [])
   useEffect(() => {
-    const measureDesktop = () => setDesktopLayout(window.innerWidth > 960)
+    const measureDesktop = () => setViewportWidth(window.innerWidth)
     window.addEventListener('resize', measureDesktop)
     return () => window.removeEventListener('resize', measureDesktop)
   }, [])
-  useEffect(() => {
-    const wasDesktop = previousDesktopLayout.current
-    previousDesktopLayout.current = desktopLayout
-    if (
-      wasDesktop &&
-      !desktopLayout &&
-      oracleOpen &&
-      oraclePlacement === 'docked'
-    ) {
-      setOracleFocusRequest((request) => request + 1)
-    }
-  }, [desktopLayout, oracleOpen, oraclePlacement])
   const changeManagedSessions = useCallback((keys: string[]) => {
     setManagedSessionKeys(new Set(keys))
   }, [])
@@ -7370,6 +7327,46 @@ function App() {
   const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const oracleDockReservedLeft =
+    sidebarWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
+  const effectiveOraclePlacement =
+    oraclePlacement === 'docked' &&
+    desktopLayout &&
+    viewportWidth - oracleDockReservedLeft >=
+      ORACLE_PANEL_WIDTH_MIN + ORACLE_CONVERSATION_WIDTH_MIN
+      ? 'docked'
+      : 'overlay'
+  const previousEffectiveOraclePlacement = useRef(effectiveOraclePlacement)
+  const responsiveOracleFocusPending = useRef(false)
+  useEffect(() => {
+    const previousPlacement = previousEffectiveOraclePlacement.current
+    previousEffectiveOraclePlacement.current = effectiveOraclePlacement
+    if (
+      previousPlacement === 'docked' &&
+      effectiveOraclePlacement === 'overlay' &&
+      oraclePlacement === 'docked' &&
+      oracleOpen
+    ) {
+      responsiveOracleFocusPending.current = true
+    }
+    if (!oracleOpen || effectiveOraclePlacement === 'docked') {
+      responsiveOracleFocusPending.current = false
+      return
+    }
+    const modalOwnsFocus = Boolean(
+      document.querySelector(
+        '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]',
+      ),
+    )
+    if (
+      responsiveOracleFocusPending.current &&
+      !settingsOpen &&
+      !modalOwnsFocus
+    ) {
+      responsiveOracleFocusPending.current = false
+      setOracleFocusRequest((request) => request + 1)
+    }
+  }, [effectiveOraclePlacement, oracleOpen, oraclePlacement, settingsOpen])
   // Where App settings opens: Oracle's model when opened from Oracle's panel.
   const [settingsSection, setSettingsSection] = useState<string>()
   const [statuslineOpen, setStatuslineOpen] = useState(false)
@@ -8912,7 +8909,7 @@ function App() {
           return
         }
         event.preventDefault()
-        if (oracleOpen && oraclePlacement === 'docked' && desktopLayout) {
+        if (oracleOpen && effectiveOraclePlacement === 'docked') {
           if (oracleComposer) {
             if (!focusActiveSessionComposer()) setOracleOpen(false)
           }
@@ -8929,6 +8926,29 @@ function App() {
         } else {
           setOracleFocusRequest((request) => request + 1)
           setOracleOpen(true)
+        }
+        return
+      }
+      if (pressed.id === 'toggleOracleDock') {
+        if (!oracleIndicator.available || !oracleOpen) return
+        const sessionComposer = composerRef.current
+        const oracleComposer =
+          event.target instanceof HTMLTextAreaElement &&
+          event.target.getAttribute('aria-label') === 'Message Oracle'
+        const fromSessionComposer = event.target === sessionComposer
+        if (
+          isEditableTarget(event.target) &&
+          !fromSessionComposer &&
+          !oracleComposer
+        ) {
+          return
+        }
+        event.preventDefault()
+        const nextPlacement =
+          oraclePlacement === 'docked' ? 'overlay' : 'docked'
+        changeOraclePlacement(nextPlacement)
+        if (nextPlacement === 'overlay' && fromSessionComposer) {
+          setOracleFocusRequest((request) => request + 1)
         }
         return
       }
@@ -14720,6 +14740,11 @@ function App() {
           : current,
       )
     } catch (caught) {
+      if (sessionKey(target) !== selectedKey) {
+        selectSession(target)
+      } else {
+        setSidebarOpen(false)
+      }
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setDeleting(false)
@@ -14886,8 +14911,7 @@ function App() {
       } ${
         oracleOpen &&
         oracleIndicator.available &&
-        oraclePlacement === 'docked' &&
-        desktopLayout
+        effectiveOraclePlacement === 'docked'
           ? 'app-shell--oracle-docked'
           : ''
       }`}
@@ -15685,7 +15709,7 @@ function App() {
           className="timeline-dock"
           data-oracle-open={
             oraclePanelWidth === undefined ||
-            (oraclePlacement === 'docked' && desktopLayout)
+            effectiveOraclePlacement === 'docked'
               ? undefined
               : ''
           }
@@ -16615,8 +16639,6 @@ function App() {
         settingsSync={settingsProfile}
         oracleResponseStyle={profile.oracleResponseStyle ?? 'balanced'}
         onOracleResponseStyleChange={(next) => saveSetting('oracleResponseStyle', next)}
-        oraclePlacement={oraclePlacement}
-        onOraclePlacementChange={changeOraclePlacement}
         notificationScope={profile.notificationScope ?? 'all'}
         onNotificationScopeChange={(next) => saveSetting('notificationScope', next)}
         onClose={() => setSettingsOpen(false)}
@@ -16772,18 +16794,14 @@ function App() {
         open={oracleOpen}
         focusRequest={oracleFocusRequest}
         onRequestSessionFocus={focusActiveSessionComposer}
-        placement={
-          oraclePlacement === 'docked' && desktopLayout ? 'docked' : 'overlay'
-        }
+        onPlacementChange={changeOraclePlacement}
+        placement={effectiveOraclePlacement}
+        placementShortcutLabel={shortcutKeys('toggleOracleDock')}
+        preferredPlacement={oraclePlacement}
         reservedLeft={
-          sidebarWidth +
-          (
-            oraclePlacement === 'docked' &&
-            desktopLayout &&
-            knowledgeMode === 'docked'
-              ? READER_WIDTH_MIN
-              : 0
-          )
+          effectiveOraclePlacement === 'docked'
+            ? oracleDockReservedLeft
+            : sidebarWidth
         }
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}

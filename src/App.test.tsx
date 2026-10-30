@@ -2574,6 +2574,52 @@ describe('App', () => {
     }
   })
 
+  it('does not move responsive Oracle focus out of App settings', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const settings = await screen.findByRole('dialog', { name: 'App settings' })
+      const responseStyle = within(settings).getByRole('combobox', {
+        name: 'Oracle response style',
+      })
+      responseStyle.focus()
+
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(responseStyle).toHaveFocus())
+      expect(oracleComposer).not.toHaveFocus()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
   it('keeps Oracle shortcuts out of settings and pending session questions', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true,
@@ -2977,7 +3023,37 @@ describe('App', () => {
     }
   })
 
-  it('stores Oracle placement on this device and falls back to an overlay on phones', async () => {
+  it('falls back to overlay when docking would violate the conversation minimum', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const oracle = await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .findByRole('button', { name: 'Oracle' })
+      fireEvent.click(oracle)
+
+      expect(await screen.findByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      expect(document.querySelector('.app-shell')).not.toHaveClass(
+        'app-shell--oracle-docked',
+      )
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('stores Oracle placement from its header and falls back to an overlay on phones', async () => {
     const originalWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
     vi.mocked(getManager).mockResolvedValue({
@@ -2991,23 +3067,34 @@ describe('App', () => {
     try {
       render(<App />)
       await screen.findAllByText('Project chat')
-      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-      const pinned = await screen.findByRole('radio', {
-        name: 'Pinned beside the session',
-      })
-      fireEvent.click(pinned)
-      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
-      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
       fireEvent.keyDown(window, {
         key: 'o',
         code: 'KeyO',
         altKey: true,
         ctrlKey: true,
       })
-      expect(await screen.findByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+      const oracle = await screen.findByRole('dialog', { name: 'Oracle' })
+      expect(oracle).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      const dock = screen.getByRole('button', { name: 'Dock Oracle' })
+      expect(dock).toHaveAttribute('title', 'Dock Oracle (Ctrl + Alt + P)')
+      dock.focus()
+      fireEvent.click(dock)
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+      expect(oracle).toHaveAttribute(
         'data-placement',
         'docked',
       )
+      const undock = screen.getByRole('button', { name: 'Undock Oracle' })
+      expect(undock).toHaveFocus()
+      fireEvent.click(undock)
+      expect(oracle).toHaveAttribute('data-placement', 'overlay')
+      const redock = screen.getByRole('button', { name: 'Dock Oracle' })
+      await waitFor(() => expect(redock).toHaveFocus())
+      fireEvent.click(redock)
+      expect(oracle).toHaveAttribute('data-placement', 'docked')
 
       act(() => {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
@@ -3018,6 +3105,108 @@ describe('App', () => {
         'overlay',
       )
       expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('toggles Oracle placement by shortcut without leaving a covered composer focused', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', {
+        name: 'Message Oracle',
+      })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+
+      fireEvent.keyDown(oracleComposer, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'docked',
+      )
+      expect(oracleComposer).toHaveFocus()
+
+      sessionComposer.focus()
+      fireEvent.keyDown(sessionComposer, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      expect(sessionComposer).not.toHaveFocus()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('does not toggle Oracle placement or focus behind App settings', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .findByRole('button', { name: 'Oracle' })
+      fireEvent.keyDown(window, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      await screen.findByRole('dialog', { name: 'Oracle' })
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const settings = await screen.findByRole('dialog', { name: 'App settings' })
+      const responseStyle = within(settings).getByRole('combobox', {
+        name: 'Oracle response style',
+      })
+      responseStyle.focus()
+
+      fireEvent.keyDown(responseStyle, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBeNull()
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      expect(responseStyle).toHaveFocus()
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
     }
@@ -3069,9 +3258,14 @@ describe('App', () => {
     })
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-    expect(await screen.findByRole('radio', { name: 'Overlay the session' }))
-      .toBeChecked()
+    fireEvent.keyDown(window, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    expect(await screen.findByRole('button', { name: 'Dock Oracle' }))
+      .toBeInTheDocument()
     expect(localStorage.getItem('agentic-remote:oracle-placement')).toBeNull()
   })
 
@@ -4168,7 +4362,10 @@ describe('App', () => {
     expect(await within(oracle).findByRole('combobox', { name: 'Oracle model' })).toBeInTheDocument()
     expect(within(oracle).getByRole('combobox', { name: 'Oracle response style' })).toBeInTheDocument()
     expect(within(oracle).getByRole('group', { name: 'What notifies you' })).toBeInTheDocument()
-    expect(within(oracle).getByRole('group', { name: 'Oracle placement' })).toBeInTheDocument()
+    expect(within(oracle).queryByRole('group', { name: 'Oracle placement' }))
+      .not.toBeInTheDocument()
+    expect(within(oracle).queryByRole('heading', { name: 'Desktop panel' }))
+      .not.toBeInTheDocument()
     // Every folder in one place, per computer: yours, then Oracle's.
     const computerFolders = within(folders).getByRole('group', { name: 'Session folders on development' })
     expect(within(computerFolders).getByRole('button', { name: 'Browse default session folder for development' })).toBeInTheDocument()
@@ -12938,6 +13135,25 @@ describe('App', () => {
     )
   })
 
+  it('reveals a card close failure from the phone session drawer', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    vi.mocked(deleteSession).mockRejectedValueOnce(new Error('Node refused the close'))
+    try {
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Close Project chat' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Node refused the close',
+      )
+      expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
   it('keeps the session chosen while another one was closing', async () => {
     const thirdSession: ManagedSession = {
       ...session,
@@ -19124,6 +19340,7 @@ describe('App', () => {
     })
     const list = shortcuts.closest('section')?.querySelector('.shortcut-list')
     expect(list).toHaveTextContent('Next session')
+    expect(list).toHaveTextContent('Dock or undock Oracle')
     expect(list).toHaveTextContent('Open or close knowledge')
     expect(list).toHaveTextContent('Expand or minimize knowledge')
   })

@@ -619,6 +619,30 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   session. Your default folder, mode, and model for new sessions are sent with
   each message and apply to the sessions Oracle starts.
 
+### 3.8 Oracle Dreamer foundation
+
+- Dreamer MUST be disabled by default and enabled explicitly in App settings
+  with a saved hub-wide IANA timezone. Its fixed schedule is 02:00 local time;
+  same-day catch-up ends at 08:00. DST repeats MUST NOT duplicate a daily run,
+  and a missing 02:00 MUST use the first later valid local time.
+- This first slice MUST perform only deterministic local metadata review:
+  journal-observed session state and eligible structured-memory metadata, not
+  transcripts, prompts, titles, memory contents or external inference.
+  Unavailable durable todos, incomplete history and source freshness limits
+  MUST be visible rather than represented as a complete review.
+- Daily run claims, generation/lease fences, plans and user edits MUST persist
+  before success. Disable, expiry, shutdown and restart MUST prevent stale
+  workers from replacing a committed plan. Bounds and storage failures MUST
+  be reported without silently resetting state.
+- Oracle MUST present a dated morning plan with priority reorder, skip, done
+  and restore. These explicit user actions MUST change only plan review state,
+  never session/task completion, prompts, permissions or memory. Concurrent
+  stale edits MUST be refused and refreshed.
+- Dreamer MUST NOT raise overnight notifications, send speech, execute work
+  or add model calls. Semantic planning, authoritative todo/history adapters
+  and optional morning delivery are separate follow-ups described in
+  [Oracle Dreamer](design/oracle-dreamer.md).
+
 ## 4. Conversation timeline
 
 - User messages, assistant messages, notices, and tool activity MUST remain in

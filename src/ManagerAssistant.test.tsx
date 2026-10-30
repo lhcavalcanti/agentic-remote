@@ -31,6 +31,13 @@ vi.mock('./api', () => ({
   resetManager: vi.fn(),
 }))
 
+vi.mock('./dreamer-api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./dreamer-api')>(),
+  getDreamer: vi.fn(async () => ({
+    available: true, revision: 0, settings: { enabled: false, timeZone: 'UTC' },
+  })),
+}))
+
 type Props = Parameters<typeof ManagerAssistant>[0]
 
 /** The header button and the panel, wired the way App wires them. */

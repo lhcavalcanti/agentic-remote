@@ -15,6 +15,7 @@ import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { oracleCommand } from './oracle-command'
 import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
+import { DreamerSettings } from './OracleDreamer'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
 import type {
@@ -4135,6 +4136,7 @@ function AppSettingsDialog({
             onRetryModels={retryHubCopilotModels}
             oracle={oracle}
           />
+          <DreamerSettings active={open} />
           {oracle.settings && !oracle.unavailable ? (
             <section className="app-settings-section" id="settings-oracle-style">
               <div className="app-settings-section__title">

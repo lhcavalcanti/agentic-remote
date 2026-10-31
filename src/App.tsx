@@ -14337,6 +14337,8 @@ function App() {
     }
     const wasSuspended = target.suspended === true
     if (!wasSuspended && sessionKey(target) === selectedKey) {
+      // Synchronous before suspendSession's first await: any later selected
+      // catalog rejection belongs to the runtime being put down.
       commandCatalogEpoch.current += 1
     }
     setSuspending(true)

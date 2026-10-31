@@ -771,7 +771,7 @@
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
     "src/App.test.tsx": "90f39ce32f9228ecc99483a61785dfd08b370f9e212d188d95b8f1646adcbfd9",
-    "src/App.tsx": "33508b7ab0fb148a61800ed055ad6b53c0454365b6d7b53da552dd10dbba5979",
+    "src/App.tsx": "4cac1e7c5990462f545c885a8b20fedcf7993d3338153c267a766e655695950c",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -975,18 +975,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "a402ad4336adcb5da5f447dba8df5872c7374068660727d1ba5c935efd717579",
+    "GRAPH_REPORT.md": "d8e99f07293054306a5f41383cf350a93e4c19dc3383d7a7282556690fa9da10",
     "communities.json": "50c830a205a3b517cac6ca6d63980b44d7234c509eba777045e32a2082ead5a4",
-    "graph.html": "4f275011ae392086cb48f235e453d1d72964344ade5db7c6adf9e0ea8c359b08",
-    "graph.json": "dc3c4c8405b5f3124bd1cb22aa67473dbd7dae507b26a7c13ce411843eb7448e"
+    "graph.html": "4b6d429dff2221c0ffe7d9fe686170d15bc2b7109433fc8544993841fc3ce895",
+    "graph.json": "5d5723e1f7c46cf0a5b60572ec025ca31797d819908a4f812178600859987084"
   },
   "schema_version": 1,
-  "source_commit": "12c9b0e00a8f4811462d16da81a4225c0f02048e",
-  "source_fingerprint": "a1adaa4aa1473b91ec4f4973034a8553172d4398cc2b439dbb31ebac47f8467b",
+  "source_commit": "83801cdf84869241d46f36ac394f2f56a5474ef0",
+  "source_fingerprint": "d794e7ab0ed2343ae7e8e7384809b19738b0c3f758df9eb316f18fd1d9f0be36",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "src/App.test.tsx",
     "src/App.tsx"
   ]
 }

@@ -218,6 +218,21 @@ describe('session navigation', () => {
       .toBe(147)
   })
 
+  it('restores saved scroll after sessions finish loading', () => {
+    localStorage.setItem('agentic-remote:session-list-scroll-v1', '147')
+    const rendered = render(
+      <NavigationHarness loading computerList={[]} sessions={new Map()} />,
+    )
+    const list = document.querySelector<HTMLElement>('.session-list__scroll')!
+    // Browsers clamp an empty scroll container back to zero.
+    list.scrollTop = 0
+
+    rendered.rerender(<NavigationHarness />)
+
+    expect(document.querySelector<HTMLElement>('.session-list__scroll')?.scrollTop)
+      .toBe(147)
+  })
+
   it('draws each pending creation where its session will appear', () => {
     const scrolled: Element[] = []
     const scrollIntoView = vi.fn(function (this: Element) {

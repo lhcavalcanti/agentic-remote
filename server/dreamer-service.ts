@@ -316,6 +316,16 @@ export class DreamerService {
           'Verified session completion is no longer available; refresh and retry.',
         )
       }
+      if (
+        item.status === 'done'
+        && item.completion
+        && item.completion.computerId === item.computerId
+        && item.completion.sessionId === item.sessionId
+        && item.completion.messageId === edit.completion.messageId
+        && item.completion.resultDigest === edit.completion.resultDigest
+      ) {
+        return this.withCompletionCandidates(this.snapshot())
+      }
       let candidate: DreamerCompletionCandidate | undefined
       try {
         candidate = await this.completionCandidate(
@@ -390,7 +400,7 @@ export class DreamerService {
       ...(activeMemoryIds ? { activeMemoryIds } : {}),
       ...(completion ? { completion } : {}),
     })
-    return this.snapshot()
+    return this.withCompletionCandidates(this.snapshot())
   }
 
   private async withCompletionCandidates(snapshot: DreamerSnapshot): Promise<DreamerSnapshot> {

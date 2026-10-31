@@ -7,6 +7,46 @@ import './dreamer.css'
 const reason = (error: unknown) => error instanceof Error ? error.message : 'Dreamer could not be reached.'
 const dreamerChanged = 'oracle-dreamer-changed'
 export const authoritativeRefresh = 'agentic-remote:authoritative-refresh'
+let activeDreamerViews = 0
+
+class AuthoritativeRefreshRequest extends Event {
+  readonly pending: Promise<unknown>[] = []
+
+  waitUntil(work: Promise<unknown>) {
+    this.pending.push(work)
+  }
+}
+
+export function waitUntilAuthoritativeRefresh(event: Event, work: Promise<unknown>) {
+  if (event instanceof AuthoritativeRefreshRequest) {
+    event.waitUntil(work)
+  } else {
+    void work.catch(() => undefined)
+  }
+}
+
+export async function dispatchAuthoritativeRefresh(): Promise<void> {
+  const event = new AuthoritativeRefreshRequest(authoritativeRefresh)
+  window.dispatchEvent(event)
+  const settled = await Promise.allSettled(event.pending)
+  const failed = settled.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  )
+  if (failed) throw failed.reason
+}
+
+export function DreamerRefreshOwner() {
+  useEffect(() => {
+    const update = (event: Event) => {
+      if (activeDreamerViews === 0) {
+        waitUntilAuthoritativeRefresh(event, getDreamer())
+      }
+    }
+    window.addEventListener(authoritativeRefresh, update)
+    return () => window.removeEventListener(authoritativeRefresh, update)
+  }, [])
+  return null
+}
 
 function useDreamer(active: boolean, onRefreshed?: () => void) {
   const [snapshot, publishSnapshot] = useState<DreamerSnapshot>()
@@ -33,7 +73,7 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
     current.current += 1
     if (!(caught instanceof DreamerApiError) || caught.status >= 500) setUnavailable(true)
   }, [])
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (rejectOnError = false) => {
     const request = ++current.current
     setRefreshing(true)
     try {
@@ -49,6 +89,7 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
         setStale(Boolean(latest.current))
         if (!(caught instanceof DreamerApiError) || caught.status >= 500) setUnavailable(true)
       }
+      if (rejectOnError) throw caught
       return undefined
     } finally {
       if (request === current.current) setRefreshing(false)
@@ -56,19 +97,24 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
   }, [acceptSnapshot, onRefreshed])
   useEffect(() => {
     if (!active) return
+    activeDreamerViews += 1
     let disposed = false
     void Promise.resolve().then(() => { if (!disposed) void refresh() })
     const update = () => { if (!disposed) void refresh() }
+    const refreshAuthoritative = (event: Event) => {
+      if (!disposed) waitUntilAuthoritativeRefresh(event, refresh(true))
+    }
     const timer = window.setInterval(update, 30_000)
     window.addEventListener(dreamerChanged, update)
-    window.addEventListener(authoritativeRefresh, update)
+    window.addEventListener(authoritativeRefresh, refreshAuthoritative)
     window.addEventListener('focus', update)
     return () => {
       disposed = true
+      activeDreamerViews -= 1
       current.current += 1
       window.clearInterval(timer)
       window.removeEventListener(dreamerChanged, update)
-      window.removeEventListener(authoritativeRefresh, update)
+      window.removeEventListener(authoritativeRefresh, refreshAuthoritative)
       window.removeEventListener('focus', update)
     }
   }, [active, refresh])

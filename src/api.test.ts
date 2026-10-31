@@ -38,6 +38,24 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('requests passive session detail without activating it', async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      session: { id: 'session' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getSession(
+      'computer',
+      'session',
+      undefined,
+      { passive: true },
+    )).resolves.toEqual({ id: 'session' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/computers/computer/sessions/session?passive=1',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
   it('requests no-store Oracle voice capabilities', async () => {
     const capability = {
       protocol: 2,

@@ -24,7 +24,11 @@ import {
 } from './app-shortcuts'
 import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
-import { authoritativeRefresh, DreamerSettings } from './OracleDreamer'
+import {
+  dispatchAuthoritativeRefresh,
+  DreamerRefreshOwner,
+  DreamerSettings,
+} from './OracleDreamer'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
 import type {
@@ -6930,7 +6934,6 @@ function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
   const managerListenersRef = useRef(new Set<(event: ManagerEvent) => void>())
-  const [managerEpoch, setManagerEpoch] = useState(0)
   const authoritativeRefreshRef = useRef<() => Promise<void>>(async () => undefined)
   const authoritativeRefreshGeneration = useRef(0)
   const [refreshState, setRefreshState] = useState<'fresh' | 'refreshing' | 'stale'>('fresh')
@@ -7420,8 +7423,6 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<string>()
   const [statuslineOpen, setStatuslineOpen] = useState(false)
   const [backgroundTasksOpen, setBackgroundTasksOpen] = useState(false)
-  const [backgroundTaskRefreshVersion, setBackgroundTaskRefreshVersion] =
-    useState(0)
   const [loadingBackgroundTasks, setLoadingBackgroundTasks] = useState(false)
   const [cancellingBackgroundTask, setCancellingBackgroundTask] =
     useState<{ ownerKey: string; taskId: string }>()
@@ -7659,10 +7660,9 @@ function App() {
   const sessionCreationIntentRef = useRef(0)
   const sessionSelectionIntentRef = useRef(0)
   const newSessionOpenRef = useRef(false)
-  const backgroundTaskRequestsRef = useRef(new Set<string>())
+  const backgroundTaskRequestsRef = useRef(new Map<string, Promise<void>>())
   const queuedBackgroundTaskRefreshesRef = useRef(new Set<string>())
   const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
-  const seenBackgroundTaskRefreshRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
 
   // Silence changes on its own schedule: counting every session event would
@@ -8586,45 +8586,52 @@ function App() {
       ) {
         return
       }
-      if (backgroundTaskRequestsRef.current.has(key)) {
+      const active = backgroundTaskRequestsRef.current.get(key)
+      if (active) {
         if (force) {
           queuedBackgroundTaskRefreshesRef.current.add(key)
         }
-        return
+        return active
       }
       if (!force && backgroundTaskSnapshotsRef.current[key]) {
         return
       }
-      backgroundTaskRequestsRef.current.add(key)
-      const startedAtSequence = eventSequenceRef.current
-      if (
-        backgroundTasksOpenRef.current &&
-        selectedKeyStateRef.current === key
-      ) {
-        setLoadingBackgroundTasks(true)
-      }
-      try {
-        const snapshot = await listBackgroundTasks(
-          session.computerId,
-          session.id,
-        )
-        if (snapshot) {
-          applyBackgroundTaskSnapshot(session, snapshot, startedAtSequence)
-        }
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      } finally {
-        backgroundTaskRequestsRef.current.delete(key)
+      const request = (async () => {
+        const startedAtSequence = eventSequenceRef.current
+        let failure: unknown
         if (
           backgroundTasksOpenRef.current &&
           selectedKeyStateRef.current === key
         ) {
-          setLoadingBackgroundTasks(false)
+          setLoadingBackgroundTasks(true)
+        }
+        try {
+          const snapshot = await listBackgroundTasks(
+            session.computerId,
+            session.id,
+          )
+          if (snapshot) {
+            applyBackgroundTaskSnapshot(session, snapshot, startedAtSequence)
+          }
+        } catch (caught) {
+          failure = caught
+          setError(caught instanceof Error ? caught.message : String(caught))
+        } finally {
+          backgroundTaskRequestsRef.current.delete(key)
+          if (
+            backgroundTasksOpenRef.current &&
+            selectedKeyStateRef.current === key
+          ) {
+            setLoadingBackgroundTasks(false)
+          }
         }
         if (queuedBackgroundTaskRefreshesRef.current.delete(key)) {
-          void loadBackgroundTasks(session, true)
+          return loadBackgroundTasks(session, true)
         }
-      }
+        if (failure) throw failure
+      })()
+      backgroundTaskRequestsRef.current.set(key, request)
+      return request
     },
     [applyBackgroundTaskSnapshot],
   )
@@ -9948,16 +9955,10 @@ function App() {
     if (loading) {
       return
     }
-    const force = backgroundTaskRefreshVersion !==
-      seenBackgroundTaskRefreshRef.current
-    if (force) {
-      seenBackgroundTaskRefreshRef.current = backgroundTaskRefreshVersion
-    }
     for (const session of sessions) {
-      void loadBackgroundTasks(session, force)
+      void loadBackgroundTasks(session).catch(() => undefined)
     }
   }, [
-    backgroundTaskRefreshVersion,
     computers,
     loading,
     loadBackgroundTasks,
@@ -10105,7 +10106,7 @@ function App() {
     let stopped = false
     let reconnectDelay = 1_000
 
-    const refreshSnapshot = async () => {
+    const refreshSnapshot = async (): Promise<ManagedSession[]> => {
       // Refreshes overlap: a reconnect and a tab becoming visible can each
       // start one. Without a generation the slower response applies last and
       // reinstates whatever the newer one already replaced, including a
@@ -10154,7 +10155,7 @@ function App() {
       const claim = claimGeneration(listing.answeredComputerIds)
       if (!claim.whole && !claim.speaksFor.size) {
         // Overtaken, and it reached nothing the newer answer did not.
-        return
+        return []
       }
       const generation = claim.generation
       const loadedSessions = listing.sessions
@@ -10219,7 +10220,7 @@ function App() {
         // What these sessions say they replaced is true whoever else answered.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(merged)
-        return
+        return merged
       }
       const reconcile = (existingSessions: ManagedSession[]) => {
         // Only rows from computers that were actually asked. A hub answers for
@@ -10319,7 +10320,6 @@ function App() {
       // either session.
       const changedSinceRefresh = (key: string) =>
         (sessionEventSequenceRef.current.get(key) || 0) > startedAtSequence
-      setBackgroundTaskRefreshVersion((current) => current + 1)
       const selectedAtRefresh = selectedRef.current
       // A replacement selected while the refresh was in flight is missing
       // from the snapshot by definition, and dropping it would jump the
@@ -10359,6 +10359,8 @@ function App() {
           detail = await getSession(
             selectedAtRefresh.computerId,
             selectedAtRefresh.id,
+            undefined,
+            { passive: true },
           )
         } catch (caught) {
           const goneKey = sessionKey(selectedAtRefresh)
@@ -10373,7 +10375,7 @@ function App() {
             generation < snapshotApplied.current ||
             (sessionEventSequenceRef.current.get(goneKey) || 0) > detailStartedAtSequence
           ) {
-            return
+            return []
           }
           // The archived record was deleted and its removal event never
           // arrived here; the list and the detail now agree it is gone.
@@ -10382,7 +10384,7 @@ function App() {
           if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
             setSelectedKey(snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined)
           }
-          return
+          return reconciledForClaim.filter((session) => sessionKey(session) !== goneKey)
         }
         const detailKey = sessionKey(detail)
         if (
@@ -10393,7 +10395,7 @@ function App() {
           // Checked again here, not only before the request: a newer refresh
           // starting while this was in flight has already spoken, and putting
           // this answer in would bring back a session it removed.
-          return
+          return []
         }
         setSessions((current) => upsertSession(current, detail))
       } else if (
@@ -10414,6 +10416,7 @@ function App() {
           snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined,
         )
       }
+      return reconciledForClaim
     }
 
     const refreshAllAuthoritativeState = async () => {
@@ -10421,10 +10424,18 @@ function App() {
       authoritativeRefreshGeneration.current = generation
       setRefreshState('refreshing')
       setRefreshMessage(undefined)
-      setManagerEpoch((epoch) => epoch + 1)
-      window.dispatchEvent(new Event(authoritativeRefresh))
       try {
-        await refreshSnapshot()
+        const settled = await Promise.allSettled([
+          refreshSnapshot().then((refreshedSessions) =>
+            Promise.all(refreshedSessions.map((session) =>
+              loadBackgroundTasks(session, true)))),
+          dispatchAuthoritativeRefresh(),
+        ])
+        const failed = settled.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === 'rejected',
+        )
+        if (failed) throw failed.reason
         if (authoritativeRefreshGeneration.current === generation) {
           setRefreshState('fresh')
         }
@@ -10722,7 +10733,7 @@ function App() {
       }
       socket?.close()
     }
-  }, [settingsClient, upsertSession])
+  }, [loadBackgroundTasks, settingsClient, upsertSession])
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
@@ -16884,7 +16895,7 @@ function App() {
         />
       ) : null}
       <ManagerAssistant
-        connectionEpoch={managerEpoch}
+        connectionEpoch={0}
         controlRef={oracleControlRef}
         defaults={managerDefaults}
         onIndicatorChange={setOracleIndicator}
@@ -16911,6 +16922,7 @@ function App() {
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}
       />
+      <DreamerRefreshOwner />
     </div>
   )
 }

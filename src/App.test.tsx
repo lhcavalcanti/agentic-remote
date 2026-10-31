@@ -3533,6 +3533,84 @@ describe('App', () => {
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
+  it('uses a passive detail read during authoritative refresh', async () => {
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    vi.mocked(getSession).mockClear()
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Refresh sessions and Oracle',
+    }))
+
+    await waitFor(() => expect(getSession).toHaveBeenCalledWith(
+      session.computerId,
+      session.id,
+      undefined,
+      { passive: true },
+    ))
+  })
+
+  it('keeps authoritative refresh pending until Oracle, Dreamer, and task reads settle', async () => {
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+    await act(async () => undefined)
+
+    vi.mocked(getManager).mockClear()
+    vi.mocked(getDreamer).mockClear()
+    vi.mocked(listBackgroundTasks).mockClear()
+    let resolveManager!: (value: Awaited<ReturnType<typeof getManager>>) => void
+    let resolveDreamer!: (value: Awaited<ReturnType<typeof getDreamer>>) => void
+    let resolveTasks!: (value: Awaited<ReturnType<typeof listBackgroundTasks>>) => void
+    vi.mocked(getManager).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveManager = resolve
+    }))
+    vi.mocked(getDreamer).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDreamer = resolve
+    }))
+    vi.mocked(listBackgroundTasks).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveTasks = resolve
+    }))
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Refresh sessions and Oracle',
+    }))
+
+    await waitFor(() => {
+      expect(getManager).toHaveBeenCalledTimes(1)
+      expect(getDreamer).toHaveBeenCalledTimes(1)
+      expect(listBackgroundTasks).toHaveBeenCalled()
+    })
+    const freshness = () => screen.queryByRole('status', {
+      name: 'Session data freshness',
+    })
+    expect(freshness()).toHaveTextContent('Refreshing authoritative data')
+
+    await act(async () => resolveManager({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    }))
+    expect(freshness()).toHaveTextContent('Refreshing authoritative data')
+
+    await act(async () => resolveDreamer({
+      available: true,
+      revision: 0,
+      settings: { enabled: false, timeZone: 'UTC' },
+    }))
+    expect(freshness()).toHaveTextContent('Refreshing authoritative data')
+
+    await act(async () => resolveTasks({
+      tasks: [],
+      runningCount: 0,
+      supported: true,
+    }))
+    await waitFor(() => expect(freshness()).not.toBeInTheDocument())
+  })
+
   it('identifies a session draft recovered from browser storage', async () => {
     localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
       'computer-1:session-1': {
@@ -9164,7 +9242,12 @@ describe('App', () => {
     const beforeRefresh = vi.mocked(listSessionListing).mock.calls.length
     fireEvent(document, new Event('visibilitychange'))
     await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(beforeRefresh + 1))
-    await waitFor(() => expect(getSession).toHaveBeenLastCalledWith(computer.id, session.id))
+    await waitFor(() => expect(getSession).toHaveBeenLastCalledWith(
+      computer.id,
+      session.id,
+      undefined,
+      { passive: true },
+    ))
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
     expect(composer).toHaveValue('Draft for tomorrow')
     expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()

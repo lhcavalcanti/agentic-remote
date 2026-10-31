@@ -134,8 +134,16 @@ describe('DreamerService', () => {
       summary: '**Done.** The requested change passed its focused checks.',
     })
 
-    const confirmed = await service.editPlan({
+    const reordered = await service.editPlan({
       revision: proposed.revision,
+      planId: proposed.plan!.id,
+      order: proposed.plan!.items.map(({ id }) => id).reverse(),
+    })
+    const projectedItem = reordered.plan!.items.find(({ id }) => id === item.id)!
+    expect(projectedItem.completionCandidate).toEqual(item.completionCandidate)
+
+    const confirmed = await service.editPlan({
+      revision: reordered.revision,
       planId: proposed.plan!.id,
       completion: {
         itemId: item.id,
@@ -143,7 +151,7 @@ describe('DreamerService', () => {
         resultDigest: item.completionCandidate!.resultDigest,
       },
     })
-    expect(confirmed.plan!.items[0]).toMatchObject({
+    expect(confirmed.plan!.items.find(({ id }) => id === item.id)).toMatchObject({
       status: 'done',
       completion: {
         computerId: 'computer-a',
@@ -157,8 +165,10 @@ describe('DreamerService', () => {
     })
 
     currentNow = new Date('2026-10-29T04:05:00.000Z')
+    const readsAfterConfirmation = readSession.mock.calls.length
+    readSession.mockRejectedValue(new Error('remote computer is offline'))
     const duplicate = await service.editPlan({
-      revision: proposed.revision,
+      revision: reordered.revision,
       planId: proposed.plan!.id,
       completion: {
         itemId: item.id,
@@ -167,7 +177,7 @@ describe('DreamerService', () => {
       },
     })
     expect(duplicate.revision).toBe(confirmed.revision)
-    expect(readSession).toHaveBeenCalledWith('computer-a', 'session-error')
+    expect(readSession).toHaveBeenCalledTimes(readsAfterConfirmation)
 
     const persisted = await import('node:fs/promises').then(({ readFile }) =>
       readFile(`${directory}/dreamer.json`, 'utf8'))
@@ -176,8 +186,8 @@ describe('DreamerService', () => {
 
     const reopened = new DreamerService(directory, options(now, { readSession }))
     await reopened.initialize()
-    expect(reopened.snapshot().plan!.items[0].completion).toEqual(
-      confirmed.plan!.items[0].completion,
+    expect(reopened.snapshot().plan!.items.find(({ id }) => id === item.id)?.completion).toEqual(
+      confirmed.plan!.items.find(({ id }) => id === item.id)?.completion,
     )
     await reopened.stop()
   })

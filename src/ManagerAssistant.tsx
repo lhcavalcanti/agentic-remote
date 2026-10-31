@@ -44,7 +44,11 @@ import { remarkSafeBreaks } from './remark-safe-breaks'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
 import { recordingDuration, useVoiceRecorder } from './voice-recorder'
-import { DreamerMorningPlan } from './OracleDreamer'
+import {
+  authoritativeRefresh,
+  DreamerMorningPlan,
+  waitUntilAuthoritativeRefresh,
+} from './OracleDreamer'
 
 const suggestions = [
   'What is running right now?',
@@ -602,7 +606,9 @@ export function ManagerAssistant({
   const [draftStorageError, setDraftStorageError] = useState(storedDraft.error)
   const [recoveredDraft, setRecoveredDraft] = useState(Boolean(storedDraft.value.draft))
   const [recoveredEdit, setRecoveredEdit] = useState(Boolean(storedDraft.value.editing))
-  const skipInitialDraftStoreRef = useRef(Boolean(storedDraft.error))
+  const draftStorageBlockedRef = useRef(Boolean(storedDraft.error))
+  const draftRef = useRef(draft)
+  const managerRefreshGeneration = useRef(0)
   const editInputRef = useRef<HTMLTextAreaElement>(null)
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const listRef = useRef<HTMLOListElement>(null)
@@ -646,11 +652,14 @@ export function ManagerAssistant({
   ].filter(Boolean).join(' ')
 
   useEffect(() => {
-    if (skipInitialDraftStoreRef.current) {
-      skipInitialDraftStoreRef.current = false
-      return
-    }
-    setDraftStorageError(storeOracleDraft(draft, editing))
+    draftRef.current = draft
+  }, [draft])
+
+  useEffect(() => {
+    if (draftStorageBlockedRef.current) return
+    const error = storeOracleDraft(draft, editing)
+    if (error) draftStorageBlockedRef.current = true
+    setDraftStorageError(error)
   }, [draft, editing])
 
   // A closed panel never keeps the microphone on.
@@ -694,43 +703,48 @@ export function ManagerAssistant({
   // Opening is reading: a reply waiting for you is seen once the panel shows.
   if (open && unread) setUnread(false)
 
-  useEffect(() => {
-    let cancelled = false
-    // Oracle is an addition to the app; nothing about it may break the rest
-    // of the page, so a failed or odd answer just leaves it hidden.
-    void Promise.resolve()
-      .then(() => {
-        if (cancelled) return undefined
-        setRefreshing(true)
-        return getManager()
-      })
-      .then((next) => {
-        if (cancelled) return
-        if (next && typeof next === 'object' && Array.isArray(next.messages)) {
-          snapshotRef.current = next
-          setSnapshot(next)
-          setLoadError(undefined)
-          setSnapshotStale(false)
-        } else {
-          setLoadError('Oracle sent an answer this app cannot read.')
-          setSnapshotStale(Boolean(snapshotRef.current))
-        }
-        setRefreshing(false)
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          const detail = caught instanceof Error ? caught.message : String(caught)
-          setLoadError(snapshotRef.current
-            ? `Oracle refresh failed: ${detail}`
-            : `Oracle could not be reached: ${detail}`)
-          setSnapshotStale(Boolean(snapshotRef.current))
-          setRefreshing(false)
-        }
-      })
-    return () => {
-      cancelled = true
+  const refreshManager = useCallback(async () => {
+    const generation = managerRefreshGeneration.current + 1
+    managerRefreshGeneration.current = generation
+    setRefreshing(true)
+    try {
+      const next = await getManager()
+      if (managerRefreshGeneration.current !== generation) return
+      if (!next || typeof next !== 'object' || !Array.isArray(next.messages)) {
+        throw new Error('Oracle sent an answer this app cannot read.')
+      }
+      snapshotRef.current = next
+      setSnapshot(next)
+      setLoadError(undefined)
+      setSnapshotStale(false)
+    } catch (caught) {
+      if (managerRefreshGeneration.current === generation) {
+        const detail = caught instanceof Error ? caught.message : String(caught)
+        setLoadError(snapshotRef.current
+          ? `Oracle refresh failed: ${detail}`
+          : `Oracle could not be reached: ${detail}`)
+        setSnapshotStale(Boolean(snapshotRef.current))
+      }
+      throw caught
+    } finally {
+      if (managerRefreshGeneration.current === generation) setRefreshing(false)
     }
-  }, [connectionEpoch, refreshAttempt])
+  }, [])
+
+  useEffect(() => {
+    void refreshManager().catch(() => undefined)
+    return () => {
+      managerRefreshGeneration.current += 1
+    }
+  }, [connectionEpoch, refreshAttempt, refreshManager])
+
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      waitUntilAuthoritativeRefresh(event, refreshManager())
+    }
+    window.addEventListener(authoritativeRefresh, refresh)
+    return () => window.removeEventListener(authoritativeRefresh, refresh)
+  }, [refreshManager])
 
   useEffect(() => subscribe((event) => {
     setSnapshot((current) => current ? applyEvent(current, event) : current)
@@ -968,6 +982,12 @@ export function ManagerAssistant({
     try {
       const next = await editQueuedManagerMessage(id, text)
       setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
+      const storageError = storeOracleDraft(draftRef.current, undefined)
+      if (storageError) {
+        draftStorageBlockedRef.current = true
+        setDraftStorageError(storageError)
+        return
+      }
       setEditing((current) => current?.id === id ? undefined : current)
       setRecoveredEdit(false)
       announce('Saved your edit. It keeps its place in the queue.')

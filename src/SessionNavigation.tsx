@@ -454,6 +454,7 @@ export function SessionNavigation({
 }) {
   const searchRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const restoredScrollRef = useRef(false)
   const { groups, counts, shown, filtering, reorderDisabled } = view
   const filters: { id: SessionFilter; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: counts.all },
@@ -461,15 +462,17 @@ export function SessionNavigation({
     { id: 'working', label: 'Working', count: counts.working },
   ]
   useEffect(() => {
+    if (loading || counts.all === 0 || restoredScrollRef.current) return
     try {
       const saved = Number(window.localStorage.getItem(sessionListScrollStorageKey))
       if (Number.isFinite(saved) && saved > 0 && scrollRef.current) {
         scrollRef.current.scrollTop = saved
       }
+      restoredScrollRef.current = true
     } catch {
       // Scroll position is a convenience; the session list remains usable.
     }
-  }, [])
+  }, [counts.all, loading])
 
   return (
     <nav aria-label="Sessions" className="session-list">

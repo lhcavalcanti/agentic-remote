@@ -361,6 +361,25 @@ describe('ManagerAssistant', () => {
     }
   })
 
+  it.each([
+    ['corrupt', '{"version":'],
+    ['future-version', JSON.stringify({ version: 2, draft: 'Do not replace these bytes' })],
+  ])('does not overwrite %s saved Oracle draft bytes after typing', async (_kind, stored) => {
+    localStorage.setItem('agentic-remote:oracle-draft-v1', stored)
+    setup()
+    await openPanel()
+
+    const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+    fireEvent.change(input, { target: { value: 'New visible text' } })
+
+    expect(input).toHaveValue('New visible text')
+    expect(localStorage.getItem('agentic-remote:oracle-draft-v1')).toBe(stored)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /saved Oracle draft|access saved drafts/,
+    )
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  })
+
   it('does not make an accepted message silently resendable when its saved copy cannot clear', async () => {
     vi.mocked(sendManagerMessage).mockResolvedValue({
       id: 'm1',
@@ -798,6 +817,48 @@ describe('ManagerAssistant', () => {
       expect(screen.getByText('Saved your edit. It keeps its place in the queue.')).toBeInTheDocument()
       // Nothing new was queued in its place.
       expect(sendManagerMessage).not.toHaveBeenCalled()
+    })
+
+    it('keeps an accepted edit visible and blocked when its saved copy cannot clear', async () => {
+      vi.mocked(editQueuedManagerMessage).mockResolvedValue({
+        ...waiting.messages[1],
+        content: 'accepted queue edit',
+        updatedAt: '2026-10-15T00:00:05.000Z',
+      })
+      setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', {
+        name: 'Edit queued message: first waiting',
+      }))
+      const editor = screen.getByRole('textbox', { name: 'Edit queued message 1' })
+      fireEvent.change(editor, { target: { value: 'accepted queue edit' } })
+      await waitFor(() => expect(localStorage.getItem(
+        'agentic-remote:oracle-draft-v1',
+      )).toContain('accepted queue edit'))
+
+      const originalRemoveItem = Storage.prototype.removeItem
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(
+        function (this: Storage, key) {
+          if (key === 'agentic-remote:oracle-draft-v1') {
+            throw new DOMException('Storage unavailable', 'SecurityError')
+          }
+          return originalRemoveItem.call(this, key)
+        },
+      )
+      try {
+        fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
+        await waitFor(() => expect(editQueuedManagerMessage).toHaveBeenCalledOnce())
+        expect(screen.getByRole('textbox', { name: 'Edit queued message 1' }))
+          .toHaveValue('accepted queue edit')
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Oracle could not save this draft on this device',
+        )
+        expect(screen.getByRole('button', { name: 'Save edit' })).toBeDisabled()
+        expect(localStorage.getItem('agentic-remote:oracle-draft-v1'))
+          .toContain('accepted queue edit')
+      } finally {
+        removeItem.mockRestore()
+      }
     })
 
     it('restores an unsaved queued-message edit after a remount', async () => {

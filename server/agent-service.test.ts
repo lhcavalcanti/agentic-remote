@@ -2286,6 +2286,67 @@ describe('AgentService deletion', () => {
     expect(commands).not.toHaveBeenCalled()
   })
 
+  it('waits for an admitted command catalog before tearing down its runtime', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-catalog-order-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let releaseOwnership: () => void = () => {}
+    const ownershipHeld = new Promise<void>((resolve) => {
+      releaseOwnership = resolve
+    })
+    const terminal = {
+      has: vi.fn(async () => {
+        await ownershipHeld
+        return false
+      }),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const commands = vi.spyOn(client.session.rpc.commands, 'list')
+    const catalog = service.listCommands(created.id)
+    await vi.waitFor(() => expect(terminal.has).toHaveBeenCalled())
+    let releaseTasks: () => void = () => {}
+    const tasksHeld = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    const tasks = vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await tasksHeld
+      return listBackgroundTasks(id)
+    })
+
+    const suspending = service.suspendSession(created.id)
+    await vi.waitFor(() =>
+      expect(service['suspendingSessions'].has(created.id)).toBe(true),
+    )
+    const tasksBeforeCatalogFinished = tasks.mock.calls.length
+    const disconnectsBeforeCatalogFinished = client.session.disconnectCount
+
+    releaseOwnership()
+    await expect(catalog).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'model' })]),
+    )
+    releaseTasks()
+    await expect(suspending).resolves.toMatchObject({ suspended: true })
+    expect(tasksBeforeCatalogFinished).toBe(0)
+    expect(disconnectsBeforeCatalogFinished).toBe(0)
+    expect(tasks).toHaveBeenCalled()
+    expect(client.session.disconnectCount).toBe(1)
+    expect(commands).toHaveBeenCalledOnce()
+  })
+
   it('clears terminal ownership and types runtime changes after suspension', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-suspend-'))
     directories.push(directory)
@@ -2412,16 +2473,22 @@ describe('AgentService deletion', () => {
       service.sendMessage(created.id, 'slip through', false),
     ).rejects.toThrow(/Resume the session/)
 
-    // Lifecycle work waits its turn rather than interleaving with the
-    // teardown, and finds the session suspended when it gets there.
+    // Lifecycle work cannot interleave with teardown. Restart waits and finds
+    // the session suspended; Clear owns its own exclusive admission and is
+    // refused while suspension owns that admission.
     const restarting = service.restartSession(created.id)
-    const clearing = service.clearConversation(created.id)
+    const clearing = service.clearConversation(created.id).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
 
     releaseTasks()
     await suspending
     expect(service.getSession(created.id)?.suspended).toBe(true)
     await expect(restarting).rejects.toThrow(/Resume the session/)
-    await expect(clearing).rejects.toThrow(/Resume the session/)
+    expect(await clearing).toMatchObject({
+      error: { message: expect.stringMatching(/Resume the session/) },
+    })
     await service.stop()
   })
 
@@ -2469,12 +2536,30 @@ describe('AgentService deletion', () => {
     )
     await vi.waitFor(() => expect(terminal.send).toHaveBeenCalled())
 
-    await expect(
-      service.suspendSession(client.session.sessionId),
-    ).rejects.toThrow(/only be suspended while idle/)
+    let suspendSettled = false
+    const suspension = service.suspendSession(client.session.sessionId).then(
+      (value) => {
+        suspendSettled = true
+        return { value }
+      },
+      (error: unknown) => {
+        suspendSettled = true
+        return { error }
+      },
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const settledBeforeSend = suspendSettled
 
     releaseSend()
     await sending.catch(() => undefined)
+    const outcome = await suspension
+    expect(settledBeforeSend).toBe(true)
+    expect(outcome).toMatchObject({
+      error: {
+        message: 'Session can only be suspended while idle',
+        statusCode: 409,
+      },
+    })
     await service.stop()
   })
 

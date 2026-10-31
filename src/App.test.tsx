@@ -9216,6 +9216,74 @@ describe('App', () => {
     expect(screen.queryByText('Late catalog failure')).toBeNull()
   })
 
+  it('does not retain a catalog failure that lands while suspension is pending', async () => {
+    let rejectCatalog: (error: Error) => void = () => {}
+    let finishSuspend: (value: typeof session) => void = () => {}
+    vi.mocked(listCommands).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectCatalog = reject
+        }),
+    )
+    vi.mocked(suspendSession).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSuspend = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
+    await waitFor(() => expect(suspendSession).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      rejectCatalog(new Error('Catalog failed during suspension'))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      finishSuspend({ ...session, suspended: true })
+    })
+
+    await screen.findByRole('button', { name: 'Resume Project chat' })
+    expect(screen.queryByText('Catalog failed during suspension')).toBeNull()
+  })
+
+  it('keeps the selected catalog failure when another session starts suspending', async () => {
+    const other = {
+      ...session,
+      id: 'session-2',
+      title: 'Second chat',
+    }
+    let rejectCatalog: (error: Error) => void = () => {}
+    vi.mocked(listSessions).mockResolvedValue([session, other])
+    vi.mocked(listCommands).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectCatalog = reject
+        }),
+    )
+    vi.mocked(suspendSession).mockResolvedValueOnce({
+      ...other,
+      suspended: true,
+    })
+
+    render(<App />)
+    await screen.findAllByText('Second chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
+    await waitFor(() =>
+      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+    )
+
+    await act(async () => {
+      rejectCatalog(new Error('Selected catalog unavailable'))
+      await Promise.resolve()
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Selected catalog unavailable',
+    )
+  })
+
   it('keeps a suspension refusal when the pending command catalog fails later', async () => {
     let rejectCatalog: (error: Error) => void = () => {}
     vi.mocked(listCommands).mockImplementationOnce(

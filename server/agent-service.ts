@@ -364,6 +364,13 @@ function terminalAnswerRefused(cause?: unknown): Error {
   ), { statusCode: 409, uncertainDelivery: false, ...(cause === undefined ? {} : { cause }) })
 }
 
+function suspendedRuntimeConflict(): Error {
+  return Object.assign(
+    new Error('Resume the session before using its provider runtime'),
+    { statusCode: 409, uncertainDelivery: false },
+  )
+}
+
 /** A steer the terminal refused, before typing anything, for want of a composer. */
 function isTerminalNotReadyRefusal(error: unknown): boolean {
   return Boolean(
@@ -3303,10 +3310,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.queuedDispatches.assertAvailable(id)
     this.assertNotRetained(id, 'changing its runtime')
     if (stored.suspended || this.suspendingSessions.has(id)) {
-      throw Object.assign(
-        new Error('Resume the session before using its provider runtime'),
-        { statusCode: 409, uncertainDelivery: false },
-      )
+      throw suspendedRuntimeConflict()
     }
     stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
@@ -3487,12 +3491,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
+    this.assertStillIdle(id)
     // Claimed before anything is awaited, so a message arriving while the
     // background tasks are being read cannot start a turn into a session that
     // is on its way down.
     this.suspendingSessions.add(id)
     try {
-      return await this.suspendClaimedSession(id, await this.store.readAfterWrites(id))
+      return await this.admissions.exclusive(id, async () =>
+        this.suspendClaimedSession(id, await this.store.readAfterWrites(id)))
     } finally {
       this.suspendingSessions.delete(id)
     }
@@ -4014,6 +4020,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async clearConversation(id: string): Promise<SessionDetail> {
     this.queuedDispatches.assertAvailable(id)
     this.assertRecoverySeedReplacementAvailable(id)
+    if (this.suspendingSessions.has(id)) {
+      throw suspendedRuntimeConflict()
+    }
     const observed = this.store.observeTranscript(id)
     try {
       return this.publicSession(await this.admissions.exclusive(id, (ownership) =>
@@ -6054,6 +6063,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async listCommands(sessionId: string): Promise<SlashCommand[]> {
+    if (this.suspendingSessions.has(sessionId)) {
+      throw suspendedRuntimeConflict()
+    }
     return this.admissions.run(sessionId, () => this.listAdmittedCommands(sessionId))
   }
 
@@ -6173,12 +6185,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const retained = this.store.get(sessionId)
     if (retained?.suspended) {
       return []
-    }
-    if (this.suspendingSessions.has(sessionId)) {
-      throw Object.assign(
-        new Error('Resume the session before using its provider runtime'),
-        { statusCode: 409, uncertainDelivery: false },
-      )
     }
     this.assertTerminalRecoverySettled(sessionId)
     if (retained?.interruption || retained?.archivedAt) return []
@@ -8034,10 +8040,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // under way counts: the pane is killed before the flag is written, and
       // anything reaching here in that gap would attach an SDK owner that
       // outlives the suspension.
-      throw Object.assign(
-        new Error('Resume the session before using its provider runtime'),
-        { statusCode: 409, uncertainDelivery: false },
-      )
+      throw suspendedRuntimeConflict()
     }
     const inFlight = this.loadingSessions.get(sessionId)
     if (inFlight) {

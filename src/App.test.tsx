@@ -100,6 +100,7 @@ import {
   uploadSessionFile,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
+import { getDreamer } from './dreamer-api'
 import { PWA_UPDATE_EVENT } from './pwa'
 import * as shell from './shell'
 
@@ -3507,6 +3508,143 @@ describe('App', () => {
     await waitFor(() =>
       expect(screen.queryByText('The hub is unavailable')).not.toBeInTheDocument(),
     )
+  })
+
+  it('manually refreshes authoritative state without changing the active draft or focus', async () => {
+    render(<App />)
+    const composer = await screen.findByRole('textbox', { name: 'Message' })
+    fireEvent.change(composer, { target: { value: 'Keep my session draft' } })
+    expect(screen.getByRole('status', { name: 'Session draft status' }))
+      .toHaveTextContent('Saved on this device')
+    composer.focus()
+    const listingsBefore = vi.mocked(listSessionListing).mock.calls.length
+    const managerBefore = vi.mocked(getManager).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Refresh sessions and Oracle',
+    }))
+
+    await waitFor(() => {
+      expect(listSessionListing).toHaveBeenCalledTimes(listingsBefore + 1)
+      expect(getManager).toHaveBeenCalledTimes(managerBefore + 1)
+    })
+    expect(composer).toHaveValue('Keep my session draft')
+    expect(composer).toHaveFocus()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('identifies a session draft recovered from browser storage', async () => {
+    localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+      'computer-1:session-1': {
+        text: 'Recovered session draft',
+        pastes: [],
+      },
+    }))
+    render(<App />)
+
+    expect(await screen.findByRole('textbox', { name: 'Message' }))
+      .toHaveValue('Recovered session draft')
+    expect(screen.getByRole('status', { name: 'Session draft status' }))
+      .toHaveTextContent('Recovered saved draft')
+  })
+
+  it('does not let an older failed refresh make newer authoritative data stale', async () => {
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    const listingsBefore = vi.mocked(listSessionListing).mock.calls.length
+    let rejectOlder!: (error: Error) => void
+    let resolveNewer!: (listing: {
+      sessions: ManagedSession[]
+      answeredComputerIds: string[]
+    }) => void
+    vi.mocked(listSessionListing)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        rejectOlder = reject
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveNewer = resolve
+      }))
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Refresh sessions and Oracle',
+    }))
+    await waitFor(() =>
+      expect(listSessionListing).toHaveBeenCalledTimes(listingsBefore + 1),
+    )
+    act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+    await waitFor(() =>
+      expect(listSessionListing).toHaveBeenCalledTimes(listingsBefore + 2),
+    )
+    await act(async () => {
+      resolveNewer({
+        sessions: [session],
+        answeredComputerIds: [computer.id],
+      })
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('status', { name: 'Session data freshness' }))
+        .not.toBeInTheDocument(),
+    )
+    await act(async () => {
+      rejectOlder(new Error('older refresh failed'))
+    })
+
+    expect(screen.queryByText(/older refresh failed/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Data may be stale')).not.toBeInTheDocument()
+  })
+
+  it('refreshes sessions, Oracle, and Dreamer on reconnect and visibility return', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Oracle' })).at(-1)!)
+    await screen.findByRole('dialog', { name: 'Oracle' })
+    await waitFor(() => expect(getDreamer).toHaveBeenCalled())
+
+    const listingBeforeReconnect = vi.mocked(listSessionListing).mock.calls.length
+    const managerBeforeReconnect = vi.mocked(getManager).mock.calls.length
+    const dreamerBeforeReconnect = vi.mocked(getDreamer).mock.calls.length
+    act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+    await waitFor(() => {
+      expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeReconnect + 1)
+      expect(getManager).toHaveBeenCalledTimes(managerBeforeReconnect + 1)
+      expect(getDreamer).toHaveBeenCalledTimes(dreamerBeforeReconnect + 1)
+    })
+
+    const listingBeforeVisible = vi.mocked(listSessionListing).mock.calls.length
+    const managerBeforeVisible = vi.mocked(getManager).mock.calls.length
+    const dreamerBeforeVisible = vi.mocked(getDreamer).mock.calls.length
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => {
+      expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeVisible + 1)
+      expect(getManager).toHaveBeenCalledTimes(managerBeforeVisible + 1)
+      expect(getDreamer).toHaveBeenCalledTimes(dreamerBeforeVisible + 1)
+    })
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(sendManagerMessage).not.toHaveBeenCalled()
+  })
+
+  it('restores session search and filter context after a remount', async () => {
+    const first = render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), {
+      target: { value: 'Project' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
+    first.unmount()
+
+    render(<App />)
+    expect(await screen.findByRole('searchbox', { name: 'Search sessions' }))
+      .toHaveValue('Project')
+    expect(screen.getByRole('button', { name: 'Needs you' }))
+      .toHaveAttribute('aria-pressed', 'true')
   })
 
   it('opens read-only skills and MCP views from the selected session menu', async () => {

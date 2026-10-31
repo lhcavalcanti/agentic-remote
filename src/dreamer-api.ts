@@ -20,6 +20,11 @@ export interface DreamerPlanEdit {
   planId: string
   order?: string[]
   item?: { id: string; status: DreamerPlanItem['status'] }
+  completion?: {
+    itemId: string
+    messageId: string
+    resultDigest: string
+  }
 }
 
 async function request(path: string, input?: DreamerSettingsEdit | DreamerPlanEdit): Promise<DreamerSnapshot> {

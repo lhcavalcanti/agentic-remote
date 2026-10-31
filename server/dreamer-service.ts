@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto'
-import type { DreamerPlan, DreamerSettings, DreamerSnapshot } from '../shared/dreamer.js'
+import type {
+  DreamerCompletionCandidate,
+  DreamerPlan,
+  DreamerSettings,
+  DreamerSnapshot,
+  DreamerTaskCompletionProvenance,
+} from '../shared/dreamer.js'
+import type { ManagedSession } from '../shared/contracts.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import type { ManagerRegistry } from './manager-store.js'
 import {
@@ -45,6 +52,7 @@ export interface DreamerServiceOptions {
   ) => DreamerPlanDraft | Promise<DreamerPlanDraft>
   setInterval?: typeof globalThis.setInterval
   clearInterval?: typeof globalThis.clearInterval
+  readSession?: (computerId: string, sessionId: string) => Promise<ManagedSession>
 }
 
 export class DreamerUnavailableError extends Error {
@@ -145,6 +153,7 @@ export class DreamerService {
   ) => DreamerPlanDraft | Promise<DreamerPlanDraft>
   private readonly setIntervalImpl: typeof globalThis.setInterval
   private readonly clearIntervalImpl: typeof globalThis.clearInterval
+  private readonly readSession?: DreamerServiceOptions['readSession']
   private initialized = false
   private initializing?: Promise<void>
   private started = false
@@ -168,6 +177,7 @@ export class DreamerService {
     this.planner = options.planner ?? ((input) => planDreamer(input))
     this.setIntervalImpl = options.setInterval ?? globalThis.setInterval
     this.clearIntervalImpl = options.clearInterval ?? globalThis.clearInterval
+    this.readSession = options.readSession
   }
 
   initialize(): Promise<void> {
@@ -213,7 +223,7 @@ export class DreamerService {
     await this.initialize()
     this.requireAvailable()
     await this.reconcileStaleMemory()
-    return this.snapshot()
+    return this.withCompletionCandidates(this.snapshot())
   }
 
   getSnapshot(): DreamerSnapshot {
@@ -269,6 +279,11 @@ export class DreamerService {
       planId: string
       order?: string[]
       item?: { id: string; status: 'pending' | 'skipped' | 'done' }
+      completion?: {
+        itemId: string
+        messageId: string
+        resultDigest: string
+      }
     },
   ): Promise<DreamerSnapshot> {
     await this.initialize()
@@ -279,8 +294,78 @@ export class DreamerService {
       planId: input.planId,
       ...(input.order ? { order: [...input.order] } : {}),
       ...(input.item ? { item: { ...input.item } } : {}),
+      ...(input.completion ? { completion: { ...input.completion } } : {}),
+    }
+    let completion: {
+      itemId: string
+      provenance: DreamerTaskCompletionProvenance
+    } | undefined
+    if (edit.completion) {
+      const current = this.store.snapshot()
+      const item = current.plan?.id === edit.planId
+        ? current.plan.items.find(({ id }) => id === edit.completion!.itemId)
+        : undefined
+      if (
+        !item
+        || item.source !== 'session'
+        || !item.computerId
+        || !item.sessionId
+        || !this.readSession
+      ) {
+        throw new DreamerConflictError(
+          'Verified session completion is no longer available; refresh and retry.',
+        )
+      }
+      let candidate: DreamerCompletionCandidate | undefined
+      try {
+        candidate = await this.completionCandidate(
+          item.computerId,
+          item.sessionId,
+          edit.completion.messageId,
+        )
+      } catch {
+        throw new DreamerConflictError(
+          'Verified session completion could not be re-read; refresh and retry.',
+        )
+      }
+      if (!candidate || candidate.resultDigest !== edit.completion.resultDigest) {
+        throw new DreamerConflictError(
+          'Verified session completion changed; refresh and review it again.',
+        )
+      }
+      completion = {
+        itemId: item.id,
+        provenance: item.completion
+          && item.completion.computerId === candidate.computerId
+          && item.completion.sessionId === candidate.sessionId
+          && item.completion.messageId === candidate.messageId
+          && item.completion.toolCallId === candidate.toolCallId
+          && item.completion.resultDigest === candidate.resultDigest
+          && item.completion.completedAt === candidate.completedAt
+          ? item.completion
+          : {
+          computerId: candidate.computerId,
+          sessionId: candidate.sessionId,
+          messageId: candidate.messageId,
+          toolCallId: candidate.toolCallId,
+          resultDigest: candidate.resultDigest,
+          completedAt: candidate.completedAt,
+          confirmedAt: this.now().toISOString(),
+        },
+      }
     }
     let activeMemoryIds: Set<string> | undefined
+    if (edit.item?.status === 'done') {
+      const current = this.store.snapshot()
+      const item = current.plan?.id === edit.planId
+        ? current.plan.items.find(({ id }) => id === edit.item!.id)
+        : undefined
+      if (item?.source === 'session') {
+        throw new DreamerConflictError(
+          'Verified session completion is required; refresh and review its evidence.',
+        )
+      }
+    }
     if (edit.item?.status === 'pending') {
       const current = this.store.snapshot()
       const item = current.plan?.items.find(({ id }) => id === edit.item!.id)
@@ -303,8 +388,57 @@ export class DreamerService {
       ...(edit.order ? { order: edit.order } : {}),
       ...(edit.item ? { item: edit.item } : {}),
       ...(activeMemoryIds ? { activeMemoryIds } : {}),
+      ...(completion ? { completion } : {}),
     })
     return this.snapshot()
+  }
+
+  private async withCompletionCandidates(snapshot: DreamerSnapshot): Promise<DreamerSnapshot> {
+    if (!snapshot.plan || !this.readSession) return snapshot
+    const items = await Promise.all(snapshot.plan.items.map(async (item) => {
+      if (
+        item.status !== 'pending'
+        || item.source !== 'session'
+        || !item.computerId
+        || !item.sessionId
+      ) return item
+      try {
+        const candidate = await this.completionCandidate(item.computerId, item.sessionId)
+        return candidate ? { ...item, completionCandidate: candidate } : item
+      } catch {
+        return { ...item, completionSourceUnavailable: true }
+      }
+    }))
+    return { ...snapshot, plan: { ...snapshot.plan, items } }
+  }
+
+  private async completionCandidate(
+    computerId: string,
+    sessionId: string,
+    messageId?: string,
+  ): Promise<DreamerCompletionCandidate | undefined> {
+    if (!this.readSession) return undefined
+    const session = await this.readSession(computerId, sessionId)
+    const message = messageId
+      ? session?.messages.find((candidate) => candidate.id === messageId)
+      : session?.messages.findLast((candidate) => candidate.taskCompletion !== undefined)
+    if (
+      !message
+      || message.role !== 'assistant'
+      || message.taskCompletion?.source !== 'root-task-complete'
+      || !message.content.trim()
+    ) return undefined
+    return {
+      computerId,
+      sessionId,
+      messageId: message.id,
+      toolCallId: message.taskCompletion.toolCallId,
+      completedAt: message.taskCompletion.completedAt,
+      resultDigest: createHash('sha256').update(message.content).digest('hex'),
+      summary: message.content.length > 1_000
+        ? `${message.content.slice(0, 999)}…`
+        : message.content,
+    }
   }
 
   async runIfDue(): Promise<DreamerSnapshot> {

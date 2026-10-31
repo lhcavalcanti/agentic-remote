@@ -650,6 +650,11 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
           message.content = taskCompletionSummary
           message.createdAt = event.timestamp
           message.activityStatus = undefined
+          message.taskCompletion = {
+            source: 'root-task-complete',
+            toolCallId,
+            completedAt: event.timestamp,
+          }
         }
       }
     }

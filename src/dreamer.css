@@ -70,6 +70,20 @@
   line-height: 1.5;
 }
 
+.dreamer-completion {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.dreamer-completion__summary {
+  max-height: 9em;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
 .dreamer-coverage {
   margin: 12px 0;
   color: var(--muted-strong);

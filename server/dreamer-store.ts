@@ -17,6 +17,7 @@ import type {
   DreamerPlanItem,
   DreamerPlanItemStatus,
   DreamerSettings,
+  DreamerTaskCompletionProvenance,
 } from '../shared/dreamer.js'
 import {
   validateDreamerTimeZone,
@@ -393,6 +394,26 @@ function validatePlanItem(item: unknown): DreamerPlanItem {
   ) {
     throw new DreamerRecoveryError('Dreamer state has an invalid plan item.')
   }
+  let completion: DreamerTaskCompletionProvenance | undefined
+  if (value.completion !== undefined) {
+    if (!value.completion || typeof value.completion !== 'object' || Array.isArray(value.completion)) {
+      throw new DreamerRecoveryError('Dreamer state has invalid task completion provenance.')
+    }
+    const stored = value.completion as Record<string, unknown>
+    if (
+      !isSafeIdentifier(stored.computerId) ||
+      !isSafeIdentifier(stored.sessionId) ||
+      !isSafeIdentifier(stored.messageId) ||
+      !isSafeIdentifier(stored.toolCallId) ||
+      typeof stored.resultDigest !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(stored.resultDigest) ||
+      !validTimestamp(stored.completedAt) ||
+      !validTimestamp(stored.confirmedAt)
+    ) {
+      throw new DreamerRecoveryError('Dreamer state has invalid task completion provenance.')
+    }
+    completion = stored as unknown as DreamerTaskCompletionProvenance
+  }
   return {
     id: value.id,
     label: value.label,
@@ -402,6 +423,7 @@ function validatePlanItem(item: unknown): DreamerPlanItem {
     ...(value.computerId ? { computerId: value.computerId as string } : {}),
     ...(value.sessionId ? { sessionId: value.sessionId as string } : {}),
     ...(value.memoryId ? { memoryId: value.memoryId as string } : {}),
+    ...(completion ? { completion } : {}),
   }
 }
 
@@ -995,6 +1017,10 @@ export class DreamerStore {
       order?: string[]
       item?: { id: string; status: DreamerPlanItemStatus }
       activeMemoryIds?: ReadonlySet<string>
+      completion?: {
+        itemId: string
+        provenance: DreamerTaskCompletionProvenance
+      }
     },
   ): Promise<void> {
     const expectedRevision = revision
@@ -1002,16 +1028,36 @@ export class DreamerStore {
     const edit = {
       ...(input.order ? { order: [...input.order] } : {}),
       ...(input.item ? { item: { ...input.item } } : {}),
+      ...(input.completion ? {
+        completion: {
+          itemId: input.completion.itemId,
+          provenance: { ...input.completion.provenance },
+        },
+      } : {}),
     }
     const activeMemoryIds = input.activeMemoryIds
       ? new Set(input.activeMemoryIds)
       : undefined
     return this.enqueue((candidate) => {
-      this.requireRevision(candidate, expectedRevision)
       if (!candidate.plan || candidate.plan.id !== expectedPlanId) {
         throw new DreamerConflictError('Dreamer plan changed; refresh and retry.')
       }
-      if (!edit.order && !edit.item) {
+      if (edit.completion) {
+        const existing = candidate.plan.items.find(({ id }) => id === edit.completion!.itemId)
+        if (
+          existing?.status === 'done'
+          && JSON.stringify(existing.completion) === JSON.stringify(edit.completion.provenance)
+        ) {
+          return { result: undefined, changed: false }
+        }
+      } else if (edit.item && !edit.order) {
+        const existing = candidate.plan.items.find(({ id }) => id === edit.item!.id)
+        if (existing?.status === edit.item.status) {
+          return { result: undefined, changed: false }
+        }
+      }
+      this.requireRevision(candidate, expectedRevision)
+      if (!edit.order && !edit.item && !edit.completion) {
         throw Object.assign(new Error('Dreamer plan edit is empty.'), { statusCode: 400 })
       }
       if (edit.order && !sameIds(candidate.plan.items, edit.order)) {
@@ -1025,6 +1071,11 @@ export class DreamerStore {
       if (edit.item) {
         const item = next.items.find(({ id }) => id === edit.item!.id)
         if (!item) throw new DreamerConflictError('Dreamer plan item changed; refresh and retry.')
+        if (edit.item.status === 'done' && item.source === 'session') {
+          throw new DreamerConflictError(
+            'Verified session completion is required; refresh and review its evidence.',
+          )
+        }
         if (
           edit.item.status === 'pending' &&
           item.memoryId &&
@@ -1034,6 +1085,7 @@ export class DreamerStore {
           throw new DreamerConflictError('Dreamer memory item is no longer available; refresh and retry.')
         }
         item.status = edit.item.status
+        if (edit.item.status !== 'done') item.completion = undefined
         const fingerprint = next.fingerprints[item.id]
         if (!fingerprint) {
           throw new DreamerRecoveryError('Dreamer plan item fingerprint is missing.')
@@ -1041,6 +1093,23 @@ export class DreamerStore {
         const history = new Map(candidate.history.map((entry) => [entry.fingerprint, entry.status]))
         if (edit.item.status === 'pending') history.delete(fingerprint)
         else history.set(fingerprint, edit.item.status)
+        if (history.size > DREAMER_MAX_HISTORY) throw new DreamerCapacityError()
+        candidate.history = [...history.entries()]
+          .map(([fingerprint, status]) => ({ fingerprint, status }))
+      }
+      if (edit.completion) {
+        const item = next.items.find(({ id }) => id === edit.completion!.itemId)
+        if (!item || item.source !== 'session') {
+          throw new DreamerConflictError('Dreamer session item changed; refresh and retry.')
+        }
+        item.status = 'done'
+        item.completion = { ...edit.completion.provenance }
+        const fingerprint = next.fingerprints[item.id]
+        if (!fingerprint) {
+          throw new DreamerRecoveryError('Dreamer plan item fingerprint is missing.')
+        }
+        const history = new Map(candidate.history.map((entry) => [entry.fingerprint, entry.status]))
+        history.set(fingerprint, 'done')
         if (history.size > DREAMER_MAX_HISTORY) throw new DreamerCapacityError()
         candidate.history = [...history.entries()]
           .map(([fingerprint, status]) => ({ fingerprint, status }))

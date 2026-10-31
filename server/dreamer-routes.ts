@@ -17,9 +17,15 @@ const planSchema = z.object({
     id: z.string().trim().min(1).max(200),
     status: z.enum(['pending', 'skipped', 'done']),
   }).strict().optional(),
+  completion: z.object({
+    itemId: z.string().trim().min(1).max(200),
+    messageId: z.string().trim().min(1).max(200),
+    resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
 }).strict().refine(
-  ({ order, item }) => order !== undefined || item !== undefined,
-  'Dreamer plan edit is empty.',
+  ({ order, item, completion }) =>
+    [order, item, completion].filter((operation) => operation !== undefined).length === 1,
+  'Dreamer plan edit must contain exactly one operation.',
 )
 
 function parse<T>(

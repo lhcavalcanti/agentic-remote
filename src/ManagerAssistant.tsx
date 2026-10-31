@@ -52,6 +52,69 @@ const suggestions = [
   'What did my sessions finish today?',
 ]
 
+const oracleDraftStorageKey = 'agentic-remote:oracle-draft-v1'
+
+type StoredOracleDraft = {
+  version: 1
+  draft: string
+  editing?: { id: string; text: string }
+}
+
+function readStoredOracleDraft(): {
+  value: StoredOracleDraft
+  error?: string
+} {
+  const empty: StoredOracleDraft = { version: 1, draft: '' }
+  try {
+    const raw = window.localStorage.getItem(oracleDraftStorageKey)
+    if (!raw) return { value: empty }
+    const parsed: unknown = JSON.parse(raw)
+    if (
+      typeof parsed !== 'object'
+      || parsed === null
+      || Reflect.get(parsed, 'version') !== 1
+      || typeof Reflect.get(parsed, 'draft') !== 'string'
+    ) {
+      return { value: empty, error: 'The saved Oracle draft could not be read. Copy any visible text before continuing.' }
+    }
+    const editing = Reflect.get(parsed, 'editing')
+    if (
+      editing !== undefined
+      && (
+        typeof editing !== 'object'
+        || editing === null
+        || typeof Reflect.get(editing, 'id') !== 'string'
+        || typeof Reflect.get(editing, 'text') !== 'string'
+      )
+    ) {
+      return { value: empty, error: 'The saved Oracle edit could not be read. Copy any visible text before continuing.' }
+    }
+    return {
+      value: {
+        version: 1,
+        draft: Reflect.get(parsed, 'draft') as string,
+        editing: editing as StoredOracleDraft['editing'],
+      },
+    }
+  } catch {
+    return { value: empty, error: 'Oracle could not access saved drafts on this device. Copy your text before leaving this page.' }
+  }
+}
+
+function storeOracleDraft(draft: string, editing?: StoredOracleDraft['editing']): string | undefined {
+  try {
+    if (!draft && !editing) window.localStorage.removeItem(oracleDraftStorageKey)
+    else window.localStorage.setItem(oracleDraftStorageKey, JSON.stringify({
+      version: 1,
+      draft,
+      editing,
+    } satisfies StoredOracleDraft))
+    return undefined
+  } catch {
+    return 'Oracle could not save this draft on this device. Keep this page open or copy your text before leaving.'
+  }
+}
+
 function conversationStateLabel(state: OracleConversation['state']): string {
   switch (state) {
     case 'off':
@@ -515,8 +578,10 @@ export function ManagerAssistant({
   /** Lets App focus the active writable session composer after Oracle closes. */
   onRequestSessionFocus?: () => boolean
 }) {
+  const [storedDraft] = useState(readStoredOracleDraft)
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
-  const [draft, setDraft] = useState('')
+  const snapshotRef = useRef<ManagerSnapshot | undefined>(undefined)
+  const [draft, setDraft] = useState(storedDraft.value.draft)
   const [answerOnly, setAnswerOnly] = useState(readAnswerOnly)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string>()
@@ -524,11 +589,20 @@ export function ManagerAssistant({
   const [busyMessage, setBusyMessage] = useState<string>()
   const [unread, setUnread] = useState(false)
   const [loadError, setLoadError] = useState<string>()
+  const [refreshing, setRefreshing] = useState(true)
+  const [snapshotStale, setSnapshotStale] = useState(false)
+  const [refreshAttempt, setRefreshAttempt] = useState(0)
   const [announcement, setAnnouncement] = useState('')
   // A waiting message being rewritten in place, and what it now says.
-  const [editing, setEditing] = useState<{ id: string; text: string }>()
+  const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(
+    storedDraft.value.editing,
+  )
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState<string>()
+  const [draftStorageError, setDraftStorageError] = useState(storedDraft.error)
+  const [recoveredDraft, setRecoveredDraft] = useState(Boolean(storedDraft.value.draft))
+  const [recoveredEdit, setRecoveredEdit] = useState(Boolean(storedDraft.value.editing))
+  const skipInitialDraftStoreRef = useRef(Boolean(storedDraft.error))
   const editInputRef = useRef<HTMLTextAreaElement>(null)
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const listRef = useRef<HTMLOListElement>(null)
@@ -570,6 +644,14 @@ export function ManagerAssistant({
       ? `Conversation: ${conversationStateLabel(conversation.state)}`
       : '',
   ].filter(Boolean).join(' ')
+
+  useEffect(() => {
+    if (skipInitialDraftStoreRef.current) {
+      skipInitialDraftStoreRef.current = false
+      return
+    }
+    setDraftStorageError(storeOracleDraft(draft, editing))
+  }, [draft, editing])
 
   // A closed panel never keeps the microphone on.
   useEffect(() => {
@@ -617,23 +699,38 @@ export function ManagerAssistant({
     // Oracle is an addition to the app; nothing about it may break the rest
     // of the page, so a failed or odd answer just leaves it hidden.
     void Promise.resolve()
-      .then(() => getManager())
+      .then(() => {
+        if (cancelled) return undefined
+        setRefreshing(true)
+        return getManager()
+      })
       .then((next) => {
         if (cancelled) return
         if (next && typeof next === 'object' && Array.isArray(next.messages)) {
+          snapshotRef.current = next
           setSnapshot(next)
           setLoadError(undefined)
+          setSnapshotStale(false)
         } else {
           setLoadError('Oracle sent an answer this app cannot read.')
+          setSnapshotStale(Boolean(snapshotRef.current))
         }
+        setRefreshing(false)
       })
       .catch((caught: unknown) => {
-        if (!cancelled) setLoadError(`Oracle could not be reached: ${caught instanceof Error ? caught.message : String(caught)}`)
+        if (!cancelled) {
+          const detail = caught instanceof Error ? caught.message : String(caught)
+          setLoadError(snapshotRef.current
+            ? `Oracle refresh failed: ${detail}`
+            : `Oracle could not be reached: ${detail}`)
+          setSnapshotStale(Boolean(snapshotRef.current))
+          setRefreshing(false)
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [connectionEpoch])
+  }, [connectionEpoch, refreshAttempt])
 
   useEffect(() => subscribe((event) => {
     setSnapshot((current) => current ? applyEvent(current, event) : current)
@@ -796,12 +893,18 @@ export function ManagerAssistant({
 
   async function send(content = draft, onlyOracle = answerOnly) {
     const text = content.trim()
-    if (!text || sending) return
+    if (!text || sending || draftStorageError) return
     setSending(true)
     setSendError(undefined)
     try {
       await sendText(content, onlyOracle)
-      setDraft((current) => current === content ? '' : current)
+      setDraft((current) => {
+        const next = current === content ? '' : current
+        const storageError = storeOracleDraft(next, editing)
+        setDraftStorageError(storageError)
+        return storageError ? current : next
+      })
+      setRecoveredDraft(false)
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -833,6 +936,7 @@ export function ManagerAssistant({
 
   function startEdit(message: ManagerMessage) {
     setEditError(undefined)
+    setRecoveredEdit(false)
     setEditing({ id: message.id, text: message.content })
   }
 
@@ -843,6 +947,7 @@ export function ManagerAssistant({
   function cancelEdit() {
     const id = editing?.id
     setEditing(undefined)
+    setRecoveredEdit(false)
     setEditError(undefined)
     if (id) returnFocusToEdit(id)
   }
@@ -853,7 +958,7 @@ export function ManagerAssistant({
   }
 
   async function saveEdit() {
-    if (!editing || savingEdit) return
+    if (!editing || savingEdit || draftStorageError) return
     const { id, text } = editing
     const original = snapshot?.messages.find((message) => message.id === id)
     // The same checks as the Save button, for Ctrl+Enter too.
@@ -864,6 +969,7 @@ export function ManagerAssistant({
       const next = await editQueuedManagerMessage(id, text)
       setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
       setEditing((current) => current?.id === id ? undefined : current)
+      setRecoveredEdit(false)
       announce('Saved your edit. It keeps its place in the queue.')
       returnFocusToEdit(id)
     } catch (caught) {
@@ -872,6 +978,7 @@ export function ManagerAssistant({
         // Too late, whatever the queue still shows: the words go to the message bar.
         const kept = text.trim()
         setEditing((current) => current?.id === id ? undefined : current)
+        setRecoveredEdit(false)
         setDraft((current) => current.trimEnd().endsWith(kept)
           ? current
           : current.trim() ? `${current.trimEnd()}\n\n${kept}` : kept)
@@ -1005,6 +1112,22 @@ export function ManagerAssistant({
           <X aria-hidden="true" size={19} />
         </button>
       </header>
+      {refreshing && snapshot ? (
+        <p aria-label="Oracle freshness" className="manager-panel__freshness" role="status">
+          Refreshing Oracle…
+        </p>
+      ) : snapshotStale && loadError ? (
+        <p aria-label="Oracle freshness" className="manager-panel__freshness form-error" role="alert">
+          <span>{loadError}. Showing the last loaded state.</span>
+          <button
+            className="secondary-button"
+            onClick={() => setRefreshAttempt((current) => current + 1)}
+            type="button"
+          >
+            Retry Oracle refresh
+          </button>
+        </p>
+      ) : null}
       <DreamerMorningPlan active={open} />
       {confirmReset ? (
         <div className="manager-panel__confirm" role="alertdialog" aria-label="Start a new conversation">
@@ -1102,6 +1225,7 @@ export function ManagerAssistant({
                         disabled={savingEdit}
                         onChange={(event) => {
                           const text = event.target.value
+                          setRecoveredEdit(false)
                           setEditing((current) => current?.id === message.id ? { ...current, text } : current)
                         }}
                         onKeyDown={onEditKeyDown}
@@ -1109,6 +1233,9 @@ export function ManagerAssistant({
                         rows={3}
                         value={rewriting.text}
                       />
+                      {recoveredEdit ? (
+                        <p className="manager-composer__status" role="status">Recovered saved edit</p>
+                      ) : null}
                       {editTooLong ? (
                         <p className="form-error" role="alert">
                           Messages are limited to {MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.
@@ -1126,7 +1253,7 @@ export function ManagerAssistant({
                         <button
                           aria-label="Save edit"
                           className="primary-button"
-                          disabled={savingEdit || !rewriting.text.trim() || editTooLong || editUnchanged}
+                          disabled={savingEdit || Boolean(draftStorageError) || !rewriting.text.trim() || editTooLong || editUnchanged}
                           onClick={() => void saveEdit()}
                           type="button"
                         >
@@ -1181,6 +1308,7 @@ export function ManagerAssistant({
         }}
       >
         {sendError ? <p className="form-error manager-composer__error" role="alert">{sendError}</p> : null}
+        {draftStorageError ? <p className="form-error manager-composer__error" role="alert">{draftStorageError}</p> : null}
         {conversation.error ? (
           <p className="form-error manager-composer__error" role="alert">
             {conversation.error}
@@ -1271,7 +1399,10 @@ export function ManagerAssistant({
           <textarea
             aria-label="Message Oracle"
             enterKeyHint={phoneEnterCreatesNewline() ? 'enter' : 'send'}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              setRecoveredDraft(false)
+              setDraft(event.target.value)
+            }}
             onKeyDown={onKeyDown}
             placeholder="Ask me anything"
             ref={inputRef}
@@ -1321,13 +1452,18 @@ export function ManagerAssistant({
             <button
               aria-label={working ? 'Queue message' : 'Send message'}
               className="manager-composer__send"
-              disabled={!draft.trim() || sending || tooLong}
+              disabled={!draft.trim() || sending || tooLong || Boolean(draftStorageError)}
               title={working ? 'Queue (answered after the current reply)' : 'Send'}
               type="submit"
             >
               {sending ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={17} /> : <ArrowUp aria-hidden="true" size={18} />}
             </button>
           </div>
+          {!draftStorageError && draft ? (
+            <p className="manager-composer__status" role="status">
+              {recoveredDraft ? 'Recovered saved draft' : 'Saved on this device'}
+            </p>
+          ) : null}
         </div>
         <div className="manager-composer__options">
           <div className="oracle-mode-field">

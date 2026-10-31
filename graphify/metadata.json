@@ -781,8 +781,8 @@
     "src/KnowledgeRootChoices.tsx": "0eab2c54bd6a3187487a50e323204cae90c235469ae25e5bf7c61686c8a20852",
     "src/KnowledgeRootSelector.test.tsx": "817e7fdf9002ea5ed7c4869ef82a78627385729528699707daa79b0adf748f05",
     "src/KnowledgeRootSelector.tsx": "bf822308bd25c81dbfbc3de2ca99a95753c7bd8d360199bf9e00ad30225c76fc",
-    "src/ManagerAssistant.test.tsx": "a90900a1450f6d6144e165f50def3e7d515cc13c57739215d25dcff344c39d72",
-    "src/ManagerAssistant.tsx": "2d2bdc42d6ae06c439ea96a8f1f3e157faff004b6982c741edd67b919305335f",
+    "src/ManagerAssistant.test.tsx": "3635cf74f336c2e339aae55c7fafad400785341cf530d08c3bf62901e1adda18",
+    "src/ManagerAssistant.tsx": "c7259bee291787699db9c418d40f4586025b433b9377961ee0b62d116f66bc75",
     "src/MarkdownCodeBlock.test.tsx": "d1f77ecdfb929df6e3970eaa06a065c8ef63a25ab3f030fff405cd0a46fefc69",
     "src/MarkdownCodeBlock.tsx": "46ffdce3491901abf4a9648f22c20dacf42972641346e444230dc72fa6e00f9a",
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
@@ -977,27 +977,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7184a0aec059ca088ca1a7eccfbd72917b9bce5244f5a1056469cf62eb056d0b",
+    "GRAPH_REPORT.md": "909abdfc358ee7068a2e60a4ebdef5656d1862cb766b1fac44eb95211735721d",
     "communities.json": "e2a27ce5a2e0602cff8e218dc294249118a2f6da0ae18cd24ba7dc2aa6368a76",
-    "graph.html": "dbd12b8ff97bb2668ba3e4a6dff212e08fce5261e915ec0ecd7543c8f98bd093",
-    "graph.json": "24cc1302eb692a3be6e7a29f2bdba06855b2759841b833a817a29e09a6f1c5d0"
+    "graph.html": "8a719e16da3032f3c87142ee0e21751f9bd57c581728cc79a8e70f005985871f",
+    "graph.json": "b54e3762a80ebf6f45067d8d5a8a4ca3a574300504cb2f22d79b9c471b87c0cc"
   },
   "schema_version": 1,
-  "source_commit": "20383ad0fb7c009f831ad1b3545de0de2532d715",
-  "source_fingerprint": "5c74bb7cb7b22b1f5a09bdc955a3fc9c669df6146ec90cb066a43d32e9842b01",
+  "source_commit": "17f5b6cb06ca165d1f569f69718b18966bd39d5c",
+  "source_fingerprint": "4c4b3649184e468165daabf5be0d239ed83cb4b72df29eb4c3aabb4dbbac82ed",
   "working_tree_changes": [
-    "server/dreamer-service.test.ts",
-    "server/dreamer-service.ts",
-    "server/hub-routes.test.ts",
-    "server/hub-routes.ts",
-    "src/App.test.tsx",
-    "src/App.tsx",
     "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/OracleDreamer.tsx",
-    "src/SessionNavigation.test.tsx",
-    "src/SessionNavigation.tsx",
-    "src/api.test.ts",
-    "src/api.ts"
+    "src/ManagerAssistant.tsx"
   ]
 }

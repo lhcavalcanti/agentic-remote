@@ -675,22 +675,31 @@ export function ManagerAssistant({
     editor.closest('li')?.scrollIntoView?.({ block: 'nearest' })
   }, [editingId])
 
+  const authoritativeEdit = editing && snapshot?.messages.find(
+    (message) => message.id === editing.id && message.role === 'user',
+  )
+  const editWasAccepted = Boolean(
+    authoritativeEdit
+    && authoritativeEdit.state !== 'queued'
+    && authoritativeEdit.content.trim() === editing?.text.trim(),
+  )
   // Oracle started on a message while it was being edited, or it left the
-  // queue another way: the words go to the message bar rather than being lost.
-  // Clearing the edit here means this happens once.
-  // Not while saving: an edit that was saved and then taken by Oracle is not
-  // to be copied back; the save itself says what happened.
+  // queue another way. Keep unsaved words in the message bar, but retire an
+  // edit whose exact content is already authoritative so it cannot be resent.
   if (editing && !savingEdit && snapshot && !snapshot.messages.some(
     (message) => message.id === editing.id && message.role === 'user' && message.state === 'queued',
   )) {
     const kept = editing.text.trim()
     setEditing(undefined)
-    if (kept) {
+    setRecoveredEdit(false)
+    if (!editWasAccepted && kept) {
       setDraft((current) => current.trimEnd().endsWith(kept)
         ? current
         : current.trim() ? `${current.trimEnd()}\n\n${kept}` : kept)
     }
-    setSendError('Oracle started on that message before your edit was saved. Your edit is in the message bar to send.')
+    if (!editWasAccepted) {
+      setSendError('Oracle started on that message before your edit was saved. Your edit is in the message bar to send.')
+    }
   }
   const openRef = useRef(open)
   const managedRef = useRef(onManagedSessionsChange)

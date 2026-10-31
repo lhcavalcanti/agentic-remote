@@ -7327,6 +7327,7 @@ function App() {
     [expandedKnowledge, knowledgeFolders],
   )
   const [commands, setCommands] = useState<SlashCommand[]>([])
+  const commandCatalogEpoch = useRef(0)
   // Which session the list above belongs to. It is fetched per session, so
   // until the new one has arrived the old one is still on hand -- and reading
   // it as though it described the session now open let a command only the
@@ -10054,6 +10055,7 @@ function App() {
       return
     }
     let active = true
+    const catalogEpoch = commandCatalogEpoch.current
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
         if (active) {
@@ -10077,10 +10079,12 @@ function App() {
           ])
         }
       })
-      .catch(() => {
-        if (active) {
+      .catch((caught) => {
+        if (active && commandCatalogEpoch.current === catalogEpoch) {
           setCommands([])
           setCommandsKey(selectedKey)
+          setError((current) =>
+            current ?? (caught instanceof Error ? caught.message : String(caught)))
         }
       })
     return () => {
@@ -14420,6 +14424,11 @@ function App() {
       return
     }
     const wasSuspended = target.suspended === true
+    if (!wasSuspended && sessionKey(target) === selectedKey) {
+      // Synchronous before suspendSession's first await: any later selected
+      // catalog rejection belongs to the runtime being put down.
+      commandCatalogEpoch.current += 1
+    }
     setSuspending(true)
     setError(undefined)
     try {

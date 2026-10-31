@@ -748,6 +748,47 @@ describe('Provider queue persistence boundaries', () => {
   const drainTerminal = (service: AgentService) =>
     (service as unknown as { drainTerminalQueue(id: string): Promise<void> }).drainTerminalQueue('session')
 
+  it('resumes an admitted SDK drain after suspension is refused', async () => {
+    const { store } = await fixture()
+    const { service, client } = copilot(store)
+    const sdk = sdkSession('session')
+    sdk.send = vi.fn(async () => {
+      queueMicrotask(() => sdk.emit(event('session.idle', {})))
+      return 'queued-first'
+    })
+    client.resumeSession = vi.fn(async () => sdk)
+    await service.openSession('session')
+    let enter = () => {}
+    let finish = () => {}
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    releases.push(finish)
+    const read = store.readAfterWrites.bind(store)
+    vi.spyOn(store, 'readAfterWrites').mockImplementationOnce(async (...args) => {
+      enter()
+      await gate
+      return read(...args)
+    })
+    const draining = (service as unknown as {
+      drainSdkQueue(id: string): Promise<void>
+    }).drainSdkQueue('session')
+    await entered
+    const suspension = service.suspendSession('session').then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
+    await vi.waitFor(() => expect(service['suspendingSessions'].has('session')).toBe(true))
+    finish()
+    const [, outcome] = await Promise.all([draining, suspension])
+    expect(outcome).toMatchObject({ error: { statusCode: 409 } })
+    await Promise.all([...service['sdkQueueWakeups'].values()])
+    await service['queuedPromptRuns'].get('session')
+    await store.flush()
+    expect(sdk.send).toHaveBeenCalledExactlyOnceWith({ prompt: 'first', mode: 'immediate' })
+    expect(store.get('session')?.queuedPrompts?.map(({ id }) => id)).toEqual(['second'])
+    await service.stop()
+  })
+
   it.each([['Copilot', copilot], ['Claude', claude]] as const)(
     '%s retains queued text when turn admission and all later writes fail',
     async (_name, provider) => {

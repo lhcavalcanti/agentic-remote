@@ -17,6 +17,9 @@ export type ManagerStatus = 'idle' | 'working' | 'recovering' | 'offline'
 
 export type ManagerMessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
+/** Trusted hub-side provenance for a user message. */
+export type ManagerMessageSource = 'typed' | 'voice'
+
 /** Delivery state of a message you sent the manager. */
 export type ManagerMessageState =
   | 'queued'
@@ -61,6 +64,11 @@ export interface ManagerMessage {
    */
   answerOnly?: boolean
   /**
+   * Immutable provenance assigned at the trusted submission boundary. Older
+   * persisted user messages without it are treated as typed.
+   */
+  readonly source?: ManagerMessageSource
+  /**
    * When Oracle first started on it. From then on it is no longer the user's
    * to edit, even if a restart or Retry puts it back in the queue.
    */
@@ -91,7 +99,18 @@ export interface ManagerClientDefaults {
   folders?: Record<string, string>
 }
 
+/** Internal provenance used to apply trusted submission policy at the hub. */
+export type ManagerSubmissionSource = ManagerMessageSource
+
+export interface ManagerSubmissionOptions {
+  answerOnly?: boolean
+  source?: ManagerSubmissionSource
+}
+
 /** Oracle's own runtime settings, kept on the hub. */
+/** How Oracle opens the sessions it starts: the Copilot SDK, or a terminal (tmux). */
+export type ManagerSessionBackend = 'sdk' | 'terminal'
+
 export interface ManagerSettings {
   /** Unset uses the hub's default: AGENTIC_REMOTE_MANAGER_MODEL, else Copilot's. */
   model?: string
@@ -110,6 +129,13 @@ export interface ManagerSettingsSnapshot extends ManagerSettings {
    * default session folder.
    */
   sessionFolders?: Record<string, string>
+  /**
+   * How Oracle opens the sessions it starts. The Copilot SDK unless set to a
+   * terminal; a provider without a terminal always uses its SDK. A hub from
+   * before this setting omits it and opens Copilot sessions in a terminal, so
+   * a client MUST NOT read its absence as the SDK.
+   */
+  sessionBackend?: ManagerSessionBackend
 }
 
 export interface ManagerSnapshot {
@@ -145,6 +171,8 @@ export interface UpdateManagerSettingsInput {
   reasoningEffort?: RuntimeReasoningEffort | null
   /** Folders to change, by computer ID; null returns that computer to its default. */
   sessionFolders?: Record<string, string | null>
+  /** How Oracle opens the sessions it starts; absent leaves it as it is. */
+  sessionBackend?: ManagerSessionBackend
 }
 
 export type ManagerEvent =

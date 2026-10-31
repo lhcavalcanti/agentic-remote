@@ -89,12 +89,23 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   NOT move between computers. Suspended visibility shares the same revisioned
   hub snapshot; computer-group order, sort mode, search, and the three primary
   filters remain browser-local.
+- Search, the three primary filters, the selected session, and session-list
+  scroll position MUST survive browser reloads and responsive layout changes.
+  Sessions MUST expose one accessible **Refresh** action that reloads
+  authoritative computers, sessions, Oracle, Dreamer, and background-task
+  state. Manual refresh, reconnect, and visibility return MUST preserve the
+  last usable snapshots and every composer draft, show loading or stale-error
+  state with retry, and MUST NOT send, queue, resume, replay, or confirm work.
 - Clearing a session replaces its identity, and the replacement MUST take the
   predecessor's exact position in the custom order. Deleting a session MUST
   remove it, and removing a computer MUST remove its lane; a partial or offline
   session listing MUST NOT be treated as evidence that an entry is gone. A
   browser-local order from before the hub owned it MAY seed an empty hub once,
   after which the hub snapshot is authoritative.
+- Each session row MUST place **Close** above **Pause**/**Resume** in its
+  lifecycle controls. Close MUST use the same confirmed, permanently deleting
+  close lifecycle and owning-computer route as **Close session**; Pause and
+  Resume retain their existing suspend lifecycle, availability, and labels.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors, including queued delivery that requires confirmation. Pending actions
   MUST take precedence over passive runtime status.
@@ -108,6 +119,16 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   name rather than inline beside it.
 - Every open session MUST identify whether it is tmux-backed or SDK-only. The
   UI MUST NOT imply that SDK-only sessions are available through `tmux attach`.
+- Normal Copilot SDK sessions MUST discover the owning computer's existing
+  Copilot CLI configuration, including configured plugins, MCP servers, skills,
+  custom agents, instructions, repository hooks, and host Git operations. They
+  MUST use the same local Copilot home and logged-in account as the CLI.
+- Copilot SDK clients MUST use the SDK-bundled runtime by default.
+  `COPILOT_SDK_BIN` MAY select an explicitly qualified SDK runtime;
+  `COPILOT_BIN` MUST remain exclusive to interactive tmux sessions.
+- Oracle MUST retain its isolated, skills-disabled configuration and MUST NOT
+  inherit normal-session discovery merely because it uses the same SDK client
+  factory.
 - An idle Copilot SDK session MAY be moved to tmux while preserving its session
   ID, title, working directory, transcript, queue, and runtime settings.
 - The move-to-tmux action MUST appear only when the owning computer explicitly
@@ -130,6 +151,25 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   after the same-ID owner is ready. If saved provider state is unavailable or
   corrupt, the session MUST remain recoverable with its history, metadata, and
   queue unchanged, and the failure MUST be shown explicitly.
+- On service startup, an interrupted Copilot SDK session MUST first attempt to
+  resume the same provider session ID and reconcile durable provider events.
+  Recovery MUST use a monotonically increasing persisted generation, reject
+  callbacks from older generations, and coalesce overlapping attempts.
+- A terminal provider event (`assistant.turn_end` or `session.idle`) MAY clear
+  the interruption and release preserved queued work in FIFO order. An open
+  turn, shutdown, abort, missing provider identity, or unsupported resume MUST
+  remain explicitly interrupted; restored history MUST NOT be presented as
+  restored stream continuity.
+- A provider permission MAY become actionable after restart only when the
+  installed SDK reports the exact durable pending request through its
+  low-level permission RPC. The provider request ID MUST remain private,
+  answers MUST be persisted before delivery, and queues MUST remain blocked
+  until provider state confirms settlement. Multiple pending permissions or an
+  unavailable RPC MUST fail closed.
+- SDK user-input and elicitation callbacks are process-local. Their cards MUST
+  become stale after restart and MUST NOT accept or replay an answer. A saved
+  answer whose callback continuity cannot be proven MUST remain an explicit
+  interruption rather than being sent again.
 - Managed session records MUST remain visible by default when their provider
   process disappears, including after overnight inactivity. Process loss MUST
   appear as interrupted/recoverable rather than Working or a silent close.
@@ -161,8 +201,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   summaries update metadata only. A cached session that reopened after the
   roster snapshot MUST stay listed.
 - Restart recovery MUST retain queues without replaying uncertain admissions.
-  Missing terminal owners and interrupted SDK turns MUST remain reviewable;
-  expired callbacks MUST NOT become answerable by merely reopening a record.
+  Missing terminal owners and unrecoverable SDK turns MUST remain reviewable;
+  expired user-input and elicitation callbacks MUST NOT become answerable by
+  merely reopening a record. A recovered durable permission is the only SDK
+  callback exception. The owning service MUST finish automatic SDK recovery
+  before it accepts browser traffic. Browser bootstrap, event-stream
+  reconnect, and foreground return MUST refresh authoritative session state;
+  they MUST NOT issue a second resume mutation or present continuity before
+  the owner reports recovery complete.
   Explicit Close/Delete MUST retain their existing user-confirmed semantics.
   See [Session retention](session-retention.md) for settings and cleanup cadence.
 - An open new-session dialog MUST preserve user choices across computer status
@@ -179,10 +225,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   background task is running. With no running background task, the existing
   green and gray session treatments MUST remain unchanged.
 - A foreground response in progress MUST show Working rather than Tasks,
-  even while background tasks run. The existing X tasks action MUST retain
-  the running count and task access. An idle foreground with running background
-  tasks MUST still show Tasks; attention, suspension, and offline states retain
-  their existing precedence.
+  even while background tasks run. A separate Tasks status action MUST retain
+  touch and keyboard access to the task panel without replacing the session's
+  activity time. An idle foreground with running background tasks MUST still
+  show Tasks; attention, suspension, and offline states retain their existing
+  precedence.
 - A running SDK background agent MUST make the session row read as active even
   when no foreground turn is open. The composer MUST keep immediate Send
   available and MUST offer Queue; queued text waits for the tracked background
@@ -445,12 +492,26 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   or open at all on a phone), in an open document's header on a phone, and in
   the phone's session list beside **Manage computers**. The button shows a
   working ring, an unread dot, and every current state in its accessible name,
-  such as "Oracle, working, new reply". It opens a non-modal drawer on a
-  desktop, resizable from its left edge by drag or arrow keys (Home or a
-  double-click resets it) and remembered per browser. Widening stops where the
+  such as "Oracle, working, new reply". `Ctrl+Alt+O` on Windows/Linux and
+  `Cmd+Alt+O` on Apple keyboards opens or closes Oracle. Opening focuses
+  Oracle's message field; closing focuses the active writable session message
+  field. With Oracle pinned beside the session, the shortcut instead moves
+  focus between those two fields while either one owns focus. It MUST NOT take
+  a key from another field, a dialog, a pending permission or question, or an
+  IME composition.
+- On desktop, Oracle opens as a non-modal overlay by default and MAY be pinned
+  beside the working session with the visible **Dock Oracle** control in its
+  header; the same control becomes **Undock Oracle** while pinned.
+  `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles
+  that choice while Oracle is open. App settings MUST NOT expose a second
+  placement control. Both placements are resizable from the panel's left edge
+  by drag or arrow keys (Home or a double-click resets it) and the placement
+  and width are remembered on this device. Widening stops where the
   conversation would have less than 360px beside the sessions list; the panel
-  is never narrower than 340px, so a window without room for both shows it at
-  340px over more of the conversation. On a phone it is a full-height sheet. A hub with `AGENTIC_REMOTE_MANAGER=off` shows no button.
+  is never narrower than 340px, so a window without room for both falls back
+  to the overlay without changing the saved desktop preference. At 960px or
+  narrower it is always a full-height overlay sheet. A hub with
+  `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
   now waits its turn, and Send becomes **Queue message**. **Dictate to
@@ -458,6 +519,96 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   transcribe**; at most 15 minutes), transcribes on the hub as a session's
   recording does, and adds the words to the message rather than sending them.
   Closing the panel discards a recording in progress.
+- Oracle's non-empty message draft and queued-message edit MUST be saved in
+  versioned browser storage independently of whether the panel is open,
+  docked, overlaid, or moved by a responsive layout. A remount or reload MUST
+  restore the text without sending it and identify it as recovered. If a
+  recovered queue item has already left the queue, its edited text MUST move
+  to the message field with an explanation. A storage failure MUST remain
+  visible and block Send or Save; accepted delivery MUST clear durable text
+  before retiring the visible draft so cleanup failure cannot silently invite
+  a duplicate.
+- A separate **Conversation** control MAY stream speech continuously only when
+  `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete explicitly installed profile
+  is available. There MUST be no automatic/default profile, and setup and
+  startup MUST NOT download models or enable the feature.
+- Conversation microphone PCM MUST travel only to the hub and, when selected,
+  one authenticated paired node. The selected computer MUST perform STT and
+  TTS locally. Conversation mode MUST NOT persist raw PCM, synthesized audio,
+  or partial transcripts. Each non-empty finalized transcript MUST be submitted
+  exactly once through the normal `ManagerAgent.send` path with trusted voice
+  provenance and `answerOnly: true`, regardless of the browser's current
+  Ask/Delegate selection. That provenance MUST remain immutable on the normal
+  persisted `ManagerMessage` through queueing, events, edits, retries, restart
+  recovery, and compaction; historical messages without provenance MUST retain
+  typed/manual semantics. The hub MUST enforce the same policy for hub-local
+  and paired-node speech.
+- A voice final MUST be read-only at the manager tool-handler boundary. It MAY
+  use explicitly classified read/query tools needed to answer, including
+  session reads and side questions, but MUST NOT delegate or steer sessions,
+  answer permissions, trust prompts, or questions, request destructive
+  confirmation, change the Oracle session folder, or write, append, or delete
+  Oracle memory. Tools not explicitly classified as read-only MUST fail closed
+  for voice. Typed Ask and typed Delegate policy MUST remain unchanged.
+- The model prompt MUST delimit the current finalized transcript as
+  acoustically untrusted, with speaker identity unverified. Voice text MUST NOT
+  be promoted into Oracle memory, settings, trusted instructions, or recovery
+  briefs, and recovery MUST omit the voice exchange linked to that message.
+  This is a provenance and authorization boundary, not speaker authentication.
+  Finalized text remains exactly one visible normal Oracle user message in
+  conversation history and is sent with Oracle's generated context to remote
+  Copilot inference. No separate voice transcript or recording artifact may be
+  persisted.
+- Before Conversation starts and while it is active, the UI MUST visibly state
+  that speaker identity is not verified, nearby or replayed audio may be
+  submitted, Ask can read session information, and finalized text is sent to
+  remote Copilot. It MUST also state that Conversation voice is Ask-only and
+  MUST NOT describe the complete experience as offline.
+- Partials MUST remain display-only. If normal-message submission fails, or
+  cancellation of a superseded submitted message cannot be confirmed,
+  Conversation MUST fail closed without restoring or retrying the final text
+  because Oracle may already have retained it. A disconnect MUST discard the
+  current utterance rather than replay PCM or a finalized transcript. TTS
+  failure MUST leave the text reply usable, and typed input plus **Dictate to
+  Oracle** MUST remain available.
+- Oracle replacement snapshots MAY start TTS for each stable completed
+  sentence before the full reply finishes. This sentence-level early playback
+  MUST NOT be described as engine-incremental synthesis unless the selected
+  engine has measured evidence that it emits audio before finishing that
+  sentence. Every engine callback or fallback result MUST be split into
+  monotonic PCM frames that fit the advertised maximum encoded frame size;
+  cancellation, output overflow, or delivery failure MUST stop further frames
+  and MUST NOT emit `audio_end`.
+- Conversation mode MUST require microphone permission, `getUserMedia`,
+  `AudioWorklet`, Web Audio playback, and WebSocket support. If a required
+  browser primitive is unavailable, it MUST refuse to start and offer
+  dictation instead of using a deprecated capture fallback.
+- Enablement and the selected speech computer MUST be parsed independently
+  from local engine paths. A hub selecting a paired node MUST NOT require local
+  STT/TTS assets; the selected node MUST validate its own complete local engine
+  configuration. Hub-local mode MUST remain strict. A missing, offline, or
+  incapable selected computer MUST advertise an explicit unavailable reason
+  and MUST NOT silently fall back to another computer.
+- Voice installation MUST stage below
+  `<data>/models/oracle-voice/.staging-*`, show applicable licenses before any
+  download, permit HTTPS for initial and redirected requests only, enforce the
+  exact pinned byte count while streaming with bounded timeout/retry behavior,
+  and verify SHA-256 before extraction or use. Every archive MUST pin expanded
+  bytes and entry count. The manifest compression type MUST select the exact
+  streaming decoder, and extraction MUST process one header at a time without
+  materializing the complete member list. It MUST abort before extracting an
+  entry that would exceed either pin and reject compression mismatch, corrupt
+  streams, traversal, duplicate paths, path-type conflicts, sparse files,
+  links, devices, FIFOs, and every type except regular files/directories. The
+  final staged tree MUST be revalidated for containment, type, count, and bytes.
+  Publication MUST serialize per profile, recheck installed content while
+  locked, clean failed/conflicting staging, and atomically activate only a
+  confirmed complete version. Failure MUST leave the prior active profile
+  unchanged. A research-only profile MUST print its full notices and require
+  explicit noninteractive acknowledgement before network access. Existing
+  `AGENTIC_REMOTE_ORACLE_VOICE` and
+  `AGENTIC_REMOTE_VOICE_*` values MUST survive setup in the mode-`0600`
+  environment file without being printed.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process
   of its own. Its tools only manage sessions and its own memory, so it MUST NOT
   run commands or edit files; work it accepts becomes a normal session on a
@@ -520,6 +671,14 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   when you ask it to, which App settings then shows. A session's task can
   still name another folder, and a computer without one uses your default
   session folder, else its home directory.
+- **App settings → Oracle → Opens new sessions with** chooses how Oracle opens
+  the sessions it starts: the Copilot SDK, which is the default, or a terminal
+  (tmux). It is kept on the hub with Oracle's settings, Oracle changes it when
+  you ask, and existing sessions are unaffected. A provider without a terminal
+  always uses its SDK, and the New session dialog keeps its own choice. A hub
+  from before this setting does not report it and still opens terminals, so
+  App settings MUST say so instead of offering the choice, and MUST show an
+  error rather than "Saved" when a hub's answer does not keep the choice.
 - Every turn MUST start with a context block the hub generates: computers, open
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.
@@ -601,6 +760,40 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   session. Your default folder, mode, and model for new sessions are sent with
   each message and apply to the sessions Oracle starts.
 
+### 3.8 Oracle Dreamer foundation
+
+- Dreamer MUST be disabled by default and enabled explicitly in App settings
+  with a saved hub-wide IANA timezone. Its fixed schedule is 02:00 local time;
+  same-day catch-up ends at 08:00. DST repeats MUST NOT duplicate a daily run,
+  and a missing 02:00 MUST use the first later valid local time.
+- This first slice MUST perform deterministic local metadata review:
+  journal-observed session state and eligible structured-memory metadata, not
+  prompts, titles, general transcript contents, memory contents or external
+  inference. Its only session-content adapter MAY passively read the exact
+  owning session to validate a successful root `task_complete` result carrying
+  the server's trusted marker. That result MUST remain transient and MUST NOT
+  become planning input.
+  Unavailable durable todos, incomplete history and source freshness limits
+  MUST be visible rather than represented as a complete review.
+- Daily run claims, generation/lease fences, plans and user edits MUST persist
+  before success. Disable, expiry, shutdown and restart MUST prevent stale
+  workers from replacing a committed plan. Bounds and storage failures MUST
+  be reported without silently resetting state.
+- Oracle MUST present a dated morning plan with priority reorder, skip and
+  restore. Memory and carried review items MAY also be marked done as plan
+  review state. A session-derived item MUST NOT expose generic **Done**:
+  only a trusted completion proposal may expose **Review completion**, and an
+  explicit confirmation MUST re-read the exact message and persist bounded
+  provenance before marking the item done. The same item/evidence pair MUST be
+  idempotent; changed, missing, plain-text, background-agent, or failed-tool
+  evidence MUST be refused. These actions MUST never prompt, resume, stop,
+  close, or otherwise mutate a session. Concurrent stale edits MUST be refused
+  and refreshed.
+- Dreamer MUST NOT raise overnight notifications, send speech, execute work
+  or add model calls. Semantic planning, authoritative todo/history adapters
+  and optional morning delivery are separate follow-ups described in
+  [Oracle Dreamer](design/oracle-dreamer.md).
+
 ## 4. Conversation timeline
 
 - User messages, assistant messages, notices, and tool activity MUST remain in
@@ -633,7 +826,8 @@ Questions and permissions are the highest-priority UI state.
 
 - SDK `ask_user` requests MUST render as actionable cards, including the
   structured `message`/`requestedSchema` form supported by current Copilot
-  runtimes.
+  runtimes. Normal SDK sessions MUST select Copilot's elicitation `ask_user`
+  variant when they register the structured-form handler.
 - Structured question cards MUST remain within the phone timeline width.
   Checkboxes MUST keep their intrinsic control size, option and heading text
   MUST wrap inside the card, and long forms MUST remain vertically reachable
@@ -764,7 +958,18 @@ Questions and permissions are the highest-priority UI state.
   after the hub restarts, MUST wait for a live composer. A Copilot started in
   the last 30 seconds can still open a startup dialog over an empty prompt,
   so its prompt MUST stay live for about three seconds first; one running
-  longer MUST only need its prompt seen steady once.
+  longer MUST only need its prompt seen steady once. A steer to a settled,
+  working Copilot that shows no usable composer (within five seconds after a
+  restart, or at once otherwise) MUST NOT hold the send lock for the startup
+  timeout or fail: nothing is typed, and the message joins the app FIFO
+  exactly once while the session is `running`, marked as a steer. A queued
+  steer at the head of the FIFO MUST be typed into the running turn as soon as
+  the composer is ready and empty again, not held until the turn ends. This
+  includes a turn that outlived a hub restart. A steer behind an older queued
+  prompt keeps its place and steers the turn that prompt starts. A steer the terminal refuses
+  again before anything was typed stays at the head without a new error; an
+  uncertain one is never retyped. Steers that would replace a terminal draft,
+  and refusals for any other reason, still return a 409.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
@@ -811,6 +1016,13 @@ Questions and permissions are the highest-priority UI state.
   is sent, the row offers `esc edit prompt` instead of the interrupt; that is
   work, and the composer MUST stay live for messages sent during it. Copilot
   queues a message sent then for after the current turn.
+- Once a turn hands its work to background agents and ends, Copilot 1.0.101
+  keeps its prompt open and its footer row reads `Waiting for background
+  agents`, an optional output size, `esc esc stop agents`, then the model
+  hint. That composer MUST be live and idle: Send delivers the message as a
+  new prompt, which Copilot answers while the agents keep running, rather
+  than refusing it as not ready. Anything else after the stop key MUST refuse
+  input, and the session stays running until the agents finish.
 - A footer that a newer Copilot draws differently MUST NOT stop tmux sessions
   from starting or taking input. Copilot shows the terminal cursor on its
   prompt row only while the prompt has the keyboard, and hides it while a form
@@ -963,6 +1175,11 @@ Questions and permissions are the highest-priority UI state.
 The Send button MUST request immediate delivery. While a Copilot SDK or tmux
 turn is running, immediate delivery MUST use the provider's native steering
 path so the follow-up reaches the current turn rather than waiting behind it.
+Copilot holds a message typed mid-response as pending and logs it only when the
+turn reaches it. Until the transcript has it, a message the tmux terminal took
+MUST show as the person's own message marked Pending, paired with exactly one
+later transcript message. It MUST never be resent; a session that settles
+without logging it drops the mark after a short grace.
 If immediate steering is unsupported, the app MUST surface an error and
 restore the draft; it MUST NOT silently queue. Stop remains the explicit way
 to abort the current turn; sending after Stop begins a new turn.
@@ -1112,6 +1329,9 @@ Best-effort preference storage MUST NOT authorize composer submission or retire
 delivery receipts. If saved draft storage cannot be read at startup, typing
 remains available but sends and draft writes stay blocked until a reload can
 recover the saved state. The UI MUST warn the user to copy new text first.
+Every non-empty writable session draft MUST show **Saved on this device** or,
+until edited, **Recovered saved draft**. The indicator MUST NOT replace
+storage, delivery-uncertainty, failed-submission, or queue warnings.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact
@@ -1419,11 +1639,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
 ### 9.2 App settings layout
 
 - App settings MUST group settings by what they are about, in this order:
-  - **Models**: new sessions' defaults per provider, then Oracle's model and
-    effort, then Oracle's response style.
+  - **Models**: new sessions' defaults per provider.
   - **Folders**: one card per computer with the folder new sessions start in,
     then Oracle's (blank means the same as new sessions).
-  - **Notifications**.
+  - **Oracle**: Oracle's model and effort, response style, and which activity
+    notifies you.
+  - **Notifications**: this device's notification permission and subscription.
   - **Interface**: Appearance, Status line, Keyboard shortcuts.
   - **App**: Settings sync, Hub connection (native app only), App updates.
 - Each section whose scope is not obvious MUST say whether it is **Synced** or
@@ -1442,7 +1663,7 @@ people sharing a hub share its profile. See
 | Scope | Settings |
 |---|---|
 | **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
-| **This device** | Keyboard shortcuts, panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
+| **This device** | Keyboard shortcuts, panel placement and widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
 | **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
 
 - A change MUST apply at once, persist on the hub before it is reported, and
@@ -1587,6 +1808,8 @@ Persistent state MAY include:
 - Knowledge bookmark metadata
 - The settings profile (§9.3)
 - Paired node registry and encrypted/external secret references
+- Oracle conversation history, including finalized speech submitted as normal
+  Oracle user messages through `ManagerAgent.send`
 
 Persistent state MUST NOT include:
 
@@ -1597,6 +1820,8 @@ Persistent state MUST NOT include:
 - Voice recordings
 - Temporary transcription artifacts
 - Live `.env` files or credentials
+- Conversation-mode PCM, synthesized audio, partial transcripts, or separate
+  voice transcript/recording artifacts
 
 Awaited session mutations MUST become visible only after their state write
 commits. A refused write MUST NOT leave the mutation in memory, subsequent
@@ -1628,6 +1853,38 @@ guards without disabling legitimate external/native history refresh.
 - The app MUST NOT silently convert errors into success-shaped data.
 - Network or process restart recovery MUST preserve as much user-visible state
   as possible without claiming an operation succeeded.
+
+### 14.1 Refusal diagnostics
+
+Every computer counts the user-facing refusals it sends so a refusal that
+fires falsely shows up without a user report:
+
+- A refusal is a 4xx response from a matched route; 404s for unknown routes
+  are not counted. A 401 or 403 a route raises as an error, such as a path
+  outside the session folder or a refused memory change, is counted. The
+  pairing-token and Host/Origin checks reply directly without a reason, so
+  those are not counted.
+- Each refusal is keyed by route template (for example
+  `/api/computers/:computerId/sessions/:sessionId/messages`), method, status,
+  and a stable reason code: the error's `reasonCode` (such as
+  `terminal-draft-conflict.new-text` or `retained-session.archived`), else the
+  `reasonCode` of an error it wraps, else its class name; `validation` for
+  invalid input; `not-found`/`not-registered` for those fallbacks; and
+  `http-<status>` for a plain error or a direct reply that names no reason.
+  Each key keeps `count`, `firstAt`, and `lastAt`.
+- Distinct keys are bounded at 256; further keys count in one `other` bucket.
+  Counts live in memory only and start again when the process restarts.
+- Each refusal emits one `info` log line,
+  `{ event: 'request.refused', route, method, status, reason }`.
+- Message text, prompts, paths, ids, query strings, headers, and client
+  addresses are never recorded or logged by this counter.
+- The hub serves its counts at `GET /api/diagnostics/refusals` as
+  `{ since, refusals }`, sorted by count, under the same Host/Origin policy as
+  every other `/api/` route. There is no reset. Browsers reach only the hub,
+  so it counts every browser-facing refusal, including those a node returned
+  through it (as `RemoteNodeRequestError`, or
+  `remote-node.terminal-draft-conflict`). Nodes only log their own refusals;
+  they expose no endpoint.
 
 ## 15. Release and operations
 

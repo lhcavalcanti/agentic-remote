@@ -202,9 +202,10 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | `list_sessions` | Open sessions, or recent history with `includeClosed` |
 | `get_session` | Detail and the last N messages (default 6, maximum 30, each truncated), read as recorded: the session is never opened or resumed. A waiting session's request shows its `requestId`, options, choices, and form fields, so it can be answered |
 | `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
-| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder |
+| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK |
 | `set_session_folder` | Change Oracle's session folder for a computer when you ask; checked on that computer, kept with Oracle's settings, and allowed in Ask mode since it touches no session |
-| `send_to_session` | Send or queue a follow-up to any session; always queued, so a busy session does not refuse it. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |
+| `set_session_backend` | Change how Oracle opens new sessions (`sdk` or `terminal`) when you ask; kept with Oracle's settings and allowed in Ask mode |
+| `send_to_session` | Send a follow-up to any session. A busy session is steered: the message is typed into its running turn (a terminal that is not ready yet takes it as soon as its composer is back). Only a refusal that certainly sent nothing falls back to the session's queue; a possibly-delivered steer is never retried. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |
 | `answer_session` | Answer what a session waits on, so it carries on without you: a permission request (option by name, or approve/deny), including Copilot's folder trust; a question (a choice or free text), several choices, or a form's values; or dismiss it. An optional `requestId` stops an answer reaching a different prompt |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
 | `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
@@ -258,11 +259,13 @@ end the turn.
   `startedAt` records through restarts and Retry; 400 blank; 413 too long), keeping its id and its place,
   which is its first line in `conversation.jsonl`; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
   the hub default) chooses Oracle's model, and with `{ sessionFolders: { <computer id>: path | null } }`
-  its session folders; each part is optional and leaves the rest as it is.
+  its session folders, and with `{ sessionBackend: 'sdk' | 'terminal' }` how
+  it opens new sessions; each part is optional and leaves the rest as it is.
   Only `null` clears a folder (a blank one is a 400), and a computer that is
   not paired is a 404 unless a folder kept for it is being removed.
   The snapshot reports them as `settings` and the socket as
-  `manager.settings`. `state.json` keeps `sessionFolders`, the model the SDK
+  `manager.settings`; `sessionBackend` is always reported, `sdk` by default. `state.json` keeps `sessionFolders`,
+  `sessionBackend` only when it is `terminal`, the model the SDK
   conversation runs on (`sessionRuntime`), and the model and effort that
   could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.
@@ -293,8 +296,23 @@ end the turn.
 - Waiting messages sit above the message bar, numbered in answer order, each
   editable in place (Save, Cancel; Ctrl+Enter, Esc) or removable until Oracle
   starts on it. An edit Oracle overtakes goes back to the message bar.
+- The non-empty message draft and active queue edit are one versioned
+  browser-local record. Open/close, Dock/Undock, responsive placement, remount,
+  reconnect, and authoritative refresh do not clear or submit it. Restored
+  text is identified as recovered; storage failure stays visible and blocks
+  Send/Save. Accepted delivery clears the durable record before retiring the
+  visible text, and a recovered edit whose queue item has gone moves into the
+  message field with an explanation.
 - **Dictate to Oracle** records and transcribes through `/api/transcriptions`
   (`src/voice-recorder.ts`), adding the words to the message.
+- **Conversation** is a separate, explicit mode beside dictation. It streams
+  microphone PCM to the configured local or paired-computer speech backend,
+  shows partials without submitting them, sends each finalized utterance once
+  to Oracle, and speaks stable reply segments. Stop remains available in every
+  state. Unsupported AudioWorklet, denied permission, model failure, or TTS
+  failure leaves typed messages and dictation usable. An ambiguously failed
+  final submission or unconfirmed cancellation closes Conversation without
+  returning or retrying the text because Oracle may already have retained it.
 - The message field reads "Ask me anything"; while Oracle answers, a separate
   line says that anything sent now waits its turn.
 - **Ask | Delegate**, a two-way switch under the message bar remembered per
@@ -304,21 +322,96 @@ end the turn.
   stop, or close a session for that message. Ask questions queue behind
   Oracle's own work only, never behind sessions. **Delegate** lets Oracle start
   and steer sessions.
-- The model under the message bar opens **App settings** at **Models →
-  Oracle**, where the model and effort are chosen; each computer's Oracle
+- The model under the message bar opens **App settings → Oracle → Model**,
+  where the model and effort are chosen; each computer's Oracle
   folder sits under **Folders**, beside the folder new sessions use. Both are
   kept on the hub (`useOracleSettings` in `src/use-oracle-settings.ts` holds
   the one copy both parts read).
-- The panel is a right-hand drawer on desktop, resizable from its left edge
-  (340px up to whatever leaves the conversation 360px beside the sessions
-  list, at most 960px; remembered per browser, and shown narrower without
-  forgetting the choice when the window narrows). The 340px minimum wins on a
-  window without room for both, where the panel overlays more of the
-  conversation. On a phone it is a full-height sheet. It shows the transcript (Markdown), tool activity chips, and a
-  composer whose Return behaviour follows the session composer.
+- `Ctrl+Alt+O` on Windows/Linux and `Cmd+Alt+O` on Apple keyboards opens or
+  closes Oracle without colliding with the browser's history/bookmark
+  shortcuts. It focuses Oracle when opening and the active writable session
+  composer when closing. While a pinned Oracle and session composer are both
+  visible, it moves focus between them instead; unrelated fields, dialogs,
+  pending questions and permissions, and IME composition keep their keys.
+- The desktop panel defaults to a right-hand overlay and can instead be pinned
+  beside the working session from the Dock/Undock control in its header.
+  `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles the
+  same choice while Oracle is open; App settings has no duplicate placement
+  control. It is resizable from its left edge (340px up to whatever leaves the
+  conversation 360px beside the sessions list, at most 960px; placement and
+  width are remembered per browser, and shown narrower without forgetting the
+  choice when the window narrows). The panel falls back to overlay when the
+  340px panel and 360px conversation minimums cannot both fit. At 960px or
+  narrower it is always a full-height sheet. It shows the transcript
+  (Markdown), tool activity chips, and a composer whose Return behaviour
+  follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
 - Sessions Oracle started get a small **Oracle** badge in the session list.
+- Startup, manual Refresh, reconnect, and visibility return re-read Oracle
+  alongside sessions and Dreamer. An in-place refresh keeps the last snapshot
+  visible, reports refreshing or stale state, and offers Retry without
+  replaying a message or queue mutation.
+
+## Conversation-mode operations
+
+Conversation mode is off unless `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete
+profile is configured. `agentic-remote voice-install <profile>` is the only
+model installation path; ordinary setup and startup do not download assets.
+The selected speech computer performs STT and TTS locally without persisting
+raw PCM, synthesized audio, or partial transcripts. Each finalized transcript
+is submitted exactly once through normal `ManagerAgent.send` with hub-trusted
+voice provenance and forced Ask-only semantics. The panel's Ask/Delegate
+selection applies to typed messages only; it cannot make Conversation voice
+delegate work, steer sessions, answer permission or trust prompts, or approve
+destructive confirmation actions.
+
+The normal persisted `ManagerMessage` stores immutable `source: 'voice'`;
+historical user messages without a source load as typed. The store preserves
+the first source for a message ID across queued edits, retries, event updates,
+restart recovery, and compaction. At the manager tool handler, a centralized
+read-only allowlist permits voice to inspect computers, sessions, skills, and
+memory and to ask read-only side questions. Every other current or future tool
+fails closed for voice, including memory changes and `set_session_folder`.
+Typed Ask keeps its intentional memory/settings behavior and typed Delegate
+remains unchanged.
+
+The current transcript is escaped and delimited as acoustically untrusted in
+the model prompt. It cannot be promoted into memory or settings, and a fresh
+runtime's recovery brief excludes the voice message and its linked exchange.
+Before every voice prompt enters Copilot, durable manager state binds the voice
+taint to that exact SDK session ID. Queue recovery retires that session before
+selecting any typed or retried work, and retirement clears the active session
+pointer and matching taint in one persisted state update before best-effort SDK
+deletion. Thus a crash after prompt entry cannot let a later typed Delegate turn
+resume acoustically influenced context, even when remote deletion fails.
+The message still appears as exactly one normal Oracle user message in visible
+history and goes with the generated current-turn context to Oracle's remote
+Copilot model. No separate voice transcript or recording artifact is
+persisted. The panel warns both before Start and while active that speaker
+identity is unverified, nearby or replayed audio may be submitted, Ask can read
+session information, and finalized text is sent to remote Copilot.
+
+A hub with `AGENTIC_REMOTE_VOICE_COMPUTER` needs only enablement and the paired
+computer selection; it does not validate or load local speech paths. The node
+advertises availability only after validating its own local profile. Local hub
+mode still requires every configured path. The retained pt-BR Faber profile is
+explicitly research-only and installation requires
+`--accept-research-only`.
+
+One stream per hub is supported initially. Local VAD can duck playback, but
+the server owns endpoint and finalization decisions. Confirmed interruption
+advances generation, cancels backend TTS first, then cancels each captured
+voice-owned manager message by ID whether it is still queued or has become
+running, without stopping unrelated typed work. It rejects stale STT, deltas,
+and audio, and reconnect restores ownership only for queued/running voice
+messages. Browser state returns to Listening only after the current generation
+and segment have actually drained from Web Audio; stale drain callbacks from a
+new segment, interruption, generation change, or close are ignored. A completed
+reply with no speakable segment returns to Listening directly. Reconnect never
+replays microphone frames. See
+[Oracle Conversation mode](../oracle-conversation.md) for profile evidence,
+browser requirements, topology, and licences.
 
 ## Testing
 

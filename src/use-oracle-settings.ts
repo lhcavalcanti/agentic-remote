@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { RuntimeReasoningEffort } from '../shared/contracts'
-import type { ManagerSettingsSnapshot } from '../shared/manager'
+import type { ManagerSessionBackend, ManagerSettingsSnapshot } from '../shared/manager'
 import { getManager, updateManagerSettings } from './api'
 
 /** Which part of App settings a change came from, so its result shows there. */
-export type OracleSettingsPart = 'model' | 'folders'
+export type OracleSettingsPart = 'model' | 'folders' | 'backend'
 
 export interface OracleSettingsState {
   settings?: ManagerSettingsSnapshot
@@ -16,6 +16,7 @@ export interface OracleSettingsState {
   error?: { part: OracleSettingsPart; message: string }
   saveModel(model: string, reasoningEffort?: RuntimeReasoningEffort): Promise<void>
   saveFolder(computerId: string, path?: string): Promise<void>
+  saveBackend(backend: ManagerSessionBackend): Promise<void>
 }
 
 /**
@@ -69,13 +70,18 @@ export function useOracleSettings(active = true): OracleSettingsState {
     input: Parameters<typeof updateManagerSettings>[0],
     part: OracleSettingsPart,
     confirmation: string,
+    /** Why the hub's answer shows the change did not take, if it does. */
+    refused?: (next: ManagerSettingsSnapshot) => string | undefined,
   ) => {
     setSaving(true)
     setSaved(undefined)
     setError(undefined)
     try {
-      setSettings(await updateManagerSettings(input))
-      setSaved({ part, message: confirmation })
+      const next = await updateManagerSettings(input)
+      setSettings(next)
+      const reason = refused?.(next)
+      if (reason) setError({ part, message: reason })
+      else setSaved({ part, message: confirmation })
     } catch (caught) {
       setError({ part, message: caught instanceof Error ? caught.message : String(caught) })
     } finally {
@@ -94,5 +100,15 @@ export function useOracleSettings(active = true): OracleSettingsState {
     path ? 'Saved. Oracle starts new sessions there.' : 'Saved. Oracle uses your folder for new sessions there.',
   ), [update])
 
-  return { settings, unavailable, loading, saving, saved, error, saveModel, saveFolder }
+  const saveBackend = useCallback((backend: ManagerSessionBackend) => update(
+    { sessionBackend: backend },
+    'backend',
+    backend === 'terminal'
+      ? 'Saved. Oracle opens its next sessions in a terminal.'
+      : 'Saved. Oracle opens its next sessions with the Copilot SDK.',
+    // A hub from before this setting ignores it and keeps opening terminals.
+    (next) => next.sessionBackend === backend ? undefined : 'This hub did not keep that choice; update it to choose how Oracle opens sessions.',
+  ), [update])
+
+  return { settings, unavailable, loading, saving, saved, error, saveModel, saveFolder, saveBackend }
 }

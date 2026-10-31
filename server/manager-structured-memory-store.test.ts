@@ -12,7 +12,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MANAGER_STRUCTURED_MEMORY_MAX_AUDIT_ENTRIES,
   MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES,
@@ -107,6 +107,59 @@ describe('ManagerStructuredMemoryStore', () => {
     expect((await stat(
       path.join(root, 'manager', 'structured-memory.json'),
     )).mode & 0o777).toBe(0o600)
+  })
+
+  it('projects Dreamer metadata without reading content or canonical keys', async () => {
+    const store = await open()
+    const result = await store.remember(rememberInput(
+      'remember-sensitive',
+      'SENTINEL MEMORY CONTENT',
+    ))
+    const internal = store as unknown as {
+      state: {
+        records: Array<Record<string, unknown>>
+      }
+    }
+    const record = internal.state.records[0]
+    Object.defineProperty(record, 'content', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        throw new Error('content was read')
+      },
+    })
+    Object.defineProperty(record, 'canonicalKey', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        throw new Error('canonicalKey was read')
+      },
+    })
+    const fullSnapshot = vi.spyOn(store, 'snapshot').mockImplementation(() => {
+      throw new Error('full snapshot was read')
+    })
+
+    const metadata = (store as unknown as {
+      metadataSnapshot: () => {
+        records: Array<Record<string, unknown>>
+        tombstones: Array<{ recordId: string }>
+      }
+    }).metadataSnapshot()
+
+    expect(fullSnapshot).not.toHaveBeenCalled()
+    expect(metadata).toEqual({
+      records: [{
+        id: result.record?.id,
+        kind: 'preference',
+        scope: { type: 'user' },
+        authority: 'direct-user',
+        confidence: 0.95,
+        createdAt: '2026-10-16T12:00:00.000Z',
+        updatedAt: '2026-10-16T12:00:00.000Z',
+      }],
+      tombstones: [],
+    })
+    expect(JSON.stringify(metadata)).not.toContain('SENTINEL')
   })
 
   it('rejects direct-user global writes before creating state', async () => {

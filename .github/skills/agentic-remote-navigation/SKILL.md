@@ -114,6 +114,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Transcription on another computer | `server/delegated-transcription-service.ts` |
 | Push notifications | `server/push-notification-service.ts`, `public/sw.js` |
 | Install and service management | `bin/agentic-remote` |
+| Merge gate (full checks on an exact SHA) | `bin/agentic-remote-gate` |
 
 Useful `src/App.tsx` landmarks: `WorkspaceDialog`, `KnowledgeReader`, `AddKnowledgeRootDialog`,
 `UserInputCard`, `SortableSessionItem`, `SortableComputerGroup`,
@@ -187,7 +188,10 @@ the monitor and profile into machine-local paths; the systemd timer must not
 execute from the mutable development checkout. The local-only monitor may pull
 and validate the development checkout, then graduate the exact validated
 commit to the production runtime. It must not run tests against or replace the
-externally reachable service before validation completes. See
+externally reachable service before validation completes. After each host's
+health check it runs the `canary` Vitest project in that host's checkout
+(private `TMUX_TMPDIR`, fake Copilot; failure rolls that host back) and, after a
+successful rollout, logs each hub's refusal counts. See
 `docs/deployment-promotion.md` for the full contract.
 
 ## Security invariants
@@ -230,8 +234,28 @@ Do not weaken these without an explicit product decision.
 ```bash
 pnpm check                      # oxlint + vitest + tsc/vite build
 pnpm vitest run server/x.test.ts -t "name"   # targeted
+pnpm test:canary                # real-tmux send/readiness subset, ~1 min
+pnpm test:fast                  # every file needing no host tmux/Copilot/Claude
+pnpm test:quick                 # fast minus slowTests; the hosted check's tests
 NODE_ENV=production pnpm check  # guards the inherited-env regression
+bin/agentic-remote-gate <PR>    # merge gate: both checks on the exact head
 ```
+
+- Vitest projects `fast`, `canary`, and `tmux` partition the files, so
+  `pnpm test` still runs each file once, serially. Add a new real-tmux file to
+  `canaryTests` or `tmuxTests` in `vite.config.ts`; otherwise it lands in
+  `fast`, which must pass without tmux, Copilot, or Claude.
+- `.github/workflows/light-check.yml` is an advisory hosted check on ready pull
+  request heads, on Node 22 (the `engines` floor): install, lint, `tsc -b`,
+  `vite build`, and `pnpm test:quick`, sized to one billed minute (about
+  1,200 minutes a month at roughly 1,200 runs). Never make it required; the
+  local gate stays authoritative. A new
+  `fast` file joins `test:quick` by default; add it to `slowTests` when it
+  takes 0.1 s or more. Disable with `gh workflow disable light-check.yml`.
+  See `docs/deployment-promotion.md`.
+- `server/send-matrix.integration.test.ts` drives sends with the app's real
+  options from `shared/send-policy.ts` against real tmux panes. Extend its
+  table when send, queue, or draft-replacement behavior changes.
 
 - `vite.config.ts` pins `NODE_ENV=development` for tests because React's
   production build omits `act`.
@@ -303,11 +327,24 @@ and must still change on every build.
    ```
 
    Use `Refs #11` for a partial slice that should leave the issue open.
-5. **Merge only after Supervisor `APPROVE` for the current head.** Follow the
-   review loop below; delete the branch after graduation.
-6. **Deploy and verify on development**, then follow the promotion policy in
+5. **Gate the exact final head.** Run `bin/agentic-remote-gate <PR>` once the
+   head is final. It clones that SHA afresh, runs `pnpm check` and
+   `NODE_ENV=production pnpm check` serially under a host-wide lock inside a
+   credentialless `bwrap` sandbox, with `bwrap` itself started from the
+   scrubbed environment (it fails rather than run unsandboxed). The sandbox
+   has no host network: install (`--ignore-scripts`) and `pnpm rebuild` reach
+   only public HTTPS through the gate's filtering proxy, and the checks run
+   offline. The clone's git directory stays read-only and outside the sandbox's
+   one writable mount, `/tmp` is a fresh tmpfs per phase, and nothing inside
+   that mount is ever a mount source or followed by the gate. It posts the `agentic-remote/full-gate` commit status; success needs passed
+   and zero failed Vitest counts from both runs. A new push needs a new gate.
+6. **Merge only after Supervisor `APPROVE` and an `agentic-remote/full-gate`
+   `success` status for the current head.** A `main` ruleset requires that
+   status, with an administrator bypass. Follow the review loop below; delete
+   the branch after graduation.
+7. **Deploy and verify on development**, then follow the promotion policy in
    `.github/copilot-instructions.md` (see Rolling out).
-7. **Close issues with evidence.** If a PR did not auto-close them, close each
+8. **Close issues with evidence.** If a PR did not auto-close them, close each
    one with what changed, how it was verified, and any deliberate deviation
    from the issue's suggested fix. Record measurements where the issue was
    about performance.
@@ -315,7 +352,8 @@ and must still change on every build.
 ### PR review loop
 
 - Prefer small, single-purpose PRs. Split unrelated fixes into separate PRs.
-- Merge only after an explicit Supervisor `APPROVE` for the current PR head.
+- Merge only after an explicit Supervisor `APPROVE` and an
+  `agentic-remote/full-gate` `success` status for the current PR head.
   A signed verdict counts even when GitHub labels the review `COMMENTED`;
   passing checks, local-agent reviews, and other comments are not substitutes.
   Do not request GitHub Copilot as a reviewer.

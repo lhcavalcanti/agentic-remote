@@ -554,12 +554,14 @@ describe('SDK metadata during clear', () => {
   })
 
   it('does not replay dependent metadata when the replacement write fails', async () => {
-    const { service, store, published, fresh } = await clearFixture()
+    const { service, store, client, published, fresh } = await clearFixture()
+    const deleteSession = vi.spyOn(client, 'deleteSession')
     vi.mocked(writeFile).mockRejectedValueOnce(new Error('disk full'))
     await expect(service.clearConversation('session')).rejects.toThrow('disk full')
     expect(store.get('session')).toBeDefined()
     expect(store.get(fresh()!.sessionId)).toBeUndefined()
-    expect(fresh()?.disconnect).toHaveBeenCalledOnce()
+    expect(fresh()?.disconnect).not.toHaveBeenCalled()
+    expect(deleteSession).toHaveBeenCalledExactlyOnceWith(fresh()!.sessionId)
     expect(published).toEqual([])
     fresh()!.emit(event('session.permissions_changed', { allowAllPermissions: false }))
     await store.flush().catch(() => undefined)
@@ -745,6 +747,47 @@ describe('Provider decisions after admitted writes', () => {
 describe('Provider queue persistence boundaries', () => {
   const drainTerminal = (service: AgentService) =>
     (service as unknown as { drainTerminalQueue(id: string): Promise<void> }).drainTerminalQueue('session')
+
+  it('resumes an admitted SDK drain after suspension is refused', async () => {
+    const { store } = await fixture()
+    const { service, client } = copilot(store)
+    const sdk = sdkSession('session')
+    sdk.send = vi.fn(async () => {
+      queueMicrotask(() => sdk.emit(event('session.idle', {})))
+      return 'queued-first'
+    })
+    client.resumeSession = vi.fn(async () => sdk)
+    await service.openSession('session')
+    let enter = () => {}
+    let finish = () => {}
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    releases.push(finish)
+    const read = store.readAfterWrites.bind(store)
+    vi.spyOn(store, 'readAfterWrites').mockImplementationOnce(async (...args) => {
+      enter()
+      await gate
+      return read(...args)
+    })
+    const draining = (service as unknown as {
+      drainSdkQueue(id: string): Promise<void>
+    }).drainSdkQueue('session')
+    await entered
+    const suspension = service.suspendSession('session').then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
+    await vi.waitFor(() => expect(service['suspendingSessions'].has('session')).toBe(true))
+    finish()
+    const [, outcome] = await Promise.all([draining, suspension])
+    expect(outcome).toMatchObject({ error: { statusCode: 409 } })
+    await Promise.all([...service['sdkQueueWakeups'].values()])
+    await service['queuedPromptRuns'].get('session')
+    await store.flush()
+    expect(sdk.send).toHaveBeenCalledExactlyOnceWith({ prompt: 'first', mode: 'immediate' })
+    expect(store.get('session')?.queuedPrompts?.map(({ id }) => id)).toEqual(['second'])
+    await service.stop()
+  })
 
   it.each([['Copilot', copilot], ['Claude', claude]] as const)(
     '%s retains queued text when turn admission and all later writes fail',
@@ -1405,7 +1448,7 @@ describe('Provider queue persistence boundaries', () => {
         name: 'AggregateError',
         errors: [
           expect.objectContaining({ code: 'EISDIR' }),
-          expect.objectContaining({ message: expect.stringContaining('SDK cleanup is incomplete') }),
+          expect.objectContaining({ message: 'Replacement cleanup refused' }),
         ],
       })
       expect(setup.owner()).toBe(sessionId)
@@ -1515,7 +1558,7 @@ describe('Provider queue persistence boundaries', () => {
       service.on('event', (incoming) => published.push(incoming))
       await block()
       await expect(service.createSession(directory)).rejects.toThrow('EISDIR')
-      expect(created.disconnect).toHaveBeenCalledOnce()
+      expect(created.disconnect).not.toHaveBeenCalled()
       expect(client.deleteSession).toHaveBeenCalledExactlyOnceWith(created.sessionId)
       expect(store.get(created.sessionId)).toBeUndefined()
       created.emit(event('session.title_changed', { title: 'Late rejected title' }))
@@ -1565,12 +1608,16 @@ describe('Provider queue persistence boundaries', () => {
       await block()
       await expect(service.createSession(directory))
         .rejects.toThrow('Session creation failed and SDK cleanup is incomplete')
-      expect(created.disconnect).toHaveBeenCalledOnce()
+      expect(created.disconnect).not.toHaveBeenCalled()
       expect(client.deleteSession).toHaveBeenCalledOnce()
       await unblock()
       await service.refreshDiscovery()
       expect(store.get(created.sessionId)).toBeUndefined()
-      await service.stop()
+      await expect(service.stop()).rejects.toMatchObject({
+        name: 'AggregateError',
+        message: 'Copilot SDK did not stop cleanly',
+        errors: [expect.objectContaining({ message: 'Disconnect refused' })],
+      })
       expect(created.disconnect).toHaveBeenCalledOnce()
     })
 
@@ -1585,7 +1632,7 @@ describe('Provider queue persistence boundaries', () => {
       expect(store.get('session')).toEqual(before)
       expect(store.get(replacement.sessionId)).toBeUndefined()
       expect(client.deleteSession).toHaveBeenCalledExactlyOnceWith(replacement.sessionId)
-      expect(replacement.disconnect).toHaveBeenCalledOnce()
+      expect(replacement.disconnect).not.toHaveBeenCalled()
       await rm(blocked, { recursive: true })
       client.listSessions = vi.fn(async () => [
         metadata('session', directory), metadata(replacement.sessionId, directory),
@@ -1626,7 +1673,7 @@ describe('Provider queue persistence boundaries', () => {
       expect(store.get(replacement.id)).toBeDefined()
       expect(errors).toEqual([expect.objectContaining({
         type: 'error', sessionId: replacement.id,
-        message: expect.stringContaining('SDK cleanup is incomplete'),
+        message: 'Cleanup unavailable',
       })])
     })
 
@@ -1679,7 +1726,7 @@ describe('Provider queue persistence boundaries', () => {
       finish(created)
       await rejected
       await stopping
-      expect(created.disconnect).toHaveBeenCalledOnce()
+      expect(created.disconnect).not.toHaveBeenCalled()
       expect(client.deleteSession).toHaveBeenCalledWith(created.sessionId)
       expect(store.get(created.sessionId)).toBeUndefined()
       await expect(service.createSession(directory)).rejects.toThrow('session service is stopping')

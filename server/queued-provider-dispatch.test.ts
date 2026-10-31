@@ -454,7 +454,7 @@ describe('provider queued delivery', () => {
   })
 
   it.each(['stop', 'delete'] as const)('settles pending SDK admission on %s without a late reattachment', async (action) => {
-    const { service, sdk, store } = await copilotFixture()
+    const { service, sdk, client, store } = await copilotFixture()
     const began = pause()
     const receipt = gate<string>()
     sdk.send.mockImplementationOnce(() => { began.resolve(); return receipt.promise })
@@ -465,8 +465,32 @@ describe('provider queued delivery', () => {
     receipt.resolve('too late')
     await Promise.resolve()
     expect(sdk.send).toHaveBeenCalledTimes(1)
-    expect(sdk.disconnect).toHaveBeenCalledTimes(1)
+    expect(sdk.disconnect).toHaveBeenCalledTimes(action === 'stop' ? 1 : 0)
+    expect(client.deleteSession).toHaveBeenCalledTimes(action === 'delete' ? 1 : 0)
     expect(action === 'stop' ? Boolean(store.get('session')?.queuedDispatch) : !store.get('session')).toBe(true)
+  })
+
+  it('closes a queued SDK assistant when provider deletion fails', async () => {
+    const { service, client, store } = await copilotFixture()
+    expect(await service.dispatchQueuedPrompt('session', 'middle', 'rewrite'))
+      .toMatchObject({ outcome: 'sent' })
+    const assistantId = store.get('session')?.messages.at(-1)?.id
+    const failure = new Error('Provider deletion failed')
+    client.deleteSession.mockRejectedValueOnce(failure)
+
+    await expect(service.deleteSession('session')).rejects.toBe(failure)
+
+    expect(store.get('session')).toMatchObject({
+      status: 'error',
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          id: assistantId,
+          role: 'assistant',
+          streaming: false,
+        }),
+      ]),
+    })
+    await expect(service.deleteSession('session')).resolves.toBeUndefined()
   })
 
   it.each(['assistant', 'stream_event', 'user', 'result'] as const)(

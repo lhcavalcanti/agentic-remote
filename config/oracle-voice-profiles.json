@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "id": "fast-en",
+      "version": "zipformer-en-20m-2023-02-17_sherpa-vits-ljspeech-medium",
+      "description": "Measured low-resource English streaming STT with the Piper en_US-ljspeech-medium voice trained from scratch on public-domain LJSpeech.",
+      "language": "en",
+      "modelType": "sherpa-onnx streaming transducer plus resident sherpa VITS",
+      "modelVersion": "zipformer-en-20M-2023-02-17 / vits-piper-en_US-ljspeech-medium",
+      "platforms": [
+        "linux-x64"
+      ],
+      "expandedBytes": 217928692,
+      "entryCount": 415,
+      "configuration": {
+        "AGENTIC_REMOTE_VOICE_STT_PROFILE": "zipformer",
+        "AGENTIC_REMOTE_VOICE_LANGUAGE": "en",
+        "AGENTIC_REMOTE_VOICE_THREADS": "1",
+        "AGENTIC_REMOTE_VOICE_ENDPOINT_MS": "800",
+        "AGENTIC_REMOTE_VOICE_STT_MODEL_DIR": "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
+        "AGENTIC_REMOTE_VOICE_TTS_ENGINE": "sherpa-vits",
+        "AGENTIC_REMOTE_VOICE_TTS_MODEL": "vits-piper-en_US-ljspeech-medium/en_US-ljspeech-medium.onnx",
+        "AGENTIC_REMOTE_VOICE_TTS_CONFIG": "vits-piper-en_US-ljspeech-medium/en_US-ljspeech-medium.onnx.json",
+        "AGENTIC_REMOTE_VOICE_TTS_TOKENS": "vits-piper-en_US-ljspeech-medium/tokens.txt",
+        "AGENTIC_REMOTE_VOICE_TTS_DATA_DIR": "vits-piper-en_US-ljspeech-medium/espeak-ng-data"
+      },
+      "notices": [
+        {
+          "name": "sherpa-onnx Zipformer English 20M model",
+          "license": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0"
+        },
+        {
+          "name": "sherpa-onnx runtime and VITS integration",
+          "license": "Apache-2.0",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/LICENSE"
+        },
+        {
+          "name": "eSpeak NG data included with the VITS archive",
+          "license": "GPL-3.0-or-later",
+          "url": "https://github.com/espeak-ng/espeak-ng/blob/1.52.0/COPYING"
+        },
+        {
+          "name": "Piper en_US-ljspeech-medium voice provenance",
+          "license": "Model card states public-domain LJSpeech and training from scratch",
+          "url": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ljspeech/medium/MODEL_CARD"
+        }
+      ],
+      "assets": [
+        {
+          "id": "zipformer-en-20m",
+          "destination": ".",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
+          "bytes": 127887156,
+          "sha256": "9c559283e8498d3fe95913c79ca1cb454bb26281ac2b102b41306c7d752765d9",
+          "expandedBytes": 136398588,
+          "entryCount": 15,
+          "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
+          "language": "en",
+          "modelType": "sherpa-onnx streaming Zipformer transducer int8",
+          "modelVersion": "20M-2023-02-17",
+          "archive": "tar.bz2"
+        },
+        {
+          "id": "ljspeech-medium-vits",
+          "destination": ".",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-medium.tar.bz2",
+          "bytes": 67169893,
+          "sha256": "3dfb4b759d8be032a4903a9538d128b0fda2a06ab1de6cbc2d93a97e2dd83dba",
+          "expandedBytes": 81529587,
+          "entryCount": 397,
+          "licenseUrl": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ljspeech/medium/MODEL_CARD",
+          "language": "en-US",
+          "modelType": "Piper VITS voice packaged for sherpa-onnx",
+          "modelVersion": "en_US-ljspeech-medium",
+          "archive": "tar.bz2"
+        },
+        {
+          "id": "ljspeech-model-card",
+          "destination": "provenance/ljspeech/MODEL_CARD",
+          "url": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ljspeech/medium/MODEL_CARD",
+          "bytes": 517,
+          "sha256": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d",
+          "licenseUrl": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ljspeech/medium/MODEL_CARD",
+          "language": "en-US",
+          "modelType": "Piper voice model card",
+          "modelVersion": "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+        }
+      ]
+    },
+    {
+      "id": "multilingual-quality",
+      "version": "nemotron-3.5-0.6b-160ms-int8-2026-06-11_sherpa-vits-faber-medium-research-only",
+      "description": "Research-only profile: Nemotron 3.5 multilingual STT configured for pt-BR with Faber TTS, which is fine-tuned from the research-only Lessac base voice.",
+      "language": "pt-BR",
+      "modelType": "Nemotron 3.5 FastConformer-RNNT plus resident sherpa VITS",
+      "modelVersion": "0.6b-160ms-int8-2026-06-11 / vits-piper-pt_BR-faber-medium",
+      "platforms": [
+        "linux-x64"
+      ],
+      "expandedBytes": 765774415,
+      "entryCount": 416,
+      "researchOnly": true,
+      "configuration": {
+        "AGENTIC_REMOTE_VOICE_STT_PROFILE": "nemotron",
+        "AGENTIC_REMOTE_VOICE_LANGUAGE": "pt-BR",
+        "AGENTIC_REMOTE_VOICE_THREADS": "4",
+        "AGENTIC_REMOTE_VOICE_ENDPOINT_MS": "1200",
+        "AGENTIC_REMOTE_VOICE_STT_MODEL_DIR": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11",
+        "AGENTIC_REMOTE_VOICE_TTS_ENGINE": "sherpa-vits",
+        "AGENTIC_REMOTE_VOICE_TTS_MODEL": "vits-piper-pt_BR-faber-medium/pt_BR-faber-medium.onnx",
+        "AGENTIC_REMOTE_VOICE_TTS_CONFIG": "vits-piper-pt_BR-faber-medium/pt_BR-faber-medium.onnx.json",
+        "AGENTIC_REMOTE_VOICE_TTS_TOKENS": "vits-piper-pt_BR-faber-medium/tokens.txt",
+        "AGENTIC_REMOTE_VOICE_TTS_DATA_DIR": "vits-piper-pt_BR-faber-medium/espeak-ng-data"
+      },
+      "notices": [
+        {
+          "name": "NVIDIA Nemotron 3.5 ASR model",
+          "license": "OpenMDW-1.1",
+          "url": "https://openmdw.ai/license/1-1/"
+        },
+        {
+          "name": "sherpa-onnx runtime and VITS integration",
+          "license": "Apache-2.0",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/LICENSE"
+        },
+        {
+          "name": "eSpeak NG data included with the VITS archive",
+          "license": "GPL-3.0-or-later",
+          "url": "https://github.com/espeak-ng/espeak-ng/blob/1.52.0/COPYING"
+        },
+        {
+          "name": "Faber voice dataset and direct model card",
+          "license": "Dataset stated CC0; model is fine-tuned from Lessac",
+          "url": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/pt/pt_BR/faber/medium/MODEL_CARD"
+        },
+        {
+          "name": "Lessac base voice ancestry",
+          "license": "Lessac/Voice Factory research-only licence; no general commercial-use claim",
+          "url": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html"
+        }
+      ],
+      "assets": [
+        {
+          "id": "nemotron-3.5-160ms-int8",
+          "destination": ".",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11.tar.bz2",
+          "bytes": 475273363,
+          "sha256": "a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
+          "expandedBytes": 684574987,
+          "entryCount": 16,
+          "licenseUrl": "https://openmdw.ai/license/1-1/",
+          "language": "40 language-locales including en-US and pt-BR",
+          "modelType": "Nemotron 3.5 FastConformer cache-aware RNNT ONNX int8",
+          "modelVersion": "0.6b-160ms-int8-2026-06-11",
+          "archive": "tar.bz2"
+        },
+        {
+          "id": "faber-medium-vits",
+          "destination": ".",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pt_BR-faber-medium.tar.bz2",
+          "bytes": 67183065,
+          "sha256": "7add3f923ad6bc25ca8a192805fd1a64d1b3893e4611c4a9719545a825039a83",
+          "expandedBytes": 81199149,
+          "entryCount": 397,
+          "licenseUrl": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/pt/pt_BR/faber/medium/MODEL_CARD",
+          "language": "pt-BR",
+          "modelType": "Piper VITS voice packaged for sherpa-onnx",
+          "modelVersion": "pt_BR-faber-medium",
+          "archive": "tar.bz2"
+        },
+        {
+          "id": "faber-model-card",
+          "destination": "provenance/faber/MODEL_CARD",
+          "url": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/pt/pt_BR/faber/medium/MODEL_CARD",
+          "bytes": 279,
+          "sha256": "01f1a5bcfd0538782726059ae407eae9c2dd1b5b35f7298fd53a68de91afe563",
+          "licenseUrl": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/pt/pt_BR/faber/medium/MODEL_CARD",
+          "language": "pt-BR",
+          "modelType": "Piper voice model card",
+          "modelVersion": "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+        }
+      ]
+    }
+  ]
+}

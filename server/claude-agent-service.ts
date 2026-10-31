@@ -1219,7 +1219,11 @@ export class ClaudeAgentService
     const session = this.requireSession(sessionId)
     if (session.status === 'running' || session.status === 'waiting') {
       if (!enqueue) {
-        throw new Error('Claude Agent is already running; queue this message instead')
+        // Refused before anything is handed over, so a caller may queue it instead.
+        throw Object.assign(
+          new Error('Claude Agent is already running; queue this message instead'),
+          { statusCode: 409, uncertainDelivery: false },
+        )
       }
       const queued = await this.store.enqueuePrompt(sessionId, {
         id: randomUUID(),

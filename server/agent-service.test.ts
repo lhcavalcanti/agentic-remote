@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
   AssistantMessageEvent,
+  GetAuthStatusResponse,
+  GetStatusResponse,
   ModelInfo,
   ResumeSessionConfig,
   SessionConfig,
@@ -41,6 +43,7 @@ class DeferredSession implements CopilotSessionLike {
   readonly taskProgress = new Map<string, CopilotTaskProgress>()
   readonly sentPrompts: string[] = []
   disconnectCount = 0
+  disconnectError?: Error
   readonly invokedCommands: string[] = []
   readonly assignedNames: string[] = []
   readonly modeSwitches: string[] = []
@@ -59,9 +62,10 @@ class DeferredSession implements CopilotSessionLike {
     reasoningEffort: 'medium',
     contextTier: 'default' as const,
   }
-  private readonly responseResolvers: Array<
-    (value: AssistantMessageEvent | undefined) => void
-  > = []
+  private readonly responseWaits: Array<{
+    resolve: (value: AssistantMessageEvent | undefined) => void
+    reject?: (error: unknown) => void
+  }> = []
   private readonly eventHandlers: Array<(event: SessionEvent) => void> = []
   readonly rpc = {
     model: {
@@ -182,8 +186,8 @@ class DeferredSession implements CopilotSessionLike {
     if (this.sendError) {
       return Promise.reject(this.sendError)
     }
-    return new Promise((resolve) => {
-      this.responseResolvers.push(resolve)
+    return new Promise((resolve, reject) => {
+      this.responseWaits.push({ resolve, reject })
     })
   }
 
@@ -191,18 +195,56 @@ class DeferredSession implements CopilotSessionLike {
     expect(mode).toBe('immediate')
     this.sentPrompts.push(prompt)
     if (this.sendError) throw this.sendError
-    this.responseResolvers.push((response) => {
-      if (response) this.emit(response)
-      this.emit({
-        id: randomUUID(), type: 'session.idle', timestamp: new Date().toISOString(),
-        parentId: null, data: {},
-      } as SessionEvent)
+    this.responseWaits.push({
+      resolve: (response) => {
+        if (response) this.emit(response)
+        this.emit({
+          id: randomUUID(), type: 'session.idle', timestamp: new Date().toISOString(),
+          parentId: null, data: {},
+        } as SessionEvent)
+      },
     })
     return randomUUID()
   }
 
   resolvePrompt(response?: AssistantMessageEvent): void {
-    this.responseResolvers.shift()?.(response)
+    this.responseWaits.shift()?.resolve(response)
+  }
+
+  resolveSessionIdle(): void {
+    const waits = this.responseWaits.splice(0)
+    for (const wait of waits) wait.resolve(undefined)
+    this.emit({
+      id: randomUUID(),
+      type: 'session.idle',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: {},
+    } as SessionEvent)
+  }
+
+  disconnectPendingWaits(error: Error): {
+    resolveLate: () => void
+    emitClearedIdle: () => void
+  } {
+    const waits = this.responseWaits.splice(0)
+    const handlers = this.eventHandlers.splice(0)
+    for (const wait of waits) wait.reject?.(error)
+    const idle = {
+      id: randomUUID(),
+      type: 'session.idle',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: {},
+    } as SessionEvent
+    return {
+      resolveLate: () => {
+        for (const wait of waits) wait.resolve(undefined)
+      },
+      emitClearedIdle: () => {
+        for (const handler of handlers) handler(idle)
+      },
+    }
   }
 
   async getEvents(): Promise<SessionEvent[]> {
@@ -212,11 +254,14 @@ class DeferredSession implements CopilotSessionLike {
   async abort() {}
   async disconnect() {
     this.disconnectCount += 1
+    if (this.disconnectError) throw this.disconnectError
   }
 }
 
 class FakeCopilotClient implements CopilotClientLike {
   readonly session = new DeferredSession()
+  getStatus?: () => Promise<GetStatusResponse>
+  getAuthStatus?: () => Promise<GetAuthStatusResponse>
   nextSessionList?: Promise<SessionMetadata[]>
   resumeError?: Error
   createError?: Error
@@ -225,7 +270,10 @@ class FakeCopilotClient implements CopilotClientLike {
   models: ModelInfo[] = []
   readonly createdConfigs: SessionConfig[] = []
   readonly deletedSessionIds: string[] = []
+  readonly resumedConfigs: ResumeSessionConfig[] = []
   readonly resumedSessionIds: string[] = []
+  retireMissingSession?: (sessionId: string) => Promise<void>
+  deleteError?: Error
   stopErrors: Error[] = []
   readonly rpc = {
     commands: {
@@ -255,9 +303,10 @@ class FakeCopilotClient implements CopilotClientLike {
   }
   async resumeSession(
     sessionId: string,
-    _config: ResumeSessionConfig,
+    config: ResumeSessionConfig,
   ): Promise<CopilotSessionLike> {
     this.resumedSessionIds.push(sessionId)
+    this.resumedConfigs.push(config)
     if (this.resumeError) {
       throw this.resumeError
     }
@@ -275,12 +324,21 @@ class FakeCopilotClient implements CopilotClientLike {
   }
   async deleteSession(sessionId: string) {
     this.deletedSessionIds.push(sessionId)
+    if (this.deleteError) throw this.deleteError
   }
 }
 
 const directories: string[] = []
 const services = new Set<AgentService>()
 const startService = AgentService.prototype.start
+const normalSdkSessionConfiguration = {
+  enableConfigDiscovery: true,
+  enableSkills: true,
+  enableOnDemandInstructionDiscovery: true,
+  enableFileHooks: true,
+  enableHostGitOperations: true,
+  askUserVariant: 'elicitation',
+}
 
 function configurableModel(): ModelInfo {
   return {
@@ -346,7 +404,1020 @@ beforeEach(() => {
   vi.spyOn(TmuxTerminalSessionController.prototype, 'ownerStopped').mockResolvedValue(false)
 })
 
+describe('AgentService startup diagnostics', () => {
+  it('logs only sanitized SDK runtime diagnostic fields after startup', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let started = false
+    client.start = async () => {
+      started = true
+    }
+    client.getStatus = async () => {
+      if (!started) throw new Error('Runtime status requested before startup')
+      return {
+        version: '1.0.98',
+        protocolVersion: 3,
+      }
+    }
+    client.getAuthStatus = async () => {
+      if (!started) throw new Error('Auth status requested before startup')
+      return {
+        isAuthenticated: true,
+        authType: 'gh-cli',
+        login: 'sensitive-login',
+        host: 'https://sensitive.example',
+        statusMessage: 'sensitive provider detail',
+      }
+    }
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+
+    expect(info).toHaveBeenCalledWith(
+      'Copilot SDK runtime: runtimeVersion=1.0.98 protocolVersion=3 authenticated=true authType=gh-cli',
+    )
+    expect(info.mock.calls.flat().join(' ')).not.toMatch(
+      /sensitive-login|sensitive\.example|sensitive provider detail/,
+    )
+    await service.stop()
+  })
+
+  it('warns without exposing a diagnostic provider error', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    client.getStatus = async () => {
+      throw new Error('secret-token provider detail')
+    }
+    client.getAuthStatus = async () => ({
+      isAuthenticated: true,
+      authType: 'gh-cli',
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await expect(service.start()).resolves.toBeUndefined()
+
+    expect(warning).toHaveBeenCalledWith(
+      'Unable to read Copilot SDK runtime diagnostic',
+    )
+    expect(warning.mock.calls.flat().join(' ')).not.toContain(
+      'secret-token provider detail',
+    )
+    await service.stop()
+  })
+})
+
 describe('AgentService deletion', () => {
+  it('enables CLI configuration discovery for normal SDK session creation', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await service.createSession(directory, false)
+
+    expect(client.createdConfigs[0]).toMatchObject(normalSdkSessionConfiguration)
+    await service.stop()
+  })
+
+  it('enables CLI configuration discovery when resuming a persisted SDK session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = '12345678-aaaa-bbbb-cccc-123456789abe'
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: sessionId,
+        cwd: directory,
+        title: 'Persisted SDK session',
+        updatedAt: '2026-10-20T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await service.activateSession(sessionId)
+
+    expect(client.resumedConfigs[0]).toMatchObject(normalSdkSessionConfiguration)
+    await service.stop()
+  })
+
+  it('deletes an SDK session without detaching it first', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const detach = Object.assign(
+      new Error('Unhandled method session.detach'),
+      { code: -32601 },
+    )
+    client.session.disconnectError = detach
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    await service.deleteSession(created.id)
+
+    expect(client.session.disconnectCount).toBe(0)
+    expect(client.deletedSessionIds).toContain(created.id)
+    expect(store.get(created.id)).toBeUndefined()
+  })
+
+  it('preserves an SDK session when provider deletion fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    client.retireMissingSession = vi.fn(async () => {})
+
+    await expect(service.deleteSession(created.id)).rejects.toBe(failure)
+
+    expect(client.retireMissingSession).not.toHaveBeenCalled()
+    expect(store.get(created.id)).toBeDefined()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('reconciles a follow-up admitted while provider deletion is draining admissions', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up while deletion starts',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up while deletion starts',
+      ),
+    )
+    const followUpAssistant = store.get(created.id)?.messages.at(-1)?.id
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    await vi.waitFor(() =>
+      expect(service['deletingSessions'].has(created.id)).toBe(true),
+    )
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    expect(
+      service['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(followUpAssistant)
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    client.session.resolveSessionIdle()
+
+    expect(await deletionOutcome).toBe(failure)
+    expect(store.get(created.id)).toMatchObject({
+      status: 'error',
+      activity: undefined,
+    })
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === followUpAssistant,
+      ),
+    ).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+
+    client.deleteError = undefined
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+  })
+
+  it('blocks retry until the aborted session-wide SDK wait settles after provider deletion fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    const handler = client.createdConfigs.at(-1)?.onPermissionRequest
+    if (!handler) throw new Error('Permission handler was not configured')
+    const permission = handler(
+      {
+        kind: 'shell',
+        fullCommandText: 'echo guarded',
+        intention: 'Run guarded work',
+        commands: [],
+        possiblePaths: [],
+        possibleUrls: [],
+        hasWriteFileRedirection: false,
+        canOfferSessionApproval: false,
+      },
+      { sessionId: created.id },
+    )
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('waiting'),
+    )
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const retryOutcome = await service
+      .sendMessage(created.id, 'Retry before the old idle')
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      )
+    client.session.resolveSessionIdle()
+
+    expect(await deletionOutcome).toBe(failure)
+    await expect(permission).resolves.toEqual({ kind: 'user-not-available' })
+    expect(retryOutcome).toMatchObject({
+      error: {
+        statusCode: 409,
+        uncertainDelivery: false,
+      },
+    })
+    const retained = store.get(created.id)
+    expect(retained).toMatchObject({
+      status: 'error',
+      activity: undefined,
+      pendingPermission: undefined,
+    })
+    expect(retained?.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+
+    client.deleteError = undefined
+    await expect(
+      service.sendMessage(created.id, 'Retry after failed deletion'),
+    ).resolves.toMatchObject({ status: 'running' })
+    client.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('idle'),
+    )
+
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+    expect(store.get(created.id)).toBeUndefined()
+  })
+
+  it('releases failed deletion when SDK disconnect rejects the interrupted wait without stale settlement', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    const interruptedAssistant = store.get(created.id)?.messages.at(-1)?.id
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    let reconciliationStarted = false
+    const updateIf = store.updateIf.bind(store)
+    vi.spyOn(store, 'updateIf').mockImplementation(async (...args) => {
+      reconciliationStarted = true
+      return updateIf(...args)
+    })
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await expect(
+      service.sendMessage(created.id, 'Retry before disconnect settles'),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+    const disconnected = client.session.disconnectPendingWaits(
+      new Error('Session disconnected while waiting for a response'),
+    )
+    await vi.waitFor(() =>
+      expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const releasedWithoutEvent = reconciliationStarted
+    if (!releasedWithoutEvent) {
+      // Release the old event-only barrier so the RED regression can clean up.
+      disconnected.emitClearedIdle()
+    }
+
+    expect(await deletionOutcome).toBe(failure)
+    expect(releasedWithoutEvent).toBe(true)
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === interruptedAssistant,
+      ),
+    ).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+
+    client.deleteError = undefined
+    await expect(
+      service.sendMessage(created.id, 'Retry after disconnect settled'),
+    ).resolves.toMatchObject({ status: 'running' })
+    const retryAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    disconnected.resolveLate()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(service['activePrompts'].get(created.id)?.assistantMessageId).toBe(
+      retryAssistant,
+    )
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === retryAssistant,
+      ),
+    ).toMatchObject({ content: '', streaming: true })
+
+    client.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('idle'),
+    )
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+  })
+
+  it('keeps failed deletion exclusive until a tracker-owned follow-up settles', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up after the original wait',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up after the original wait',
+      ),
+    )
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    await vi.waitFor(() =>
+      expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+    )
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+    const followUpAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    let deletionSettled = false
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    ).finally(() => {
+      deletionSettled = true
+    })
+
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const releasedBeforeStaleIdle = deletionSettled
+    const retryOutcome = await service
+      .sendMessage(created.id, 'Retry before the follow-up idle')
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      )
+    client.session.resolveSessionIdle()
+
+    expect(await deletionOutcome).toBe(failure)
+    expect(releasedBeforeStaleIdle).toBe(false)
+    expect(retryOutcome).toMatchObject({
+      error: {
+        statusCode: 409,
+        uncertainDelivery: false,
+      },
+    })
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === followUpAssistant,
+      ),
+    ).toMatchObject({
+      role: 'assistant',
+      streaming: false,
+    })
+
+    client.deleteError = undefined
+    await expect(
+      service.sendMessage(created.id, 'Retry after the follow-up settled'),
+    ).resolves.toMatchObject({ status: 'running' })
+    const retryAssistant =
+      service['activePrompts'].get(created.id)?.assistantMessageId
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(service['activePrompts'].get(created.id)?.assistantMessageId).toBe(
+      retryAssistant,
+    )
+    expect(
+      store.get(created.id)?.messages.find(
+        (message) => message.id === retryAssistant,
+      ),
+    ).toMatchObject({ content: '', streaming: true })
+
+    client.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(store.get(created.id)?.status).toBe('idle'),
+    )
+    await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+  })
+
+  it.each(['session.error', 'session.shutdown'] as const)(
+    'settles failed deletion when a tracker-owned follow-up ends with %s',
+    async (type) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const store = new SessionStore(path.join(directory, 'state'))
+      const client = new FakeCopilotClient()
+      const service = new AgentService(
+        store,
+        client,
+        async () => [],
+        async () => undefined,
+      )
+      await service.start()
+      const created = await service.createSession(directory, false, false)
+      await service.sendMessage(created.id, 'Start guarded work')
+      let acceptFollowUp!: (messageId: string) => void
+      client.session.send = vi.fn(async ({ prompt }) => {
+        client.session.sentPrompts.push(prompt)
+        return new Promise<string>((resolve) => {
+          acceptFollowUp = resolve
+        })
+      })
+      const followingUp = service.sendMessage(
+        created.id,
+        'Follow up after the original wait',
+      )
+      await vi.waitFor(() =>
+        expect(client.session.sentPrompts).toContain(
+          'Follow up after the original wait',
+        ),
+      )
+      client.session.resolvePrompt({
+        id: randomUUID(),
+        type: 'assistant.message',
+        timestamp: new Date().toISOString(),
+        parentId: null,
+        data: { messageId: 'original-response', content: 'base answer' },
+      } as AssistantMessageEvent)
+      acceptFollowUp('follow-up-message')
+      await followingUp
+      await vi.waitFor(() =>
+        expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+      )
+      expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+      const failure = new Error('Provider deletion failed')
+      client.deleteError = failure
+      let deletionSettled = false
+      const deletionOutcome = service.deleteSession(created.id).then(
+        () => undefined,
+        (error: unknown) => error,
+      ).finally(() => {
+        deletionSettled = true
+      })
+
+      await vi.waitFor(() =>
+        expect(client.deletedSessionIds).toContain(created.id),
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      const releasedBeforeTrackerEnded = deletionSettled
+      client.session.emit({
+        id: randomUUID(),
+        type,
+        timestamp: new Date().toISOString(),
+        parentId: null,
+        data: type === 'session.error'
+          ? { errorType: 'runtime', message: 'Follow-up disconnected' }
+          : {},
+      } as SessionEvent)
+
+      expect(await deletionOutcome).toBe(failure)
+      expect(releasedBeforeTrackerEnded).toBe(false)
+      client.deleteError = undefined
+      await expect(service.deleteSession(created.id)).resolves.toBeUndefined()
+    },
+  )
+
+  it('settles tracker-owned failed deletion when SDK teardown clears handlers without an event', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const store = new SessionStore(stateDirectory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up before SDK teardown',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up before SDK teardown',
+      ),
+    )
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    await vi.waitFor(() =>
+      expect(service['sdkPromptRuns'].has(created.id)).toBe(false),
+    )
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(true)
+
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+
+    let disconnected:
+      | ReturnType<DeferredSession['disconnectPendingWaits']>
+      | undefined
+    client.session.disconnect = vi.fn(async () => {
+      client.session.disconnectCount += 1
+      disconnected = client.session.disconnectPendingWaits(
+        new Error('Session disconnected while waiting for a response'),
+      )
+    })
+    const stopping = service.stop()
+    const settledFromTeardown =
+      !service['sdkFollowUpTrackers'].has(created.id)
+    if (!settledFromTeardown) {
+      // Let the RED implementation finish so the regression can report the
+      // missing teardown signal instead of wedging its own cleanup.
+      client.session.resolveSessionIdle()
+    }
+
+    expect(await deletionOutcome).toBe(failure)
+    await stopping
+    if (!disconnected) {
+      throw new Error('The SDK session was not disconnected during teardown')
+    }
+
+    const retryClient = new FakeCopilotClient()
+    retryClient.nextSessionList = Promise.resolve([
+      {
+        sessionId: created.id,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Retained after failed deletion',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const retryStore = new SessionStore(stateDirectory)
+    const retryService = new AgentService(
+      retryStore,
+      retryClient,
+      async () => [],
+      async () => undefined,
+    )
+    await retryService.start()
+    await retryService.activateSession(created.id)
+    await expect(
+      retryService.sendMessage(created.id, 'Retry after SDK teardown'),
+    ).resolves.toMatchObject({ status: 'running' })
+    const retryAssistant =
+      retryService['activePrompts'].get(created.id)?.assistantMessageId
+
+    disconnected.resolveLate()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(settledFromTeardown).toBe(true)
+    expect(
+      retryService['activePrompts'].get(created.id)?.assistantMessageId,
+    ).toBe(retryAssistant)
+    expect(
+      retryStore.get(created.id)?.messages.find(
+        (message) => message.id === retryAssistant,
+      ),
+    ).toMatchObject({ content: '', streaming: true })
+
+    retryClient.session.resolveSessionIdle()
+    await vi.waitFor(() =>
+      expect(retryStore.get(created.id)?.status).toBe('idle'),
+    )
+    await expect(
+      retryService.deleteSession(created.id),
+    ).resolves.toBeUndefined()
+  })
+
+  it('settles a follow-up tracker registered after the initial SDK teardown sweep', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, false)
+    await service.sendMessage(created.id, 'Start guarded work')
+    let acceptFollowUp!: (messageId: string) => void
+    client.session.send = vi.fn(async ({ prompt }) => {
+      client.session.sentPrompts.push(prompt)
+      return new Promise<string>((resolve) => {
+        acceptFollowUp = resolve
+      })
+    })
+    const followingUp = service.sendMessage(
+      created.id,
+      'Follow up before the post-admission sweep',
+    )
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toContain(
+        'Follow up before the post-admission sweep',
+      ),
+    )
+    client.session.resolvePrompt({
+      id: randomUUID(),
+      type: 'assistant.message',
+      timestamp: new Date().toISOString(),
+      parentId: null,
+      data: { messageId: 'original-response', content: 'base answer' },
+    } as AssistantMessageEvent)
+    await vi.waitFor(() =>
+      expect(
+        service['pendingSdkFollowUps'].get(created.id)?.previousCompleted,
+      ).toBe(true),
+    )
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+
+    const failure = new Error('Provider deletion failed')
+    client.deleteError = failure
+    const deletionOutcome = service.deleteSession(created.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await vi.waitFor(() =>
+      expect(service['deletingSessions'].has(created.id)).toBe(true),
+    )
+
+    const stopping = service.stop()
+    expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+    acceptFollowUp('follow-up-message')
+    await followingUp
+    await vi.waitFor(() =>
+      expect(client.deletedSessionIds).toContain(created.id),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const settledAfterAdmissions =
+      !service['sdkFollowUpTrackers'].has(created.id)
+    if (!settledAfterAdmissions) {
+      // Let the RED implementation finish so the regression reports the
+      // missing post-admission sweep instead of wedging its own cleanup.
+      client.session.resolveSessionIdle()
+    }
+
+    expect(await deletionOutcome).toBe(failure)
+    await stopping
+    expect(settledAfterAdmissions).toBe(true)
+    expect(store.get(created.id)).toBeDefined()
+  })
+
+  it.each([
+    ['provider message', new Error('Session not found: active-session')],
+    [
+      'provider code',
+      Object.assign(new Error('Provider rejected deletion'), {
+        code: 'SESSION_NOT_FOUND',
+      }),
+    ],
+  ])('treats a missing SDK identity reported by %s as deleted', async (_label, missing) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.deleteError = missing
+    client.retireMissingSession = vi.fn(async () => {})
+
+    await service.deleteSession(created.id)
+
+    expect(client.retireMissingSession).toHaveBeenCalledWith(created.id)
+    expect(store.get(created.id)).toBeUndefined()
+    expect(service['sessions'].has(created.id)).toBe(false)
+  })
+
+  it('preserves an SDK session when missing-session retirement fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.deleteError = new Error(`Session not found: ${created.id}`)
+    const retirementFailure = new Error('SDK local retirement failed')
+    client.retireMissingSession = vi.fn(async () => {
+      throw retirementFailure
+    })
+
+    await expect(service.deleteSession(created.id)).rejects.toBe(retirementFailure)
+
+    expect(store.get(created.id)).toBeDefined()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('does not detach a retired missing SDK identity during shutdown', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const sdkSessions = new Map<string, CopilotSessionLike>()
+    client.retireMissingSession = vi.fn(async (sessionId) => {
+      sdkSessions.delete(sessionId)
+    })
+    client.stop = async () => {
+      const results = await Promise.allSettled(
+        [...sdkSessions.values()].map((session) => session.disconnect()),
+      )
+      return results.flatMap((result) =>
+        result.status === 'rejected'
+          ? [result.reason instanceof Error
+              ? result.reason
+              : new Error(String(result.reason))]
+          : [],
+      )
+    }
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    sdkSessions.set(created.id, client.session)
+    client.deleteError = new Error(`Session not found: ${created.id}`)
+
+    await service.deleteSession(created.id)
+    await service.stop()
+
+    expect(client.retireMissingSession).toHaveBeenCalledWith(created.id)
+    expect(client.session.disconnectCount).toBe(0)
+  })
+
+  it('preserves an SDK session when session.delete is not supported', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const unsupported = Object.assign(
+      new Error('Method not found: session.delete'),
+      { code: -32601 },
+    )
+    client.deleteError = unsupported
+
+    await expect(service.deleteSession(created.id)).rejects.toBe(unsupported)
+
+    expect(store.get(created.id)).toBeDefined()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('rejects SDK-to-tmux activation after failed detach without reopening the terminal', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => false),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      reopen: vi.fn(async () => ({
+        sessionName: 'agentic-remote',
+        windowId: '@30',
+      })),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.setBackend(created.id, 'terminal')
+    const failure = new Error('Detach failed')
+    client.session.disconnectError = failure
+
+    await expect(service.activateSession(created.id)).rejects.toBe(failure)
+
+    expect(terminal.reopen).not.toHaveBeenCalled()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('leaves an SDK session unsuspended after failed detach', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failure = new Error('Detach failed')
+    client.session.disconnectError = failure
+
+    await expect(service.suspendSession(created.id)).rejects.toBe(failure)
+
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+    expect(service['sessions'].get(created.id)).toBe(client.session)
+  })
+
+  it('performs failed creation cleanup without detaching', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const failure = new Error('Mode unavailable')
+    client.session.modeSetError = failure
+    client.session.disconnectError = new Error('Detach failed')
+
+    await expect(service.createSession(
+      directory,
+      false,
+      true,
+      'copilot',
+      undefined,
+      undefined,
+      undefined,
+      'plan',
+    )).rejects.toBe(failure)
+
+    expect(client.session.disconnectCount).toBe(0)
+    expect(client.deletedSessionIds).toContain(client.session.sessionId)
+  })
+
   it('extracts visible prompts while hiding injected context messages', () => {
     const events = JSON.parse(`[
       {
@@ -515,6 +1586,11 @@ describe('AgentService deletion', () => {
         role: 'assistant',
         content: '**Done.** The requested work is live.',
         activityStatus: undefined,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+          completedAt: '2026-07-22T00:00:02.000Z',
+        },
       }),
     ])
   })
@@ -1061,6 +2137,280 @@ describe('AgentService deletion', () => {
     )
   })
 
+  it('returns an empty command catalog for a suspended session without loading its runtime', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspended-commands-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'resting-commands',
+        cwd: directory,
+        title: 'Resting commands',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    await store.setSuspended('resting-commands', true)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await expect(service.listCommands('resting-commands')).resolves.toEqual([])
+    expect(client.resumedSessionIds).toEqual([])
+    expect(client.createdConfigs).toEqual([])
+  })
+
+  it('suspends once across repeated requests and resumes the same SDK session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-repeat-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({
+      id: created.id,
+      suspended: true,
+    })
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({
+      id: created.id,
+      suspended: true,
+    })
+    expect(client.session.disconnectCount).toBe(1)
+    await expect(
+      service.configureRuntime(created.id, {
+        model: 'fixture-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      }),
+    ).rejects.toMatchObject({
+      message: 'Resume the session before using its provider runtime',
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+
+    await expect(service.resumeSession(created.id)).resolves.toMatchObject({
+      id: created.id,
+      suspended: false,
+    })
+    await expect(service.listCommands(created.id)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'model' })]),
+    )
+    expect(client.resumedSessionIds).toEqual([created.id])
+  })
+
+  it('serializes concurrent repeated suspension without tearing down twice', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-concurrent-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let releaseTasks: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    const tasks = vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await held
+      return listBackgroundTasks(id)
+    })
+
+    const first = service.suspendSession(created.id)
+    const second = service.suspendSession(created.id)
+    await vi.waitFor(() => expect(tasks).toHaveBeenCalled())
+    releaseTasks()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ id: created.id, suspended: true }),
+      expect.objectContaining({ id: created.id, suspended: true }),
+    ])
+    expect(client.session.disconnectCount).toBe(1)
+  })
+
+  it('refuses command catalogs before touching a runtime reserved for suspension', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-catalog-race-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let releaseTasks: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    const tasks = vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await held
+      return listBackgroundTasks(id)
+    })
+    const commands = vi.spyOn(client.session.rpc.commands, 'list')
+
+    const suspending = service.suspendSession(created.id)
+    await vi.waitFor(() => expect(tasks).toHaveBeenCalled())
+    const outcome = await service.listCommands(created.id).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
+    releaseTasks()
+    await suspending
+
+    expect(outcome).toMatchObject({
+      error: {
+        message: 'Resume the session before using its provider runtime',
+        statusCode: 409,
+        uncertainDelivery: false,
+      },
+    })
+    expect(commands).not.toHaveBeenCalled()
+  })
+
+  it('waits for an admitted command catalog before tearing down its runtime', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-catalog-order-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let releaseOwnership: () => void = () => {}
+    const ownershipHeld = new Promise<void>((resolve) => {
+      releaseOwnership = resolve
+    })
+    const terminal = {
+      has: vi.fn(async () => {
+        await ownershipHeld
+        return false
+      }),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const commands = vi.spyOn(client.session.rpc.commands, 'list')
+    const catalog = service.listCommands(created.id)
+    await vi.waitFor(() => expect(terminal.has).toHaveBeenCalled())
+    let releaseTasks: () => void = () => {}
+    const tasksHeld = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    const tasks = vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await tasksHeld
+      return listBackgroundTasks(id)
+    })
+
+    const suspending = service.suspendSession(created.id)
+    await vi.waitFor(() =>
+      expect(service['suspendingSessions'].has(created.id)).toBe(true),
+    )
+    const tasksBeforeCatalogFinished = tasks.mock.calls.length
+    const disconnectsBeforeCatalogFinished = client.session.disconnectCount
+
+    releaseOwnership()
+    await expect(catalog).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'model' })]),
+    )
+    releaseTasks()
+    await expect(suspending).resolves.toMatchObject({ suspended: true })
+    expect(tasksBeforeCatalogFinished).toBe(0)
+    expect(disconnectsBeforeCatalogFinished).toBe(0)
+    expect(tasks).toHaveBeenCalled()
+    expect(client.session.disconnectCount).toBe(1)
+    expect(commands).toHaveBeenCalledOnce()
+  })
+
+  it('clears terminal ownership and types runtime changes after suspension', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-suspend-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'terminal-suspend',
+        cwd: directory,
+        title: 'Terminal suspend',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      has: vi.fn(async () => true),
+      stop: vi.fn(async (_id: string, beforeStop?: () => Promise<void> | void) => {
+        await beforeStop?.()
+        return true
+      }),
+      configure: vi.fn(async () => false),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    service['externalSessionIds'].add('terminal-suspend')
+
+    await expect(service.suspendSession('terminal-suspend')).resolves.toMatchObject({
+      suspended: true,
+    })
+    expect(service['externalSessionIds'].has('terminal-suspend')).toBe(false)
+    await expect(
+      service.configureRuntime('terminal-suspend', {
+        model: 'fixture-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      }),
+    ).rejects.toMatchObject({
+      message: 'Resume the session before using its provider runtime',
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+    expect(terminal.configure).not.toHaveBeenCalled()
+  })
+
   it('restarts a queue left standing by a drain that failed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-drain-'))
     directories.push(directory)
@@ -1128,16 +2478,22 @@ describe('AgentService deletion', () => {
       service.sendMessage(created.id, 'slip through', false),
     ).rejects.toThrow(/Resume the session/)
 
-    // Lifecycle work waits its turn rather than interleaving with the
-    // teardown, and finds the session suspended when it gets there.
+    // Lifecycle work cannot interleave with teardown. Restart waits and finds
+    // the session suspended; Clear owns its own exclusive admission and is
+    // refused while suspension owns that admission.
     const restarting = service.restartSession(created.id)
-    const clearing = service.clearConversation(created.id)
+    const clearing = service.clearConversation(created.id).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
 
     releaseTasks()
     await suspending
     expect(service.getSession(created.id)?.suspended).toBe(true)
     await expect(restarting).rejects.toThrow(/Resume the session/)
-    await expect(clearing).rejects.toThrow(/Resume the session/)
+    expect(await clearing).toMatchObject({
+      error: { message: expect.stringMatching(/Resume the session/) },
+    })
     await service.stop()
   })
 
@@ -1185,12 +2541,30 @@ describe('AgentService deletion', () => {
     )
     await vi.waitFor(() => expect(terminal.send).toHaveBeenCalled())
 
-    await expect(
-      service.suspendSession(client.session.sessionId),
-    ).rejects.toThrow(/only be suspended while idle/)
+    let suspendSettled = false
+    const suspension = service.suspendSession(client.session.sessionId).then(
+      (value) => {
+        suspendSettled = true
+        return { value }
+      },
+      (error: unknown) => {
+        suspendSettled = true
+        return { error }
+      },
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const settledBeforeSend = suspendSettled
 
     releaseSend()
     await sending.catch(() => undefined)
+    const outcome = await suspension
+    expect(settledBeforeSend).toBe(true)
+    expect(outcome).toMatchObject({
+      error: {
+        message: 'Session can only be suspended while idle',
+        statusCode: 409,
+      },
+    })
     await service.stop()
   })
 
@@ -2697,12 +4071,16 @@ describe('AgentService deletion', () => {
         expect(terminal.create).not.toHaveBeenCalled()
         expect(terminal.send).not.toHaveBeenCalled()
         expect(client.resumedSessionIds).toEqual([])
-        const retained = store.get('terminal-owner')
+        let retained = store.get('terminal-owner')
         await expect(service.openSession('terminal-owner')).resolves.toEqual(retained)
         expect(store.shouldRecoverTerminalSession('terminal-owner')).toBe(true)
         await expect(service.activateSession('terminal-owner'))
           .rejects.toThrow(/Reopening saved terminal sessions is not available/)
         await expect(service.listCommands('terminal-owner')).rejects.toThrow(/discovery/)
+        await store.setSuspended('terminal-owner', true)
+        await expect(service.listCommands('terminal-owner')).resolves.toEqual([])
+        await store.setSuspended('terminal-owner', false)
+        retained = store.get('terminal-owner')
         expect(client.resumedSessionIds).toEqual([])
         expect(store.get('terminal-owner')).toEqual(retained)
         await expect(service.sendMessage('terminal-owner', 'Do not assume ownership')).rejects.toThrow(/discovery/)
@@ -3125,6 +4503,7 @@ describe('AgentService deletion', () => {
     expect(service.store.get(created.id)).toBeUndefined()
     expect(client.deletedSessionIds).toContain(created.id)
     expect(client.createdConfigs.at(-1)).toMatchObject({
+      ...normalSdkSessionConfiguration,
       sessionId: cleared.id,
       workingDirectory: directory,
     })
@@ -4607,7 +5986,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('recreates an empty managed session when Copilot cannot resume it', async () => {
+  it('recreates a missing empty session with CLI configuration discovery', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const store = new SessionStore(path.join(directory, 'state'))
@@ -4641,6 +6020,7 @@ describe('AgentService deletion', () => {
     expect(client.createdConfigs.at(-1)).toMatchObject({
       sessionId,
       workingDirectory: directory,
+      ...normalSdkSessionConfiguration,
     })
     expect(client.session.modeSwitches).toEqual([])
     await service.stop()
@@ -5557,6 +6937,10 @@ describe('AgentService deletion', () => {
         role: 'assistant',
         content: '**Complete.** The live result is visible.',
         streaming: false,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+        },
       }),
     )
     expect(
@@ -5968,6 +7352,172 @@ describe('AgentService deletion', () => {
     })
     expect(service['activePrompts'].has(created.id)).toBe(false)
     expect(service['sdkFollowUpTrackers'].has(created.id)).toBe(false)
+    await service.stop()
+  })
+
+  it('settles a completed SDK turn when Stop finds no active prompt', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-stale-sdk-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const timestamp = new Date().toISOString()
+    const events = [
+      {
+        id: randomUUID(), type: 'assistant.turn_start',
+        timestamp, parentId: null, data: {},
+      },
+      {
+        id: randomUUID(), type: 'assistant.turn_end',
+        timestamp, parentId: null, data: {},
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.status = 'running'
+      session.activity = 'Stale activity'
+    })
+    const abort = vi.spyOn(client.session, 'abort')
+
+    await service.cancel(created.id)
+
+    expect(service.store.get(created.id)).toMatchObject({
+      status: 'idle',
+      activity: undefined,
+    })
+    expect(abort).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('does not settle SDK Stop while foreground work remains', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-live-sdk-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = [
+      {
+        id: randomUUID(), type: 'assistant.turn_start',
+        timestamp: new Date().toISOString(), parentId: null, data: {},
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.status = 'running'
+      session.activity = 'Still working'
+    })
+
+    await service.cancel(created.id)
+
+    expect(service.store.get(created.id)).toMatchObject({
+      status: 'running',
+      activity: 'Still working',
+    })
+    await service.stop()
+  })
+
+  it('does not settle SDK Stop while background work remains after turn end', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-background-sdk-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const timestamp = new Date().toISOString()
+    const events = [
+      {
+        id: randomUUID(), type: 'assistant.turn_start',
+        timestamp, parentId: null, data: {},
+      },
+      {
+        id: randomUUID(), type: 'subagent.started',
+        timestamp, parentId: null, agentId: 'worker', data: {},
+      },
+      {
+        id: randomUUID(), type: 'assistant.turn_end',
+        timestamp, parentId: null, data: {},
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.status = 'running'
+      session.activity = 'Waiting for worker'
+    })
+
+    await service.cancel(created.id)
+
+    expect(service.store.get(created.id)).toMatchObject({
+      status: 'running',
+      activity: 'Waiting for worker',
+    })
+    await service.stop()
+  })
+
+  it('does not settle SDK Stop while task RPC reports a background agent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-rpc-background-sdk-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const timestamp = new Date().toISOString()
+    const events = [
+      {
+        id: randomUUID(), type: 'assistant.turn_start',
+        timestamp, parentId: null, data: {},
+      },
+      {
+        id: randomUUID(), type: 'assistant.turn_end',
+        timestamp, parentId: null, data: {},
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.status = 'running'
+      session.activity = 'Waiting for RPC-only worker'
+    })
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'rpc-only-worker',
+      description: 'Review the repository',
+      status: 'running',
+      startedAt: timestamp,
+      agentType: 'general-purpose',
+      executionMode: 'background',
+    })
+
+    await service.cancel(created.id)
+
+    expect(service.store.get(created.id)).toMatchObject({
+      status: 'running',
+      activity: 'Waiting for RPC-only worker',
+    })
     await service.stop()
   })
 
@@ -6682,6 +8232,305 @@ describe('AgentService deletion', () => {
       service.store.get(client.session.sessionId)?.queuedPrompts,
     ).toMatchObject([{ content: 'Run this after the current turn' }])
     await service.stop()
+  })
+
+  it.each([
+    ['behind a waiting queue', true, 'v1'],
+    ['on an empty queue', false, 'v1'],
+  ] as const)('queues a steer the busy terminal could not take yet, %s', async (_name, waiting, logVersion) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([{
+      sessionId: client.session.sessionId, startTime: new Date(), modifiedTime: new Date(),
+      summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+    }])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        throw Object.assign(new Error('The terminal is not ready for this input.'), {
+          statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.steer',
+        })
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => ' ◉ Working · esc interrupt'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client,
+      async () => [{ id: client.session.sessionId, cwd: directory, title: 'External session', updatedAt: new Date().toISOString() }],
+      async () => undefined, async () => [], async () => logVersion, terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+      session.activity = 'Working in terminal'
+      if (waiting) {
+        session.queuedPrompts = [{ id: randomUUID(), content: 'Older queued prompt', createdAt: new Date().toISOString() }]
+        session.queuedCount = 1
+      }
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const sent = await service.sendMessage(client.session.sessionId, 'Steer when you can')
+      expect(terminal.send).toHaveBeenCalledTimes(1)
+      expect(terminal.send).toHaveBeenCalledWith(
+        client.session.sessionId, 'Steer when you can', false, { allowDuringAgentExecution: true },
+      )
+      const expected = [
+        ...(waiting ? [{ content: 'Older queued prompt' }] : []),
+        { content: 'Steer when you can' },
+      ]
+      expect(sent.queuedPrompts).toMatchObject(expected)
+      expect(service.store.get(client.session.sessionId)?.queuedPrompts).toMatchObject(expected)
+      expect(client.session.sentPrompts).toEqual([])
+    } finally {
+      warn.mockRestore()
+      await service.stop()
+    }
+  })
+
+  it.each([
+    ['a refusal for another reason', { statusCode: 409, uncertainDelivery: false }],
+    ['a not-ready refusal that may have typed', { statusCode: 409, uncertainDelivery: true, reasonCode: 'terminal-not-ready.steer' }],
+  ])('does not queue a steer after %s', async (_name, fields) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([{
+      sessionId: client.session.sessionId, startTime: new Date(), modifiedTime: new Date(),
+      summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+    }])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        throw Object.assign(new Error('Refused'), fields)
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => ' ◉ Working · esc interrupt'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client,
+      async () => [{ id: client.session.sessionId, cwd: directory, title: 'External session', updatedAt: new Date().toISOString() }],
+      async () => undefined, async () => [], async () => 'v1', terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+      session.activity = 'Working in terminal'
+    })
+    try {
+      await expect(service.sendMessage(client.session.sessionId, 'Steer now'))
+        .rejects.toMatchObject({ statusCode: 409 })
+      expect(terminal.send).toHaveBeenCalledTimes(1)
+      expect(service.store.get(client.session.sessionId)?.queuedPrompts ?? []).toEqual([])
+    } finally {
+      await service.stop()
+    }
+  })
+
+  describe('a steer the busy terminal could not take yet', () => {
+    const notReady = () => Object.assign(new Error('The terminal is not ready for this input.'), {
+      statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.steer',
+    })
+    const noComposer = ' ◉ Working · esc interrupt'
+    const composerBack = [
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ◉ Working · esc interrupt',
+    ].join('\n')
+
+    async function busyTerminal(
+      sends: Array<() => boolean>,
+      options: { olderQueued?: boolean } = {},
+    ) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      client.nextSessionList = Promise.resolve([{
+        sessionId: client.session.sessionId, startTime: new Date(), modifiedTime: new Date(),
+        summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+      }])
+      const pane = { current: noComposer }
+      let call = 0
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => {
+          const next = sends[Math.min(call, sends.length - 1)]
+          call += 1
+          return next()
+        }),
+        sendWhenIdle: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+        capture: vi.fn(async () => pane.current),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')), client,
+        async () => [{ id: client.session.sessionId, cwd: directory, title: 'External session', updatedAt: new Date().toISOString() }],
+        async () => undefined, async () => [], async () => 'v1', terminal,
+      )
+      await service.start()
+      await service.store.update(client.session.sessionId, (session) => {
+        session.status = 'running'
+        session.activity = 'Working in terminal'
+        if (options.olderQueued) {
+          session.queuedPrompts = [{ id: randomUUID(), content: 'Older queued prompt', createdAt: new Date().toISOString() }]
+          session.queuedCount = 1
+        }
+      })
+      const errors: unknown[] = []
+      service.on('event', (event: { type: string }) => {
+        if (event.type === 'error') errors.push(event)
+      })
+      return { service, terminal, pane, errors, sessionId: client.session.sessionId, client }
+    }
+
+    const steerSend = (sessionId: string, content: string) =>
+      [sessionId, content, false, { allowDuringAgentExecution: true }]
+
+    it('marks it as a steer and types it into the turn once the composer is back', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, errors, sessionId, client } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+      ])
+      try {
+        const sent = await service.sendMessage(sessionId, 'Steer when you can')
+        expect(sent.queuedPrompts).toMatchObject([{ content: 'Steer when you can', steer: true }])
+        // Still no composer: nothing more is typed.
+        await new Promise((resolve) => setTimeout(resolve, 1_600))
+        expect(terminal.send).toHaveBeenCalledTimes(1)
+
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        expect(terminal.send.mock.calls[1]).toEqual(steerSend(sessionId, 'Steer when you can'))
+        expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+        await vi.waitFor(() => {
+          const stored = service.store.get(sessionId)
+          expect(stored?.queuedPrompts ?? []).toEqual([])
+          expect(service.store.terminalQueueDispatch(sessionId)).toBeUndefined()
+          expect(stored?.failedPrompt).toBeUndefined()
+        }, { timeout: 5_000 })
+        // The turn it steered is still the one running.
+        expect(service.store.get(sessionId)?.status).toBe('running')
+        await new Promise((resolve) => setTimeout(resolve, 1_600))
+        expect(terminal.send).toHaveBeenCalledTimes(2)
+        expect(errors).toEqual([])
+        expect(client.session.sentPrompts).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('does not type it over text already in the composer', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+      ])
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack.replace('\n┃\n', '\n┃ something typed in the terminal\n')
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+        expect(terminal.send).toHaveBeenCalledTimes(1)
+        expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([{ content: 'Steer when you can', steer: true }])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('stays behind an older queued prompt, then steers the turn that prompt starts', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, errors, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+      ], { olderQueued: true })
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+        expect(terminal.send).toHaveBeenCalledTimes(1)
+        expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+        expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([
+          { content: 'Older queued prompt' },
+          { content: 'Steer when you can', steer: true },
+        ])
+
+        // The turn ends; the older prompt starts the next one.
+        pane.current = composerBack.replace(' ◉ Working · esc interrupt', ' / commands')
+        terminal.sendWhenIdle.mockImplementationOnce(async () => {
+          pane.current = noComposer
+          return true
+        })
+        await service.store.update(sessionId, (session) => {
+          session.status = 'idle'
+          session.activity = undefined
+        })
+        await vi.waitFor(() => expect(terminal.sendWhenIdle).toHaveBeenCalledExactlyOnceWith(
+          sessionId, 'Older queued prompt',
+        ), { timeout: 5_000 })
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([
+          { content: 'Steer when you can', steer: true },
+        ]), { timeout: 5_000 })
+        expect(service.store.get(sessionId)?.status).toBe('running')
+
+        // That turn shows its composer: the steer goes in without waiting for it to end.
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        expect(terminal.send.mock.calls[1]).toEqual(steerSend(sessionId, 'Steer when you can'))
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts ?? []).toEqual([]), { timeout: 5_000 })
+        expect(terminal.sendWhenIdle).toHaveBeenCalledOnce()
+        expect(errors).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('puts it back quietly when the composer goes again before it is typed', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, errors, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => { throw notReady() },
+        () => true,
+      ])
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(3), { timeout: 8_000 })
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.queuedPrompts ?? []).toEqual([]), { timeout: 5_000 })
+        expect(service.store.get(sessionId)?.failedPrompt).toBeUndefined()
+        expect(errors).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('never types it twice when delivery is uncertain', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => { throw Object.assign(new Error('The paste may have landed'), { statusCode: 500, uncertainDelivery: true }) },
+        () => true,
+      ])
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        pane.current = composerBack
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        await vi.waitFor(() => expect(service.store.get(sessionId)?.failedPrompt).toMatchObject({
+          content: 'Steer when you can', uncertain: true,
+        }), { timeout: 5_000 })
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+        expect(terminal.send).toHaveBeenCalledTimes(2)
+        expect(service.store.get(sessionId)?.queuedPrompts ?? []).toEqual([])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
   })
 
   it('sends an explicit enqueue immediately when an idle terminal has no event log', async () => {

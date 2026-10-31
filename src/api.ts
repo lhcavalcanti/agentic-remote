@@ -47,6 +47,7 @@ import type {
   SendManagerMessageInput,
   UpdateManagerSettingsInput,
 } from '../shared/manager'
+import type { VoiceCapabilities } from '../shared/oracle-voice'
 import {
   httpDeliveryUncertain,
   parseSubmissionReceipt,
@@ -618,9 +619,10 @@ export async function getSession(
   computerId: string,
   sessionId: string,
   signal?: AbortSignal,
+  options: { passive?: boolean } = {},
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
-    sessionPath(computerId, sessionId),
+    `${sessionPath(computerId, sessionId)}${options.passive ? '?passive=1' : ''}`,
     { signal, cache: 'no-store' },
   )
   return response.session
@@ -952,6 +954,24 @@ export async function transcribeAudio(file: File): Promise<AudioTranscription> {
   return request<AudioTranscription>('/api/transcriptions', {
     method: 'POST',
     body,
+  })
+}
+
+export interface OracleVoiceTicket {
+  ticket: string
+  expiresAt: string
+}
+
+export function getOracleVoiceCapabilities(): Promise<VoiceCapabilities> {
+  return request<VoiceCapabilities>('/api/oracle-voice/capabilities', {
+    cache: 'no-store',
+  })
+}
+
+export function createOracleVoiceTicket(): Promise<OracleVoiceTicket> {
+  return request<OracleVoiceTicket>('/api/oracle-voice/tickets', {
+    method: 'POST',
+    cache: 'no-store',
   })
 }
 

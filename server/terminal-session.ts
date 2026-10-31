@@ -261,14 +261,30 @@ function formReplyExpired(progress: FormReplyProgress): TerminalFormReplyError {
   )
 }
 
+const terminalDraftConflictMessages = {
+  'composer-unreadable': 'The terminal composer could not be read, so its text was not cleared.',
+  'changed-before-clear': 'The terminal changed before its text could be cleared. The app draft was not sent.',
+  'owner-changed-before-clear': 'The terminal owner changed before its text could be cleared. The app draft was not sent.',
+  'owner-changed-after-clear': 'The terminal owner changed after its text was cleared. The app draft was not sent.',
+  'clear-unconfirmed': 'The terminal clear was sent, but an empty composer could not be confirmed. The app draft was not sent.',
+  'composer-not-ready': 'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
+  'unsent-text': 'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+  'new-text': 'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
+} as const
+
+export type TerminalDraftConflict = keyof typeof terminalDraftConflictMessages
+
 export class TerminalDraftConflictError extends Error {
   readonly statusCode = 409
   readonly uncertainDelivery = false
   readonly terminalDraftConflict = true
+  /** Stable refusal reason; each conflict has its own message. */
+  readonly reasonCode: `terminal-draft-conflict.${TerminalDraftConflict}`
 
-  constructor(message: string) {
-    super(message)
+  constructor(conflict: TerminalDraftConflict) {
+    super(terminalDraftConflictMessages[conflict])
     this.name = 'TerminalDraftConflictError'
+    this.reasonCode = `terminal-draft-conflict.${conflict}`
   }
 }
 
@@ -285,6 +301,9 @@ const REPLACEMENT_READY_FRAMES = 30
 // first message to it only needs its prompt seen steady once.
 const SETTLED_OWNER_AGE_MS = 30_000
 const SETTLED_READY_FRAMES = 2
+// A settled Copilot that is working shows its prompt at once or not at all, so
+// a steer is refused after this rather than waiting out startup under the lock.
+const SETTLED_STEER_READY_TIMEOUT_MS = 5_000
 const PROBE_COLUMNS = 80
 const PROBE_ROWS = 24
 const PROBE_ANSWER_TIMEOUT_MS = 10_000
@@ -1765,9 +1784,7 @@ export class TmuxTerminalSessionController
   ): Promise<string> {
     const readable = composerText(pane)
     if (readable === undefined) {
-      throw new TerminalDraftConflictError(
-        'The terminal composer could not be read, so its text was not cleared.',
-      )
+      throw new TerminalDraftConflictError('composer-unreadable')
     }
     if (!composerHoldsText(pane)) {
       return pane
@@ -1779,9 +1796,7 @@ export class TmuxTerminalSessionController
       parseTerminalFormPrompt(pane) ||
       isTerminalAgentWorking(pane)
     ) {
-      throw new TerminalDraftConflictError(
-        'The terminal changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('changed-before-clear')
     }
     const currentOwner = await this.owner(sessionId, owner.target, true)
     if (
@@ -1790,9 +1805,7 @@ export class TmuxTerminalSessionController
       currentOwner.rootPid !== owner.rootPid ||
       currentOwner.target !== owner.target
     ) {
-      throw new TerminalDraftConflictError(
-        'The terminal owner changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('owner-changed-before-clear')
     }
     const currentPane = await capturePane(owner.target)
     if (
@@ -1804,9 +1817,7 @@ export class TmuxTerminalSessionController
       parseTerminalFormPrompt(currentPane) ||
       isTerminalAgentWorking(currentPane)
     ) {
-      throw new TerminalDraftConflictError(
-        'The terminal changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('changed-before-clear')
     }
     if (!composerHoldsText(currentPane)) {
       return currentPane
@@ -1825,9 +1836,7 @@ export class TmuxTerminalSessionController
       'display-message -p changed',
     ], { timeout: 2_000 })
     if (cleared.stdout.trim() !== 'cleared') {
-      throw new TerminalDraftConflictError(
-        'The terminal owner changed before its text could be cleared. The app draft was not sent.',
-      )
+      throw new TerminalDraftConflictError('owner-changed-before-clear')
     }
     let previousEmpty: string | undefined
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1849,18 +1858,14 @@ export class TmuxTerminalSessionController
           ) {
             return clearedPane
           }
-          throw new TerminalDraftConflictError(
-            'The terminal owner changed after its text was cleared. The app draft was not sent.',
-          )
+          throw new TerminalDraftConflictError('owner-changed-after-clear')
         }
         previousEmpty = text
       } else {
         previousEmpty = undefined
       }
     }
-    throw new TerminalDraftConflictError(
-      'The terminal clear was sent, but an empty composer could not be confirmed. The app draft was not sent.',
-    )
+    throw new TerminalDraftConflictError('clear-unconfirmed')
   }
 
   private async sendInternal(
@@ -1916,6 +1921,12 @@ export class TmuxTerminalSessionController
         // that has been running a while has nothing left to open over its
         // prompt, so it is not held to the settling a fresh one needs.
         const settled = await this.ownerSettled(owner.pid)
+        // Native-queued commands keep the full wait: Copilot queues them itself.
+        const boundedSteer =
+          settled &&
+          !idleOnly &&
+          !enqueue &&
+          options.allowDuringAgentExecution === true
         let startup: Awaited<ReturnType<typeof waitForTerminalStartup>>
         try {
           startup = await waitForTerminalStartup(
@@ -1933,18 +1944,32 @@ export class TmuxTerminalSessionController
                 )
               }
             },
-            TERMINAL_STARTUP_TIMEOUT_MS,
+            boundedSteer
+              ? SETTLED_STEER_READY_TIMEOUT_MS
+              : TERMINAL_STARTUP_TIMEOUT_MS,
             settled ? SETTLED_READY_FRAMES : undefined,
           )
         } catch (error) {
+          const notReady =
+            error instanceof Error && /did not become ready/i.test(error.message)
+          if (boundedSteer && notReady && !options.replaceExistingInput) {
+            throw Object.assign(
+              new Error(
+                'The terminal is not ready for this input. Wait for its composer, or queue the message while the agent is working.',
+              ),
+              {
+                statusCode: 409,
+                uncertainDelivery: false,
+                reasonCode: 'terminal-not-ready.steer',
+              },
+            )
+          }
           if (
             options.replaceExistingInput &&
             error instanceof Error &&
             /did not become ready/i.test(error.message)
           ) {
-            throw new TerminalDraftConflictError(
-              'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
-            )
+            throw new TerminalDraftConflictError('composer-not-ready')
           }
           throw error
         }
@@ -2038,9 +2063,7 @@ export class TmuxTerminalSessionController
             error instanceof Error &&
             /did not become ready/i.test(error.message)
           ) {
-            throw new TerminalDraftConflictError(
-              'The terminal did not return to a readable composer before replacement. Nothing was cleared or pasted.',
-            )
+            throw new TerminalDraftConflictError('composer-not-ready')
           }
           throw error
         }
@@ -2061,9 +2084,7 @@ export class TmuxTerminalSessionController
         composerText(paneBeforePaste) !== undefined &&
         composerHoldsText(paneBeforePaste)
       if (existingInput && !options.replaceExistingInput) {
-        throw new TerminalDraftConflictError(
-            'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
-        )
+        throw new TerminalDraftConflictError('unsent-text')
       }
       if (isTerminalOverlay(paneBeforePaste)) {
         throw Object.assign(
@@ -2084,7 +2105,13 @@ export class TmuxTerminalSessionController
           new Error(
             'The terminal is not ready for this input. Wait for its composer, or queue the message while the agent is working.',
           ),
-          { statusCode: 409 },
+          {
+            statusCode: 409,
+            uncertainDelivery: false,
+            ...(allowWorking && !enqueue && !options.replaceExistingInput
+              ? { reasonCode: 'terminal-not-ready.steer' }
+              : {}),
+          },
         )
       }
       this.inputReadySessions.set(sessionId, {
@@ -2133,9 +2160,7 @@ export class TmuxTerminalSessionController
             parseTerminalFormPrompt(paneBeforePaste) ||
             (!toleratesWorking && isTerminalAgentWorking(paneBeforePaste))
           ) {
-            throw new TerminalDraftConflictError(
-              'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
-            )
+            throw new TerminalDraftConflictError('new-text')
           }
         }
         // The paste can reach the pane even if its acknowledgement is lost.
@@ -2771,17 +2796,45 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
   return false
 }
 
+const TERMINAL_NOT_READY_MESSAGE = 'Copilot did not become ready for terminal input'
+
+/**
+ * Runs a startup capture bounded by the startup deadline. Its timeout is the
+ * time left, so on a loaded host the last capture can be cut off just as the
+ * deadline passes; that is the deadline expiring, not tmux failing, and must
+ * surface as "did not become ready" so callers classify it as such.
+ */
+async function captureBeforeDeadline<T>(
+  deadline: number,
+  capture: (timeout: number) => Promise<T>,
+): Promise<T> {
+  try {
+    return await capture(Math.max(1, deadline - Date.now()))
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as { killed?: unknown }).killed === true &&
+      (error as { code?: unknown }).code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+    ) {
+      throw new Error(TERMINAL_NOT_READY_MESSAGE)
+    }
+    throw error
+  }
+}
+
 async function clearAutomaticStartupPrompts(
   target: string,
   validateOwner: () => Promise<void>,
   deadline: number,
 ): Promise<void> {
-  const capture = async () =>
-    (
-      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target], {
-        timeout: Math.max(1, deadline - Date.now()),
-      })
-    ).stdout
+  const capture = () =>
+    captureBeforeDeadline(deadline, async (timeout) =>
+      (
+        await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target], {
+          timeout,
+        })
+      ).stdout,
+    )
 
   const waitUntilClosed = async (
     isOpen: (pane: string) => boolean,
@@ -2833,7 +2886,7 @@ async function clearAutomaticStartupPrompts(
   throw new Error('Too many Copilot startup prompts appeared in sequence')
 }
 
-async function waitForTerminalStartup(
+export async function waitForTerminalStartup(
   target: string,
   handleAutomaticPrompts = true,
   validateOwner: () => Promise<void> = async () => undefined,
@@ -2843,7 +2896,9 @@ async function waitForTerminalStartup(
   const deadline = Date.now() + timeoutMs
   let readyFrames = 0
   while (Date.now() < deadline) {
-    const pane = await capturePane(target, Math.max(1, deadline - Date.now()))
+    const pane = await captureBeforeDeadline(deadline, (timeout) =>
+      capturePane(target, timeout),
+    )
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
       parseTerminalPermission(pane) ||
@@ -2879,7 +2934,7 @@ async function waitForTerminalStartup(
     }
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error('Copilot did not become ready for terminal input')
+  throw new Error(TERMINAL_NOT_READY_MESSAGE)
 }
 
 function cleanDialogLine(line: string): string {
@@ -3281,6 +3336,15 @@ function isKnownTerminalFooterRow(
       .replace(/^·\s*ctrl\+q\s+enqueue(?:\s|$)/u, '').trim()
     return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)
   }
+  // Once a turn hands its work to background agents and ends, Copilot 1.0.101
+  // keeps its prompt open and offers only to stop them; a message sent then
+  // starts a new turn. Anything after that key must be the model hint.
+  const background =
+    /^\s*[●○◉◎]\s+Waiting for background agents(?:\s+·\s+\d+(?:\.\d+)?\s?[KMG]?B)?\s+esc\s+esc\s+stop\s+agents\b(.*)$/u.exec(line)
+  if (background) {
+    const rest = background[1].trim().replace(/\s+/gu, ' ')
+    return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)
+  }
   // Hint rows are judged by the hint grammar alone rather than by the looser
   // patterns below, so reordered or unknown cells refuse input.
   if (isTerminalHintRow(line)) {
@@ -3614,7 +3678,7 @@ function reportUnrecognisedComposerParts(rows: readonly string[]): void {
   }
 }
 
-function terminalInputReady(pane: string, allowWorking = false): boolean {
+export function terminalInputReady(pane: string, allowWorking = false): boolean {
   return (
     hasLiveTerminalComposer(pane) &&
     (allowWorking || !isTerminalAgentWorking(pane)) &&

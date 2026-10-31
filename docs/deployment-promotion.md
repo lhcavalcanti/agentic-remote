@@ -103,8 +103,8 @@ possibly unverified `current` pointer:
   the recorded known-good release, quarantine the interrupted candidate, and
   leave both success records unchanged. A successfully recovered interruption
   still exits as a failed graduation; a later run may validate and retry.
-- `local-verified`: setup, source identity, local health, and external checks
-  passed and were recorded. Recheck that exact active release and resume the
+- `local-verified`: setup, source identity, local health, external checks, and
+  the host canary passed and were recorded. Recheck that exact active release and resume the
   downstream phase without rebuilding it or choosing a new rollback baseline.
 - `verified`: all configured phases passed. Finish the success records without
   reactivating the candidate, including when an operator has already manually
@@ -339,8 +339,9 @@ A local-only monitor may run this sequence on an opt-in machine:
    while every test passes. Pinning also means what passed is what is
    promoted, rather than whatever the checkout became while the suite ran.
    `state_dir` therefore decides which filesystem validation runs on.
-   Nothing runs the suite remotely, so this is the only gate a commit passes
-   before production and it has to include the tests.
+   The [advisory hosted check](#advisory-hosted-check) runs only a quick
+   subset, so this is the only gate a commit passes before production and it
+   has to include the tests.
 6. Remove the validation worktree afterwards, refusing to delete anything that
    turns out to be a checkout this repository cannot account for.
 7. Verify the production runtime worktree is clean, intentionally detached, and
@@ -350,9 +351,12 @@ A local-only monitor may run this sequence on an opt-in machine:
    the exact validated commit, publish an immutable release, and
    restart the managed service.
 9. Wait for the service, local health endpoint, external access check, paired
-   computers, and relevant sessions to recover.
+   computers, and relevant sessions to recover, then run the
+   [host canary](#host-canary) in the runtime checkout. A canary failure rolls
+   the local runtime back exactly as a health failure does.
 10. Record completed verification and the candidate, tested, promoted, and
     previous release identifiers, then clear the pending journal.
+11. Log each host's refusal counts (see [Refusal counts](#refusal-counts)).
 
 If validation or promotion fails, do not advance the success marker and do not
 discard the previous known-good release. The next run must be able to retry or
@@ -362,6 +366,132 @@ commit, the monitor should exit without restarting the service.
 The monitor is machine-local orchestration. It is intentionally not an
 Agentic Remote application command and must not be required by the hub or node
 runtime.
+
+## Merge gate
+
+The [advisory hosted check](#advisory-hosted-check) runs only a quick subset,
+so a pull request is merge-ready only when the full gate has passed on its
+exact final head. Run it from a checkout of this
+repository on a host with the operator's `gh` authentication:
+
+```bash
+bin/agentic-remote-gate <PR-number|full-sha> [--repo owner/name] [--no-status] [--no-wait]
+```
+
+1. A pull request number resolves to its current head SHA; anything else must
+   be a full 40-character SHA. The repository defaults to this checkout's
+   `origin`.
+2. The gate posts a `pending` `agentic-remote/full-gate` commit status, clones
+   the repository afresh into a private temporary directory, fetches that exact
+   SHA (which also reaches pull request heads absent from a plain clone),
+   detaches to it, and refuses to continue unless `HEAD` equals the SHA.
+3. It runs `pnpm install --frozen-lockfile --ignore-scripts
+   --ignore-pnpmfile`, `pnpm rebuild` (the dependency build scripts the
+   lockfile allows), `pnpm check`, then `NODE_ENV=production pnpm check` in the
+   same clone, through the Corepack pnpm the `packageManager` field pins to a
+   plain release version (anything else fails). The tree, untracked files
+   included, must stay clean and on the SHA after each step.
+4. It posts `success` with the Vitest counts and total duration, for example
+   `normal+production: 5099 passed, 1 skipped (58m)`, only when both checks
+   exit cleanly and each reports passed tests and no failed ones. Any failure,
+   including install failure, a `HEAD` mismatch, a dirty tree, a missing or
+   unparseable test summary, an unusable sandbox, or an interrupt, posts
+   `failure`; so does the exit path when the final status cannot be posted.
+   Descriptions carry counts and durations only, never paths, output, or
+   secrets. `--no-status` posts nothing.
+5. Logs and a `summary` stay in
+   `${XDG_STATE_HOME:-~/.local/state}/agentic-remote/gates/<sha>/`
+   (`clone.log`, `sandbox.log`, `install.log`, `rebuild.log`, `egress.log`,
+   `check.log`, `production-check.log`). The temporary clone is removed however the gate
+   ends.
+
+Install, dependency build, and both checks run pull-request code, so they run
+in a [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox
+that the gate requires. The sandbox gets every namespace unshared, including
+the network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
+`NODE_ENV` for the production run) that `bwrap` itself is also started with,
+since it stays visible inside as PID 1, a private `HOME` (holding its own
+Corepack `pnpm` shim) inside the temporary directory, an empty tmpfs over the
+real home, `/run`, and `/tmp` (fresh for each phase), read-only system
+directories plus the Node toolchain's `bin` and `lib/node_modules`, and one
+writable directory holding the clone and that `HOME`. So no
+token, `gh` or SSH configuration, agent socket, the operator's tmux server, or
+any host service (loopback, LAN, or tailnet) is reachable, and pnpm and
+Corepack caches are per gate. Only the gate itself, outside the sandbox, calls
+`gh`.
+
+- **Network.** The checks run with only the sandbox's own loopback. Install and
+  dependency build, which download packages and binaries such as
+  `ffmpeg-static`'s, reach the outside only through a proxy the gate runs
+  outside the sandbox. It allows `CONNECT` to port 443 of globally routable
+  addresses only, so host, private, link-local, and tailnet addresses stay
+  unreachable even there, and logs refusals to `egress.log`.
+- **Git.** The clone's git directory sits outside the writable directory and is
+  mounted read-only. The gate's own git commands after each phase name it
+  explicitly with the clone as the work tree, ignore system and global
+  configuration, disable fsmonitor, hooks, and attribute and exclude files,
+  and never enter submodules (whose repositories the sandbox could fill), so a
+  replaced, symlinked, or re-initialised clone cannot run anything outside the
+  sandbox; a clone that is no longer a plain directory fails the gate.
+- **Mounts and cleanup.** Nothing the sandbox can write is ever a mount source
+  or followed by the gate: the writable directory itself is mounted, never a
+  path inside it, so a symlink one phase leaves there cannot redirect the next
+  phase's mounts. Logs are written by the gate into its state directory, which
+  the sandbox cannot see, and cleanup removes links without following them.
+
+When `bwrap` is missing or cannot start (for example where unprivileged user
+namespaces are blocked), the gate posts `failure` and never runs the checks
+unsandboxed.
+
+Each check takes about half an hour, and suites on one host interfere through
+real tmux, so gates hold a host-wide lock: a second gate waits for the first,
+or fails at once with `--no-wait`. Avoid running other full suites on the host
+meanwhile.
+
+A ruleset on `main` requires the `agentic-remote/full-gate` status, with an
+administrator bypass. A new push needs a new gate, because the status belongs
+to the commit that was tested.
+
+## Advisory hosted check
+
+`.github/workflows/light-check.yml` gives each pull request head fast feedback
+on GitHub. It is advisory: it must never be a required check or part of a
+branch ruleset, because an exhausted Actions quota then fails every run and
+blocks merges, which is why hosted CI was removed in #124. The local gate above
+stays authoritative.
+
+- One `ubuntu-latest` job runs `pnpm install --frozen-lockfile`, `pnpm lint`,
+  `pnpm exec tsc -b`, `pnpm exec vite build`, and `pnpm test:quick`.
+- It runs on the latest Node 22, the supported floor in `engines`, while the
+  local gate covers the newer Node a host runs.
+- It runs when a ready pull request is opened, reopened, updated, or marked
+  ready. Drafts are skipped, as are pull requests whose every changed file is
+  Markdown, under `docs/`, or under `graphify/`. A newer head cancels the
+  running check. Permissions are read-only and the job times out after 3
+  minutes.
+- `pnpm test:quick` is the `fast` project minus `slowTests` in
+  `vite.config.ts`: every jsdom file and each file measured at 0.1 seconds or
+  more locally. New files join it by default; add one to `slowTests` when it is
+  that slow. Every file still runs in `pnpm test`.
+- No dependency cache is used. Restoring the 440 MB pnpm store took 12 seconds
+  against 17 seconds for an uncached install, and each pull request's first run
+  had nothing to restore and spent 9 more seconds saving it. pnpm comes from
+  `packageManager` through `npm install --global` (2 seconds) rather than
+  `pnpm/action-setup` (4 to 6 seconds).
+
+Budget: jobs are billed per job and rounded up to whole minutes, so the check is
+sized to finish within 60 seconds, one billed minute. Three measured GitHub runs
+took 43 to 54 seconds: setup, checkout, Node, and pnpm 5 to 6, install 15 to 18,
+lint 3 to 4, type-check 5 to 8, build 2 to 4, and tests 7 to 11. About 10 pull
+requests a day with about 3 heads each is roughly 1,200 runs, or 1,200 billed
+minutes, a month against an assumed 2,000-minute quota.
+Skipped runs cost nothing; a cancelled run is billed for its started minute.
+If a run regularly exceeds 60 seconds, shrink the test selection rather than
+double the cost.
+
+Disable the check with `gh workflow disable light-check.yml` (and re-enable it
+with `gh workflow enable light-check.yml`), for example when the quota runs
+low.
 
 ## Connection-continuity invariants
 
@@ -442,7 +572,8 @@ then runs, for each host in order:
 2. Run `./bin/agentic-remote update` there.
 3. Require the remote `HEAD` to equal the validated commit. A host that landed
    on a different tip did not install what was validated, so it is rolled back.
-4. Probe the health URL on that host.
+4. Probe the health URL on that host, then run the
+   [host canary](#host-canary) in `DOWNSTREAM_ROOT`.
 5. Roll that host back with `./bin/agentic-remote rollback` if any step fails.
 
 The success marker only advances after every host succeeds, so a failure leaves
@@ -462,7 +593,8 @@ stays single-machine.
   `agentic-remote update` no longer works on that host, because it runs
   `git pull --ff-only`; the monitor becomes the way that host is updated.
 - A build toolchain reachable from a non-interactive login shell on that host,
-  plus `curl` and `git`.
+  plus `bash`, `curl`, and `git`. The login shell itself may be any POSIX `sh`;
+  each command arrives single-quoted for `bash -lc`.
 - The downstream account must be able to manage its own service, which for the
   default installation means a user systemd service with lingering enabled.
 - At least one previous release, so a failed promotion has something to fall
@@ -475,6 +607,36 @@ Every destination shares one `DOWNSTREAM_ROOT` and one
 health address that is valid from each host. Machines that differ need separate
 profiles on separate monitor hosts.
 
+### Host canary
+
+Validation runs only where the monitor builds, but hosts differ (for example in
+their tmux version). After each host's health check passes, the monitor runs
+the `canary` Vitest project, the real-tmux send and readiness subset, in that
+host's own checkout: `PROD_ROOT` locally and `DOWNSTREAM_ROOT` downstream. Both
+get `node_modules/.bin/vitest` from `agentic-remote setup`, which installs dev
+dependencies.
+
+- It uses a private `mktemp -d` directory as `TMUX_TMPDIR` and `TMPDIR`, with
+  `TMUX` unset, so it never reaches the live or runtime tmux server. Any tmux
+  server left in that directory is stopped, and the directory is removed.
+- Its fixtures fake Copilot. `COPILOT_BIN` is `false`, `COPILOT_HOME` is
+  private, and GitHub tokens are removed, so it makes no model requests.
+- It runs with `CI=true` under `timeout 600`.
+- A missing Vitest fails the canary rather than skipping it. A failure is
+  handled like a failed health check on that host.
+
+`AGENTIC_REMOTE_MONITOR_CANARY=0` turns it off for every host; any other value
+leaves it on.
+
+### Refusal counts
+
+After a successful rollout the monitor logs one line per host summarising
+`GET /api/diagnostics/refusals`, sent with the hub's own base URL as `origin`.
+The base URL comes from `HEALTH_URL`, or from `DOWNSTREAM_HEALTH_URL` probed
+from each downstream host. The counts are informational: a node (`404`) or an
+unreachable hub is logged as `unavailable` and never fails or rolls back the
+promotion.
+
 ### Failure behavior
 
 A failure on any host restores that host to the commit it was on, then restores
@@ -483,9 +645,9 @@ split across two commits. The success marker is not advanced, so the next run
 retries the same commit.
 
 The local runtime stays active because its validation and health are durably
-recorded as `local-verified`. A retry rechecks that same local commit/release and
-resumes the downstream phase without rebuilding or restarting the healthy local
-runtime. If that recheck fails, recovery still uses the original journaled
+recorded as `local-verified`. A retry rechecks that same local commit/release,
+including the local canary, and resumes the downstream phase without rebuilding
+or restarting the healthy local runtime. If that recheck fails, recovery still uses the original journaled
 known-good baseline, never the uncompleted candidate.
 
 ### Choosing which machine serves the UI

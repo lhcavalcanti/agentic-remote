@@ -1,6 +1,6 @@
 # Provider compatibility
 
-Status: Current implementation study, 2026-09-05
+Status: Current implementation study, 2026-10-29
 
 Agentic Remote supports GitHub Copilot and Claude Agent as separate providers
 behind the same `SessionService` contract. They can run concurrently on one
@@ -14,6 +14,7 @@ history is not transferred between providers.
 | Local authentication | Existing GitHub/Copilot login | Existing local Claude login | Compatible; credentials remain on the owning computer |
 | Streaming text and tools | SDK events and terminal event logs | Agent SDK stream events | Compatible through shared UI messages |
 | Multi-turn resume | Copilot session ID | Claude session ID | Compatible; provider-native histories remain separate |
+| Service-restart recovery | Same-ID SDK history/event reconciliation; durable pending-permission RPC when available | Durable queue and lazy provider resume | Provider-specific; neither provider reattaches a lost model stream |
 | Context-preserving recovery | Fresh Copilot session seeded with a bounded text-only brief; prior transcript remains read-only | Not supported | Copilot-only and capability-gated |
 | Model and effort | Supported | Supported | Compatible through provider-specific model lists |
 | Context tier | Default and long-context when advertised | Automatic provider-managed context | Provider-specific; Claude advertises only the default UI option |
@@ -46,6 +47,27 @@ history is not transferred between providers.
 - Idle Copilot SDK sessions can migrate to tmux with the same provider session
   ID. Claude Agent sessions cannot migrate because the Agent SDK process is not
   attachable to a tmux pane.
+- Normal Copilot SDK sessions discover the owning computer's existing CLI
+  configuration for MCP servers, repository and personal skills, custom agents,
+  instructions, repository hooks, host Git operations, and enabled installed
+  plugin contributions. The SDK runtime owns plugin resolution so repository
+  enablement overrides, direct-install identities, and manifest precedence
+  match interactive CLI sessions without Agentic Remote injecting contribution
+  paths. They use the same local Copilot home and logged-in GitHub account as
+  interactive CLI sessions. Active SDK sessions retain their current plugin
+  catalog until a supported restart or cold resume; new sessions see plugin
+  installs and updates immediately.
+- Normal Copilot SDK sessions select the elicitation `ask_user` variant, so
+  current runtimes send structured forms through Agentic Remote's existing
+  elicitation handler instead of limiting model questions to the legacy
+  single-question callback.
+- SDK clients use the runtime bundled with `@github/copilot-sdk` by default.
+  `COPILOT_SDK_BIN` is an advanced compatibility override for a separately
+  qualified SDK runtime; `COPILOT_BIN` remains the interactive tmux executable.
+- Destructive SDK deletion calls provider deletion directly and removes local
+  state only after provider deletion succeeds or reports that the identity is
+  already absent. Suspension and SDK-to-tmux migration still require successful
+  detach so Agentic Remote never creates a second owner.
 - Claude model and effort changes apply to the next turn. Claude controls its
   context window, so it does not advertise a long-context tier.
 - Opening Model and context or App settings reloads the owning provider's model
@@ -57,7 +79,9 @@ history is not transferred between providers.
 - The session menu provides **Skills** and **MCP servers**. `/skill`, `/skills`,
   and `/mcp` open these read-only views; optional trailing text filters the list
   locally. They do not invoke a provider command, send a prompt, or change MCP
-  or skill configuration.
+  or skill configuration. Agentic Remote does not install plugins or MCP
+  servers, perform MCP OAuth onboarding, edit provider configuration, render
+  MCP Apps, or emulate the Copilot CLI TUI.
 - Resource inspection never creates or resumes a provider session merely to
   read metadata. Copilot terminal, suspended, and unloaded sessions use
   server-scoped folder discovery when available. This shows configured defaults,
@@ -113,10 +137,23 @@ history is not transferred between providers.
   runtime to continue recovery, rather than dismissing its legacy failure
   marker. Pending seeds may then run once; failed or uncertain seeds are not
   automatically retried.
-- A service restart marks persisted SDK approval/question requests stale and
-  recoverable because their callbacks no longer exist. Replies receive `409`
-  rather than claiming the old callback resumed. Terminal-backed prompts keep
-  their live-terminal recovery behavior.
+- A service restart resumes an interrupted Copilot SDK identity under the same
+  session ID and reconciles its durable event history. Completed turns return
+  to idle; incomplete turns remain explicitly interrupted because the SDK
+  cannot reattach the old child process or model stream.
+- SDK recovery completes on the owning computer before its HTTP listener starts.
+  Browser startup, socket reconnect, and visibility return only refresh the
+  authoritative session snapshot. They do not call Resume, so overlapping
+  refreshes cannot create a second SDK owner.
+- Copilot SDK permission requests can be reconstructed only when
+  `permissions.pendingRequests()` reports one exact durable request. Agentic
+  Remote answers it through `handlePendingPermissionRequest()`, persists the
+  selected response before delivery, and does not expose the provider request
+  ID. Missing RPC support or multiple pending requests fails closed.
+- SDK user-input and elicitation callbacks remain process-local and expire
+  across a service restart. Their cards stay stale and replies receive `409`;
+  they are never replayed as if callback continuity existed. Terminal-backed
+  prompts retain their live-terminal recovery behavior.
 - Provider ownership and record retention are separate. Missing managed
   terminals remain interrupted and reviewable; interrupted SDK turns require
   explicit continuation. See [Session retention](session-retention.md).
@@ -129,9 +166,9 @@ history is not transferred between providers.
    Claude history contains sessions created through Agentic Remote.
 3. Keep provider-specific runtime copy explicit. Claude plan/auto permission
    behavior is similar to, but not identical with, Copilot plan/autopilot.
-4. If durable cross-restart questions become a requirement, implement a
-   provider-supported deferral/resume protocol rather than persisting an
-   in-memory callback-shaped request.
+4. Durable cross-restart SDK questions still require a provider-supported
+   deferral/resume protocol; persisting an in-memory callback-shaped request is
+   not sufficient.
 5. Background task RPCs are experimental and may not be available on older
    Copilot runtimes. Agentic Remote uses capability discovery and
    event-triggered resynchronization; tmux sessions additionally derive

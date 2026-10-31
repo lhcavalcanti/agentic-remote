@@ -8,8 +8,11 @@ import {
   CircleStop,
   ExternalLink,
   LoaderCircle,
+  MessageCircle,
   Mic,
   Orbit,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   RotateCcw,
   SlidersHorizontal,
@@ -38,13 +41,110 @@ import {
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { remarkSafeBreaks } from './remark-safe-breaks'
+import { useOracleConversation } from './use-oracle-conversation'
+import type { OracleConversation } from './use-oracle-conversation'
 import { recordingDuration, useVoiceRecorder } from './voice-recorder'
+import {
+  authoritativeRefresh,
+  DreamerMorningPlan,
+  waitUntilAuthoritativeRefresh,
+} from './OracleDreamer'
 
 const suggestions = [
   'What is running right now?',
   'What needs my attention?',
   'What did my sessions finish today?',
 ]
+
+const oracleDraftStorageKey = 'agentic-remote:oracle-draft-v1'
+
+type StoredOracleDraft = {
+  version: 1
+  draft: string
+  editing?: { id: string; text: string }
+}
+
+function readStoredOracleDraft(): {
+  value: StoredOracleDraft
+  error?: string
+} {
+  const empty: StoredOracleDraft = { version: 1, draft: '' }
+  try {
+    const raw = window.localStorage.getItem(oracleDraftStorageKey)
+    if (!raw) return { value: empty }
+    const parsed: unknown = JSON.parse(raw)
+    if (
+      typeof parsed !== 'object'
+      || parsed === null
+      || Reflect.get(parsed, 'version') !== 1
+      || typeof Reflect.get(parsed, 'draft') !== 'string'
+    ) {
+      return { value: empty, error: 'The saved Oracle draft could not be read. Copy any visible text before continuing.' }
+    }
+    const editing = Reflect.get(parsed, 'editing')
+    if (
+      editing !== undefined
+      && (
+        typeof editing !== 'object'
+        || editing === null
+        || typeof Reflect.get(editing, 'id') !== 'string'
+        || typeof Reflect.get(editing, 'text') !== 'string'
+      )
+    ) {
+      return { value: empty, error: 'The saved Oracle edit could not be read. Copy any visible text before continuing.' }
+    }
+    return {
+      value: {
+        version: 1,
+        draft: Reflect.get(parsed, 'draft') as string,
+        editing: editing as StoredOracleDraft['editing'],
+      },
+    }
+  } catch {
+    return { value: empty, error: 'Oracle could not access saved drafts on this device. Copy your text before leaving this page.' }
+  }
+}
+
+function storeOracleDraft(draft: string, editing?: StoredOracleDraft['editing']): string | undefined {
+  try {
+    if (!draft && !editing) window.localStorage.removeItem(oracleDraftStorageKey)
+    else window.localStorage.setItem(oracleDraftStorageKey, JSON.stringify({
+      version: 1,
+      draft,
+      editing,
+    } satisfies StoredOracleDraft))
+    return undefined
+  } catch {
+    return 'Oracle could not save this draft on this device. Keep this page open or copy your text before leaving.'
+  }
+}
+
+function conversationStateLabel(state: OracleConversation['state']): string {
+  switch (state) {
+    case 'off':
+      return 'Conversation off'
+    case 'starting':
+      return 'Starting'
+    case 'listening':
+      return 'Listening'
+    case 'speech':
+      return 'Speech detected'
+    case 'transcribing':
+      return 'Transcribing'
+    case 'thinking':
+      return 'Oracle is thinking'
+    case 'speaking':
+      return 'Speaking'
+    case 'interrupted':
+      return 'Interrupted'
+    case 'reconnecting':
+      return 'Reconnecting'
+    case 'stopping':
+      return 'Stopping'
+    case 'error':
+      return 'Error'
+  }
+}
 
 function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnapshot {
   switch (event.type) {
@@ -220,13 +320,13 @@ function readAnswerOnly(): boolean {
 
 const widthStorageKey = 'agentic-remote:oracle-width'
 const WIDTH_DEFAULT = 440
-const WIDTH_MIN = 340
+export const ORACLE_PANEL_WIDTH_MIN = 340
 const WIDTH_MAX = 960
 /** The conversation keeps at least this much beside the panel. */
-const CONVERSATION_MIN = 360
+export const ORACLE_CONVERSATION_WIDTH_MIN = 360
 
 function boundWidth(value: number, limit = WIDTH_MAX): number {
-  return Math.min(limit, Math.max(WIDTH_MIN, Math.round(value)))
+  return Math.min(limit, Math.max(ORACLE_PANEL_WIDTH_MIN, Math.round(value)))
 }
 
 /** The width chosen, which a narrow window may show narrower without forgetting it. */
@@ -269,7 +369,9 @@ function usePanelWidth(reservedLeft: number) {
     return () => window.removeEventListener('resize', measure)
   }, [])
 
-  const limit = boundWidth(viewport - reservedLeft - CONVERSATION_MIN)
+  const limit = boundWidth(
+    viewport - reservedLeft - ORACLE_CONVERSATION_WIDTH_MIN,
+  )
   const clampWidth = (value: number) => boundWidth(value, limit)
   const width = clampWidth(preferred)
 
@@ -287,7 +389,7 @@ function usePanelWidth(reservedLeft: number) {
       'aria-label': 'Resize Oracle',
       'aria-orientation': 'vertical' as const,
       'aria-valuemax': limit,
-      'aria-valuemin': WIDTH_MIN,
+      'aria-valuemin': ORACLE_PANEL_WIDTH_MIN,
       'aria-valuenow': width,
       'data-resizing': resizing,
       onDoubleClick: () => commit(undefined),
@@ -371,6 +473,7 @@ function visibleTrigger(): HTMLElement | undefined {
 /** Lets the rest of the app hand Oracle a prompt, as `/oracle` does. */
 export interface OracleControl {
   ask(text: string, options: { answerOnly: boolean }): Promise<void>
+  focusComposer(): boolean
 }
 
 /**
@@ -381,6 +484,7 @@ export function OracleButton({
   indicator,
   open,
   onToggle,
+  shortcutLabel,
   compact = false,
   floating = false,
   className = '',
@@ -389,6 +493,7 @@ export function OracleButton({
   indicator: OracleIndicator
   open: boolean
   onToggle: () => void
+  shortcutLabel?: string
   compact?: boolean
   /** The round bubble that sits with Scroll to latest. */
   floating?: boolean
@@ -413,7 +518,9 @@ export function OracleButton({
         working ? ' oracle-toggle--working' : ''
       }${indicator.status === 'offline' ? ' oracle-toggle--offline' : ''}${className ? ` ${className}` : ''}`}
       onClick={onToggle}
-      title="Oracle: ask about your sessions or hand off work"
+      title={`Oracle: ask about your sessions or hand off work${
+        shortcutLabel ? ` (${shortcutLabel})` : ''
+      }`}
       type="button"
     >
       <span className="oracle-toggle__mark">
@@ -439,6 +546,12 @@ export function ManagerAssistant({
   controlRef,
   reservedLeft = 0,
   onWidthChange,
+  placement = 'overlay',
+  placementShortcutLabel,
+  preferredPlacement = 'overlay',
+  onPlacementChange,
+  focusRequest = 0,
+  onRequestSessionFocus,
 }: {
   /** Changes each time the event socket reconnects, so the snapshot is reread. */
   connectionEpoch: number
@@ -456,9 +569,23 @@ export function ManagerAssistant({
   reservedLeft?: number
   /** The open panel's width, or undefined while it is closed, for whatever it covers to move beside it. */
   onWidthChange?: (width: number | undefined) => void
+  /** Desktop placement. Narrow layouts always pass overlay. */
+  placement?: 'overlay' | 'docked'
+  /** Shortcut shown with the placement action. */
+  placementShortcutLabel?: string
+  /** Stored desktop choice, even while a narrow layout falls back to overlay. */
+  preferredPlacement?: 'overlay' | 'docked'
+  /** Changes the stored desktop placement from the panel header. */
+  onPlacementChange?: (placement: 'overlay' | 'docked') => void
+  /** Changes when a keyboard shortcut explicitly requests the composer. */
+  focusRequest?: number
+  /** Lets App focus the active writable session composer after Oracle closes. */
+  onRequestSessionFocus?: () => boolean
 }) {
+  const [storedDraft] = useState(readStoredOracleDraft)
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
-  const [draft, setDraft] = useState('')
+  const snapshotRef = useRef<ManagerSnapshot | undefined>(undefined)
+  const [draft, setDraft] = useState(storedDraft.value.draft)
   const [answerOnly, setAnswerOnly] = useState(readAnswerOnly)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string>()
@@ -466,17 +593,56 @@ export function ManagerAssistant({
   const [busyMessage, setBusyMessage] = useState<string>()
   const [unread, setUnread] = useState(false)
   const [loadError, setLoadError] = useState<string>()
+  const [refreshing, setRefreshing] = useState(true)
+  const [snapshotStale, setSnapshotStale] = useState(false)
+  const [refreshAttempt, setRefreshAttempt] = useState(0)
   const [announcement, setAnnouncement] = useState('')
   // A waiting message being rewritten in place, and what it now says.
-  const [editing, setEditing] = useState<{ id: string; text: string }>()
+  const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(
+    storedDraft.value.editing,
+  )
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState<string>()
+  const [draftStorageError, setDraftStorageError] = useState(storedDraft.error)
+  const [recoveredDraft, setRecoveredDraft] = useState(Boolean(storedDraft.value.draft))
+  const [recoveredEdit, setRecoveredEdit] = useState(Boolean(storedDraft.value.editing))
+  const draftStorageBlockedRef = useRef(Boolean(storedDraft.error))
+  const draftRef = useRef(draft)
+  const managerRefreshGeneration = useRef(0)
+  const replaceSnapshot = useCallback((next: ManagerSnapshot) => {
+    managerRefreshGeneration.current += 1
+    snapshotRef.current = next
+    setSnapshot(next)
+    setRefreshing(false)
+  }, [])
+  const updateSnapshot = useCallback((
+    update: (current: ManagerSnapshot) => ManagerSnapshot,
+  ) => {
+    const current = snapshotRef.current
+    if (!current) return
+    const next = update(current)
+    managerRefreshGeneration.current += 1
+    snapshotRef.current = next
+    setSnapshot(next)
+    setRefreshing(false)
+  }, [])
   const editInputRef = useRef<HTMLTextAreaElement>(null)
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const listRef = useRef<HTMLOListElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const focusRequestRef = useRef(focusRequest)
+  const sessionFocusRef = useRef(onRequestSessionFocus)
   const panelWidth = usePanelWidth(reservedLeft)
+  const returnFinalTranscript = useCallback((text: string) => {
+    const transcript = text.trim()
+    if (!transcript) return
+    setDraft((current) => {
+      const draft = current.trimEnd()
+      return draft ? `${draft}\n\n${transcript}` : transcript
+    })
+    window.requestAnimationFrame(() => inputRef.current?.focus())
+  }, [])
   const voice = useVoiceRecorder({
     onTranscript: (text) => {
       setDraft((current) => current.trim() ? `${current.trimEnd()} ${text}` : text)
@@ -484,7 +650,34 @@ export function ManagerAssistant({
     },
     onError: (message) => setSendError(message),
   })
+  const conversation = useOracleConversation({
+    defaults,
+    answerOnly: true,
+    open,
+    onFinalTranscript: returnFinalTranscript,
+    onError: announce,
+  })
   const { recording: voiceRecording, stop: stopVoice } = voice
+  const conversationAvailable = conversation.capability?.available === true
+  const conversationActive = conversation.state !== 'off'
+  const conversationOwnsMicrophone = conversation.ownsResources
+  const liveAnnouncement = [
+    announcement,
+    conversationActive
+      ? `Conversation: ${conversationStateLabel(conversation.state)}`
+      : '',
+  ].filter(Boolean).join(' ')
+
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
+
+  useEffect(() => {
+    if (draftStorageBlockedRef.current) return
+    const error = storeOracleDraft(draft, editing)
+    if (error) draftStorageBlockedRef.current = true
+    setDraftStorageError(error)
+  }, [draft, editing])
 
   // A closed panel never keeps the microphone on.
   useEffect(() => {
@@ -499,22 +692,31 @@ export function ManagerAssistant({
     editor.closest('li')?.scrollIntoView?.({ block: 'nearest' })
   }, [editingId])
 
+  const authoritativeEdit = editing && snapshot?.messages.find(
+    (message) => message.id === editing.id && message.role === 'user',
+  )
+  const editWasAccepted = Boolean(
+    authoritativeEdit
+    && authoritativeEdit.state !== 'queued'
+    && authoritativeEdit.content.trim() === editing?.text.trim(),
+  )
   // Oracle started on a message while it was being edited, or it left the
-  // queue another way: the words go to the message bar rather than being lost.
-  // Clearing the edit here means this happens once.
-  // Not while saving: an edit that was saved and then taken by Oracle is not
-  // to be copied back; the save itself says what happened.
+  // queue another way. Keep unsaved words in the message bar, but retire an
+  // edit whose exact content is already authoritative so it cannot be resent.
   if (editing && !savingEdit && snapshot && !snapshot.messages.some(
     (message) => message.id === editing.id && message.role === 'user' && message.state === 'queued',
   )) {
     const kept = editing.text.trim()
     setEditing(undefined)
-    if (kept) {
+    setRecoveredEdit(false)
+    if (!editWasAccepted && kept) {
       setDraft((current) => current.trimEnd().endsWith(kept)
         ? current
         : current.trim() ? `${current.trimEnd()}\n\n${kept}` : kept)
     }
-    setSendError('Oracle started on that message before your edit was saved. Your edit is in the message bar to send.')
+    if (!editWasAccepted) {
+      setSendError('Oracle started on that message before your edit was saved. Your edit is in the message bar to send.')
+    }
   }
   const openRef = useRef(open)
   const managedRef = useRef(onManagedSessionsChange)
@@ -527,36 +729,56 @@ export function ManagerAssistant({
   // Opening is reading: a reply waiting for you is seen once the panel shows.
   if (open && unread) setUnread(false)
 
-  useEffect(() => {
-    let cancelled = false
-    // Oracle is an addition to the app; nothing about it may break the rest
-    // of the page, so a failed or odd answer just leaves it hidden.
-    void Promise.resolve()
-      .then(() => getManager())
-      .then((next) => {
-        if (cancelled) return
-        if (next && typeof next === 'object' && Array.isArray(next.messages)) {
-          setSnapshot(next)
-          setLoadError(undefined)
-        } else {
-          setLoadError('Oracle sent an answer this app cannot read.')
-        }
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) setLoadError(`Oracle could not be reached: ${caught instanceof Error ? caught.message : String(caught)}`)
-      })
-    return () => {
-      cancelled = true
+  const refreshManager = useCallback(async () => {
+    const generation = managerRefreshGeneration.current + 1
+    managerRefreshGeneration.current = generation
+    setRefreshing(true)
+    try {
+      const next = await getManager()
+      if (managerRefreshGeneration.current !== generation) return
+      if (!next || typeof next !== 'object' || !Array.isArray(next.messages)) {
+        throw new Error('Oracle sent an answer this app cannot read.')
+      }
+      snapshotRef.current = next
+      setSnapshot(next)
+      setLoadError(undefined)
+      setSnapshotStale(false)
+    } catch (caught) {
+      if (managerRefreshGeneration.current === generation) {
+        const detail = caught instanceof Error ? caught.message : String(caught)
+        setLoadError(snapshotRef.current
+          ? `Oracle refresh failed: ${detail}`
+          : `Oracle could not be reached: ${detail}`)
+        setSnapshotStale(Boolean(snapshotRef.current))
+      }
+      throw caught
+    } finally {
+      if (managerRefreshGeneration.current === generation) setRefreshing(false)
     }
-  }, [connectionEpoch])
+  }, [])
+
+  useEffect(() => {
+    void refreshManager().catch(() => undefined)
+    return () => {
+      managerRefreshGeneration.current += 1
+    }
+  }, [connectionEpoch, refreshAttempt, refreshManager])
+
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      waitUntilAuthoritativeRefresh(event, refreshManager())
+    }
+    window.addEventListener(authoritativeRefresh, refresh)
+    return () => window.removeEventListener(authoritativeRefresh, refresh)
+  }, [refreshManager])
 
   useEffect(() => subscribe((event) => {
-    setSnapshot((current) => current ? applyEvent(current, event) : current)
+    updateSnapshot((current) => applyEvent(current, event))
     if (event.type === 'manager.message' && event.message.role === 'assistant') {
       if (!openRef.current) setUnread(true)
       setAnnouncement('Oracle replied.')
     }
-  }), [subscribe])
+  }), [subscribe, updateSnapshot])
 
   const managedKey = snapshot?.managedSessions.join('\n') ?? ''
   useEffect(() => {
@@ -599,16 +821,36 @@ export function ManagerAssistant({
   const wasOpenRef = useRef(false)
   useEffect(() => {
     const wasOpen = wasOpenRef.current
+    const focusRequested = focusRequestRef.current !== focusRequest
+    focusRequestRef.current = focusRequest
     wasOpenRef.current = open
     if (open) {
       const active = document.activeElement
       returnFocusRef.current = active instanceof HTMLElement && active !== document.body ? active : null
-      if (!phoneEnterCreatesNewline()) inputRef.current?.focus()
+      if (focusRequested || !phoneEnterCreatesNewline()) {
+        const input = inputRef.current
+        input?.focus()
+        input?.setSelectionRange(input.value.length, input.value.length)
+      }
       return
     }
     // Only a panel that was open hands focus back; the first render must not take it.
     if (!wasOpen) return
-    const target = returnFocusRef.current
+    const sessionFocus = sessionFocusRef.current
+    if (sessionFocus?.()) {
+      window.requestAnimationFrame(() => {
+        const active = document.activeElement
+        if (
+          !(active instanceof HTMLElement) ||
+          active === document.body ||
+          !active.isConnected
+        ) {
+          visibleTrigger()?.focus()
+        }
+      })
+      return
+    }
+    const target = sessionFocus ? null : returnFocusRef.current
     returnFocusRef.current = null
     // Safari does not focus a button on click, so the trigger is the fallback.
     const trigger = visibleTrigger()
@@ -616,7 +858,11 @@ export function ManagerAssistant({
     if (destination && document.activeElement !== destination && !document.querySelector('[role="dialog"]:focus-within')) {
       destination.focus()
     }
-  }, [open])
+  }, [focusRequest, open])
+
+  useEffect(() => {
+    sessionFocusRef.current = onRequestSessionFocus
+  }, [onRequestSessionFocus])
 
   const close = useCallback(() => {
     setConfirmReset(false)
@@ -650,8 +896,8 @@ export function ManagerAssistant({
 
   const sendText = useCallback(async (content: string, onlyOracle: boolean) => {
     const message = await sendManagerMessage(content, defaults, { answerOnly: onlyOracle })
-    setSnapshot((current) => current ? withReturnedMessage(current, message) : current)
-  }, [defaults])
+    updateSnapshot((current) => withReturnedMessage(current, message))
+  }, [defaults, updateSnapshot])
 
   useEffect(() => {
     if (!controlRef) return
@@ -671,6 +917,14 @@ export function ManagerAssistant({
           setSendError(`Could not send to Oracle: ${reason}. Your question is in the message bar to send again.`)
         }
       },
+      focusComposer: () => {
+        const input = inputRef.current
+        if (!openRef.current || !input || input.disabled || input.readOnly) return false
+        input.focus({ preventScroll: true })
+        const end = input.value.length
+        input.setSelectionRange(end, end)
+        return document.activeElement === input
+      },
     }
     return () => {
       controlRef.current = undefined
@@ -679,12 +933,18 @@ export function ManagerAssistant({
 
   async function send(content = draft, onlyOracle = answerOnly) {
     const text = content.trim()
-    if (!text || sending) return
+    if (!text || sending || draftStorageError) return
     setSending(true)
     setSendError(undefined)
     try {
       await sendText(content, onlyOracle)
-      if (content === draft) setDraft('')
+      setDraft((current) => {
+        const next = current === content ? '' : current
+        const storageError = storeOracleDraft(next, editing)
+        setDraftStorageError(storageError)
+        return storageError ? current : next
+      })
+      setRecoveredDraft(false)
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -697,7 +957,7 @@ export function ManagerAssistant({
     setSendError(undefined)
     try {
       const next = await work()
-      setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
+      updateSnapshot((current) => withReturnedMessage(current, next))
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -708,7 +968,7 @@ export function ManagerAssistant({
   async function startOver() {
     setConfirmReset(false)
     try {
-      setSnapshot(await resetManager())
+      replaceSnapshot(await resetManager())
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -716,6 +976,7 @@ export function ManagerAssistant({
 
   function startEdit(message: ManagerMessage) {
     setEditError(undefined)
+    setRecoveredEdit(false)
     setEditing({ id: message.id, text: message.content })
   }
 
@@ -726,6 +987,7 @@ export function ManagerAssistant({
   function cancelEdit() {
     const id = editing?.id
     setEditing(undefined)
+    setRecoveredEdit(false)
     setEditError(undefined)
     if (id) returnFocusToEdit(id)
   }
@@ -736,7 +998,7 @@ export function ManagerAssistant({
   }
 
   async function saveEdit() {
-    if (!editing || savingEdit) return
+    if (!editing || savingEdit || draftStorageError) return
     const { id, text } = editing
     const original = snapshot?.messages.find((message) => message.id === id)
     // The same checks as the Save button, for Ctrl+Enter too.
@@ -745,8 +1007,15 @@ export function ManagerAssistant({
     setEditError(undefined)
     try {
       const next = await editQueuedManagerMessage(id, text)
-      setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
+      updateSnapshot((current) => withReturnedMessage(current, next))
+      const storageError = storeOracleDraft(draftRef.current, undefined)
+      if (storageError) {
+        draftStorageBlockedRef.current = true
+        setDraftStorageError(storageError)
+        return
+      }
       setEditing((current) => current?.id === id ? undefined : current)
+      setRecoveredEdit(false)
       announce('Saved your edit. It keeps its place in the queue.')
       returnFocusToEdit(id)
     } catch (caught) {
@@ -755,6 +1024,7 @@ export function ManagerAssistant({
         // Too late, whatever the queue still shows: the words go to the message bar.
         const kept = text.trim()
         setEditing((current) => current?.id === id ? undefined : current)
+        setRecoveredEdit(false)
         setDraft((current) => current.trimEnd().endsWith(kept)
           ? current
           : current.trim() ? `${current.trimEnd()}\n\n${kept}` : kept)
@@ -802,8 +1072,13 @@ export function ManagerAssistant({
     }
   }
 
+  async function startConversation() {
+    voice.stop(true)
+    await conversation.start()
+  }
+
   if (!snapshot?.available || !open) {
-    return <p aria-live="polite" className="visually-hidden">{announcement}</p>
+    return <p aria-live="polite" className="visually-hidden">{liveAnnouncement}</p>
   }
 
   const working = snapshot.status === 'working' || snapshot.status === 'recovering'
@@ -822,7 +1097,8 @@ export function ManagerAssistant({
   return (
     <section
       aria-label="Oracle"
-      className="manager-panel"
+      className={`manager-panel manager-panel--${placement}`}
+      data-placement={placement}
       data-resizing={panelWidth.resizing}
       id="oracle-panel"
       onKeyDown={(event) => {
@@ -855,10 +1131,50 @@ export function ManagerAssistant({
         >
           <RotateCcw aria-hidden="true" size={17} />
         </button>
+        {onPlacementChange ? (
+          <button
+            aria-label={
+              preferredPlacement === 'docked' ? 'Undock Oracle' : 'Dock Oracle'
+            }
+            className="icon-button"
+            onClick={() =>
+              onPlacementChange(
+                preferredPlacement === 'docked' ? 'overlay' : 'docked',
+              )
+            }
+            title={`${preferredPlacement === 'docked' ? 'Undock' : 'Dock'} Oracle${
+              placementShortcutLabel ? ` (${placementShortcutLabel})` : ''
+            }`}
+            type="button"
+          >
+            {preferredPlacement === 'docked' ? (
+              <PanelRightOpen aria-hidden="true" size={18} />
+            ) : (
+              <PanelRightClose aria-hidden="true" size={18} />
+            )}
+          </button>
+        ) : null}
         <button aria-label="Close Oracle" className="icon-button" onClick={close} title="Close (Esc)" type="button">
           <X aria-hidden="true" size={19} />
         </button>
       </header>
+      {refreshing && snapshot ? (
+        <p aria-label="Oracle freshness" className="manager-panel__freshness" role="status">
+          Refreshing Oracle…
+        </p>
+      ) : snapshotStale && loadError ? (
+        <p aria-label="Oracle freshness" className="manager-panel__freshness form-error" role="alert">
+          <span>{loadError}. Showing the last loaded state.</span>
+          <button
+            className="secondary-button"
+            onClick={() => setRefreshAttempt((current) => current + 1)}
+            type="button"
+          >
+            Retry Oracle refresh
+          </button>
+        </p>
+      ) : null}
+      <DreamerMorningPlan active={open} />
       {confirmReset ? (
         <div className="manager-panel__confirm" role="alertdialog" aria-label="Start a new conversation">
           <p>Start a new conversation? Oracle keeps its notes and memory.</p>
@@ -955,6 +1271,7 @@ export function ManagerAssistant({
                         disabled={savingEdit}
                         onChange={(event) => {
                           const text = event.target.value
+                          setRecoveredEdit(false)
                           setEditing((current) => current?.id === message.id ? { ...current, text } : current)
                         }}
                         onKeyDown={onEditKeyDown}
@@ -962,6 +1279,9 @@ export function ManagerAssistant({
                         rows={3}
                         value={rewriting.text}
                       />
+                      {recoveredEdit ? (
+                        <p className="manager-composer__status" role="status">Recovered saved edit</p>
+                      ) : null}
                       {editTooLong ? (
                         <p className="form-error" role="alert">
                           Messages are limited to {MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.
@@ -979,7 +1299,7 @@ export function ManagerAssistant({
                         <button
                           aria-label="Save edit"
                           className="primary-button"
-                          disabled={savingEdit || !rewriting.text.trim() || editTooLong || editUnchanged}
+                          disabled={savingEdit || Boolean(draftStorageError) || !rewriting.text.trim() || editTooLong || editUnchanged}
                           onClick={() => void saveEdit()}
                           type="button"
                         >
@@ -1034,6 +1354,12 @@ export function ManagerAssistant({
         }}
       >
         {sendError ? <p className="form-error manager-composer__error" role="alert">{sendError}</p> : null}
+        {draftStorageError ? <p className="form-error manager-composer__error" role="alert">{draftStorageError}</p> : null}
+        {conversation.error ? (
+          <p className="form-error manager-composer__error" role="alert">
+            {conversation.error}
+          </p>
+        ) : null}
         {tooLong ? (
           <p className="form-error manager-composer__error" role="alert">
             Messages are limited to {MANAGER_MESSAGE_MAX_LENGTH.toLocaleString('en-US')} characters.
@@ -1058,25 +1384,106 @@ export function ManagerAssistant({
               Stop & transcribe
             </button>
           </div>
+        ) : conversationActive ? (
+          <div
+            aria-label="Conversation status"
+            className={`manager-conversation-status manager-conversation-status--${conversation.state}`}
+            role="group"
+          >
+            {conversation.state === 'error' ? null : (
+              <LoaderCircle
+                aria-hidden="true"
+                className="activity-message__spinner manager-conversation-status__activity"
+                size={17}
+              />
+            )}
+            <div className="manager-conversation-status__content">
+              <strong>{conversationStateLabel(conversation.state)}</strong>
+              {conversation.partial ? (
+                <p aria-label="Live transcript" className="manager-conversation-status__partial">
+                  {conversation.partial}
+                </p>
+              ) : null}
+              <p className="manager-conversation-status__privacy">
+                Speech processing stays on your selected computer; Oracle uses remote Copilot. Final messages stay in Oracle history.
+              </p>
+              <p className="manager-conversation-security">
+                Speaker identity is not verified. Nearby or replayed audio may be submitted. Conversation is Ask-only and can read session information. Finalized text is sent to remote Copilot.
+              </p>
+            </div>
+            {conversation.ownsResources ? (
+              <button
+                aria-label="Stop conversation"
+                className="manager-conversation-stop"
+                disabled={conversation.state === 'stopping'}
+                onClick={conversation.stop}
+                type="button"
+              >
+                <Square aria-hidden="true" fill="currentColor" size={11} />
+                {conversation.state === 'stopping' ? 'Stopping' : 'Stop'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
-        <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}`}>
+        {conversationAvailable && !conversationActive ? (
+          <div
+            aria-label="Conversation security notice"
+            className="manager-conversation-policy"
+            role="note"
+          >
+            <p>
+              Speaker identity is not verified. Nearby or replayed audio may be submitted. Ask can read session information. Finalized text is sent to remote Copilot.
+            </p>
+            <p>
+              Conversation voice is Ask-only and cannot delegate. The mode switch still controls typed messages.
+            </p>
+          </div>
+        ) : null}
+        <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}${
+          conversationAvailable ? ' manager-composer__row--conversation' : ''
+        }`}>
           <textarea
             aria-label="Message Oracle"
             enterKeyHint={phoneEnterCreatesNewline() ? 'enter' : 'send'}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              setRecoveredDraft(false)
+              setDraft(event.target.value)
+            }}
             onKeyDown={onKeyDown}
             placeholder="Ask me anything"
             ref={inputRef}
             rows={2}
             value={draft}
           />
-          <div className="manager-composer__actions">
+          <div className={`manager-composer__actions${
+            conversationAvailable ? ' manager-composer__actions--conversation' : ''
+          }`}>
+            {conversationAvailable && !conversation.ownsResources ? (
+              <button
+                aria-label="Start conversation"
+                className="manager-conversation-toggle"
+                disabled={voice.transcribing || voice.recording || voice.starting}
+                onClick={() => void startConversation()}
+                title="Start a hands-free conversation with Oracle"
+                type="button"
+              >
+                <MessageCircle aria-hidden="true" size={16} />
+                <span>Start conversation</span>
+              </button>
+            ) : null}
             <button
               aria-label={voice.transcribing ? 'Transcribing audio' : 'Dictate to Oracle'}
               className="icon-button manager-composer__mic"
-              disabled={voice.transcribing || voice.recording || voice.starting}
+              disabled={
+                conversationOwnsMicrophone
+                || voice.transcribing
+                || voice.recording
+                || voice.starting
+              }
               onClick={() => void voice.start()}
-              title="Record and transcribe"
+              title={conversationOwnsMicrophone
+                ? 'Stop Conversation before using dictation'
+                : 'Record and transcribe'}
               type="button"
             >
               {voice.transcribing
@@ -1091,13 +1498,18 @@ export function ManagerAssistant({
             <button
               aria-label={working ? 'Queue message' : 'Send message'}
               className="manager-composer__send"
-              disabled={!draft.trim() || sending || tooLong}
+              disabled={!draft.trim() || sending || tooLong || Boolean(draftStorageError)}
               title={working ? 'Queue (answered after the current reply)' : 'Send'}
               type="submit"
             >
               {sending ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={17} /> : <ArrowUp aria-hidden="true" size={18} />}
             </button>
           </div>
+          {!draftStorageError && draft ? (
+            <p className="manager-composer__status" role="status">
+              {recoveredDraft ? 'Recovered saved draft' : 'Saved on this device'}
+            </p>
+          ) : null}
         </div>
         <div className="manager-composer__options">
           <div className="oracle-mode-field">
@@ -1120,7 +1532,9 @@ export function ManagerAssistant({
               </button>
             </div>
             <span className="oracle-mode__hint" id="oracle-mode-hint">
-              {answerOnly ? 'Running work is left alone' : 'Can start and steer sessions'}
+              {conversationActive
+                ? `Conversation voice is Ask-only; typed messages use ${answerOnly ? 'Ask' : 'Delegate'}`
+                : answerOnly ? 'Running work is left alone' : 'Can start and steer sessions'}
             </span>
           </div>
           <button
@@ -1140,7 +1554,7 @@ export function ManagerAssistant({
           </p>
         ) : null}
       </form>
-      <p aria-live="polite" className="visually-hidden">{announcement}</p>
+      <p aria-live="polite" className="visually-hidden">{liveAnnouncement}</p>
     </section>
   )
 }

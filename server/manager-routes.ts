@@ -4,7 +4,9 @@ import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager.js'
 import { MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES } from '../shared/manager-structured-memory.js'
 import type {
   ManagerClientDefaults,
+  ManagerEvent,
   ManagerMessage,
+  ManagerSubmissionOptions,
   ManagerSettingsSnapshot,
   ManagerSnapshot,
   UpdateManagerSettingsInput,
@@ -14,7 +16,7 @@ import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory
 /** What the routes need from the manager agent. */
 export interface ManagerRouteAgent {
   snapshot(): ManagerSnapshot
-  send(content: string, defaults?: ManagerClientDefaults, options?: { answerOnly?: boolean }): Promise<ManagerMessage>
+  send(content: string, defaults?: ManagerClientDefaults, options?: ManagerSubmissionOptions): Promise<ManagerMessage>
   retry(messageId: string): Promise<ManagerMessage>
   removeQueued(messageId: string): Promise<ManagerMessage>
   editQueued(messageId: string, content: string): Promise<ManagerMessage>
@@ -22,6 +24,11 @@ export interface ManagerRouteAgent {
   resolveConfirmation(messageId: string, accept: boolean): Promise<ManagerMessage>
   cancel(): Promise<void>
   reset(): Promise<void>
+}
+
+export interface ManagerEventSource {
+  on(event: 'event', listener: (event: ManagerEvent) => void): unknown
+  off(event: 'event', listener: (event: ManagerEvent) => void): unknown
 }
 
 const effort = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
@@ -47,6 +54,7 @@ const settingsSchema = z.object({
   reasoningEffort: effort.nullable().optional(),
   // Null clears a folder; a blank one is a mistake, not a way to clear it.
   sessionFolders: z.record(z.string().trim().min(1).max(200), z.string().trim().min(1).max(4096).nullable()).optional(),
+  sessionBackend: z.enum(['sdk', 'terminal']).optional(),
 })
 
 const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })

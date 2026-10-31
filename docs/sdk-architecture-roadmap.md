@@ -36,7 +36,7 @@ not proof that a defect still exists.
 | --- | --- | --- |
 | Provider boundary | `SessionService` and `ProviderSessionService` already separate Copilot and Claude. | Extend these contracts; do not introduce another provider router. |
 | SDK integration | Copilot already uses structured permissions, questions/elicitation, model/mode operations, command RPCs, and background-task RPCs. Claude uses its official Agent SDK. | Characterize and improve existing paths instead of reimplementing them. |
-| Runtime compatibility | The lockfile resolves Copilot SDK 1.0.16, while `AgentService` explicitly launches the system CLI through `COPILOT_BIN` or its default path. | Record the SDK, actual CLI, and supported protocol separately. A package version does not prove runtime capability. |
+| Runtime compatibility | The lockfile resolves Copilot SDK 1.0.22. SDK clients use its bundled Copilot runtime by default; `COPILOT_SDK_BIN` is the explicit SDK override, while `COPILOT_BIN` remains terminal-only. Normal SDK sessions discover existing local CLI configuration. | Record the SDK, actual runtime, and supported protocol separately. A package or executable version does not prove runtime capability. |
 | Lifecycle and durability | #197 added commit-aware persistence, durable retired identities, queue admissions/settlement, reply settlement, and shared `SessionAdmissions`. | Keep these invariants and their regression suites intact during extraction. Do not plan them as missing features. |
 | Read models | `SessionSummary` exists, but `ManagedSession`, list responses, and `session.upserted` events currently carry full `SessionDetail` histories. | Reuse/refine the existing summary type and add an explicit unloaded-detail state. An empty array must not mean both unloaded and empty. |
 | Polling and storage | Event logs have incremental readers and version gates; the JSON store batches durable changes and separates live stream deltas from committed checkpoints. | Preserve those optimizations. Measure remaining deep clones, full snapshot encoding, and changed-history projection costs. |
@@ -47,6 +47,15 @@ Source entry points: [provider compatibility](provider-compatibility.md),
 feedback](slash-command-feedback.md), [session admissions](../server/session-admissions.ts),
 [session store](../server/session-store.ts), and
 [shared contracts](../shared/contracts.ts).
+
+Current lifecycle evidence: the SDK 1.0.22 bundled runtime 1.0.98 supports
+create, detach, and delete over protocol 3 with the existing GitHub CLI login.
+The independently installed CLI can report a newer executable version while
+launching an older headless runtime that lacks `session.detach`; therefore
+destructive deletion does not depend on detach, while ownership-preserving
+suspend and SDK-to-tmux transitions still fail closed when detach is
+unsupported. Startup diagnostics expose only runtime version, protocol version,
+authenticated state, and authentication type.
 
 ### Coordinate with existing work
 
@@ -245,7 +254,7 @@ explain any tradeoff.
 2. Run the smallest relevant existing checks while iterating. Before a runtime
    PR can graduate, run the complete `pnpm check` locally; include the
    inherited-production-environment check when test/config changes require it.
-   There is no hosted CI to substitute for this gate.
+   The advisory hosted light check does not substitute for this gate.
 3. Refresh Graphify for tracked source or documentation changes. UI behavior
    changes also need phone/desktop evidence for the affected flow, including
    keyboard/focus and waiting-state behavior.

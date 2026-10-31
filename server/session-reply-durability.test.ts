@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Query } from '@anthropic-ai/claude-agent-sdk'
+import type { SessionEvent } from '@github/copilot-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UserInputReplyInput } from '../shared/contracts.js'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
@@ -353,6 +354,11 @@ function holdWrite() {
     return disk.writeFile(...args)
   })
   return { started, finish, fail }
+}
+
+function refuseSdkSettlement(message = 'disk full') {
+  vi.mocked(rename).mockImplementationOnce(disk.rename)
+    .mockRejectedValueOnce(new Error(message))
 }
 
 async function nextTick() {
@@ -1130,19 +1136,25 @@ describe('Reply durability regressions', () => {
       const { service, store, contents } = await copilotFixture()
       const { response, resolve, reply } = await copilotRequest(service, kind)
       const before = store.get(sessionId)
-      const onDisk = await contents()
-      vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+      refuseSdkSettlement()
 
-      await expect(reply()).rejects.toThrow('disk full')
+      await expect(reply()).rejects.toThrow('reply was accepted')
       await response
       expect(resolve).toHaveBeenCalledTimes(1)
-      expect(store.get(sessionId)).toEqual(before)
-      expect(await contents()).toBe(onDisk)
+      expect(store.get(sessionId)?.status).toBe(before?.status)
+      expect(store.get(sessionId)?.pendingPermission).toEqual(before?.pendingPermission)
+      expect(store.get(sessionId)?.pendingUserInput).toEqual(before?.pendingUserInput)
+      const onDisk = await contents()
+      expect(JSON.parse(onDisk).sdkAcceptedReplies[sessionId].requestId)
+        .toBe(kind === 'permission'
+          ? before?.pendingPermission?.requestId
+          : before?.pendingUserInput?.requestId)
 
       await expect(reply('Right')).rejects.toMatchObject({ statusCode: 409 })
       vi.mocked(writeFile).mockRejectedValueOnce(new Error('disk still full'))
       await expect(reply()).rejects.toThrow('disk still full')
-      expect(store.get(sessionId)).toEqual(before)
+      expect(store.get(sessionId)?.pendingPermission).toEqual(before?.pendingPermission)
+      expect(store.get(sessionId)?.pendingUserInput).toEqual(before?.pendingUserInput)
       expect(await contents()).toBe(onDisk)
 
       const settled = await reply()
@@ -1281,6 +1293,167 @@ describe('Concurrent Claude question advancement', () => {
 
 describe('Accepted reply ownership', () => {
   it.each(['permission', 'input', 'elicitation'] as const)(
+    'persists the exact Copilot %s choice before its callback and keeps the card until settlement',
+    async (kind) => {
+      const { service, store, contents } = await copilotFixture()
+      const pending = await copilotRequest(service, kind)
+      const before = store.get(sessionId)
+      vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
+      const settlement = holdWrite()
+      const reply = pending.reply('Right')
+      await expect(pending.response).resolves.toEqual(kind === 'permission'
+        ? { kind: 'reject', feedback: 'Rejected from Agentic Remote' }
+        : kind === 'input'
+          ? { answer: 'Right', wasFreeform: false }
+          : { action: 'accept', content: { direction: 'Right' } })
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+      expect(store.get(sessionId)?.status).toBe(before?.status)
+      expect(store.get(sessionId)?.pendingPermission).toEqual(before?.pendingPermission)
+      expect(store.get(sessionId)?.pendingUserInput).toEqual(before?.pendingUserInput)
+      const saved = JSON.parse(await contents())
+      expect(saved.sdkAcceptedReplies[sessionId]).toMatchObject(kind === 'permission'
+        ? { requestId: pending.requestId, generation: 0, kind, optionId: 'reject' }
+        : kind === 'input'
+          ? {
+              requestId: pending.requestId, generation: 0, kind: 'user-input',
+              input: { answer: 'Right', wasFreeform: false, action: 'accept' },
+            }
+          : {
+              requestId: pending.requestId, generation: 0, kind,
+              input: {
+                answer: '', wasFreeform: false, action: 'accept',
+                values: { direction: 'Right' },
+              },
+            })
+      expect(saved.sessions[sessionId]).not.toHaveProperty('sdkAcceptedReply')
+      await settlement.started
+      const duplicate = pending.reply('Right')
+      await expect(pending.reply('Left')).rejects.toMatchObject({ statusCode: 409 })
+      settlement.finish()
+      const [settled, repeated] = await Promise.all([reply, duplicate])
+      expect(repeated).toEqual(settled)
+      expect(settled).toMatchObject({ status: 'running' })
+      expect(settled.pendingPermission).toBeUndefined()
+      expect(settled.pendingUserInput).toBeUndefined()
+      expect(store.sdkAcceptedReply(sessionId)).toBeUndefined()
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each(['permission', 'input', 'elicitation'] as const)(
+    'does not deliver a Copilot %s choice when the acceptance write fails',
+    async (kind) => {
+      const { service, store, contents } = await copilotFixture()
+      const pending = await copilotRequest(service, kind)
+      const before = store.get(sessionId)
+      const saved = await contents()
+      vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+
+      await expect(pending.reply('Right')).rejects.toThrow('disk full')
+      expect(pending.resolve).not.toHaveBeenCalled()
+      expect(store.get(sessionId)).toEqual(before)
+      expect(await contents()).toBe(saved)
+      expect(store.sdkAcceptedReply(sessionId)).toBeUndefined()
+
+      await pending.reply('Left')
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+      await expect(pending.response).resolves.toEqual(kind === 'permission'
+        ? { kind: 'approve-once' }
+        : kind === 'input'
+          ? { answer: 'Left', wasFreeform: false }
+          : { action: 'accept', content: { direction: 'Left' } })
+    },
+  )
+
+  it.each(['permission', 'input', 'elicitation'] as const)(
+    'retains a Copilot %s choice after callback delivery when confirmation fails',
+    async (kind) => {
+      const { service, store, contents } = await copilotFixture()
+      const pending = await copilotRequest(service, kind)
+      vi.mocked(rename).mockImplementationOnce(disk.rename)
+        .mockRejectedValueOnce(new Error('confirmation refused'))
+
+      await expect(pending.reply('Right')).rejects.toMatchObject({
+        statusCode: 503, message: expect.stringContaining('confirmation refused'),
+      })
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+      const saved = JSON.parse(await contents())
+      expect(saved.sdkAcceptedReplies[sessionId]?.requestId).toBe(pending.requestId)
+      expect(saved.sessions[sessionId][kind === 'permission'
+        ? 'pendingPermission' : 'pendingUserInput'].requestId).toBe(pending.requestId)
+      await expect(pending.reply('Left')).rejects.toMatchObject({ statusCode: 409 })
+
+      const settled = await pending.reply('Right')
+      expect(settled).toMatchObject({ status: 'running' })
+      expect(settled.pendingPermission).toBeUndefined()
+      expect(settled.pendingUserInput).toBeUndefined()
+      expect(store.sdkAcceptedReply(sessionId)).toBeUndefined()
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('keeps a durable accepted choice when a live idle event precedes refused confirmation', async () => {
+    const { service, store } = await copilotFixture()
+    const pending = await copilotRequest(service, 'input')
+    let report!: (event: SessionEvent) => void
+    const owner = {
+      sessionId,
+      on: (callback: (event: SessionEvent) => void) => {
+        report = callback
+        return () => undefined
+      },
+      disconnect: async () => {},
+    } as unknown as CopilotSessionLike
+    service['installSdkOwner'](owner)
+    vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
+    const settlement = holdWrite()
+    const reply = expect(pending.reply('Right')).rejects.toMatchObject({ statusCode: 503 })
+    await settlement.started
+    expect(pending.resolve).toHaveBeenCalledOnce()
+    report({
+      type: 'session.idle', id: 'recent-idle', parentId: null,
+      timestamp: new Date().toISOString(), data: {}, ephemeral: true,
+    } as SessionEvent)
+    settlement.fail(new Error('confirmation refused'))
+    await reply
+    await store.readAfterWrites(sessionId)
+
+    expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(pending.requestId)
+    expect(store.get(sessionId)?.pendingUserInput?.requestId).toBe(pending.requestId)
+    await pending.reply('Right')
+    expect(store.sdkAcceptedReply(sessionId)).toBeUndefined()
+    expect(pending.resolve).toHaveBeenCalledOnce()
+  })
+
+  it('does not overwrite one durable SDK choice with a concurrently accepted different request', async () => {
+    const { service, store } = await copilotFixture()
+    const permission = await copilotRequest(service, 'permission')
+    const input = await copilotRequest(service, 'input')
+    vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
+    const settlement = holdWrite()
+    const first = expect(permission.reply('Left')).rejects.toMatchObject({ statusCode: 503 })
+    await settlement.started
+    expect(permission.resolve).toHaveBeenCalledOnce()
+    expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(permission.requestId)
+    const competing = expect(input.reply('Right')).rejects.toMatchObject({ statusCode: 409 })
+    settlement.fail(new Error('confirmation refused'))
+    await Promise.all([first, competing])
+
+    expect(store.sdkAcceptedReply(sessionId)).toMatchObject({
+      requestId: permission.requestId,
+      optionId: 'allow-once',
+    })
+    expect(input.resolve).not.toHaveBeenCalled()
+    const settledPermission = await permission.reply('Left')
+    expect(settledPermission.pendingPermission).toBeUndefined()
+    expect(settledPermission.pendingUserInput?.requestId).toBe(input.requestId)
+    expect(store.sdkAcceptedReply(sessionId)).toBeUndefined()
+    await input.reply('Right')
+    expect(input.resolve).toHaveBeenCalledOnce()
+    expect(permission.resolve).toHaveBeenCalledOnce()
+  })
+
+  it.each(['permission', 'input', 'elicitation'] as const)(
     'joins concurrent Copilot %s replies and refuses a conflicting choice',
     async (kind) => {
       const { service, store } = await copilotFixture()
@@ -1293,7 +1466,7 @@ describe('Accepted reply ownership', () => {
       const duplicate = pending.reply('Right')
       await expect(pending.reply('Left')).rejects.toMatchObject({ statusCode: 409 })
       expect(store.get(sessionId)).toEqual(before)
-      expect(pending.resolve).toHaveBeenCalledTimes(1)
+      expect(pending.resolve).not.toHaveBeenCalled()
       expect(vi.mocked(writeFile).mock.calls).toHaveLength(writes + 1)
       gate.finish()
       const [settled, repeated] = await Promise.all([first, duplicate])
@@ -1349,14 +1522,17 @@ describe('Accepted reply ownership', () => {
     async (olderKind, newerKind) => {
       const { service, store } = await copilotFixture()
       const older = await copilotRequest(service, olderKind)
+      vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
       const gate = holdWrite()
-      const rejected = expect(older.reply()).rejects.toThrow('disk full')
+      const rejected = expect(older.reply()).rejects.toThrow('reply was accepted')
       await gate.started
+      expect(older.resolve).toHaveBeenCalledTimes(1)
       const newerRequest = copilotRequest(service, newerKind)
       gate.fail(new Error('disk full'))
       await rejected
       const newer = await newerRequest
       const waiting = store.get(sessionId)!
+      expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(older.requestId)
       const settled = await older.reply()
       expect(settled).toMatchObject({
         status: 'waiting',
@@ -1367,11 +1543,35 @@ describe('Accepted reply ownership', () => {
           requestId: newer.requestId,
         },
       })
+      expect(store.sdkAcceptedReply(sessionId)).toBeUndefined()
       expect(newer.resolve).not.toHaveBeenCalled()
       expect(older.resolve).toHaveBeenCalledTimes(1)
       await newer.reply('Right')
       expect(newer.resolve).toHaveBeenCalledTimes(1)
       expect(older.resolve).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each(['permission', 'input', 'elicitation'] as const)(
+    'does not deliver an obsolete Copilot %s answer when a newer card commits first',
+    async (kind) => {
+      const { service, store } = await copilotFixture()
+      const older = await copilotRequest(service, kind)
+      const gate = holdWrite()
+      const earlier = store.update(sessionId, (session) => { session.title = 'Earlier write' })
+      await gate.started
+      const newerRequest = copilotRequest(service, kind)
+      const rejected = expect(older.reply()).rejects.toThrow('no longer pending')
+      gate.finish()
+      await earlier
+      const newer = await newerRequest
+      await rejected
+      expect(older.resolve).not.toHaveBeenCalled()
+      expect(store.sdkAcceptedReply(sessionId)).toBeUndefined()
+      expect(store.get(sessionId)?.[kind === 'permission'
+        ? 'pendingPermission' : 'pendingUserInput']?.requestId).toBe(newer.requestId)
+      await newer.reply('Right')
+      expect(newer.resolve).toHaveBeenCalledTimes(1)
     },
   )
 
@@ -1415,7 +1615,7 @@ describe('Accepted reply ownership', () => {
     const { service, store } = await copilotFixture()
     const pending = await copilotRequest(service, 'elicitation')
     const values = { direction: 'Left', detail: 'Original' }
-    vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+    refuseSdkSettlement()
     await expect(service.replyUserInput(sessionId, pending.requestId, {
       ...answer('Left'), values,
     })).rejects.toThrow('disk full')
@@ -1436,7 +1636,7 @@ describe('Accepted reply ownership', () => {
       const { service } = await copilotFixture()
       const pending = await copilotRequest(service, 'elicitation')
       const reply = { ...answer(''), action }
-      vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+      refuseSdkSettlement()
       await expect(service.replyUserInput(sessionId, pending.requestId, reply))
         .rejects.toThrow('disk full')
       await expect(pending.response).resolves.toEqual({ action })
@@ -1465,8 +1665,12 @@ describe('Reply lifecycle cleanup', () => {
       `does not schedule ${provider} accepted-reply retries after %s`,
       async (operation) => {
         const { service, store, pending } = await setup()
-        vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+        if (provider === 'copilot') refuseSdkSettlement()
+        else vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
         await expect(pending.reply()).rejects.toThrow('disk full')
+        if (provider === 'copilot') {
+          expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(pending.requestId)
+        }
         await store.readAfterWrites(sessionId)
         await (operation === 'stop' ? service.stop() : service.deleteSession(sessionId))
         const writes = vi.mocked(writeFile).mock.calls.length
@@ -1485,13 +1689,19 @@ describe('Reply lifecycle cleanup', () => {
     it(`gives duplicate ${provider} replies the same refused settlement outcome`, async () => {
       const { service, store, pending } = await setup()
       const before = store.get(sessionId)
+      if (provider === 'copilot') vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
       const gate = holdWrite()
       const first = expect(pending.reply()).rejects.toThrow('disk full')
       await gate.started
       const duplicate = expect(pending.reply()).rejects.toThrow('disk full')
       gate.fail(new Error('disk full'))
       await Promise.all([first, duplicate])
-      expect(store.get(sessionId)).toEqual(before)
+      if (provider === 'copilot') {
+        expect(store.get(sessionId)?.pendingUserInput).toEqual(before?.pendingUserInput)
+        expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(pending.requestId)
+      } else {
+        expect(store.get(sessionId)).toEqual(before)
+      }
       expect(pending.resolve).toHaveBeenCalledTimes(1)
       const writes = vi.mocked(writeFile).mock.calls.length
       await nextTick()
@@ -1503,8 +1713,12 @@ describe('Reply lifecycle cleanup', () => {
 
     it(`retains ${provider} settlement state when deleting the stored session fails`, async () => {
       const { service, store, pending } = await setup()
-      vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+      if (provider === 'copilot') refuseSdkSettlement()
+      else vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
       await expect(pending.reply()).rejects.toThrow('disk full')
+      if (provider === 'copilot') {
+        expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(pending.requestId)
+      }
       vi.mocked(rename).mockRejectedValueOnce(new Error('delete refused'))
       await expect(service.deleteSession(sessionId)).rejects.toThrow('delete refused')
       expect(store.get(sessionId)?.pendingUserInput?.requestId).toBe(pending.requestId)
@@ -1560,8 +1774,11 @@ describe('Reply lifecycle cleanup', () => {
         const published = vi.fn()
         service.on('event', published)
         const gate = holdWrite()
-        const reply = pending.reply()
+        const reply = provider === 'copilot'
+          ? expect(pending.reply()).rejects.toThrow('no longer available')
+          : pending.reply()
         await gate.started
+        if (provider === 'copilot') expect(pending.resolve).not.toHaveBeenCalled()
         let finished = false
         const closing = (operation === 'stop' ? service.stop() : service.deleteSession(sessionId))
           .then(() => { finished = true })
@@ -1570,6 +1787,13 @@ describe('Reply lifecycle cleanup', () => {
         await expect(pending.reply()).rejects.toThrow('no longer available')
         gate.finish()
         await Promise.all([reply, closing])
+        if (provider === 'copilot') {
+          await expect(pending.response).resolves.toEqual({ answer: '', wasFreeform: true })
+          if (operation === 'stop') {
+            expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(pending.requestId)
+            expect(store.get(sessionId)?.pendingUserInput?.requestId).toBe(pending.requestId)
+          }
+        }
         const writes = vi.mocked(writeFile).mock.calls.length
         await nextTick()
         await store.flush()
@@ -1624,9 +1848,11 @@ describe('Reply continuation ownership', () => {
       async (outcome, timing) => {
         const { service, store, provider, finished } = await copilotRunFixture(outcome)
         const pending = await copilotRequest(service, kind)
+        vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
         const gate = holdWrite()
         const refused = expect(pending.reply()).rejects.toThrow('disk full')
         await gate.started
+        expect(pending.resolve).toHaveBeenCalledTimes(1)
         if (timing === 'before') {
           provider.finish()
           await nextTick()
@@ -1640,6 +1866,7 @@ describe('Reply continuation ownership', () => {
         expect(kind === 'permission'
           ? store.get(sessionId)?.pendingPermission?.requestId
           : store.get(sessionId)?.pendingUserInput?.requestId).toBe(pending.requestId)
+        expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(pending.requestId)
         await expect(pending.reply('Right')).rejects.toMatchObject({ statusCode: 409 })
 
         const settled = await pending.reply()
@@ -1677,6 +1904,9 @@ describe('Reply continuation ownership', () => {
         ? await copilotRequest(service, 'input')
         : await claudeRequest(service, 'input')
       vi.mocked(writeFile).mockRejectedValue(new Error('disk full'))
+      if (service instanceof AgentService) {
+        vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
+      }
       const gate = holdWrite()
       const refused = expect(pending.reply()).rejects.toThrow('disk full')
       await gate.started
@@ -1693,6 +1923,9 @@ describe('Reply continuation ownership', () => {
         : service['active'].has(sessionId)).toBe(false)
       expect(store.get(sessionId)?.status).toBe('waiting')
       expect(store.get(sessionId)?.pendingUserInput?.requestId).toBe(pending.requestId)
+      if (service instanceof AgentService) {
+        expect(store.sdkAcceptedReply(sessionId)?.requestId).toBe(pending.requestId)
+      }
       vi.mocked(writeFile).mockImplementation(disk.writeFile)
       await expect(pending.reply('Right')).rejects.toMatchObject({ statusCode: 409 })
 
@@ -1742,7 +1975,8 @@ describe('Reply continuation ownership', () => {
 
     it(`preserves a newer ${providerName} prompt that takes ownership before settlement prepares`, async () => {
       const { service, store, pending } = await setup()
-      vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+      if (providerName === 'copilot') refuseSdkSettlement()
+      else vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
       await expect(pending.reply()).rejects.toThrow('disk full')
       const gate = holdWrite()
       const earlier = store.update(sessionId, (stored) => { stored.title = 'Earlier write' })
@@ -1765,7 +1999,8 @@ describe('Reply continuation ownership', () => {
       `preserves a newer ${providerName} %s after the original provider owner ends`,
       async (kind) => {
         const { service, store, pending } = await setup()
-        vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+        if (providerName === 'copilot') refuseSdkSettlement()
+        else vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
         await expect(pending.reply()).rejects.toThrow('disk full')
         releasePrompt(service)
         const newer = service instanceof AgentService

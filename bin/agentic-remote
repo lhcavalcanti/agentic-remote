@@ -11,6 +11,9 @@ readonly SERVICE_FILE="$SYSTEMD_DIR/$SERVICE_NAME"
 readonly CONFIG_DIR="$HOME/.config/agentic-remote"
 readonly ENV_FILE="$CONFIG_DIR/environment"
 readonly COMMAND_LINK="$HOME/.local/bin/agentic-remote"
+readonly VOICE_PROFILE_MANIFEST="$REPO_ROOT/config/oracle-voice-profiles.json"
+VOICE_INSTALL_CLEANUP_PATH=""
+VOICE_INSTALL_CLEANUP_LINK=""
 
 usage() {
   cat <<'EOF'
@@ -35,6 +38,8 @@ Commands:
       Pull the current branch, install dependencies, build, and restart.
   rollback
       Activate the previous immutable release and restart the service.
+  voice-install [--accept-research-only] <profile>
+      Explicitly download, verify, and atomically activate a local voice profile.
   uninstall
       Stop and remove the service. Application data is preserved.
   help
@@ -57,6 +62,870 @@ config_value() {
     return
   fi
   sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1
+}
+
+voice_manifest_query() {
+  local profile_id="$1" mode="$2"
+  node - "$VOICE_PROFILE_MANIFEST" "$profile_id" "$mode" <<'NODE'
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const path = require('node:path')
+
+const [manifestPath, profileId, mode] = process.argv.slice(2)
+let manifest
+try {
+  manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+} catch (error) {
+  console.error(`agentic-remote: could not read voice profile manifest: ${error.message}`)
+  process.exit(1)
+}
+
+const fail = (message) => {
+  console.error(`agentic-remote: ${message}`)
+  process.exit(1)
+}
+const printable = (value, name) => {
+  if (typeof value !== 'string' || value.length === 0 || /[\0\r\n\t]/.test(value)) {
+    fail(`invalid ${name} in voice profile manifest`)
+  }
+}
+const safeName = (value, name) => {
+  printable(value, name)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    fail(`invalid ${name} in voice profile manifest`)
+  }
+}
+const safeRelative = (value, name) => {
+  printable(value, name)
+  const normalized = path.posix.normalize(value)
+  if (
+    value.startsWith('/') ||
+    value.includes('\\') ||
+    normalized === '..' ||
+    normalized.startsWith('../')
+  ) {
+    fail(`invalid ${name} in voice profile manifest`)
+  }
+}
+const httpsUrl = (value, name) => {
+  printable(value, name)
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    fail(`invalid ${name} in voice profile manifest`)
+  }
+  if (parsed.protocol !== 'https:') fail(`${name} must use HTTPS`)
+}
+
+if (
+  manifest?.schemaVersion !== 1 ||
+  !Array.isArray(manifest.profiles) ||
+  Object.hasOwn(manifest, 'defaultProfile')
+) {
+  fail('unsupported voice profile manifest')
+}
+const ids = new Set()
+for (const profile of manifest.profiles) {
+  safeName(profile?.id, 'profile id')
+  if (ids.has(profile.id)) fail(`duplicate voice profile: ${profile.id}`)
+  ids.add(profile.id)
+}
+const profile = manifest.profiles.find(({ id }) => id === profileId)
+if (!profile) fail(`unknown voice profile: ${profileId}`)
+safeName(profile.version, 'profile version')
+printable(profile.description, 'profile description')
+printable(profile.language, 'profile language')
+printable(profile.modelType, 'profile model type')
+printable(profile.modelVersion, 'profile model version')
+if (!Number.isSafeInteger(profile.expandedBytes) || profile.expandedBytes <= 0) {
+  fail('voice profile must declare a positive expanded byte count')
+}
+if (!Number.isSafeInteger(profile.entryCount) || profile.entryCount <= 0) {
+  fail('voice profile must declare a positive entry count')
+}
+if (profile.researchOnly !== undefined && typeof profile.researchOnly !== 'boolean') {
+  fail('voice profile researchOnly must be a boolean')
+}
+if (!Array.isArray(profile.platforms) || profile.platforms.length === 0) {
+  fail('voice profile must declare platforms')
+}
+for (const platform of profile.platforms) safeName(platform, 'profile platform')
+
+const requiredConfiguration = new Set([
+  'AGENTIC_REMOTE_VOICE_STT_MODEL_DIR',
+  'AGENTIC_REMOTE_VOICE_STT_PROFILE',
+  'AGENTIC_REMOTE_VOICE_LANGUAGE',
+  'AGENTIC_REMOTE_VOICE_THREADS',
+  'AGENTIC_REMOTE_VOICE_ENDPOINT_MS',
+  'AGENTIC_REMOTE_VOICE_TTS_MODEL',
+  'AGENTIC_REMOTE_VOICE_TTS_CONFIG',
+])
+const ttsEngine = profile.configuration?.AGENTIC_REMOTE_VOICE_TTS_ENGINE
+if (ttsEngine === 'sherpa-vits') {
+  requiredConfiguration.add('AGENTIC_REMOTE_VOICE_TTS_ENGINE')
+  requiredConfiguration.add('AGENTIC_REMOTE_VOICE_TTS_TOKENS')
+  requiredConfiguration.add('AGENTIC_REMOTE_VOICE_TTS_DATA_DIR')
+} else if (ttsEngine === undefined) {
+  requiredConfiguration.add('AGENTIC_REMOTE_VOICE_TTS_BIN')
+} else {
+  fail(`unsupported voice TTS engine: ${ttsEngine}`)
+}
+const optionalConfiguration = new Set([
+  'AGENTIC_REMOTE_VOICE_COMPUTER',
+  'AGENTIC_REMOTE_VOICE_TTS_SPEAKER',
+])
+if (!profile.configuration || Array.isArray(profile.configuration)) {
+  fail('voice profile configuration must be an object')
+}
+for (const key of requiredConfiguration) {
+  if (!Object.hasOwn(profile.configuration, key)) {
+    fail(`voice profile is missing ${key}`)
+  }
+}
+for (const [key, value] of Object.entries(profile.configuration)) {
+  if (!requiredConfiguration.has(key) && !optionalConfiguration.has(key)) {
+    fail(`unsupported voice profile configuration key: ${key}`)
+  }
+  if (typeof value !== 'string' || /[\0\r\n]/.test(value)) {
+    fail(`invalid voice profile configuration value: ${key}`)
+  }
+  if (
+    key.endsWith('_DIR')
+    || (key.includes('_TTS_') && key !== 'AGENTIC_REMOTE_VOICE_TTS_ENGINE')
+  ) {
+    safeRelative(value, key)
+  }
+}
+if (!['zipformer', 'nemotron'].includes(profile.configuration.AGENTIC_REMOTE_VOICE_STT_PROFILE)) {
+  fail('unsupported voice STT profile')
+}
+const threads = Number(profile.configuration.AGENTIC_REMOTE_VOICE_THREADS)
+const endpointMs = Number(profile.configuration.AGENTIC_REMOTE_VOICE_ENDPOINT_MS)
+if (!Number.isInteger(threads) || threads < 1 || threads > 16) {
+  fail('voice threads must be an integer from 1 to 16')
+}
+if (!Number.isInteger(endpointMs) || endpointMs < 300 || endpointMs > 3000) {
+  fail('voice endpoint must be an integer from 300 to 3000 milliseconds')
+}
+if (!Array.isArray(profile.notices) || profile.notices.length === 0) {
+  fail('voice profile must include notices')
+}
+for (const notice of profile.notices) {
+  printable(notice?.name, 'notice name')
+  printable(notice?.license, 'notice license')
+  httpsUrl(notice?.url, 'notice URL')
+}
+if (!Array.isArray(profile.assets) || profile.assets.length === 0) {
+  fail('voice profile must include assets')
+}
+const assetIds = new Set()
+for (const asset of profile.assets) {
+  safeName(asset?.id, 'asset id')
+  if (assetIds.has(asset.id)) fail(`duplicate voice asset: ${asset.id}`)
+  assetIds.add(asset.id)
+  safeRelative(asset.destination, 'asset destination')
+  httpsUrl(asset.url, 'asset URL')
+  httpsUrl(asset.licenseUrl, 'asset license URL')
+  if (!Number.isSafeInteger(asset.bytes) || asset.bytes <= 0) {
+    fail(`invalid byte size for voice asset: ${asset.id}`)
+  }
+  if (typeof asset.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(asset.sha256)) {
+    fail(`invalid checksum for voice asset: ${asset.id}`)
+  }
+  printable(asset.language, 'asset language')
+  printable(asset.modelType, 'asset model type')
+  printable(asset.modelVersion, 'asset model version')
+  if (asset.archive !== undefined && !['tar.gz', 'tar.bz2'].includes(asset.archive)) {
+    fail(`unsupported archive type for voice asset: ${asset.id}`)
+  }
+  if (asset.archive !== undefined) {
+    if (!Number.isSafeInteger(asset.expandedBytes) || asset.expandedBytes <= 0) {
+      fail(`invalid expanded byte count for voice archive: ${asset.id}`)
+    }
+    if (!Number.isSafeInteger(asset.entryCount) || asset.entryCount <= 0) {
+      fail(`invalid entry count for voice archive: ${asset.id}`)
+    }
+  } else if (asset.expandedBytes !== undefined || asset.entryCount !== undefined) {
+    fail(`non-archive voice asset must not declare archive expansion metadata: ${asset.id}`)
+  }
+  if (asset.executable !== undefined && typeof asset.executable !== 'boolean') {
+    fail(`invalid executable flag for voice asset: ${asset.id}`)
+  }
+}
+const expandedBytes = profile.assets.reduce(
+  (total, asset) => total + (asset.archive ? asset.expandedBytes : asset.bytes),
+  0,
+)
+const entryCount = profile.assets.reduce(
+  (total, asset) => total + (asset.archive ? asset.entryCount : 1),
+  0,
+)
+const nonArchiveParents = new Set()
+for (const asset of profile.assets.filter(({ archive }) => archive === undefined)) {
+  const parts = asset.destination.split('/').slice(0, -1)
+  for (let index = 1; index <= parts.length; index += 1) {
+    nonArchiveParents.add(parts.slice(0, index).join('/'))
+  }
+}
+if (expandedBytes !== profile.expandedBytes) {
+  fail('voice profile expanded byte count does not match its assets')
+}
+if (
+  !Number.isSafeInteger(profile.entryCount)
+  || profile.entryCount < entryCount
+  || profile.entryCount > entryCount + nonArchiveParents.size
+) {
+  fail('voice profile entry count does not match its assets')
+}
+
+if (mode === 'metadata') {
+  const digest = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(profile))
+    .digest('hex')
+  console.log(profile.version)
+  console.log(digest)
+  console.log(profile.platforms.join(','))
+  console.log(profile.researchOnly === true ? '1' : '0')
+  console.log(profile.expandedBytes)
+  console.log(profile.entryCount)
+} else if (mode === 'assets') {
+  for (const asset of profile.assets) {
+    console.log([
+      asset.id,
+      asset.destination,
+      asset.url,
+      asset.bytes,
+      asset.sha256,
+      asset.archive ?? '',
+      asset.expandedBytes ?? '',
+      asset.entryCount ?? '',
+      asset.executable === true ? '1' : '0',
+    ].join('\x1f'))
+  }
+} else if (mode === 'configuration') {
+  for (const [key, value] of Object.entries(profile.configuration)) {
+    console.log(`${key}=${value}`)
+  }
+} else if (mode === 'notices') {
+  console.log(`Oracle voice profile: ${profile.id}`)
+  console.log(`Version: ${profile.version}`)
+  console.log(`Language: ${profile.language}`)
+  if (profile.researchOnly === true) {
+    console.log('Use restriction: research-only profile; review the full ancestry below.')
+  }
+  console.log('')
+  console.log('Licenses and notices:')
+  for (const notice of profile.notices) {
+    console.log(`- ${notice.name}: ${notice.license}`)
+    console.log(`  ${notice.url}`)
+  }
+  console.log('')
+  console.log('Pinned assets:')
+  for (const asset of profile.assets) {
+    console.log(`- ${asset.id}: ${asset.bytes} bytes; ${asset.licenseUrl}`)
+  }
+} else if (mode === 'profile-json') {
+  console.log(`${JSON.stringify(profile, null, 2)}\n`)
+} else {
+  fail(`unsupported voice manifest query: ${mode}`)
+}
+NODE
+}
+
+voice_download_asset() {
+  local asset_id="$1" url="$2" expected_bytes="$3" destination="$4"
+  local attempt curl_status limiter_status
+  for attempt in 1 2 3; do
+    rm -f -- "$destination"
+    set +e
+    curl \
+      --fail \
+      --location \
+      --silent \
+      --show-error \
+      --proto '=https' \
+      --proto-redir '=https' \
+      --connect-timeout 15 \
+      --max-time 600 \
+      "$url" |
+      node -e '
+        const fs = require("node:fs")
+        const [destination, expectedText] = process.argv.slice(1)
+        const expected = Number(expectedText)
+        const output = fs.openSync(destination, "wx", 0o600)
+        let written = 0
+        let closed = false
+        const close = () => {
+          if (closed) return
+          closed = true
+          fs.closeSync(output)
+        }
+        process.stdin.on("data", (chunk) => {
+          written += chunk.length
+          if (written > expected) {
+            close()
+            fs.rmSync(destination, { force: true })
+            process.exitCode = 65
+            process.stdin.destroy()
+            return
+          }
+          fs.writeSync(output, chunk)
+        })
+        process.stdin.on("end", () => {
+          close()
+          if (written !== expected) {
+            fs.rmSync(destination, { force: true })
+            process.exitCode = 66
+          }
+        })
+        process.stdin.on("error", () => {
+          close()
+          fs.rmSync(destination, { force: true })
+          if (!process.exitCode) process.exitCode = 67
+        })
+      ' "$destination" "$expected_bytes"
+    local pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+    curl_status="${pipeline_status[0]}"
+    limiter_status="${pipeline_status[1]}"
+    if [[ "$limiter_status" == 65 ]]; then
+      die "download for $asset_id exceeded the pinned ${expected_bytes}-byte limit"
+    fi
+    if [[ "$curl_status" == 0 && "$limiter_status" == 0 ]]; then
+      return
+    fi
+    rm -f -- "$destination"
+    if ((attempt < 3)); then
+      sleep 1
+    fi
+  done
+  die "download failed after 3 attempts for $asset_id"
+}
+
+voice_extract_archive() {
+  local archive="$1" archive_type="$2" destination="$3"
+  local expected_bytes="$4" expected_entries="$5"
+  python3 - \
+    "$archive" \
+    "$archive_type" \
+    "$destination" \
+    "$expected_bytes" \
+    "$expected_entries" <<'PY'
+import os
+from pathlib import Path, PurePosixPath
+import sys
+import tarfile
+
+(
+    archive_path,
+    archive_type,
+    destination_text,
+    expected_bytes_text,
+    expected_entries_text,
+) = sys.argv[1:]
+destination = Path(destination_text)
+expected_bytes = int(expected_bytes_text)
+expected_entries = int(expected_entries_text)
+archive_modes = {
+    "tar.gz": "r|gz",
+    "tar.bz2": "r|bz2",
+}
+
+def fail(message):
+    raise SystemExit(f"agentic-remote: {message}")
+
+def normalized_member(member):
+    if "\0" in member.name or "\\" in member.name:
+        fail(f"unsafe archive path: {member.name}")
+    relative = PurePosixPath(member.name)
+    if relative.is_absolute() or ".." in relative.parts:
+        fail(f"unsafe archive path: {member.name}")
+    normalized = str(relative)
+    if normalized in ("", "."):
+        if not member.isdir():
+            fail(f"unsafe archive path: {member.name}")
+        return relative, normalized
+    return relative, normalized
+
+try:
+    mode = archive_modes.get(archive_type)
+    if mode is None:
+        fail(f"unsupported archive type: {archive_type}")
+    destination.mkdir(parents=True, exist_ok=True)
+    root = destination.resolve()
+    entries = 0
+    expanded = 0
+    declared = set()
+    path_types = {}
+    with tarfile.open(archive_path, mode) as archive:
+        for member in archive:
+            entries += 1
+            if entries > expected_entries:
+                fail(f"archive entry count exceeds pinned {expected_entries}")
+            if not (member.isfile() or member.isdir()):
+                fail("voice archives may contain only regular files and directories")
+            if member.sparse is not None or any(
+                key.startswith("GNU.sparse") for key in member.pax_headers
+            ):
+                fail("voice archives must not contain sparse files")
+            expanded += member.size
+            if expanded > expected_bytes:
+                fail(f"archive expanded bytes exceed pinned {expected_bytes}")
+
+            relative, normalized = normalized_member(member)
+            if normalized in declared:
+                fail(f"duplicate archive path: {member.name}")
+            declared.add(normalized)
+            if normalized in ("", "."):
+                continue
+
+            parts = relative.parts
+            for index in range(1, len(parts)):
+                ancestor = str(PurePosixPath(*parts[:index]))
+                if path_types.get(ancestor) == "file":
+                    fail(f"archive path type conflict: {member.name}")
+                path_types.setdefault(ancestor, "directory")
+            member_type = "directory" if member.isdir() else "file"
+            previous_type = path_types.get(normalized)
+            if previous_type is not None and previous_type != member_type:
+                fail(f"archive path type conflict: {member.name}")
+            path_types[normalized] = member_type
+
+            target = destination.joinpath(*relative.parts)
+            parent = target.parent
+            parent.mkdir(parents=True, exist_ok=True)
+            resolved_parent = parent.resolve()
+            if os.path.commonpath((root, resolved_parent)) != str(root):
+                fail(f"unsafe archive path: {member.name}")
+            if member.isdir():
+                target.mkdir(mode=0o755, exist_ok=True)
+                if not target.is_dir() or target.is_symlink():
+                    fail(f"archive directory is not safe: {member.name}")
+                continue
+
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                descriptor = os.open(target, flags, 0o644)
+            except OSError as error:
+                fail(f"could not create archive file {member.name}: {error}")
+            source = archive.extractfile(member)
+            if source is None:
+                os.close(descriptor)
+                fail(f"could not read archive file: {member.name}")
+            copied = 0
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    while True:
+                        chunk = source.read(min(1024 * 1024, member.size - copied + 1))
+                        if not chunk:
+                            break
+                        copied += len(chunk)
+                        if copied > member.size:
+                            fail(f"archive file exceeded declared size: {member.name}")
+                        output.write(chunk)
+            finally:
+                source.close()
+            if copied != member.size:
+                fail(
+                    f"archive file size mismatch for {member.name}: "
+                    f"expected {member.size}, got {copied}"
+                )
+
+        if entries != expected_entries:
+            fail(
+                f"archive entry count mismatch: expected {expected_entries}, "
+                f"got {entries}"
+            )
+        if expanded != expected_bytes:
+            fail(
+                f"archive expanded byte mismatch: expected {expected_bytes}, "
+                f"got {expanded}"
+            )
+except (tarfile.TarError, OSError) as error:
+    fail(
+        f"could not validate or extract {archive_type} voice archive "
+        f"(compression must match the manifest): {error}"
+    )
+PY
+}
+
+voice_validate_staging_tree() {
+  local staging="$1" expected_bytes="$2" expected_entries="$3"
+  python3 - "$staging" "$expected_bytes" "$expected_entries" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+root_text, expected_bytes_text, expected_entries_text = sys.argv[1:]
+root = Path(root_text).resolve()
+expected_bytes = int(expected_bytes_text)
+expected_entries = int(expected_entries_text)
+entries = 0
+expanded = 0
+
+def fail(message):
+    raise SystemExit(f"agentic-remote: {message}")
+
+for directory, names, files in os.walk(root, topdown=True, followlinks=False):
+    directory_path = Path(directory)
+    for name in [*names, *files]:
+        candidate = directory_path / name
+        metadata = candidate.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            fail(f"voice staging tree contains a symbolic link: {candidate}")
+        if not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
+            fail(f"voice staging tree contains a special entry: {candidate}")
+        if os.path.commonpath((root, candidate.resolve())) != str(root):
+            fail(f"voice staging tree escapes its root: {candidate}")
+        entries += 1
+        if stat.S_ISREG(metadata.st_mode):
+            expanded += metadata.st_size
+
+if entries != expected_entries:
+    fail(
+        f"voice profile entry count mismatch: expected {expected_entries}, "
+        f"got {entries}"
+    )
+if expanded != expected_bytes:
+    fail(
+        f"voice profile expanded byte mismatch: expected {expected_bytes}, "
+        f"got {expanded}"
+    )
+PY
+}
+
+voice_profile_tree_digest() {
+  local profile_root="$1"
+  python3 - "$profile_root" <<'PY'
+import hashlib
+from pathlib import Path
+import stat
+import sys
+
+root = Path(sys.argv[1]).resolve()
+digest = hashlib.sha256()
+excluded = {".profile-sha256", ".profile-tree-sha256"}
+
+def fail(message):
+    raise SystemExit(f"agentic-remote: {message}")
+
+for candidate in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()):
+    relative = candidate.relative_to(root).as_posix()
+    if relative in excluded:
+        continue
+    metadata = candidate.lstat()
+    if stat.S_ISLNK(metadata.st_mode):
+        fail(f"voice profile contains a symbolic link: {candidate}")
+    if stat.S_ISDIR(metadata.st_mode):
+        kind = b"directory"
+    elif stat.S_ISREG(metadata.st_mode):
+        kind = b"file"
+    else:
+        fail(f"voice profile contains a special entry: {candidate}")
+    digest.update(kind + b"\0")
+    digest.update(relative.encode("utf-8") + b"\0")
+    digest.update(f"{stat.S_IMODE(metadata.st_mode):o}".encode("ascii") + b"\0")
+    if kind == b"file":
+        digest.update(str(metadata.st_size).encode("ascii") + b"\0")
+        with candidate.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+print(digest.hexdigest())
+PY
+}
+
+activate_voice_profile() {
+  local voice_root="$1" profile_id="$2" version="$3"
+  local active_root="$voice_root/active"
+  local temporary_link="$active_root/.${profile_id}.current.$$"
+  mkdir -p "$active_root"
+  [[ ! -e "$active_root/$profile_id" || -L "$active_root/$profile_id" ]] ||
+    die "voice active path is not a symbolic link: $active_root/$profile_id"
+  VOICE_INSTALL_CLEANUP_LINK="$temporary_link"
+  rm -f -- "$temporary_link"
+  ln -s "../profiles/$profile_id/$version" "$temporary_link"
+  voice_install_fault before-active-replace
+  if ! mv -Tf "$temporary_link" "$active_root/$profile_id"; then
+    rm -f -- "$temporary_link"
+    die "could not activate voice profile: $profile_id $version"
+  fi
+  voice_install_fault after-active-replace
+  VOICE_INSTALL_CLEANUP_LINK=""
+}
+
+voice_install_fault() {
+  local stage="$1"
+  case "${AGENTIC_REMOTE_VOICE_INSTALL_FAULT:-}" in
+    "exit:$stage")
+      exit 97
+      ;;
+    "term:$stage")
+      kill -TERM "$BASHPID"
+      ;;
+  esac
+}
+
+cleanup_voice_install() {
+  local result=$?
+  trap - EXIT
+  if [[ -n "$VOICE_INSTALL_CLEANUP_LINK" ]]; then
+    rm -f -- "$VOICE_INSTALL_CLEANUP_LINK"
+  fi
+  if [[ -n "$VOICE_INSTALL_CLEANUP_PATH" &&
+    ( -e "$VOICE_INSTALL_CLEANUP_PATH" || -L "$VOICE_INSTALL_CLEANUP_PATH" ) ]]; then
+    rm -rf -- "$VOICE_INSTALL_CLEANUP_PATH"
+  fi
+  exit "$result"
+}
+
+print_voice_configuration() {
+  local profile_id="$1"
+  printf '\nSet these values in %s:\n' "$ENV_FILE"
+  local key value
+  while IFS='=' read -r key value; do
+    case "$key" in
+      AGENTIC_REMOTE_VOICE_STT_MODEL_DIR | \
+        AGENTIC_REMOTE_VOICE_TTS_BIN | \
+        AGENTIC_REMOTE_VOICE_TTS_MODEL | \
+        AGENTIC_REMOTE_VOICE_TTS_CONFIG | \
+        AGENTIC_REMOTE_VOICE_TTS_TOKENS | \
+        AGENTIC_REMOTE_VOICE_TTS_DATA_DIR)
+        value="models/oracle-voice/active/$profile_id/$value"
+        ;;
+    esac
+    printf '%s=%s\n' "$key" "$value"
+  done < <(voice_manifest_query "$profile_id" configuration)
+  printf '%s\n' \
+    "Oracle voice remains disabled until AGENTIC_REMOTE_ORACLE_VOICE=on is set."
+}
+
+voice_install() {
+  local accept_research_only=0 profile_id=""
+  while (($#)); do
+    case "$1" in
+      --accept-research-only)
+        [[ "$accept_research_only" == 0 ]] ||
+          die "voice-install received --accept-research-only more than once"
+        accept_research_only=1
+        ;;
+      -*)
+        die "unknown voice-install option: $1"
+        ;;
+      *)
+        [[ -z "$profile_id" ]] ||
+          die "voice-install requires exactly one profile"
+        profile_id="$1"
+        ;;
+    esac
+    shift
+  done
+  [[ -n "$profile_id" ]] ||
+    die "voice-install requires one profile and optional --accept-research-only"
+  require_command node
+  require_command curl
+  require_command flock
+  require_command python3
+  require_command sha256sum
+  require_command stat
+
+  local metadata version profile_digest platforms research_only
+  local profile_expanded_bytes profile_entry_count
+  metadata="$(voice_manifest_query "$profile_id" metadata)"
+  version="$(sed -n '1p' <<<"$metadata")"
+  profile_digest="$(sed -n '2p' <<<"$metadata")"
+  platforms="$(sed -n '3p' <<<"$metadata")"
+  research_only="$(sed -n '4p' <<<"$metadata")"
+  profile_expanded_bytes="$(sed -n '5p' <<<"$metadata")"
+  profile_entry_count="$(sed -n '6p' <<<"$metadata")"
+  local platform
+  case "$(uname -s):$(uname -m)" in
+    Linux:x86_64 | Linux:amd64)
+      platform="linux-x64"
+      ;;
+    *)
+      die "voice profile $profile_id has no asset for $(uname -s) $(uname -m)"
+      ;;
+  esac
+  [[ ",$platforms," == *",$platform,"* ]] ||
+    die "voice profile $profile_id does not support $platform"
+
+  local notices
+  notices="$(voice_manifest_query "$profile_id" notices)"
+  printf '%s\n' "$notices"
+  if [[ "$research_only" == 1 && "$accept_research_only" != 1 ]]; then
+    die "voice profile $profile_id is research-only; rerun with --accept-research-only after reviewing the notices"
+  fi
+
+  local data_directory voice_root profiles_root final_directory marker tree_marker
+  data_directory="${AGENTIC_REMOTE_DATA_DIR:-$(config_value AGENTIC_REMOTE_DATA_DIR)}"
+  data_directory="${data_directory:-$HOME/.agentic-remote}"
+  voice_root="$data_directory/models/oracle-voice"
+  profiles_root="$voice_root/profiles/$profile_id"
+  final_directory="$profiles_root/$version"
+  marker="$final_directory/.profile-sha256"
+  tree_marker="$final_directory/.profile-tree-sha256"
+  mkdir -p "$profiles_root" "$voice_root/locks"
+  trap cleanup_voice_install EXIT
+
+  local lock_file="$voice_root/locks/$profile_id.lock"
+  local lock_fd
+  exec {lock_fd}>"$lock_file"
+  flock -w 600 "$lock_fd" ||
+    die "timed out waiting for voice profile publication lock: $profile_id"
+  if [[ -e "$final_directory" || -L "$final_directory" ]]; then
+    [[ -d "$final_directory" && ! -L "$final_directory" ]] ||
+      die "voice profile version path is not a directory: $profile_id $version"
+    [[ -f "$marker" && ! -L "$marker" && "$(cat "$marker")" == "$profile_digest" ]] ||
+      die "voice profile version already exists with different contents: $profile_id $version"
+    [[ -f "$tree_marker" && ! -L "$tree_marker" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
+    [[ "$(voice_profile_tree_digest "$final_directory")" == "$(cat "$tree_marker")" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
+    activate_voice_profile "$voice_root" "$profile_id" "$version"
+    [[ "$(readlink -f -- "$voice_root/active/$profile_id")" == "$final_directory" ]] ||
+      die "voice profile activation could not be confirmed: $profile_id $version"
+    flock -u "$lock_fd"
+    trap - EXIT
+    printf 'Voice profile %s %s is already installed.\n' "$profile_id" "$version"
+    print_voice_configuration "$profile_id"
+    return
+  fi
+  flock -u "$lock_fd"
+
+  local staging="" attempt
+  for attempt in {1..20}; do
+    staging="$voice_root/.staging-${profile_id}-${version}.$$-${RANDOM}"
+    if mkdir -m 0700 -- "$staging" 2>/dev/null; then
+      break
+    fi
+    staging=""
+  done
+  [[ -n "$staging" ]] || die "could not create voice installation staging directory"
+  VOICE_INSTALL_CLEANUP_PATH="$staging"
+  mkdir -p "$staging/.downloads"
+
+  local asset_id destination url expected_bytes expected_sha archive
+  local expected_expanded_bytes expected_entry_count executable
+  local downloaded actual_bytes actual_sha extraction_directory target
+  while IFS=$'\x1f' read -r \
+    asset_id destination url expected_bytes expected_sha archive \
+    expected_expanded_bytes expected_entry_count executable; do
+    downloaded="$staging/.downloads/$asset_id"
+    printf 'Downloading %s (%s bytes)...\n' "$asset_id" "$expected_bytes"
+    voice_download_asset "$asset_id" "$url" "$expected_bytes" "$downloaded"
+    actual_bytes="$(stat -c %s "$downloaded")"
+    [[ "$actual_bytes" == "$expected_bytes" ]] ||
+      die "byte-size mismatch for $asset_id: expected $expected_bytes, got $actual_bytes"
+    actual_sha="$(sha256sum "$downloaded" | awk '{print $1}')"
+    [[ "$actual_sha" == "$expected_sha" ]] ||
+      die "checksum mismatch for $asset_id: expected $expected_sha, got $actual_sha"
+
+    if [[ -n "$archive" ]]; then
+      extraction_directory="$staging/$destination"
+      voice_extract_archive \
+        "$downloaded" \
+        "$archive" \
+        "$extraction_directory" \
+        "$expected_expanded_bytes" \
+        "$expected_entry_count"
+    else
+      target="$staging/$destination"
+      mkdir -p "$(dirname "$target")"
+      [[ ! -e "$target" && ! -L "$target" ]] ||
+        die "voice asset destination already exists: $destination"
+      cp -- "$downloaded" "$target"
+      if [[ "$executable" == "1" ]]; then
+        chmod 0755 "$target"
+      fi
+    fi
+  done < <(voice_manifest_query "$profile_id" assets)
+
+  rm -rf -- "$staging/.downloads"
+  voice_validate_staging_tree \
+    "$staging" \
+    "$profile_expanded_bytes" \
+    "$profile_entry_count"
+  printf '%s\n' "$notices" >"$staging/NOTICES.txt"
+  voice_manifest_query "$profile_id" profile-json >"$staging/PROFILE.json"
+  voice_profile_tree_digest "$staging" >"$staging/.profile-tree-sha256"
+  printf '%s\n' "$profile_digest" >"$staging/.profile-sha256"
+
+  flock -w 600 "$lock_fd" ||
+    die "timed out waiting for voice profile publication lock: $profile_id"
+
+  if [[ -e "$final_directory" || -L "$final_directory" ]]; then
+    [[ -d "$final_directory" && ! -L "$final_directory" ]] ||
+      die "voice profile version path is not a directory: $profile_id $version"
+    [[ -f "$marker" && ! -L "$marker" && "$(cat "$marker")" == "$profile_digest" ]] ||
+      die "voice profile version already exists with different contents: $profile_id $version"
+    [[ -f "$tree_marker" && ! -L "$tree_marker" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
+    [[ "$(voice_profile_tree_digest "$final_directory")" == "$(cat "$tree_marker")" ]] ||
+      die "voice profile integrity check failed: $profile_id $version"
+    rm -rf -- "$staging"
+    VOICE_INSTALL_CLEANUP_PATH=""
+    activate_voice_profile "$voice_root" "$profile_id" "$version"
+    [[ "$(readlink -f -- "$voice_root/active/$profile_id")" == "$final_directory" ]] ||
+      die "voice profile activation could not be confirmed: $profile_id $version"
+    trap - EXIT
+    printf 'Voice profile %s %s is already installed.\n' "$profile_id" "$version"
+    print_voice_configuration "$profile_id"
+    return
+  fi
+
+  voice_install_fault before-final-rename
+  mv -T -- "$staging" "$final_directory"
+  VOICE_INSTALL_CLEANUP_PATH="$final_directory"
+  voice_install_fault after-final-rename
+  [[ -f "$marker" && "$(cat "$marker")" == "$profile_digest" ]] ||
+    die "voice profile publication marker could not be confirmed: $profile_id $version"
+  [[ -f "$tree_marker" &&
+    "$(voice_profile_tree_digest "$final_directory")" == "$(cat "$tree_marker")" ]] ||
+    die "voice profile integrity check failed after publication: $profile_id $version"
+  VOICE_INSTALL_CLEANUP_PATH=""
+  activate_voice_profile "$voice_root" "$profile_id" "$version"
+  [[ "$(readlink -f -- "$voice_root/active/$profile_id")" == "$final_directory" ]] ||
+    die "voice profile activation could not be confirmed: $profile_id $version"
+  trap - EXIT
+
+  printf 'Installed and activated voice profile %s %s.\n' "$profile_id" "$version"
+  print_voice_configuration "$profile_id"
+}
+
+append_preserved_voice_configuration() {
+  local destination="$1"
+  declare -A voice_configuration=()
+  local line key value
+  if [[ -f "$ENV_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" == *=* ]] || continue
+      key="${line%%=*}"
+      value="${line#*=}"
+      case "$key" in
+        AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_*)
+          voice_configuration["$key"]="$value"
+          ;;
+      esac
+    done <"$ENV_FILE"
+  fi
+  while IFS= read -r key; do
+    case "$key" in
+      AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_*)
+        voice_configuration["$key"]="${!key}"
+        ;;
+    esac
+  done < <(compgen -e)
+  if ((${#voice_configuration[@]} == 0)); then
+    return
+  fi
+  while IFS= read -r key; do
+    printf '%s=%s\n' "$key" "${voice_configuration[$key]}" >>"$destination"
+  done < <(printf '%s\n' "${!voice_configuration[@]}" | LC_ALL=C sort)
 }
 
 validate_host() {
@@ -461,6 +1330,7 @@ setup_service() {
   if [[ -n "$manager_structured_memory" ]]; then
     printf 'AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY=%s\n' "$manager_structured_memory" >>"$environment_tmp"
   fi
+  append_preserved_voice_configuration "$environment_tmp"
   printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
   install -m 0600 "$environment_tmp" "$ENV_FILE"
   rm -f -- "$environment_tmp"
@@ -582,6 +1452,9 @@ case "$command" in
   rollback)
     (($# == 0)) || die "rollback does not accept options"
     rollback_service
+    ;;
+  voice-install)
+    voice_install "$@"
     ;;
   uninstall)
     (($# == 0)) || die "uninstall does not accept options"

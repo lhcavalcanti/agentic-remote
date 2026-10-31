@@ -338,6 +338,20 @@ The development server uses Vite plus Fastify. Run the complete checks with:
 pnpm check
 ```
 
+`pnpm test` runs every test file once, serially. Two named Vitest projects run
+a subset:
+
+- `pnpm test:fast` runs every file that needs no tmux, Copilot, or Claude on
+  the host.
+- `pnpm test:quick` runs the part of `fast` that fits the advisory hosted
+  check's one-minute budget; files measured as slow are listed in `slowTests`
+  in `vite.config.ts`.
+- `pnpm test:canary` runs the quick real-tmux send and readiness subset,
+  including the send matrix, in about a minute.
+
+The remaining real-tmux files form the `tmux` project. A new test file that
+needs tmux must be added to `canaryTests` or `tmuxTests` in `vite.config.ts`.
+
 After changing `src/app-icon-design.ts`, regenerate the committed PWA and
 native bundle icons:
 
@@ -433,6 +447,9 @@ badges **Oracle**.
 - Messages sent while it is busy wait in a queue where you can see, edit in
   place, and remove them.
 - The microphone dictates to Oracle; the words land in its message bar.
+- **Conversation** streams speech to local STT and plays local TTS while Oracle
+  continues to use remote Copilot. It is disabled by default and keeps
+  dictation as the fallback.
 - **App settings → Models** chooses its model, and **Folders** the folder it
   starts sessions in on each computer. Both are kept on the hub; ask Oracle to start sessions
   somewhere else and it updates its folder.
@@ -464,9 +481,40 @@ files that other users can read are tightened to owner-only on startup, or
 refused if another user owns them. `off` leaves any existing structured-memory
 files untouched.
 
+### Oracle Conversation mode
+
+Conversation mode must be installed and enabled explicitly; `setup` never
+downloads speech models:
+
+```bash
+agentic-remote voice-install fast-en
+# Research-only pt-BR ancestry requires an explicit acknowledgement:
+agentic-remote voice-install multilingual-quality --accept-research-only
+```
+
+The installer prints notices before network access, enforces HTTPS-only bounded
+downloads, verifies compressed and expanded archive metadata plus SHA-256,
+rejects special archive entries, and serializes atomic publication. Add the
+printed `AGENTIC_REMOTE_VOICE_*` settings to the protected environment file,
+then separately opt in with `AGENTIC_REMOTE_ORACLE_VOICE=on`.
+
+Speech recognition and synthesis run on the selected hub or paired node. Raw
+PCM, synthesized audio, and partial transcripts are not persisted. Each final
+is submitted once as a normal Oracle message, remains in Oracle conversation
+history, and goes with Oracle context to remote Copilot; no separate voice
+transcript or recording artifact is kept. Browser support requires microphone,
+AudioWorklet, Web Audio, and WebSocket APIs; unsupported browsers continue to
+offer dictation. See
+[Oracle Conversation mode](docs/oracle-conversation.md) for paired-node setup,
+measured limitations, removal, and troubleshooting, and
+[voice asset notices](docs/licenses/oracle-voice.md) for LJSpeech, the
+research-only Faber/Lessac ancestry, OpenMDW, GPL/eSpeak, and model terms.
+
 ## Documentation
 
 - [Application specification](docs/app-spec.md) — normative product behavior
+- [Oracle Conversation mode](docs/oracle-conversation.md) — local speech
+  profiles, privacy, installation, evidence, and troubleshooting
 - [Multi-computer architecture](docs/architecture.md) — routing and ownership
 - [Provider compatibility](docs/provider-compatibility.md) — Copilot/Claude
   differences

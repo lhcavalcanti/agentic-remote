@@ -398,9 +398,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 223,
+  "communities": 215,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18156,
+  "edges": 18168,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -494,7 +494,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "81eaaed951173e7f404bfb0ad3b77784617e0ffe0b2fb78170e32c9869eecda9",
+    "package.json": "9411eb2308ebcc071ecd6192e245795c52794cd72b5df7c597811d32234665e8",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "3fd03facc1f69300d8a98a951f6d2d7d74146d0ed2228a258f8a411e36069274",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -524,8 +524,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "54846ab1808aaf1f9185119ba02e6623abf9fd3992dcb5e4115c8ef10d3340b1",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "918d46c65cd839e0abbb81e08f3744d23b4a1b869613820ed06dbcddb4275dce",
-    "server/agent-service.ts": "88c914c2d9b3004ffc6a6e57fa0581e7a4e1f63b96173dad78dbf213b52bcafd",
+    "server/agent-service.test.ts": "73203a0d68d02b30c5ebabb05422490ac041e67370b4d96c0016ea1f5764cf16",
+    "server/agent-service.ts": "9fe2748a79d78ca8f1d66bea25339d05c1f0b51d6e2e894bfeba975846cdf8c7",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -602,7 +602,7 @@
     "server/manager-structured-memory-validation.ts": "baf36801defb0b887793cfa04f9dbfac7206a588cd480cdb72b4c04ed3466120",
     "server/manager-tools.test.ts": "ff717a1e7e8999ebc095438b23a58c22672b19519e524f21876016417f9e50a4",
     "server/manager-tools.ts": "96132dde553a7361694b304381a67ae4447b4797e49158cc2d73dd0ee6f79dae",
-    "server/multi-node.test.ts": "df7c7d4cc2519872154fc58db9c1879683813ec25bb1757fbf8ee85af9fbc92c",
+    "server/multi-node.test.ts": "5520eea688c542f6be055eb2e179340689d1777147f1d8122c3dfb78f314c9d9",
     "server/node-identity.ts": "5a997e31e6717b7f5ba8b8de3dd036120fb4695ee316a84d7a85027fcceef66e",
     "server/node-routes.ts": "864ea488253aadb624b21ccffe3e126c942ad196f54f3a2bdb1c50de01ee1338",
     "server/notification-scope.integration.test.ts": "9ef0280e899e478c51b21e8933ed67d0e64fa8c17064864d19f58e0412e1440f",
@@ -696,7 +696,7 @@
     "server/session-retention.ts": "30c36ad2384c744c1d4aab69b833ab5df3502ef334eab198ede50c158c3fdc08",
     "server/session-service.ts": "5da0a4060ccdfd8f5a57e94667b9bfa042641e24c67a1ff329f64e9d5e3f669d",
     "server/session-store-durability.test.ts": "0ff26c96ab3b0962cd7e177493bca5c69dd9027ec3a082d37d86255959cfb90e",
-    "server/session-store-providers.test.ts": "f5c3153fcd1928b9c51d44c9fb97386d1ec41ccdc3fc093de38cdfaef5713a35",
+    "server/session-store-providers.test.ts": "72b8786f3a2ed6cf0d0f97db7349e43476ffcc1fe5cd3e0d12e8a72ee81f909a",
     "server/session-store-serialization.test.ts": "71282d420e93f3c58082becfd38e0f5b7698f303412db76eb9c65a2b5853016c",
     "server/session-store.test.ts": "a5f7358574e5acd9d4e069bfbffb69e67ab97401e7b19a1f0926dc121a16979d",
     "server/session-store.ts": "6d84c944cebaf63ebf318ce0e2d8fb8eaeeec55818b0497d8f7ed400c70e8262",
@@ -754,10 +754,10 @@
     "shared/side-question.ts": "026d2e3fae18f5348da782057d669400bb67ed91b7623fe3975c1f2d788ea855",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "631a4d13b66bbb6e175ac54374462a4600bb4af3e017b5ed59de5007ae91d98c",
+    "shell/README.md": "50f1a9f0c8bcf8ae778701cb3fc03d302bf0d35e1a5afb544b7c1b40160e709f",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "e149fb0e0f0c13e5807c3dfa881e165510942d613a485db0ae987bb0eea63436",
-    "shell/src-tauri/Cargo.toml": "561ce3f9e337d07cbe547417f2445258f3b32868c43efc74414f83a3c5e552c8",
+    "shell/package.json": "f9e9a7be92d8e4ad155252252523b40816d98004465d1e9944a74ed2550ee093",
+    "shell/src-tauri/Cargo.toml": "18d6ae4ee809b826460a66a125933299e5d70b8ccd5452f2a3942a1dd73c97b7",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -765,13 +765,13 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "f53deb630827d1f4b2aa9b98a94834723928374ea4b6fa4eed8c1ad42367d704",
+    "shell/src-tauri/tauri.conf.json": "19a9b3c64ce58f533ec00c680795929b832d8634a8820cae2ce0704a685140fa",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "537a596fb6b7a1c4965196ac776c67b7f555217d212c210a367ee616360f4f11",
-    "src/App.tsx": "17423ab761388808caafceef4d2087858747497724f182467c883bceedc65263",
+    "src/App.test.tsx": "90f39ce32f9228ecc99483a61785dfd08b370f9e212d188d95b8f1646adcbfd9",
+    "src/App.tsx": "4cac1e7c5990462f545c885a8b20fedcf7993d3338153c267a766e655695950c",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -887,7 +887,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6606,
+  "nodes": 6608,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -975,13 +975,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "9acd41d9b666af8880fdd9cf06c17b2b94e6933fd846da865620260226972d4a",
-    "communities.json": "fcccc2b097687c6e70c1c38ec4d76bb004471430a671ee8eb9d6f415d5cf2a94",
-    "graph.html": "9a3a227e3251d1125300b0852b27209bfe9a961d6a2b47decfee086cd1e7bfd6",
-    "graph.json": "007fc290eff054d69a7b0e8acf345d0f59ed7139214c91c21b604de1052e4424"
+    "GRAPH_REPORT.md": "befc1afcbc283f00dc9b4ce4c1fa41aed44aefbc9dda45c6f55b569353c5f750",
+    "communities.json": "f64b07221efe1251c77a8f116e5f073200bb7a7ea2d670dec549a442b8120311",
+    "graph.html": "bdbb7582e8cb52626b6018b877213a79603345c941e754564017dd5343f6c50e",
+    "graph.json": "56824b96eacdfb4fa5851fa8cd306e485d4c738c3f92ee4cb6e8fdd50cbf4aab"
   },
   "schema_version": 1,
-  "source_commit": "e8a7ca2f6c70479066e2d9f05c976df053a19fc2",
-  "source_fingerprint": "26bae186e0cf1bc76c319604da5553eea8a4c14f570baa8bd8d8f29be3788bee",
-  "working_tree_changes": []
+  "source_commit": "a71033c3acfee5dabd52ce255449fc5ad675e9a7",
+  "source_fingerprint": "25248aba0a3c88fefda646ec3088387c153005eb03562dacab9814e22824ece6",
+  "working_tree_changes": [
+    "server/agent-service.ts",
+    "server/session-store-providers.test.ts"
+  ]
 }

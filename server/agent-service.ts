@@ -364,6 +364,13 @@ function terminalAnswerRefused(cause?: unknown): Error {
   ), { statusCode: 409, uncertainDelivery: false, ...(cause === undefined ? {} : { cause }) })
 }
 
+function suspendedRuntimeConflict(): Error {
+  return Object.assign(
+    new Error('Resume the session before using its provider runtime'),
+    { statusCode: 409, uncertainDelivery: false },
+  )
+}
+
 /** A steer the terminal refused, before typing anything, for want of a composer. */
 function isTerminalNotReadyRefusal(error: unknown): boolean {
   return Boolean(
@@ -3302,6 +3309,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
     this.assertNotRetained(id, 'changing its runtime')
+    if (stored.suspended || this.suspendingSessions.has(id)) {
+      throw suspendedRuntimeConflict()
+    }
     stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
       throw new RuntimeConfigurationError(
@@ -3481,14 +3491,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
+    const queueWasDraining = this.drainingSessions.has(id)
+    const startupQueueWasPending = this.startupTerminalQueues.has(id)
+    // A delivery already handed to the runtime cannot be drained safely, but
+    // an admitted queue claim must see the reservation below and abort itself.
+    // The exclusive admission then waits for that rollback before teardown.
+    this.assertNoActiveTurn(id)
     // Claimed before anything is awaited, so a message arriving while the
     // background tasks are being read cannot start a turn into a session that
     // is on its way down.
     this.suspendingSessions.add(id)
+    let suspended = false
     try {
-      return await this.suspendClaimedSession(id, await this.store.readAfterWrites(id))
+      const result = await this.admissions.exclusive(id, async () => {
+        const current = await this.store.readAfterWrites(id)
+        this.assertStillIdle(id, queueWasDraining)
+        return this.suspendClaimedSession(id, current)
+      })
+      suspended = true
+      this.startupTerminalQueues.delete(id)
+      this.pendingTerminalQueueClaims.delete(id)
+      this.terminalDrainRequested.delete(id)
+      return result
     } finally {
       this.suspendingSessions.delete(id)
+      const current = this.store.get(id)
+      if (!suspended && queueWasDraining && current?.queuedPrompts?.length &&
+          this.store.backend(id) !== 'terminal' && !this.externalSessionIds.has(id)) {
+        this.sdkDrainRequested.add(id)
+      }
+      if (!suspended && startupQueueWasPending && current?.queuedPrompts?.length &&
+          this.hasStartupQueueLifecycle(id, current)) {
+        this.startupTerminalQueues.add(id)
+        this.pendingTerminalQueueClaims.delete(id)
+        this.terminalDrainRequested.add(id)
+      }
+      if (!suspended) this.wakeDeferredQueue(id)
     }
   }
 
@@ -3609,6 +3647,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
       }
+      this.externalSessionIds.delete(id)
     } else {
       // An attachment already on its way would insert a live runtime after
       // this point, so it is waited for and then let go of rather than left
@@ -3683,14 +3722,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private assertStillIdle(id: string): void {
+  private assertStillIdle(id: string, queueWasDraining = false): void {
     this.assertTerminalQueueSettled(id)
+    if (queueWasDraining || this.drainingSessions.has(id)) {
+      throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    this.assertNoActiveTurn(id)
+  }
+
+  private assertNoActiveTurn(id: string): void {
     const current = this.store.get(id)
     if (
       !current ||
       current.status === 'running' ||
       current.status === 'waiting' ||
-      this.drainingSessions.has(id) ||
       this.activePrompts.has(id) ||
       // A prompt already on its way to the runtime. The store still says idle
       // until the turn is recorded, so without this the teardown lands on a
@@ -3698,9 +3748,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.dispatchingSessions.has(id)
     ) {
       throw Object.assign(new Error('Session can only be suspended while idle'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
         statusCode: 409,
       })
     }
@@ -4007,6 +4054,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async clearConversation(id: string): Promise<SessionDetail> {
     this.queuedDispatches.assertAvailable(id)
     this.assertRecoverySeedReplacementAvailable(id)
+    if (this.suspendingSessions.has(id)) {
+      throw suspendedRuntimeConflict()
+    }
     const observed = this.store.observeTranscript(id)
     try {
       return this.publicSession(await this.admissions.exclusive(id, (ownership) =>
@@ -6047,6 +6097,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async listCommands(sessionId: string): Promise<SlashCommand[]> {
+    if (this.suspendingSessions.has(sessionId)) {
+      throw suspendedRuntimeConflict()
+    }
     return this.admissions.run(sessionId, () => this.listAdmittedCommands(sessionId))
   }
 
@@ -6163,8 +6216,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async commandCatalog(sessionId: string) {
-    this.assertTerminalRecoverySettled(sessionId)
     const retained = this.store.get(sessionId)
+    if (retained?.suspended) {
+      return []
+    }
+    this.assertTerminalRecoverySettled(sessionId)
     if (retained?.interruption || retained?.archivedAt) return []
     if (await this.terminalController.has(sessionId)) {
       const stored = this.store.get(sessionId)
@@ -8018,7 +8074,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // under way counts: the pane is killed before the flag is written, and
       // anything reaching here in that gap would attach an SDK owner that
       // outlives the suspension.
-      throw new Error('Resume the session before using it')
+      throw suspendedRuntimeConflict()
     }
     const inFlight = this.loadingSessions.get(sessionId)
     if (inFlight) {

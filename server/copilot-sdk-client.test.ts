@@ -88,7 +88,7 @@ describe('retireMissingCopilotSdkSession', () => {
 
   it('adds the missing-session retirement capability to concrete SDK clients', () => {
     const client = createCopilotSdkClient({})
-    expect(client.retireMissingSession).toEqual(expect.any(Function))
+
     expect(client.retireMissingSession).toEqual(expect.any(Function))
   })
 })

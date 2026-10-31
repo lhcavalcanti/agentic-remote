@@ -3491,14 +3491,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
-    this.assertStillIdle(id)
+    const queueWasDraining = this.drainingSessions.has(id)
+    // A delivery already handed to the runtime cannot be drained safely, but
+    // an admitted queue claim must see the reservation below and abort itself.
+    // The exclusive admission then waits for that rollback before teardown.
+    this.assertNoActiveTurn(id)
     // Claimed before anything is awaited, so a message arriving while the
     // background tasks are being read cannot start a turn into a session that
     // is on its way down.
     this.suspendingSessions.add(id)
     try {
-      return await this.admissions.exclusive(id, async () =>
-        this.suspendClaimedSession(id, await this.store.readAfterWrites(id)))
+      return await this.admissions.exclusive(id, async () => {
+        const current = await this.store.readAfterWrites(id)
+        this.assertStillIdle(id, queueWasDraining)
+        return this.suspendClaimedSession(id, current)
+      })
     } finally {
       this.suspendingSessions.delete(id)
     }
@@ -3696,14 +3703,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private assertStillIdle(id: string): void {
+  private assertStillIdle(id: string, queueWasDraining = false): void {
     this.assertTerminalQueueSettled(id)
+    if (queueWasDraining || this.drainingSessions.has(id)) {
+      throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    this.assertNoActiveTurn(id)
+  }
+
+  private assertNoActiveTurn(id: string): void {
     const current = this.store.get(id)
     if (
       !current ||
       current.status === 'running' ||
       current.status === 'waiting' ||
-      this.drainingSessions.has(id) ||
       this.activePrompts.has(id) ||
       // A prompt already on its way to the runtime. The store still says idle
       // until the turn is recorded, so without this the teardown lands on a
@@ -3711,9 +3729,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.dispatchingSessions.has(id)
     ) {
       throw Object.assign(new Error('Session can only be suspended while idle'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
         statusCode: 409,
       })
     }

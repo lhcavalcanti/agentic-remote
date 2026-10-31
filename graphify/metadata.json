@@ -398,9 +398,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 217,
+  "communities": 215,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18162,
+  "edges": 18165,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -525,7 +525,7 @@
     "server/agent-service-recovery.test.ts": "54846ab1808aaf1f9185119ba02e6623abf9fd3992dcb5e4115c8ef10d3340b1",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "73203a0d68d02b30c5ebabb05422490ac041e67370b4d96c0016ea1f5764cf16",
-    "server/agent-service.ts": "e03268f85d983a39cfeaf39b73f6d353fe0ad2d5d9ba9966651a9f1eda049d37",
+    "server/agent-service.ts": "3ba36085f02c5f518bb9c2834b3855f05e3221e687f6fb11c9299da99026c41d",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -887,7 +887,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6607,
+  "nodes": 6608,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -975,15 +975,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d8e99f07293054306a5f41383cf350a93e4c19dc3383d7a7282556690fa9da10",
-    "communities.json": "50c830a205a3b517cac6ca6d63980b44d7234c509eba777045e32a2082ead5a4",
-    "graph.html": "4b6d429dff2221c0ffe7d9fe686170d15bc2b7109433fc8544993841fc3ce895",
-    "graph.json": "5d5723e1f7c46cf0a5b60572ec025ca31797d819908a4f812178600859987084"
+    "GRAPH_REPORT.md": "9295859450696929d031eda5b179e36343edace970ba87b39df04a3f461e2900",
+    "communities.json": "7492dc88712dcb4975064a5d2d3effe79edc82ca8089316376a651a27699d0b2",
+    "graph.html": "d44bbe3e524b4fba51030a507698eb005e3d6d910db564c382d12dc5756f7f95",
+    "graph.json": "732c440dcbdaafd4c9bb2961c8586750ad69da2c7078be8d0b0f67323c337321"
   },
   "schema_version": 1,
-  "source_commit": "83801cdf84869241d46f36ac394f2f56a5474ef0",
-  "source_fingerprint": "d794e7ab0ed2343ae7e8e7384809b19738b0c3f758df9eb316f18fd1d9f0be36",
+  "source_commit": "81bb4041c1d9f8382e348865425a661fae60a915",
+  "source_fingerprint": "4016a0772c4cd0e29ce99fa961a315ccfe6739e138536d87e19a51009e489334",
   "working_tree_changes": [
-    "src/App.tsx"
+    "server/agent-service.ts"
   ]
 }

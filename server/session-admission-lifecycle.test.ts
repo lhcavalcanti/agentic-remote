@@ -417,7 +417,14 @@ describe('Session admission and queue lifecycle', () => {
       const pending = await question(runtime.service)
       await runtime.service.sendMessage(id, 'second', true)
       vi.mocked(writeFile).mockRejectedValue(new Error('Persistent storage outage'))
+      if (provider === 'copilot') {
+        vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
+      }
       await expect(pending.reply()).rejects.toThrow('Persistent storage outage')
+      if (provider === 'copilot') {
+        expect(runtime.store.sdkAcceptedReply(id)?.requestId).toBe(pending.requestId)
+        expect(pending.resolve).toHaveBeenCalledOnce()
+      }
       runtime.complete('first')
       await vi.waitFor(() => expect(runtime.active()).toBe(false))
       expect(runtime.store.get(id)?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['second'])
@@ -440,7 +447,13 @@ describe('Session admission and queue lifecycle', () => {
         const pending = await question(runtime.service)
         await runtime.service.sendMessage(id, 'second', true)
         vi.mocked(writeFile).mockRejectedValue(new Error('Outage'))
+        if (provider === 'copilot') {
+          vi.mocked(writeFile).mockImplementationOnce(disk.writeFile)
+        }
         await expect(pending.reply()).rejects.toThrow('Outage')
+        if (provider === 'copilot') {
+          expect(runtime.store.sdkAcceptedReply(id)?.requestId).toBe(pending.requestId)
+        }
         runtime.complete('first')
         await vi.waitFor(() => expect(runtime.active()).toBe(false))
         vi.mocked(writeFile).mockImplementation(disk.writeFile)

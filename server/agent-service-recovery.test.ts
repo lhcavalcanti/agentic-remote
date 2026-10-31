@@ -25,6 +25,7 @@ it('retains interrupted SDK queues across restart and requires explicit continua
   await f.service.start()
   expect(f.service.getSession('pending')).toMatchObject({
     isOpen: true, status: 'error', interruption: { previousStatus: 'running' },
+    restartRecovery: { state: 'interrupted' },
     queuedPrompts: [prompt('first'), prompt('second')],
   })
   expect(owner.send).not.toHaveBeenCalled()
@@ -33,11 +34,12 @@ it('retains interrupted SDK queues across restart and requires explicit continua
   expect(await f.service.listCommands('pending')).toEqual([])
   await f.service['discoverSessions']()
   expect(f.service.getSession('pending')?.interruption).toBeDefined()
-  expect(f.client.resumeSession).not.toHaveBeenCalled()
+  expect(f.client.resumeSession).toHaveBeenCalledTimes(1)
   await expect(f.service.sendMessage('pending', 'Not yet reopened')).rejects.toMatchObject({ statusCode: 409 })
   const reopened = await f.service.activateSession('pending')
   expect(reopened.status).toBe('error')
   expect(reopened.interruption).toBeUndefined()
+  expect(reopened.restartRecovery).toBeUndefined()
   expect(reopened.queuedPrompts).toEqual([prompt('first'), prompt('second')])
   expect(owner.send).not.toHaveBeenCalled()
   await f.service.sendMessage('pending', 'Explicit continuation')
@@ -66,6 +68,1031 @@ it('does not count unconfirmed boot recovery candidates as live owners or archiv
     isOpen: true, interruption: interrupted!.interruption,
   })
 })
+
+it('ignores events from a stale SDK owner generation even when the session object is reused', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.messages.push({
+      id: 'assistant',
+      role: 'assistant',
+      content: '',
+      createdAt: timestamp,
+      streaming: true,
+    })
+    session.status = 'running'
+  })
+  const listeners: Array<(event: SessionEvent) => void> = []
+  const owner = {
+    ...sdkSession('pending'),
+    on: (listener: (event: SessionEvent) => void) => {
+      listeners.push(listener)
+      return () => undefined
+    },
+  }
+  f.service['sessions'].set('pending', owner)
+  Reflect.set(f.service, 'sdkOwnerGenerations', new Map([['pending', 1]]))
+  f.service['activePrompts'].set('pending', { assistantMessageId: 'assistant' })
+  f.service['attachSession'](owner, 'pending', 1)
+  const staleListener = listeners[0]!
+
+  Reflect.get(f.service, 'sdkOwnerGenerations').set('pending', 2)
+  f.service['attachSession'](owner, 'pending', 2)
+  staleListener({
+    type: 'assistant.message_delta',
+    id: 'stale-delta',
+    parentId: null,
+    timestamp,
+    data: { messageId: 'assistant', deltaContent: 'stale' },
+  } as SessionEvent)
+  expect(f.store.get('pending')?.messages.at(-1)?.content).toBe('')
+
+  listeners[1]!({
+    type: 'assistant.message_delta',
+    id: 'current-delta',
+    parentId: null,
+    timestamp,
+    data: { messageId: 'assistant', deltaContent: 'current' },
+  } as SessionEvent)
+  expect(f.store.get('pending')?.messages.at(-1)?.content).toBe('current')
+})
+
+it('requires durable completion before a live idle event clears an accepted SDK reply', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingUserInput = {
+      requestId: 'public-question',
+      question: 'Choose?',
+      choices: ['Left'], allowFreeform: false,
+    }
+  })
+  await f.store.acceptLiveSdkReply('pending', {
+    requestId: 'public-question', kind: 'user-input',
+    input: { answer: 'Left', wasFreeform: false },
+  }, 'pendingUserInput', () => false)
+  await f.store.markInterrupted('pending')
+  const recovery = await f.store.claimSdkRecovery('pending')
+  const callbacks: Array<(event: SessionEvent) => void> = []
+  const owner: CopilotSessionLike = {
+    ...sdkSession('pending'),
+    on: (callback) => {
+      callbacks.push(callback)
+      return () => undefined
+    },
+    getEvents: vi.fn(async () => sdkRecoveryEvents(true)),
+  }
+  f.service['installSdkOwner'](owner, 'pending', recovery.generation)
+  callbacks[0]!({
+    type: 'session.idle',
+    id: 'recent-but-ephemeral',
+    parentId: null,
+    timestamp: new Date(
+      Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt) + 1_000,
+    ).toISOString(),
+    data: {},
+    ephemeral: true,
+  } as SessionEvent)
+  await f.store.readAfterWrites('pending')
+
+  expect(f.store.sdkRecovery('pending')).toMatchObject({
+    generation: recovery.generation, state: 'recovering',
+  })
+  expect(f.store.sdkAcceptedReply('pending')?.requestId).toBe('public-question')
+  expect(f.store.get('pending')?.pendingUserInput?.requestId).toBe('public-question')
+})
+
+it('does not let a worker idle event settle foreground SDK recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.queuedPrompts = [prompt('wait for the foreground turn')]
+  })
+  await f.store.markInterrupted('pending')
+  const recovery = await f.store.claimSdkRecovery('pending')
+  const callbacks: Array<(event: SessionEvent) => void> = []
+  const owner: CopilotSessionLike = {
+    ...sdkSession('pending'),
+    on: (callback) => {
+      callbacks.push(callback)
+      return () => undefined
+    },
+    getEvents: vi.fn(async () => sdkRecoveryEvents(false)),
+  }
+  f.service['installSdkOwner'](owner, 'pending', recovery.generation)
+
+  callbacks[0]!({
+    type: 'session.idle',
+    id: 'worker-idle',
+    parentId: null,
+    timestamp,
+    data: { agentId: 'worker-1' },
+    ephemeral: true,
+  } as SessionEvent)
+  await f.store.readAfterWrites('pending')
+
+  expect(f.store.sdkRecovery('pending')).toMatchObject({
+    generation: recovery.generation,
+    state: 'recovering',
+  })
+  expect(f.store.get('pending')?.queuedPrompts).toEqual([
+    prompt('wait for the foreground turn'),
+  ])
+})
+
+it('recovers a completed SDK turn under the same provider identity during startup', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.client.resumeSession).toHaveBeenCalledWith(
+    'pending',
+    expect.objectContaining({
+      suppressResumeEvent: true,
+      continuePendingWork: true,
+    }),
+  )
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'idle',
+    isOpen: true,
+  })
+  expect(f.service.getSession('pending')?.interruption).toBeUndefined()
+  expect(f.service.getSession('pending')?.restartRecovery).toBeUndefined()
+  expect(f.service.getSession('pending')?.messages.map((message) => message.content))
+    .toEqual(['Retain pending', 'Recovered answer'])
+})
+
+it('keeps stale user input and queued work blocked when resumed history is idle', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingUserInput = {
+      requestId: 'stale-question',
+      question: 'Choose a direction',
+      choices: ['Left'],
+      allowFreeform: false,
+    }
+    session.queuedPrompts = [prompt('wait for explicit recovery')]
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: {
+      state: 'interrupted',
+      message: expect.stringMatching(/question.*pending/i),
+    },
+    pendingUserInput: {
+      requestId: 'stale-question',
+      stale: true,
+    },
+    queuedPrompts: [prompt('wait for explicit recovery')],
+  })
+  expect(owner.send).not.toHaveBeenCalled()
+})
+
+it('keeps an open SDK model turn explicitly interrupted after startup recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.queuedPrompts = [prompt('first'), prompt('second')]
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(false))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    interruption: { previousStatus: 'running' },
+    restartRecovery: {
+      state: 'interrupted',
+      message: expect.stringMatching(/stream|turn/i),
+    },
+    queuedPrompts: [prompt('first'), prompt('second')],
+  })
+  expect(owner.send).not.toHaveBeenCalled()
+})
+
+it('fails closed when a populated SDK provider identity is missing', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  f.client.resumeSession = vi.fn(async () => {
+    throw new Error('Session not found')
+  })
+
+  await f.service.start()
+
+  expect(f.client.createSession).not.toHaveBeenCalled()
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: {
+      state: 'failed',
+      message: expect.stringMatching(/provider identity/i),
+    },
+  })
+  expect(f.events).toContainEqual({
+    type: 'error',
+    sessionId: 'pending',
+    message: 'SDK restart recovery failed. The saved provider identity could not be resumed.',
+  })
+})
+
+it('coalesces duplicate SDK startup recovery attempts into one provider resume', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  await f.store.markInterrupted('pending')
+  const events = gate<SessionEvent[]>(sdkRecoveryEvents(true))
+  const entered = gate(undefined)
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => {
+    entered.finish(undefined)
+    return events.pending
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  const first = f.service['recoverSdkSessionOnce']('pending')
+  await entered.pending
+  const second = f.service['recoverSdkSessionOnce']('pending')
+  events.finish(sdkRecoveryEvents(true))
+  await Promise.all([first, second])
+
+  expect(f.client.resumeSession).toHaveBeenCalledTimes(1)
+  expect(f.service.getSession('pending')?.restartRecovery).toBeUndefined()
+})
+
+it('skips repeated SDK recovery triggers while this node already owns the runtime', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  await f.store.markInterrupted('pending')
+  const owner = sdkSession('pending')
+  f.service['installSdkOwner'](owner, 'pending', 0)
+  f.client.resumeSession = vi.fn(async () => sdkSession('pending'))
+
+  await Promise.all([
+    f.service['recoverSdkSessions'](),
+    f.service['recoverSdkSessions'](),
+  ])
+
+  expect(f.client.resumeSession).not.toHaveBeenCalled()
+  expect(f.service['sessions'].get('pending')).toBe(owner)
+})
+
+it('releases a preserved SDK FIFO in order only after completed-turn recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.queuedPrompts = [prompt('first'), prompt('second')]
+    session.queuedCount = 2
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  await vi.waitFor(() => {
+    expect(vi.mocked(owner.send)?.mock.calls.map(([input]) => input.prompt))
+      .toEqual(['first', 'second'])
+  })
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'idle',
+    queuedPrompts: [],
+    queuedCount: 0,
+  })
+})
+
+it('does not treat provider shutdown during a model turn as completed recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => [
+    ...sdkRecoveryEvents(false),
+    {
+      type: 'session.shutdown',
+      id: 'shutdown',
+      parentId: 'turn-start',
+      timestamp: '2026-10-24T00:00:03.000Z',
+      data: {},
+    } as SessionEvent,
+  ])
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: { state: 'interrupted' },
+  })
+})
+
+it('reconstructs and answers a durable SDK permission after restart', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      kind: 'shell',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  let events = sdkPermissionEvents()
+  let pending = [{
+    requestId: 'provider-permission',
+    request: {
+      kind: 'commands',
+      fullCommandText: 'printf safe',
+      intention: 'Run a controlled command',
+      commandIdentifiers: ['printf'],
+      canOfferSessionApproval: false,
+    },
+  }]
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => events)
+  const handlePendingPermissionRequest = vi.fn(async () => {
+    pending = []
+    events = sdkRecoveryEvents(true)
+    return { success: true }
+  })
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({ items: pending })),
+      handlePendingPermissionRequest,
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  const waiting = f.service.getSession('pending')!
+  expect(waiting).toMatchObject({
+    status: 'waiting',
+    restartRecovery: { state: 'waiting-permission' },
+    pendingPermission: {
+      stale: false,
+    },
+  })
+  const recoveredRequestId = waiting.pendingPermission!.requestId
+  expect(recoveredRequestId).not.toBe('agentic-permission')
+  expect(JSON.stringify(waiting)).not.toContain('provider-permission')
+
+  const answered = await f.service.replyPermission(
+    'pending',
+    recoveredRequestId,
+    'allow-once',
+  )
+
+  expect(handlePendingPermissionRequest).toHaveBeenCalledWith({
+    requestId: 'provider-permission',
+    result: { kind: 'approve-once', approvedInteractively: true },
+  })
+  expect(answered).toMatchObject({ status: 'idle' })
+  expect(answered.pendingPermission).toBeUndefined()
+  expect(answered.interruption).toBeUndefined()
+  expect(answered.restartRecovery).toBeUndefined()
+  expect(f.store.sdkAcceptedReply('pending')).toBeUndefined()
+})
+
+it('keeps a recovered permission interrupted when its low-level RPC is unavailable', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    pendingPermission: { requestId: 'agentic-permission', stale: true },
+    restartRecovery: {
+      state: 'interrupted',
+      message: expect.stringMatching(/permission.*not available/i),
+    },
+  })
+})
+
+it('retains a saved recovered permission after its provider RPC disappears on restart', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  const requestId = 'public-permission'
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId,
+      title: 'Allow tool',
+      options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
+    }
+  })
+  await f.store.markInterrupted('pending')
+  const recovery = await f.store.claimSdkRecovery('pending')
+  await f.store.bindRecoveredPermission('pending', recovery.generation, requestId, 'provider-permission', {
+    requestId,
+    title: 'Allow tool',
+    options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
+  })
+  await f.store.acceptSdkReply('pending', recovery.generation, {
+    requestId, kind: 'permission', optionId: 'reject',
+    providerRequestId: 'provider-permission',
+  })
+  await f.store.clearPendingRequest('pending', 'pendingPermission', requestId, { status: 'idle' })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: { state: 'interrupted', message: expect.stringMatching(/uncertain/i) },
+  })
+  expect(f.store.sdkAcceptedReply('pending')?.providerRequestId).toBe('provider-permission')
+  expect(JSON.stringify(f.service.getSession('pending'))).not.toContain('provider-permission')
+})
+
+it('retains an accepted recovered permission reply until provider delivery is confirmed', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  let pending = [{
+    requestId: 'provider-permission',
+    request: {
+      kind: 'commands',
+      fullCommandText: 'printf safe',
+      intention: 'Run a controlled command',
+      commandIdentifiers: ['printf'],
+      canOfferSessionApproval: false,
+    },
+  }]
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  const handlePendingPermissionRequest = vi.fn()
+    .mockRejectedValueOnce(new Error('synthetic provider outage'))
+    .mockImplementationOnce(async () => {
+      pending = []
+      return { success: true }
+    })
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({ items: pending })),
+      handlePendingPermissionRequest,
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+  await f.service.start()
+  const recoveredRequestId =
+    f.service.getSession('pending')!.pendingPermission!.requestId
+
+  await expect(f.service.replyPermission(
+    'pending',
+    recoveredRequestId,
+    'reject',
+  )).rejects.toThrow('synthetic provider outage')
+  expect(f.store.sdkAcceptedReply('pending')).toMatchObject({
+    requestId: recoveredRequestId,
+    kind: 'permission',
+    optionId: 'reject',
+  })
+  await expect(f.service.replyPermission(
+    'pending',
+    recoveredRequestId,
+    'allow-once',
+  )).rejects.toMatchObject({ statusCode: 409 })
+
+  await f.service.replyPermission('pending', recoveredRequestId, 'reject')
+
+  expect(handlePendingPermissionRequest).toHaveBeenLastCalledWith({
+    requestId: 'provider-permission',
+    result: { kind: 'reject', feedback: 'Rejected from Agentic Remote' },
+  })
+  expect(f.store.sdkAcceptedReply('pending')).toBeUndefined()
+})
+
+it('keeps a recovered permission decision uncertain if the provider does not confirm its delivery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'public-permission',
+      title: 'Allow tool',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+    session.queuedPrompts = [prompt('not replayed')]
+  })
+  let pending = [{ requestId: 'provider-permission', request: { kind: 'commands' } }]
+  let events = sdkPermissionEvents()
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => events)
+  const handlePendingPermissionRequest = vi.fn(async () => {
+    pending = []
+    const completedAt = new Date(
+      Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt) + 1_000,
+    ).toISOString()
+    events = sdkRecoveryEvents(true).map((event) =>
+      event.type === 'assistant.turn_end' ? { ...event, timestamp: completedAt } : event)
+    return { success: false }
+  })
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({ items: pending })),
+      handlePendingPermissionRequest,
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+  await f.service.start()
+  const requestId = f.service.getSession('pending')!.pendingPermission!.requestId
+
+  const interrupted = await f.service.replyPermission('pending', requestId, 'reject')
+
+  expect(interrupted).toMatchObject({
+    status: 'error',
+    restartRecovery: { state: 'interrupted', message: expect.stringMatching(/unconfirmed|uncertain/i) },
+    pendingPermission: { requestId, stale: true },
+    queuedPrompts: [prompt('not replayed')],
+  })
+  expect(f.store.sdkAcceptedReply('pending')).toMatchObject({
+    requestId, optionId: 'reject', providerRequestId: 'provider-permission',
+  })
+  expect(handlePendingPermissionRequest).toHaveBeenCalledOnce()
+  expect(owner.send).not.toHaveBeenCalled()
+})
+
+it.each(['permission', 'user-input', 'elicitation'] as const)(
+  'retains an accepted live SDK %s choice as uncertain without replaying its lost callback',
+  async (kind) => {
+    const f = await fixture(['pending'], 'sdk')
+    f.ownership.aggregateError = undefined
+    const requestId = 'public-reply'
+    await f.store.update('pending', (session) => {
+      session.status = 'waiting'
+      session.queuedPrompts = [prompt('still queued')]
+      if (kind === 'permission') {
+        session.pendingPermission = {
+          requestId, title: 'Allow tool',
+          options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
+        }
+      } else {
+        session.pendingUserInput = {
+          requestId, question: 'Choose a direction', choices: ['Left'],
+          allowFreeform: false,
+          ...(kind === 'elicitation'
+            ? { form: { fields: [{ name: 'direction', title: 'Direction', type: 'string', required: true }] } }
+            : {}),
+        }
+      }
+    })
+    await f.store.acceptLiveSdkReply(
+      'pending',
+      kind === 'permission'
+        ? { requestId, kind, optionId: 'reject' }
+        : kind === 'user-input'
+          ? { requestId, kind, input: { answer: 'Left', wasFreeform: false } }
+          : {
+              requestId, kind,
+              input: {
+                answer: '', wasFreeform: false, action: 'accept',
+                values: { direction: 'Left' },
+              },
+            },
+      kind === 'permission' ? 'pendingPermission' : 'pendingUserInput',
+      () => false,
+    )
+    const owner = sdkSession('pending')
+    owner.getEvents = vi.fn(async () =>
+      kind === 'permission' ? sdkPermissionEvents() : sdkRecoveryEvents(false))
+    const handlePendingPermissionRequest = vi.fn(async () => ({ success: true }))
+    if (kind === 'permission') {
+      Object.assign(owner.rpc, {
+        permissions: {
+          pendingRequests: vi.fn(async () => ({
+            items: [{ requestId: 'provider-permission', request: { kind: 'commands' } }],
+          })),
+          handlePendingPermissionRequest,
+        },
+      })
+    }
+    f.client.resumeSession = vi.fn(async () => owner)
+
+    await f.service.start()
+
+    const interrupted = f.service.getSession('pending')!
+    expect(interrupted).toMatchObject({
+      status: 'error',
+      interruption: { previousStatus: 'waiting' },
+      restartRecovery: {
+        state: 'interrupted',
+        message: expect.stringMatching(/saved.*(uncertain|not sent again)/i),
+      },
+      [kind === 'permission' ? 'pendingPermission' : 'pendingUserInput']: {
+        requestId, stale: true,
+      },
+      queuedPrompts: [prompt('still queued')],
+    })
+    expect(f.store.sdkAcceptedReply('pending')).toMatchObject({
+      requestId, kind, generation: 1,
+    })
+    expect(owner.send).not.toHaveBeenCalled()
+    expect(handlePendingPermissionRequest).not.toHaveBeenCalled()
+    if (kind === 'permission') {
+      await expect(f.service.replyPermission('pending', requestId, 'reject'))
+        .rejects.toMatchObject({ statusCode: 409 })
+    } else {
+      await expect(f.service.replyUserInput('pending', requestId, {
+        answer: 'Left', wasFreeform: false,
+        ...(kind === 'elicitation' ? { values: { direction: 'Left' } } : {}),
+      })).rejects.toMatchObject({ statusCode: 409 })
+    }
+    expect(handlePendingPermissionRequest).not.toHaveBeenCalled()
+    expect(f.store.sdkAcceptedReply('pending')?.requestId).toBe(requestId)
+  },
+)
+
+it('retains answer-delivery uncertainty even when a later SDK turn completion is durable', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.queuedPrompts = [prompt('still queued')]
+    session.pendingUserInput = {
+      requestId: 'public-question',
+      question: 'Which direction?',
+      choices: ['Left'], allowFreeform: false,
+    }
+  })
+  await f.store.acceptLiveSdkReply('pending', {
+    requestId: 'public-question',
+    kind: 'user-input',
+    input: { answer: 'Left', wasFreeform: false },
+  }, 'pendingUserInput', () => false)
+  await f.store.updateStatus('pending', 'idle')
+  const completedAt = new Date(
+    Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt) + 1_000,
+  ).toISOString()
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true).map((event) =>
+    event.type === 'assistant.turn_end' ? { ...event, timestamp: completedAt } : event))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    interruption: { previousStatus: 'idle' },
+    restartRecovery: { state: 'interrupted', message: expect.stringMatching(/uncertain/i) },
+    pendingUserInput: { requestId: 'public-question', stale: true },
+    queuedPrompts: [prompt('still queued')],
+  })
+  expect(f.store.sdkAcceptedReply('pending')?.requestId).toBe('public-question')
+  expect(f.service.getSession('pending')?.messages.map((message) => message.content))
+    .toEqual(['Retain pending', 'Recovered answer'])
+  expect(owner.send).not.toHaveBeenCalled()
+})
+
+it('does not treat a terminal SDK event older than an accepted answer as its confirmation', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingUserInput = {
+      requestId: 'public-question',
+      question: 'Which direction?',
+      choices: ['Left'], allowFreeform: false,
+    }
+    session.queuedPrompts = [prompt('not replayed')]
+  })
+  await f.store.acceptLiveSdkReply('pending', {
+    requestId: 'public-question', kind: 'user-input',
+    input: { answer: 'Left', wasFreeform: false },
+  }, 'pendingUserInput', () => false)
+  await f.store.updateStatus('pending', 'idle')
+  const completedBeforeChoice = new Date(
+    Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt) - 1_000,
+  ).toISOString()
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true).map((event) =>
+    event.type === 'assistant.turn_end'
+      ? { ...event, timestamp: completedBeforeChoice }
+      : event))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: { state: 'interrupted', message: expect.stringMatching(/uncertain/i) },
+    pendingUserInput: { requestId: 'public-question', stale: true },
+    queuedPrompts: [prompt('not replayed')],
+  })
+  expect(f.store.sdkAcceptedReply('pending')?.requestId).toBe('public-question')
+  expect(owner.send).not.toHaveBeenCalled()
+})
+
+it('does not mistake an ephemeral provider idle event for durable answer completion', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingUserInput = {
+      requestId: 'public-question',
+      question: 'Which direction?',
+      choices: ['Left'], allowFreeform: false,
+    }
+  })
+  await f.store.acceptLiveSdkReply('pending', {
+    requestId: 'public-question', kind: 'user-input',
+    input: { answer: 'Left', wasFreeform: false },
+  }, 'pendingUserInput', () => false)
+  const acceptedAt = Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt)
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => [
+    ...sdkRecoveryEvents(false),
+    {
+      type: 'session.idle', id: 'transient-idle', parentId: null,
+      timestamp: new Date(acceptedAt + 1_000).toISOString(),
+      data: {}, ephemeral: true,
+    } as SessionEvent,
+  ])
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: { state: 'interrupted', message: expect.stringMatching(/uncertain/i) },
+    pendingUserInput: { requestId: 'public-question', stale: true },
+  })
+  expect(f.store.sdkAcceptedReply('pending')?.requestId).toBe('public-question')
+  expect(owner.send).not.toHaveBeenCalled()
+})
+
+it('does not replace an accepted recovered permission with a different provider request', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  const permission = {
+    requestId: 'public-permission',
+    title: 'Allow old tool',
+    options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
+  }
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = permission
+  })
+  await f.store.markInterrupted('pending')
+  const previous = await f.store.claimSdkRecovery('pending')
+  await f.store.bindRecoveredPermission(
+    'pending', previous.generation,
+    permission.requestId, 'provider-old', permission,
+  )
+  await f.store.acceptSdkReply('pending', previous.generation, {
+    requestId: permission.requestId,
+    kind: 'permission',
+    optionId: 'reject',
+    providerRequestId: 'provider-old',
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  const handlePendingPermissionRequest = vi.fn()
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({
+        items: [{ requestId: 'provider-new', request: { kind: 'commands' } }],
+      })),
+      handlePendingPermissionRequest,
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: { state: 'interrupted', message: expect.stringMatching(/uncertain|unconfirmed/i) },
+    pendingPermission: { requestId: permission.requestId, stale: true },
+  })
+  expect(f.store.sdkAcceptedReply('pending')).toMatchObject({
+    requestId: permission.requestId,
+    optionId: 'reject',
+    providerRequestId: 'provider-old',
+  })
+  expect(handlePendingPermissionRequest).not.toHaveBeenCalled()
+})
+
+it('fails closed when multiple provider permissions are pending after restart', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({
+        items: [
+          { requestId: 'provider-permission-1', request: { kind: 'commands' } },
+          { requestId: 'provider-permission-2', request: { kind: 'commands' } },
+        ],
+      })),
+      handlePendingPermissionRequest: vi.fn(),
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: {
+      state: 'failed',
+      message: expect.stringMatching(/more than one provider permission/i),
+    },
+  })
+})
+
+it('cancels only the active SDK recovery generation', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingPermission = {
+      requestId: 'agentic-permission',
+      title: 'Old permission',
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+      ],
+    }
+  })
+  const owner = sdkSession('pending')
+  owner.abort = vi.fn(async () => {})
+  owner.getEvents = vi.fn(async () => sdkPermissionEvents())
+  Object.assign(owner.rpc, {
+    permissions: {
+      pendingRequests: vi.fn(async () => ({
+        items: [{
+          requestId: 'provider-permission',
+          request: { kind: 'commands', intention: 'Run a controlled command' },
+        }],
+      })),
+      handlePendingPermissionRequest: vi.fn(),
+    },
+  })
+  f.client.resumeSession = vi.fn(async () => owner)
+  await f.service.start()
+  f.terminal.cancel.mockResolvedValue(false)
+
+  await f.service.cancel('pending')
+
+  expect(owner.abort).toHaveBeenCalledOnce()
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    pendingPermission: undefined,
+    restartRecovery: {
+      state: 'interrupted',
+      message: expect.stringMatching(/cancelled/i),
+    },
+  })
+})
+
+function sdkPermissionEvents(): SessionEvent[] {
+  return [
+    ...sdkRecoveryEvents(false),
+    {
+      type: 'permission.requested',
+      id: 'permission',
+      parentId: 'turn-start',
+      timestamp: '2026-10-24T00:00:03.000Z',
+      data: {
+        requestId: 'provider-permission',
+        permissionRequest: {
+          kind: 'shell',
+          fullCommandText: 'printf safe',
+          intention: 'Run a controlled command',
+          commandIdentifiers: ['printf'],
+          canOfferSessionApproval: false,
+          commands: [{ identifier: 'printf', readOnly: true }],
+          hasWriteFileRedirection: false,
+          possiblePaths: [],
+          possibleUrls: [],
+        },
+        promptRequest: {
+          kind: 'commands',
+          fullCommandText: 'printf safe',
+          intention: 'Run a controlled command',
+          commandIdentifiers: ['printf'],
+          canOfferSessionApproval: false,
+        },
+      },
+    } as SessionEvent,
+  ]
+}
+
+function sdkRecoveryEvents(completed: boolean): SessionEvent[] {
+  const events = [
+    {
+      type: 'session.start',
+      id: 'start',
+      parentId: null,
+      timestamp: '2026-10-24T00:00:00.000Z',
+      data: { context: { cwd: '/tmp/project' } },
+    },
+    {
+      type: 'user.message',
+      id: 'user',
+      parentId: 'start',
+      timestamp: '2026-10-24T00:00:01.000Z',
+      data: { content: 'Retain pending' },
+    },
+    {
+      type: 'assistant.turn_start',
+      id: 'turn-start',
+      parentId: 'user',
+      timestamp: '2026-10-24T00:00:02.000Z',
+      data: { turnId: 'turn' },
+    },
+  ] as SessionEvent[]
+  if (completed) {
+    events.push(
+      {
+        type: 'assistant.message',
+        id: 'assistant',
+        parentId: 'turn-start',
+        timestamp: '2026-10-24T00:00:03.000Z',
+        data: { messageId: 'assistant', content: 'Recovered answer' },
+      } as SessionEvent,
+      {
+        type: 'assistant.turn_end',
+        id: 'turn-end',
+        parentId: 'assistant',
+        timestamp: '2026-10-24T00:00:04.000Z',
+        data: { turnId: 'turn' },
+      } as SessionEvent,
+    )
+  }
+  return events
+}
 
 function prompt(id: string) {
   return { id, content: id, createdAt: timestamp }

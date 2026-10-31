@@ -2029,7 +2029,8 @@ button {
   background: color-mix(in srgb, var(--task) 8%, transparent);
 }
 
-.session-state--running {
+.session-state--running,
+.session-state--recovering {
   color: var(--accent-foreground);
 }
 
@@ -2311,6 +2312,12 @@ button {
 .error-banner span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.error-banner--recovery {
+  color: var(--accent-foreground);
+  border-color: color-mix(in srgb, var(--accent-foreground) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-foreground) 8%, transparent);
 }
 
 .timeline {

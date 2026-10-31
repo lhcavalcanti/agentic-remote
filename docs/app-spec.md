@@ -151,6 +151,25 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   after the same-ID owner is ready. If saved provider state is unavailable or
   corrupt, the session MUST remain recoverable with its history, metadata, and
   queue unchanged, and the failure MUST be shown explicitly.
+- On service startup, an interrupted Copilot SDK session MUST first attempt to
+  resume the same provider session ID and reconcile durable provider events.
+  Recovery MUST use a monotonically increasing persisted generation, reject
+  callbacks from older generations, and coalesce overlapping attempts.
+- A terminal provider event (`assistant.turn_end` or `session.idle`) MAY clear
+  the interruption and release preserved queued work in FIFO order. An open
+  turn, shutdown, abort, missing provider identity, or unsupported resume MUST
+  remain explicitly interrupted; restored history MUST NOT be presented as
+  restored stream continuity.
+- A provider permission MAY become actionable after restart only when the
+  installed SDK reports the exact durable pending request through its
+  low-level permission RPC. The provider request ID MUST remain private,
+  answers MUST be persisted before delivery, and queues MUST remain blocked
+  until provider state confirms settlement. Multiple pending permissions or an
+  unavailable RPC MUST fail closed.
+- SDK user-input and elicitation callbacks are process-local. Their cards MUST
+  become stale after restart and MUST NOT accept or replay an answer. A saved
+  answer whose callback continuity cannot be proven MUST remain an explicit
+  interruption rather than being sent again.
 - Managed session records MUST remain visible by default when their provider
   process disappears, including after overnight inactivity. Process loss MUST
   appear as interrupted/recoverable rather than Working or a silent close.
@@ -182,8 +201,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   summaries update metadata only. A cached session that reopened after the
   roster snapshot MUST stay listed.
 - Restart recovery MUST retain queues without replaying uncertain admissions.
-  Missing terminal owners and interrupted SDK turns MUST remain reviewable;
-  expired callbacks MUST NOT become answerable by merely reopening a record.
+  Missing terminal owners and unrecoverable SDK turns MUST remain reviewable;
+  expired user-input and elicitation callbacks MUST NOT become answerable by
+  merely reopening a record. A recovered durable permission is the only SDK
+  callback exception. The owning service MUST finish automatic SDK recovery
+  before it accepts browser traffic. Browser bootstrap, event-stream
+  reconnect, and foreground return MUST refresh authoritative session state;
+  they MUST NOT issue a second resume mutation or present continuity before
+  the owner reports recovery complete.
   Explicit Close/Delete MUST retain their existing user-confirmed semantics.
   See [Session retention](session-retention.md) for settings and cleanup cadence.
 - An open new-session dialog MUST preserve user choices across computer status

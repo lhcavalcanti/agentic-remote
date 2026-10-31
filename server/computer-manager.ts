@@ -660,6 +660,14 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     )
   }
 
+  connectVoice(computerId: string, streamId: string, signal?: AbortSignal) {
+    const computer = this.requireComputer(computerId)
+    if (computer.isLocal) {
+      throw new Error('The local voice backend does not use a remote connection')
+    }
+    return this.requireClient(computerId).connectVoice(streamId, { signal })
+  }
+
   async transcribeAudio(
     computerId: string,
     filename: string,
@@ -1325,6 +1333,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       baseUrl: computer.baseUrl,
       registrationId: this.clients.get(computer.id)?.registrationId,
       providers: this.clients.get(computer.id)?.providers,
+      voice: this.clients.get(computer.id)?.voice,
     }
   }
 

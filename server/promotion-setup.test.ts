@@ -1,5 +1,119 @@
-import { readFile } from 'node:fs/promises'
-import { describe, expect, it } from 'vitest'
+import { execFile } from 'node:child_process'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { afterEach, describe, expect, it } from 'vitest'
+
+const exec = promisify(execFile)
+const fixtures: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    fixtures.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  )
+})
+
+function shellFunction(script: string, name: string): string {
+  return script.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0] ?? ''
+}
+
+async function setupFixture() {
+  const parent = path.join(process.cwd(), '.agentic-remote')
+  await mkdir(parent, { recursive: true })
+  const root = await mkdtemp(path.join(parent, 'voice-setup-test-'))
+  fixtures.push(root)
+  const repository = path.join(root, 'repository')
+  const config = path.join(root, 'config')
+  const environment = path.join(config, 'environment')
+  await Promise.all([
+    mkdir(repository, { recursive: true }),
+    mkdir(config, { recursive: true }),
+  ])
+  await writeFile(
+    environment,
+    [
+      'HOST=127.0.0.1',
+      'PORT=4317',
+      'AGENTIC_REMOTE_ROLE=hub',
+      'AGENTIC_REMOTE_NODE_NAME=fixture',
+      'AGENTIC_REMOTE_ORACLE_VOICE=on',
+      'AGENTIC_REMOTE_VOICE_COMPUTER=',
+      'AGENTIC_REMOTE_VOICE_STT_PROFILE=nemotron',
+      'AGENTIC_REMOTE_VOICE_LANGUAGE=pt-BR',
+      'AGENTIC_REMOTE_VOICE_THREADS=4',
+      'AGENTIC_REMOTE_VOICE_ENDPOINT_MS=900',
+      'AGENTIC_REMOTE_VOICE_STT_MODEL_DIR=models/stt',
+      'AGENTIC_REMOTE_VOICE_TTS_ENGINE=sherpa-vits',
+      'AGENTIC_REMOTE_VOICE_TTS_MODEL=models/voice.onnx',
+      'AGENTIC_REMOTE_VOICE_TTS_CONFIG=models/voice.onnx.json',
+      'AGENTIC_REMOTE_VOICE_TTS_TOKENS=models/tokens.txt',
+      'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR=models/espeak-ng-data',
+      'AGENTIC_REMOTE_VOICE_TRANSCRIPT=private words',
+      'AGENTIC_REMOTE_NODE_TOKEN=do-not-print',
+    ].join('\n') + '\n',
+  )
+  await chmod(environment, 0o600)
+  const script = await readFile(
+    new URL('../bin/agentic-remote', import.meta.url),
+    'utf8',
+  )
+  const functions = [
+    'config_value',
+    'validate_host',
+    'validate_port',
+    'validate_role',
+    'validate_name',
+    'derived_origins',
+    'append_preserved_voice_configuration',
+    'setup_service',
+  ].map((name) => shellFunction(script, name)).filter(Boolean).join('\n')
+  const curlMarker = path.join(root, 'curl-called')
+  const runner = path.join(root, 'run-setup')
+  await writeFile(
+    runner,
+    [
+      '#!/usr/bin/env bash',
+      'set -Eeuo pipefail',
+      'die() { printf "agentic-remote: %s\\n" "$*" >&2; exit 1; }',
+      'require_command() { :; }',
+      'pnpm() { :; }',
+      'publish_release() { :; }',
+      'write_service() { :; }',
+      'refresh_promotion_lifecycle_if_installed() { :; }',
+      'enable_linger() { :; }',
+      'quarantine_inactive_rejected_releases() { :; }',
+      'systemctl() { :; }',
+      'curl() { touch "$CURL_MARKER"; return 99; }',
+      functions,
+      'setup_service --name fixture',
+    ].join('\n'),
+  )
+  await chmod(runner, 0o755)
+  const run = () => exec(runner, {
+    env: {
+      ...process.env,
+      HOME: root,
+      REPO_ROOT: repository,
+      CONFIG_DIR: config,
+      ENV_FILE: environment,
+      SYSTEMD_DIR: path.join(root, 'systemd'),
+      COMMAND_LINK: path.join(root, 'agentic-remote'),
+      SERVICE_NAME: 'fixture.service',
+      CURL_MARKER: curlMarker,
+    },
+  })
+  return { environment, curlMarker, run }
+}
 
 // Behavior of the monitor is covered by executing it in
 // server/promotion-monitor.test.ts. What remains here are assertions about
@@ -172,5 +286,41 @@ describe('reproducible promotion setup', () => {
     )
     expect(refresh).toBeGreaterThan(0)
     expect(refresh).toBeLessThan(restart)
+  })
+
+  it('preserves every Oracle voice value without printing private configuration', async () => {
+    const fixture = await setupFixture()
+
+    const result = await fixture.run()
+
+    const environment = await readFile(fixture.environment, 'utf8')
+    for (const preserved of [
+      'AGENTIC_REMOTE_ORACLE_VOICE=on',
+      'AGENTIC_REMOTE_VOICE_COMPUTER=',
+      'AGENTIC_REMOTE_VOICE_STT_PROFILE=nemotron',
+      'AGENTIC_REMOTE_VOICE_LANGUAGE=pt-BR',
+      'AGENTIC_REMOTE_VOICE_THREADS=4',
+      'AGENTIC_REMOTE_VOICE_ENDPOINT_MS=900',
+      'AGENTIC_REMOTE_VOICE_STT_MODEL_DIR=models/stt',
+      'AGENTIC_REMOTE_VOICE_TTS_ENGINE=sherpa-vits',
+      'AGENTIC_REMOTE_VOICE_TTS_MODEL=models/voice.onnx',
+      'AGENTIC_REMOTE_VOICE_TTS_CONFIG=models/voice.onnx.json',
+      'AGENTIC_REMOTE_VOICE_TTS_TOKENS=models/tokens.txt',
+      'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR=models/espeak-ng-data',
+      'AGENTIC_REMOTE_VOICE_TRANSCRIPT=private words',
+    ]) {
+      expect(environment).toContain(`${preserved}\n`)
+    }
+    expect((await stat(fixture.environment)).mode & 0o777).toBe(0o600)
+    expect(`${result.stdout}${result.stderr}`).not.toContain('private words')
+    expect(`${result.stdout}${result.stderr}`).not.toContain('do-not-print')
+  })
+
+  it('never downloads voice models during setup', async () => {
+    const fixture = await setupFixture()
+
+    await fixture.run()
+
+    await expect(stat(fixture.curlMarker)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

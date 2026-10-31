@@ -16,6 +16,7 @@ import {
   MANAGER_STRUCTURED_MEMORY_MAX_TOMBSTONES,
   type ManagerStructuredMemoryAuthority,
   type ManagerStructuredMemoryCorrectInput,
+  type ManagerStructuredMemoryMetadataSnapshot,
   type ManagerStructuredMemoryMutationResult,
   type ManagerStructuredMemoryRememberInput,
   type ManagerStructuredMemorySearchResult,
@@ -274,6 +275,25 @@ export class ManagerStructuredMemoryStore {
   snapshot(): ManagerStructuredMemoryState {
     this.requireInitialized()
     return structuredClone(this.state)
+  }
+
+  metadataSnapshot(): ManagerStructuredMemoryMetadataSnapshot {
+    this.requireInitialized()
+    return {
+      records: this.state.records.map((record) => ({
+        id: record.id,
+        kind: record.kind,
+        scope: structuredClone(record.scope),
+        authority: record.authority,
+        confidence: record.confidence,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        ...(record.validFrom ? { validFrom: record.validFrom } : {}),
+        ...(record.validUntil ? { validUntil: record.validUntil } : {}),
+        ...(record.supersededById ? { supersededById: record.supersededById } : {}),
+      })),
+      tombstones: this.state.tombstones.map(({ recordId }) => ({ recordId })),
+    }
   }
 
   exportState(): string {

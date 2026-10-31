@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   ChatMessage,
+  PendingPermission,
   PendingUserInput,
   QueuedPrompt,
   SessionFileUpload,
@@ -11,6 +12,7 @@ import type {
   SessionRecoveryReason,
   SessionStatus,
   SessionRetentionPatch,
+  UserInputReplyInput,
   ActivityKind,
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
@@ -45,6 +47,28 @@ export interface RecoverySeed {
   state: 'pending' | 'dispatching' | 'failed'
   startedAt?: string
   error?: string
+}
+
+export interface SdkRestartRecovery {
+  generation: number
+  state: 'pending' | 'recovering' | 'waiting-permission' | 'interrupted' | 'failed'
+  detectedAt: string
+  previousStatus: SessionStatus
+  providerRequestId?: string
+  message?: string
+}
+
+export interface SdkAcceptedReplyInput {
+  requestId: string
+  kind: 'permission' | 'user-input' | 'elicitation'
+  optionId?: string
+  providerRequestId?: string
+  input?: UserInputReplyInput
+}
+
+export interface SdkAcceptedReply extends SdkAcceptedReplyInput {
+  generation: number
+  acceptedAt: string
 }
 
 export interface TranscriptObservation {
@@ -113,6 +137,8 @@ interface StoredState {
   version: 1
   sessions: Record<string, StoredSession>
   retiredSessionIds?: string[]
+  sdkRestartRecoveries?: Record<string, SdkRestartRecovery>
+  sdkAcceptedReplies?: Record<string, SdkAcceptedReply>
 }
 
 interface StoredSession extends SessionDetail {
@@ -128,6 +154,8 @@ interface StoredSession extends SessionDetail {
   sdkQueueAdmission?: SdkQueueAdmission
   recoveryResend?: RecoveryResend
   recoverySeed?: RecoverySeed
+  sdkRestartRecovery?: SdkRestartRecovery
+  sdkAcceptedReply?: SdkAcceptedReply
   uploadOwnerIds?: string[]
   transcriptEpoch?: string
   lastClaimedRecovery?: string
@@ -158,6 +186,37 @@ const emptyRetirements: ReadonlySet<string> = new Set()
 function isSessionIdList(value: unknown): value is string[] {
   return Array.isArray(value) &&
     value.every((id) => typeof id === 'string' && id.length > 0)
+}
+
+function validateSdkRestartRecovery(recovery: SdkRestartRecovery): void {
+  if (
+    !recovery || typeof recovery !== 'object' || Array.isArray(recovery) ||
+    !Number.isSafeInteger(recovery.generation) || recovery.generation < 0 ||
+    !['pending', 'recovering', 'waiting-permission', 'interrupted', 'failed']
+      .includes(recovery.state) ||
+    !Number.isFinite(Date.parse(recovery.detectedAt)) ||
+    !['idle', 'running', 'waiting', 'error'].includes(recovery.previousStatus) ||
+    (recovery.providerRequestId !== undefined &&
+      (typeof recovery.providerRequestId !== 'string' || !recovery.providerRequestId)) ||
+    (recovery.message !== undefined && typeof recovery.message !== 'string')
+  ) throw new Error('Invalid SDK restart recovery metadata')
+}
+
+function validateSdkAcceptedReply(reply: SdkAcceptedReply): void {
+  if (
+    !reply || typeof reply !== 'object' || Array.isArray(reply) ||
+    !Number.isSafeInteger(reply.generation) || reply.generation < 0 ||
+    typeof reply.requestId !== 'string' || !reply.requestId ||
+    !['permission', 'user-input', 'elicitation'].includes(reply.kind) ||
+    !Number.isFinite(Date.parse(reply.acceptedAt)) ||
+    (reply.optionId !== undefined && typeof reply.optionId !== 'string') ||
+    (reply.providerRequestId !== undefined &&
+      (typeof reply.providerRequestId !== 'string' || !reply.providerRequestId)) ||
+    (reply.input !== undefined &&
+      (!reply.input || typeof reply.input !== 'object' ||
+        typeof reply.input.answer !== 'string' ||
+        typeof reply.input.wasFreeform !== 'boolean'))
+  ) throw new Error('Invalid SDK accepted reply metadata')
 }
 
 function activityDuration(startedAt: string, completedAt: string): number | undefined {
@@ -226,7 +285,7 @@ function encode(value: unknown): Buffer | undefined {
   return serialized === undefined ? undefined : Buffer.from(serialized, 'utf8')
 }
 
-/** Byte-for-byte the UTF-8 encoding of `JSON.stringify(state)`. */
+/** Canonical state JSON with SDK-only metadata in rollback-safe top-level maps. */
 export function serializeState(state: StoredState): Buffer {
   return Buffer.concat(serializeStateChunks(state))
 }
@@ -247,12 +306,31 @@ export function serializeStateChunks(state: StoredState): Buffer[] {
   const chunks: Buffer[] = [Buffer.from('{')]
   let first = true
   for (const [key, value] of Object.entries(state)) {
+    if (key === 'sdkRestartRecoveries' || key === 'sdkAcceptedReplies') continue
     const serialized = key === 'sessions' && value && typeof value === 'object' && !Array.isArray(value)
       ? serializeSessions(value as Record<string, StoredSession>)
       : encode(value)
     if (serialized === undefined) continue
     chunks.push(Buffer.from(`${first ? '' : ','}${JSON.stringify(key)}:`, 'utf8'))
     chunks.push(...(Array.isArray(serialized) ? serialized : [serialized]))
+    first = false
+  }
+  const privateMaps = {
+    sdkRestartRecoveries: Object.fromEntries(
+      Object.entries(state.sessions).flatMap(([id, session]) =>
+        session?.sdkRestartRecovery ? [[id, session.sdkRestartRecovery]] : []),
+    ),
+    sdkAcceptedReplies: Object.fromEntries(
+      Object.entries(state.sessions).flatMap(([id, session]) =>
+        session?.sdkAcceptedReply ? [[id, session.sdkAcceptedReply]] : []),
+    ),
+  }
+  for (const [key, value] of Object.entries(privateMaps)) {
+    if (!Object.keys(value).length) continue
+    chunks.push(
+      Buffer.from(`${first ? '' : ','}${JSON.stringify(key)}:`, 'utf8'),
+      encode(value)!,
+    )
     first = false
   }
   chunks.push(Buffer.from('}'))
@@ -293,7 +371,16 @@ function serializeSessions(sessions: Record<string, StoredSession>): Buffer[] {
     const cacheable = session !== null && typeof session === 'object'
     let serialized = cacheable ? serializedSessions.get(session) : undefined
     if (serialized === undefined) {
-      serialized = encode(session)
+      if (cacheable) {
+        const {
+          sdkRestartRecovery: _sdkRestartRecovery,
+          sdkAcceptedReply: _sdkAcceptedReply,
+          ...publiclySafeSession
+        } = session
+        serialized = encode(publiclySafeSession)
+      } else {
+        serialized = encode(session)
+      }
       if (serialized === undefined) continue
       if (cacheable) serializedSessions.set(session, serialized)
     }
@@ -331,6 +418,9 @@ function cloneSession(session: StoredSession): SessionDetail {
     sdkQueueAdmission,
     recoveryResend: _recoveryResend,
     recoverySeed,
+    sdkRestartRecovery,
+    sdkAcceptedReply: _sdkAcceptedReply,
+    restartRecovery: _restartRecovery,
     uploadOwnerIds: _uploadOwnerIds,
     transcriptEpoch: _transcriptEpoch,
     lastClaimedRecovery: _lastClaimedRecovery,
@@ -346,9 +436,25 @@ function cloneSession(session: StoredSession): SessionDetail {
     detail.failedPrompt = undefined
   }
   if (ownsRecoverySeedFailure(session)) detail.failedPrompt = undefined
+  const restartRecovery = sdkRestartRecovery
+    ? {
+        state: sdkRestartRecovery.state === 'pending'
+          ? 'interrupted' as const
+          : sdkRestartRecovery.state,
+        detectedAt: sdkRestartRecovery.detectedAt,
+        ...(sdkRestartRecovery.message ? { message: sdkRestartRecovery.message } : {}),
+      }
+    : undefined
   if (detail.interruption) {
     detail.status = 'error'
-    detail.activity = 'Session process stopped. History and queued work are retained. Reopen to continue.'
+    detail.activity = restartRecovery?.message ||
+      (restartRecovery?.state === 'recovering'
+        ? 'Recovering the saved provider conversation.'
+        : 'Session process stopped. History and queued work are retained. Reopen to continue.')
+  }
+  if (restartRecovery?.state === 'waiting-permission' && detail.pendingPermission) {
+    detail.status = 'waiting'
+    detail.activity = detail.pendingPermission.title
   }
   if (recoverySeed?.state === 'failed') {
     detail.status = 'error'
@@ -364,6 +470,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     messages: [...(archivedMessages || []), ...detail.messages],
     executionMode: backend === 'terminal' ? 'tmux' : 'sdk',
     ...(recoverySeed ? { recoverySeedState: recoverySeed.state } : {}),
+    ...(restartRecovery ? { restartRecovery } : {}),
   }
 }
 
@@ -410,6 +517,14 @@ export class SessionStore {
         parsed.sessions === null ||
         typeof parsed.sessions !== 'object' ||
         Array.isArray(parsed.sessions) ||
+        (parsed.sdkRestartRecoveries !== undefined &&
+          (!parsed.sdkRestartRecoveries ||
+            typeof parsed.sdkRestartRecoveries !== 'object' ||
+            Array.isArray(parsed.sdkRestartRecoveries))) ||
+        (parsed.sdkAcceptedReplies !== undefined &&
+          (!parsed.sdkAcceptedReplies ||
+            typeof parsed.sdkAcceptedReplies !== 'object' ||
+            Array.isArray(parsed.sdkAcceptedReplies))) ||
         (parsed.retiredSessionIds !== undefined && !isSessionIdList(parsed.retiredSessionIds))
       ) {
         throw new Error('Unsupported Agentic Remote state format')
@@ -424,9 +539,14 @@ export class SessionStore {
       loaded = structuredClone(this.state)
     }
 
+    const recoveries = loaded.sdkRestartRecoveries || {}
+    const replies = loaded.sdkAcceptedReplies || {}
+    for (const recovery of Object.values(recoveries)) validateSdkRestartRecovery(recovery)
+    for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
-    let staleSdkInteractionMarked = false
-    for (const session of Object.values(loaded.sessions)) {
+    let staleSdkInteractionMarked = Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
+      Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
+    for (const [id, session] of Object.entries(loaded.sessions)) {
       if (session.retention !== undefined && !sessionRetentionSchema.safeParse(session.retention).success) {
         throw new Error('Invalid session retention metadata')
       }
@@ -438,6 +558,16 @@ export class SessionStore {
         !Number.isFinite(Date.parse(session.interruption.detectedAt)) ||
         !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus)
       )) throw new Error('Invalid session interruption metadata')
+      if (session.sdkRestartRecovery !== undefined) {
+        validateSdkRestartRecovery(session.sdkRestartRecovery)
+        staleSdkInteractionMarked = true
+      }
+      if (session.sdkAcceptedReply !== undefined) {
+        validateSdkAcceptedReply(session.sdkAcceptedReply)
+        staleSdkInteractionMarked = true
+      }
+      if (Object.hasOwn(recoveries, id)) session.sdkRestartRecovery = recoveries[id]
+      if (Object.hasOwn(replies, id)) session.sdkAcceptedReply = replies[id]
       if (session.replacedSessionIds !== undefined) {
         if (!isSessionIdList(session.replacedSessionIds)) {
           throw new Error('Invalid session retirement metadata')
@@ -459,11 +589,36 @@ export class SessionStore {
         session.pendingUserInput || session.failedPrompt || session.recoverySeed ||
         session.queuedDispatch || session.terminalQueueDispatch || session.sdkQueueAdmission,
       ))
-      if (session.managedOpen && !session.interruption &&
-          (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) {
+      if (!session.interruption && (
+        (session.managedOpen &&
+          (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) ||
+        (session.backend === 'sdk' && session.provider === 'copilot' &&
+          session.isOpen && Boolean(session.sdkAcceptedReply))
+      )) {
         session.interruption = {
           detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
         }
+        staleSdkInteractionMarked = true
+      }
+      if (session.backend === 'sdk' && session.interruption) {
+        if (!session.sdkRestartRecovery) {
+          session.sdkRestartRecovery = {
+            generation: 0,
+            state: 'pending',
+            detectedAt: session.interruption.detectedAt,
+            previousStatus: session.interruption.previousStatus,
+          }
+          staleSdkInteractionMarked = true
+        } else if (session.sdkRestartRecovery.state === 'recovering') {
+          session.sdkRestartRecovery.state = 'pending'
+          session.sdkRestartRecovery.providerRequestId = undefined
+          session.sdkRestartRecovery.message =
+            'SDK recovery was interrupted and will be reclaimed.'
+          staleSdkInteractionMarked = true
+        }
+      } else if (session.sdkRestartRecovery) {
+        session.sdkRestartRecovery = undefined
+        session.sdkAcceptedReply = undefined
         staleSdkInteractionMarked = true
       }
       session.queuedPrompts ??= []
@@ -564,16 +719,18 @@ export class SessionStore {
         }
       }
     }
+    delete loaded.sdkRestartRecoveries
+    delete loaded.sdkAcceptedReplies
     this.retire(loaded, legacyRetirements)
+    if (staleSdkInteractionMarked) {
+      const temporaryPath = `${this.statePath}.tmp`
+      await writeFile(temporaryPath, serializeState(loaded), { mode: 0o600 })
+      await rename(temporaryPath, this.statePath)
+    }
     freezeCommitted(loaded)
     this.state = loaded
     this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
-    if (staleSdkInteractionMarked) {
-      const temporaryPath = `${this.statePath}.tmp`
-      await writeFile(temporaryPath, JSON.stringify(loaded), { mode: 0o600 })
-      await rename(temporaryPath, this.statePath)
-    }
   }
 
   list(): SessionDetail[] {
@@ -921,7 +1078,7 @@ export class SessionStore {
           (session.suspended === true && !session.archivedAt) ||
           session.managedOpen === true ||
           (session.isOpen === true && protectedRecord))
-        const interruption = present ? undefined
+        const interruption = present && !session.sdkRestartRecovery ? undefined
           : isOpen && session.backend === 'terminal' && !session.suspended
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
@@ -969,6 +1126,8 @@ export class SessionStore {
             backend: 'terminal',
             isOpen: true,
             interruption: undefined,
+            sdkRestartRecovery: undefined,
+            sdkAcceptedReply: undefined,
             archivedAt: undefined,
           }
         } else if (
@@ -1031,6 +1190,8 @@ export class SessionStore {
           session.activity = 'Previous provider runtime stopped. Send a new prompt or recover to continue.'
         }
         session.interruption = undefined
+        session.sdkRestartRecovery = undefined
+        session.sdkAcceptedReply = undefined
         session.archivedAt = undefined
       }
       if (managedOpen) {
@@ -1056,11 +1217,284 @@ export class SessionStore {
         detectedAt: new Date(this.now()).toISOString(),
         previousStatus: session.status,
       }
+      if (session.backend === 'sdk') {
+        session.sdkRestartRecovery ??= {
+          generation: 0,
+          state: 'pending',
+          detectedAt: session.interruption.detectedAt,
+          previousStatus: session.interruption.previousStatus,
+        }
+      }
       if (session.pendingPermission) session.pendingPermission.stale = true
       if (session.pendingUserInput) session.pendingUserInput.stale = true
     }, (session) => !session.interruption ||
       Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
       Boolean(session.pendingUserInput && !session.pendingUserInput.stale))
+  }
+
+  sdkRecovery(sessionId: string): SdkRestartRecovery | undefined {
+    const recovery = this.state.sessions[sessionId]?.sdkRestartRecovery
+    return recovery && !this.isRetiredSession(sessionId)
+      ? structuredClone(recovery)
+      : undefined
+  }
+
+  sdkAcceptedReply(sessionId: string): SdkAcceptedReply | undefined {
+    const reply = this.state.sessions[sessionId]?.sdkAcceptedReply
+    return reply && !this.isRetiredSession(sessionId)
+      ? structuredClone(reply)
+      : undefined
+  }
+
+  async claimSdkRecovery(sessionId: string): Promise<SdkRestartRecovery> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (
+        existing.backend !== 'sdk' ||
+        !existing.interruption ||
+        existing.archivedAt ||
+        existing.suspended
+      ) {
+        throw new Error('SDK session is not eligible for restart recovery')
+      }
+      const interruption = existing.interruption
+      const session = structuredClone(existing)
+      const previous = session.sdkRestartRecovery
+      session.sdkRestartRecovery = {
+        generation: (previous?.generation ?? 0) + 1,
+        state: 'recovering',
+        detectedAt: previous?.detectedAt ?? interruption.detectedAt,
+        previousStatus: previous?.previousStatus ?? interruption.previousStatus,
+      }
+      if (session.sdkAcceptedReply) {
+        session.sdkAcceptedReply.generation = session.sdkRestartRecovery.generation
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      const recovery = structuredClone(session.sdkRestartRecovery)
+      return () => recovery
+    })
+  }
+
+  async settleSdkRecovery(
+    sessionId: string,
+    generation: number,
+    outcome: {
+      state: 'ready' | 'recovering' | 'waiting-permission' | 'interrupted' | 'failed'
+      message?: string
+    },
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing.sdkRestartRecovery?.generation !== generation) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      if (outcome.state === 'ready') {
+        if (
+          session.sdkRestartRecovery?.state !== 'recovering' &&
+          session.sdkRestartRecovery?.state !== 'waiting-permission'
+        ) {
+          return () => undefined
+        }
+        session.sdkRestartRecovery = undefined
+        session.sdkAcceptedReply = undefined
+        session.interruption = undefined
+        session.pendingPermission = undefined
+        session.pendingUserInput = undefined
+        session.status = 'idle'
+        session.activity = undefined
+      } else {
+        session.sdkRestartRecovery = {
+          ...session.sdkRestartRecovery!,
+          state: outcome.state,
+          message: outcome.message,
+          ...(outcome.state === 'waiting-permission'
+            ? {}
+            : { providerRequestId: undefined }),
+        }
+        session.status = outcome.state === 'waiting-permission' ? 'waiting' : 'error'
+        session.activity = outcome.message ||
+          (outcome.state === 'recovering'
+            ? 'Recovering the saved provider conversation.'
+            : 'Provider continuity could not be restored.')
+        if (
+          outcome.state === 'interrupted' &&
+          session.sdkAcceptedReply &&
+          session.sdkAcceptedReply.kind !== 'permission' &&
+          session.pendingUserInput?.requestId === session.sdkAcceptedReply.requestId
+        ) {
+          session.pendingUserInput.stale = true
+        }
+        if (
+          outcome.state === 'interrupted' &&
+          session.sdkAcceptedReply?.kind === 'permission' &&
+          session.pendingPermission
+        ) {
+          session.pendingPermission.stale = true
+        }
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  async bindRecoveredPermission(
+    sessionId: string,
+    generation: number,
+    requestId: string,
+    providerRequestId: string,
+    permission: PendingPermission,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing.sdkRestartRecovery?.generation !== generation) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      session.sdkRestartRecovery = {
+        ...session.sdkRestartRecovery!,
+        state: 'waiting-permission',
+        providerRequestId,
+        message: 'A provider permission is waiting for your response.',
+      }
+      session.pendingPermission = { ...permission, requestId, stale: false }
+      session.pendingUserInput = undefined
+      session.status = 'waiting'
+      session.activity = permission.title
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  async acceptSdkReply(
+    sessionId: string,
+    generation: number,
+    reply: SdkAcceptedReplyInput,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing.sdkRestartRecovery?.generation !== generation) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      session.sdkAcceptedReply = {
+        ...structuredClone(reply),
+        generation,
+        acceptedAt: new Date(this.now()).toISOString(),
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  async acceptLiveSdkReply(
+    sessionId: string,
+    reply: SdkAcceptedReplyInput,
+    kind: 'pendingPermission' | 'pendingUserInput',
+    providerOwnsRequest: (requestId: string) => boolean,
+  ): Promise<SessionDetail> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      const currentRequestId = existing[kind]?.requestId
+      if (
+        currentRequestId !== reply.requestId &&
+        currentRequestId &&
+        providerOwnsRequest(currentRequestId)
+      ) {
+        throw new Error('Provider request is no longer pending')
+      }
+      if (existing.sdkAcceptedReply) {
+        throw Object.assign(new Error('Another SDK reply is waiting for confirmation'), {
+          statusCode: 409,
+        })
+      }
+      const session = structuredClone(existing)
+      session.sdkAcceptedReply = {
+        ...structuredClone(reply),
+        generation: 0,
+        acceptedAt: new Date(this.now()).toISOString(),
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  async clearSdkReply(
+    sessionId: string,
+    generation: number,
+    requestId: string,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (
+        existing.sdkAcceptedReply?.generation !== generation ||
+        existing.sdkAcceptedReply.requestId !== requestId
+      ) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      session.sdkAcceptedReply = undefined
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  async cancelSdkRecovery(
+    sessionId: string,
+    generation: number,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing.sdkRestartRecovery?.generation !== generation) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      session.sdkRestartRecovery = {
+        ...session.sdkRestartRecovery!,
+        state: 'interrupted',
+        providerRequestId: undefined,
+        message: 'The recovered provider turn was cancelled. Queued work was not sent.',
+      }
+      session.sdkAcceptedReply = undefined
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.status = 'error'
+      session.activity = undefined
+      session.interruption = {
+        detectedAt: session.sdkRestartRecovery.detectedAt,
+        previousStatus: session.sdkRestartRecovery.previousStatus,
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
   }
 
   async setSuspended(
@@ -1094,6 +1528,10 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.backend = backend
+      if (backend === 'terminal') {
+        session.sdkRestartRecovery = undefined
+        session.sdkAcceptedReply = undefined
+      }
       session.managedOpen = true
       session.isOpen = true
       session.updatedAt = new Date().toISOString()
@@ -2356,6 +2794,11 @@ export class SessionStore {
         content,
         createdAt: completedAt,
         streaming: false,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId,
+          completedAt,
+        },
       })
       session.activity = undefined
       session.updatedAt = completedAt
@@ -2425,8 +2868,13 @@ export class SessionStore {
       | ((session: Readonly<SessionDetail>) => { status: SessionStatus; activity?: string }),
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      session[kind] = undefined
-      if (continuation) {
+      const ownsCard = session[kind]?.requestId === requestId
+      if (ownsCard) session[kind] = undefined
+      if (session.sdkAcceptedReply?.generation === 0 &&
+          session.sdkAcceptedReply.requestId === requestId) {
+        session.sdkAcceptedReply = undefined
+      }
+      if (continuation && ownsCard) {
         const next = typeof continuation === 'function' ? continuation(session) : continuation
         session.status = session.pendingPermission || session.pendingUserInput
           ? 'waiting'
@@ -2435,7 +2883,9 @@ export class SessionStore {
           session.pendingUserInput?.question ||
           next.activity
       }
-    }, (session) => session[kind]?.requestId === requestId)
+    }, (session) => session[kind]?.requestId === requestId ||
+      (session.sdkAcceptedReply?.generation === 0 &&
+        session.sdkAcceptedReply.requestId === requestId))
   }
 
   async update(

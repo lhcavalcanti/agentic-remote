@@ -46,6 +46,7 @@ async function publicationFixture() {
     'config_value', 'validate_host', 'validate_port', 'validate_role', 'validate_name', 'validate_release_id',
     'refresh_promotion_lifecycle_if_installed', 'derived_origins', 'sync_release_paths',
     'quarantine_inactive_rejected_releases', 'publish_release',
+    'append_preserved_voice_configuration',
     'setup_service', 'rollback_service',
   ].map((name) => {
     const match = script.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))

@@ -5,7 +5,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronDown, GripVertical, Monitor, Pause, Play, Plus, Search, X } from 'lucide-react'
+import { ChevronDown, GripVertical, Monitor, Pause, Play, Plus, RefreshCw, Search, X } from 'lucide-react'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
@@ -34,12 +34,16 @@ export type PendingSessionCreation = Pick<
   before?: string
 }
 
+const sessionListScrollStorageKey = 'agentic-remote:session-list-scroll-v1'
+
 type SessionActions = {
   /** `computerId:sessionId` of the sessions Oracle started. */
   managedSessions?: ReadonlySet<string>
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
+  onCloseSession: (session: ManagedSession) => void
   onToggleSessionSuspended: (session: ManagedSession) => void
+  deleting: boolean
   suspending: boolean
 }
 
@@ -122,7 +126,9 @@ function SortableSessionItem({
   sorting,
   onSelectSession,
   onOpenSessionTasks,
+  onCloseSession,
   onToggleSessionSuspended,
+  deleting,
   suspending,
   managedSessions,
 }: SessionActions & {
@@ -148,6 +154,7 @@ function SortableSessionItem({
   const presentation = sessionPresentation(session, backgroundTasks, online)
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
+  const closeUnavailable = !online || deleting
   const suspendUnavailable =
     !online || suspending || (!session.suspended && (
       session.status !== 'idle' || Boolean(session.pendingUserInput || session.pendingPermission)
@@ -174,7 +181,7 @@ function SortableSessionItem({
       </span>
       <div
         className={`session-item__body${
-          runningBackgroundTasks > 0 ? ' session-item__body--tasks' : ''
+          runningBackgroundTasks > 0 ? ' session-item__body--task-status' : ''
         }`}
       >
         <button
@@ -212,7 +219,9 @@ function SortableSessionItem({
               {session.retention?.pinned ? (
                 <em className="provider-badge" title="Protected from automatic archival">For review</em>
               ) : null}
-              <SessionState presentation={presentation} />
+              {presentation.state === 'tasks' && runningBackgroundTasks > 0
+                ? null
+                : <SessionState presentation={presentation} />}
             </span>
             <strong>{session.title}</strong>
             <small className="session-item__where">
@@ -230,38 +239,57 @@ function SortableSessionItem({
         {runningBackgroundTasks > 0 ? (
           <button
             aria-label={`View background tasks for ${session.title}`}
-            className={`session-item__tasks session-item__tasks--interactive${online ? '' : ' session-item__tasks--offline'}`}
+            className={`session-item__tasks session-state session-state--tasks${online ? '' : ' session-item__tasks--offline'}`}
             onClick={() => onOpenSessionTasks(session)}
             title={online ? undefined : 'Last known background tasks; reconnect to refresh their state'}
             type="button"
           >
-            {runningBackgroundTasks} task{runningBackgroundTasks === 1 ? '' : 's'}{online ? '' : ' · last known'}
+            <span aria-hidden="true" className="status-dot status-dot--running" />
+            Tasks
           </button>
         ) : null}
       </div>
-      <button
-        aria-label={
-          session.suspended ? `Resume ${session.title}` : `Suspend ${session.title}`
-        }
-        aria-pressed={session.suspended ? true : undefined}
-        className={`session-item__suspend${
-          session.suspended ? ' session-item__suspend--active' : ''
-        }`}
-        disabled={suspendUnavailable}
-        onClick={() => onToggleSessionSuspended(session)}
-        title={
-          !online
-            ? `Reconnect ${computerName} to manage this session`
-            : session.suspended
-            ? 'Start this session up again'
-            : suspendUnavailable
-              ? 'Wait for the session to finish before suspending it'
-              : 'Keep this session but stop what is running for it'
-        }
-        type="button"
-      >
-        {session.suspended ? <Play size={13} /> : <Pause size={13} />}
-      </button>
+      <div className="session-item__controls">
+        <button
+          aria-label={`Close ${session.title}`}
+          className="session-item__close"
+          disabled={closeUnavailable}
+          onClick={() => onCloseSession(session)}
+          title={
+            !online
+              ? `Reconnect ${computerName} to manage this session`
+              : deleting
+                ? 'Wait for the session to finish closing'
+                : 'Permanently delete this session and its history'
+          }
+          type="button"
+        >
+          <X aria-hidden="true" size={13} />
+        </button>
+        <button
+          aria-label={
+            session.suspended ? `Resume ${session.title}` : `Suspend ${session.title}`
+          }
+          aria-pressed={session.suspended ? true : undefined}
+          className={`session-item__suspend${
+            session.suspended ? ' session-item__suspend--active' : ''
+          }`}
+          disabled={suspendUnavailable}
+          onClick={() => onToggleSessionSuspended(session)}
+          title={
+            !online
+              ? `Reconnect ${computerName} to manage this session`
+              : session.suspended
+              ? 'Start this session up again'
+              : suspendUnavailable
+                ? 'Wait for the session to finish before suspending it'
+                : 'Keep this session but stop what is running for it'
+          }
+          type="button"
+        >
+          {session.suspended ? <Play aria-hidden="true" size={13} /> : <Pause aria-hidden="true" size={13} />}
+        </button>
+      </div>
     </div>
   )
 }
@@ -397,6 +425,9 @@ export function SessionNavigation({
   onFilterChange: setFilter,
   onShowSuspendedChange: setShowSuspended,
   pendingCreations = [],
+  onRefresh,
+  refreshState = 'fresh',
+  refreshMessage,
   ...actions
 }: SessionActions & {
   view: SessionNavigationView
@@ -414,17 +445,34 @@ export function SessionNavigation({
   loadingError?: string
   onDismissCreationError?: () => void
   pendingCreations?: PendingSessionCreation[]
+  onRefresh?: () => void
+  refreshState?: 'fresh' | 'refreshing' | 'stale'
+  refreshMessage?: string
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
   onShowSuspendedChange: (show: boolean) => void
 }) {
   const searchRef = useRef<HTMLInputElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const restoredScrollRef = useRef(false)
   const { groups, counts, shown, filtering, reorderDisabled } = view
   const filters: { id: SessionFilter; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: counts.all },
     { id: 'attention', label: 'Needs you', count: counts.attention },
     { id: 'working', label: 'Working', count: counts.working },
   ]
+  useEffect(() => {
+    if (loading || counts.all === 0 || restoredScrollRef.current) return
+    try {
+      const saved = Number(window.localStorage.getItem(sessionListScrollStorageKey))
+      if (Number.isFinite(saved) && saved > 0 && scrollRef.current) {
+        scrollRef.current.scrollTop = saved
+      }
+      restoredScrollRef.current = true
+    } catch {
+      // Scroll position is a convenience; the session list remains usable.
+    }
+  }, [counts.all, loading])
 
   return (
     <nav aria-label="Sessions" className="session-list">
@@ -453,6 +501,21 @@ export function SessionNavigation({
             </select>
             <ChevronDown aria-hidden="true" size={13} />
           </label>
+          {onRefresh ? (
+            <button
+              aria-busy={refreshState === 'refreshing'}
+              aria-label={refreshState === 'stale'
+                ? 'Retry refreshing sessions and Oracle'
+                : 'Refresh sessions and Oracle'}
+              className="icon-button session-list__refresh"
+              disabled={refreshState === 'refreshing'}
+              onClick={onRefresh}
+              title="Reload sessions, Oracle and review state"
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={15} />
+            </button>
+          ) : null}
           <button
             aria-label="New session"
             className="icon-button session-list__new"
@@ -544,6 +607,16 @@ export function SessionNavigation({
             </button>
           </div>
         ) : null}
+        {onRefresh && refreshState !== 'fresh' ? (
+          <p
+            aria-label="Session data freshness"
+            className={`session-list__freshness session-list__freshness--${refreshState}`}
+            role="status"
+          >
+            {refreshState === 'refreshing' ? 'Refreshing authoritative data...' : 'Data may be stale'}
+            {refreshMessage ? `: ${refreshMessage}` : ''}
+          </p>
+        ) : null}
       </div>
       {creationError ? (
         <div className="error-banner session-list__error" role="alert">
@@ -559,7 +632,20 @@ export function SessionNavigation({
           ) : null}
         </div>
       ) : null}
-      <div className="session-list__scroll">
+      <div
+        className="session-list__scroll"
+        onScroll={(event) => {
+          try {
+            window.localStorage.setItem(
+              sessionListScrollStorageKey,
+              String(event.currentTarget.scrollTop),
+            )
+          } catch {
+            // Scroll position is a convenience; the session list remains usable.
+          }
+        }}
+        ref={scrollRef}
+      >
         {loading ? <p className="sidebar-message">Loading sessions...</p> : null}
         {!loading && !loadingError && counts.all === 0 && pendingCreations.length === 0 ? (
           <p className="sidebar-message">No sessions here.</p>

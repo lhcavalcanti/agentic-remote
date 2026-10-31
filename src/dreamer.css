@@ -1,0 +1,100 @@
+.dreamer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-bottom: 12px;
+}
+
+.dreamer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dreamer-actions button,
+.dreamer-morning button {
+  min-height: 40px;
+}
+
+.dreamer-morning {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.dreamer-morning > summary,
+.dreamer-coverage > summary {
+  cursor: pointer;
+  padding: 12px 16px;
+  min-height: 44px;
+}
+
+.dreamer-morning__body {
+  max-height: 45dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 16px 16px;
+}
+
+.dreamer-date {
+  font-weight: 600;
+}
+
+.dreamer-priorities {
+  padding-inline-start: 24px;
+  margin: 12px 0;
+}
+
+.dreamer-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.dreamer-item__heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dreamer-item__heading span,
+.dreamer-item__source {
+  color: var(--muted);
+}
+
+.dreamer-item p,
+.dreamer-coverage p {
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
+.dreamer-completion {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.dreamer-completion__summary {
+  max-height: 9em;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.dreamer-coverage {
+  margin: 12px 0;
+  color: var(--muted-strong);
+}
+
+.dreamer-coverage > summary {
+  padding-inline: 0;
+}
+
+@media (max-width: 600px) {
+  #settings-dreamer input:not([type='checkbox']) {
+    font-size: 16px;
+  }
+}

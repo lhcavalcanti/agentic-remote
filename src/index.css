@@ -147,6 +147,17 @@ button {
   --inline-code-text: var(--accent-foreground);
 }
 
+.app-shell--oracle-docked {
+  grid-template-columns:
+    var(--sidebar-width)
+    minmax(0, 1fr)
+    var(--oracle-panel-width);
+}
+
+.app-shell--oracle-docked > .workspace {
+  grid-column: 2;
+}
+
 .app-shell[data-accent-theme='ocean'] {
   --accent: #6eb7ff;
   --accent-deep: #4a93dc;
@@ -1307,6 +1318,22 @@ button {
   flex: 0 0 auto;
 }
 
+.session-list__refresh {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+
+.session-list__freshness {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.session-list__freshness--stale {
+  color: var(--warning);
+}
+
 .session-list__title > small {
   color: var(--muted);
   font-size: 10px;
@@ -1715,7 +1742,7 @@ button {
   position: relative;
 }
 
-/* The whole row apart from the handle and the suspend control opens the
+/* The whole row apart from the handle and lifecycle controls opens the
    session, so it carries the padding-free bulk of the row. */
 .session-item__open {
   display: block;
@@ -2002,7 +2029,8 @@ button {
   background: color-mix(in srgb, var(--task) 8%, transparent);
 }
 
-.session-state--running {
+.session-state--running,
+.session-state--recovering {
   color: var(--accent-foreground);
 }
 
@@ -2024,9 +2052,7 @@ button {
   }
 }
 
-/* The folder and what is running in it read as one line. The count sits to
-   the right of the path because it is the thing worth catching at a glance,
-   and the path gives way first when there is not enough room for both. */
+/* The folder and its activity time read as one line. */
 .session-item__where {
   display: flex;
   align-items: baseline;
@@ -2050,33 +2076,28 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* The task action shares the metadata line without nesting inside the session
-   button or squeezing the session title. Its absolute hit area is deliberately
-   kept out of the row's height calculation. */
+/* The Tasks status remains a separate action without replacing the activity
+   time or nesting a button inside the session button. */
 .session-item__tasks {
   display: inline-flex;
   position: absolute;
   right: 0;
-  bottom: 0;
-  align-items: flex-end;
+  top: 0;
+  align-items: center;
   justify-content: center;
   min-height: 28px;
   flex: 0 0 auto;
-  max-width: 50%;
-  overflow: hidden;
-  padding: 0 2px;
+  margin-left: 0;
+  padding: 1px 5px;
   color: var(--task);
-  font-size: 11px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   border: 0;
   border-radius: 4px;
-  background: transparent;
+  background: color-mix(in srgb, var(--task) 8%, var(--panel));
 }
 
-.session-item__body--tasks .session-item__where {
-  padding-right: calc(50% + 6px);
+.session-item__body--task-status .session-item__badges,
+.session-item__body--task-status .session-item__text > strong {
+  padding-right: 56px;
 }
 
 .session-item__tasks--offline {
@@ -2291,6 +2312,12 @@ button {
 .error-banner span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.error-banner--recovery {
+  color: var(--accent-foreground);
+  border-color: color-mix(in srgb, var(--accent-foreground) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-foreground) 8%, transparent);
 }
 
 .timeline {
@@ -3340,8 +3367,17 @@ button {
 
 .composer-area > .composer,
 .composer-area > .composer-runtime,
+.composer-area > .composer-draft-status,
 .composer-area > .composer-hint {
   flex: 0 0 auto;
+}
+
+.composer-draft-status {
+  width: 100%;
+  max-width: var(--composer-max-width);
+  margin: 5px auto 0;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .queued-prompts {
@@ -7249,6 +7285,10 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  .manager-conversation-status__activity {
+    animation: none !important;
+  }
 }
 
 /* Reveals the history a long session keeps out of the first render. */
@@ -7269,13 +7309,19 @@ button {
 }
 
 /* Sits at the end of the row, out of the way of the title but reachable
-   without opening the conversation. It only asks for room when the pointer is
-   near or the session is already resting, so a list of running work reads as
-   work rather than as a row of controls. */
-.session-item__suspend {
+   without opening the conversation. Close stays above Pause so the destructive
+   and reversible lifecycle actions keep a stable order. */
+.session-item__controls {
   grid-column: 3;
   grid-row: 1;
   align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-item__close,
+.session-item__suspend {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -7296,11 +7342,19 @@ button {
   transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
 }
 
+.session-item:hover .session-item__close,
 .session-item:hover .session-item__suspend,
+.session-item:focus-within .session-item__close,
 .session-item:focus-within .session-item__suspend,
+.session-item__close:focus-visible,
 .session-item__suspend:focus-visible,
 .session-item__suspend--active {
   opacity: 1;
+}
+
+.session-item__close:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 .session-item__suspend:hover {
@@ -7312,6 +7366,7 @@ button {
   color: #6ea8fe;
 }
 
+.session-item__close:focus-visible,
 .session-item__suspend:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
@@ -7319,12 +7374,16 @@ button {
 
 /* Still hidden until the pointer is near. Fading a disabled control in on its
    own left every busy session showing a faint pause button at all times. */
+.session-item__close:disabled,
 .session-item__suspend:disabled {
   cursor: not-allowed;
 }
 
+.session-item:hover .session-item__close:disabled,
 .session-item:hover .session-item__suspend:disabled,
+.session-item:focus-within .session-item__close:disabled,
 .session-item:focus-within .session-item__suspend:disabled,
+.session-item__close:disabled:focus-visible,
 .session-item__suspend:disabled:focus-visible {
   opacity: 0.35;
 }
@@ -7333,25 +7392,28 @@ button {
    completely there -- and tapping the row opens the session rather than
    finding an invisible target. It stays visible, and large enough to hit. */
 @media (hover: none) {
+  .session-item__close,
   .session-item__suspend {
     opacity: 1;
     width: 40px;
     height: 40px;
   }
 
+  .session-item__close:disabled,
   .session-item__suspend:disabled {
     opacity: 0.3;
   }
 }
 
-.session-item__tasks--interactive {
+.session-item__tasks {
   cursor: pointer;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
 }
 
-.session-item__tasks--interactive:focus-visible {
+.session-item__tasks:hover {
+  background: color-mix(in srgb, var(--task) 15%, var(--panel));
+}
+
+.session-item__tasks:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
   border-radius: 4px;
@@ -7538,6 +7600,15 @@ button {
   box-shadow: var(--shadow-popover);
 }
 
+.manager-panel--docked {
+  position: relative;
+  grid-row: 1;
+  grid-column: 3;
+  width: var(--oracle-width, 440px);
+  min-width: 0;
+  box-shadow: none;
+}
+
 .manager-panel__header {
   display: flex;
   align-items: center;
@@ -7584,6 +7655,23 @@ button {
 
 .manager-panel__status--offline {
   color: var(--danger);
+}
+
+.manager-panel__freshness {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.manager-panel__freshness .secondary-button {
+  flex: none;
+  padding: 5px 8px;
 }
 
 .manager-panel__confirm {
@@ -7838,7 +7926,9 @@ button {
 }
 
 .manager-composer {
-  padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+  padding: 10px max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
   border-top: 1px solid var(--border);
 }
 
@@ -7858,6 +7948,10 @@ button {
 
 .manager-composer__row:focus-within {
   border-color: var(--accent);
+}
+
+.manager-composer__row--conversation {
+  flex-wrap: wrap;
 }
 
 .manager-composer textarea {
@@ -7881,6 +7975,7 @@ button {
 
 .manager-composer__actions {
   display: flex;
+  align-items: center;
   gap: 4px;
 }
 
@@ -8042,13 +8137,145 @@ button {
 }
 
 .manager-composer__mic {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   color: var(--muted-strong);
 }
 
 .manager-composer__recording {
   margin-bottom: 6px;
+}
+
+.manager-conversation-toggle,
+.manager-conversation-stop {
+  min-height: 44px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--muted-strong);
+  font: inherit;
+  cursor: pointer;
+}
+
+.manager-conversation-toggle {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.manager-conversation-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.manager-conversation-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.manager-conversation-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manager-conversation-stop:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manager-conversation-status {
+  display: flex;
+  min-width: 0;
+  min-height: 52px;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 6px;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.manager-conversation-status__activity {
+  flex: none;
+  color: var(--accent);
+}
+
+.manager-conversation-status__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.manager-conversation-status__content strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.manager-conversation-status__partial {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.manager-conversation-status__privacy {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.manager-conversation-security {
+  margin: 4px 0 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.manager-conversation-policy {
+  margin: 0 0 6px;
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.manager-conversation-policy p {
+  margin: 0;
+}
+
+.manager-conversation-policy p + p {
+  margin-top: 3px;
+}
+
+.manager-conversation-stop {
+  display: inline-flex;
+  min-height: 44px;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: 9px;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.manager-conversation-stop:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: rgba(184, 73, 73, 0.1);
+}
+
+.manager-conversation-stop:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .manager-composer__row--only {
@@ -8102,6 +8329,15 @@ button {
 .oracle-mode button[aria-pressed='true'] {
   background: var(--panel-soft);
   box-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+  color: var(--text);
+}
+
+.oracle-mode button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.oracle-mode button[aria-pressed='true']:disabled {
   color: var(--text);
 }
 
@@ -8234,4 +8470,23 @@ button {
 
 .message__content--plain {
   white-space: pre-wrap;
+}
+
+@media (max-width: 420px) {
+  .manager-composer__row--conversation {
+    flex-wrap: wrap;
+  }
+
+  .manager-composer__row--conversation textarea {
+    flex: 1 0 100%;
+  }
+
+  .manager-composer__actions--conversation {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+  }
+
+  .manager-conversation-status {
+    align-items: flex-start;
+  }
 }

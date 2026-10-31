@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelBackgroundTask,
+  createOracleVoiceTicket,
   dispatchQueuedPrompt,
   fetchSettingsProfile,
+  getOracleVoiceCapabilities,
   importSettingsProfile,
   saveSettingsChanges,
   getProviderRuntimeOptions,
@@ -36,6 +38,67 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('requests passive session detail without activating it', async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      session: { id: 'session' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getSession(
+      'computer',
+      'session',
+      undefined,
+      { passive: true },
+    )).resolves.toEqual({ id: 'session' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/computers/computer/sessions/session?passive=1',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('requests no-store Oracle voice capabilities', async () => {
+    const capability = {
+      protocol: 2,
+      available: true,
+      computerId: 'development',
+      computerName: 'Development',
+      sampleRate: 16_000,
+      playbackSampleRate: 22_050,
+      languages: ['en'],
+      sttProfile: 'sherpa-streaming',
+      ttsVoice: 'kitten-nano',
+      resourceClass: 'low',
+      limits: {
+        maxFrameBytes: 64_000,
+        maxQueueBytes: 256_000,
+        maxUtteranceMs: 60_000,
+      },
+    }
+    const fetchMock = vi.fn(async () => Response.json(capability))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getOracleVoiceCapabilities()).resolves.toEqual(capability)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/oracle-voice/capabilities',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('requests a no-store Oracle voice ticket', async () => {
+    const ticket = {
+      ticket: 'voice-ticket',
+      expiresAt: '2026-10-16T00:00:30Z',
+    }
+    const fetchMock = vi.fn(async () => Response.json(ticket))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(createOracleVoiceTicket()).resolves.toEqual(ticket)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/oracle-voice/tickets',
+      expect.objectContaining({ method: 'POST', cache: 'no-store' }),
+    )
+  })
+
   it('turns a non-JSON gateway response into an actionable hub error', async () => {
     vi.stubGlobal(
       'fetch',

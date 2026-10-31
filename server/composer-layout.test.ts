@@ -142,3 +142,34 @@ describe('desktop composer layout', () => {
     )
   })
 })
+
+describe('Oracle Conversation composer layout', () => {
+  it('keeps Conversation controls large enough for touch and visibly focusable', async () => {
+    const css = await stylesheet()
+
+    expect(declaration(css, '.manager-conversation-toggle', 'min-height')).toBe('44px')
+    expect(declaration(css, '.manager-conversation-stop', 'min-height')).toBe('44px')
+    expect(declaration(css, '.manager-conversation-toggle:focus-visible', 'outline')).toContain(
+      'var(--accent)',
+    )
+  })
+
+  it('gives the Conversation action its own row at the 390px phone layout', async () => {
+    const css = await stylesheet()
+    const phone = atRule(css, /@media \(max-width: 420px\)/)
+
+    expect(declaration(phone, '.manager-composer__row--conversation', 'flex-wrap')).toBe('wrap')
+    expect(declaration(phone, '.manager-composer__actions--conversation', 'flex')).toBe(
+      '1 0 100%',
+    )
+  })
+
+  it('stops the activity marker under reduced motion', async () => {
+    const css = await stylesheet()
+    const reduced = atRule(css, /@media \(prefers-reduced-motion: reduce\)/)
+
+    expect(
+      declaration(reduced, '.manager-conversation-status__activity', 'animation'),
+    ).toBe('none !important')
+  })
+})

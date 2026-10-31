@@ -46,7 +46,13 @@ function recorder() {
   }
 }
 
-async function fixture({ queued = false } = {}) {
+async function fixture({
+  queued = false,
+  discoveryFailure,
+}: {
+  queued?: boolean
+  discoveryFailure?: Error
+} = {}) {
   const directory = path.resolve('graphify/.cache', `startup-phases-${randomUUID()}`)
   await mkdir(directory, { recursive: true })
   directories.push(directory)
@@ -110,7 +116,11 @@ async function fixture({ queued = false } = {}) {
   }
   const agent = new AgentService(
     copilotStore, client,
-    async () => { calls.push('active'); return [] },
+    async () => {
+      calls.push('active')
+      if (discoveryFailure) throw discoveryFailure
+      return []
+    },
     async () => {},
     async () => [],
     async () => undefined,
@@ -267,6 +277,8 @@ describe('managed startup diagnostics', () => {
       'complete copilot.recovery.persistence',
       'begin copilot.recovery.terminal',
       'complete copilot.recovery.terminal',
+      'begin copilot.recovery.sdk',
+      'complete copilot.recovery.sdk',
       'begin copilot.recovery.dispatches',
       'complete copilot.recovery.dispatches',
       'begin copilot.recovery.transcripts',
@@ -331,6 +343,25 @@ describe('managed startup diagnostics', () => {
     expect(await persisted()).toBe(before)
   })
 
+  it('runs SDK recovery before listening when terminal discovery is deferred', async () => {
+    const f = await fixture({
+      queued: true,
+      discoveryFailure: new Error('Synthetic terminal discovery failure'),
+    })
+    const recoverSdkSessions = vi.fn(async () => { f.calls.push('sdk-recovery') })
+    f.agent['recoverSdkSessions'] = recoverSdkSessions
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { phases, trail } = recorder()
+
+    await startManagedServer(f.app, f.service, address, phases)
+
+    expect(recoverSdkSessions).toHaveBeenCalledOnce()
+    expect(f.calls.indexOf('sdk-recovery')).toBeLessThan(f.calls.indexOf('listen'))
+    expect(trail()).toContain('fail copilot.discovery')
+    expect(trail()).toContain('complete copilot.recovery.persistence')
+    expect(trail()).toContain('complete copilot.recovery.sdk')
+  })
+
   it.each<[string, (f: Fixture, released: Promise<void>) => void]>([
     ['copilot.store', (f, released) => hold(f.copilotStore, 'initialize', released)],
     ['copilot.sdk', (f, released) => hold(f.client, 'start', released)],
@@ -338,6 +369,7 @@ describe('managed startup diagnostics', () => {
     ['copilot.discovery', (f, released) => hold(f.client, 'listSessions', released)],
     ['copilot.recovery.persistence', (f, released) => hold(f.copilotStore, 'verifyPersistence', released)],
     ['copilot.recovery.terminal', (f, released) => hold(f.agent, 'recoverTerminalSessions', released)],
+    ['copilot.recovery.sdk', (f, released) => hold(f.agent, 'recoverSdkSessions', released)],
     ['copilot.recovery.dispatches', (f, released) => hold(f.agent, 'reconcileUntrackedTerminalDispatches', released)],
     ['copilot.recovery.transcripts', (f, released) => hold(f.agent, 'refreshTranscripts', released)],
     ['copilot.queue.sdk', (f, released) => hold(f.agent, 'drainSdkQueue', released)],

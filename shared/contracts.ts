@@ -83,6 +83,12 @@ export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type ActivityKind = 'tool' | 'skill' | 'agent'
 
+export interface TaskCompletionEvidence {
+  source: 'root-task-complete'
+  toolCallId: string
+  completedAt: string
+}
+
 export interface ChatMessage {
   id: string
   role: MessageRole
@@ -94,6 +100,7 @@ export interface ChatMessage {
   activityGroupId?: string
   activityResult?: string
   activityDurationMs?: number
+  taskCompletion?: TaskCompletionEvidence
 }
 
 export interface PermissionOption {
@@ -160,6 +167,12 @@ export interface SessionRecoveryInfo {
   contextMessageCount: number
   contextTruncated: boolean
   reason: SessionRecoveryReason
+}
+
+export interface SessionRestartRecovery {
+  state: 'recovering' | 'waiting-permission' | 'interrupted' | 'failed'
+  detectedAt: string
+  message?: string
 }
 
 export interface QueuedPrompt {
@@ -373,6 +386,8 @@ export interface SessionSummary {
    */
   replacedSessionIds?: string[]
   recovery?: SessionRecoveryInfo
+  /** Recovery of the durable part of an SDK session after its runtime stopped. */
+  restartRecovery?: SessionRestartRecovery
   /** A recovery brief that still owns the session and must settle first. */
   recoverySeedState?: 'pending' | 'dispatching' | 'failed'
   /**
@@ -400,6 +415,7 @@ export interface ComputerSummary {
   /** Opaque runtime registration lifetime; changes on a same-ID re-pair. */
   registrationId?: string
   providers?: AgentProviderCapability[]
+  voice?: VoiceBackendCapability
 }
 
 export interface ManagedSession extends SessionDetail {
@@ -426,7 +442,23 @@ export interface NodeInfo {
   name: string
   version: string
   providers?: AgentProviderCapability[]
+  voice?: VoiceBackendCapability
 }
+
+export type VoiceBackendCapability =
+  | {
+      available: false
+      reason: string
+    }
+  | {
+      available: true
+      sampleRate: 16_000
+      playbackSampleRate: number
+      languages: string[]
+      sttProfile: string
+      ttsVoice: string
+      resourceClass: 'low' | 'quality'
+    }
 
 export type ServerEvent =
   | { type: 'session.upserted'; session: SessionDetail }

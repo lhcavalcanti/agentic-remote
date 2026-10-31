@@ -1,6 +1,8 @@
+import { CopilotSession, type SessionEvent } from '@github/copilot-sdk'
 import { describe, expect, it, vi } from 'vitest'
 import {
   COPILOT_SDK_SESSION_DISCOVERY,
+  COPILOT_SDK_SESSION_INTERACTION,
   copilotSdkClientOptions,
   createCopilotSdkClient,
   readCopilotSdkRuntimeDiagnostic,
@@ -8,13 +10,21 @@ import {
 } from './copilot-sdk-client.js'
 
 describe('COPILOT_SDK_SESSION_DISCOVERY', () => {
-  it('defines the normal-session CLI configuration discovery options', () => {
+  it('defines normal-session CLI configuration discovery', () => {
     expect(COPILOT_SDK_SESSION_DISCOVERY).toEqual({
       enableConfigDiscovery: true,
       enableSkills: true,
       enableOnDemandInstructionDiscovery: true,
       enableFileHooks: true,
       enableHostGitOperations: true,
+    })
+  })
+})
+
+describe('COPILOT_SDK_SESSION_INTERACTION', () => {
+  it('selects structured questions for sessions with an elicitation handler', () => {
+    expect(COPILOT_SDK_SESSION_INTERACTION).toEqual({
+      askUserVariant: 'elicitation',
     })
   })
 })
@@ -124,5 +134,83 @@ describe('readCopilotSdkRuntimeDiagnostic', () => {
     await expect(
       readCopilotSdkRuntimeDiagnostic({}),
     ).resolves.toBeUndefined()
+  })
+})
+
+describe('Copilot SDK completion', () => {
+  it('settles an autopilot request without waiting for a later session-wide idle', async () => {
+    let session!: CopilotSession
+    const response = {
+      id: 'assistant',
+      type: 'assistant.message',
+      timestamp: '2026-10-30T00:00:00.000Z',
+      parentId: 'request',
+      data: {
+        messageId: 'assistant',
+        originatingMessageId: 'request',
+        content: 'Finished before return',
+      },
+    } as SessionEvent
+    const idle = {
+      id: 'completion',
+      type: 'session.idle',
+      timestamp: '2026-10-30T00:00:01.000Z',
+      parentId: 'assistant',
+      ephemeral: true,
+      data: { mode: 'autopilot' },
+    } as SessionEvent
+    const dispatch = (event: SessionEvent) => {
+      const handler = Reflect.get(session, '_dispatchEvent')
+      Reflect.apply(handler, session, [event])
+    }
+    const connection = {
+      sendRequest: vi.fn(async (method: string) => {
+        if (method === 'session.sendAndWait') {
+          queueMicrotask(() => dispatch(idle))
+          return {
+            response,
+            aborted: false,
+            completionEventId: idle.id,
+          }
+        }
+        if (method === 'session.send') {
+          queueMicrotask(() => {
+            dispatch(response)
+            dispatch(idle)
+          })
+          return { messageId: 'request' }
+        }
+        throw new Error(`Unexpected SDK request: ${method}`)
+      }),
+    }
+    session = Reflect.construct(CopilotSession, [
+      'session',
+      connection,
+      undefined,
+      undefined,
+      {},
+    ]) as CopilotSession
+
+    await expect(session.sendAndWait('Finish the task', 25)).resolves.toMatchObject({
+      type: 'assistant.message',
+      data: { content: 'Finished before return' },
+    })
+  })
+
+  it('still rejects when request-scoped completion never arrives', async () => {
+    const connection = {
+      sendRequest: vi.fn(() => new Promise(() => {})),
+    }
+    const session = Reflect.construct(CopilotSession, [
+      'session',
+      connection,
+      undefined,
+      undefined,
+      {},
+    ]) as CopilotSession
+
+    await expect(session.sendAndWait('Never finishes', 25)).rejects.toThrow(
+      'Timeout after 25ms waiting for session.idle',
+    )
   })
 })

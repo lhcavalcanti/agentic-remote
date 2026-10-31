@@ -11,7 +11,12 @@ import type {
   UserInputField,
   UserInputReplyInput,
 } from '../shared/contracts.js'
-import type { ManagerClientDefaults, ManagerSessionBackend, ManagerSessionRef } from '../shared/manager.js'
+import type {
+  ManagerClientDefaults,
+  ManagerMessageSource,
+  ManagerSessionBackend,
+  ManagerSessionRef,
+} from '../shared/manager.js'
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { rosterLine } from './manager-context.js'
@@ -57,6 +62,8 @@ export interface ManagerToolHost {
   registry(): ManagerRegistry
   /** The message being answered was asked in Ask mode, so no session may be acted on. */
   answerOnly(): boolean
+  /** Trusted provenance of the message whose tool call is being handled. */
+  messageSource(): ManagerMessageSource
   /** Where Oracle starts new sessions, by computer ID. */
   sessionFolders(): Record<string, string>
   /** Validates and keeps the folder, or returns the computer to its default; gives back what was kept. */
@@ -105,6 +112,23 @@ export interface ManagerTool {
 
 /** A tool failure the model reads and can act on. */
 class ToolFailure extends Error {}
+
+export type ManagerToolMutability = 'read' | 'mutation'
+
+const VOICE_READ_ONLY_TOOLS = new Set([
+  'list_computers',
+  'list_sessions',
+  'get_session',
+  'ask_session',
+  'list_skills',
+  'memory_list',
+  'memory_read',
+])
+
+/** Unknown tools are mutations until explicitly reviewed and allowlisted. */
+export function managerToolMutability(name: string): ManagerToolMutability {
+  return VOICE_READ_ONLY_TOOLS.has(name) ? 'read' : 'mutation'
+}
 
 const MESSAGE_LIMIT = 2000
 const sessionIdField = z.string().trim().min(1).max(200)
@@ -321,6 +345,11 @@ export function createManagerTools(
       skipPermission: true,
       defer: 'never',
       handler: async (args, invocation) => {
+        // Voice is acoustically untrusted. Enforce its read-only boundary at
+        // the handler so prompts and future tools cannot bypass it.
+        if (host.messageSource() === 'voice' && managerToolMutability(name) !== 'read') {
+          return failure('This voice turn is acoustically untrusted and read-only. It cannot change sessions, permissions, trust, confirmations, Oracle settings, or memory. Ask a typed message to make changes.')
+        }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {

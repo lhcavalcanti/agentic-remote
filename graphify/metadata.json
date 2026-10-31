@@ -524,8 +524,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "54846ab1808aaf1f9185119ba02e6623abf9fd3992dcb5e4115c8ef10d3340b1",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "a5897f3011b560c65ea3118c4e5fbd4b9478876ff3c3b3516f5b3d818cbf0bcc",
-    "server/agent-service.ts": "aab0dedda46d3c77ca083306ee0a2b680c265678e5b4a903f2e8195bd84f9661",
+    "server/agent-service.test.ts": "f749f92c691e37561160e1765e520e439204ad95b21d0b7e7c5f36dac8de8f21",
+    "server/agent-service.ts": "d500e8638a91049ed5943f9eb3a410d26455e984032be6662ebe0bef2176e56e",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -975,24 +975,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e3589c1dd7f4aad412d19135373ef2f2f75383c6d2059d1591628302992d6b6e",
+    "GRAPH_REPORT.md": "8eb90661c5338b890f3e60224d56ec4b201d77c9c328a08a2fbf835c42cb59a0",
     "communities.json": "fcccc2b097687c6e70c1c38ec4d76bb004471430a671ee8eb9d6f415d5cf2a94",
-    "graph.html": "2add21c9518ab47e0d6ad9ca93e2afe6eacbc527184c5eaa11f742e76efb1052",
-    "graph.json": "6f9000dd3d730d92f37fb6b92ce5bfa09d732681629cc25e9415e20e648ef697"
+    "graph.html": "3fde3138910e625232fd702e181132d4dc5c17960478c94cbabecd92000eb51b",
+    "graph.json": "58245802edf548e8c3dc7170b478cf47f3dff9a7333daea9da45767f213eef8a"
   },
   "schema_version": 1,
-  "source_commit": "0a1fb02068103a40bf5b85fff22d656ecb42043f",
-  "source_fingerprint": "46e65823f4a471d80d4ca37442d52689fefbecbde7bee4d4764774863e79355f",
+  "source_commit": "3340f3381540ac677b2c872a151a440fdecce4b3",
+  "source_fingerprint": "de415875b5a5220f6d6c81b59a99ef6cc4eabfc5e58432a6fcd58241ceaacaa0",
   "working_tree_changes": [
-    "package.json",
     "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/multi-node.test.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/agent-service.ts"
   ]
 }

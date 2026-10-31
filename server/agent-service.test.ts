@@ -2243,6 +2243,49 @@ describe('AgentService deletion', () => {
     expect(client.session.disconnectCount).toBe(1)
   })
 
+  it('refuses command catalogs before touching a runtime reserved for suspension', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-catalog-race-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let releaseTasks: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    const tasks = vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await held
+      return listBackgroundTasks(id)
+    })
+    const commands = vi.spyOn(client.session.rpc.commands, 'list')
+
+    const suspending = service.suspendSession(created.id)
+    await vi.waitFor(() => expect(tasks).toHaveBeenCalled())
+    const outcome = await service.listCommands(created.id).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
+    releaseTasks()
+    await suspending
+
+    expect(outcome).toMatchObject({
+      error: {
+        message: 'Resume the session before using its provider runtime',
+        statusCode: 409,
+        uncertainDelivery: false,
+      },
+    })
+    expect(commands).not.toHaveBeenCalled()
+  })
+
   it('clears terminal ownership and types runtime changes after suspension', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-suspend-'))
     directories.push(directory)

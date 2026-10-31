@@ -6174,6 +6174,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (retained?.suspended) {
       return []
     }
+    if (this.suspendingSessions.has(sessionId)) {
+      throw Object.assign(
+        new Error('Resume the session before using its provider runtime'),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
     this.assertTerminalRecoverySettled(sessionId)
     if (retained?.interruption || retained?.archivedAt) return []
     if (await this.terminalController.has(sessionId)) {

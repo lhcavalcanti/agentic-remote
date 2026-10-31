@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "9f625ee0f98190bd8d817737e491488e83406c72",
+  "built_at_commit": "f2819f899330db496a79c77d811300cb94e60763",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -79247,7 +79247,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L824",
+      "source_location": "L837",
       "target": "server_manager_proactive_inbox_isalreadyexists",
       "weight": 1.0
     },
@@ -79291,7 +79291,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L820",
+      "source_location": "L833",
       "target": "server_manager_proactive_inbox_ismissing",
       "weight": 1.0
     },
@@ -79434,7 +79434,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L828",
+      "source_location": "L841",
       "target": "server_manager_proactive_inbox_managerproactiveinbox",
       "weight": 1.0
     },
@@ -79753,7 +79753,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L740",
+      "source_location": "L753",
       "target": "server_manager_proactive_inbox_validatelimit",
       "weight": 1.0
     },
@@ -79764,7 +79764,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L699",
+      "source_location": "L712",
       "target": "server_manager_proactive_inbox_validateobservation",
       "weight": 1.0
     },
@@ -79775,7 +79775,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L752",
+      "source_location": "L765",
       "target": "server_manager_proactive_inbox_validateoptions",
       "weight": 1.0
     },
@@ -79884,7 +79884,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_isalreadyexists",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L825",
+      "source_location": "L838",
       "target": "server_manager_proactive_inbox_isrecord",
       "weight": 1.0
     },
@@ -79896,7 +79896,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_ismissing",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L821",
+      "source_location": "L834",
       "target": "server_manager_proactive_inbox_isrecord",
       "weight": 1.0
     },
@@ -79907,7 +79907,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1232",
+      "source_location": "L1251",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_acknowledge",
       "weight": 1.0
     },
@@ -79918,7 +79918,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L954",
+      "source_location": "L967",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "weight": 1.0
     },
@@ -79929,7 +79929,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1490",
+      "source_location": "L1509",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_cleanupstagingfiles",
       "weight": 1.0
     },
@@ -79940,7 +79940,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1401",
+      "source_location": "L1420",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "weight": 1.0
     },
@@ -79951,7 +79951,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L843",
+      "source_location": "L856",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_constructor",
       "weight": 1.0
     },
@@ -79962,7 +79962,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1327",
+      "source_location": "L1346",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_createevent",
       "weight": 1.0
     },
@@ -79973,7 +79973,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1423",
+      "source_location": "L1442",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_ensuredirectory",
       "weight": 1.0
     },
@@ -79984,7 +79984,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1323",
+      "source_location": "L1342",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_failurereason",
       "weight": 1.0
     },
@@ -79995,7 +79995,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L883",
+      "source_location": "L896",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_initialize",
       "weight": 1.0
     },
@@ -80006,7 +80006,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L909",
+      "source_location": "L922",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "weight": 1.0
     },
@@ -80017,7 +80017,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1056",
+      "source_location": "L1069",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "weight": 1.0
     },
@@ -80028,7 +80028,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1214",
+      "source_location": "L1233",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_pending",
       "weight": 1.0
     },
@@ -80039,7 +80039,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1546",
+      "source_location": "L1565",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_persist",
       "weight": 1.0
     },
@@ -80050,7 +80050,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1293",
+      "source_location": "L1312",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_prune",
       "weight": 1.0
     },
@@ -80061,7 +80061,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1580",
+      "source_location": "L1599",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_readstatefile",
       "weight": 1.0
     },
@@ -80072,7 +80072,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1397",
+      "source_location": "L1416",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireavailable",
       "weight": 1.0
     },
@@ -80083,7 +80083,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1386",
+      "source_location": "L1405",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "weight": 1.0
     },
@@ -80094,7 +80094,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1665",
+      "source_location": "L1685",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_restoreprimary",
       "weight": 1.0
     },
@@ -80105,7 +80105,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1466",
+      "source_location": "L1485",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_securedirectory",
       "weight": 1.0
     },
@@ -80116,7 +80116,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1648",
+      "source_location": "L1668",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectory",
       "weight": 1.0
     },
@@ -80127,7 +80127,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1656",
+      "source_location": "L1676",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectorypath",
       "weight": 1.0
     },
@@ -80138,7 +80138,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1427",
+      "source_location": "L1446",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_verifydirectory",
       "weight": 1.0
     },
@@ -80149,7 +80149,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1431",
+      "source_location": "L1450",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_walkdirectory",
       "weight": 1.0
     },
@@ -80160,7 +80160,7 @@
       "relation": "method",
       "source": "server_manager_proactive_inbox_managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1635",
+      "source_location": "L1655",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_writesynced",
       "weight": 1.0
     },
@@ -80172,7 +80172,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_acknowledge",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1241",
+      "source_location": "L1260",
       "target": "server_manager_proactive_inbox_isdisposition",
       "weight": 1.0
     },
@@ -80184,7 +80184,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_acknowledge",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1252",
+      "source_location": "L1271",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "weight": 1.0
     },
@@ -80196,7 +80196,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_acknowledge",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1248",
+      "source_location": "L1267",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "weight": 1.0
     },
@@ -80208,7 +80208,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_acknowledge",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1256",
+      "source_location": "L1275",
       "target": "server_manager_proactive_inbox_managerproactiveinboxreferenceerror",
       "weight": 1.0
     },
@@ -80220,7 +80220,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_acknowledge",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1243",
+      "source_location": "L1262",
       "target": "server_manager_proactive_inbox_managerproactiveinboxvalidationerror",
       "weight": 1.0
     },
@@ -80232,7 +80232,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_acknowledge",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1277",
+      "source_location": "L1296",
       "target": "server_manager_proactive_inbox_nowiso",
       "weight": 1.0
     },
@@ -80244,7 +80244,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L969",
+      "source_location": "L982",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "weight": 1.0
     },
@@ -80256,7 +80256,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L960",
+      "source_location": "L973",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "weight": 1.0
     },
@@ -80268,7 +80268,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1010",
+      "source_location": "L1023",
       "target": "server_manager_proactive_inbox_managerproactiveinboxcapacityerror",
       "weight": 1.0
     },
@@ -80280,7 +80280,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L991",
+      "source_location": "L1004",
       "target": "server_manager_proactive_inbox_managerproactiveinboxscopeerror",
       "weight": 1.0
     },
@@ -80292,7 +80292,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1014",
+      "source_location": "L1027",
       "target": "server_manager_proactive_inbox_nowiso",
       "weight": 1.0
     },
@@ -80304,7 +80304,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L958",
+      "source_location": "L971",
       "target": "server_manager_proactive_inbox_requireid",
       "weight": 1.0
     },
@@ -80316,7 +80316,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_cleanupstagingfiles",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1502",
+      "source_location": "L1521",
       "target": "server_manager_proactive_inbox_ismissing",
       "weight": 1.0
     },
@@ -80328,7 +80328,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_cleanupstagingfiles",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1533",
+      "source_location": "L1552",
       "target": "server_manager_proactive_inbox_isrecord",
       "weight": 1.0
     },
@@ -80340,7 +80340,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_cleanupstagingfiles",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1543",
+      "source_location": "L1562",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectorypath",
       "weight": 1.0
     },
@@ -80352,7 +80352,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_cleanupstagingfiles",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1513",
+      "source_location": "L1532",
       "target": "server_manager_proactive_inbox_managerproactiveinboxrecoveryerror",
       "weight": 1.0
     },
@@ -80364,7 +80364,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1407",
+      "source_location": "L1426",
       "target": "server_manager_proactive_inbox_clonestate",
       "weight": 1.0
     },
@@ -80376,7 +80376,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1415",
+      "source_location": "L1434",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_persist",
       "weight": 1.0
     },
@@ -80388,7 +80388,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1404",
+      "source_location": "L1423",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "weight": 1.0
     },
@@ -80400,7 +80400,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1410",
+      "source_location": "L1429",
       "target": "server_manager_proactive_inbox_validatepersistedstate",
       "weight": 1.0
     },
@@ -80412,7 +80412,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_constructor",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L880",
+      "source_location": "L893",
       "target": "server_manager_proactive_inbox_emptystate",
       "weight": 1.0
     },
@@ -80424,7 +80424,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_constructor",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L847",
+      "source_location": "L860",
       "target": "server_manager_proactive_inbox_isrecord",
       "weight": 1.0
     },
@@ -80436,7 +80436,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_constructor",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L848",
+      "source_location": "L861",
       "target": "server_manager_proactive_inbox_managerproactiveinboxvalidationerror",
       "weight": 1.0
     },
@@ -80448,7 +80448,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_constructor",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L852",
+      "source_location": "L865",
       "target": "server_manager_proactive_inbox_requireid",
       "weight": 1.0
     },
@@ -80460,7 +80460,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_constructor",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L853",
+      "source_location": "L866",
       "target": "server_manager_proactive_inbox_validateoptions",
       "weight": 1.0
     },
@@ -80472,7 +80472,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_createevent",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1334",
+      "source_location": "L1353",
       "target": "server_manager_proactive_inbox_eventid",
       "weight": 1.0
     },
@@ -80484,7 +80484,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_createevent",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1348",
+      "source_location": "L1367",
       "target": "server_manager_proactive_inbox_managerproactiveinboxcapacityerror",
       "weight": 1.0
     },
@@ -80496,7 +80496,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_createevent",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1364",
+      "source_location": "L1383",
       "target": "server_manager_proactive_inbox_namespaceid",
       "weight": 1.0
     },
@@ -80508,7 +80508,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_ensuredirectory",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1424",
+      "source_location": "L1443",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_walkdirectory",
       "weight": 1.0
     },
@@ -80520,7 +80520,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initialize",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L895",
+      "source_location": "L908",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "weight": 1.0
     },
@@ -80532,7 +80532,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initialize",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L886",
+      "source_location": "L899",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireavailable",
       "weight": 1.0
     },
@@ -80544,7 +80544,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L922",
+      "source_location": "L935",
       "target": "server_manager_proactive_inbox_ismissing",
       "weight": 1.0
     },
@@ -80556,7 +80556,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L916",
+      "source_location": "L929",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_cleanupstagingfiles",
       "weight": 1.0
     },
@@ -80568,7 +80568,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L915",
+      "source_location": "L928",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_ensuredirectory",
       "weight": 1.0
     },
@@ -80580,7 +80580,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L920",
+      "source_location": "L933",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_readstatefile",
       "weight": 1.0
     },
@@ -80592,7 +80592,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L939",
+      "source_location": "L952",
       "target": "server_manager_proactive_inbox_managerproactiveinboxrecoveryerror",
       "weight": 1.0
     },
@@ -80604,7 +80604,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_initializeonce",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L933",
+      "source_location": "L946",
       "target": "server_manager_proactive_inbox_validatepersistedstate",
       "weight": 1.0
     },
@@ -80616,7 +80616,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1067",
+      "source_location": "L1080",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "weight": 1.0
     },
@@ -80628,7 +80628,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1156",
+      "source_location": "L1179",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_createevent",
       "weight": 1.0
     },
@@ -80640,7 +80640,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1060",
+      "source_location": "L1073",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "weight": 1.0
     },
@@ -80652,7 +80652,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1112",
+      "source_location": "L1125",
       "target": "server_manager_proactive_inbox_managerproactiveinboxcapacityerror",
       "weight": 1.0
     },
@@ -80664,7 +80664,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1072",
+      "source_location": "L1085",
       "target": "server_manager_proactive_inbox_managerproactiveinboxscopeerror",
       "weight": 1.0
     },
@@ -80676,7 +80676,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1084",
+      "source_location": "L1097",
       "target": "server_manager_proactive_inbox_namespaceid",
       "weight": 1.0
     },
@@ -80688,7 +80688,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1104",
+      "source_location": "L1117",
       "target": "server_manager_proactive_inbox_nowiso",
       "weight": 1.0
     },
@@ -80700,7 +80700,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1200",
+      "source_location": "L1219",
       "target": "server_manager_proactive_inbox_publicevent",
       "weight": 1.0
     },
@@ -80712,7 +80712,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_observe",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1059",
+      "source_location": "L1072",
       "target": "server_manager_proactive_inbox_validateobservation",
       "weight": 1.0
     },
@@ -80724,7 +80724,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_pending",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1216",
+      "source_location": "L1235",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "weight": 1.0
     },
@@ -80736,7 +80736,7 @@
       "relation": "indirect_call",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_pending",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1228",
+      "source_location": "L1247",
       "target": "server_manager_proactive_inbox_publicevent",
       "weight": 1.0
     },
@@ -80748,7 +80748,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_pending",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1215",
+      "source_location": "L1234",
       "target": "server_manager_proactive_inbox_validatelimit",
       "weight": 1.0
     },
@@ -80760,7 +80760,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1558",
+      "source_location": "L1577",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_cleanupstagingfiles",
       "weight": 1.0
     },
@@ -80772,7 +80772,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1568",
+      "source_location": "L1587",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_restoreprimary",
       "weight": 1.0
     },
@@ -80784,44 +80784,8 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1562",
+      "source_location": "L1581",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectory",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
-      "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1557",
-      "target": "server_manager_proactive_inbox_managerproactiveinbox_verifydirectory",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
-      "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1559",
-      "target": "server_manager_proactive_inbox_managerproactiveinbox_writesynced",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
-      "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1549",
-      "target": "server_manager_proactive_inbox_managerproactiveinboxcapacityerror",
       "weight": 1.0
     },
     {
@@ -80833,6 +80797,42 @@
       "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
       "source_file": "server/manager-proactive-inbox.ts",
       "source_location": "L1576",
+      "target": "server_manager_proactive_inbox_managerproactiveinbox_verifydirectory",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
+      "source_file": "server/manager-proactive-inbox.ts",
+      "source_location": "L1578",
+      "target": "server_manager_proactive_inbox_managerproactiveinbox_writesynced",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
+      "source_file": "server/manager-proactive-inbox.ts",
+      "source_location": "L1568",
+      "target": "server_manager_proactive_inbox_managerproactiveinboxcapacityerror",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
+      "source_file": "server/manager-proactive-inbox.ts",
+      "source_location": "L1595",
       "target": "server_manager_proactive_inbox_managerproactiveinboxpersistenceerror",
       "weight": 1.0
     },
@@ -80844,7 +80844,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_persist",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1570",
+      "source_location": "L1589",
       "target": "server_manager_proactive_inbox_managerproactiveinboxrecoveryerror",
       "weight": 1.0
     },
@@ -80856,7 +80856,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_prune",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1296",
+      "source_location": "L1315",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_commit",
       "weight": 1.0
     },
@@ -80868,7 +80868,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_prune",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1294",
+      "source_location": "L1313",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "weight": 1.0
     },
@@ -80880,7 +80880,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_prune",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1299",
+      "source_location": "L1318",
       "target": "server_manager_proactive_inbox_managerproactiveinboxpersistenceerror",
       "weight": 1.0
     },
@@ -80892,7 +80892,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_readstatefile",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1599",
+      "source_location": "L1618",
       "target": "server_manager_proactive_inbox_managerproactiveinboxrecoveryerror",
       "weight": 1.0
     },
@@ -80904,7 +80904,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_requireinitialized",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1389",
+      "source_location": "L1408",
       "target": "server_manager_proactive_inbox_managerproactiveinboxerror",
       "weight": 1.0
     },
@@ -80916,7 +80916,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_restoreprimary",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1668",
+      "source_location": "L1688",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectory",
       "weight": 1.0
     },
@@ -80928,7 +80928,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_restoreprimary",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1673",
+      "source_location": "L1693",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_writesynced",
       "weight": 1.0
     },
@@ -80940,7 +80940,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_securedirectory",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1471",
+      "source_location": "L1490",
       "target": "server_manager_proactive_inbox_managerproactiveinboxrecoveryerror",
       "weight": 1.0
     },
@@ -80952,7 +80952,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectory",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1653",
+      "source_location": "L1673",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectorypath",
       "weight": 1.0
     },
@@ -80964,7 +80964,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_verifydirectory",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1428",
+      "source_location": "L1447",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_walkdirectory",
       "weight": 1.0
     },
@@ -80976,7 +80976,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_walkdirectory",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1446",
+      "source_location": "L1465",
       "target": "server_manager_proactive_inbox_isalreadyexists",
       "weight": 1.0
     },
@@ -80988,7 +80988,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_walkdirectory",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1463",
+      "source_location": "L1482",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_securedirectory",
       "weight": 1.0
     },
@@ -81000,7 +81000,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_managerproactiveinbox_walkdirectory",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1454",
+      "source_location": "L1473",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_syncdirectorypath",
       "weight": 1.0
     },
@@ -81254,7 +81254,7 @@
       "relation": "imports_from",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L20",
+      "source_location": "L21",
       "target": "server_manager_proactive_inbox",
       "type_only": true,
       "weight": 1.0
@@ -81267,7 +81267,7 @@
       "relation": "imports",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L20",
+      "source_location": "L21",
       "target": "server_manager_proactive_inbox_managerproactiveinbox",
       "weight": 1.0
     },
@@ -81279,7 +81279,7 @@
       "relation": "imports",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L16",
+      "source_location": "L17",
       "target": "server_manager_proactive_inbox_managerproactiveinboxobservation",
       "weight": 1.0
     },
@@ -81291,7 +81291,7 @@
       "relation": "imports",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L16",
+      "source_location": "L17",
       "target": "server_manager_proactive_inbox_managerproactiveinboxoptions",
       "weight": 1.0
     },
@@ -81303,7 +81303,7 @@
       "relation": "imports",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L20",
+      "source_location": "L21",
       "target": "server_manager_proactive_inbox_managerproactiveinboxvalidationerror",
       "weight": 1.0
     },
@@ -81314,7 +81314,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1377",
+      "source_location": "L1486",
       "target": "server_manager_proactive_inbox_test_deferred",
       "weight": 1.0
     },
@@ -81325,7 +81325,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L32",
+      "source_location": "L33",
       "target": "server_manager_proactive_inbox_test_fshooks",
       "weight": 1.0
     },
@@ -81336,7 +81336,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L53",
+      "source_location": "L57",
       "target": "server_manager_proactive_inbox_test_get",
       "weight": 1.0
     },
@@ -81347,7 +81347,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1401",
+      "source_location": "L1510",
       "target": "server_manager_proactive_inbox_test_mkdirfortest",
       "weight": 1.0
     },
@@ -81358,7 +81358,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L98",
+      "source_location": "L122",
       "target": "server_manager_proactive_inbox_test_observation",
       "weight": 1.0
     },
@@ -81369,7 +81369,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L117",
+      "source_location": "L141",
       "target": "server_manager_proactive_inbox_test_openinbox",
       "weight": 1.0
     },
@@ -81380,7 +81380,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L25",
+      "source_location": "L26",
       "target": "server_manager_proactive_inbox_test_readgate",
       "weight": 1.0
     },
@@ -81391,7 +81391,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1388",
+      "source_location": "L1497",
       "target": "server_manager_proactive_inbox_test_readstate",
       "weight": 1.0
     },
@@ -81402,7 +81402,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1373",
+      "source_location": "L1482",
       "target": "server_manager_proactive_inbox_test_statepath",
       "weight": 1.0
     },
@@ -81413,7 +81413,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1363",
+      "source_location": "L1472",
       "target": "server_manager_proactive_inbox_test_teststate",
       "weight": 1.0
     },
@@ -81424,7 +81424,7 @@
       "relation": "contains",
       "source": "server_manager_proactive_inbox_test",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1392",
+      "source_location": "L1501",
       "target": "server_manager_proactive_inbox_test_writestate",
       "weight": 1.0
     },
@@ -81436,7 +81436,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_test_openinbox",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L123",
+      "source_location": "L147",
       "target": "server_manager_proactive_inbox_managerproactiveinbox",
       "weight": 1.0
     },
@@ -81448,7 +81448,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_test_openinbox",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L130",
+      "source_location": "L154",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_bindcomputer",
       "weight": 1.0
     },
@@ -81460,7 +81460,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_test_openinbox",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L129",
+      "source_location": "L153",
       "target": "server_manager_proactive_inbox_managerproactiveinbox_initialize",
       "weight": 1.0
     },
@@ -81472,7 +81472,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_test_readstate",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1389",
+      "source_location": "L1498",
       "target": "server_manager_proactive_inbox_test_statepath",
       "weight": 1.0
     },
@@ -81484,7 +81484,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_test_writestate",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1397",
+      "source_location": "L1506",
       "target": "server_manager_proactive_inbox_test_statepath",
       "weight": 1.0
     },
@@ -81496,7 +81496,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validatelimit",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L746",
+      "source_location": "L759",
       "target": "server_manager_proactive_inbox_managerproactiveinboxvalidationerror",
       "weight": 1.0
     },
@@ -81508,7 +81508,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateobservation",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L715",
+      "source_location": "L728",
       "target": "server_manager_proactive_inbox_hasexactkeys",
       "weight": 1.0
     },
@@ -81520,7 +81520,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateobservation",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L721",
+      "source_location": "L734",
       "target": "server_manager_proactive_inbox_isid",
       "weight": 1.0
     },
@@ -81532,7 +81532,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateobservation",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L725",
+      "source_location": "L738",
       "target": "server_manager_proactive_inbox_isorigin",
       "weight": 1.0
     },
@@ -81544,7 +81544,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateobservation",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L715",
+      "source_location": "L728",
       "target": "server_manager_proactive_inbox_isrecord",
       "weight": 1.0
     },
@@ -81556,7 +81556,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateobservation",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L724",
+      "source_location": "L737",
       "target": "server_manager_proactive_inbox_issafecounter",
       "weight": 1.0
     },
@@ -81568,7 +81568,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateobservation",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L726",
+      "source_location": "L739",
       "target": "server_manager_proactive_inbox_isstatus",
       "weight": 1.0
     },
@@ -81580,7 +81580,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateobservation",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L716",
+      "source_location": "L729",
       "target": "server_manager_proactive_inbox_managerproactiveinboxvalidationerror",
       "weight": 1.0
     },
@@ -81592,7 +81592,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validateoptions",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L763",
+      "source_location": "L776",
       "target": "server_manager_proactive_inbox_managerproactiveinboxvalidationerror",
       "weight": 1.0
     },
@@ -81616,7 +81616,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validatepersistedstate",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L604",
+      "source_location": "L617",
       "target": "server_manager_proactive_inbox_eventid",
       "weight": 1.0
     },
@@ -81628,7 +81628,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validatepersistedstate",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L559",
+      "source_location": "L572",
       "target": "server_manager_proactive_inbox_hasexactkeys",
       "weight": 1.0
     },
@@ -81640,7 +81640,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validatepersistedstate",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L591",
+      "source_location": "L604",
       "target": "server_manager_proactive_inbox_isdisposition",
       "weight": 1.0
     },
@@ -81652,7 +81652,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validatepersistedstate",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L583",
+      "source_location": "L596",
       "target": "server_manager_proactive_inbox_iseventkind",
       "weight": 1.0
     },
@@ -81688,7 +81688,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validatepersistedstate",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L542",
+      "source_location": "L555",
       "target": "server_manager_proactive_inbox_isrecord",
       "weight": 1.0
     },
@@ -81736,7 +81736,7 @@
       "relation": "calls",
       "source": "server_manager_proactive_inbox_validatepersistedstate",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L517",
+      "source_location": "L523",
       "target": "server_manager_proactive_inbox_namespaceid",
       "weight": 1.0
     },
@@ -243421,7 +243421,7 @@
       "label": "isAlreadyExists()",
       "norm_label": "isalreadyexists()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L824"
+      "source_location": "L837"
     },
     {
       "_callable": true,
@@ -243469,7 +243469,7 @@
       "label": "isMissing()",
       "norm_label": "ismissing()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L820"
+      "source_location": "L833"
     },
     {
       "_callable": true,
@@ -243620,7 +243620,7 @@
       "label": "ManagerProactiveInbox",
       "norm_label": "managerproactiveinbox",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L828"
+      "source_location": "L841"
     },
     {
       "_callable": true,
@@ -243632,7 +243632,7 @@
       "label": ".acknowledge()",
       "norm_label": ".acknowledge()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1232"
+      "source_location": "L1251"
     },
     {
       "_callable": true,
@@ -243644,7 +243644,7 @@
       "label": ".bindComputer()",
       "norm_label": ".bindcomputer()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L954"
+      "source_location": "L967"
     },
     {
       "_callable": true,
@@ -243656,7 +243656,7 @@
       "label": ".cleanupStagingFiles()",
       "norm_label": ".cleanupstagingfiles()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1490"
+      "source_location": "L1509"
     },
     {
       "_callable": true,
@@ -243668,7 +243668,7 @@
       "label": ".commit()",
       "norm_label": ".commit()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1401"
+      "source_location": "L1420"
     },
     {
       "_callable": true,
@@ -243680,7 +243680,7 @@
       "label": ".constructor()",
       "norm_label": ".constructor()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L843"
+      "source_location": "L856"
     },
     {
       "_callable": true,
@@ -243692,7 +243692,7 @@
       "label": ".createEvent()",
       "norm_label": ".createevent()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1327"
+      "source_location": "L1346"
     },
     {
       "_callable": true,
@@ -243704,7 +243704,7 @@
       "label": ".ensureDirectory()",
       "norm_label": ".ensuredirectory()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1423"
+      "source_location": "L1442"
     },
     {
       "_callable": true,
@@ -243716,7 +243716,7 @@
       "label": ".failureReason()",
       "norm_label": ".failurereason()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1323"
+      "source_location": "L1342"
     },
     {
       "_callable": true,
@@ -243728,7 +243728,7 @@
       "label": ".initialize()",
       "norm_label": ".initialize()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L883"
+      "source_location": "L896"
     },
     {
       "_callable": true,
@@ -243740,7 +243740,7 @@
       "label": ".initializeOnce()",
       "norm_label": ".initializeonce()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L909"
+      "source_location": "L922"
     },
     {
       "_callable": true,
@@ -243752,7 +243752,7 @@
       "label": ".observe()",
       "norm_label": ".observe()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1056"
+      "source_location": "L1069"
     },
     {
       "_callable": true,
@@ -243764,7 +243764,7 @@
       "label": ".pending()",
       "norm_label": ".pending()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1214"
+      "source_location": "L1233"
     },
     {
       "_callable": true,
@@ -243776,7 +243776,7 @@
       "label": ".persist()",
       "norm_label": ".persist()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1546"
+      "source_location": "L1565"
     },
     {
       "_callable": true,
@@ -243788,7 +243788,7 @@
       "label": ".prune()",
       "norm_label": ".prune()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1293"
+      "source_location": "L1312"
     },
     {
       "_callable": true,
@@ -243800,7 +243800,7 @@
       "label": ".readStateFile()",
       "norm_label": ".readstatefile()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1580"
+      "source_location": "L1599"
     },
     {
       "_callable": true,
@@ -243812,7 +243812,7 @@
       "label": ".requireAvailable()",
       "norm_label": ".requireavailable()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1397"
+      "source_location": "L1416"
     },
     {
       "_callable": true,
@@ -243824,7 +243824,7 @@
       "label": ".requireInitialized()",
       "norm_label": ".requireinitialized()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1386"
+      "source_location": "L1405"
     },
     {
       "_callable": true,
@@ -243836,7 +243836,7 @@
       "label": ".restorePrimary()",
       "norm_label": ".restoreprimary()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1665"
+      "source_location": "L1685"
     },
     {
       "_callable": true,
@@ -243848,7 +243848,7 @@
       "label": ".secureDirectory()",
       "norm_label": ".securedirectory()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1466"
+      "source_location": "L1485"
     },
     {
       "_callable": true,
@@ -243860,7 +243860,7 @@
       "label": ".syncDirectory()",
       "norm_label": ".syncdirectory()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1648"
+      "source_location": "L1668"
     },
     {
       "_callable": true,
@@ -243872,7 +243872,7 @@
       "label": ".syncDirectoryPath()",
       "norm_label": ".syncdirectorypath()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1656"
+      "source_location": "L1676"
     },
     {
       "_callable": true,
@@ -243884,7 +243884,7 @@
       "label": ".verifyDirectory()",
       "norm_label": ".verifydirectory()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1427"
+      "source_location": "L1446"
     },
     {
       "_callable": true,
@@ -243896,7 +243896,7 @@
       "label": ".walkDirectory()",
       "norm_label": ".walkdirectory()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1431"
+      "source_location": "L1450"
     },
     {
       "_callable": true,
@@ -243908,7 +243908,7 @@
       "label": ".writeSynced()",
       "norm_label": ".writesynced()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L1635"
+      "source_location": "L1655"
     },
     {
       "_callable": true,
@@ -244373,7 +244373,7 @@
       "label": "deferred()",
       "norm_label": "deferred()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1377"
+      "source_location": "L1486"
     },
     {
       "_origin": "ast",
@@ -244384,7 +244384,7 @@
       "label": "fsHooks",
       "norm_label": "fshooks",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L32"
+      "source_location": "L33"
     },
     {
       "_callable": true,
@@ -244396,7 +244396,7 @@
       "label": "get()",
       "norm_label": "get()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L53"
+      "source_location": "L57"
     },
     {
       "_callable": true,
@@ -244408,7 +244408,7 @@
       "label": "mkdirForTest()",
       "norm_label": "mkdirfortest()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1401"
+      "source_location": "L1510"
     },
     {
       "_callable": true,
@@ -244420,7 +244420,7 @@
       "label": "observation()",
       "norm_label": "observation()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L98"
+      "source_location": "L122"
     },
     {
       "_callable": true,
@@ -244432,7 +244432,7 @@
       "label": "openInbox()",
       "norm_label": "openinbox()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L117"
+      "source_location": "L141"
     },
     {
       "_callable": true,
@@ -244445,7 +244445,7 @@
       "label": "ReadGate",
       "norm_label": "readgate",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L25"
+      "source_location": "L26"
     },
     {
       "_callable": true,
@@ -244457,7 +244457,7 @@
       "label": "readState()",
       "norm_label": "readstate()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1388"
+      "source_location": "L1497"
     },
     {
       "_callable": true,
@@ -244469,7 +244469,7 @@
       "label": "statePath()",
       "norm_label": "statepath()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1373"
+      "source_location": "L1482"
     },
     {
       "_callable": true,
@@ -244482,7 +244482,7 @@
       "label": "TestState",
       "norm_label": "teststate",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1363"
+      "source_location": "L1472"
     },
     {
       "_callable": true,
@@ -244494,7 +244494,7 @@
       "label": "writeState()",
       "norm_label": "writestate()",
       "source_file": "server/manager-proactive-inbox.test.ts",
-      "source_location": "L1392"
+      "source_location": "L1501"
     },
     {
       "_callable": true,
@@ -244506,7 +244506,7 @@
       "label": "validateLimit()",
       "norm_label": "validatelimit()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L740"
+      "source_location": "L753"
     },
     {
       "_callable": true,
@@ -244518,7 +244518,7 @@
       "label": "validateObservation()",
       "norm_label": "validateobservation()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L699"
+      "source_location": "L712"
     },
     {
       "_callable": true,
@@ -244530,7 +244530,7 @@
       "label": "validateOptions()",
       "norm_label": "validateoptions()",
       "source_file": "server/manager-proactive-inbox.ts",
-      "source_location": "L752"
+      "source_location": "L765"
     },
     {
       "_callable": true,

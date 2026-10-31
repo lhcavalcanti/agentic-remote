@@ -1,4 +1,5 @@
 import {
+  chown,
   chmod,
   lstat,
   mkdir,
@@ -32,6 +33,7 @@ type ReadGate = {
 const fsHooks = vi.hoisted(() => ({
   readGate: undefined as ReadGate | undefined,
   syncFailurePath: undefined as string | undefined,
+  uidOverridePath: undefined as string | undefined,
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -41,16 +43,37 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     const targetPath = args[0]
     const gate = fsHooks.readGate
     const syncFailurePath = fsHooks.syncFailurePath
+    const uidOverridePath = fsHooks.uidOverridePath
     if (
       typeof targetPath !== 'string' ||
-      (!gate && !syncFailurePath)
+      (!gate && !syncFailurePath && !uidOverridePath)
     ) {
       return handle
     }
     const originalRead = handle.read.bind(handle)
+    const originalStat = handle.stat.bind(handle)
     const originalSync = handle.sync.bind(handle)
     return new Proxy(handle, {
       get(target, property, receiver) {
+        if (property === 'stat' && targetPath === uidOverridePath) {
+          return async (...statArgs: Parameters<typeof handle.stat>) => {
+            const metadata = await originalStat(...statArgs)
+            return new Proxy(metadata, {
+              get(metadataTarget, metadataProperty, metadataReceiver) {
+                if (metadataProperty === 'uid') {
+                  return typeof metadata.uid === 'bigint'
+                    ? metadata.uid + 1n
+                    : metadata.uid + 1
+                }
+                return Reflect.get(
+                  metadataTarget,
+                  metadataProperty,
+                  metadataReceiver,
+                )
+              },
+            })
+          }
+        }
         if (
           property === 'read' &&
           gate &&
@@ -92,6 +115,7 @@ describe('ManagerProactiveInbox', () => {
   afterEach(async () => {
     fsHooks.readGate = undefined
     fsHooks.syncFailurePath = undefined
+    fsHooks.uidOverridePath = undefined
     await rm(directory, { recursive: true, force: true })
   })
 
@@ -238,7 +262,13 @@ describe('ManagerProactiveInbox', () => {
   it('refuses a foreign-owned inbox directory without touching it', async () => {
     const uid = process.getuid?.()
     expect(uid).toBeDefined()
-    const foreignDirectory = uid === 0 ? '/home/lcavalcanti' : '/proc'
+    const foreignDirectory = uid === 0
+      ? path.join(directory, 'foreign-owned')
+      : '/proc'
+    if (uid === 0) {
+      await mkdir(foreignDirectory, { mode: 0o700 })
+      await chown(foreignDirectory, 1, 1)
+    }
     const metadata = await stat(foreignDirectory)
     expect(metadata.uid).not.toBe(uid)
     const inbox = new ManagerProactiveInbox(foreignDirectory, {
@@ -375,6 +405,30 @@ describe('ManagerProactiveInbox', () => {
 
     expect(inbox.pending()).toMatchObject([
       { kind: 'finished', taskGeneration: 1, revision: 7 },
+    ])
+  })
+
+  it.each([
+    ['queued input', { queuedCount: 1 }],
+    ['a pending request', { hasPendingRequest: true }],
+    ['a closed session', { isOpen: false }],
+    ['suspension', { suspended: true }],
+    ['recovery', { recovering: true }],
+  ])('keeps a task active when an error coincides with %s', async (_label, guard) => {
+    const inbox = await openInbox()
+
+    await inbox.observe(observation())
+    await inbox.observe(observation({
+      revision: 2,
+      status: 'error',
+      ...guard,
+    }))
+    expect(inbox.pending()).toEqual([])
+
+    await inbox.observe(observation({ revision: 3, status: 'error' }))
+
+    expect(inbox.pending()).toMatchObject([
+      { kind: 'failed', taskGeneration: 1, revision: 3 },
     ])
   })
 
@@ -861,6 +915,42 @@ describe('ManagerProactiveInbox', () => {
     expect(reopened.pending()).toEqual([])
   })
 
+  it('requires permission tightening to be durable before recovery succeeds', async () => {
+    await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    await chmod(statePath, 0o644)
+    fsHooks.syncFailurePath = statePath
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect((await stat(statePath)).mode & 0o777).toBe(0o600)
+
+    fsHooks.syncFailurePath = undefined
+    await reopened.initialize()
+    expect(reopened.pending()).toEqual([])
+  })
+
+  it('refuses a private state file not owned by the hub user', async () => {
+    await openInbox()
+    const statePath = path.join(directory, 'manager-proactive-inbox.json')
+    fsHooks.uidOverridePath = statePath
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+  })
+
   it('persists only bounded lifecycle metadata and no user text', async () => {
     const inbox = await openInbox()
     await inbox.observe(observation())
@@ -1309,6 +1399,25 @@ describe('ManagerProactiveInbox', () => {
     state.cursors[0]!.revision = 2
     state.cursors[0]!.active = active
     state.cursors[0]!.lastStatus = lastStatus
+    const serialized = await writeState(directory, state)
+    const reopened = new ManagerProactiveInbox(directory, {
+      enabled: true,
+      hubId: 'hub-a',
+      now,
+    })
+
+    await expect(reopened.initialize()).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
+  })
+
+  it('refuses an active idle cursor without a lifecycle guard', async () => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+
+    const state = await readState(directory)
+    state.cursors[0]!.lastStatus = 'idle'
     const serialized = await writeState(directory, state)
     const reopened = new ManagerProactiveInbox(directory, {
       enabled: true,

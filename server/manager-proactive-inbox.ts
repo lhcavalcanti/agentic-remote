@@ -513,6 +513,12 @@ function validatePersistedState(
       throw new Error('unsupported cursor')
     }
     const cursor = rawCursor as unknown as PersistedCursor
+    const completionBlocked =
+      !cursor.isOpen ||
+      cursor.suspended ||
+      cursor.recovering ||
+      cursor.hasPendingRequest ||
+      cursor.queuedCount > 0
     if (
       cursor.namespaceId !== namespaceId(
         expectedHubId,
@@ -525,7 +531,14 @@ function validatePersistedState(
         cursor.computerGeneration ||
       (cursor.active && cursor.taskGeneration === 0) ||
       (!cursor.active && cursor.lastStatus === 'running') ||
-      (cursor.active && cursor.lastStatus === 'error')
+      (
+        cursor.active &&
+        (
+          cursor.lastStatus === 'idle' ||
+          cursor.lastStatus === 'error'
+        ) &&
+        !completionBlocked
+      )
     ) {
       throw new Error('unsupported cursor namespace')
     }
@@ -1152,7 +1165,17 @@ export class ManagerProactiveInbox {
       }
 
       let admitted: PersistedEvent | undefined
-      if (active && observation.status === 'error') {
+      const completionAllowed =
+        observation.isOpen &&
+        !observation.suspended &&
+        !observation.recovering &&
+        !observation.hasPendingRequest &&
+        observation.queuedCount === 0
+      if (
+        active &&
+        observation.status === 'error' &&
+        completionAllowed
+      ) {
         admitted = this.createEvent(
           candidate,
           observation,
@@ -1164,11 +1187,7 @@ export class ManagerProactiveInbox {
       } else if (
         active &&
         observation.status === 'idle' &&
-        observation.isOpen &&
-        !observation.suspended &&
-        !observation.recovering &&
-        !observation.hasPendingRequest &&
-        observation.queuedCount === 0
+        completionAllowed
       ) {
         admitted = this.createEvent(
           candidate,
@@ -1600,14 +1619,15 @@ export class ManagerProactiveInbox {
           'The proactive inbox state exceeds the supported size; no files were changed.',
         )
       }
+      const uid = process.getuid?.()
+      if (uid !== undefined && opened.uid !== uid) {
+        throw new ManagerProactiveInboxRecoveryError(
+          'The proactive inbox state is not owned by the hub; no files were changed.',
+        )
+      }
       if ((opened.mode & 0o077) !== 0) {
-        const uid = process.getuid?.()
-        if (uid !== undefined && opened.uid !== uid) {
-          throw new ManagerProactiveInboxRecoveryError(
-            'The proactive inbox state is accessible to other users and not owned by the hub; no files were changed.',
-          )
-        }
         await handle.chmod(0o600)
+        await handle.sync()
       }
       const buffer = Buffer.alloc(opened.size + 1)
       let length = 0

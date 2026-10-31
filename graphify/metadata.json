@@ -101,6 +101,8 @@
     "server/manager-journal.ts",
     "server/manager-memory.test.ts",
     "server/manager-memory.ts",
+    "server/manager-proactive-inbox.test.ts",
+    "server/manager-proactive-inbox.ts",
     "server/manager-routes.test.ts",
     "server/manager-routes.ts",
     "server/manager-runtime.test.ts",
@@ -398,9 +400,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 218,
+  "communities": 226,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18406,
+  "edges": 18632,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -450,6 +452,7 @@
     "docs/design/oracle-conversation-mode.md": "6501b1af81b35547389351f870784d121818404f958ba0488a0807abca01b197",
     "docs/design/oracle-dreamer.md": "b5e9fa1f111a999f75b3a7060931d5d03409aabb5d474000afb02cfb948f05bf",
     "docs/design/oracle-durable-ux.md": "c26ae138274606865c3d580e652b71aa506a1fb8ddce4e428e31f2dc6b39fc38",
+    "docs/design/oracle-proactive-inbox.md": "2a19e1bba6feb8b251e294666ecf7273528f03db459bfc9933e1febb6403994e",
     "docs/design/session-manager.md": "a1d45bb77239060ed7a41cf2cc8d7bef48d782b46f1396c86628f3a1ee5f87d1",
     "docs/design/settings-profile.md": "a58ef0f51a272acdd4fada36a496f53b06cb2b52ee5c799a699314bd69073105",
     "docs/licenses/onnxruntime-1.24.2-third-party-notices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
@@ -468,6 +471,7 @@
     "docs/superpowers/plans/2026-10-20-copilot-sdk-cli-parity.md": "e76bc7b375f460248e5ed61bc6e5aed0aed10c5c546c7f5b54d7b91962a01e6e",
     "docs/superpowers/plans/2026-10-24-copilot-sdk-restart-recovery.md": "d226322b7114d37a1fdab31f99707fb94543b986ce3cf353f08a745238a93975",
     "docs/superpowers/specs/2026-10-16-oracle-structured-memory-design.md": "82ca91bf70cd9b102231b1cce43cc916836c9b61576eac3518598e1de647e4a4",
+    "docs/superpowers/specs/2026-10-17-oracle-proactive-lifecycle-design.md": "0eb8027ecbb9a7c24e83388dddecc3d84b19c2f1394fce21df15d6759ba4cb98",
     "docs/superpowers/specs/2026-10-20-copilot-sdk-cli-parity-design.md": "0a6ef302d12467d20947c5bc24f61ad2ea18a04417dd0a5f8fef866bfc7571eb",
     "docs/superpowers/specs/2026-10-24-copilot-sdk-restart-recovery-design.md": "d8276731a6918d7649af65848f4317f72c9473168e89fae55f0fec657b7e28be",
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
@@ -587,6 +591,8 @@
     "server/manager-journal.ts": "ef6202bcd697a0288ba6fe5979330b89c0b8a3f5eb484b73b33fb161ef4afd65",
     "server/manager-memory.test.ts": "9eb272be7cc7e235318778e136e9a9be3ad298aa956e4418652a2b76d7a0f489",
     "server/manager-memory.ts": "223ed822099340e8dc9b4d12125ae7cdd1ba6f59508e4c51b90f6763e6f9d2cd",
+    "server/manager-proactive-inbox.test.ts": "674a9f639de64e032b6ca08e570711fb46bb6267134af157a2e4fde86d29ec87",
+    "server/manager-proactive-inbox.ts": "5ac6c9b0424dafe39effe341d31bfba058a2897a11f9dcf4824824120ce7a10b",
     "server/manager-routes.test.ts": "34cdfdad9704168db42dd90366779ed1eac05f2c2a54b38272b417866f419bd3",
     "server/manager-routes.ts": "4b12d14afcbb3c9104358dee8f573a9c2e16eb9d3fe2ef2a5a851cb95c3c6fc5",
     "server/manager-runtime.test.ts": "8518eed66f174a4a1831b4b6a78fa25db7f37a14429ef7d8e972857870c192f9",
@@ -890,7 +896,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6660,
+  "nodes": 6762,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -932,6 +938,7 @@
     "docs/design/oracle-conversation-mode.md",
     "docs/design/oracle-dreamer.md",
     "docs/design/oracle-durable-ux.md",
+    "docs/design/oracle-proactive-inbox.md",
     "docs/design/session-manager.md",
     "docs/design/settings-profile.md",
     "docs/licenses/onnxruntime-1.24.2-third-party-notices.txt",
@@ -950,6 +957,7 @@
     "docs/superpowers/plans/2026-10-20-copilot-sdk-cli-parity.md",
     "docs/superpowers/plans/2026-10-24-copilot-sdk-restart-recovery.md",
     "docs/superpowers/specs/2026-10-16-oracle-structured-memory-design.md",
+    "docs/superpowers/specs/2026-10-17-oracle-proactive-lifecycle-design.md",
     "docs/superpowers/specs/2026-10-20-copilot-sdk-cli-parity-design.md",
     "docs/superpowers/specs/2026-10-24-copilot-sdk-restart-recovery-design.md",
     "fixtures/voice/README.md",
@@ -981,16 +989,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ea9f8213f9049a546fb1ba1ae620a9ce8e1f8c0cb81982b6dea926cdeeafce75",
-    "communities.json": "13daab7c01ed3326f7401ff8c8d3e3ed2f7b987732c65d7f37730c1f7326a568",
-    "graph.html": "8dcd5787d19d428451dfd744699d025fda7d896baf50eaeb374358c8d18aac11",
-    "graph.json": "fd4c87af56acc62b0c54be671ef523f380738adf7510987c3f4b959d66ea9199"
+    "GRAPH_REPORT.md": "3459b9ec0af9ad42890c250c646d4e01cdc90dca1a7d3104848deea917bd1590",
+    "communities.json": "27a1b0925de4b3aa779a42354dde11619a808a14dd928b6a8cc58da4cd1e73f1",
+    "graph.html": "ef7f2205bb5b00f4aaf6a3d73091a5af02f37ccd8f48a2423b0b9a6a87c9e2e7",
+    "graph.json": "601fa16dafdae6eedc1e62d472fc594e5cb10a633b5088e3a75ccf5f9e82bde7"
   },
   "schema_version": 1,
-  "source_commit": "3cc648584357abb1f95d4ee97e675925cc0690be",
-  "source_fingerprint": "8ff6234e0f385715f96bc6a92dfdd688317fa68f77c2798e3c08c19ae90ac82f",
+  "source_commit": "f2819f899330db496a79c77d811300cb94e60763",
+  "source_fingerprint": "28b9cd95fb8dc8e6db3698ce16fa984f9bd68240fe4ecf8f3a4f76b7bf6569e3",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
-    "server/agent-service.ts"
+    "server/manager-proactive-inbox.test.ts",
+    "server/manager-proactive-inbox.ts"
   ]
 }

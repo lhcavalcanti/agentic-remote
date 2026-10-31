@@ -3492,6 +3492,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
     }
     const queueWasDraining = this.drainingSessions.has(id)
+    const startupQueueWasPending = this.startupTerminalQueues.has(id)
     // A delivery already handed to the runtime cannot be drained safely, but
     // an admitted queue claim must see the reservation below and abort itself.
     // The exclusive admission then waits for that rollback before teardown.
@@ -3500,14 +3501,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // background tasks are being read cannot start a turn into a session that
     // is on its way down.
     this.suspendingSessions.add(id)
+    let suspended = false
     try {
-      return await this.admissions.exclusive(id, async () => {
+      const result = await this.admissions.exclusive(id, async () => {
         const current = await this.store.readAfterWrites(id)
         this.assertStillIdle(id, queueWasDraining)
         return this.suspendClaimedSession(id, current)
       })
+      suspended = true
+      this.startupTerminalQueues.delete(id)
+      this.pendingTerminalQueueClaims.delete(id)
+      this.terminalDrainRequested.delete(id)
+      return result
     } finally {
       this.suspendingSessions.delete(id)
+      const current = this.store.get(id)
+      if (!suspended && startupQueueWasPending && current?.queuedPrompts?.length &&
+          this.hasStartupQueueLifecycle(id, current)) {
+        this.startupTerminalQueues.add(id)
+        this.pendingTerminalQueueClaims.delete(id)
+        this.terminalDrainRequested.add(id)
+      }
+      if (!suspended) this.wakeDeferredQueue(id)
     }
   }
 

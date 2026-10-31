@@ -398,9 +398,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 215,
+  "communities": 212,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18165,
+  "edges": 18167,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -525,7 +525,7 @@
     "server/agent-service-recovery.test.ts": "54846ab1808aaf1f9185119ba02e6623abf9fd3992dcb5e4115c8ef10d3340b1",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "73203a0d68d02b30c5ebabb05422490ac041e67370b4d96c0016ea1f5764cf16",
-    "server/agent-service.ts": "3ba36085f02c5f518bb9c2834b3855f05e3221e687f6fb11c9299da99026c41d",
+    "server/agent-service.ts": "71cdbd0ef451b31cce9b9100b3051f6a2580d8131d7fb545121c71e0caa2bcf0",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -975,14 +975,14 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "9295859450696929d031eda5b179e36343edace970ba87b39df04a3f461e2900",
-    "communities.json": "7492dc88712dcb4975064a5d2d3effe79edc82ca8089316376a651a27699d0b2",
-    "graph.html": "d44bbe3e524b4fba51030a507698eb005e3d6d910db564c382d12dc5756f7f95",
-    "graph.json": "732c440dcbdaafd4c9bb2961c8586750ad69da2c7078be8d0b0f67323c337321"
+    "GRAPH_REPORT.md": "626185e31e4364d7f787fcc9976b9210d95563541d4143470b1d24148bf21765",
+    "communities.json": "105dd79ac883153f5c5dc892ef229fbeba0d4fcb5b387b1b4d375e74efd4da10",
+    "graph.html": "905f5d9d0fc2871f5dd4511c312e8b1c080d8d57df152be8d61aa49d7a6436ed",
+    "graph.json": "42172852e10f7966f628de63e01e034f663c9232e2d5db563207dcda56e6fa5b"
   },
   "schema_version": 1,
-  "source_commit": "81bb4041c1d9f8382e348865425a661fae60a915",
-  "source_fingerprint": "4016a0772c4cd0e29ce99fa961a315ccfe6739e138536d87e19a51009e489334",
+  "source_commit": "bf7370832b2588377d6d04eddcf133833161ec15",
+  "source_fingerprint": "f7fb56b5816d3bab6e43e9beefc30acb6156f8d37f7a43b896a24cfda3a139bf",
   "working_tree_changes": [
     "server/agent-service.ts"
   ]

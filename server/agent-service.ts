@@ -3516,6 +3516,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       this.suspendingSessions.delete(id)
       const current = this.store.get(id)
+      if (!suspended && queueWasDraining && current?.queuedPrompts?.length &&
+          this.store.backend(id) !== 'terminal' && !this.externalSessionIds.has(id)) {
+        this.sdkDrainRequested.add(id)
+      }
       if (!suspended && startupQueueWasPending && current?.queuedPrompts?.length &&
           this.hasStartupQueueLifecycle(id, current)) {
         this.startupTerminalQueues.add(id)

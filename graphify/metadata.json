@@ -398,9 +398,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 212,
+  "communities": 215,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18167,
+  "edges": 18168,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -525,7 +525,7 @@
     "server/agent-service-recovery.test.ts": "54846ab1808aaf1f9185119ba02e6623abf9fd3992dcb5e4115c8ef10d3340b1",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "73203a0d68d02b30c5ebabb05422490ac041e67370b4d96c0016ea1f5764cf16",
-    "server/agent-service.ts": "71cdbd0ef451b31cce9b9100b3051f6a2580d8131d7fb545121c71e0caa2bcf0",
+    "server/agent-service.ts": "9fe2748a79d78ca8f1d66bea25339d05c1f0b51d6e2e894bfeba975846cdf8c7",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -696,7 +696,7 @@
     "server/session-retention.ts": "30c36ad2384c744c1d4aab69b833ab5df3502ef334eab198ede50c158c3fdc08",
     "server/session-service.ts": "5da0a4060ccdfd8f5a57e94667b9bfa042641e24c67a1ff329f64e9d5e3f669d",
     "server/session-store-durability.test.ts": "0ff26c96ab3b0962cd7e177493bca5c69dd9027ec3a082d37d86255959cfb90e",
-    "server/session-store-providers.test.ts": "f5c3153fcd1928b9c51d44c9fb97386d1ec41ccdc3fc093de38cdfaef5713a35",
+    "server/session-store-providers.test.ts": "72b8786f3a2ed6cf0d0f97db7349e43476ffcc1fe5cd3e0d12e8a72ee81f909a",
     "server/session-store-serialization.test.ts": "71282d420e93f3c58082becfd38e0f5b7698f303412db76eb9c65a2b5853016c",
     "server/session-store.test.ts": "a5f7358574e5acd9d4e069bfbffb69e67ab97401e7b19a1f0926dc121a16979d",
     "server/session-store.ts": "6d84c944cebaf63ebf318ce0e2d8fb8eaeeec55818b0497d8f7ed400c70e8262",
@@ -975,15 +975,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "626185e31e4364d7f787fcc9976b9210d95563541d4143470b1d24148bf21765",
-    "communities.json": "105dd79ac883153f5c5dc892ef229fbeba0d4fcb5b387b1b4d375e74efd4da10",
-    "graph.html": "905f5d9d0fc2871f5dd4511c312e8b1c080d8d57df152be8d61aa49d7a6436ed",
-    "graph.json": "42172852e10f7966f628de63e01e034f663c9232e2d5db563207dcda56e6fa5b"
+    "GRAPH_REPORT.md": "befc1afcbc283f00dc9b4ce4c1fa41aed44aefbc9dda45c6f55b569353c5f750",
+    "communities.json": "f64b07221efe1251c77a8f116e5f073200bb7a7ea2d670dec549a442b8120311",
+    "graph.html": "bdbb7582e8cb52626b6018b877213a79603345c941e754564017dd5343f6c50e",
+    "graph.json": "56824b96eacdfb4fa5851fa8cd306e485d4c738c3f92ee4cb6e8fdd50cbf4aab"
   },
   "schema_version": 1,
-  "source_commit": "bf7370832b2588377d6d04eddcf133833161ec15",
-  "source_fingerprint": "f7fb56b5816d3bab6e43e9beefc30acb6156f8d37f7a43b896a24cfda3a139bf",
+  "source_commit": "a71033c3acfee5dabd52ce255449fc5ad675e9a7",
+  "source_fingerprint": "25248aba0a3c88fefda646ec3088387c153005eb03562dacab9814e22824ece6",
   "working_tree_changes": [
-    "server/agent-service.ts"
+    "server/agent-service.ts",
+    "server/session-store-providers.test.ts"
   ]
 }

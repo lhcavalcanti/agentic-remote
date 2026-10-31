@@ -46,7 +46,13 @@ function recorder() {
   }
 }
 
-async function fixture({ queued = false } = {}) {
+async function fixture({
+  queued = false,
+  discoveryFailure,
+}: {
+  queued?: boolean
+  discoveryFailure?: Error
+} = {}) {
   const directory = path.resolve('graphify/.cache', `startup-phases-${randomUUID()}`)
   await mkdir(directory, { recursive: true })
   directories.push(directory)
@@ -110,7 +116,11 @@ async function fixture({ queued = false } = {}) {
   }
   const agent = new AgentService(
     copilotStore, client,
-    async () => { calls.push('active'); return [] },
+    async () => {
+      calls.push('active')
+      if (discoveryFailure) throw discoveryFailure
+      return []
+    },
     async () => {},
     async () => [],
     async () => undefined,
@@ -331,6 +341,25 @@ describe('managed startup diagnostics', () => {
     ])
     expect(f.app.listen).not.toHaveBeenCalled()
     expect(await persisted()).toBe(before)
+  })
+
+  it('runs SDK recovery before listening when terminal discovery is deferred', async () => {
+    const f = await fixture({
+      queued: true,
+      discoveryFailure: new Error('Synthetic terminal discovery failure'),
+    })
+    const recoverSdkSessions = vi.fn(async () => { f.calls.push('sdk-recovery') })
+    f.agent['recoverSdkSessions'] = recoverSdkSessions
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { phases, trail } = recorder()
+
+    await startManagedServer(f.app, f.service, address, phases)
+
+    expect(recoverSdkSessions).toHaveBeenCalledOnce()
+    expect(f.calls.indexOf('sdk-recovery')).toBeLessThan(f.calls.indexOf('listen'))
+    expect(trail()).toContain('fail copilot.discovery')
+    expect(trail()).toContain('complete copilot.recovery.persistence')
+    expect(trail()).toContain('complete copilot.recovery.sdk')
   })
 
   it.each<[string, (f: Fixture, released: Promise<void>) => void]>([

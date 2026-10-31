@@ -112,7 +112,11 @@ export function sessionPresentation(
   )
   return {
     state: online ? state : 'offline',
-    label: online && state === 'error' && session.interruption ? 'Interrupted' : stateLabels[online ? state : 'offline'],
+    label: online && state === 'error' && session.restartRecovery?.state === 'failed'
+      ? 'Recovery failed'
+      : online && state === 'error' && session.interruption
+        ? 'Interrupted'
+        : stateLabels[online ? state : 'offline'],
     description: online
       ? session.restartRecovery?.message || stateLabels[state]
       : `Computer offline. Last known state: ${stateLabels[state].toLowerCase()}.`,

@@ -325,6 +325,28 @@ describe('session presentation', () => {
     })
   })
 
+  it('labels failed restart recovery distinctly from an interrupted session', () => {
+    expect(sessionPresentation({
+      ...session,
+      status: 'error',
+      interruption: {
+        detectedAt: '2026-09-05T00:00:00Z',
+        previousStatus: 'running',
+      },
+      restartRecovery: {
+        state: 'failed',
+        detectedAt: '2026-09-05T00:00:00Z',
+        message: 'The saved provider identity could not be resumed.',
+      },
+    })).toMatchObject({
+      state: 'error',
+      label: 'Recovery failed',
+      description: 'The saved provider identity could not be resumed.',
+      needsAttention: true,
+      working: false,
+    })
+  })
+
   it('keeps an uncertain queued dispatch in Needs you without implying it was unsent', () => {
     const held = {
       ...session,

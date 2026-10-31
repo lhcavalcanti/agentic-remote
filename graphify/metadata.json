@@ -398,9 +398,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 222,
+  "communities": 227,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18393,
+  "edges": 18395,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -525,10 +525,10 @@
     "server/active-sessions.test.ts": "94b5ae9e40f621ff6faee27de76df8da70e86c4724843e71dad15c97a1a276c4",
     "server/active-sessions.ts": "dfbfcdb228e5f664e5a94afd39b1eab8570f7dbe72f913cf6da921f1337d8eb3",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
-    "server/agent-service-recovery.test.ts": "e41ef064ca413711b1eded83c0cc3dae5253fc4a35d67b24040e77b440a9be37",
+    "server/agent-service-recovery.test.ts": "6847301459e121e607f3c5523d8f6764bb5ee6b25bd0ad4782724e54f81e5c05",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "ff1393da280a2d312081c8cd8b758135faf2bb5eef0873b6622c1b303f0620c3",
-    "server/agent-service.ts": "e56a75b197a326971c67f6aa804e2d20a053bf315dfcb857fbb7c270b3d5ff78",
+    "server/agent-service.ts": "772d1c2740a16ce3bbe1388e8f1d3ead24b2c1447399583262dd7cae53cc311c",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -710,7 +710,7 @@
     "server/sherpa-onnx-node.d.ts": "b47ceabc976c4df6581fc4d29b44e0613d900a89c5a6029325680e813ed4b4e2",
     "server/side-question.test.ts": "bb7fe56de6bf5ed357ca35929523244836eecd39fa6abceffeeb1f5a36548ac8",
     "server/side-question.ts": "ff75273c172f073bc9cc7a7cd40d2697ad26041068714e543a84dfbcaa760b8e",
-    "server/startup-phases.test.ts": "a17ce08d9f4902e10f4ea77506e63989a2af680eb4eb988fed6e499820667641",
+    "server/startup-phases.test.ts": "0e011eb08c02cf537ef7501ff2185530d5f587010587760ca94d26eaa6718c4d",
     "server/startup-phases.ts": "c819e686ff91fed16463d5022f04685d659d9fd012d4631ff84d4d2b133e68ec",
     "server/submission-error-http.test.ts": "4e575bc36df1c861a90b30fced64147af534723abcc00f1985f36e1104e27162",
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
@@ -861,8 +861,8 @@
     "src/session-navigation-view.test.ts": "8af5df6f1bca884f42a6e08d01dafc4d214d1e058f21bf2a48193529501e251d",
     "src/session-navigation-view.ts": "f054430118f3405ec158f90a027cc8a496ca046b6d8cd12fd8190b8712cbedce",
     "src/session-patches.ts": "34eb315b38a1c4d44296cfbef6d4181df3e0302dc419eb120a72a26ff4191d55",
-    "src/session-presentation.test.ts": "9501e70a8eac35f7af85d48e0fd5c7a3732d3182088f39d47c6be13b4bcf0d9e",
-    "src/session-presentation.ts": "d4d5980f3eaccfc6210a03a8dd211396e18f92532245415cbe4c3827f9ebdf1d",
+    "src/session-presentation.test.ts": "b63bf209a57bed86d80f7a190b34e1c305d8c16afbd0196bf1c4e54e0a24e91c",
+    "src/session-presentation.ts": "325a05ea19941b5a0d205d154475c399a50063963544a2016279357228949be2",
     "src/session-resource-commands.test.ts": "aad01518e46dd66c0910f8c113f9895712c7628bf9385eee6d33ef0f0e73e62a",
     "src/session-resource-commands.ts": "0ed9df05cac3541796e74ffa8670660e4d7605d933eac10c67ec2f7b96764bd3",
     "src/session-response-order.test.ts": "7256ba87a3b219d24cbb7a0632ff595def6a9955b0d691a4b52aa8d6b5e2d13c",
@@ -981,19 +981,19 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "21a951872c29f43720035cf72f68830c95b2f4d6f8b0d0e71ffbbc170d8aace8",
-    "communities.json": "24360d8cb96171747aaec41a4d257dc435cecee5e8ec8764dd8dc2f06a0f01f0",
-    "graph.html": "b984c52506e42024f8da894e3d6584a6f5a27e0db41aca50b10b020930fdb491",
-    "graph.json": "f8437f839fdd7d03ac98ad7984ddd0c1099f30580b23f279930b76a7036c7c89"
+    "GRAPH_REPORT.md": "6d0e6d33d95ab6ff84b82f8c9c269eda29d4598c058d6e631b6890cbedd00a0a",
+    "communities.json": "8c9f3f52381c54d6f0b6132afd19d34ce7e2f6d71af6da33406ccd602d5dd426",
+    "graph.html": "d1594ab415815acc326371984b30db6185635e6ca050d48bd7aacbc34c3e1988",
+    "graph.json": "ba43d0155dbdfcc18537b94c78d7932e053f44b1d95edccc6e5f3021d1813748"
   },
   "schema_version": 1,
-  "source_commit": "caef5c711c85cd5630d72970c535ada0bb1353ac",
-  "source_fingerprint": "8dcd7ab4d9bde6181c3f6035d0dfab36fd93fa2359988b55239556ce8d86376f",
+  "source_commit": "9e7773b137334716237cc18ac7c79376ba459baf",
+  "source_fingerprint": "e0fa472c8cc85f53bd29fe7f6887c91258a7868b507de05beb8ac71cd0d2cdc0",
   "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/agent-service-recovery.test.ts",
+    "server/agent-service.ts",
+    "server/startup-phases.test.ts",
+    "src/session-presentation.test.ts",
+    "src/session-presentation.ts"
   ]
 }

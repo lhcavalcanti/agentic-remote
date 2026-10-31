@@ -161,6 +161,44 @@ it('requires durable completion before a live idle event clears an accepted SDK 
   expect(f.store.get('pending')?.pendingUserInput?.requestId).toBe('public-question')
 })
 
+it('does not let a worker idle event settle foreground SDK recovery', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.queuedPrompts = [prompt('wait for the foreground turn')]
+  })
+  await f.store.markInterrupted('pending')
+  const recovery = await f.store.claimSdkRecovery('pending')
+  const callbacks: Array<(event: SessionEvent) => void> = []
+  const owner: CopilotSessionLike = {
+    ...sdkSession('pending'),
+    on: (callback) => {
+      callbacks.push(callback)
+      return () => undefined
+    },
+    getEvents: vi.fn(async () => sdkRecoveryEvents(false)),
+  }
+  f.service['installSdkOwner'](owner, 'pending', recovery.generation)
+
+  callbacks[0]!({
+    type: 'session.idle',
+    id: 'worker-idle',
+    parentId: null,
+    timestamp,
+    data: { agentId: 'worker-1' },
+    ephemeral: true,
+  } as SessionEvent)
+  await f.store.readAfterWrites('pending')
+
+  expect(f.store.sdkRecovery('pending')).toMatchObject({
+    generation: recovery.generation,
+    state: 'recovering',
+  })
+  expect(f.store.get('pending')?.queuedPrompts).toEqual([
+    prompt('wait for the foreground turn'),
+  ])
+})
+
 it('recovers a completed SDK turn under the same provider identity during startup', async () => {
   const f = await fixture(['pending'], 'sdk')
   f.ownership.aggregateError = undefined
@@ -188,6 +226,40 @@ it('recovers a completed SDK turn under the same provider identity during startu
   expect(f.service.getSession('pending')?.restartRecovery).toBeUndefined()
   expect(f.service.getSession('pending')?.messages.map((message) => message.content))
     .toEqual(['Retain pending', 'Recovered answer'])
+})
+
+it('keeps stale user input and queued work blocked when resumed history is idle', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  f.ownership.aggregateError = undefined
+  await f.store.update('pending', (session) => {
+    session.status = 'waiting'
+    session.pendingUserInput = {
+      requestId: 'stale-question',
+      question: 'Choose a direction',
+      choices: ['Left'],
+      allowFreeform: false,
+    }
+    session.queuedPrompts = [prompt('wait for explicit recovery')]
+  })
+  const owner = sdkSession('pending')
+  owner.getEvents = vi.fn(async () => sdkRecoveryEvents(true))
+  f.client.resumeSession = vi.fn(async () => owner)
+
+  await f.service.start()
+
+  expect(f.service.getSession('pending')).toMatchObject({
+    status: 'error',
+    restartRecovery: {
+      state: 'interrupted',
+      message: expect.stringMatching(/question.*pending/i),
+    },
+    pendingUserInput: {
+      requestId: 'stale-question',
+      stale: true,
+    },
+    queuedPrompts: [prompt('wait for explicit recovery')],
+  })
+  expect(owner.send).not.toHaveBeenCalled()
 })
 
 it('keeps an open SDK model turn explicitly interrupted after startup recovery', async () => {

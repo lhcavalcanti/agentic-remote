@@ -2409,6 +2409,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.nativeStartupDiscoveryReady = false
       console.warn('Terminal discovery deferred during startup:', error)
       this.publishError('', error)
+      await phases.run('copilot.recovery.persistence', () =>
+        this.store.verifyPersistence())
+      if (this.stopped) return
+      await phases.run('copilot.recovery.sdk', () => this.recoverSdkSessions())
     }
     if (this.stopped) return
     await phases.run('copilot.queue.terminal', () =>
@@ -8581,6 +8585,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (interrupted) this.publish(interrupted)
         return
       }
+      if (this.store.get(sessionId)?.pendingUserInput?.stale) {
+        const interrupted = await this.store.settleSdkRecovery(
+          sessionId,
+          recovery.generation,
+          {
+            state: 'interrupted',
+            message: 'A provider question was pending when the runtime stopped. Its callback could not be recovered; queued work was not sent.',
+          },
+        )
+        if (interrupted) this.publish(interrupted)
+        return
+      }
       const permissionApi = sdkSession.rpc.permissions
       if (permissionApi) {
         const pending = await permissionApi.pendingRequests()
@@ -9884,8 +9900,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.handleSessionEvent(sessionId, event)
       if (
-        (event.type === 'assistant.turn_end' && !eventAgentId(event)) ||
-        event.type === 'session.idle'
+        isForegroundLifecycleEvent(event) &&
+        (event.type === 'assistant.turn_end' || event.type === 'session.idle')
       ) {
         void this.settleAttachedSdkRecovery(
           sessionId,

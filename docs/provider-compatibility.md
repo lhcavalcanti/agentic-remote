@@ -48,9 +48,15 @@ history is not transferred between providers.
   ID. Claude Agent sessions cannot migrate because the Agent SDK process is not
   attachable to a tmux pane.
 - Normal Copilot SDK sessions discover the owning computer's existing CLI
-  configuration for plugins, MCP servers, skills, custom agents, instructions,
-  repository hooks, and host Git operations. They use the same local Copilot
-  home and logged-in GitHub account as interactive CLI sessions.
+  configuration for MCP servers, repository and personal skills, custom agents,
+  instructions, repository hooks, host Git operations, and enabled installed
+  plugin contributions. The SDK runtime owns plugin resolution so repository
+  enablement overrides, direct-install identities, and manifest precedence
+  match interactive CLI sessions without Agentic Remote injecting contribution
+  paths. They use the same local Copilot home and logged-in GitHub account as
+  interactive CLI sessions. Active SDK sessions retain their current plugin
+  catalog until a supported restart or cold resume; new sessions see plugin
+  installs and updates immediately.
 - Normal Copilot SDK sessions select the elicitation `ask_user` variant, so
   current runtimes send structured forms through Agentic Remote's existing
   elicitation handler instead of limiting model questions to the legacy

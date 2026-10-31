@@ -6447,6 +6447,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return cached.commands
       }
       const temporarySession = await this.client.createSession({
+        ...COPILOT_SDK_SESSION_DISCOVERY,
         workingDirectory: stored.cwd,
         streaming: false,
         infiniteSessions: { enabled: false },
@@ -7182,6 +7183,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const session = this.sessions.get(sessionId)
     if (!session) {
+      await this.settleCompletedSdkCancellation(sessionId)
       return
     }
     const recovery = this.store.sdkRecovery(sessionId)
@@ -7196,7 +7198,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await session.abort()
       return
     }
-    if (!this.activePrompts.has(sessionId)) return
+    if (!this.activePrompts.has(sessionId)) {
+      await this.settleCompletedSdkCancellation(sessionId)
+      return
+    }
     // Marked before the abort, so an idle that arrives straight after it
     // cannot reach the tracker while it is still waiting for output. A
     // follow-up still being handed over has no tracker yet, so the stop is
@@ -7205,6 +7210,65 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (pendingFollowUp) pendingFollowUp.stopped = true
     this.sdkFollowUpTrackers.get(sessionId)?.settleWhenIdle()
     await session.abort()
+  }
+
+  private async settleCompletedSdkCancellation(
+    sessionId: string,
+  ): Promise<void> {
+    const stored = this.store.get(sessionId)
+    if (
+      !stored ||
+      this.externalSessionIds.has(sessionId) ||
+      this.store.sdkRecovery(sessionId) ||
+      stored.status === 'idle' ||
+      stored.suspended ||
+      stored.pendingPermission ||
+      stored.pendingUserInput ||
+      stored.queuedPrompts?.length ||
+      this.drainingSessions.has(sessionId) ||
+      this.dispatchingSessions.has(sessionId)
+    ) {
+      return
+    }
+    const tasks = await this.listBackgroundTasks(sessionId)
+    if (
+      !tasks.supported ||
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      return
+    }
+    const events = await this.sessionEventReader(sessionId)
+    const latestLifecycle = events.findLast(isForegroundLifecycleEvent)
+    if (
+      !latestLifecycle ||
+      !isForegroundCompletionEvent(latestLifecycle) ||
+      statusFromEvents(events) !== 'idle' ||
+      backgroundTasksFromEvents(events).some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      return
+    }
+    const settled = await this.store.updateIf(sessionId, (session) => {
+      if (
+        session.status === 'idle' ||
+        session.suspended ||
+        session.pendingPermission ||
+        session.pendingUserInput ||
+        session.queuedPrompts?.length ||
+        this.activePrompts.has(sessionId) ||
+        this.drainingSessions.has(sessionId) ||
+        this.dispatchingSessions.has(sessionId)
+      ) {
+        return false
+      }
+      session.status = 'idle'
+      session.activity = undefined
+      return true
+    })
+    if (settled) this.publish(settled)
   }
 
   async listBackgroundTasks(

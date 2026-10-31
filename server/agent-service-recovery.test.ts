@@ -199,6 +199,33 @@ it('does not let a worker idle event settle foreground SDK recovery', async () =
   ])
 })
 
+it('does not settle unattached SDK recovery from stale completion on Stop', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+    session.activity = 'Recovering the interrupted turn'
+  })
+  await f.store.markInterrupted('pending')
+  const recovery = f.store.sdkRecovery('pending')!
+  const before = f.store.get('pending')
+  f.terminal.cancel.mockResolvedValue(false)
+  f.readEvents.mockResolvedValue(sdkRecoveryEvents(true))
+
+  await f.service.cancel('pending')
+
+  expect(f.terminal.cancel).toHaveBeenCalledOnce()
+  expect(f.readEvents).not.toHaveBeenCalled()
+  expect(f.store.sdkRecovery('pending')).toMatchObject({
+    generation: recovery.generation,
+    state: 'pending',
+  })
+  expect(f.store.get('pending')).toMatchObject({
+    status: before?.status,
+    activity: before?.activity,
+    interruption: before?.interruption,
+  })
+})
+
 it('recovers a completed SDK turn under the same provider identity during startup', async () => {
   const f = await fixture(['pending'], 'sdk')
   f.ownership.aggregateError = undefined

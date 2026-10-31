@@ -9184,6 +9184,105 @@ describe('App', () => {
     )
   })
 
+  it('renders an active command-catalog failure instead of silently clearing it', async () => {
+    vi.mocked(listCommands).mockRejectedValueOnce(new Error('Catalog unavailable'))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Catalog unavailable',
+    )
+  })
+
+  it('does not render a stale command-catalog failure after suspension succeeds', async () => {
+    let rejectCatalog: (error: Error) => void = () => {}
+    vi.mocked(listCommands).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectCatalog = reject
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
+    await screen.findByRole('button', { name: 'Resume Project chat' })
+
+    await act(async () => {
+      rejectCatalog(new Error('Late catalog failure'))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Late catalog failure')).toBeNull()
+  })
+
+  it('keeps a suspension refusal when the pending command catalog fails later', async () => {
+    let rejectCatalog: (error: Error) => void = () => {}
+    vi.mocked(listCommands).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectCatalog = reject
+        }),
+    )
+    vi.mocked(suspendSession).mockRejectedValueOnce(
+      new Error('Session can only be suspended while idle'),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Session can only be suspended while idle',
+    )
+
+    await act(async () => {
+      rejectCatalog(new Error('Late catalog failure'))
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Session can only be suspended while idle',
+    )
+    expect(screen.queryByText('Late catalog failure')).toBeNull()
+  })
+
+  it('submits only one suspension while the first request is pending', async () => {
+    let finishSuspend: (value: typeof session) => void = () => {}
+    vi.mocked(suspendSession).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSuspend = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const suspend = screen.getByRole('button', { name: 'Suspend Project chat' })
+    fireEvent.click(suspend)
+    fireEvent.click(suspend)
+
+    expect(suspendSession).toHaveBeenCalledOnce()
+    await act(async () => {
+      finishSuspend({ ...session, suspended: true })
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Resume Project chat' }),
+    ).toBeInTheDocument()
+  })
+
+  it('renders the owning computer refusal when suspension fails', async () => {
+    vi.mocked(suspendSession).mockRejectedValueOnce(
+      new Error('Session can only be suspended while idle'),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Session can only be suspended while idle',
+    )
+  })
+
   it('offers to start a suspended session even though it is not idle', async () => {
     vi.mocked(listSessions).mockResolvedValue([
       { ...session, suspended: true, status: 'error' },

@@ -2132,6 +2132,176 @@ describe('AgentService deletion', () => {
     )
   })
 
+  it('returns an empty command catalog for a suspended session without loading its runtime', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspended-commands-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'resting-commands',
+        cwd: directory,
+        title: 'Resting commands',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    await store.setSuspended('resting-commands', true)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await expect(service.listCommands('resting-commands')).resolves.toEqual([])
+    expect(client.resumedSessionIds).toEqual([])
+    expect(client.createdConfigs).toEqual([])
+  })
+
+  it('suspends once across repeated requests and resumes the same SDK session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-repeat-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({
+      id: created.id,
+      suspended: true,
+    })
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({
+      id: created.id,
+      suspended: true,
+    })
+    expect(client.session.disconnectCount).toBe(1)
+    await expect(
+      service.configureRuntime(created.id, {
+        model: 'fixture-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      }),
+    ).rejects.toMatchObject({
+      message: 'Resume the session before using its provider runtime',
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+
+    await expect(service.resumeSession(created.id)).resolves.toMatchObject({
+      id: created.id,
+      suspended: false,
+    })
+    await expect(service.listCommands(created.id)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'model' })]),
+    )
+    expect(client.resumedSessionIds).toEqual([created.id])
+  })
+
+  it('serializes concurrent repeated suspension without tearing down twice', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-concurrent-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let releaseTasks: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    const tasks = vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await held
+      return listBackgroundTasks(id)
+    })
+
+    const first = service.suspendSession(created.id)
+    const second = service.suspendSession(created.id)
+    await vi.waitFor(() => expect(tasks).toHaveBeenCalled())
+    releaseTasks()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ id: created.id, suspended: true }),
+      expect.objectContaining({ id: created.id, suspended: true }),
+    ])
+    expect(client.session.disconnectCount).toBe(1)
+  })
+
+  it('clears terminal ownership and types runtime changes after suspension', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-suspend-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'terminal-suspend',
+        cwd: directory,
+        title: 'Terminal suspend',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      has: vi.fn(async () => true),
+      stop: vi.fn(async (_id: string, beforeStop?: () => Promise<void> | void) => {
+        await beforeStop?.()
+        return true
+      }),
+      configure: vi.fn(async () => false),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    service['externalSessionIds'].add('terminal-suspend')
+
+    await expect(service.suspendSession('terminal-suspend')).resolves.toMatchObject({
+      suspended: true,
+    })
+    expect(service['externalSessionIds'].has('terminal-suspend')).toBe(false)
+    await expect(
+      service.configureRuntime('terminal-suspend', {
+        model: 'fixture-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      }),
+    ).rejects.toMatchObject({
+      message: 'Resume the session before using its provider runtime',
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+    expect(terminal.configure).not.toHaveBeenCalled()
+  })
+
   it('restarts a queue left standing by a drain that failed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-drain-'))
     directories.push(directory)
@@ -3768,12 +3938,16 @@ describe('AgentService deletion', () => {
         expect(terminal.create).not.toHaveBeenCalled()
         expect(terminal.send).not.toHaveBeenCalled()
         expect(client.resumedSessionIds).toEqual([])
-        const retained = store.get('terminal-owner')
+        let retained = store.get('terminal-owner')
         await expect(service.openSession('terminal-owner')).resolves.toEqual(retained)
         expect(store.shouldRecoverTerminalSession('terminal-owner')).toBe(true)
         await expect(service.activateSession('terminal-owner'))
           .rejects.toThrow(/Reopening saved terminal sessions is not available/)
         await expect(service.listCommands('terminal-owner')).rejects.toThrow(/discovery/)
+        await store.setSuspended('terminal-owner', true)
+        await expect(service.listCommands('terminal-owner')).resolves.toEqual([])
+        await store.setSuspended('terminal-owner', false)
+        retained = store.get('terminal-owner')
         expect(client.resumedSessionIds).toEqual([])
         expect(store.get('terminal-owner')).toEqual(retained)
         await expect(service.sendMessage('terminal-owner', 'Do not assume ownership')).rejects.toThrow(/discovery/)

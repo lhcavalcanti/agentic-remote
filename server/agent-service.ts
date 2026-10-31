@@ -3302,6 +3302,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
     this.assertNotRetained(id, 'changing its runtime')
+    if (stored.suspended || this.suspendingSessions.has(id)) {
+      throw Object.assign(
+        new Error('Resume the session before using its provider runtime'),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
     stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
       throw new RuntimeConfigurationError(
@@ -3609,6 +3615,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
       }
+      this.externalSessionIds.delete(id)
     } else {
       // An attachment already on its way would insert a live runtime after
       // this point, so it is waited for and then let go of rather than left
@@ -6163,8 +6170,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async commandCatalog(sessionId: string) {
-    this.assertTerminalRecoverySettled(sessionId)
     const retained = this.store.get(sessionId)
+    if (retained?.suspended) {
+      return []
+    }
+    this.assertTerminalRecoverySettled(sessionId)
     if (retained?.interruption || retained?.archivedAt) return []
     if (await this.terminalController.has(sessionId)) {
       const stored = this.store.get(sessionId)
@@ -8018,7 +8028,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // under way counts: the pane is killed before the flag is written, and
       // anything reaching here in that gap would attach an SDK owner that
       // outlives the suspension.
-      throw new Error('Resume the session before using it')
+      throw Object.assign(
+        new Error('Resume the session before using its provider runtime'),
+        { statusCode: 409, uncertainDelivery: false },
+      )
     }
     const inFlight = this.loadingSessions.get(sessionId)
     if (inFlight) {

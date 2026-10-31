@@ -10023,10 +10023,12 @@ function App() {
           ])
         }
       })
-      .catch(() => {
+      .catch((caught) => {
         if (active) {
           setCommands([])
           setCommandsKey(selectedKey)
+          setError((current) =>
+            current ?? (caught instanceof Error ? caught.message : String(caught)))
         }
       })
     return () => {

@@ -619,9 +619,10 @@ export async function getSession(
   computerId: string,
   sessionId: string,
   signal?: AbortSignal,
+  options: { passive?: boolean } = {},
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
-    sessionPath(computerId, sessionId),
+    `${sessionPath(computerId, sessionId)}${options.passive ? '?passive=1' : ''}`,
     { signal, cache: 'no-store' },
   )
   return response.session

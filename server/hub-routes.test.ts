@@ -30,6 +30,35 @@ describe('hub routes', () => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
   })
 
+  it('uses the passive session reader when requested', async () => {
+    const getSession = vi.fn(async () => ({ id: 'session-1', messages: [] }))
+    const readSession = vi.fn(async () => ({ id: 'session-1', messages: [] }))
+    const app = Fastify()
+    await registerHubRoutes(
+      app,
+      {
+        getSession,
+        readSession,
+        captureComputerRegistration: () => () => true,
+        on: () => undefined,
+        off: () => undefined,
+      } as unknown as ComputerManager,
+      {} as KnowledgeStore,
+      muteCarrier([]),
+    )
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/computers/computer-1/sessions/session-1?passive=1',
+      headers: { host: 'localhost' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(readSession).toHaveBeenCalledWith('computer-1', 'session-1')
+    expect(getSession).not.toHaveBeenCalled()
+    await app.close()
+  })
+
   it('keeps a cleared conversation silenced when the node drops the mute', async () => {
     const mutes = muteCarrier(['computer-1:session-1'])
     const clearConversation = vi.fn(async () => {

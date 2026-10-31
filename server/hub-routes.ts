@@ -611,14 +611,20 @@ export async function registerHubRoutes(
     },
   )
 
-  app.get<{ Params: SessionParams }>(
+  app.get<{ Params: SessionParams; Querystring: { passive?: string } }>(
     '/api/computers/:computerId/sessions/:sessionId',
-    async (request) => ({
-      session: await manager.getSession(
-        request.params.computerId,
-        request.params.sessionId,
-      ),
-    }),
+    async (request) => {
+      const session = request.query.passive === '1'
+        ? await manager.readSession(
+          request.params.computerId,
+          request.params.sessionId,
+        )
+        : await manager.getSession(
+          request.params.computerId,
+          request.params.sessionId,
+        )
+      return { session }
+    },
   )
 
   app.get<{

@@ -8,20 +8,27 @@ an OpenClaw runtime.
 
 ## Scope and phases
 
-1. **This PR: metadata-only morning review.** Opt-in settings, explicit IANA
+1. **Foundation: metadata-only morning review.** Opt-in settings, explicit IANA
    timezone, fixed 02:00 schedule, durable daily run/lease and deterministic
    local prioritization. Persist a bounded plan with stable IDs. In Oracle,
-   review priority order, move items up/down, skip, mark done or restore.
-   These actions change only the plan, never the source session/task/memory.
-2. **Authoritative source adapters.** Add a durable todo API with completion,
+   review priority order, move items up/down, skip, mark memory/carried review
+   items done, or restore. These actions change only the plan, never the source
+   session/task/memory.
+2. **Trusted completion adapter.** For a session item only, passively read its
+   owning session and propose completion from a successful root
+   `task_complete` result carrying the server's trusted marker. Explicit
+   confirmation revalidates the exact message and stores bounded provenance.
+   This does not mutate the source session or create a general transcript
+   planning input.
+3. **Authoritative source adapters.** Add a durable todo API with completion,
    due date, scope and revision; define owner metadata replay for offline and
    closed sessions. Then collect these sources with bounded cancellable reads,
    visible per-source completeness and scope isolation.
-3. **Semantic planning, separately approved.** Explicitly opt into bounded
+4. **Semantic planning, separately approved.** Explicitly opt into bounded
    redacted summaries, provider egress and spend ceilings; use a read-only
    capability with schema-validated proposals. No planner tool may send
    prompts, answer permissions, create/delete/modify sessions or memory.
-4. **Presentation refinements.** Optional morning delivery after quiet hours
+5. **Presentation refinements.** Optional morning delivery after quiet hours
    through the existing notification policy/outbox; no 02:00 push or speech.
    Do not add a second notification/control plane.
 
@@ -33,8 +40,8 @@ todo store. Structured memory has no todo kind. The UI must name these limits.
 
 ## Safety and privacy
 
-No model calls, embeddings, transcript/prompt reads, directory walks, external
-services, task/session mutations, automatic execution or new memory authority.
+No model calls, embeddings, general transcript/prompt reads, directory walks,
+external services, task/session mutations, automatic execution or new memory authority.
 Use only identity/status/update metadata and structured-memory identity/kind/
 scope/authority/validity metadata. Never persist or render source titles,
 canonical keys, paths, prompts, task descriptions or memory content in a plan.
@@ -47,6 +54,13 @@ records. The planner need not parse any text to prioritize. All metadata is data
 not instructions. Source IDs must be bounded and encoded, never executable URLs.
 The structured-memory store projects metadata before it leaves the store;
 Dreamer does not obtain a full memory snapshot and redact it afterwards.
+
+The narrow completion adapter is the sole content-read exception: it reads the
+exact owning session through remote-aware routing, accepts only a successful
+root `task_complete` marker projected by the server, and returns a bounded
+transient summary plus SHA-256 digest. Plain assistant text, background-agent
+results, failed tools and stale UI state are not completion evidence. Result
+text is never persisted in Dreamer state.
 
 Single trusted hub owner and single process writer; this does not add hostile
 multi-user isolation. APIs inherit hub Host/Origin checks and no-store responses;
@@ -104,8 +118,12 @@ Prune run records only when their replay authority is covered by a fence.
 
 Morning writes carry snapshot revision plus run/item IDs; reject concurrent
 stale reorder/status requests with 409 and refresh. Reorder requires the exact
-item set, not a lossy filtered subset. Done means "done in this plan", not
-completion of the linked work. Display failures, empty results, off mode and
+item set, not a lossy filtered subset. For memory and carried items, Done means
+"done in this plan", not completion of linked work. Session items do not expose
+generic Done: **Review completion** is available only for transient trusted
+evidence, and **Confirm completed** revalidates it before persisting
+computer/session/message/tool IDs, digest, completion time and confirmation
+time. The same item/evidence pair is idempotent. Display failures, empty results, off mode and
 metadata-only coverage explicitly. No overnight notification; ordinary morning
 opening of Oracle reads the persisted plan, not triggers a hidden model turn.
 
@@ -119,7 +137,8 @@ Shared types live in `shared/dreamer.ts`:
   `coverage: string[]`, `omitted: number`.
 - `DreamerPlanItem`: `id`, `label`, `reason`, `status: pending|skipped|done`,
   `source: session|memory|carry`, optional `computerId`, `sessionId`,
-  `memoryId`. Labels/reasons are generic server-authored text only.
+  `memoryId`, transient `completionCandidate`, and persisted metadata-only
+  `completion`. Labels/reasons are generic server-authored text only.
 
 Routes (JSON snapshot responses, no envelope):
 
@@ -128,7 +147,11 @@ GET /api/manager/dreamer
 PUT /api/manager/dreamer/settings
   { revision, enabled, timeZone }
 PUT /api/manager/dreamer/plan
-  { revision, planId, order?: string[], item?: { id, status } }
+  { revision, planId, exactly one of:
+    order: string[]
+    item: { id, status }
+    completion: { itemId, messageId, resultDigest }
+  }
 ```
 
 No manual run endpoint, task mutations, force-unlock or model tool. All invalid
@@ -146,10 +169,12 @@ rollback; concurrent initialization and edits cannot lose state.
 Planner tests use synthetic secret-bearing titles/prompts/memory values and
 prove no text is collected or persisted, zero source mutations/model calls,
 correct tombstone/expiry/mode filters, deterministic order/IDs, visible coverage
-and bounded overflow. Route tests exercise settings persistence, daily
-publication and reorder/skip/done with stale-edit rejection. UI tests exercise
-enable/disable/timezone errors, plan ordering, skip/done/restore, error recovery,
-empty state and explicit unchanged-source-state wording.
+and bounded overflow. Route tests exercise settings persistence, daily publication,
+reorder/skip/review-state done, verified completion, idempotency, malformed or
+mixed mutations, and stale-edit rejection. UI tests exercise
+enable/disable/timezone errors, plan ordering, skip/done/restore, explicit
+completion confirmation, error recovery, empty state and unchanged-source-state
+wording.
 
 ## Exact follow-ups before claiming the complete requested feature
 

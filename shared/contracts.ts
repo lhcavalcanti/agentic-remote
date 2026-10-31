@@ -83,6 +83,12 @@ export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type ActivityKind = 'tool' | 'skill' | 'agent'
 
+export interface TaskCompletionEvidence {
+  source: 'root-task-complete'
+  toolCallId: string
+  completedAt: string
+}
+
 export interface ChatMessage {
   id: string
   role: MessageRole
@@ -94,6 +100,7 @@ export interface ChatMessage {
   activityGroupId?: string
   activityResult?: string
   activityDurationMs?: number
+  taskCompletion?: TaskCompletionEvidence
 }
 
 export interface PermissionOption {

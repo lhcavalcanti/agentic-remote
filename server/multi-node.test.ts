@@ -484,7 +484,10 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
-  async listCommands(): Promise<SlashCommand[]> {
+  async listCommands(id: string): Promise<SlashCommand[]> {
+    if (this.sessions.get(id)?.suspended) {
+      return []
+    }
     return [
       {
         name: 'model',
@@ -1362,6 +1365,168 @@ describe('multi-node hub', () => {
       await expect(manager.readSession(hub.identity.info.id, 'missing')).rejects.toMatchObject({ statusCode: 404 })
       await expect(manager.readSession(remote.identity.info.id, 'missing')).rejects.toMatchObject({ statusCode: 404 })
       expect(remoteOpen).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('keeps local and remote suspend refreshes explicit, idempotent, and owner-routed', async () => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    const remoteSuspend = vi.spyOn(remoteService, 'suspendSession')
+    const remoteResume = vi.spyOn(remoteService, 'resumeSession')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-suspend-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-suspend-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'suspend-node',
+        },
+      })).statusCode).toBe(201)
+
+      for (const target of [
+        { computerId: hub.identity.info.id, sessionId: 'local-session' },
+        { computerId: remote.identity.info.id, sessionId: 'remote-session' },
+      ]) {
+        const base = `/api/computers/${target.computerId}/sessions/${target.sessionId}`
+        const suspended = await hub.app.inject({
+          method: 'POST',
+          url: `${base}/suspend`,
+          payload: {},
+        })
+        expect(suspended.statusCode, suspended.body).toBe(200)
+        expect(suspended.json().session).toMatchObject({
+          id: target.sessionId,
+          computerId: target.computerId,
+          suspended: true,
+        })
+
+        const detail = await hub.app.inject({ method: 'GET', url: base })
+        expect(detail.statusCode, detail.body).toBe(200)
+        expect(detail.json().session).toMatchObject({
+          id: target.sessionId,
+          computerId: target.computerId,
+          suspended: true,
+        })
+        const commands = await hub.app.inject({
+          method: 'GET',
+          url: `${base}/commands`,
+        })
+        expect(commands.statusCode, commands.body).toBe(200)
+        expect(commands.json()).toEqual({ commands: [] })
+
+        const repeated = await hub.app.inject({
+          method: 'POST',
+          url: `${base}/suspend`,
+          payload: {},
+        })
+        expect(repeated.statusCode, repeated.body).toBe(200)
+        expect(repeated.json().session.suspended).toBe(true)
+
+        const resumed = await hub.app.inject({
+          method: 'POST',
+          url: `${base}/resume`,
+          payload: {},
+        })
+        expect(resumed.statusCode, resumed.body).toBe(200)
+        expect(resumed.json().session).toMatchObject({
+          id: target.sessionId,
+          computerId: target.computerId,
+          suspended: false,
+        })
+        const resumedCommands = await hub.app.inject({
+          method: 'GET',
+          url: `${base}/commands`,
+        })
+        expect(resumedCommands.statusCode, resumedCommands.body).toBe(200)
+        expect(resumedCommands.json().commands).toEqual([
+          expect.objectContaining({ name: 'model' }),
+        ])
+      }
+
+      expect(remoteSuspend).toHaveBeenCalledTimes(2)
+      expect(remoteSuspend).toHaveBeenCalledWith('remote-session')
+      expect(remoteResume).toHaveBeenCalledOnce()
+      expect(remoteResume).toHaveBeenCalledWith('remote-session')
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('preserves typed remote owner conflicts and sanitizes unexpected provider failures', async () => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-suspend-errors-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-suspend-errors-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'failing-node',
+        },
+      })).statusCode).toBe(201)
+      const commandsUrl =
+        `/api/computers/${remote.identity.info.id}/sessions/remote-session/commands`
+      const listCommands = vi.spyOn(remoteService, 'listCommands')
+
+      listCommands.mockRejectedValueOnce(Object.assign(
+        new Error('Resume the session before using its provider runtime'),
+        { statusCode: 409, uncertainDelivery: false },
+      ))
+      const conflict = await hub.app.inject({
+        method: 'GET',
+        url: commandsUrl,
+      })
+      expect(conflict.statusCode, conflict.body).toBe(409)
+      expect(conflict.json()).toEqual({
+        error: 'Resume the session before using its provider runtime',
+        uncertainDelivery: false,
+      })
+
+      listCommands.mockRejectedValueOnce(new Error('Provider credentials leaked internally'))
+      const unexpected = await hub.app.inject({
+        method: 'GET',
+        url: commandsUrl,
+      })
+      expect(unexpected.statusCode, unexpected.body).toBe(500)
+      expect(unexpected.json()).toEqual({
+        error: 'Unexpected server error',
+        uncertainDelivery: true,
+      })
+      expect(unexpected.body).not.toContain('credentials')
     } finally {
       await Promise.all([hub.app.close(), remote.app.close()])
     }

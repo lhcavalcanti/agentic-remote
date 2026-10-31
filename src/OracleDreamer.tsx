@@ -1,16 +1,63 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DreamerPlanItem, DreamerSnapshot } from '../shared/dreamer'
+import {
+  isDreamerSessionItem,
+  type DreamerPlanItem,
+  type DreamerSnapshot,
+} from '../shared/dreamer'
 import { DreamerApiError, getDreamer, saveDreamerSettings, updateDreamerPlan } from './dreamer-api'
 import type { DreamerPlanEdit } from './dreamer-api'
 import './dreamer.css'
 
 const reason = (error: unknown) => error instanceof Error ? error.message : 'Dreamer could not be reached.'
 const dreamerChanged = 'oracle-dreamer-changed'
+export const authoritativeRefresh = 'agentic-remote:authoritative-refresh'
+let activeDreamerViews = 0
+
+class AuthoritativeRefreshRequest extends Event {
+  readonly pending: Promise<unknown>[] = []
+
+  waitUntil(work: Promise<unknown>) {
+    this.pending.push(work)
+  }
+}
+
+export function waitUntilAuthoritativeRefresh(event: Event, work: Promise<unknown>) {
+  if (event instanceof AuthoritativeRefreshRequest) {
+    event.waitUntil(work)
+  } else {
+    void work.catch(() => undefined)
+  }
+}
+
+export async function dispatchAuthoritativeRefresh(): Promise<void> {
+  const event = new AuthoritativeRefreshRequest(authoritativeRefresh)
+  window.dispatchEvent(event)
+  const settled = await Promise.allSettled(event.pending)
+  const failed = settled.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  )
+  if (failed) throw failed.reason
+}
+
+export function DreamerRefreshOwner() {
+  useEffect(() => {
+    const update = (event: Event) => {
+      if (activeDreamerViews === 0) {
+        waitUntilAuthoritativeRefresh(event, getDreamer())
+      }
+    }
+    window.addEventListener(authoritativeRefresh, update)
+    return () => window.removeEventListener(authoritativeRefresh, update)
+  }, [])
+  return null
+}
 
 function useDreamer(active: boolean, onRefreshed?: () => void) {
   const [snapshot, publishSnapshot] = useState<DreamerSnapshot>()
   const [error, setError] = useState<string>()
   const [unavailable, setUnavailable] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [stale, setStale] = useState(false)
   const latest = useRef<DreamerSnapshot | undefined>(undefined)
   const current = useRef(0)
   const acceptSnapshot = useCallback((next: DreamerSnapshot) => {
@@ -19,6 +66,7 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
     publishSnapshot(next)
     setUnavailable(!next.available)
     setError(undefined)
+    setStale(false)
     return true
   }, [])
   const setSnapshot = useCallback((next: DreamerSnapshot) => {
@@ -29,8 +77,9 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
     current.current += 1
     if (!(caught instanceof DreamerApiError) || caught.status >= 500) setUnavailable(true)
   }, [])
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (rejectOnError = false) => {
     const request = ++current.current
+    setRefreshing(true)
     try {
       const next = await getDreamer()
       if (request === current.current) {
@@ -41,28 +90,39 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
     } catch (caught) {
       if (request === current.current) {
         setError(reason(caught))
+        setStale(Boolean(latest.current))
         if (!(caught instanceof DreamerApiError) || caught.status >= 500) setUnavailable(true)
       }
+      if (rejectOnError) throw caught
       return undefined
+    } finally {
+      if (request === current.current) setRefreshing(false)
     }
   }, [acceptSnapshot, onRefreshed])
   useEffect(() => {
     if (!active) return
+    activeDreamerViews += 1
     let disposed = false
     void Promise.resolve().then(() => { if (!disposed) void refresh() })
     const update = () => { if (!disposed) void refresh() }
+    const refreshAuthoritative = (event: Event) => {
+      if (!disposed) waitUntilAuthoritativeRefresh(event, refresh(true))
+    }
     const timer = window.setInterval(update, 30_000)
     window.addEventListener(dreamerChanged, update)
+    window.addEventListener(authoritativeRefresh, refreshAuthoritative)
     window.addEventListener('focus', update)
     return () => {
       disposed = true
+      activeDreamerViews -= 1
       current.current += 1
       window.clearInterval(timer)
       window.removeEventListener(dreamerChanged, update)
+      window.removeEventListener(authoritativeRefresh, refreshAuthoritative)
       window.removeEventListener('focus', update)
     }
   }, [active, refresh])
-  return { snapshot, setSnapshot, error, unavailable, failMutation, refresh }
+  return { snapshot, setSnapshot, error, unavailable, refreshing, stale, failMutation, refresh }
 }
 
 export function DreamerSettings({ active = true }: { active?: boolean }) {
@@ -164,18 +224,29 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [saved, setSaved] = useState(false)
+  const [confirmingCompletion, setConfirmingCompletion] = useState<string>()
   const onRefreshed = useCallback(() => setError(undefined), [])
-  const { snapshot, setSnapshot, error: loadError, unavailable, failMutation, refresh } = useDreamer(active, onRefreshed)
+  const {
+    snapshot,
+    setSnapshot,
+    error: loadError,
+    unavailable,
+    refreshing,
+    stale,
+    failMutation,
+    refresh,
+  } = useDreamer(active, onRefreshed)
   const plan = snapshot?.plan
   const readOnly = saving || unavailable || !snapshot?.available
 
-  async function edit(change: Pick<DreamerPlanEdit, 'order' | 'item'>) {
+  async function edit(change: Pick<DreamerPlanEdit, 'order' | 'item' | 'completion'>) {
     if (!snapshot || !plan || readOnly) return
     setSaving(true)
     setError(undefined)
     setSaved(false)
     try {
       setSnapshot(await updateDreamerPlan({ revision: snapshot.revision, planId: plan.id, ...change }))
+      setConfirmingCompletion(undefined)
       setSaved(true)
     } catch (caught) {
       failMutation(caught)
@@ -201,14 +272,32 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
   function disposition(item: DreamerPlanItem, status: DreamerPlanItem['status']) {
     void edit({ item: { id: item.id, status } })
   }
+  function confirmCompletion(item: DreamerPlanItem) {
+    const candidate = item.completionCandidate
+    if (!candidate) return
+    void edit({
+      completion: {
+        itemId: item.id,
+        messageId: candidate.messageId,
+        resultDigest: candidate.resultDigest,
+      },
+    })
+  }
   if (snapshot && !snapshot.settings.enabled && !plan && !snapshot.lastError && !loadError) return null
 
   return (
     <details className="dreamer-morning">
       <summary>Morning plan</summary>
       <div className="dreamer-morning__body">
+        {refreshing || stale ? (
+          <p aria-label="Dreamer data freshness" className="dialog-message" role="status">
+            {refreshing ? 'Refreshing authoritative review data...' : 'Data may be stale'}
+          </p>
+        ) : null}
         {plan ? <p className="dreamer-date">{plan.localDate} ({plan.timeZone})</p> : null}
-        <p className="dialog-message">Changes only this plan, not your sessions or tasks. Metadata-only suggestions, not verified outcomes.</p>
+        <p className="dialog-message">
+          Review actions update this plan only. A session is marked complete only after you confirm verified task-completion evidence.
+        </p>
         {error || loadError || snapshot?.lastError ? <p className="form-error" role="alert">{error ?? loadError ?? snapshot?.lastError}</p> : null}
         {plan ? (
           <>
@@ -219,13 +308,72 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
                   <p>{item.reason}</p>
                   {item.sessionId ? <p className="dreamer-item__source">Session {item.sessionId.slice(0, 12)}</p> : null}
                   {item.memoryId ? <p className="dreamer-item__source">Memory {item.memoryId.slice(0, 12)}</p> : null}
+                  {item.completion ? (
+                    <p className="dreamer-item__source">
+                      Completed from verified session evidence at {item.completion.completedAt}
+                    </p>
+                  ) : null}
+                  {item.completionSourceUnavailable ? (
+                    <p className="dreamer-item__source" role="status">
+                      Completion evidence is unavailable. Refresh the morning plan to retry.
+                    </p>
+                  ) : null}
+                  {confirmingCompletion === item.id && item.completionCandidate ? (
+                    <div
+                      aria-label={`Completion evidence for ${item.label}`}
+                      className="dreamer-completion"
+                      role="group"
+                    >
+                      <strong>Verified session result</strong>
+                      <p className="dreamer-completion__summary">
+                        {item.completionCandidate.summary}
+                      </p>
+                      <p className="dreamer-item__source">
+                        Session {item.completionCandidate.sessionId.slice(0, 12)} · completed {item.completionCandidate.completedAt}
+                      </p>
+                      <div className="dreamer-actions">
+                        <button
+                          aria-label={`Cancel completion for ${item.label}`}
+                          className="secondary-button"
+                          disabled={readOnly}
+                          onClick={() => setConfirmingCompletion(undefined)}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          aria-label={`Confirm ${item.label} completed`}
+                          className="primary-button"
+                          disabled={readOnly}
+                          onClick={() => confirmCompletion(item)}
+                          type="button"
+                        >
+                          Confirm completed
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="dreamer-actions">
                     <button aria-label={`Move ${item.label} up`} className="secondary-button" disabled={readOnly || index === 0} onClick={() => move(index, -1)} type="button">Up</button>
                     <button aria-label={`Move ${item.label} down`} className="secondary-button" disabled={readOnly || index === plan.items.length - 1} onClick={() => move(index, 1)} type="button">Down</button>
                     {item.status === 'pending' ? (
                       <>
                         <button className="secondary-button" disabled={readOnly} onClick={() => disposition(item, 'skipped')} type="button">Skip</button>
-                        <button className="secondary-button" disabled={readOnly} onClick={() => disposition(item, 'done')} type="button">Done</button>
+                        {isDreamerSessionItem(item) ? (
+                          item.completionCandidate ? (
+                            <button
+                              aria-label={`Review completion evidence for ${item.label}`}
+                              className="secondary-button"
+                              disabled={readOnly}
+                              onClick={() => setConfirmingCompletion(item.id)}
+                              type="button"
+                            >
+                              Review completion
+                            </button>
+                          ) : null
+                        ) : (
+                          <button className="secondary-button" disabled={readOnly} onClick={() => disposition(item, 'done')} type="button">Done</button>
+                        )}
                       </>
                     ) : <button aria-label={`Restore ${item.label}`} className="secondary-button" disabled={readOnly} onClick={() => disposition(item, 'pending')} type="button">Restore</button>}
                   </div>

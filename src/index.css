@@ -1318,6 +1318,22 @@ button {
   flex: 0 0 auto;
 }
 
+.session-list__refresh {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+
+.session-list__freshness {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.session-list__freshness--stale {
+  color: var(--warning);
+}
+
 .session-list__title > small {
   color: var(--muted);
   font-size: 10px;
@@ -3351,8 +3367,17 @@ button {
 
 .composer-area > .composer,
 .composer-area > .composer-runtime,
+.composer-area > .composer-draft-status,
 .composer-area > .composer-hint {
   flex: 0 0 auto;
+}
+
+.composer-draft-status {
+  width: 100%;
+  max-width: var(--composer-max-width);
+  margin: 5px auto 0;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .queued-prompts {
@@ -7630,6 +7655,23 @@ button {
 
 .manager-panel__status--offline {
   color: var(--danger);
+}
+
+.manager-panel__freshness {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.manager-panel__freshness .secondary-button {
+  flex: none;
+  padding: 5px 8px;
 }
 
 .manager-panel__confirm {

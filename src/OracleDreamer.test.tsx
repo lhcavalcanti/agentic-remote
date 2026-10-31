@@ -36,6 +36,15 @@ const plan = {
   ],
 }
 const ready = { ...initial, settings: { ...initial.settings, enabled: true }, plan }
+const completionCandidate = {
+  computerId: 'computer-a',
+  sessionId: 'session-a',
+  messageId: 'completion-message',
+  toolCallId: 'task-complete-call',
+  completedAt: '2026-10-29T03:20:00.000Z',
+  resultDigest: 'a'.repeat(64),
+  summary: '**Done.** The requested change passed its focused checks.',
+}
 
 async function openMorningPlan() {
   fireEvent.click(await screen.findByText('Morning plan'))
@@ -141,10 +150,101 @@ describe('Dreamer settings and morning review', () => {
     expect(screen.getByText(/2026-10-29/)).toBeInTheDocument()
     expect(screen.getByText('Durable todos unavailable.')).toBeInTheDocument()
     expect(screen.getByText(/2 additional candidates/)).toBeInTheDocument()
-    expect(screen.getByText(/Changes only this plan/)).toBeInTheDocument()
+    expect(screen.getByText(/Review actions update this plan only/)).toBeInTheDocument()
     const items = within(screen.getByRole('list', { name: 'Dreamer priorities' })).getAllByRole('listitem')
     expect(items[0]).toHaveTextContent('Review failed session')
     expect(items[1]).toHaveTextContent('Review remembered decision')
+  })
+
+  it('requires explicit confirmation before applying authoritative session completion evidence', async () => {
+    const proposed = {
+      ...ready,
+      plan: {
+        ...plan,
+        items: [{
+          ...plan.items[0],
+          source: 'carry' as const,
+          computerId: 'computer-a',
+          sessionId: 'session-a',
+          completionCandidate,
+        }, plan.items[1]],
+      },
+    }
+    const completed = {
+      ...proposed,
+      revision: 4,
+      plan: {
+        ...proposed.plan,
+        items: [{
+          ...proposed.plan.items[0],
+          status: 'done' as const,
+          completionCandidate: undefined,
+          completion: {
+            ...completionCandidate,
+            summary: undefined,
+            confirmedAt: '2026-10-29T04:00:00.000Z',
+          },
+        }, plan.items[1]],
+      },
+    }
+    vi.mocked(getDreamer).mockResolvedValue(proposed)
+    vi.mocked(updateDreamerPlan).mockResolvedValue(completed)
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+    const sessionItem = within(screen.getByRole('list', {
+      name: 'Dreamer priorities',
+    })).getAllByRole('listitem')[0]
+
+    expect(within(sessionItem).queryByRole('button', { name: 'Done' })).toBeNull()
+    fireEvent.click(within(sessionItem).getByRole('button', {
+      name: 'Review completion evidence for Review failed session',
+    }))
+    expect(within(sessionItem).getByText(/requested change passed/)).toBeInTheDocument()
+    fireEvent.click(within(sessionItem).getByRole('button', {
+      name: 'Confirm Review failed session completed',
+    }))
+
+    await screen.findByRole('button', { name: 'Restore Review failed session' })
+    expect(updateDreamerPlan).toHaveBeenCalledWith({
+      revision: 3,
+      planId: 'daily-plan',
+      completion: {
+        itemId: 'a',
+        messageId: 'completion-message',
+        resultDigest: 'a'.repeat(64),
+      },
+    })
+  })
+
+  it('does not offer completion for unverified session text', async () => {
+    vi.mocked(getDreamer).mockResolvedValue(ready)
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+    const items = within(screen.getByRole('list', {
+      name: 'Dreamer priorities',
+    })).getAllByRole('listitem')
+    expect(within(items[0]).queryByRole('button', { name: 'Done' })).toBeNull()
+    expect(within(items[0]).queryByRole('button', {
+      name: /completion evidence/i,
+    })).toBeNull()
+    expect(within(items[1]).getByRole('button', { name: 'Done' })).toBeEnabled()
+  })
+
+  it('distinguishes an unavailable completion source from unverified text', async () => {
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...ready,
+      plan: {
+        ...plan,
+        items: [{ ...plan.items[0], completionSourceUnavailable: true }],
+      },
+    })
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    expect(screen.getByText(
+      'Completion evidence is unavailable. Refresh the morning plan to retry.',
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh morning plan' })).toBeEnabled()
   })
 
   it('persists exact reordered IDs using the current plan and revision', async () => {
@@ -163,22 +263,31 @@ describe('Dreamer settings and morning review', () => {
   })
 
   it.each(['done', 'skipped'] as const)('persists %s only in the plan and offers restore', async (status) => {
+    const targetIndex = status === 'done' ? 1 : 0
+    const target = plan.items[targetIndex]
     vi.mocked(getDreamer).mockResolvedValue(ready)
     vi.mocked(updateDreamerPlan).mockResolvedValue({
-      ...ready, revision: 4, plan: { ...plan, items: [{ ...plan.items[0], status }, plan.items[1]] },
+      ...ready,
+      revision: 4,
+      plan: {
+        ...plan,
+        items: plan.items.map((item, index) =>
+          index === targetIndex ? { ...item, status } : item),
+      },
     })
     render(<DreamerMorningPlan />)
     await openMorningPlan()
-    const first = within(screen.getByRole('list', { name: 'Dreamer priorities' })).getAllByRole('listitem')[0]
-    fireEvent.click(within(first).getByRole('button', { name: status === 'done' ? 'Done' : 'Skip' }))
-    await screen.findByRole('button', { name: 'Restore Review failed session' })
+    const item = within(screen.getByRole('list', { name: 'Dreamer priorities' }))
+      .getAllByRole('listitem')[targetIndex]
+    fireEvent.click(within(item).getByRole('button', { name: status === 'done' ? 'Done' : 'Skip' }))
+    await screen.findByRole('button', { name: `Restore ${target.label}` })
     expect(updateDreamerPlan).toHaveBeenCalledWith({
-      revision: 3, planId: 'daily-plan', item: { id: 'a', status },
+      revision: 3, planId: 'daily-plan', item: { id: target.id, status },
     })
     vi.mocked(updateDreamerPlan).mockResolvedValue({ ...ready, revision: 5 })
-    fireEvent.click(screen.getByRole('button', { name: 'Restore Review failed session' }))
+    fireEvent.click(screen.getByRole('button', { name: `Restore ${target.label}` }))
     await waitFor(() => expect(updateDreamerPlan).toHaveBeenLastCalledWith({
-      revision: 4, planId: 'daily-plan', item: { id: 'a', status: 'pending' },
+      revision: 4, planId: 'daily-plan', item: { id: target.id, status: 'pending' },
     }))
   })
 
@@ -229,6 +338,23 @@ describe('Dreamer settings and morning review', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(screen.getByText('Review failed session')).toBeInTheDocument()
     expect(updateDreamerPlan).not.toHaveBeenCalled()
+  })
+
+  it('refreshes on the authoritative app signal and keeps stale plan data visible on failure', async () => {
+    vi.mocked(getDreamer).mockResolvedValueOnce(ready)
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    vi.mocked(getDreamer).mockRejectedValueOnce(new Error('Hub offline.'))
+    await act(async () => {
+      window.dispatchEvent(new Event('agentic-remote:authoritative-refresh'))
+    })
+
+    expect(getDreamer).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('Review failed session')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Dreamer data freshness' }))
+      .toHaveTextContent('Data may be stale')
+    expect(screen.getByRole('alert')).toHaveTextContent('Hub offline.')
   })
 
   it('keeps the original settings revision on a draft across background refresh', async () => {

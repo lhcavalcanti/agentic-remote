@@ -1321,6 +1321,11 @@ describe('SessionStore', () => {
         content: '**Done.**',
         createdAt: '2026-07-22T00:00:03.000Z',
         streaming: false,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task',
+          completedAt: '2026-07-22T00:00:03.000Z',
+        },
       },
     ])
   })

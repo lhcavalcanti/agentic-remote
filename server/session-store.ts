@@ -2794,6 +2794,11 @@ export class SessionStore {
         content,
         createdAt: completedAt,
         streaming: false,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId,
+          completedAt,
+        },
       })
       session.activity = undefined
       session.updatedAt = completedAt

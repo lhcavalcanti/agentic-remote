@@ -131,6 +131,10 @@ history is not transferred between providers.
   session ID and reconciles its durable event history. Completed turns return
   to idle; incomplete turns remain explicitly interrupted because the SDK
   cannot reattach the old child process or model stream.
+- SDK recovery completes on the owning computer before its HTTP listener starts.
+  Browser startup, socket reconnect, and visibility return only refresh the
+  authoritative session snapshot. They do not call Resume, so overlapping
+  refreshes cannot create a second SDK owner.
 - Copilot SDK permission requests can be reconstructed only when
   `permissions.pendingRequests()` reports one exact durable request. Agentic
   Remote answers it through `handlePendingPermissionRequest()`, persists the

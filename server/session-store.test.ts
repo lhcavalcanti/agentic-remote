@@ -223,7 +223,7 @@ describe('SessionStore', () => {
         requestId: 'public-question',
         kind: 'user-input',
         input: { answer: 'Left', wasFreeform: false },
-      }, 'pendingUserInput')
+      }, 'pendingUserInput', () => false)
       await store.updateStatus('finished-before-reply-settlement', 'idle')
       await store.close()
 

@@ -7997,6 +7997,47 @@ describe('App', () => {
     expect(screen.getByText('Recovering')).toBeInTheDocument()
   })
 
+  it('refreshes recovered SDK state on reconnect and visibility without issuing resume requests', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const recovering: ManagedSession = {
+      ...session,
+      revision: 1,
+      status: 'error',
+      interruption: {
+        detectedAt: '2026-10-24T00:00:00Z',
+        previousStatus: 'running',
+      },
+      restartRecovery: {
+        state: 'recovering',
+        detectedAt: '2026-10-24T00:00:00Z',
+      },
+    }
+    const recovered: ManagedSession = {
+      ...session,
+      revision: 2,
+      status: 'idle',
+    }
+    let current = recovering
+    vi.mocked(listSessions).mockImplementation(async () => [current])
+    vi.mocked(getSession).mockImplementation(async () => current)
+
+    render(<App />)
+
+    expect(await screen.findByText('Recovering')).toBeInTheDocument()
+    expect(screen.getByLabelText('Message')).toBeDisabled()
+    current = recovered
+
+    act(() => {
+      MockWebSocket.instances[0]?.onopen?.()
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    await waitFor(() => expect(screen.queryByText('Recovering')).toBeNull())
+    expect(screen.getByLabelText('Message')).toBeEnabled()
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(activateSession).not.toHaveBeenCalled()
+  })
+
   it('removes an archived row without deleting the selected transcript or draft', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.mocked(activateSession).mockResolvedValue(session)

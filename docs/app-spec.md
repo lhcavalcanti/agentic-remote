@@ -193,7 +193,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   Missing terminal owners and unrecoverable SDK turns MUST remain reviewable;
   expired user-input and elicitation callbacks MUST NOT become answerable by
   merely reopening a record. A recovered durable permission is the only SDK
-  callback exception.
+  callback exception. The owning service MUST finish automatic SDK recovery
+  before it accepts browser traffic. Browser bootstrap, event-stream
+  reconnect, and foreground return MUST refresh authoritative session state;
+  they MUST NOT issue a second resume mutation or present continuity before
+  the owner reports recovery complete.
   Explicit Close/Delete MUST retain their existing user-confirmed semantics.
   See [Session retention](session-retention.md) for settings and cleanup cadence.
 - An open new-session dialog MUST preserve user choices across computer status

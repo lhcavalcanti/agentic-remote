@@ -8627,7 +8627,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             },
       )
       if (settled) this.publish(settled)
-    } catch {
+    } catch (error) {
       const failed = await this.store.settleSdkRecovery(
         sessionId,
         recovery.generation,
@@ -8636,7 +8636,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           message: 'The saved provider identity could not be resumed. History and queued work remain retained.',
         },
       )
-      if (failed) this.publish(failed)
+      if (failed) {
+        this.publish(failed)
+        this.publishError(
+          sessionId,
+          new Error(
+            'SDK restart recovery failed. The saved provider identity could not be resumed.',
+            { cause: error },
+          ),
+        )
+      }
     }
   }
 

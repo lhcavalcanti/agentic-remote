@@ -129,7 +129,7 @@ it('requires durable completion before a live idle event clears an accepted SDK 
   await f.store.acceptLiveSdkReply('pending', {
     requestId: 'public-question', kind: 'user-input',
     input: { answer: 'Left', wasFreeform: false },
-  }, 'pendingUserInput')
+  }, 'pendingUserInput', () => false)
   await f.store.markInterrupted('pending')
   const recovery = await f.store.claimSdkRecovery('pending')
   const callbacks: Array<(event: SessionEvent) => void> = []
@@ -235,6 +235,11 @@ it('fails closed when a populated SDK provider identity is missing', async () =>
       message: expect.stringMatching(/provider identity/i),
     },
   })
+  expect(f.events).toContainEqual({
+    type: 'error',
+    sessionId: 'pending',
+    message: 'SDK restart recovery failed. The saved provider identity could not be resumed.',
+  })
 })
 
 it('coalesces duplicate SDK startup recovery attempts into one provider resume', async () => {
@@ -260,6 +265,25 @@ it('coalesces duplicate SDK startup recovery attempts into one provider resume',
 
   expect(f.client.resumeSession).toHaveBeenCalledTimes(1)
   expect(f.service.getSession('pending')?.restartRecovery).toBeUndefined()
+})
+
+it('skips repeated SDK recovery triggers while this node already owns the runtime', async () => {
+  const f = await fixture(['pending'], 'sdk')
+  await f.store.update('pending', (session) => {
+    session.status = 'running'
+  })
+  await f.store.markInterrupted('pending')
+  const owner = sdkSession('pending')
+  f.service['installSdkOwner'](owner, 'pending', 0)
+  f.client.resumeSession = vi.fn(async () => sdkSession('pending'))
+
+  await Promise.all([
+    f.service['recoverSdkSessions'](),
+    f.service['recoverSdkSessions'](),
+  ])
+
+  expect(f.client.resumeSession).not.toHaveBeenCalled()
+  expect(f.service['sessions'].get('pending')).toBe(owner)
 })
 
 it('releases a preserved SDK FIFO in order only after completed-turn recovery', async () => {
@@ -613,6 +637,7 @@ it.each(['permission', 'user-input', 'elicitation'] as const)(
               },
             },
       kind === 'permission' ? 'pendingPermission' : 'pendingUserInput',
+      () => false,
     )
     const owner = sdkSession('pending')
     owner.getEvents = vi.fn(async () =>
@@ -680,7 +705,7 @@ it('retains answer-delivery uncertainty even when a later SDK turn completion is
     requestId: 'public-question',
     kind: 'user-input',
     input: { answer: 'Left', wasFreeform: false },
-  }, 'pendingUserInput')
+  }, 'pendingUserInput', () => false)
   await f.store.updateStatus('pending', 'idle')
   const completedAt = new Date(
     Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt) + 1_000,
@@ -720,7 +745,7 @@ it('does not treat a terminal SDK event older than an accepted answer as its con
   await f.store.acceptLiveSdkReply('pending', {
     requestId: 'public-question', kind: 'user-input',
     input: { answer: 'Left', wasFreeform: false },
-  }, 'pendingUserInput')
+  }, 'pendingUserInput', () => false)
   await f.store.updateStatus('pending', 'idle')
   const completedBeforeChoice = new Date(
     Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt) - 1_000,
@@ -758,7 +783,7 @@ it('does not mistake an ephemeral provider idle event for durable answer complet
   await f.store.acceptLiveSdkReply('pending', {
     requestId: 'public-question', kind: 'user-input',
     input: { answer: 'Left', wasFreeform: false },
-  }, 'pendingUserInput')
+  }, 'pendingUserInput', () => false)
   const acceptedAt = Date.parse(f.store.sdkAcceptedReply('pending')!.acceptedAt)
   const owner = sdkSession('pending')
   owner.getEvents = vi.fn(async () => [

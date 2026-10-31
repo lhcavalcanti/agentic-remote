@@ -1,6 +1,6 @@
 # Copilot SDK Restart Recovery
 
-Status: Proposed for review
+Status: Implemented on `feat/sdk-restart-recovery`; pending review
 
 ## Goal
 
@@ -205,6 +205,13 @@ After SDK startup and provider discovery, before SDK queue drainage:
 An empty session whose provider state is missing may retain the existing
 same-ID empty fallback because it has no conversation context to misrepresent.
 A populated session fails closed.
+
+The owning service completes this algorithm before Fastify listens. The
+browser does not trigger provider recovery: its initial snapshot, event-socket
+reconnect, and visible-tab refresh only replace local state with the owner's
+authoritative result. Existing snapshot generations coalesce overlapping
+reads, while server recovery generations and `sdkRecoveryRuns` coalesce
+provider ownership.
 
 ## Permission Recovery
 

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DreamerPlanItem, DreamerSnapshot } from '../shared/dreamer'
+import {
+  isDreamerSessionItem,
+  type DreamerPlanItem,
+  type DreamerSnapshot,
+} from '../shared/dreamer'
 import { DreamerApiError, getDreamer, saveDreamerSettings, updateDreamerPlan } from './dreamer-api'
 import type { DreamerPlanEdit } from './dreamer-api'
 import './dreamer.css'
@@ -355,7 +359,7 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
                     {item.status === 'pending' ? (
                       <>
                         <button className="secondary-button" disabled={readOnly} onClick={() => disposition(item, 'skipped')} type="button">Skip</button>
-                        {item.source === 'session' ? (
+                        {isDreamerSessionItem(item) ? (
                           item.completionCandidate ? (
                             <button
                               aria-label={`Review completion evidence for ${item.label}`}

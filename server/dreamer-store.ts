@@ -12,18 +12,20 @@ import {
 } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type {
-  DreamerPlan,
-  DreamerPlanItem,
-  DreamerPlanItemStatus,
-  DreamerSettings,
-  DreamerTaskCompletionProvenance,
+import {
+  hasDreamerSessionIdentity,
+  isDreamerSessionItem,
+  type DreamerPlan,
+  type DreamerPlanItem,
+  type DreamerPlanItemStatus,
+  type DreamerSettings,
+  type DreamerTaskCompletionProvenance,
 } from '../shared/dreamer.js'
 import {
   validateDreamerTimeZone,
 } from './dreamer-schedule.js'
 
-export const DREAMER_STATE_VERSION = 1
+export const DREAMER_STATE_VERSION = 2
 export const DREAMER_MAX_STATE_BYTES = 1_048_576
 export const DREAMER_MAX_RUNS = 35
 export const DREAMER_MAX_ITEMS = 20
@@ -73,7 +75,7 @@ export type DreamerPlanWithFingerprints = Omit<DreamerPlan, 'items'> & {
 }
 
 export interface DreamerStoreState {
-  version: 1
+  version: 2
   revision: number
   settings: DreamerSettings & { generation: number }
   plan?: DreamerPersistedPlan
@@ -204,6 +206,21 @@ function validTimestamp(value: unknown): value is string {
   return isSafeString(value, 64) &&
     Number.isFinite(Date.parse(value)) &&
     new Date(value).toISOString() === value
+}
+
+function sameCompletionEvidence(
+  left: DreamerTaskCompletionProvenance | undefined,
+  right: DreamerTaskCompletionProvenance,
+): boolean {
+  return Boolean(
+    left &&
+    left.computerId === right.computerId &&
+    left.sessionId === right.sessionId &&
+    left.messageId === right.messageId &&
+    left.toolCallId === right.toolCallId &&
+    left.resultDigest === right.resultDigest &&
+    left.completedAt === right.completedAt,
+  )
 }
 
 function assertUniqueJsonKeys(serialized: string): void {
@@ -432,7 +449,7 @@ function validateState(raw: unknown): DreamerStoreState {
     throw new DreamerRecoveryError('Dreamer state is malformed; no state was reset.')
   }
   const value = raw as Record<string, unknown>
-  if (value.version !== DREAMER_STATE_VERSION) {
+  if (value.version !== 1 && value.version !== DREAMER_STATE_VERSION) {
     throw new DreamerRecoveryError('Dreamer state uses an unsupported version; no state was reset.')
   }
   assertInteger(value.revision, 'revision')
@@ -586,7 +603,7 @@ function validateState(raw: unknown): DreamerStoreState {
     throw new DreamerRecoveryError('Dreamer state has an invalid error status.')
   }
   return {
-    version: 1,
+    version: DREAMER_STATE_VERSION,
     revision: value.revision as number,
     settings: {
       enabled: settings.enabled as boolean,
@@ -709,15 +726,19 @@ export class DreamerStore {
         throw error
       }
       let parsed: DreamerStoreState
+      let needsMigration = false
       try {
         assertUniqueJsonKeys(serialized)
-        parsed = validateState(JSON.parse(serialized))
+        const raw = JSON.parse(serialized) as unknown
+        needsMigration = (raw as { version?: unknown }).version === 1
+        parsed = validateState(raw)
       } catch (error) {
         if (error instanceof DreamerRecoveryError) throw error
         throw new DreamerRecoveryError('Dreamer state is corrupt; no state was reset.')
       }
       this.state = parsed
       this.serialized = serialized
+      if (needsMigration) this.serialized = await this.persist(parsed)
       this.initialized = true
     } catch (error) {
       const failure = error instanceof DreamerRecoveryError
@@ -1046,7 +1067,7 @@ export class DreamerStore {
         const existing = candidate.plan.items.find(({ id }) => id === edit.completion!.itemId)
         if (
           existing?.status === 'done'
-          && JSON.stringify(existing.completion) === JSON.stringify(edit.completion.provenance)
+          && sameCompletionEvidence(existing.completion, edit.completion.provenance)
         ) {
           return { result: undefined, changed: false }
         }
@@ -1071,7 +1092,7 @@ export class DreamerStore {
       if (edit.item) {
         const item = next.items.find(({ id }) => id === edit.item!.id)
         if (!item) throw new DreamerConflictError('Dreamer plan item changed; refresh and retry.')
-        if (edit.item.status === 'done' && item.source === 'session') {
+        if (edit.item.status === 'done' && isDreamerSessionItem(item)) {
           throw new DreamerConflictError(
             'Verified session completion is required; refresh and review its evidence.',
           )
@@ -1099,7 +1120,7 @@ export class DreamerStore {
       }
       if (edit.completion) {
         const item = next.items.find(({ id }) => id === edit.completion!.itemId)
-        if (!item || item.source !== 'session') {
+        if (!item || !hasDreamerSessionIdentity(item)) {
           throw new DreamerConflictError('Dreamer session item changed; refresh and retry.')
         }
         item.status = 'done'

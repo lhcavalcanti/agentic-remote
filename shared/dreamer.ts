@@ -37,6 +37,18 @@ export interface DreamerPlanItem {
   completionSourceUnavailable?: boolean
 }
 
+export function isDreamerSessionItem<
+  T extends Pick<DreamerPlanItem, 'source' | 'computerId' | 'sessionId'>,
+>(item: T): boolean {
+  return item.source === 'session' || hasDreamerSessionIdentity(item)
+}
+
+export function hasDreamerSessionIdentity<
+  T extends Pick<DreamerPlanItem, 'computerId' | 'sessionId'>,
+>(item: T): item is T & { computerId: string; sessionId: string } {
+  return Boolean(item.computerId && item.sessionId)
+}
+
 export interface DreamerPlan {
   id: string
   localDate: string

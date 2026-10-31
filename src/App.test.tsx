@@ -3611,6 +3611,44 @@ describe('App', () => {
     await waitFor(() => expect(freshness()).not.toBeInTheDocument())
   })
 
+  it('still refreshes background tasks when a session event lands during the passive detail read', async () => {
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+    vi.mocked(listBackgroundTasks).mockClear()
+    vi.mocked(getSession).mockClear()
+    let resolveDetail!: (value: ManagedSession) => void
+    vi.mocked(getSession).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDetail = resolve
+    }))
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Refresh sessions and Oracle',
+    }))
+    await waitFor(() => expect(getSession).toHaveBeenCalledWith(
+      session.computerId,
+      session.id,
+      undefined,
+      { passive: true },
+    ))
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.upserted',
+        session: {
+          ...session,
+          updatedAt: '2026-10-31T09:00:00.000Z',
+        },
+      }),
+    } as MessageEvent))
+    await act(async () => resolveDetail(session))
+
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledWith(
+      session.computerId,
+      session.id,
+    ))
+  })
+
   it('identifies a session draft recovered from browser storage', async () => {
     localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
       'computer-1:session-1': {

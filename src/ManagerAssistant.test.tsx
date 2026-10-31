@@ -19,6 +19,7 @@ import {
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { sessionLinkTarget } from './manager-links'
+import { authoritativeRefresh } from './OracleDreamer'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
 
@@ -571,6 +572,60 @@ describe('ManagerAssistant', () => {
       expect(screen.queryByRole('alert', { name: 'Oracle freshness' }))
         .not.toBeInTheDocument(),
     )
+  })
+
+  it('does not let an older refresh erase a newer Oracle socket event', async () => {
+    let finishRefresh!: (value: ManagerSnapshot) => void
+    const view = setup()
+    await openPanel()
+    vi.mocked(getManager).mockImplementationOnce(() => new Promise((resolve) => {
+      finishRefresh = resolve
+    }))
+
+    window.dispatchEvent(new Event(authoritativeRefresh))
+    await waitFor(() => expect(getManager).toHaveBeenCalledTimes(2))
+    view.emit({
+      type: 'manager.message',
+      message: {
+        id: 'new-reply',
+        role: 'assistant',
+        content: 'Newer socket reply',
+        createdAt: '2026-10-31T09:00:00.000Z',
+      },
+    })
+    expect(screen.getByText('Newer socket reply')).toBeInTheDocument()
+
+    await act(async () => finishRefresh(empty))
+
+    expect(screen.getByText('Newer socket reply')).toBeInTheDocument()
+  })
+
+  it('does not let an older refresh erase a newly accepted Oracle send', async () => {
+    let finishRefresh!: (value: ManagerSnapshot) => void
+    vi.mocked(sendManagerMessage).mockResolvedValue({
+      id: 'accepted-send',
+      role: 'user',
+      content: 'Keep accepted send',
+      createdAt: '2026-10-31T09:00:00.000Z',
+      state: 'queued',
+    })
+    setup()
+    await openPanel()
+    vi.mocked(getManager).mockImplementationOnce(() => new Promise((resolve) => {
+      finishRefresh = resolve
+    }))
+    window.dispatchEvent(new Event(authoritativeRefresh))
+    await waitFor(() => expect(getManager).toHaveBeenCalledTimes(2))
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Oracle' }), {
+      target: { value: 'Keep accepted send' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await screen.findByText('Keep accepted send')
+
+    await act(async () => finishRefresh(empty))
+
+    expect(screen.getByText('Keep accepted send')).toBeInTheDocument()
   })
 
   it('keeps Oracle text across close, dock, and responsive overlay transitions', async () => {

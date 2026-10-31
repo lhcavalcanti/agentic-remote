@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
-import type {
-  DreamerCompletionCandidate,
-  DreamerPlan,
-  DreamerSettings,
-  DreamerSnapshot,
-  DreamerTaskCompletionProvenance,
+import {
+  hasDreamerSessionIdentity,
+  isDreamerSessionItem,
+  type DreamerCompletionCandidate,
+  type DreamerPlan,
+  type DreamerSettings,
+  type DreamerSnapshot,
+  type DreamerTaskCompletionProvenance,
 } from '../shared/dreamer.js'
 import type { ManagedSession } from '../shared/contracts.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
@@ -307,9 +309,7 @@ export class DreamerService {
         : undefined
       if (
         !item
-        || item.source !== 'session'
-        || !item.computerId
-        || !item.sessionId
+        || !hasDreamerSessionIdentity(item)
         || !this.readSession
       ) {
         throw new DreamerConflictError(
@@ -370,7 +370,7 @@ export class DreamerService {
       const item = current.plan?.id === edit.planId
         ? current.plan.items.find(({ id }) => id === edit.item!.id)
         : undefined
-      if (item?.source === 'session') {
+      if (item && isDreamerSessionItem(item)) {
         throw new DreamerConflictError(
           'Verified session completion is required; refresh and review its evidence.',
         )
@@ -408,9 +408,7 @@ export class DreamerService {
     const items = await Promise.all(snapshot.plan.items.map(async (item) => {
       if (
         item.status !== 'pending'
-        || item.source !== 'session'
-        || !item.computerId
-        || !item.sessionId
+        || !hasDreamerSessionIdentity(item)
       ) return item
       try {
         const candidate = await this.completionCandidate(item.computerId, item.sessionId)

@@ -99,7 +99,8 @@ describe('DreamerService', () => {
   it('offers only authoritative task completion evidence and confirms it idempotently', async () => {
     const directory = await root()
     let currentNow = new Date('2026-10-29T04:00:00.000Z')
-    const now = () => currentNow
+    const queuedNow: Date[] = []
+    const now = () => queuedNow.shift() ?? currentNow
     const readSession = vi.fn(async () => completionSession())
     const service = new DreamerService(directory, options(now, { readSession }))
     await service.start()
@@ -142,7 +143,11 @@ describe('DreamerService', () => {
     const projectedItem = reordered.plan!.items.find(({ id }) => id === item.id)!
     expect(projectedItem.completionCandidate).toEqual(item.completionCandidate)
 
-    const confirmed = await service.editPlan({
+    queuedNow.push(
+      new Date('2026-10-29T04:00:00.000Z'),
+      new Date('2026-10-29T04:00:01.000Z'),
+    )
+    const confirmation = {
       revision: reordered.revision,
       planId: proposed.plan!.id,
       completion: {
@@ -150,7 +155,12 @@ describe('DreamerService', () => {
         messageId: item.completionCandidate!.messageId,
         resultDigest: item.completionCandidate!.resultDigest,
       },
-    })
+    }
+    const [confirmed, concurrentDuplicate] = await Promise.all([
+      service.editPlan(confirmation),
+      service.editPlan(confirmation),
+    ])
+    expect(concurrentDuplicate.revision).toBe(confirmed.revision)
     expect(confirmed.plan!.items.find(({ id }) => id === item.id)).toMatchObject({
       status: 'done',
       completion: {
@@ -190,6 +200,75 @@ describe('DreamerService', () => {
       confirmed.plan!.items.find(({ id }) => id === item.id)?.completion,
     )
     await reopened.stop()
+  })
+
+  it('requires trusted completion evidence for carried session items', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-30T04:00:00.000Z')
+    const store = new DreamerStore(directory, {
+      now,
+      randomUUID: () => 'carry-claim',
+    })
+    await store.initialize()
+    await store.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await store.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-30'),
+      localDate: '2026-10-30',
+      timeZone: 'UTC',
+      generation: store.snapshot().settings.generation,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected carried-plan claim')
+    await store.commitRun(claim.claim, {
+      id: 'carried-plan',
+      localDate: '2026-10-30',
+      timeZone: 'UTC',
+      createdAt: '2026-10-30T04:00:00.000Z',
+      items: [{
+        id: 'carried-session',
+        label: 'Session needs attention',
+        reason: 'Carried from the previous daily review.',
+        status: 'pending',
+        source: 'carry',
+        computerId: 'computer-a',
+        sessionId: 'session-error',
+      }],
+      coverage: ['journal-metadata-only'],
+      omitted: 0,
+    }, [])
+
+    const service = new DreamerService(directory, options(now, {
+      readSession: async () => completionSession(),
+    }))
+    await service.initialize()
+    const snapshot = await service.snapshotForApi()
+    const item = snapshot.plan!.items[0]
+    expect(item.completionCandidate).toMatchObject({
+      messageId: 'completion-message',
+      toolCallId: 'task-complete-call',
+    })
+    await expect(service.editPlan({
+      revision: snapshot.revision,
+      planId: snapshot.plan!.id,
+      item: { id: item.id, status: 'done' },
+    })).rejects.toMatchObject({ statusCode: 409 })
+
+    const confirmed = await service.editPlan({
+      revision: snapshot.revision,
+      planId: snapshot.plan!.id,
+      completion: {
+        itemId: item.id,
+        messageId: item.completionCandidate!.messageId,
+        resultDigest: item.completionCandidate!.resultDigest,
+      },
+    })
+    expect(confirmed.plan!.items[0]).toMatchObject({
+      source: 'carry',
+      status: 'done',
+      completion: {
+        computerId: 'computer-a',
+        sessionId: 'session-error',
+      },
+    })
   })
 
   it('refuses plain assistant text as task completion evidence', async () => {

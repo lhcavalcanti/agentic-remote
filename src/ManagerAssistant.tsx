@@ -609,6 +609,23 @@ export function ManagerAssistant({
   const draftStorageBlockedRef = useRef(Boolean(storedDraft.error))
   const draftRef = useRef(draft)
   const managerRefreshGeneration = useRef(0)
+  const replaceSnapshot = useCallback((next: ManagerSnapshot) => {
+    managerRefreshGeneration.current += 1
+    snapshotRef.current = next
+    setSnapshot(next)
+    setRefreshing(false)
+  }, [])
+  const updateSnapshot = useCallback((
+    update: (current: ManagerSnapshot) => ManagerSnapshot,
+  ) => {
+    const current = snapshotRef.current
+    if (!current) return
+    const next = update(current)
+    managerRefreshGeneration.current += 1
+    snapshotRef.current = next
+    setSnapshot(next)
+    setRefreshing(false)
+  }, [])
   const editInputRef = useRef<HTMLTextAreaElement>(null)
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const listRef = useRef<HTMLOListElement>(null)
@@ -756,12 +773,12 @@ export function ManagerAssistant({
   }, [refreshManager])
 
   useEffect(() => subscribe((event) => {
-    setSnapshot((current) => current ? applyEvent(current, event) : current)
+    updateSnapshot((current) => applyEvent(current, event))
     if (event.type === 'manager.message' && event.message.role === 'assistant') {
       if (!openRef.current) setUnread(true)
       setAnnouncement('Oracle replied.')
     }
-  }), [subscribe])
+  }), [subscribe, updateSnapshot])
 
   const managedKey = snapshot?.managedSessions.join('\n') ?? ''
   useEffect(() => {
@@ -879,8 +896,8 @@ export function ManagerAssistant({
 
   const sendText = useCallback(async (content: string, onlyOracle: boolean) => {
     const message = await sendManagerMessage(content, defaults, { answerOnly: onlyOracle })
-    setSnapshot((current) => current ? withReturnedMessage(current, message) : current)
-  }, [defaults])
+    updateSnapshot((current) => withReturnedMessage(current, message))
+  }, [defaults, updateSnapshot])
 
   useEffect(() => {
     if (!controlRef) return
@@ -940,7 +957,7 @@ export function ManagerAssistant({
     setSendError(undefined)
     try {
       const next = await work()
-      setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
+      updateSnapshot((current) => withReturnedMessage(current, next))
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -951,7 +968,7 @@ export function ManagerAssistant({
   async function startOver() {
     setConfirmReset(false)
     try {
-      setSnapshot(await resetManager())
+      replaceSnapshot(await resetManager())
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -990,7 +1007,7 @@ export function ManagerAssistant({
     setEditError(undefined)
     try {
       const next = await editQueuedManagerMessage(id, text)
-      setSnapshot((current) => current ? withReturnedMessage(current, next) : current)
+      updateSnapshot((current) => withReturnedMessage(current, next))
       const storageError = storeOracleDraft(draftRef.current, undefined)
       if (storageError) {
         draftStorageBlockedRef.current = true

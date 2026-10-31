@@ -10391,15 +10391,19 @@ function App() {
           return reconciledForClaim.filter((session) => sessionKey(session) !== goneKey)
         }
         const detailKey = sessionKey(detail)
-        if (
-          generation < snapshotApplied.current ||
-          (sessionEventSequenceRef.current.get(detailKey) || 0) >
-            detailStartedAtSequence
-        ) {
+        if (generation < snapshotApplied.current) {
           // Checked again here, not only before the request: a newer refresh
           // starting while this was in flight has already spoken, and putting
           // this answer in would bring back a session it removed.
           return []
+        }
+        if (
+          (sessionEventSequenceRef.current.get(detailKey) || 0) >
+          detailStartedAtSequence
+        ) {
+          // The socket has the newer selected-session detail, but this list is
+          // still the authoritative set whose background tasks need refresh.
+          return reconciledForClaim
         }
         setSessions((current) => upsertSession(current, detail))
       } else if (

@@ -161,7 +161,13 @@ describe('Dreamer settings and morning review', () => {
       ...ready,
       plan: {
         ...plan,
-        items: [{ ...plan.items[0], computerId: 'computer-a', sessionId: 'session-a', completionCandidate }, plan.items[1]],
+        items: [{
+          ...plan.items[0],
+          source: 'carry' as const,
+          computerId: 'computer-a',
+          sessionId: 'session-a',
+          completionCandidate,
+        }, plan.items[1]],
       },
     }
     const completed = {

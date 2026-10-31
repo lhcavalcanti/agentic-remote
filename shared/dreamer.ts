@@ -1,6 +1,26 @@
 export type DreamerPlanItemStatus = 'pending' | 'skipped' | 'done'
 export type DreamerPlanItemSource = 'session' | 'memory' | 'carry'
 
+export interface DreamerTaskCompletionProvenance {
+  computerId: string
+  sessionId: string
+  messageId: string
+  toolCallId: string
+  resultDigest: string
+  completedAt: string
+  confirmedAt: string
+}
+
+export interface DreamerCompletionCandidate {
+  computerId: string
+  sessionId: string
+  messageId: string
+  toolCallId: string
+  resultDigest: string
+  completedAt: string
+  summary: string
+}
+
 export interface DreamerPlanItem {
   id: string
   label: string
@@ -10,6 +30,23 @@ export interface DreamerPlanItem {
   computerId?: string
   sessionId?: string
   memoryId?: string
+  completion?: DreamerTaskCompletionProvenance
+  /** Transient API projection; never persisted in Dreamer state. */
+  completionCandidate?: DreamerCompletionCandidate
+  /** Transient projection; the owning session could not be read for evidence. */
+  completionSourceUnavailable?: boolean
+}
+
+export function isDreamerSessionItem<
+  T extends Pick<DreamerPlanItem, 'source' | 'computerId' | 'sessionId'>,
+>(item: T): boolean {
+  return item.source === 'session' || hasDreamerSessionIdentity(item)
+}
+
+export function hasDreamerSessionIdentity<
+  T extends Pick<DreamerPlanItem, 'computerId' | 'sessionId'>,
+>(item: T): item is T & { computerId: string; sessionId: string } {
+  return Boolean(item.computerId && item.sessionId)
 }
 
 export interface DreamerPlan {

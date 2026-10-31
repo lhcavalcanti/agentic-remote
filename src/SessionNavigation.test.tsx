@@ -130,6 +130,7 @@ function navigation(sessions = sessionsByComputer, sort: SessionSort = 'custom')
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  localStorage.clear()
 })
 
 describe('session navigation', () => {
@@ -164,6 +165,72 @@ describe('session navigation', () => {
     expect(screen.queryByText('Loading sessions...')).toBeNull()
     expect(screen.queryByText('No sessions here.')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retry loading sessions' })).toBeNull()
+  })
+
+  it('offers one refresh action with explicit freshness and retry state', () => {
+    const onRefresh = vi.fn()
+    render(
+      <DndContext>
+        <SessionNavigation
+          {...actions}
+          backgroundTasks={backgroundTasks}
+          view={sessionNavigationView(
+            computers,
+            sessionsByComputer,
+            backgroundTasks,
+            '',
+            'all',
+          )}
+          query=""
+          filter="all"
+          showSuspended
+          showSuspendedSaving={false}
+          onQueryChange={vi.fn()}
+          onFilterChange={vi.fn()}
+          onShowSuspendedChange={vi.fn()}
+          loading={false}
+          onRefresh={onRefresh}
+          refreshState="stale"
+          refreshMessage="Sessions could not be refreshed."
+          selectedKey="studio:review"
+          sort="custom"
+        />
+      </DndContext>,
+    )
+
+    expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .toHaveTextContent('Data may be stale')
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Retry refreshing sessions and Oracle',
+    }))
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores the session-list scroll position after a remount', () => {
+    const first = render(navigation())
+    const list = document.querySelector<HTMLElement>('.session-list__scroll')!
+    list.scrollTop = 147
+    fireEvent.scroll(list)
+    first.unmount()
+
+    render(navigation())
+    expect(document.querySelector<HTMLElement>('.session-list__scroll')?.scrollTop)
+      .toBe(147)
+  })
+
+  it('restores saved scroll after sessions finish loading', () => {
+    localStorage.setItem('agentic-remote:session-list-scroll-v1', '147')
+    const rendered = render(
+      <NavigationHarness loading computerList={[]} sessions={new Map()} />,
+    )
+    const list = document.querySelector<HTMLElement>('.session-list__scroll')!
+    // Browsers clamp an empty scroll container back to zero.
+    list.scrollTop = 0
+
+    rendered.rerender(<NavigationHarness />)
+
+    expect(document.querySelector<HTMLElement>('.session-list__scroll')?.scrollTop)
+      .toBe(147)
   })
 
   it('draws each pending creation where its session will appear', () => {

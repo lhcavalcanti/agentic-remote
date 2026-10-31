@@ -19,6 +19,7 @@ import {
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { sessionLinkTarget } from './manager-links'
+import { authoritativeRefresh } from './OracleDreamer'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
 
@@ -330,10 +331,88 @@ describe('ManagerAssistant', () => {
     expect(input).toHaveValue('Also check the tests')
     await act(async () => accept({ id: 'm2', role: 'user', content: 'Also check the tests', createdAt: 't', state: 'queued' }))
     expect(input).toHaveValue('')
+    expect(localStorage.getItem('agentic-remote:oracle-draft-v1')).toBeNull()
 
     fireEvent.change(input, { target: { value: 'line one' } })
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
     expect(sendManagerMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps visible text and reports when browser storage cannot save it', async () => {
+    const originalSetItem = Storage.prototype.setItem
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+      function (this: Storage, key, value) {
+        if (key === 'agentic-remote:oracle-draft-v1') {
+          throw new DOMException('Quota exceeded', 'QuotaExceededError')
+        }
+        return originalSetItem.call(this, key, value)
+      },
+    )
+    try {
+      setup()
+      await openPanel()
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'Do not lose this' } })
+      expect(input).toHaveValue('Do not lose this')
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Oracle could not save this draft on this device',
+      )
+    } finally {
+      setItem.mockRestore()
+    }
+  })
+
+  it.each([
+    ['corrupt', '{"version":'],
+    ['future-version', JSON.stringify({ version: 2, draft: 'Do not replace these bytes' })],
+  ])('does not overwrite %s saved Oracle draft bytes after typing', async (_kind, stored) => {
+    localStorage.setItem('agentic-remote:oracle-draft-v1', stored)
+    setup()
+    await openPanel()
+
+    const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+    fireEvent.change(input, { target: { value: 'New visible text' } })
+
+    expect(input).toHaveValue('New visible text')
+    expect(localStorage.getItem('agentic-remote:oracle-draft-v1')).toBe(stored)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /saved Oracle draft|access saved drafts/,
+    )
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  })
+
+  it('does not make an accepted message silently resendable when its saved copy cannot clear', async () => {
+    vi.mocked(sendManagerMessage).mockResolvedValue({
+      id: 'm1',
+      role: 'user',
+      content: 'Accepted once',
+      createdAt: 't',
+      state: 'queued',
+    })
+    setup()
+    await openPanel()
+    const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+    fireEvent.change(input, { target: { value: 'Accepted once' } })
+    const originalRemoveItem = Storage.prototype.removeItem
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(
+      function (this: Storage, key) {
+        if (key === 'agentic-remote:oracle-draft-v1') {
+          throw new DOMException('Storage unavailable', 'SecurityError')
+        }
+        return originalRemoveItem.call(this, key)
+      },
+    )
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledTimes(1))
+      expect(input).toHaveValue('Accepted once')
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Oracle could not save this draft on this device',
+      )
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+    } finally {
+      removeItem.mockRestore()
+    }
   })
 
   it('keeps a newer update when the send response arrives after it', async () => {
@@ -358,6 +437,23 @@ describe('ManagerAssistant', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Messages are limited')
     expect(input).toHaveValue('hello')
+  })
+
+  it('restores a saved Oracle draft after a remount without sending it', async () => {
+    const first = setup()
+    await openPanel()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Oracle' }), {
+      target: { value: 'Keep this Oracle draft' },
+    })
+    expect(screen.getByText('Saved on this device')).toBeInTheDocument()
+    first.unmount()
+
+    setup()
+    await openPanel()
+    expect(screen.getByRole('textbox', { name: 'Message Oracle' }))
+      .toHaveValue('Keep this Oracle draft')
+    expect(screen.getByText('Recovered saved draft')).toBeInTheDocument()
+    expect(sendManagerMessage).not.toHaveBeenCalled()
   })
 
   it('streams a reply, then shows the stored one and marks it unread while closed', async () => {
@@ -449,6 +545,127 @@ describe('ManagerAssistant', () => {
     await waitFor(() => expect(onIndicatorChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ available: false, unavailableReason: 'Oracle is turned off.' }),
     ))
+  })
+
+  it('keeps the previous Oracle snapshot visible when an authoritative refresh fails', async () => {
+    const snapshot = {
+      ...empty,
+      messages: [{
+        id: 'existing',
+        role: 'assistant' as const,
+        content: 'Authoritative Oracle state',
+        createdAt: 't',
+      }],
+    }
+    const view = setup(snapshot)
+    await openPanel()
+    vi.mocked(getManager).mockRejectedValueOnce(new Error('offline'))
+
+    view.rerender(<Harness {...view.props} connectionEpoch={2} />)
+
+    expect(await screen.findByRole('alert', { name: 'Oracle freshness' }))
+      .toHaveTextContent('Oracle refresh failed: offline')
+    expect(screen.getByText('Authoritative Oracle state')).toBeInTheDocument()
+    vi.mocked(getManager).mockResolvedValueOnce(snapshot)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Oracle refresh' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('alert', { name: 'Oracle freshness' }))
+        .not.toBeInTheDocument(),
+    )
+  })
+
+  it('does not let an older refresh erase a newer Oracle socket event', async () => {
+    let finishRefresh!: (value: ManagerSnapshot) => void
+    const view = setup()
+    await openPanel()
+    vi.mocked(getManager).mockImplementationOnce(() => new Promise((resolve) => {
+      finishRefresh = resolve
+    }))
+
+    window.dispatchEvent(new Event(authoritativeRefresh))
+    await waitFor(() => expect(getManager).toHaveBeenCalledTimes(2))
+    view.emit({
+      type: 'manager.message',
+      message: {
+        id: 'new-reply',
+        role: 'assistant',
+        content: 'Newer socket reply',
+        createdAt: '2026-10-31T09:00:00.000Z',
+      },
+    })
+    expect(screen.getByText('Newer socket reply')).toBeInTheDocument()
+
+    await act(async () => finishRefresh(empty))
+
+    expect(screen.getByText('Newer socket reply')).toBeInTheDocument()
+  })
+
+  it('does not let an older refresh erase a newly accepted Oracle send', async () => {
+    let finishRefresh!: (value: ManagerSnapshot) => void
+    vi.mocked(sendManagerMessage).mockResolvedValue({
+      id: 'accepted-send',
+      role: 'user',
+      content: 'Keep accepted send',
+      createdAt: '2026-10-31T09:00:00.000Z',
+      state: 'queued',
+    })
+    setup()
+    await openPanel()
+    vi.mocked(getManager).mockImplementationOnce(() => new Promise((resolve) => {
+      finishRefresh = resolve
+    }))
+    window.dispatchEvent(new Event(authoritativeRefresh))
+    await waitFor(() => expect(getManager).toHaveBeenCalledTimes(2))
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Oracle' }), {
+      target: { value: 'Keep accepted send' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await screen.findByText('Keep accepted send')
+
+    await act(async () => finishRefresh(empty))
+
+    expect(screen.getByText('Keep accepted send')).toBeInTheDocument()
+  })
+
+  it('keeps Oracle text across close, dock, and responsive overlay transitions', async () => {
+    const onPlacementChange = vi.fn()
+    const view = setup(empty, {
+      placement: 'overlay',
+      preferredPlacement: 'overlay',
+      onPlacementChange,
+    })
+    await openPanel()
+    const composer = screen.getByRole('textbox', { name: 'Message Oracle' })
+    fireEvent.change(composer, { target: { value: 'Keep this Oracle draft' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dock Oracle' }))
+    expect(onPlacementChange).toHaveBeenCalledWith('docked')
+    view.rerender(
+      <Harness
+        {...view.props}
+        onPlacementChange={onPlacementChange}
+        placement="docked"
+        preferredPlacement="docked"
+      />,
+    )
+    expect(screen.getByRole('textbox', { name: 'Message Oracle' }))
+      .toHaveValue('Keep this Oracle draft')
+
+    view.rerender(
+      <Harness
+        {...view.props}
+        onPlacementChange={onPlacementChange}
+        placement="overlay"
+        preferredPlacement="docked"
+      />,
+    )
+    expect(screen.getByRole('textbox', { name: 'Message Oracle' }))
+      .toHaveValue('Keep this Oracle draft')
+    fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Oracle/ }))
+    expect(screen.getByRole('textbox', { name: 'Message Oracle' }))
+      .toHaveValue('Keep this Oracle draft')
   })
 
   it("names the hub's default model when it is the one that could not start", async () => {
@@ -657,6 +874,91 @@ describe('ManagerAssistant', () => {
       expect(sendManagerMessage).not.toHaveBeenCalled()
     })
 
+    it('keeps an accepted edit visible and blocked when its saved copy cannot clear', async () => {
+      vi.mocked(editQueuedManagerMessage).mockResolvedValue({
+        ...waiting.messages[1],
+        content: 'accepted queue edit',
+        updatedAt: '2026-10-15T00:00:05.000Z',
+      })
+      setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', {
+        name: 'Edit queued message: first waiting',
+      }))
+      const editor = screen.getByRole('textbox', { name: 'Edit queued message 1' })
+      fireEvent.change(editor, { target: { value: 'accepted queue edit' } })
+      await waitFor(() => expect(localStorage.getItem(
+        'agentic-remote:oracle-draft-v1',
+      )).toContain('accepted queue edit'))
+
+      const originalRemoveItem = Storage.prototype.removeItem
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(
+        function (this: Storage, key) {
+          if (key === 'agentic-remote:oracle-draft-v1') {
+            throw new DOMException('Storage unavailable', 'SecurityError')
+          }
+          return originalRemoveItem.call(this, key)
+        },
+      )
+      try {
+        fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
+        await waitFor(() => expect(editQueuedManagerMessage).toHaveBeenCalledOnce())
+        expect(screen.getByRole('textbox', { name: 'Edit queued message 1' }))
+          .toHaveValue('accepted queue edit')
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Oracle could not save this draft on this device',
+        )
+        expect(screen.getByRole('button', { name: 'Save edit' })).toBeDisabled()
+        expect(localStorage.getItem('agentic-remote:oracle-draft-v1'))
+          .toContain('accepted queue edit')
+      } finally {
+        removeItem.mockRestore()
+      }
+    })
+
+    it('restores an unsaved queued-message edit after a remount', async () => {
+      const first = setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', {
+        name: 'Edit queued message: first waiting',
+      }))
+      fireEvent.change(screen.getByRole('textbox', {
+        name: 'Edit queued message 1',
+      }), {
+        target: { value: 'first waiting with an unfinished edit' },
+      })
+      first.unmount()
+
+      setup(waiting)
+      await openPanel()
+      expect(screen.getByRole('textbox', { name: 'Edit queued message 1' }))
+        .toHaveValue('first waiting with an unfinished edit')
+      expect(screen.getByText('Recovered saved edit')).toBeInTheDocument()
+      expect(editQueuedManagerMessage).not.toHaveBeenCalled()
+    })
+
+    it('moves a recovered edit into the composer when the queued message is gone', async () => {
+      localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+        version: 1,
+        draft: '',
+        editing: {
+          id: 'q1',
+          text: 'Recovered words from a message Oracle already started',
+        },
+      }))
+      setup(empty)
+      await openPanel()
+
+      expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue(
+        'Recovered words from a message Oracle already started',
+      )
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Oracle started on that message before your edit was saved',
+      )
+      expect(screen.queryByRole('textbox', { name: 'Edit queued message 1' }))
+        .not.toBeInTheDocument()
+    })
+
     it('cancels with Escape or Cancel, leaving it as it was and the panel open', async () => {
       setup(waiting)
       await openPanel()
@@ -719,6 +1021,65 @@ describe('ManagerAssistant', () => {
       expect(screen.queryByRole('textbox', { name: 'Edit queued message 1' })).not.toBeInTheDocument()
       expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('')
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('does not resurrect an accepted edit when Oracle starts it before failed cleanup', async () => {
+      let resolve: (message: ManagerSnapshot['messages'][number]) => void = () => undefined
+      vi.mocked(editQueuedManagerMessage).mockImplementation(() => new Promise((done) => {
+        resolve = done
+      }))
+      const first = setup(waiting)
+      await openPanel()
+      fireEvent.click(screen.getByRole('button', {
+        name: 'Edit queued message: first waiting',
+      }))
+      fireEvent.change(screen.getByRole('textbox', {
+        name: 'Edit queued message 1',
+      }), {
+        target: { value: 'accepted before cleanup failed' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
+      const accepted = {
+        ...waiting.messages[1],
+        content: 'accepted before cleanup failed',
+        state: 'running' as const,
+        updatedAt: '2026-10-15T00:00:06.000Z',
+      }
+      first.emit({ type: 'manager.message', message: accepted })
+
+      const originalRemoveItem = Storage.prototype.removeItem
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(
+        function (this: Storage, key) {
+          if (key === 'agentic-remote:oracle-draft-v1') {
+            throw new DOMException('Storage unavailable', 'SecurityError')
+          }
+          return originalRemoveItem.call(this, key)
+        },
+      )
+      try {
+        await act(async () => resolve(accepted))
+        expect(screen.getByText(
+          'Oracle could not save this draft on this device',
+          { exact: false },
+        )).toBeInTheDocument()
+        expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('')
+        expect(localStorage.getItem('agentic-remote:oracle-draft-v1'))
+          .toContain('accepted before cleanup failed')
+
+        first.unmount()
+        setup({
+          ...waiting,
+          queued: 1,
+          messages: [waiting.messages[0], accepted, waiting.messages[2]],
+        })
+        await openPanel()
+        expect(screen.getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('')
+        expect(screen.queryByRole('textbox', {
+          name: 'Edit queued message 1',
+        })).not.toBeInTheDocument()
+      } finally {
+        removeItem.mockRestore()
+      }
     })
 
     it('checks Ctrl+Enter like Save, and announces every save', async () => {

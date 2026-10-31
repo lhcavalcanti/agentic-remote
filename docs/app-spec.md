@@ -89,6 +89,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   NOT move between computers. Suspended visibility shares the same revisioned
   hub snapshot; computer-group order, sort mode, search, and the three primary
   filters remain browser-local.
+- Search, the three primary filters, the selected session, and session-list
+  scroll position MUST survive browser reloads and responsive layout changes.
+  Sessions MUST expose one accessible **Refresh** action that reloads
+  authoritative computers, sessions, Oracle, Dreamer, and background-task
+  state. Manual refresh, reconnect, and visibility return MUST preserve the
+  last usable snapshots and every composer draft, show loading or stale-error
+  state with retry, and MUST NOT send, queue, resume, replay, or confirm work.
 - Clearing a session replaces its identity, and the replacement MUST take the
   predecessor's exact position in the custom order. Deleting a session MUST
   remove it, and removing a computer MUST remove its lane; a partial or offline
@@ -487,6 +494,15 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   transcribe**; at most 15 minutes), transcribes on the hub as a session's
   recording does, and adds the words to the message rather than sending them.
   Closing the panel discards a recording in progress.
+- Oracle's non-empty message draft and queued-message edit MUST be saved in
+  versioned browser storage independently of whether the panel is open,
+  docked, overlaid, or moved by a responsive layout. A remount or reload MUST
+  restore the text without sending it and identify it as recovered. If a
+  recovered queue item has already left the queue, its edited text MUST move
+  to the message field with an explanation. A storage failure MUST remain
+  visible and block Send or Save; accepted delivery MUST clear durable text
+  before retiring the visible draft so cleanup failure cannot silently invite
+  a duplicate.
 - A separate **Conversation** control MAY stream speech continuously only when
   `AGENTIC_REMOTE_ORACLE_VOICE=on` and a complete explicitly installed profile
   is available. There MUST be no automatic/default profile, and setup and
@@ -725,19 +741,29 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   with a saved hub-wide IANA timezone. Its fixed schedule is 02:00 local time;
   same-day catch-up ends at 08:00. DST repeats MUST NOT duplicate a daily run,
   and a missing 02:00 MUST use the first later valid local time.
-- This first slice MUST perform only deterministic local metadata review:
+- This first slice MUST perform deterministic local metadata review:
   journal-observed session state and eligible structured-memory metadata, not
-  transcripts, prompts, titles, memory contents or external inference.
+  prompts, titles, general transcript contents, memory contents or external
+  inference. Its only session-content adapter MAY passively read the exact
+  owning session to validate a successful root `task_complete` result carrying
+  the server's trusted marker. That result MUST remain transient and MUST NOT
+  become planning input.
   Unavailable durable todos, incomplete history and source freshness limits
   MUST be visible rather than represented as a complete review.
 - Daily run claims, generation/lease fences, plans and user edits MUST persist
   before success. Disable, expiry, shutdown and restart MUST prevent stale
   workers from replacing a committed plan. Bounds and storage failures MUST
   be reported without silently resetting state.
-- Oracle MUST present a dated morning plan with priority reorder, skip, done
-  and restore. These explicit user actions MUST change only plan review state,
-  never session/task completion, prompts, permissions or memory. Concurrent
-  stale edits MUST be refused and refreshed.
+- Oracle MUST present a dated morning plan with priority reorder, skip and
+  restore. Memory and carried review items MAY also be marked done as plan
+  review state. A session-derived item MUST NOT expose generic **Done**:
+  only a trusted completion proposal may expose **Review completion**, and an
+  explicit confirmation MUST re-read the exact message and persist bounded
+  provenance before marking the item done. The same item/evidence pair MUST be
+  idempotent; changed, missing, plain-text, background-agent, or failed-tool
+  evidence MUST be refused. These actions MUST never prompt, resume, stop,
+  close, or otherwise mutate a session. Concurrent stale edits MUST be refused
+  and refreshed.
 - Dreamer MUST NOT raise overnight notifications, send speech, execute work
   or add model calls. Semantic planning, authoritative todo/history adapters
   and optional morning delivery are separate follow-ups described in
@@ -1278,6 +1304,9 @@ Best-effort preference storage MUST NOT authorize composer submission or retire
 delivery receipts. If saved draft storage cannot be read at startup, typing
 remains available but sends and draft writes stay blocked until a reload can
 recover the saved state. The UI MUST warn the user to copy new text first.
+Every non-empty writable session draft MUST show **Saved on this device** or,
+until edited, **Recovered saved draft**. The indicator MUST NOT replace
+storage, delivery-uncertainty, failed-submission, or queue warnings.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact

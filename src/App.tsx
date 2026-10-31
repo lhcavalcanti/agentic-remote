@@ -24,7 +24,11 @@ import {
 } from './app-shortcuts'
 import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
-import { DreamerSettings } from './OracleDreamer'
+import {
+  dispatchAuthoritativeRefresh,
+  DreamerRefreshOwner,
+  DreamerSettings,
+} from './OracleDreamer'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
 import type {
@@ -419,6 +423,7 @@ const SIDEBAR_WIDTH_KEY = 'agentic-remote:sidebar-width'
 const SIDEBAR_WIDTH_DEFAULT = 320
 const SIDEBAR_WIDTH_MIN = 220
 const SIDEBAR_WIDTH_MAX = 560
+const SESSION_NAVIGATION_STORAGE_KEY = 'agentic-remote:session-navigation-v1'
 
 function clampSidebarWidth(value: number): number {
   return Math.min(Math.max(Math.round(value), SIDEBAR_WIDTH_MIN), SIDEBAR_WIDTH_MAX)
@@ -432,6 +437,27 @@ function readStoredSidebarWidth(): number {
       : SIDEBAR_WIDTH_DEFAULT
   } catch {
     return SIDEBAR_WIDTH_DEFAULT
+  }
+}
+
+function readStoredSessionNavigation(): {
+  query: string
+  filter: SessionFilter
+} {
+  const fallback = { query: '', filter: 'all' as const }
+  try {
+    const raw = localStorage.getItem(SESSION_NAVIGATION_STORAGE_KEY)
+    if (!raw) return fallback
+    const parsed: unknown = JSON.parse(raw)
+    const query = Reflect.get(parsed as object, 'query')
+    const filter = Reflect.get(parsed as object, 'filter')
+    if (
+      typeof query !== 'string'
+      || !['all', 'attention', 'working'].includes(String(filter))
+    ) return fallback
+    return { query, filter: filter as SessionFilter }
+  } catch {
+    return fallback
   }
 }
 
@@ -6904,10 +6930,14 @@ function WorkspaceDialog({
 
 function App() {
   const initialLocationSelection = useRef(readSelectionFromLocation())
+  const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
   const managerListenersRef = useRef(new Set<(event: ManagerEvent) => void>())
-  const [managerEpoch, setManagerEpoch] = useState(0)
+  const authoritativeRefreshRef = useRef<() => Promise<void>>(async () => undefined)
+  const authoritativeRefreshGeneration = useRef(0)
+  const [refreshState, setRefreshState] = useState<'fresh' | 'refreshing' | 'stale'>('fresh')
+  const [refreshMessage, setRefreshMessage] = useState<string>()
   const [managedSessionKeys, setManagedSessionKeys] = useState<ReadonlySet<string>>(() => new Set())
   const subscribeManager = useCallback((listener: (event: ManagerEvent) => void) => {
     managerListenersRef.current.add(listener)
@@ -6971,6 +7001,16 @@ function App() {
   })
   const [composerStorageError, setComposerStorageError] =
     useState<string | undefined>(composerInitialReadFailure.current)
+  const initialComposerDraftText = useRef<Record<string, string> | undefined>(
+    undefined,
+  )
+  if (!initialComposerDraftText.current) {
+    initialComposerDraftText.current = Object.fromEntries(
+      Object.entries(composerDrafts)
+        .filter(([, draft]) => Boolean(draft.text))
+        .map(([key, draft]) => [key, draft.text]),
+    )
+  }
   const composerDraftsRef = useRef(composerDrafts)
   const editingQueuedPrompts = useMemo(() => queuedEditOwners(composerDrafts), [composerDrafts])
   const unconfirmedQueuedPrompts = useMemo(() => queuedEditOwners(composerDrafts, true), [composerDrafts])
@@ -7384,8 +7424,6 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<string>()
   const [statuslineOpen, setStatuslineOpen] = useState(false)
   const [backgroundTasksOpen, setBackgroundTasksOpen] = useState(false)
-  const [backgroundTaskRefreshVersion, setBackgroundTaskRefreshVersion] =
-    useState(0)
   const [loadingBackgroundTasks, setLoadingBackgroundTasks] = useState(false)
   const [cancellingBackgroundTask, setCancellingBackgroundTask] =
     useState<{ ownerKey: string; taskId: string }>()
@@ -7571,8 +7609,19 @@ function App() {
     [],
   )
   const sessionSort: SessionSort = profile.sessionSort ?? 'custom'
-  const [sessionQuery, setSessionQuery] = useState('')
-  const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
+  const [sessionQuery, setSessionQuery] = useState(initialSessionNavigation.current.query)
+  const [sessionFilter, setSessionFilter] = useState<SessionFilter>(
+    initialSessionNavigation.current.filter,
+  )
+  useEffect(() => {
+    writeStored(SESSION_NAVIGATION_STORAGE_KEY, JSON.stringify({
+      query: sessionQuery,
+      filter: sessionFilter,
+    }))
+  }, [sessionFilter, sessionQuery])
+  const refreshAuthoritative = useCallback(() => {
+    void authoritativeRefreshRef.current().catch(() => undefined)
+  }, [])
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
@@ -7612,10 +7661,9 @@ function App() {
   const sessionCreationIntentRef = useRef(0)
   const sessionSelectionIntentRef = useRef(0)
   const newSessionOpenRef = useRef(false)
-  const backgroundTaskRequestsRef = useRef(new Set<string>())
+  const backgroundTaskRequestsRef = useRef(new Map<string, Promise<void>>())
   const queuedBackgroundTaskRefreshesRef = useRef(new Set<string>())
   const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
-  const seenBackgroundTaskRefreshRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
 
   // Silence changes on its own schedule: counting every session event would
@@ -8331,6 +8379,11 @@ function App() {
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
   const composer = selectedKey ? composerDrafts[selectedKey]?.text || '' : ''
+  const composerDraftRecovered = Boolean(
+    selectedKey
+    && composer
+    && initialComposerDraftText.current?.[selectedKey] === composer,
+  )
   const missingAcceptanceOwners = Object.entries(composerDrafts).flatMap(
     ([key, draft]) => {
       const pending = draft.pendingSubmission
@@ -8534,45 +8587,52 @@ function App() {
       ) {
         return
       }
-      if (backgroundTaskRequestsRef.current.has(key)) {
+      const active = backgroundTaskRequestsRef.current.get(key)
+      if (active) {
         if (force) {
           queuedBackgroundTaskRefreshesRef.current.add(key)
         }
-        return
+        return active
       }
       if (!force && backgroundTaskSnapshotsRef.current[key]) {
         return
       }
-      backgroundTaskRequestsRef.current.add(key)
-      const startedAtSequence = eventSequenceRef.current
-      if (
-        backgroundTasksOpenRef.current &&
-        selectedKeyStateRef.current === key
-      ) {
-        setLoadingBackgroundTasks(true)
-      }
-      try {
-        const snapshot = await listBackgroundTasks(
-          session.computerId,
-          session.id,
-        )
-        if (snapshot) {
-          applyBackgroundTaskSnapshot(session, snapshot, startedAtSequence)
-        }
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      } finally {
-        backgroundTaskRequestsRef.current.delete(key)
+      const request = (async () => {
+        const startedAtSequence = eventSequenceRef.current
+        let failure: unknown
         if (
           backgroundTasksOpenRef.current &&
           selectedKeyStateRef.current === key
         ) {
-          setLoadingBackgroundTasks(false)
+          setLoadingBackgroundTasks(true)
+        }
+        try {
+          const snapshot = await listBackgroundTasks(
+            session.computerId,
+            session.id,
+          )
+          if (snapshot) {
+            applyBackgroundTaskSnapshot(session, snapshot, startedAtSequence)
+          }
+        } catch (caught) {
+          failure = caught
+          setError(caught instanceof Error ? caught.message : String(caught))
+        } finally {
+          backgroundTaskRequestsRef.current.delete(key)
+          if (
+            backgroundTasksOpenRef.current &&
+            selectedKeyStateRef.current === key
+          ) {
+            setLoadingBackgroundTasks(false)
+          }
         }
         if (queuedBackgroundTaskRefreshesRef.current.delete(key)) {
-          void loadBackgroundTasks(session, true)
+          return loadBackgroundTasks(session, true)
         }
-      }
+        if (failure) throw failure
+      })()
+      backgroundTaskRequestsRef.current.set(key, request)
+      return request
     },
     [applyBackgroundTaskSnapshot],
   )
@@ -9896,16 +9956,10 @@ function App() {
     if (loading) {
       return
     }
-    const force = backgroundTaskRefreshVersion !==
-      seenBackgroundTaskRefreshRef.current
-    if (force) {
-      seenBackgroundTaskRefreshRef.current = backgroundTaskRefreshVersion
-    }
     for (const session of sessions) {
-      void loadBackgroundTasks(session, force)
+      void loadBackgroundTasks(session).catch(() => undefined)
     }
   }, [
-    backgroundTaskRefreshVersion,
     computers,
     loading,
     loadBackgroundTasks,
@@ -10056,7 +10110,7 @@ function App() {
     let stopped = false
     let reconnectDelay = 1_000
 
-    const refreshSnapshot = async () => {
+    const refreshSnapshot = async (): Promise<ManagedSession[]> => {
       // Refreshes overlap: a reconnect and a tab becoming visible can each
       // start one. Without a generation the slower response applies last and
       // reinstates whatever the newer one already replaced, including a
@@ -10105,7 +10159,7 @@ function App() {
       const claim = claimGeneration(listing.answeredComputerIds)
       if (!claim.whole && !claim.speaksFor.size) {
         // Overtaken, and it reached nothing the newer answer did not.
-        return
+        return []
       }
       const generation = claim.generation
       const loadedSessions = listing.sessions
@@ -10170,7 +10224,7 @@ function App() {
         // What these sessions say they replaced is true whoever else answered.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(merged)
-        return
+        return merged
       }
       const reconcile = (existingSessions: ManagedSession[]) => {
         // Only rows from computers that were actually asked. A hub answers for
@@ -10270,7 +10324,6 @@ function App() {
       // either session.
       const changedSinceRefresh = (key: string) =>
         (sessionEventSequenceRef.current.get(key) || 0) > startedAtSequence
-      setBackgroundTaskRefreshVersion((current) => current + 1)
       const selectedAtRefresh = selectedRef.current
       // A replacement selected while the refresh was in flight is missing
       // from the snapshot by definition, and dropping it would jump the
@@ -10310,6 +10363,8 @@ function App() {
           detail = await getSession(
             selectedAtRefresh.computerId,
             selectedAtRefresh.id,
+            undefined,
+            { passive: true },
           )
         } catch (caught) {
           const goneKey = sessionKey(selectedAtRefresh)
@@ -10324,7 +10379,7 @@ function App() {
             generation < snapshotApplied.current ||
             (sessionEventSequenceRef.current.get(goneKey) || 0) > detailStartedAtSequence
           ) {
-            return
+            return []
           }
           // The archived record was deleted and its removal event never
           // arrived here; the list and the detail now agree it is gone.
@@ -10333,18 +10388,22 @@ function App() {
           if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
             setSelectedKey(snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined)
           }
-          return
+          return reconciledForClaim.filter((session) => sessionKey(session) !== goneKey)
         }
         const detailKey = sessionKey(detail)
-        if (
-          generation < snapshotApplied.current ||
-          (sessionEventSequenceRef.current.get(detailKey) || 0) >
-            detailStartedAtSequence
-        ) {
+        if (generation < snapshotApplied.current) {
           // Checked again here, not only before the request: a newer refresh
           // starting while this was in flight has already spoken, and putting
           // this answer in would bring back a session it removed.
-          return
+          return []
+        }
+        if (
+          (sessionEventSequenceRef.current.get(detailKey) || 0) >
+          detailStartedAtSequence
+        ) {
+          // The socket has the newer selected-session detail, but this list is
+          // still the authoritative set whose background tasks need refresh.
+          return reconciledForClaim
         }
         setSessions((current) => upsertSession(current, detail))
       } else if (
@@ -10365,7 +10424,38 @@ function App() {
           snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined,
         )
       }
+      return reconciledForClaim
     }
+
+    const refreshAllAuthoritativeState = async () => {
+      const generation = authoritativeRefreshGeneration.current + 1
+      authoritativeRefreshGeneration.current = generation
+      setRefreshState('refreshing')
+      setRefreshMessage(undefined)
+      try {
+        const settled = await Promise.allSettled([
+          refreshSnapshot().then((refreshedSessions) =>
+            Promise.all(refreshedSessions.map((session) =>
+              loadBackgroundTasks(session, true)))),
+          dispatchAuthoritativeRefresh(),
+        ])
+        const failed = settled.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === 'rejected',
+        )
+        if (failed) throw failed.reason
+        if (authoritativeRefreshGeneration.current === generation) {
+          setRefreshState('fresh')
+        }
+      } catch (caught) {
+        if (authoritativeRefreshGeneration.current !== generation) return
+        const message = caught instanceof Error ? caught.message : String(caught)
+        setRefreshState('stale')
+        setRefreshMessage(message)
+        throw caught
+      }
+    }
+    authoritativeRefreshRef.current = refreshAllAuthoritativeState
 
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -10381,14 +10471,13 @@ function App() {
       socket.onopen = () => {
         reportOraclePresenceRef.current()
         reconnectDelay = 1_000
-        setManagerEpoch((epoch) => epoch + 1)
         sessionKnowledgeRootRef.current.refresh()
         // Order events are not replayed, so a reorder committed while this
         // socket was down would otherwise stay invisible until the next one.
         void syncSessionOrderRef.current()
         // Settings events are not replayed either.
         void settingsClient.sync()
-        void refreshSnapshot().catch((caught: unknown) => {
+        void refreshAllAuthoritativeState().catch((caught: unknown) => {
           setSessionLoadError(
             caught instanceof Error ? caught.message : String(caught),
           )
@@ -10633,7 +10722,7 @@ function App() {
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        void refreshSnapshot().catch((caught: unknown) => {
+        void refreshAllAuthoritativeState().catch((caught: unknown) => {
           setError(caught instanceof Error ? caught.message : String(caught))
         })
       }
@@ -10643,13 +10732,16 @@ function App() {
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
       stopped = true
+      if (authoritativeRefreshRef.current === refreshAllAuthoritativeState) {
+        authoritativeRefreshRef.current = async () => undefined
+      }
       document.removeEventListener('visibilitychange', handleVisibility)
       if (retry !== undefined) {
         window.clearTimeout(retry)
       }
       socket?.close()
     }
-  }, [settingsClient, upsertSession])
+  }, [loadBackgroundTasks, settingsClient, upsertSession])
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
@@ -15054,6 +15146,9 @@ function App() {
                 onQueryChange={setSessionQuery}
                 onFilterChange={setSessionFilter}
                 onShowSuspendedChange={changeShowSuspendedSessions}
+                onRefresh={refreshAuthoritative}
+                refreshMessage={refreshMessage}
+                refreshState={refreshState}
                 creationError={
                   !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
                     ? sessionCreationError
@@ -16236,6 +16331,15 @@ function App() {
                 </div>
               )}
             </div>
+            {!askingAside && composer && !composerStorageError ? (
+              <p
+                aria-label="Session draft status"
+                className="composer-draft-status"
+                role="status"
+              >
+                {composerDraftRecovered ? 'Recovered saved draft' : 'Saved on this device'}
+              </p>
+            ) : null}
             {(statusline.provider ||
               (statusline.model && selected.runtime?.model) ||
               (statusline.effort && selected.runtime?.reasoningEffort) ||
@@ -16804,7 +16908,7 @@ function App() {
         />
       ) : null}
       <ManagerAssistant
-        connectionEpoch={managerEpoch}
+        connectionEpoch={0}
         controlRef={oracleControlRef}
         defaults={managerDefaults}
         onIndicatorChange={setOracleIndicator}
@@ -16831,6 +16935,7 @@ function App() {
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}
       />
+      <DreamerRefreshOwner />
     </div>
   )
 }

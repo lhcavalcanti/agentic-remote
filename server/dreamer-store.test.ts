@@ -6,6 +6,7 @@ import type { DreamerPlan } from '../shared/dreamer.js'
 import {
   DreamerCapacityError,
   DreamerConflictError,
+  DREAMER_STATE_VERSION,
   DREAMER_MAX_ZONES,
   DreamerRecoveryError,
   DreamerStore,
@@ -164,6 +165,28 @@ describe('DreamerStore', () => {
       timeZone: 'UTC',
       generation: second.snapshot().settings.generation,
     })).resolves.toMatchObject({ kind: 'already-committed' })
+  })
+
+  it('migrates version-one state before an older writer can erase completion provenance', async () => {
+    const root = await directory()
+    const statePath = path.join(root, 'dreamer.json')
+    const first = new DreamerStore(root)
+    await first.initialize()
+    await first.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const legacy = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>
+    legacy.version = 1
+    await writeFile(statePath, JSON.stringify(legacy))
+
+    const reopened = new DreamerStore(root)
+    await reopened.initialize()
+
+    const migrated = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>
+    expect(DREAMER_STATE_VERSION).toBe(2)
+    expect(migrated).toMatchObject({
+      version: 2,
+      revision: legacy.revision,
+      settings: legacy.settings,
+    })
   })
 
   it('refuses a new timezone at fence capacity without blocking disable or known zones', async () => {

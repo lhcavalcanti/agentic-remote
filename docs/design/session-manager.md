@@ -296,6 +296,13 @@ end the turn.
 - Waiting messages sit above the message bar, numbered in answer order, each
   editable in place (Save, Cancel; Ctrl+Enter, Esc) or removable until Oracle
   starts on it. An edit Oracle overtakes goes back to the message bar.
+- The non-empty message draft and active queue edit are one versioned
+  browser-local record. Open/close, Dock/Undock, responsive placement, remount,
+  reconnect, and authoritative refresh do not clear or submit it. Restored
+  text is identified as recovered; storage failure stays visible and blocks
+  Send/Save. Accepted delivery clears the durable record before retiring the
+  visible text, and a recovered edit whose queue item has gone moves into the
+  message field with an explanation.
 - **Dictate to Oracle** records and transcribes through `/api/transcriptions`
   (`src/voice-recorder.ts`), adding the words to the message.
 - **Conversation** is a separate, explicit mode beside dictation. It streams
@@ -341,6 +348,10 @@ end the turn.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
 - Sessions Oracle started get a small **Oracle** badge in the session list.
+- Startup, manual Refresh, reconnect, and visibility return re-read Oracle
+  alongside sessions and Dreamer. An in-place refresh keeps the last snapshot
+  visible, reports refreshing or stale state, and offers Retry without
+  replaying a message or queue mutation.
 
 ## Conversation-mode operations
 

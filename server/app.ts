@@ -397,12 +397,15 @@ export async function buildApp(
       // leaves the manager's own conversations out.
       if (managerAgent) agent.excludeFromDiscovery(managerAgent.hiddenSessionIds())
     }
-    if (managerStoreReady && managerStore) {
+    if (managerStoreReady && managerStore && manager) {
+      const dreamerManager = manager
       dreamerService = new DreamerService(
         path.join(dataDirectory, 'manager', 'dreamer'),
         {
           registry: () => managerStore!.registry(),
           structuredMemory: managerStructuredMemory,
+          readSession: (computerId, sessionId) =>
+            dreamerManager.readSession(computerId, sessionId),
         },
       )
       try {

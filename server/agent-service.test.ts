@@ -1586,6 +1586,11 @@ describe('AgentService deletion', () => {
         role: 'assistant',
         content: '**Done.** The requested work is live.',
         activityStatus: undefined,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+          completedAt: '2026-07-22T00:00:02.000Z',
+        },
       }),
     ])
   })
@@ -6932,6 +6937,10 @@ describe('AgentService deletion', () => {
         role: 'assistant',
         content: '**Complete.** The live result is visible.',
         streaming: false,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+        },
       }),
     )
     expect(

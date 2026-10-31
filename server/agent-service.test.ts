@@ -7473,6 +7473,54 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('does not settle SDK Stop while task RPC reports a background agent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stop-rpc-background-sdk-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const timestamp = new Date().toISOString()
+    const events = [
+      {
+        id: randomUUID(), type: 'assistant.turn_start',
+        timestamp, parentId: null, data: {},
+      },
+      {
+        id: randomUUID(), type: 'assistant.turn_end',
+        timestamp, parentId: null, data: {},
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (session) => {
+      session.status = 'running'
+      session.activity = 'Waiting for RPC-only worker'
+    })
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'rpc-only-worker',
+      description: 'Review the repository',
+      status: 'running',
+      startedAt: timestamp,
+      agentType: 'general-purpose',
+      executionMode: 'background',
+    })
+
+    await service.cancel(created.id)
+
+    expect(service.store.get(created.id)).toMatchObject({
+      status: 'running',
+      activity: 'Waiting for RPC-only worker',
+    })
+    await service.stop()
+  })
+
   it('keeps SDK follow-up ownership when the original turn idles before acceptance', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

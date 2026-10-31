@@ -7230,6 +7230,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return
     }
+    const tasks = await this.listBackgroundTasks(sessionId)
+    if (
+      !tasks.supported ||
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      return
+    }
     const events = await this.sessionEventReader(sessionId)
     const latestLifecycle = events.findLast(isForegroundLifecycleEvent)
     if (

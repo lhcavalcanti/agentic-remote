@@ -49,6 +49,37 @@ State, transcript, journal, registry, and the agent's Markdown memory live in
 service's discovery before they exist. See
 [docs/design/session-manager.md](design/session-manager.md).
 
+### Oracle Conversation speech path
+
+Conversation mode is an optional extension of the hub-owned Oracle
+conversation. The browser sends 16 kHz microphone PCM to a same-origin,
+single-use-ticket WebSocket on the hub. The hub either uses its local voice
+backend or relays the stream over the authenticated node API to the paired
+computer named by `AGENTIC_REMOTE_VOICE_COMPUTER`. Both roles isolate native
+STT/TTS in a child process; the node never receives Oracle's manager state.
+The hub parses that selection before local engine paths: a remote selection
+therefore needs no hub-local model inventory. The selected node independently
+validates and advertises its local engine. With no selected computer, local
+mode remains strict and invalid paths advertise voice as unavailable.
+
+Raw PCM, synthesized audio, and partial transcripts stay in memory and are
+never persisted. Each finalized transcript crosses exactly once through the
+normal `ManagerAgent.send` path, is persisted as the normal Oracle user message
+in Oracle conversation history, and enters remote Copilot's existing trust
+boundary with the generated Oracle context. No separate voice transcript or
+recording artifact is persisted. A restart or disconnect ends the stream and
+stale audio or finalized transcripts cannot be replayed.
+
+The feature is disabled unless `AGENTIC_REMOTE_ORACLE_VOICE=on`. Setup
+preserves existing voice configuration but downloads nothing. Profiles are
+installed only by `agentic-remote voice-install <profile>`, with pinned
+compressed/expanded limits, regular-file/directory-only extraction,
+per-profile publication locking, and atomic activation. The pt-BR profile is
+research-only and requires `--accept-research-only` before network access.
+Current shipped assets are Linux x86-64; browser requirements and measured
+limits are documented in
+[Oracle Conversation mode](oracle-conversation.md).
+
 ## Transport and authentication
 
 The browser communicates only with the hub. The hub is a single trusted-admin

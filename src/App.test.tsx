@@ -182,9 +182,34 @@ function finishQueueReorder(from: string, to: string) {
   finishReorder('prompt-queue', `queued:${from}`, `queued:${to}`)
 }
 
+vi.mock('./dreamer-api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./dreamer-api')>(),
+  getDreamer: vi.fn(async () => ({
+    available: true, revision: 0, settings: { enabled: false, timeZone: 'UTC' },
+  })),
+}))
+
 vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   getManager: vi.fn(),
+  getOracleVoiceCapabilities: vi.fn(async () => ({
+    protocol: 2,
+    available: false,
+    computerId: 'hub',
+    computerName: 'Hub',
+    sampleRate: 16_000,
+    playbackSampleRate: 22_050,
+    languages: ['en'],
+    sttProfile: '',
+    ttsVoice: '',
+    resourceClass: 'low',
+    limits: {
+      maxFrameBytes: 64_000,
+      maxQueueBytes: 256_000,
+      maxUtteranceMs: 60_000,
+    },
+    reason: 'Conversation mode is disabled in App tests',
+  })),
   sendManagerMessage: vi.fn(),
   retryManagerMessage: vi.fn(),
   resolveManagerConfirmation: vi.fn(),
@@ -1764,7 +1789,9 @@ describe('App', () => {
       expect(sync).toHaveTextContent(
         'Appearance, accent, status line, new-session models and folders, session sort, computer order, Oracle\'s response style, and what notifies you follow you to every device that opens this hub.',
       )
-      expect(sync).toHaveTextContent('Keyboard shortcuts, panel widths, and drafts stay on this device.')
+      expect(sync).toHaveTextContent(
+        'Keyboard shortcuts, panel placement and widths, and drafts stay on this device.',
+      )
       const scope = (heading: string) =>
         within(dialog).getByRole('heading', { name: heading })
           .closest('.app-settings-section__title')?.querySelector('.settings-scope')
@@ -2356,6 +2383,10 @@ describe('App', () => {
     const dock = document.querySelector<HTMLElement>('.timeline-dock')!
     const oracle = await within(dock).findByRole('button', { name: 'Oracle' })
     expect(oracle).toHaveClass('oracle-bubble')
+    expect(oracle).toHaveAttribute(
+      'title',
+      'Oracle: ask about your sessions or hand off work (Ctrl + Alt + O)',
+    )
     expect(within(document.querySelector<HTMLElement>('.conversation-header')!)
       .queryByRole('button', { name: /^Oracle/ })).toBeNull()
     // The phone session list covers the conversation, so it offers Oracle too;
@@ -2385,6 +2416,981 @@ describe('App', () => {
     expect(within(dock).getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /Project chat, started by Oracle/ })).not.toBeInTheDocument())
+  })
+
+  it('toggles Oracle from the session composer without losing either draft', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const sessionComposer = await screen.findByRole<HTMLTextAreaElement>(
+      'textbox',
+      { name: 'Message' },
+    )
+    fireEvent.change(sessionComposer, { target: { value: 'Keep the session draft' } })
+    sessionComposer.focus()
+
+    fireEvent.keyDown(sessionComposer, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+
+    const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+    await waitFor(() => expect(oracleComposer).toHaveFocus())
+    fireEvent.change(oracleComposer, { target: { value: 'Keep the Oracle draft' } })
+
+    fireEvent.keyDown(oracleComposer, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument(),
+    )
+    await waitFor(() => expect(sessionComposer).toHaveFocus())
+    expect(sessionComposer).toHaveValue('Keep the session draft')
+
+    fireEvent.keyDown(sessionComposer, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    const reopenedOracleComposer = await screen.findByRole<HTMLTextAreaElement>('textbox', {
+      name: 'Message Oracle',
+    })
+    expect(reopenedOracleComposer).toHaveValue('Keep the Oracle draft')
+    await waitFor(() => expect(reopenedOracleComposer).toHaveFocus())
+    expect(reopenedOracleComposer.selectionStart).toBe('Keep the Oracle draft'.length)
+    expect(sendManagerMessage).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('leaves AltGraph text entry in the session composer alone', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const composer = await screen.findByRole('textbox', { name: 'Message' })
+    const event = new KeyboardEvent('keydown', {
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyO',
+      ctrlKey: true,
+      key: 'ó',
+    })
+    Object.defineProperty(event, 'getModifierState', {
+      value: (modifier: string) => modifier === 'AltGraph',
+    })
+
+    expect(composer.dispatchEvent(event)).toBe(true)
+    expect(event.defaultPrevented).toBe(false)
+    expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+  })
+
+  it('keeps pinned Oracle open while its shortcut moves focus between composers', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      await waitFor(() =>
+        expect(document.querySelector('.app-shell')).toHaveClass('app-shell--oracle-docked'),
+      )
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'docked',
+      )
+
+      sessionComposer.focus()
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+
+      fireEvent.keyDown(oracleComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      await waitFor(() => expect(sessionComposer).toHaveFocus())
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('moves focus into Oracle when a pinned panel becomes a phone overlay', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      fireEvent.keyDown(oracleComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      await waitFor(() => expect(sessionComposer).toHaveFocus())
+
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('does not move responsive Oracle focus out of App settings', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const settings = await screen.findByRole('dialog', { name: 'App settings' })
+      const responseStyle = within(settings).getByRole('combobox', {
+        name: 'Oracle response style',
+      })
+      responseStyle.focus()
+
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(responseStyle).toHaveFocus())
+      expect(oracleComposer).not.toHaveFocus()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('keeps Oracle shortcuts out of settings and pending session questions', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const responseStyle = await screen.findByRole('combobox', {
+      name: 'Oracle response style',
+    })
+    responseStyle.focus()
+    fireEvent.keyDown(responseStyle, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the Oracle shortcut behind the active modal dialog', async () => {
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...computer,
+      providers: computer.providers?.map((provider) => ({
+        ...provider,
+        supportsSessionRetention: true,
+      })),
+    }])
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session retention' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Session retention' })
+
+    fireEvent.keyDown(within(dialog).getByRole('button', { name: 'Close' }), {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+
+    expect(dialog).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+  })
+
+  it('does not close Oracle from under its confirmation dialog', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [{
+        id: 'oracle-answer',
+        role: 'assistant',
+        content: 'Current answer',
+        createdAt: '2026-10-22T00:00:00.000Z',
+      }],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const oracle = await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+      .findByRole('button', { name: 'Oracle' })
+    fireEvent.click(oracle)
+    fireEvent.click(await screen.findByTitle('Start a new conversation (memory is kept)'))
+    const confirmation = screen.getByRole('alertdialog', {
+      name: 'Start a new conversation',
+    })
+
+    fireEvent.keyDown(within(confirmation).getByRole('button', { name: 'Keep this one' }), {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+
+    expect(screen.getByRole('dialog', { name: 'Oracle' })).toBeVisible()
+    expect(confirmation).toBeVisible()
+  })
+
+  it('preserves Oracle confirmation focus when docking falls back to overlay', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [{
+        id: 'oracle-answer',
+        role: 'assistant',
+        content: 'Current answer',
+        createdAt: '2026-10-22T00:00:00.000Z',
+      }],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      fireEvent.click(
+        await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+          .findByRole('button', { name: 'Oracle' }),
+      )
+      fireEvent.click(
+        await screen.findByTitle('Start a new conversation (memory is kept)'),
+      )
+      const keep = within(
+        screen.getByRole('alertdialog', { name: 'Start a new conversation' }),
+      ).getByRole('button', { name: 'Keep this one' })
+      keep.focus()
+
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', {
+          configurable: true,
+          value: 1000,
+        })
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(keep).toHaveFocus())
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth,
+      })
+    }
+  })
+
+  it('focuses the active session composer when a shortcut-opened overlay closes', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+    await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+      .findByRole('button', { name: 'Oracle' })
+
+    fireEvent.keyDown(window, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+    await waitFor(() => expect(oracleComposer).toHaveFocus())
+    fireEvent.keyDown(oracleComposer, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument(),
+    )
+    await waitFor(() => expect(sessionComposer).toHaveFocus())
+  })
+
+  it('focuses the active session composer when the close button closes Oracle', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const sessionComposer = await screen.findByRole<HTMLTextAreaElement>(
+      'textbox',
+      { name: 'Message' },
+    )
+    fireEvent.change(sessionComposer, { target: { value: 'Continue here' } })
+    const oracle = await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+      .findByRole('button', { name: 'Oracle' })
+    fireEvent.click(oracle)
+    await screen.findByRole('textbox', { name: 'Message Oracle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+    await waitFor(() => expect(sessionComposer).toHaveFocus())
+    expect(sessionComposer.selectionStart).toBe('Continue here'.length)
+  })
+
+  it('returns focus to Oracle in an open phone session drawer', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.click(await screen.findByRole('button', { name: 'Open sessions' }))
+      const sidebarOracle = within(document.querySelector<HTMLElement>('.sidebar-settings')!)
+        .getByRole('button', { name: 'Oracle' })
+      fireEvent.click(sidebarOracle)
+      await screen.findByRole('dialog', { name: 'Oracle' })
+      fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+
+      await waitFor(() => expect(sidebarOracle).toHaveFocus())
+      expect(sessionComposer).not.toHaveFocus()
+      expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('closes Oracle safely when there is no active session composer', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const oracle = await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+      .findByRole('button', { name: 'Oracle' })
+    fireEvent.click(oracle)
+    await screen.findByRole('dialog', { name: 'Oracle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument()
+    await waitFor(() => expect(oracle).toHaveFocus())
+  })
+
+  it('closes pinned Oracle when its shortcut has no visible session composer', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(listSessions).mockResolvedValue([])
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const oracle = await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .findByRole('button', { name: 'Oracle' })
+      fireEvent.click(oracle)
+      const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      fireEvent.keyDown(oracleComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument(),
+      )
+      await waitFor(() => expect(oracle).toHaveFocus())
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('returns to the Oracle trigger when the session becomes blocked while Oracle is open', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+    sessionComposer.focus()
+    fireEvent.keyDown(sessionComposer, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    await screen.findByRole('textbox', { name: 'Message Oracle' })
+
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            pendingUserInput: {
+              requestId: 'became-blocked',
+              question: 'Choose before continuing',
+              choices: ['Continue'],
+              allowFreeform: true,
+            },
+          },
+        }),
+      } as MessageEvent)
+    })
+    await screen.findByRole('heading', { name: 'Choose before continuing' })
+    fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+
+    const oracle = within(document.querySelector<HTMLElement>('.timeline-dock')!)
+      .getByRole('button', { name: 'Oracle' })
+    await waitFor(() => expect(oracle).toHaveFocus())
+    expect(sessionComposer).not.toHaveFocus()
+  })
+
+  it('does not open Oracle while a session question owns attention', async () => {
+    const askingSession: ManagedSession = {
+      ...session,
+      pendingUserInput: {
+        requestId: 'oracle-shortcut-question',
+        question: 'Which environment?',
+        choices: ['Development', 'Production'],
+        allowFreeform: true,
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([askingSession])
+    vi.mocked(getSession).mockResolvedValue(askingSession)
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Which environment?' })
+    fireEvent.keyDown(window, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+  })
+
+  it('does not focus a disabled session composer when Oracle closes', async () => {
+    const suspended = { ...session, suspended: true }
+    vi.mocked(listSessions).mockResolvedValue([suspended])
+    vi.mocked(getSession).mockResolvedValue(suspended)
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    render(<App />)
+    const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+    await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+      .findByRole('button', { name: 'Oracle' })
+    expect(sessionComposer).toBeDisabled()
+    fireEvent.keyDown(window, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+    fireEvent.keyDown(oracleComposer, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument(),
+    )
+    expect(sessionComposer).not.toHaveFocus()
+    await waitFor(() =>
+      expect(within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .getByRole('button', { name: 'Oracle' })).toHaveFocus(),
+    )
+  })
+
+  it('does not reserve a pinned column when Oracle is unavailable', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    window.history.replaceState({}, '', '/?oracle=open')
+    vi.mocked(getManager).mockResolvedValue({
+      available: false,
+      unavailableReason: 'Oracle is disabled.',
+      status: 'offline',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      await waitFor(() => expect(getManager).toHaveBeenCalled())
+      await waitFor(() =>
+        expect(document.querySelector('.app-shell')).not.toHaveClass(
+          'app-shell--oracle-docked',
+        ),
+      )
+      expect(screen.queryByRole('dialog', { name: 'Oracle' })).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth,
+      })
+    }
+  })
+
+  it('reserves room for docked Knowledge when Oracle is pinned', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    localStorage.setItem('agentic-remote:knowledge-mode', JSON.stringify('docked'))
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const oracle = await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .findByRole('button', { name: 'Oracle' })
+      fireEvent.click(oracle)
+      expect(await screen.findByRole('separator', { name: 'Resize Oracle' }))
+        .toHaveAttribute('aria-valuemax', '440')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth,
+      })
+    }
+  })
+
+  it('falls back to overlay when docking would violate the conversation minimum', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const oracle = await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .findByRole('button', { name: 'Oracle' })
+      fireEvent.click(oracle)
+
+      expect(await screen.findByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      expect(document.querySelector('.app-shell')).not.toHaveClass(
+        'app-shell--oracle-docked',
+      )
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('stores Oracle placement from its header and falls back to an overlay on phones', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      fireEvent.keyDown(window, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracle = await screen.findByRole('dialog', { name: 'Oracle' })
+      expect(oracle).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      const dock = screen.getByRole('button', { name: 'Dock Oracle' })
+      expect(dock).toHaveAttribute('title', 'Dock Oracle (Ctrl + Alt + P)')
+      dock.focus()
+      fireEvent.click(dock)
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+      expect(oracle).toHaveAttribute(
+        'data-placement',
+        'docked',
+      )
+      const undock = screen.getByRole('button', { name: 'Undock Oracle' })
+      expect(undock).toHaveFocus()
+      fireEvent.click(undock)
+      expect(oracle).toHaveAttribute('data-placement', 'overlay')
+      const redock = screen.getByRole('button', { name: 'Dock Oracle' })
+      await waitFor(() => expect(redock).toHaveFocus())
+      fireEvent.click(redock)
+      expect(oracle).toHaveAttribute('data-placement', 'docked')
+
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('toggles Oracle placement by shortcut without leaving a covered composer focused', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', {
+        name: 'Message Oracle',
+      })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+
+      fireEvent.keyDown(oracleComposer, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'docked',
+      )
+      expect(oracleComposer).toHaveFocus()
+
+      sessionComposer.focus()
+      fireEvent.keyDown(sessionComposer, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      expect(sessionComposer).not.toHaveFocus()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('focuses Oracle when docking falls back over the session composer', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', {
+        name: 'Message Oracle',
+      })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      sessionComposer.focus()
+
+      fireEvent.keyDown(sessionComposer, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBe('docked')
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      expect(sessionComposer).not.toHaveFocus()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth,
+      })
+    }
+  })
+
+  it('does not toggle Oracle placement or focus behind App settings', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    try {
+      render(<App />)
+      await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .findByRole('button', { name: 'Oracle' })
+      fireEvent.keyDown(window, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      await screen.findByRole('dialog', { name: 'Oracle' })
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const settings = await screen.findByRole('dialog', { name: 'App settings' })
+      const responseStyle = within(settings).getByRole('combobox', {
+        name: 'Oracle response style',
+      })
+      responseStyle.focus()
+
+      fireEvent.keyDown(responseStyle, {
+        key: 'p',
+        code: 'KeyP',
+        altKey: true,
+        ctrlKey: true,
+      })
+
+      expect(localStorage.getItem('agentic-remote:oracle-placement')).toBeNull()
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      expect(responseStyle).toHaveFocus()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('uses the shortcut to focus the full-screen Oracle composer on a phone', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    localStorage.setItem('agentic-remote:oracle-placement', 'docked')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'recovering',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    try {
+      render(<App />)
+      const sessionComposer = await screen.findByRole('textbox', { name: 'Message' })
+      await within(document.querySelector<HTMLElement>('.timeline-dock')!)
+        .findByRole('button', { name: 'Oracle, working' })
+      fireEvent.keyDown(sessionComposer, {
+        key: 'o',
+        code: 'KeyO',
+        altKey: true,
+        ctrlKey: true,
+      })
+      const oracleComposer = await screen.findByRole('textbox', { name: 'Message Oracle' })
+      await waitFor(() => expect(oracleComposer).toHaveFocus())
+      expect(screen.getByRole('dialog', { name: 'Oracle' })).toHaveAttribute(
+        'data-placement',
+        'overlay',
+      )
+      expect(screen.getByText('Reconnecting…')).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('drops an invalid stored Oracle placement', async () => {
+    localStorage.setItem('agentic-remote:oracle-placement', 'beside-ish')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+      settings: {},
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.keyDown(window, {
+      key: 'o',
+      code: 'KeyO',
+      altKey: true,
+      ctrlKey: true,
+    })
+    expect(await screen.findByRole('button', { name: 'Dock Oracle' }))
+      .toBeInTheDocument()
+    expect(localStorage.getItem('agentic-remote:oracle-placement')).toBeNull()
   })
 
   it('sends /oracle to Oracle as Ask only, never to the session', async () => {
@@ -3472,13 +4478,18 @@ describe('App', () => {
     const dialog = screen.getByRole('dialog', { name: 'App settings' })
     const groups = [...dialog.querySelectorAll<HTMLElement>('.app-settings-group')]
     expect(groups.map((group) => group.querySelector('h3')?.textContent)).toEqual([
-      'Models', 'Folders', 'Notifications', 'Interface', 'App',
+      'Models', 'Folders', 'Oracle', 'Notifications', 'Interface', 'App',
     ])
-    const [models, folders, notifications, ui, app] = groups
-    // Every model choice in one place: new sessions', then Oracle's.
+    const [models, folders, oracle, notifications, ui, app] = groups
     expect(within(models).getByRole('heading', { name: 'New sessions' })).toBeInTheDocument()
     expect(await within(models).findByLabelText('GitHub Copilot default model')).toBeInTheDocument()
-    expect(await within(models).findByRole('combobox', { name: 'Oracle model' })).toBeInTheDocument()
+    expect(await within(oracle).findByRole('combobox', { name: 'Oracle model' })).toBeInTheDocument()
+    expect(within(oracle).getByRole('combobox', { name: 'Oracle response style' })).toBeInTheDocument()
+    expect(within(oracle).getByRole('group', { name: 'What notifies you' })).toBeInTheDocument()
+    expect(within(oracle).queryByRole('group', { name: 'Oracle placement' }))
+      .not.toBeInTheDocument()
+    expect(within(oracle).queryByRole('heading', { name: 'Desktop panel' }))
+      .not.toBeInTheDocument()
     // Every folder in one place, per computer: yours, then Oracle's.
     const computerFolders = within(folders).getByRole('group', { name: 'Session folders on development' })
     expect(within(computerFolders).getByRole('button', { name: 'Browse default session folder for development' })).toBeInTheDocument()
@@ -3494,7 +4505,7 @@ describe('App', () => {
     // A jump bar reaches each group.
     const jump = within(dialog).getByRole('navigation', { name: 'Settings sections' })
     expect(within(jump).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      'Models', 'Folders', 'Notifications', 'Interface', 'App',
+      'Models', 'Folders', 'Oracle', 'Notifications', 'Interface', 'App',
     ])
     // It scrolls the settings alone, placing the group under the jump bar;
     // never the page behind the dialog.
@@ -3559,7 +4570,7 @@ describe('App', () => {
     Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: scrollTo })
     let oracleTop = 400
     const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-      const top = this.id === 'settings-oracle' ? oracleTop : this.classList.contains('app-settings-dialog') ? 100 : 0
+      const top = this.id === 'settings-oracle-model' ? oracleTop : this.classList.contains('app-settings-dialog') ? 100 : 0
       return { top } as DOMRect
     })
     try {
@@ -3567,7 +4578,7 @@ describe('App', () => {
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
       await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 292 }))
       expect(scrollTo.mock.contexts.at(-1)).toBe(dialog)
-      expect(within(dialog).getByRole('heading', { name: 'Oracle' })).toHaveFocus()
+      expect(within(dialog).getByRole('heading', { name: 'Model' })).toHaveFocus()
       // Catalogs loading above it push it down; it follows.
       oracleTop = 600
       settingsGrow()
@@ -7636,6 +8647,27 @@ describe('App', () => {
       await waitFor(() => expect(pendingBubble()).toBeNull())
       expect(screen.getAllByText(steer)).toHaveLength(1)
       expect(sendMessage).toHaveBeenCalledOnce()
+    })
+
+    it('uses the transcript stack spacing before any message has been logged', async () => {
+      const emptyRunning = { ...running, messages: [] }
+      vi.mocked(listSessions).mockResolvedValue([emptyRunning])
+      vi.mocked(getSession).mockResolvedValue(emptyRunning)
+      vi.mocked(sendMessage).mockResolvedValue(emptyRunning)
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+      const bubble = await screen.findByRole('article', {
+        name: 'Your message, pending in the terminal',
+      })
+      expect(bubble.parentElement).toHaveClass('message-stack')
+      expect(
+        screen.queryByRole('heading', { name: 'What should we work on?' }),
+      ).not.toBeInTheDocument()
     })
 
     it('is shown for an accepted steer while the same words already wait in the queue', async () => {
@@ -12263,6 +13295,57 @@ describe('App', () => {
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
   })
 
+  it('routes card Close and Pause actions to the remote session computer', async () => {
+    const remoteSession = {
+      ...secondSession,
+      computerId: secondComputer.id,
+      computerName: secondComputer.name,
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === remoteSession.id ? remoteSession : session,
+    )
+    vi.mocked(suspendSession).mockResolvedValue({
+      ...remoteSession,
+      suspended: true,
+    })
+    render(<App />)
+    await screen.findAllByText('Second chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
+    await waitFor(() =>
+      expect(suspendSession).toHaveBeenCalledWith('computer-2', 'session-2'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Close "Second chat" on worker-node?\n\nThis permanently deletes the GitHub Copilot session and its history from that computer.',
+    )
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-2', 'session-2'),
+    )
+  })
+
+  it('reveals a card close failure from the phone session drawer', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    vi.mocked(deleteSession).mockRejectedValueOnce(new Error('Node refused the close'))
+    try {
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Close Project chat' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Node refused the close',
+      )
+      expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
   it('keeps the session chosen while another one was closing', async () => {
     const thirdSession: ManagedSession = {
       ...session,
@@ -13757,7 +14840,7 @@ describe('App', () => {
     expect(order[2]).toContain('Finished a while ago')
   })
 
-  it('opens background tasks by touch from the sidebar count', async () => {
+  it('opens background tasks by touch from the sidebar status', async () => {
     // The status line is a display preference, so it cannot be the only way to
     // reach a panel that describes work still running.
     localStorage.setItem(
@@ -13786,7 +14869,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    // A keyboard shortcut cannot be reached by touch, so the count already in
+    // A keyboard shortcut cannot be reached by touch, so the status already in
     // the sidebar has to be a way in that no display preference can remove.
     fireEvent.click(
       await screen.findByRole('button', {
@@ -17895,6 +18978,8 @@ describe('App', () => {
       JSON.stringify({
         toggleKnowledge: { code: 'KeyG', alt: false, shift: false, ctrl: false, meta: false },
         backgroundTasks: { code: 'ArrowDown', alt: true, shift: false, ctrl: false, meta: false },
+        toggleOracle: { code: 'Enter', alt: false, shift: false, ctrl: true, meta: false },
+        toggleOracleDock: { code: 'Enter', alt: false, shift: false, ctrl: true, meta: false },
         nonsense: { code: 'KeyZ', alt: true },
       }),
     )
@@ -17916,6 +19001,60 @@ describe('App', () => {
     expect(
       screen.getByLabelText('Change the keys for Next session'),
     ).toHaveTextContent('Alt + \u2193')
+    expect(
+      screen.getByLabelText('Change the keys for Open, close, or focus Oracle'),
+    ).toHaveTextContent('Ctrl + Alt + O')
+    expect(
+      screen.getByLabelText('Change the keys for Dock or undock Oracle'),
+    ).toHaveTextContent('Ctrl + Alt + P')
+  })
+
+  it('refuses Enter as the Oracle shortcut because composers use it to send', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(
+      await screen.findByLabelText(
+        'Change the keys for Open, close, or focus Oracle',
+      ),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText(
+        'Press the new keys for Open, close, or focus Oracle',
+      ),
+      { key: 'Enter', code: 'Enter', ctrlKey: true },
+    )
+
+    expect(await screen.findByText(/Enter sends from a composer/i)).toBeVisible()
+    expect(
+      screen.getByLabelText(
+        'Press the new keys for Open, close, or focus Oracle',
+      ),
+    ).toBeVisible()
+  })
+
+  it('refuses Enter as the Oracle dock shortcut because composers use it to send', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(
+      await screen.findByLabelText(
+        'Change the keys for Dock or undock Oracle',
+      ),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText(
+        'Press the new keys for Dock or undock Oracle',
+      ),
+      { key: 'Enter', code: 'Enter', ctrlKey: true },
+    )
+
+    expect(await screen.findByText(/Enter sends from a composer/i)).toBeVisible()
+    expect(
+      screen.getByLabelText(
+        'Press the new keys for Dock or undock Oracle',
+      ),
+    ).toBeVisible()
   })
 
   it('refuses a key at capture that a reload would throw away', async () => {
@@ -18421,6 +19560,7 @@ describe('App', () => {
     })
     const list = shortcuts.closest('section')?.querySelector('.shortcut-list')
     expect(list).toHaveTextContent('Next session')
+    expect(list).toHaveTextContent('Dock or undock Oracle')
     expect(list).toHaveTextContent('Open or close knowledge')
     expect(list).toHaveTextContent('Expand or minimize knowledge')
   })
@@ -20306,11 +21446,10 @@ describe('App', () => {
     )
   })
 
-  it('counts only what is running, not what is merely tracked', async () => {
-    // A session can carry a long history of finished work. The count exists to
-    // be caught at a glance, so it speaks for what is running now: a hundred
-    // tracked tasks with none of them running is a quiet session and reads as
-    // one.
+  it('shows task status only while background work is running', async () => {
+    // A session can carry a long history of finished work. The status speaks
+    // only for what is running now: a hundred tracked tasks with none of them
+    // running is a quiet session and reads as one.
     render(<App />)
     await screen.findAllByText('Project chat')
 
@@ -20339,7 +21478,7 @@ describe('App', () => {
     // Nothing is running, so the row says nothing about tasks at all.
     expect(document.querySelector('.session-item__tasks')).toBeNull()
 
-    // Two of them start, and only those two are counted.
+    // Running work adds one stable status action without replacing the time.
     await act(async () => {
       MockWebSocket.instances[0]?.onmessage?.({
         data: JSON.stringify({
@@ -20356,20 +21495,22 @@ describe('App', () => {
     await waitFor(() =>
       expect(
         document.querySelector('.session-item__tasks')?.textContent,
-      ).toBe('2 tasks'),
+      ).toBe('Tasks'),
     )
+    expect(document.querySelector('.session-item__time')).toHaveTextContent(/\S/)
   })
 
   it('says nothing in the list when no task is running', async () => {
-    // The count is there to be caught in passing. A session with nothing
+    // The status is there to be caught in passing. A session with nothing
     // running should read as a session, not as a session with a zero on it.
     render(<App />)
     await screen.findAllByText('Project chat')
 
     expect(document.querySelector('.session-item__tasks')).toBeNull()
     expect(screen.queryByText(/running task/)).not.toBeInTheDocument()
-    // The folder still shows, and the count would sit beside it.
+    // The folder and activity time remain visible.
     expect(document.querySelector('.session-item__where')).not.toBeNull()
+    expect(document.querySelector('.session-item__time')).toHaveTextContent(/\S/)
   })
 
   it('retries a knowledge restore that failed', async () => {

@@ -115,6 +115,22 @@ describe('maintained graph artifacts', () => {
     expect(metadata.graphify_version).toBe(scope.graphify_version)
   })
 
+  it('lists only graph-represented files as semantically extracted', () => {
+    const metadata = JSON.parse(readFileSync(join(area, 'metadata.json'), 'utf8'))
+    const graph = JSON.parse(readFileSync(join(area, 'graph.json'), 'utf8'))
+    const represented = new Set(graph.nodes.map((node: { source_file?: string }) => node.source_file))
+    for (const file of metadata.code_files) expect(represented.has(file)).toBe(true)
+  })
+
+  it('configures the offline viewer for the maintained graph size', () => {
+    const metadata = JSON.parse(readFileSync(join(area, 'metadata.json'), 'utf8'))
+    const result = pythonCall(area, `
+print(module.environment().get("GRAPHIFY_VIZ_NODE_LIMIT", ""))
+`)
+    expect(result.status, result.stderr).toBe(0)
+    expect(Number(result.stdout.trim())).toBeGreaterThan(metadata.nodes)
+  })
+
   it('ships an integrity-checked, self-contained viewer with connections disabled', () => {
     const html = readFileSync(join(area, 'graph.html'), 'utf8')
     const integrity = 'sha384-' + createHash('sha384')
@@ -184,5 +200,29 @@ socket.create_connection(("example.invalid", 443))
 `)
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('Graphify network access is disabled')
+  })
+
+  it('inventories unrepresented data JSON without hiding missing code', () => {
+    const root = fixture()
+    mkdirSync(join(root, 'config'))
+    writeFileSync(join(root, 'config/profiles.json'), '{"profiles":[]}\n')
+    writeFileSync(join(root, 'src/missing.ts'), 'export const missing = true\n')
+    const result = pythonCall(root, `
+code = [root / "src/example.ts", root / "config/profiles.json", root / "src/missing.ts"]
+parsed, inventory, missing = module.partition_extraction_results(
+    root, code, {"src/example.ts"}, {"config/profiles.json"}
+)
+print(json.dumps({
+    "parsed": [path.relative_to(root).as_posix() for path in parsed],
+    "inventory": inventory,
+    "missing": missing,
+}))
+`)
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual({
+      parsed: ['src/example.ts'],
+      inventory: ['config/profiles.json'],
+      missing: ['src/missing.ts'],
+    })
   })
 })

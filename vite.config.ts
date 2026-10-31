@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
@@ -48,6 +49,12 @@ const slowTests = [
   'server/computer-manager-metadata.test.ts',
   'server/conversation-recovery.test.ts',
   'server/delegated-transcription-service.test.ts',
+  'server/dreamer-app.test.ts',
+  'server/dreamer-planner.test.ts',
+  'server/dreamer-routes.test.ts',
+  'server/dreamer-schedule.test.ts',
+  'server/dreamer-service.test.ts',
+  'server/dreamer-store.test.ts',
   'server/file-upload-routes.test.ts',
   'server/full-gate.test.ts',
   'server/history-projection.test.ts',
@@ -110,6 +117,7 @@ const slowTests = [
   'src/MermaidDiagram.real.test.tsx',
   'src/MermaidDiagram.test.tsx',
   'src/OracleSettings.test.tsx',
+  'src/OracleDreamer.test.tsx',
   'src/ReaderWorkspace.test.tsx',
   'src/SessionActions.test.tsx',
   'src/SessionNavigation.test.tsx',
@@ -133,13 +141,31 @@ for (const file of [...canaryTests, ...tmuxTests, ...slowTests]) {
   }
 }
 
+const oracleVoiceAssetNames = new Set([
+  'ort-wasm-simd-threaded.mjs',
+  'ort-wasm-simd-threaded.wasm',
+  'silero_vad_v5.onnx',
+  'vad.worklet.bundle.min.js',
+])
+
 const packageVersion = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
 ) as { version: string }
+const oracleVoiceThirdPartyNotices = readFileSync(
+  new URL('./docs/licenses/oracle-voice-browser.txt', import.meta.url),
+  'utf8',
+) + '\n\n' + readFileSync(
+  new URL(
+    './docs/licenses/onnxruntime-1.24.2-third-party-notices.txt',
+    import.meta.url,
+  ),
+  'utf8',
+)
 
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
   const buildId = command === 'build' ? randomUUID() : packageVersion.version
+  const oracleVoiceE2eBuild = process.env.AGENTIC_REMOTE_E2E_BUILD === '1'
   return {
     define: {
       __APP_VERSION__: JSON.stringify(packageVersion.version),
@@ -165,9 +191,43 @@ export default defineConfig(({ command, mode }) => {
               readFileSync(new URL('./public/sw.js', import.meta.url), 'utf8')
             }`,
           })
+          this.emitFile({
+            type: 'asset',
+            fileName: 'oracle-voice-assets/THIRD_PARTY_NOTICES.txt',
+            source: oracleVoiceThirdPartyNotices,
+          })
         },
       },
     ],
+    resolve: oracleVoiceE2eBuild
+      ? {
+          alias: [{
+            find: /^@ricky0123\/vad-web$/,
+            replacement: fileURLToPath(
+              new URL('./e2e/fixtures/fake-vad.ts', import.meta.url),
+            ),
+          }],
+        }
+      : undefined,
+    build: {
+      assetsInlineLimit(filePath) {
+        return oracleVoiceAssetNames.has(filePath.split(/[\\/]/).at(-1) ?? '')
+          ? false
+          : undefined
+      },
+      rollupOptions: {
+        output: {
+          assetFileNames(assetInfo) {
+            const sourceName = assetInfo.names.find((name) =>
+              oracleVoiceAssetNames.has(name.split('/').at(-1) ?? ''))
+            const baseName = sourceName?.split('/').at(-1)
+            return baseName
+              ? `oracle-voice-assets/${baseName}`
+              : 'assets/[name]-[hash][extname]'
+          },
+        },
+      },
+    },
     server: {
       host: '127.0.0.1',
       port: 4317,
@@ -180,6 +240,7 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     test: {
+      exclude: [...configDefaults.exclude, 'e2e/**'],
       // React resolves to its production CJS build when NODE_ENV=production, and
       // that build omits `act`, so every component test fails. `pnpm start` and
       // the systemd unit both export NODE_ENV=production, so pin it here to keep

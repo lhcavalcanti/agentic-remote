@@ -7,7 +7,10 @@ import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
-import type { HubEvent } from '../shared/contracts.js'
+import type {
+  HubEvent,
+  VoiceBackendCapability,
+} from '../shared/contracts.js'
 import {
   deliveryUncertaintyFromError,
   SubmissionError,
@@ -62,10 +65,24 @@ import {
   registerFileUploadRoutes,
 } from './file-upload-routes.js'
 import {
+  readOracleVoiceConfig,
+  readOracleVoiceSelection,
+  type OracleVoiceConfig,
+} from './oracle-voice-config.js'
+import type { VoiceEngineFactory } from './oracle-voice-engine.js'
+import {
+  DEFAULT_VOICE_BACKEND_LIMITS,
+  LocalVoiceBackend,
+  type VoiceBackend,
+} from './oracle-voice-session.js'
+import { ChildVoiceEngine } from './oracle-voice-worker.js'
+import {
   registerTranscriptionRoutes,
   transcriptionMultipartOptions,
 } from './transcription-routes.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
+import { registerDreamerRoutes } from './dreamer-routes.js'
+import { DreamerService } from './dreamer-service.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -83,6 +100,10 @@ export interface BuildAppOptions {
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
   settingsProfileStore?: SettingsProfileStore
+  /** Injected speech-engine construction seam; buildApp never starts it. */
+  voiceEngineFactory?: VoiceEngineFactory
+  /** Injected voice transport seam; Task 6 constructs the runtime backend. */
+  voiceBackend?: VoiceBackend
   /**
    * The session manager agent. Built on a hub with the built-in session
    * service unless false or turned off with AGENTIC_REMOTE_MANAGER=off.
@@ -126,6 +147,10 @@ export async function buildApp(
   settingsProfileStore?: SettingsProfileStore
   managerAgent?: ManagerAgent
   managerStructuredMemory: ManagerStructuredMemoryRuntime
+  voiceConfig: OracleVoiceConfig
+  voiceEngineFactory?: VoiceEngineFactory
+  voiceCapability: VoiceBackendCapability
+  dreamerService?: DreamerService
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -145,6 +170,55 @@ export async function buildApp(
   }
   const app = Fastify({ logger: options.logger ?? true })
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
+  const voiceSelection = readOracleVoiceSelection()
+  let voiceConfig: OracleVoiceConfig = { enabled: false }
+  let voiceConfigurationError: string | undefined
+  try {
+    voiceConfig = await readOracleVoiceConfig(dataDirectory, process.env, {
+      requireLocal: role === 'node' || !voiceSelection.enabled || !voiceSelection.computerName,
+    })
+  } catch (error) {
+    voiceConfigurationError = error instanceof Error ? error.message : String(error)
+  }
+  const localVoiceConfig = voiceConfig.enabled && 'stt' in voiceConfig
+    ? voiceConfig
+    : undefined
+  let voiceEngineFactory = options.voiceEngineFactory
+  if (
+    !options.voiceBackend
+    && !voiceConfigurationError
+    && localVoiceConfig
+    && !voiceEngineFactory
+  ) {
+    voiceEngineFactory = new ChildVoiceEngine(localVoiceConfig)
+  }
+  const voiceService = options.voiceBackend ?? (
+    !voiceConfigurationError && localVoiceConfig && voiceEngineFactory
+      ? new LocalVoiceBackend(voiceEngineFactory, localVoiceConfig)
+      : undefined
+  )
+  const voiceCapability: VoiceBackendCapability =
+    options.voiceBackend?.capability() ?? (
+      voiceConfigurationError
+        ? {
+            available: false,
+            reason: `Oracle voice configuration is invalid: ${voiceConfigurationError}`,
+          }
+        : !voiceConfig.enabled
+          ? {
+              available: false,
+              reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
+            }
+          : !localVoiceConfig
+            ? {
+                available: false,
+                reason: 'Oracle voice uses the configured paired computer; no local engine is loaded.',
+              }
+          : voiceEngineFactory?.capability() ?? {
+              available: false,
+              reason: 'Oracle voice engine is unavailable.',
+            }
+    )
   const agent = options.service
     ? undefined
     : new AgentService(new SessionStore(dataDirectory))
@@ -213,12 +287,22 @@ export async function buildApp(
     })
   })
 
-  await app.register(fastifyWebsocket)
+  await app.register(fastifyWebsocket, {
+    options: {
+      maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
+    },
+  })
   const localTranscription =
     options.transcriptionService ??
     new LocalTranscriptionService(localTranscriptionOptions(dataDirectory))
   await localTranscription.initialize()
-  await registerNodeRoutes(app, service, identity, localTranscription)
+  await registerNodeRoutes(
+    app,
+    service,
+    identity,
+    localTranscription,
+    voiceService,
+  )
 
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined
@@ -228,6 +312,10 @@ export async function buildApp(
   let sessionOrderStore: SessionOrderStore | undefined
   let settingsProfileStore: SettingsProfileStore | undefined
   let managerAgent: ManagerAgent | undefined
+  let managerStore: ManagerStore | undefined
+  let managerStoreReady = false
+  let dreamerService: DreamerService | undefined
+  let dreamerUnavailable: string | undefined
   let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
@@ -279,7 +367,7 @@ export async function buildApp(
     } else if (!agent) {
       managerUnavailable = 'Oracle needs the built-in Copilot session service.'
     } else {
-      const managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
       // The manager is an addition to the hub; a hub whose manager cannot
       // start still serves everything else.
       const initialized = await managerStore.initialize().then(() => true, (error: unknown) => {
@@ -287,6 +375,7 @@ export async function buildApp(
         managerUnavailable = `Oracle could not start: ${error instanceof Error ? error.message : String(error)}`
         return false
       })
+      managerStoreReady = initialized
       const recorder = initialized ? new JournalRecorder(managerStore) : undefined
       if (recorder) {
         forwardToJournal = (event) => recorder.handle(event)
@@ -308,6 +397,24 @@ export async function buildApp(
       // leaves the manager's own conversations out.
       if (managerAgent) agent.excludeFromDiscovery(managerAgent.hiddenSessionIds())
     }
+    if (managerStoreReady && managerStore) {
+      dreamerService = new DreamerService(
+        path.join(dataDirectory, 'manager', 'dreamer'),
+        {
+          registry: () => managerStore!.registry(),
+          structuredMemory: managerStructuredMemory,
+        },
+      )
+      try {
+        await dreamerService.initialize()
+      } catch (error) {
+        app.log.error({ err: error }, 'Dreamer could not initialize')
+        dreamerService = undefined
+        dreamerUnavailable = 'Dreamer storage is unavailable on this hub.'
+      }
+    } else {
+      dreamerUnavailable = 'Dreamer is unavailable because Oracle is not running on this hub.'
+    }
     await registerHubRoutes(
       app,
       manager,
@@ -318,6 +425,19 @@ export async function buildApp(
       managerAgent,
       settingsProfileStore,
       presence,
+      {
+        identity,
+        computers: manager,
+        manager: managerAgent,
+        managerEvents: managerAgent,
+        localBackend: voiceService,
+        ...(voiceSelection.enabled && voiceSelection.computerName
+          ? { selectedComputerName: voiceSelection.computerName }
+          : {}),
+        unavailableReason: voiceCapability.available
+          ? 'Oracle voice is unavailable.'
+          : voiceCapability.reason,
+      },
     )
     if (managerAgent) pushService.attachOracle(managerAgent)
     await registerManagerRoutes(
@@ -325,6 +445,11 @@ export async function buildApp(
       managerAgent,
       managerUnavailable,
       managerStructuredMemory,
+    )
+    await registerDreamerRoutes(
+      app,
+      dreamerService,
+      dreamerUnavailable ?? 'Dreamer is unavailable on this hub.',
     )
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
@@ -390,15 +515,23 @@ export async function buildApp(
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
     const starting = managerAgent
-    if (!starting) return
-    await startupPhases.run('manager.start', () => starting.start()).catch((error: unknown) => {
-      app.log.error({ err: error }, 'The manager agent could not start')
-    })
+    if (starting) {
+      await startupPhases.run('manager.start', () => starting.start()).catch((error: unknown) => {
+        app.log.error({ err: error }, 'The manager agent could not start')
+      })
+    }
+    if (dreamerService) {
+      await dreamerService.start().catch((error: unknown) => {
+        app.log.error({ err: error }, 'Dreamer could not start')
+      })
+    }
   })
 
   app.addHook('onClose', async () => {
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
+    await voiceService?.stop()
+    await dreamerService?.stop()
     await managerAgent?.stop()
     manager?.stop()
     pushService?.stop()
@@ -419,5 +552,9 @@ export async function buildApp(
     settingsProfileStore,
     managerAgent,
     managerStructuredMemory,
+    voiceConfig,
+    voiceEngineFactory,
+    voiceCapability,
+    dreamerService,
   }
 }

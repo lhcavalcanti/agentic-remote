@@ -34,6 +34,10 @@ import type {
   SideQuestionExchange,
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
+import {
+  RemoteVoiceClient,
+  type RemoteVoiceClientOptions,
+} from './remote-voice-client.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
 import { parseSubmissionReceipt } from '../shared/submission-error.js'
 import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
@@ -90,6 +94,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private stopped = false
   private _online = false
   private _providers: NodeInfo['providers']
+  private _voice: NodeInfo['voice']
 
   constructor(readonly computer: RegisteredComputer) {
     super()
@@ -114,6 +119,10 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  get voice(): NodeInfo['voice'] {
+    return this._voice
+  }
+
   async getInfo(signal?: AbortSignal): Promise<NodeInfo> {
     const info = await this.request<NodeInfo>(
       '/node-api/info',
@@ -122,8 +131,19 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       false,
     )
     this._providers = info.providers
+    this._voice = info.voice
     this.setOnline(true)
     return info
+  }
+
+  connectVoice(
+    streamId: string,
+    options: Omit<RemoteVoiceClientOptions, 'registrationSignal'> = {},
+  ): Promise<RemoteVoiceClient> {
+    return RemoteVoiceClient.connect(this.computer, streamId, {
+      ...options,
+      registrationSignal: this.resourceLifetime.signal,
+    })
   }
 
   async listSessions(): Promise<SessionDetail[]> {

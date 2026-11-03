@@ -774,7 +774,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   the server's trusted marker. That result MUST remain transient and MUST NOT
   become planning input.
   Unavailable durable todos, incomplete history and source freshness limits
-  MUST be visible rather than represented as a complete review.
+  MUST be visible rather than represented as a complete review. Session
+  candidates MUST use the exact computer/session identity, deduplicate current
+  and carried entries by that identity, and exclude invalid or partial IDs,
+  generic open-session metadata, historical orphans, closed/completed sessions
+  and entries with no actionable source. Exclusions MUST be reported as counts
+  rather than rendered as review cards.
 - Daily run claims, generation/lease fences, plans and user edits MUST persist
   before success. Disable, expiry, shutdown and restart MUST prevent stale
   workers from replacing a committed plan. Bounds and storage failures MUST
@@ -786,9 +791,16 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   explicit confirmation MUST re-read the exact message and persist bounded
   provenance before marking the item done. The same item/evidence pair MUST be
   idempotent; changed, missing, plain-text, background-agent, or failed-tool
-  evidence MUST be refused. These actions MUST never prompt, resume, stop,
+  evidence MUST be refused. Completion evidence older than the latest root user
+  turn MUST also be refused. These actions MUST never prompt, resume, stop,
   close, or otherwise mutate a session. Concurrent stale edits MUST be refused
   and refreshed.
+- Refresh and evidence retry MUST reload and reconcile authoritative sessions,
+  live background tasks and the current Dreamer plan without duplicating cards
+  or discarding the active draft/order. Offline, pending, stale and error states
+  MUST remain distinct and actionable. Background Tasks is the live provider
+  task surface; the morning plan is durable review state. Review edits affect
+  only the latter, while both participate in the same authoritative refresh.
 - Dreamer MUST NOT raise overnight notifications, send speech, execute work
   or add model calls. Semantic planning, authoritative todo/history adapters
   and optional morning delivery are separate follow-ups described in

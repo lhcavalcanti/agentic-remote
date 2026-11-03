@@ -45,6 +45,24 @@ describe('Dreamer schedule', () => {
       .toMatchObject({ due: true, localDate: '2026-10-25' })
   })
 
+  it('uses the 2026-11-02 America/Los_Angeles local day after the DST fallback', () => {
+    const timeZone = 'America/Los_Angeles'
+    expect(dreamerLocalDate(new Date('2026-11-02T07:59:59.000Z'), timeZone))
+      .toBe('2026-11-01')
+    expect(dreamerLocalDate(new Date('2026-11-02T08:00:00.000Z'), timeZone))
+      .toBe('2026-11-02')
+    expect(dreamerScheduledAt('2026-11-02', timeZone).toISOString())
+      .toBe('2026-11-02T10:00:00.000Z')
+    expect(dreamerScheduleDecision(new Date('2026-11-02T09:59:59.000Z'), timeZone))
+      .toMatchObject({ due: false, localDate: '2026-11-02', reason: 'before-run' })
+    expect(dreamerScheduleDecision(new Date('2026-11-02T10:00:00.000Z'), timeZone))
+      .toMatchObject({ due: true, localDate: '2026-11-02' })
+    expect(dreamerScheduleDecision(new Date('2026-11-02T15:59:59.000Z'), timeZone))
+      .toMatchObject({ due: true, localDate: '2026-11-02' })
+    expect(dreamerScheduleDecision(new Date('2026-11-02T16:00:00.000Z'), timeZone))
+      .toMatchObject({ due: false, localDate: '2026-11-02', reason: 'window-expired' })
+  })
+
   it('rejects invalid IANA zones without falling back to the host zone', () => {
     expect(validateDreamerTimeZone('Not/AZone')).toBe(false)
     expect(() => dreamerLocalDate(new Date(), 'Not/AZone')).toThrow('Invalid Dreamer timezone')

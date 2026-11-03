@@ -37,8 +37,10 @@ const plan = {
 }
 const ready = { ...initial, settings: { ...initial.settings, enabled: true }, plan }
 const completionCandidate = {
+  source: 'root-task-complete' as const,
   computerId: 'computer-a',
   sessionId: 'session-a',
+  sessionRevision: 7,
   messageId: 'completion-message',
   toolCallId: 'task-complete-call',
   completedAt: '2026-10-29T03:20:00.000Z',
@@ -200,6 +202,7 @@ describe('Dreamer settings and morning review', () => {
       name: 'Review completion evidence for Review failed session',
     }))
     expect(within(sessionItem).getByText(/requested change passed/)).toBeInTheDocument()
+    expect(sessionItem).toHaveTextContent('computer-a / session-a · revision 7')
     fireEvent.click(within(sessionItem).getByRole('button', {
       name: 'Confirm Review failed session completed',
     }))
@@ -210,6 +213,9 @@ describe('Dreamer settings and morning review', () => {
       planId: 'daily-plan',
       completion: {
         itemId: 'a',
+        computerId: 'computer-a',
+        sessionId: 'session-a',
+        sessionRevision: 7,
         messageId: 'completion-message',
         resultDigest: 'a'.repeat(64),
       },
@@ -235,16 +241,116 @@ describe('Dreamer settings and morning review', () => {
       ...ready,
       plan: {
         ...plan,
-        items: [{ ...plan.items[0], completionSourceUnavailable: true }],
+        items: [{
+          ...plan.items[0],
+          computerId: 'computer-a',
+          sessionId: '51a9d338-ec8f-4f3f-9f56-2de6c43519f7',
+          completionSourceUnavailable: true,
+          sourceState: 'unavailable' as const,
+          sourceStateReason: 'The owning session is offline or unavailable. Reconnect it, then refresh.',
+        }],
       },
     })
     render(<DreamerMorningPlan />)
     await openMorningPlan()
 
-    expect(screen.getByText(
-      'Completion evidence is unavailable. Refresh the morning plan to retry.',
-    )).toBeInTheDocument()
+    expect(screen.getByText(/owning session is offline or unavailable/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry evidence for Review failed session' }))
+      .toBeEnabled()
     expect(screen.getByRole('button', { name: 'Refresh morning plan' })).toBeEnabled()
+  })
+
+  it.each([
+    ['desktop', 1440],
+    ['phone', 390],
+  ])('renders one authoritative review card with its full identity on %s', async (_layout, width) => {
+    const previousWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...ready,
+      plan: {
+        ...plan,
+        items: [{
+          ...plan.items[0],
+          label: 'Session is waiting',
+          reason: 'Authoritative session state reports that input is required.',
+          computerId: 'computer-a',
+          sessionId: '5932eac7-7370-4b17-a539-0cadf719f34b',
+          sourceState: 'pending' as const,
+          sourceStateReason: 'No verified root task completion is available. Resolve the session, then refresh.',
+        }],
+      },
+    })
+    try {
+      render(<DreamerMorningPlan />)
+      await openMorningPlan()
+      const items = within(screen.getByRole('list', {
+        name: 'Dreamer priorities',
+      })).getAllByRole('listitem')
+      expect(items).toHaveLength(1)
+      expect(items[0]).toHaveTextContent(
+        'computer-a / 5932eac7-7370-4b17-a539-0cadf719f34b',
+      )
+      expect(items[0]).toHaveTextContent(/No verified root task completion/)
+      expect(items[0]).not.toHaveTextContent('Open session review')
+      expect(items[0]).not.toHaveTextContent('Journal metadata reports an open session')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: previousWidth,
+      })
+    }
+  })
+
+  it('retries authoritative evidence without duplicating the review card or replaying an edit', async () => {
+    const sessionId = '1b31e2dd-8810-46fc-884a-a3532b5b9148'
+    vi.mocked(getDreamer)
+      .mockResolvedValueOnce({
+        ...ready,
+        plan: {
+          ...plan,
+          items: [{
+            ...plan.items[0],
+            computerId: 'computer-a',
+            sessionId,
+            completionSourceUnavailable: true,
+            sourceState: 'unavailable' as const,
+            sourceStateReason: 'The owning session is offline or unavailable. Reconnect it, then refresh.',
+          }],
+        },
+      })
+      .mockResolvedValueOnce({
+        ...ready,
+        revision: 4,
+        plan: {
+          ...plan,
+          items: [{
+            ...plan.items[0],
+            computerId: 'computer-a',
+            sessionId,
+            completionCandidate: {
+              ...completionCandidate,
+              sessionId,
+            },
+            sourceState: 'verified-completion' as const,
+            sourceStateReason: 'Review the verified result before confirming completion.',
+          }],
+        },
+      })
+
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Retry evidence for Review failed session',
+    }))
+
+    expect(await screen.findByRole('button', {
+      name: 'Review completion evidence for Review failed session',
+    })).toBeEnabled()
+    expect(within(screen.getByRole('list', {
+      name: 'Dreamer priorities',
+    })).getAllByRole('listitem')).toHaveLength(1)
+    expect(updateDreamerPlan).not.toHaveBeenCalled()
   })
 
   it('persists exact reordered IDs using the current plan and revision', async () => {

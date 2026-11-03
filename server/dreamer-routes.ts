@@ -19,6 +19,9 @@ const planSchema = z.object({
   }).strict().optional(),
   completion: z.object({
     itemId: z.string().trim().min(1).max(200),
+    computerId: z.string().trim().min(1).max(200),
+    sessionId: z.string().trim().min(1).max(200),
+    sessionRevision: z.number().int().nonnegative(),
     messageId: z.string().trim().min(1).max(200),
     resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().optional(),

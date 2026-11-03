@@ -59,7 +59,6 @@ describe('Dreamer planner', () => {
       .toEqual([
         { sessionId: 'error-session', memoryId: undefined },
         { sessionId: 'waiting-session', memoryId: undefined },
-        { sessionId: 'secret-session', memoryId: undefined },
         { sessionId: undefined, memoryId: 'memory-a' },
       ])
     expect(result.items[0]).toMatchObject({
@@ -75,6 +74,7 @@ describe('Dreamer planner', () => {
       'live-computer-state-unavailable',
       'background-todos-unavailable',
       'structured-memory-metadata',
+      'Excluded 1 generic open-session metadata entry without an actionable source.',
     ]))
   })
 
@@ -109,6 +109,10 @@ describe('Dreamer planner', () => {
       'future-metadata',
       'closed-metadata',
       'invalid-scope',
+      'Excluded 1 session proposal with invalid identity.',
+      'Excluded 1 closed session proposal.',
+      'Excluded 1 future-dated session proposal.',
+      'Excluded 1 stale session proposal.',
       'tombstoned-memory',
       'superseded-memory',
       'expired-memory',
@@ -149,9 +153,147 @@ describe('Dreamer planner', () => {
 
     expect(result.items.map(({ id, source, sessionId, status }) => ({ id, source, sessionId, status })))
       .toEqual([
-        { id: 'carry-item', source: 'carry', sessionId: 'carry', status: 'pending' },
-        { id: expect.any(String), source: 'session', sessionId: 'new', status: 'pending' },
+        { id: expect.any(String), source: 'carry', sessionId: 'carry', status: 'pending' },
       ])
+  })
+
+  it('deduplicates reported session identities across current metadata and stale carried proposals', () => {
+    const sessions = [
+      '51a9d338-ec8f-4f3f-9f56-2de6c43519f7',
+      '5932eac7-7370-4b17-a539-0cadf719f34b',
+      '1b31e2dd-8810-46fc-884a-a3532b5b9148',
+    ]
+    const previousItems = sessions.flatMap((sessionId, index) => [
+      {
+        id: `old-${index}-a`,
+        label: 'Open session review',
+        reason: 'Journal metadata reports an open session.',
+        status: 'pending' as const,
+        source: 'session' as const,
+        computerId: 'computer-a',
+        sessionId,
+        fingerprint: `old-${index}-a`,
+      },
+      {
+        id: `old-${index}-b`,
+        label: 'Open session review',
+        reason: 'Journal metadata reports an open session.',
+        status: 'pending' as const,
+        source: 'carry' as const,
+        computerId: 'computer-a',
+        sessionId,
+        fingerprint: `old-${index}-b`,
+      },
+    ])
+
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: sessions.flatMap((sessionId) => [
+        {
+          computerId: 'computer-a',
+          sessionId,
+          status: 'waiting' as const,
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+          fingerprint: `current-${sessionId}`,
+        },
+        {
+          computerId: 'computer-a',
+          sessionId,
+          status: 'waiting' as const,
+          lastSeenAt: '2026-11-02T17:54:00.000Z',
+          fingerprint: `duplicate-${sessionId}`,
+        },
+      ]),
+      previous: { items: previousItems, history: [] },
+    })
+
+    expect(result.items.map(({ sessionId }) => sessionId)).toEqual(sessions)
+    expect(new Set(result.items.map(({ id }) => id)).size).toBe(3)
+    expect(result.items.every(({ label }) => label === 'Session is waiting')).toBe(true)
+    expect(JSON.stringify(result.items)).not.toContain('Open session review')
+    expect(JSON.stringify(result.items)).not.toContain('Journal metadata reports an open session')
+    expect(result.coverage).toContain('Excluded 9 duplicate session proposals.')
+  })
+
+  it('deduplicates legacy memory carries by stable memory identity', () => {
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [],
+      memory: {
+        mode: 'on',
+        available: true,
+        records: [{
+          id: 'memory-a',
+          kind: 'outcome',
+          scope: { type: 'user' },
+          authority: 'verified-outcome',
+          confidence: 1,
+          createdAt: '2026-11-01T18:00:00.000Z',
+          updatedAt: '2026-11-02T17:00:00.000Z',
+        }],
+        tombstones: [],
+      },
+      previous: {
+        items: [
+          {
+            id: 'legacy-memory-a',
+            label: 'Review completion',
+            reason: 'Legacy generated proposal.',
+            status: 'pending',
+            source: 'memory',
+            memoryId: 'memory-a',
+            fingerprint: 'legacy-a',
+          },
+          {
+            id: 'legacy-memory-b',
+            label: 'pending',
+            reason: 'Duplicate generated proposal.',
+            status: 'pending',
+            source: 'carry',
+            memoryId: 'memory-a',
+            fingerprint: 'legacy-b',
+          },
+        ],
+        history: [],
+      },
+    })
+
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]).toMatchObject({
+      id: expect.stringMatching(/^memory-/),
+      label: 'Memory item needs review',
+      memoryId: 'memory-a',
+      source: 'carry',
+    })
+    expect(result.coverage).toContain('Excluded 2 duplicate memory proposals.')
+  })
+
+  it('excludes generic open-session metadata that has no actionable review source', () => {
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [
+        {
+          computerId: 'computer-a',
+          sessionId: '51a9d338-ec8f-4f3f-9f56-2de6c43519f7',
+          status: 'running',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+        },
+        {
+          computerId: 'computer-a',
+          sessionId: '5932eac7-7370-4b17-a539-0cadf719f34b',
+          status: 'idle',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+        },
+      ],
+    })
+
+    expect(result.items).toEqual([])
+    expect(result.coverage).toContain(
+      'Excluded 2 generic open-session metadata entries without an actionable source.',
+    )
   })
 
   it('reports overflow but refuses to drop pending carry items', () => {
@@ -167,7 +309,7 @@ describe('Dreamer planner', () => {
     }))
     const result = planDreamer({
       now: new Date('2026-10-29T04:00:00.000Z'),
-      registryAvailable: true,
+      registryAvailable: false,
       sessions: [
         { computerId: 'c', sessionId: 'new', status: 'error', lastSeenAt: '2026-10-29T03:00:00.000Z' },
       ],
@@ -248,7 +390,7 @@ describe('Dreamer planner', () => {
     const sessions = Array.from({ length: 10_000 }, (_, index) => ({
       computerId: `computer-${index % 10}`,
       sessionId: `session-${index}`,
-      status: index === 9_999 ? 'error' as const : 'running' as const,
+      status: index === 9_999 ? 'error' as const : 'waiting' as const,
       lastSeenAt: '2026-10-29T03:00:00.000Z',
     }))
     const find = vi.spyOn(sessions, 'find').mockImplementation(() => {
@@ -274,7 +416,7 @@ describe('Dreamer planner', () => {
         {
           computerId: 'a',
           sessionId: 'b:c',
-          status: 'running',
+          status: 'waiting',
           lastSeenAt: '2026-10-29T03:00:00.000Z',
         },
         {

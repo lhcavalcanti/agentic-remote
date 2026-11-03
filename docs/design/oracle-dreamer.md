@@ -60,7 +60,11 @@ exact owning session through remote-aware routing, accepts only a successful
 root `task_complete` marker projected by the server, and returns a bounded
 transient summary plus SHA-256 digest. Plain assistant text, background-agent
 results, failed tools and stale UI state are not completion evidence. Result
-text is never persisted in Dreamer state.
+text is never persisted in Dreamer state. Confirmation binds the evidence to
+the exact computer ID, session ID, authoritative session revision, root result
+source, message and tool call before storing provenance. Evidence must occur
+after the latest root user turn; a historical completion cannot complete a
+newer task.
 
 Single trusted hub owner and single process writer; this does not add hostile
 multi-user isolation. APIs inherit hub Host/Origin checks and no-store responses;
@@ -78,7 +82,10 @@ corruption disables Dreamer alone and reports an explicit safe error.
 - Startup catch-up is limited to the current local date, between 02:00 and
   08:00; do not replay past dates. Show missed/unavailable status rather than
   invent yesterday's review. Each plan is dated for the morning after its run,
-  i.e. that run's local calendar date.
+  i.e. that run's local calendar date. Calendar calculations use the configured
+  IANA zone rather than the host UTC date. For `America/Los_Angeles` on
+  2026-11-02, the day starts at `08:00Z`, the 02:00 run is `10:00Z`, and
+  catch-up expires at `16:00Z`.
 - Durable key is hub-owned and includes timezone/local date, not wall-clock
   titles, process identity or random event timestamps. Retained high-water
   fences prevent replay when old plans are pruned or the clock goes backward.
@@ -94,14 +101,16 @@ corruption disables Dreamer alone and reports an explicit safe error.
 ## Plans and user review
 
 Local priority: unresolved session errors first, waiting sessions second,
-other open/active sessions next, then active memory review candidates.
-Tie-break on stable source identity. Exclude removed/replaced/closed registry
-entries from current-session suggestions. Metadata is not evidence that work
-succeeded. Unfinished Dreamer plan items can be carried as this feature's own
-durable review todos, with stable IDs and preserved status/order; they are not
-provider tasks. Done/skip items do not spontaneously reappear on the next day
-for an unchanged source fingerprint. Changed source evidence may create a new
-review candidate.
+then active memory review candidates. Generic running/idle journal metadata is
+not an actionable review item. Tie-break and deduplicate current/carried items
+on stable source identity, not mutable metadata fingerprints. Exclude partial
+identities, generated duplicates, removed/replaced/closed registry entries,
+historical orphans and sources with no actionable review signal. Metadata is
+not evidence that work succeeded. Unfinished Dreamer plan items can be carried
+as this feature's own durable review todos, with stable IDs and preserved
+status/order; they are not provider tasks. Current authoritative metadata
+refreshes a carry without re-inserting an old plan revision. Done/skip items do
+not spontaneously reappear for unchanged source evidence.
 
 Keep at most 20 plan items and 35 daily run records with bounded state
 (at most 1 MiB); expose omitted counts, unavailable sources and stale metadata.
@@ -122,10 +131,22 @@ item set, not a lossy filtered subset. For memory and carried items, Done means
 "done in this plan", not completion of linked work. Session items do not expose
 generic Done: **Review completion** is available only for transient trusted
 evidence, and **Confirm completed** revalidates it before persisting
-computer/session/message/tool IDs, digest, completion time and confirmation
-time. The same item/evidence pair is idempotent. Display failures, empty results, off mode and
-metadata-only coverage explicitly. No overnight notification; ordinary morning
-opening of Oracle reads the persisted plan, not triggers a hidden model turn.
+root source, computer/session/revision/message/tool IDs, digest, completion time
+and confirmation time. Open metadata remains pending; offline reads remain
+unavailable with an actionable retry, and closed or mismatched sources are
+durably removed during authoritative reconciliation so the returned revision
+and visible reorder set remain consistent. Legacy partial source identities are
+dropped during migration with counted coverage. The same item/evidence pair is
+idempotent. Refresh and retry reconcile the existing plan rather than append
+cards. Display failures, empty results, off mode and counted exclusions
+explicitly. No overnight notification; ordinary morning opening of Oracle reads
+the persisted plan, not triggers a hidden model turn.
+
+The morning plan and Background Tasks intentionally differ: Dreamer is durable
+review state, while Background Tasks is live provider runtime state. Review
+actions and completion confirmation never mutate provider tasks or sessions.
+The app's authoritative refresh reloads sessions, both surfaces and Dreamer
+together while preserving the active draft and review ordering.
 
 ## API contract
 
@@ -150,7 +171,9 @@ PUT /api/manager/dreamer/plan
   { revision, planId, exactly one of:
     order: string[]
     item: { id, status }
-    completion: { itemId, messageId, resultDigest }
+    completion: {
+      itemId, computerId, sessionId, sessionRevision, messageId, resultDigest
+    }
   }
 ```
 
@@ -169,12 +192,14 @@ rollback; concurrent initialization and edits cannot lose state.
 Planner tests use synthetic secret-bearing titles/prompts/memory values and
 prove no text is collected or persisted, zero source mutations/model calls,
 correct tombstone/expiry/mode filters, deterministic order/IDs, visible coverage
-and bounded overflow. Route tests exercise settings persistence, daily publication,
-reorder/skip/review-state done, verified completion, idempotency, malformed or
+and bounded overflow. They also cover duplicate session identities, generic
+label exclusion, stale carries and invalid source identities. Route/service
+tests exercise settings persistence, daily publication, reorder/skip/review
+state, authoritative completion success/failure, idempotency, malformed or
 mixed mutations, and stale-edit rejection. UI tests exercise
 enable/disable/timezone errors, plan ordering, skip/done/restore, explicit
-completion confirmation, error recovery, empty state and unchanged-source-state
-wording.
+completion confirmation, actionable evidence retry, desktop/mobile source
+identity rendering, coordinated task refresh, error recovery and empty state.
 
 ## Exact follow-ups before claiming the complete requested feature
 

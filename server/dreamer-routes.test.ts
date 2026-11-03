@@ -31,12 +31,13 @@ async function setup() {
     memory: () => ({ mode: 'off', available: false, records: [], tombstones: [] }),
     readSession: async (computerId, sessionId) => ({
       id: sessionId,
+      revision: 7,
       computerId,
       computerName: 'development',
       cwd: '/home/tester/project',
       title: 'Review failed session',
       updatedAt: '2026-10-29T03:30:00.000Z',
-      status: 'idle',
+      status: 'waiting',
       messages: [{
         id: 'completion-message',
         role: 'assistant',
@@ -95,6 +96,9 @@ describe('Dreamer routes', () => {
       planId: plan.plan.id,
       completion: {
         itemId: item.id,
+        computerId: item.completionCandidate.computerId,
+        sessionId: item.completionCandidate.sessionId,
+        sessionRevision: item.completionCandidate.sessionRevision,
         messageId: item.completionCandidate.messageId,
         resultDigest: item.completionCandidate.resultDigest,
       },

@@ -3550,7 +3550,7 @@ describe('App', () => {
     ))
   })
 
-  it('keeps authoritative refresh pending until Oracle, Dreamer, and task reads settle', async () => {
+  it('refreshes the morning plan and live task bar from authoritative sources without mutating tasks', async () => {
     vi.mocked(listComputers).mockResolvedValue([taskComputer])
     render(<App />)
     await screen.findByRole('textbox', { name: 'Message' })
@@ -3609,6 +3609,7 @@ describe('App', () => {
       supported: true,
     }))
     await waitFor(() => expect(freshness()).not.toBeInTheDocument())
+    expect(cancelBackgroundTask).not.toHaveBeenCalled()
   })
 
   it('still refreshes background tasks when a session event lands during the passive detail read', async () => {

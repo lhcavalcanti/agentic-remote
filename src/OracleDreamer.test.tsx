@@ -480,6 +480,34 @@ describe('Dreamer settings and morning review', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/changed elsewhere/)
   })
 
+  it('rebases an active settings draft across a revision-only authoritative refresh', async () => {
+    render(<DreamerSettings />)
+    fireEvent.change(await screen.findByLabelText('Dreamer timezone'), {
+      target: { value: 'Asia/Kathmandu' },
+    })
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...initial,
+      revision: 4,
+      settings: { ...initial.settings },
+    })
+    await act(async () => {
+      window.dispatchEvent(new Event('agentic-remote:authoritative-refresh'))
+    })
+    expect(screen.getByLabelText('Dreamer timezone')).toHaveValue('Asia/Kathmandu')
+    vi.mocked(saveDreamerSettings).mockResolvedValue({
+      ...ready,
+      revision: 5,
+      settings: { enabled: false, timeZone: 'Asia/Kathmandu' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Dreamer' }))
+    await screen.findByText('Dreamer settings saved.')
+    expect(saveDreamerSettings).toHaveBeenCalledWith({
+      revision: 4,
+      enabled: false,
+      timeZone: 'Asia/Kathmandu',
+    })
+  })
+
   it('does not replace a saved edit with an older delayed refresh response', async () => {
     vi.mocked(getDreamer).mockResolvedValue(ready)
     render(<DreamerMorningPlan />)

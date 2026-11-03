@@ -511,30 +511,115 @@ describe('DreamerService', () => {
     await service.stop()
   })
 
-  it('durably removes filtered sessions so visible-item reorder remains lossless', async () => {
+  it('keeps an actionable carry pending when its authoritative session is running', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const store = new DreamerStore(directory, { now, randomUUID: () => 'running-claim' })
+    await store.initialize()
+    await store.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await store.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: store.snapshot().settings.generation,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected running-carry claim')
+    await store.commitRun(claim.claim, {
+      id: 'running-carry-plan',
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      createdAt: '2026-10-29T02:00:00.000Z',
+      items: [{
+        id: 'running-carry',
+        label: 'Session needs attention',
+        reason: 'Journal metadata reports an unresolved error.',
+        status: 'pending',
+        source: 'carry',
+        computerId: 'computer-a',
+        sessionId: 'running-session',
+      }],
+      coverage: ['journal-metadata-only'],
+      omitted: 0,
+    }, [])
+
     const service = new DreamerService(directory, options(now, {
-      registry: () => ({
-        'computer-a:closed-session': {
-          computerId: 'computer-a',
-          sessionId: 'closed-session',
-          title: 'Closed session',
-          origin: 'user',
-          firstSeenAt: '2026-10-29T00:00:00.000Z',
-          lastStatus: 'error',
-          lastSeenAt: '2026-10-29T03:00:00.000Z',
-        },
-        'computer-a:waiting-session': {
+      readSession: async () => completionSession(false, '', {
+        id: 'running-session',
+        status: 'running',
+        isOpen: true,
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+
+    const snapshot = await service.snapshotForApi()
+    expect(snapshot.plan!.items).toEqual([
+      expect.objectContaining({
+        id: 'running-carry',
+        sessionId: 'running-session',
+        source: 'carry',
+        sourceState: 'pending',
+      }),
+    ])
+    expect(service.snapshot().plan!.items).toEqual([
+      expect.objectContaining({ id: 'running-carry', sessionId: 'running-session' }),
+    ])
+    await service.stop()
+  })
+
+  it('durably removes hidden sessions before visible reorder and status edits', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const store = new DreamerStore(directory, { now, randomUUID: () => 'reconcile-claim' })
+    await store.initialize()
+    await store.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await store.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: store.snapshot().settings.generation,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected reconciliation-plan claim')
+    await store.commitRun(claim.claim, {
+      id: 'reconciliation-plan',
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      createdAt: '2026-10-29T02:00:00.000Z',
+      items: [
+        {
+          id: 'waiting-session',
+          label: 'Session is waiting',
+          reason: 'Journal metadata reports that the session is waiting.',
+          status: 'pending',
+          source: 'session',
           computerId: 'computer-a',
           sessionId: 'waiting-session',
-          title: 'Waiting session',
-          origin: 'user',
-          firstSeenAt: '2026-10-29T00:00:00.000Z',
-          lastStatus: 'waiting',
-          lastSeenAt: '2026-10-29T03:00:00.000Z',
         },
-      }),
+        {
+          id: 'duplicate-waiting-session',
+          label: 'pending',
+          reason: 'Duplicate generated proposal.',
+          status: 'pending',
+          source: 'carry',
+          computerId: 'computer-a',
+          sessionId: 'waiting-session',
+        },
+        {
+          id: 'closed-session',
+          label: 'Review completion',
+          reason: 'Historical orphan metadata.',
+          status: 'pending',
+          source: 'session',
+          computerId: 'computer-a',
+          sessionId: 'closed-session',
+        },
+      ],
+      coverage: ['journal-metadata-only'],
+      omitted: 0,
+    }, [])
+    const unreconciledRevision = store.snapshot().revision
+
+    const service = new DreamerService(directory, options(now, {
       readSession: async (_computerId, sessionId) => completionSession(false, '', {
         id: sessionId,
         status: sessionId === 'closed-session' ? 'idle' : 'waiting',
@@ -542,25 +627,46 @@ describe('DreamerService', () => {
         messages: [],
       }),
     }))
-    await service.start()
-    const disabled = service.snapshot()
-    await service.updateSettings({
-      revision: disabled.revision,
-      enabled: true,
-      timeZone: 'UTC',
-    })
+    await service.initialize()
 
     const snapshot = await service.snapshotForApi()
+    expect(snapshot.revision).toBeGreaterThan(unreconciledRevision)
     expect(snapshot.plan!.items.map(({ sessionId }) => sessionId)).toEqual(['waiting-session'])
     expect(service.snapshot().plan!.items.map(({ sessionId }) => sessionId))
       .toEqual(['waiting-session'])
+    expect(snapshot.plan!.coverage).toEqual(expect.arrayContaining([
+      'Excluded 1 duplicate session proposal.',
+      'Excluded 1 session that is authoritatively closed or missing.',
+    ]))
     await expect(service.editPlan({
+      revision: unreconciledRevision,
+      planId: snapshot.plan!.id,
+      order: snapshot.plan!.items.map(({ id }) => id),
+    })).rejects.toMatchObject({ statusCode: 409 })
+
+    const reordered = await service.editPlan({
       revision: snapshot.revision,
       planId: snapshot.plan!.id,
       order: snapshot.plan!.items.map(({ id }) => id),
-    })).resolves.toMatchObject({
-      plan: { items: [{ sessionId: 'waiting-session' }] },
     })
+    expect(reordered.plan!.items.map(({ sessionId }) => sessionId)).toEqual(['waiting-session'])
+
+    const skipped = await service.editPlan({
+      revision: reordered.revision,
+      planId: reordered.plan!.id,
+      item: { id: reordered.plan!.items[0].id, status: 'skipped' },
+    })
+    expect(skipped.plan!.items).toEqual([
+      expect.objectContaining({ sessionId: 'waiting-session', status: 'skipped' }),
+    ])
+
+    const refreshed = await service.snapshotForApi()
+    expect(refreshed.plan!.items).toEqual([
+      expect.objectContaining({ sessionId: 'waiting-session', status: 'skipped' }),
+    ])
+    expect(service.snapshot().plan!.items).toEqual([
+      expect.objectContaining({ sessionId: 'waiting-session', status: 'skipped' }),
+    ])
     await service.stop()
   })
 

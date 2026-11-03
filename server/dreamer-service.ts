@@ -32,6 +32,7 @@ import {
   type DreamerRunClaim,
   type DreamerStoreSnapshot,
   type DreamerPlanWithFingerprints,
+  type DreamerCoverageIncrement,
 } from './dreamer-store.js'
 import {
   dreamerScheduleDecision,
@@ -485,6 +486,16 @@ export class DreamerService {
             sourceStateReason: 'No verified root task completion is available. Resolve the session, then refresh.',
           }
         }
+        if (
+          item.source === 'carry' &&
+          (session.status === 'running' || session.status === 'idle')
+        ) {
+          return {
+            ...item,
+            sourceState: 'pending' as const,
+            sourceStateReason: 'The session is still open and has no verified root task completion. Refresh after it finishes.',
+          }
+        }
         unreviewableCount += 1
         removedItemIds.push(item.id)
         return undefined
@@ -502,11 +513,10 @@ export class DreamerService {
         }
       }
     }))
-    const coverageEntries: string[] = []
+    const coverageIncrements: DreamerCoverageIncrement[] = []
     const addExcluded = (count: number, singular: string, plural = `${singular}s`) => {
       if (!count) return
-      const entry = `Excluded ${count} ${count === 1 ? singular : plural}.`
-      coverageEntries.push(entry)
+      coverageIncrements.push({ count, singular, plural })
     }
     addExcluded(duplicateCount, 'duplicate session proposal')
     addExcluded(
@@ -530,7 +540,7 @@ export class DreamerService {
           snapshot.revision,
           snapshot.plan.id,
           removedItemIds,
-          coverageEntries,
+          coverageIncrements,
         )
       } catch (error) {
         if (conflictRetry && error instanceof DreamerConflictError) {
@@ -554,7 +564,8 @@ export class DreamerService {
       }
     }
     const coverage = [...snapshot.plan.coverage]
-    for (const entry of coverageEntries) {
+    for (const { count, singular, plural = `${singular}s` } of coverageIncrements) {
+      const entry = `Excluded ${count} ${count === 1 ? singular : plural}.`
       if (!coverage.includes(entry)) coverage.push(entry)
     }
     return {

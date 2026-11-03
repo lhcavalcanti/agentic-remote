@@ -121,31 +121,34 @@ describe('Dreamer planner', () => {
   })
 
   it('carries pending review items in order and does not resurrect unchanged done or skipped evidence', () => {
+    const sessions = [
+      { computerId: 'c', sessionId: 'carry', status: 'error' as const, lastSeenAt: '2026-10-29T03:00:00.000Z', fingerprint: 'carry-fingerprint' },
+      { computerId: 'c', sessionId: 'done', status: 'error' as const, lastSeenAt: '2026-10-29T03:00:00.000Z', fingerprint: 'done-fingerprint' },
+      { computerId: 'c', sessionId: 'skip', status: 'waiting' as const, lastSeenAt: '2026-10-29T03:00:00.000Z', fingerprint: 'skipped-fingerprint' },
+    ]
+    const seeded = planDreamer({
+      now: new Date('2026-10-29T04:00:00.000Z'),
+      registryAvailable: true,
+      sessions,
+    })
+    const seededBySession = new Map(seeded.items.map((item) => [item.sessionId, item]))
     const prior = {
       items: [
         {
-          id: 'carry-item',
-          label: 'Session needs attention',
-          reason: 'Journal metadata reports an unresolved error.',
+          ...seededBySession.get('carry')!,
           status: 'pending' as const,
-          source: 'session' as const,
-          computerId: 'c',
-          sessionId: 'carry',
-          fingerprint: 'carry-fingerprint',
         },
       ],
       history: [
-        { fingerprint: 'done-fingerprint', status: 'done' as const },
-        { fingerprint: 'skipped-fingerprint', status: 'skipped' as const },
+        { fingerprint: seededBySession.get('done')!.fingerprint, status: 'done' as const },
+        { fingerprint: seededBySession.get('skip')!.fingerprint, status: 'skipped' as const },
       ],
     }
     const result = planDreamer({
       now: new Date('2026-10-29T04:00:00.000Z'),
       registryAvailable: true,
       sessions: [
-        { computerId: 'c', sessionId: 'carry', status: 'error', lastSeenAt: '2026-10-29T03:00:00.000Z', fingerprint: 'carry-fingerprint' },
-        { computerId: 'c', sessionId: 'done', status: 'error', lastSeenAt: '2026-10-29T03:00:00.000Z', fingerprint: 'done-fingerprint' },
-        { computerId: 'c', sessionId: 'skip', status: 'waiting', lastSeenAt: '2026-10-29T03:00:00.000Z', fingerprint: 'skipped-fingerprint' },
+        ...sessions,
         { computerId: 'c', sessionId: 'new', status: 'running', lastSeenAt: '2026-10-29T03:00:00.000Z', fingerprint: 'new-fingerprint' },
       ],
       previous: prior,
@@ -155,6 +158,258 @@ describe('Dreamer planner', () => {
       .toEqual([
         { id: expect.any(String), source: 'carry', sessionId: 'carry', status: 'pending' },
       ])
+  })
+
+  it('preserves an actionable session carry while excluding newly generic sessions', () => {
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [
+        {
+          computerId: 'computer-a',
+          sessionId: 'carried-session',
+          status: 'running',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+        },
+        {
+          computerId: 'computer-a',
+          sessionId: 'new-idle-session',
+          status: 'idle',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+        },
+      ],
+      previous: {
+        items: [{
+          id: 'legacy-carried-session',
+          label: 'Session needs attention',
+          reason: 'Journal metadata reports an unresolved error.',
+          status: 'pending',
+          source: 'session',
+          computerId: 'computer-a',
+          sessionId: 'carried-session',
+          fingerprint: 'previous-error-state',
+        }],
+        history: [],
+      },
+    })
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: expect.stringMatching(/^session-/),
+        label: 'Session needs attention',
+        source: 'carry',
+        sessionId: 'carried-session',
+      }),
+    ])
+    expect(result.coverage).toContain(
+      'Excluded 1 generic open-session metadata entry without an actionable source.',
+    )
+    expect(result.coverage).not.toContain('historical-session-orphan')
+  })
+
+  it('preserves interleaved session and memory carry order', () => {
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [
+        {
+          computerId: 'computer-a',
+          sessionId: 'session-one',
+          status: 'error',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+        },
+        {
+          computerId: 'computer-a',
+          sessionId: 'session-two',
+          status: 'waiting',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+        },
+      ],
+      memory: {
+        mode: 'on',
+        available: true,
+        records: [{
+          id: 'memory-one',
+          kind: 'outcome',
+          scope: { type: 'user' },
+          authority: 'verified-outcome',
+          confidence: 1,
+          createdAt: '2026-11-01T18:00:00.000Z',
+          updatedAt: '2026-11-02T17:00:00.000Z',
+        }],
+        tombstones: [],
+      },
+      previous: {
+        items: [
+          {
+            id: 'old-session-one',
+            label: 'Session needs attention',
+            reason: 'Previous session review.',
+            status: 'pending',
+            source: 'session',
+            computerId: 'computer-a',
+            sessionId: 'session-one',
+            fingerprint: 'old-session-one',
+          },
+          {
+            id: 'old-memory-one',
+            label: 'Memory item needs review',
+            reason: 'Previous memory review.',
+            status: 'pending',
+            source: 'memory',
+            memoryId: 'memory-one',
+            fingerprint: 'old-memory-one',
+          },
+          {
+            id: 'old-session-two',
+            label: 'Session is waiting',
+            reason: 'Previous session review.',
+            status: 'pending',
+            source: 'session',
+            computerId: 'computer-a',
+            sessionId: 'session-two',
+            fingerprint: 'old-session-two',
+          },
+        ],
+        history: [],
+      },
+    })
+
+    expect(result.items.map(({ sessionId, memoryId }) => sessionId ?? memoryId))
+      .toEqual(['session-one', 'memory-one', 'session-two'])
+  })
+
+  it('does not deduplicate a memory candidate against an identity-less carry', () => {
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [],
+      memory: {
+        mode: 'on',
+        available: true,
+        records: [{
+          id: 'memory-a',
+          kind: 'fact',
+          scope: { type: 'user' },
+          authority: 'direct-user',
+          confidence: 1,
+          createdAt: '2026-11-01T18:00:00.000Z',
+          updatedAt: '2026-11-02T17:00:00.000Z',
+        }],
+        tombstones: [],
+      },
+      previous: {
+        items: [{
+          id: 'identity-less-carry',
+          label: 'Review prior plan item',
+          reason: 'This carry has no source identity.',
+          status: 'pending',
+          source: 'carry',
+          fingerprint: 'identity-less-carry',
+        }],
+        history: [],
+      },
+    })
+
+    expect(result.items.map(({ id, memoryId }) => ({ id, memoryId }))).toEqual([
+      { id: 'identity-less-carry', memoryId: undefined },
+      { id: expect.stringMatching(/^memory-/), memoryId: 'memory-a' },
+    ])
+  })
+
+  it('does not deduplicate distinct session identities with the same fingerprint', () => {
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [
+        {
+          computerId: 'computer-a',
+          sessionId: 'session-one',
+          status: 'error',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+          fingerprint: 'shared-fingerprint',
+        },
+        {
+          computerId: 'computer-a',
+          sessionId: 'session-two',
+          status: 'error',
+          lastSeenAt: '2026-11-02T17:55:00.000Z',
+          fingerprint: 'shared-fingerprint',
+        },
+      ],
+      previous: {
+        items: [{
+          id: 'old-session-one',
+          label: 'Session needs attention',
+          reason: 'Previous session review.',
+          status: 'pending',
+          source: 'session',
+          computerId: 'computer-a',
+          sessionId: 'session-one',
+          fingerprint: 'old-session-one',
+        }],
+        history: [],
+      },
+    })
+
+    expect(result.items.map(({ sessionId }) => sessionId))
+      .toEqual(['session-one', 'session-two'])
+  })
+
+  it('does not let completed history suppress a different session with the same source fingerprint', () => {
+    const first = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [{
+        computerId: 'computer-a',
+        sessionId: 'session-one',
+        status: 'error',
+        lastSeenAt: '2026-11-02T17:55:00.000Z',
+        fingerprint: 'shared-fingerprint',
+      }],
+    })
+    const completed = {
+      ...first.items[0],
+      status: 'done' as const,
+    }
+
+    const second = planDreamer({
+      now: new Date('2026-11-02T18:05:00.000Z'),
+      registryAvailable: true,
+      sessions: [{
+        computerId: 'computer-a',
+        sessionId: 'session-two',
+        status: 'error',
+        lastSeenAt: '2026-11-02T18:00:00.000Z',
+        fingerprint: 'shared-fingerprint',
+      }],
+      previous: { items: [completed], history: [] },
+    })
+
+    expect(second.items.map(({ sessionId }) => sessionId)).toEqual(['session-two'])
+  })
+
+  it('counts historical session orphans instead of repeating a symbolic exclusion', () => {
+    const previousItems = ['orphan-one', 'orphan-two'].map((sessionId) => ({
+      id: `old-${sessionId}`,
+      label: 'Session needs attention',
+      reason: 'Previous session review.',
+      status: 'pending' as const,
+      source: 'session' as const,
+      computerId: 'computer-a',
+      sessionId,
+      fingerprint: `old-${sessionId}`,
+    }))
+    const result = planDreamer({
+      now: new Date('2026-11-02T18:00:00.000Z'),
+      registryAvailable: true,
+      sessions: [],
+      previous: { items: previousItems, history: [] },
+    })
+
+    expect(result.items).toEqual([])
+    expect(result.coverage).toContain('Excluded 2 historical session orphans.')
+    expect(result.coverage).not.toContain('historical-session-orphan')
   })
 
   it('deduplicates reported session identities across current metadata and stale carried proposals', () => {

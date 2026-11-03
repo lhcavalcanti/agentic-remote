@@ -131,7 +131,13 @@ function validTimestamp(value: string | undefined): number | undefined {
 
 function sessionFingerprint(session: DreamerSessionMetadata): string {
   return typeof session.fingerprint === 'string' && session.fingerprint.length <= 200
-    ? session.fingerprint
+    ? digest([
+        'session',
+        session.computerId,
+        session.sessionId,
+        'source-fingerprint',
+        session.fingerprint,
+      ])
     : digest([
         'session',
         session.computerId,
@@ -341,6 +347,40 @@ function carryItem(
   }
 }
 
+function carrySessionItem(
+  item: DreamerPreviousItem,
+  session: DreamerSessionMetadata,
+  fingerprint: string,
+): DreamerStoredPlanItem {
+  const actionable = session.status === 'error' || session.status === 'waiting'
+  const carried = carryItem(
+    item,
+    actionable ? candidateForSession(session, fingerprint) : undefined,
+  )
+  return {
+    ...carried,
+    id: `session-${digest([session.computerId, session.sessionId]).slice(0, 32)}`,
+    computerId: session.computerId,
+    sessionId: session.sessionId,
+    fingerprint,
+  }
+}
+
+function sameSourceIdentity(
+  left: DreamerStoredPlanItem,
+  right: DreamerStoredPlanItem,
+): boolean {
+  if (
+    left.computerId && left.sessionId &&
+    right.computerId && right.sessionId
+  ) {
+    return left.computerId === right.computerId &&
+      left.sessionId === right.sessionId
+  }
+  if (left.memoryId && right.memoryId) return left.memoryId === right.memoryId
+  return false
+}
+
 function addCountedCoverage(
   coverage: string[],
   count: number,
@@ -390,7 +430,6 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
   }> = []
   const sessionsByIdentity = new Map<string, DreamerSessionMetadata>()
   let duplicateSessionProposals = 0
-  let genericSessionMetadata = 0
   let invalidSessionIdentities = 0
   let removedOrReplacedSessions = 0
   let closedSessions = 0
@@ -416,10 +455,6 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
     if (session.status && !(session.status in SESSION_PRIORITY)) {
       addCoverage(coverage, 'invalid-metadata')
       invalidSessionMetadata += 1
-      continue
-    }
-    if (session.status !== 'error' && session.status !== 'waiting') {
-      genericSessionMetadata += 1
       continue
     }
     const seenAt = validTimestamp(session.lastSeenAt)
@@ -457,12 +492,6 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
   }
   addCountedCoverage(
     coverage,
-    genericSessionMetadata,
-    'generic open-session metadata entry without an actionable source',
-    'generic open-session metadata entries without an actionable source',
-  )
-  addCountedCoverage(
-    coverage,
     invalidSessionIdentities,
     'session proposal with invalid identity',
     'session proposals with invalid identity',
@@ -477,54 +506,6 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
   )
   addCountedCoverage(coverage, futureSessions, 'future-dated session proposal')
   addCountedCoverage(coverage, staleSessions, 'stale session proposal')
-
-  const selectedSessionIdentities = new Set<string>()
-  for (const item of previous?.items ?? []) {
-    if (item.status !== 'pending' || !item.computerId || !item.sessionId) continue
-    const identity = sessionIdentityKey(item.computerId, item.sessionId)
-    if (selectedSessionIdentities.has(identity)) {
-      duplicateSessionProposals += 1
-      continue
-    }
-    const currentSession = sessionsByIdentity.get(identity)
-    if (!currentSession) {
-      if (input.registryAvailable) addCoverage(coverage, 'historical-session-orphan')
-      else {
-        carry.push(carryItem(item))
-        selectedSessionIdentities.add(identity)
-      }
-      continue
-    }
-    const fingerprint = sessionFingerprint(currentSession)
-    if (previousHistory.has(fingerprint)) {
-      selectedSessionIdentities.add(identity)
-      sessionsByIdentity.delete(identity)
-      continue
-    }
-    duplicateSessionProposals += 1
-    carry.push(carryItem(item, candidateForSession(currentSession, fingerprint)))
-    selectedSessionIdentities.add(identity)
-    sessionsByIdentity.delete(identity)
-  }
-  for (const session of [...sessionsByIdentity.values()].sort((left, right) => {
-    const leftRank = SESSION_PRIORITY[left.status ?? 'idle'] ?? 98
-    const rightRank = SESSION_PRIORITY[right.status ?? 'idle'] ?? 98
-    return leftRank - rightRank ||
-      left.computerId.localeCompare(right.computerId) ||
-      left.sessionId.localeCompare(right.sessionId)
-  })) {
-    const fingerprint = sessionFingerprint(session)
-    if (previousHistory.has(fingerprint)) continue
-    candidates.push({
-      item: candidateForSession(session, fingerprint),
-      priority: SESSION_PRIORITY[session.status ?? 'idle'] ?? 98,
-    })
-  }
-  addCountedCoverage(
-    coverage,
-    duplicateSessionProposals,
-    'duplicate session proposal',
-  )
 
   const currentMemoryIds = new Set<string>()
   const currentMemoryCandidates = new Map<string, {
@@ -601,8 +582,10 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
     ...[...currentMemoryCandidates.values()].map(({ item, priority }) => ({ item, priority })),
   )
 
+  const selectedSessionIdentities = new Set<string>()
   const selectedMemoryIds = new Set<string>()
   let invalidPreviousSessionIdentities = 0
+  let historicalSessionOrphans = 0
   for (const item of previous?.items ?? []) {
     if (item.status !== 'pending') continue
     const hasComputerId = Boolean(item.computerId)
@@ -614,7 +597,31 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
       invalidPreviousSessionIdentities += 1
       continue
     }
-    if (item.computerId && item.sessionId) continue
+    if (item.computerId && item.sessionId) {
+      const identity = sessionIdentityKey(item.computerId, item.sessionId)
+      if (selectedSessionIdentities.has(identity)) {
+        duplicateSessionProposals += 1
+        continue
+      }
+      const currentSession = sessionsByIdentity.get(identity)
+      if (!currentSession) {
+        if (input.registryAvailable) historicalSessionOrphans += 1
+        else {
+          carry.push(carryItem(item))
+          selectedSessionIdentities.add(identity)
+        }
+        continue
+      }
+      const fingerprint = sessionFingerprint(currentSession)
+      selectedSessionIdentities.add(identity)
+      sessionsByIdentity.delete(identity)
+      if (previousHistory.has(fingerprint)) continue
+      if (currentSession.status === 'error' || currentSession.status === 'waiting') {
+        duplicateSessionProposals += 1
+      }
+      carry.push(carrySessionItem(item, currentSession, fingerprint))
+      continue
+    }
     if (item.memoryId) {
       if (selectedMemoryIds.has(item.memoryId)) {
         duplicateMemoryProposals += 1
@@ -634,6 +641,42 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
     }
     carry.push(carryItem(item))
   }
+  let genericSessionMetadata = 0
+  for (const session of [...sessionsByIdentity.values()].sort((left, right) => {
+    const leftRank = SESSION_PRIORITY[left.status ?? 'idle'] ?? 98
+    const rightRank = SESSION_PRIORITY[right.status ?? 'idle'] ?? 98
+    return leftRank - rightRank ||
+      left.computerId.localeCompare(right.computerId) ||
+      left.sessionId.localeCompare(right.sessionId)
+  })) {
+    if (session.status !== 'error' && session.status !== 'waiting') {
+      genericSessionMetadata += 1
+      continue
+    }
+    const fingerprint = sessionFingerprint(session)
+    if (previousHistory.has(fingerprint)) continue
+    candidates.push({
+      item: candidateForSession(session, fingerprint),
+      priority: SESSION_PRIORITY[session.status] ?? 98,
+    })
+  }
+  addCountedCoverage(
+    coverage,
+    genericSessionMetadata,
+    'generic open-session metadata entry without an actionable source',
+    'generic open-session metadata entries without an actionable source',
+  )
+  addCountedCoverage(
+    coverage,
+    historicalSessionOrphans,
+    'historical session orphan',
+    'historical session orphans',
+  )
+  addCountedCoverage(
+    coverage,
+    duplicateSessionProposals,
+    'duplicate session proposal',
+  )
   addCountedCoverage(
     coverage,
     duplicateMemoryProposals,
@@ -647,16 +690,7 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
   )
   if (carry.length > DREAMER_MAX_ITEMS) throw new DreamerPlannerCapacityError()
   const selectedCandidates = candidates.filter(
-    ({ item }) => !carry.some((carried) =>
-      carried.fingerprint === item.fingerprint ||
-      (
-        carried.computerId === item.computerId &&
-        carried.sessionId === item.sessionId
-      ) ||
-      (
-        carried.memoryId !== undefined &&
-        carried.memoryId === item.memoryId
-      )),
+    ({ item }) => !carry.some((carried) => sameSourceIdentity(carried, item)),
   )
 
   selectedCandidates.sort((left, right) => {

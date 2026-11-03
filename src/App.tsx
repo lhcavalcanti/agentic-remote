@@ -25,9 +25,11 @@ import {
 import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import {
+  coordinatedAuthoritativeRefresh,
   dispatchAuthoritativeRefresh,
   DreamerRefreshOwner,
   DreamerSettings,
+  waitUntilAuthoritativeRefresh,
 } from './OracleDreamer'
 import { isManagerEvent } from '../shared/manager'
 import type { ManagerClientDefaults, ManagerEvent, ManagerSessionRef } from '../shared/manager'
@@ -10456,6 +10458,9 @@ function App() {
       }
     }
     authoritativeRefreshRef.current = refreshAllAuthoritativeState
+    const handleCoordinatedAuthoritativeRefresh = (event: Event) => {
+      waitUntilAuthoritativeRefresh(event, refreshAllAuthoritativeState())
+    }
 
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -10729,12 +10734,20 @@ function App() {
     }
 
     connect()
+    window.addEventListener(
+      coordinatedAuthoritativeRefresh,
+      handleCoordinatedAuthoritativeRefresh,
+    )
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
       stopped = true
       if (authoritativeRefreshRef.current === refreshAllAuthoritativeState) {
         authoritativeRefreshRef.current = async () => undefined
       }
+      window.removeEventListener(
+        coordinatedAuthoritativeRefresh,
+        handleCoordinatedAuthoritativeRefresh,
+      )
       document.removeEventListener('visibilitychange', handleVisibility)
       if (retry !== undefined) {
         window.clearTimeout(retry)

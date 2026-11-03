@@ -95,6 +95,12 @@ export interface DreamerStoreSnapshot {
   lastError?: string
 }
 
+export interface DreamerCoverageIncrement {
+  count: number
+  singular: string
+  plural?: string
+}
+
 export interface DreamerRunClaim {
   key: string
   token: string
@@ -184,6 +190,34 @@ export function dreamerRunKey(timeZone: string, localDate: string): string {
 
 function clone<T>(value: T): T {
   return structuredClone(value)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function mergeCoverageIncrements(
+  coverage: readonly string[],
+  increments: readonly DreamerCoverageIncrement[],
+): string[] {
+  const merged = [...coverage]
+  for (const increment of increments) {
+    if (!Number.isSafeInteger(increment.count) || increment.count <= 0) continue
+    const plural = increment.plural ?? `${increment.singular}s`
+    const labels = [...new Set([increment.singular, plural])]
+      .map(escapeRegExp)
+      .join('|')
+    const pattern = new RegExp(`^Excluded (\\d+) (?:${labels})\\.$`)
+    let total = increment.count
+    for (let index = merged.length - 1; index >= 0; index -= 1) {
+      const match = pattern.exec(merged[index])
+      if (!match) continue
+      total += Number(match[1])
+      merged.splice(index, 1)
+    }
+    merged.push(`Excluded ${total} ${total === 1 ? increment.singular : plural}.`)
+  }
+  return merged
 }
 
 function isMissing(error: unknown): boolean {
@@ -1091,7 +1125,7 @@ export class DreamerStore {
     revision: number,
     planId: string,
     removedItemIds: readonly string[],
-    coverageEntries: readonly string[],
+    coverageIncrements: readonly DreamerCoverageIncrement[],
   ): Promise<void> {
     const removals = new Set(removedItemIds)
     return this.enqueue((candidate) => {
@@ -1101,14 +1135,12 @@ export class DreamerStore {
       this.requireRevision(candidate, revision)
       const next = clone(candidate.plan)
       const items = next.items.filter(({ id }) => !removals.has(id))
-      const coverage = [...next.coverage]
-      for (const entry of coverageEntries) {
-        if (!coverage.includes(entry)) coverage.push(entry)
-      }
+      const coverage = mergeCoverageIncrements(next.coverage, coverageIncrements)
       if (coverage.length > 32) throw new DreamerCapacityError()
       if (
         items.length === next.items.length
         && coverage.length === next.coverage.length
+        && coverage.every((entry, index) => entry === next.coverage[index])
       ) {
         return { result: undefined, changed: false }
       }

@@ -25,7 +25,7 @@ import {
   validateDreamerTimeZone,
 } from './dreamer-schedule.js'
 
-export const DREAMER_STATE_VERSION = 2
+export const DREAMER_STATE_VERSION = 3
 export const DREAMER_MAX_STATE_BYTES = 1_048_576
 export const DREAMER_MAX_RUNS = 35
 export const DREAMER_MAX_ITEMS = 20
@@ -75,7 +75,7 @@ export type DreamerPlanWithFingerprints = Omit<DreamerPlan, 'items'> & {
 }
 
 export interface DreamerStoreState {
-  version: 2
+  version: 3
   revision: number
   settings: DreamerSettings & { generation: number }
   plan?: DreamerPersistedPlan
@@ -93,6 +93,12 @@ export interface DreamerStoreSnapshot {
   zoneFences: DreamerZoneFence[]
   history: DreamerHistoryEntry[]
   lastError?: string
+}
+
+export interface DreamerCoverageIncrement {
+  count: number
+  singular: string
+  plural?: string
 }
 
 export interface DreamerRunClaim {
@@ -186,6 +192,34 @@ function clone<T>(value: T): T {
   return structuredClone(value)
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function mergeCoverageIncrements(
+  coverage: readonly string[],
+  increments: readonly DreamerCoverageIncrement[],
+): string[] {
+  const merged = [...coverage]
+  for (const increment of increments) {
+    if (!Number.isSafeInteger(increment.count) || increment.count <= 0) continue
+    const plural = increment.plural ?? `${increment.singular}s`
+    const labels = [...new Set([increment.singular, plural])]
+      .map(escapeRegExp)
+      .join('|')
+    const pattern = new RegExp(`^Excluded (\\d+) (?:${labels})\\.$`)
+    let total = increment.count
+    for (let index = merged.length - 1; index >= 0; index -= 1) {
+      const match = pattern.exec(merged[index])
+      if (!match) continue
+      total += Number(match[1])
+      merged.splice(index, 1)
+    }
+    merged.push(`Excluded ${total} ${total === 1 ? increment.singular : plural}.`)
+  }
+  return merged
+}
+
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT'
 }
@@ -214,8 +248,10 @@ function sameCompletionEvidence(
 ): boolean {
   return Boolean(
     left &&
+    left.source === right.source &&
     left.computerId === right.computerId &&
     left.sessionId === right.sessionId &&
+    left.sessionRevision === right.sessionRevision &&
     left.messageId === right.messageId &&
     left.toolCallId === right.toolCallId &&
     left.resultDigest === right.resultDigest &&
@@ -342,7 +378,7 @@ function assertInteger(value: unknown, name: string): asserts value is number {
   }
 }
 
-function validatePlan(plan: unknown): DreamerPersistedPlan {
+function validatePlan(plan: unknown, version: number): DreamerPersistedPlan {
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
     throw new DreamerRecoveryError('Dreamer state has an invalid plan.')
   }
@@ -366,8 +402,23 @@ function validatePlan(plan: unknown): DreamerPersistedPlan {
   ) {
     throw new DreamerRecoveryError('Dreamer state has an invalid plan.')
   }
-  const items = value.items.map((item) => validatePlanItem(item))
-  const fingerprints = Object.fromEntries(
+  let legacyPartialIdentityCount = 0
+  const retainedItems = value.items.filter((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return true
+    const candidate = item as Record<string, unknown>
+    const hasComputerId = candidate.computerId !== undefined
+    const hasSessionId = candidate.sessionId !== undefined
+    const malformedSessionIdentity = hasComputerId !== hasSessionId ||
+      (candidate.source === 'session' && (!hasComputerId || !hasSessionId))
+    if (!malformedSessionIdentity) return true
+    if (version >= DREAMER_STATE_VERSION) {
+      throw new DreamerRecoveryError('Dreamer state has an invalid plan item source identity.')
+    }
+    legacyPartialIdentityCount += 1
+    return false
+  })
+  const items = retainedItems.map((item) => validatePlanItem(item, version))
+  const storedFingerprints = Object.fromEntries(
     Object.entries(value.fingerprints as Record<string, unknown>)
       .map(([id, fingerprint]) => {
         if (!isSafeIdentifier(id) || !isSafeString(fingerprint, 200)) {
@@ -376,11 +427,28 @@ function validatePlan(plan: unknown): DreamerPersistedPlan {
         return [id, fingerprint]
       }),
   )
+  const itemIds = new Set(items.map(({ id }) => id))
+  const fingerprints = Object.fromEntries(
+    Object.entries(storedFingerprints).filter(([id]) => itemIds.has(id)),
+  )
   if (
     Object.keys(fingerprints).length !== items.length ||
-    items.some((item) => fingerprints[item.id] === undefined)
+    items.some((item) => fingerprints[item.id] === undefined) ||
+    (version >= DREAMER_STATE_VERSION &&
+      Object.keys(storedFingerprints).length !== items.length)
   ) {
     throw new DreamerRecoveryError('Dreamer state plan fingerprints do not match its items.')
+  }
+  const coverage = [...value.coverage as string[]]
+  if (legacyPartialIdentityCount > 0) {
+    coverage.push(
+      `Excluded ${legacyPartialIdentityCount} legacy session ${
+        legacyPartialIdentityCount === 1 ? 'item' : 'items'
+      } with partial source identity.`,
+    )
+  }
+  if (coverage.length > 32) {
+    throw new DreamerRecoveryError('Dreamer state has too much plan coverage metadata.')
   }
   return {
     id: value.id,
@@ -388,17 +456,19 @@ function validatePlan(plan: unknown): DreamerPersistedPlan {
     timeZone: value.timeZone as string,
     createdAt: value.createdAt as string,
     items,
-    coverage: value.coverage as string[],
+    coverage,
     omitted: value.omitted as number,
     fingerprints,
   }
 }
 
-function validatePlanItem(item: unknown): DreamerPlanItem {
+function validatePlanItem(item: unknown, version: number): DreamerPlanItem {
   if (!item || typeof item !== 'object' || Array.isArray(item)) {
     throw new DreamerRecoveryError('Dreamer state has an invalid plan item.')
   }
   const value = item as Record<string, unknown>
+  const hasComputerId = value.computerId !== undefined
+  const hasSessionId = value.sessionId !== undefined
   if (
     !isSafeIdentifier(value.id) ||
     !isSafeString(value.label, 120) ||
@@ -407,7 +477,9 @@ function validatePlanItem(item: unknown): DreamerPlanItem {
     !['session', 'memory', 'carry'].includes(String(value.source)) ||
     (value.computerId !== undefined && !isSafeIdentifier(value.computerId)) ||
     (value.sessionId !== undefined && !isSafeIdentifier(value.sessionId)) ||
-    (value.memoryId !== undefined && !isSafeIdentifier(value.memoryId))
+    (value.memoryId !== undefined && !isSafeIdentifier(value.memoryId)) ||
+    hasComputerId !== hasSessionId ||
+    (value.source === 'session' && (!hasComputerId || !hasSessionId))
   ) {
     throw new DreamerRecoveryError('Dreamer state has an invalid plan item.')
   }
@@ -420,6 +492,14 @@ function validatePlanItem(item: unknown): DreamerPlanItem {
     if (
       !isSafeIdentifier(stored.computerId) ||
       !isSafeIdentifier(stored.sessionId) ||
+      (
+        version >= 3 &&
+        (
+          stored.source !== 'root-task-complete' ||
+          !Number.isSafeInteger(stored.sessionRevision) ||
+          (stored.sessionRevision as number) < 0
+        )
+      ) ||
       !isSafeIdentifier(stored.messageId) ||
       !isSafeIdentifier(stored.toolCallId) ||
       typeof stored.resultDigest !== 'string' ||
@@ -429,7 +509,17 @@ function validatePlanItem(item: unknown): DreamerPlanItem {
     ) {
       throw new DreamerRecoveryError('Dreamer state has invalid task completion provenance.')
     }
-    completion = stored as unknown as DreamerTaskCompletionProvenance
+    completion = {
+      source: 'root-task-complete',
+      computerId: stored.computerId as string,
+      sessionId: stored.sessionId as string,
+      sessionRevision: version >= 3 ? stored.sessionRevision as number : 0,
+      messageId: stored.messageId as string,
+      toolCallId: stored.toolCallId as string,
+      resultDigest: stored.resultDigest as string,
+      completedAt: stored.completedAt as string,
+      confirmedAt: stored.confirmedAt as string,
+    }
   }
   return {
     id: value.id,
@@ -449,7 +539,7 @@ function validateState(raw: unknown): DreamerStoreState {
     throw new DreamerRecoveryError('Dreamer state is malformed; no state was reset.')
   }
   const value = raw as Record<string, unknown>
-  if (value.version !== 1 && value.version !== DREAMER_STATE_VERSION) {
+  if (value.version !== 1 && value.version !== 2 && value.version !== DREAMER_STATE_VERSION) {
     throw new DreamerRecoveryError('Dreamer state uses an unsupported version; no state was reset.')
   }
   assertInteger(value.revision, 'revision')
@@ -610,7 +700,7 @@ function validateState(raw: unknown): DreamerStoreState {
       timeZone: settings.timeZone as string,
       generation: settings.generation as number,
     },
-    ...(value.plan === undefined ? {} : { plan: validatePlan(value.plan) }),
+    ...(value.plan === undefined ? {} : { plan: validatePlan(value.plan, value.version as number) }),
     runs,
     zoneFences,
     history,
@@ -642,7 +732,7 @@ function validatePlanForCommit(
   if (plan.items.length > DREAMER_MAX_ITEMS) {
     throw new DreamerCapacityError('Dreamer plans may contain at most 20 items.')
   }
-  return validatePlan(toPersistedPlan(plan))
+  return validatePlan(toPersistedPlan(plan), DREAMER_STATE_VERSION)
 }
 
 function terminalRun(run: DreamerRunRecord): boolean {
@@ -730,7 +820,7 @@ export class DreamerStore {
       try {
         assertUniqueJsonKeys(serialized)
         const raw = JSON.parse(serialized) as unknown
-        needsMigration = (raw as { version?: unknown }).version === 1
+        needsMigration = (raw as { version?: unknown }).version !== DREAMER_STATE_VERSION
         parsed = validateState(raw)
       } catch (error) {
         if (error instanceof DreamerRecoveryError) throw error
@@ -1027,6 +1117,40 @@ export class DreamerStore {
       candidate.plan = next
       candidate.history = [...history.entries()]
         .map(([fingerprint, status]) => ({ fingerprint, status }))
+      return { result: undefined, changed: true }
+    })
+  }
+
+  async reconcilePlanSources(
+    revision: number,
+    planId: string,
+    removedItemIds: readonly string[],
+    coverageIncrements: readonly DreamerCoverageIncrement[],
+  ): Promise<void> {
+    const removals = new Set(removedItemIds)
+    return this.enqueue((candidate) => {
+      if (!candidate.plan || candidate.plan.id !== planId) {
+        throw new DreamerConflictError('Dreamer plan changed; refresh and retry.')
+      }
+      this.requireRevision(candidate, revision)
+      const next = clone(candidate.plan)
+      const items = next.items.filter(({ id }) => !removals.has(id))
+      const coverage = mergeCoverageIncrements(next.coverage, coverageIncrements)
+      if (coverage.length > 32) throw new DreamerCapacityError()
+      if (
+        items.length === next.items.length
+        && coverage.length === next.coverage.length
+        && coverage.every((entry, index) => entry === next.coverage[index])
+      ) {
+        return { result: undefined, changed: false }
+      }
+      const retainedIds = new Set(items.map(({ id }) => id))
+      next.items = items
+      next.coverage = coverage
+      next.fingerprints = Object.fromEntries(
+        Object.entries(next.fingerprints).filter(([id]) => retainedIds.has(id)),
+      )
+      candidate.plan = next
       return { result: undefined, changed: true }
     })
   }

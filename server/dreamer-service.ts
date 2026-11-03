@@ -32,6 +32,7 @@ import {
   type DreamerRunClaim,
   type DreamerStoreSnapshot,
   type DreamerPlanWithFingerprints,
+  type DreamerCoverageIncrement,
 } from './dreamer-store.js'
 import {
   dreamerScheduleDecision,
@@ -283,6 +284,9 @@ export class DreamerService {
       item?: { id: string; status: 'pending' | 'skipped' | 'done' }
       completion?: {
         itemId: string
+        computerId: string
+        sessionId: string
+        sessionRevision: number
         messageId: string
         resultDigest: string
       }
@@ -311,6 +315,8 @@ export class DreamerService {
         !item
         || !hasDreamerSessionIdentity(item)
         || !this.readSession
+        || item.computerId !== edit.completion.computerId
+        || item.sessionId !== edit.completion.sessionId
       ) {
         throw new DreamerConflictError(
           'Verified session completion is no longer available; refresh and retry.',
@@ -321,6 +327,7 @@ export class DreamerService {
         && item.completion
         && item.completion.computerId === item.computerId
         && item.completion.sessionId === item.sessionId
+        && item.completion.sessionRevision === edit.completion.sessionRevision
         && item.completion.messageId === edit.completion.messageId
         && item.completion.resultDigest === edit.completion.resultDigest
       ) {
@@ -343,19 +350,31 @@ export class DreamerService {
           'Verified session completion changed; refresh and review it again.',
         )
       }
+      if (
+        candidate.computerId !== edit.completion.computerId
+        || candidate.sessionId !== edit.completion.sessionId
+        || candidate.sessionRevision !== edit.completion.sessionRevision
+      ) {
+        throw new DreamerConflictError(
+          'Verified session completion changed; refresh and review it again.',
+        )
+      }
       completion = {
         itemId: item.id,
         provenance: item.completion
           && item.completion.computerId === candidate.computerId
           && item.completion.sessionId === candidate.sessionId
+          && item.completion.sessionRevision === candidate.sessionRevision
           && item.completion.messageId === candidate.messageId
           && item.completion.toolCallId === candidate.toolCallId
           && item.completion.resultDigest === candidate.resultDigest
           && item.completion.completedAt === candidate.completedAt
           ? item.completion
           : {
+          source: candidate.source,
           computerId: candidate.computerId,
           sessionId: candidate.sessionId,
+          sessionRevision: candidate.sessionRevision,
           messageId: candidate.messageId,
           toolCallId: candidate.toolCallId,
           resultDigest: candidate.resultDigest,
@@ -403,21 +422,160 @@ export class DreamerService {
     return this.withCompletionCandidates(this.snapshot())
   }
 
-  private async withCompletionCandidates(snapshot: DreamerSnapshot): Promise<DreamerSnapshot> {
+  private async withCompletionCandidates(
+    snapshot: DreamerSnapshot,
+    conflictRetry = true,
+  ): Promise<DreamerSnapshot> {
     if (!snapshot.plan || !this.readSession) return snapshot
-    const items = await Promise.all(snapshot.plan.items.map(async (item) => {
+    let duplicateCount = 0
+    let closedOrMissingCount = 0
+    let invalidIdentityCount = 0
+    let unreviewableCount = 0
+    const seenSessions = new Set<string>()
+    const removedItemIds: string[] = []
+    const projected = await Promise.all(snapshot.plan.items.map(async (item) => {
       if (
         item.status !== 'pending'
         || !hasDreamerSessionIdentity(item)
       ) return item
+      const identity = JSON.stringify([item.computerId, item.sessionId])
+      if (seenSessions.has(identity)) {
+        duplicateCount += 1
+        removedItemIds.push(item.id)
+        return undefined
+      }
+      seenSessions.add(identity)
       try {
-        const candidate = await this.completionCandidate(item.computerId, item.sessionId)
-        return candidate ? { ...item, completionCandidate: candidate } : item
-      } catch {
-        return { ...item, completionSourceUnavailable: true }
+        const session = await this.readSession!(item.computerId, item.sessionId)
+        if (
+          session.computerId !== item.computerId
+          || session.id !== item.sessionId
+        ) {
+          invalidIdentityCount += 1
+          removedItemIds.push(item.id)
+          return undefined
+        }
+        if (session.isOpen === false) {
+          closedOrMissingCount += 1
+          removedItemIds.push(item.id)
+          return undefined
+        }
+        const candidate = this.completionCandidateFromSession(
+          session,
+          item.computerId,
+          item.sessionId,
+        )
+        if (candidate) {
+          return {
+            ...item,
+            label: 'Review session completion',
+            reason: 'Authoritative session evidence reports a completed root task.',
+            completionCandidate: candidate,
+            sourceState: 'verified-completion' as const,
+            sourceStateReason: 'Review the verified result before confirming completion.',
+          }
+        }
+        if (session.status === 'error' || session.status === 'waiting') {
+          return {
+            ...item,
+            label: session.status === 'error' ? 'Session needs attention' : 'Session is waiting',
+            reason: session.status === 'error'
+              ? 'Authoritative session state reports an unresolved error.'
+              : 'Authoritative session state reports that input is required.',
+            sourceState: 'pending' as const,
+            sourceStateReason: 'No verified root task completion is available. Resolve the session, then refresh.',
+          }
+        }
+        if (
+          item.source === 'carry' &&
+          (session.status === 'running' || session.status === 'idle')
+        ) {
+          return {
+            ...item,
+            sourceState: 'pending' as const,
+            sourceStateReason: 'The session is still open and has no verified root task completion. Refresh after it finishes.',
+          }
+        }
+        unreviewableCount += 1
+        removedItemIds.push(item.id)
+        return undefined
+      } catch (error) {
+        if ((error as { statusCode?: unknown }).statusCode === 404) {
+          closedOrMissingCount += 1
+          removedItemIds.push(item.id)
+          return undefined
+        }
+        return {
+          ...item,
+          completionSourceUnavailable: true,
+          sourceState: 'unavailable' as const,
+          sourceStateReason: 'The owning session is offline or unavailable. Reconnect it, then refresh.',
+        }
       }
     }))
-    return { ...snapshot, plan: { ...snapshot.plan, items } }
+    const coverageIncrements: DreamerCoverageIncrement[] = []
+    const addExcluded = (count: number, singular: string, plural = `${singular}s`) => {
+      if (!count) return
+      coverageIncrements.push({ count, singular, plural })
+    }
+    addExcluded(duplicateCount, 'duplicate session proposal')
+    addExcluded(
+      closedOrMissingCount,
+      'session that is authoritatively closed or missing',
+      'sessions that are authoritatively closed or missing',
+    )
+    addExcluded(
+      invalidIdentityCount,
+      'session proposal with mismatched authoritative identity',
+      'session proposals with mismatched authoritative identity',
+    )
+    addExcluded(
+      unreviewableCount,
+      'session proposal without an actionable authoritative source',
+      'session proposals without an actionable authoritative source',
+    )
+    if (removedItemIds.length > 0) {
+      try {
+        await this.store.reconcilePlanSources(
+          snapshot.revision,
+          snapshot.plan.id,
+          removedItemIds,
+          coverageIncrements,
+        )
+      } catch (error) {
+        if (conflictRetry && error instanceof DreamerConflictError) {
+          return this.withCompletionCandidates(this.snapshot(), false)
+        }
+        throw error
+      }
+      const persisted = this.snapshot()
+      if (!persisted.plan) return persisted
+      const transientItems = new Map(
+        projected
+          .filter((item): item is DreamerPlan['items'][number] => item !== undefined)
+          .map((item) => [item.id, item]),
+      )
+      return {
+        ...persisted,
+        plan: {
+          ...persisted.plan,
+          items: persisted.plan.items.map((item) => transientItems.get(item.id) ?? item),
+        },
+      }
+    }
+    const coverage = [...snapshot.plan.coverage]
+    for (const { count, singular, plural = `${singular}s` } of coverageIncrements) {
+      const entry = `Excluded ${count} ${count === 1 ? singular : plural}.`
+      if (!coverage.includes(entry)) coverage.push(entry)
+    }
+    return {
+      ...snapshot,
+      plan: {
+        ...snapshot.plan,
+        coverage,
+        items: projected.filter((item): item is DreamerPlan['items'][number] => item !== undefined),
+      },
+    }
   }
 
   private async completionCandidate(
@@ -427,9 +585,29 @@ export class DreamerService {
   ): Promise<DreamerCompletionCandidate | undefined> {
     if (!this.readSession) return undefined
     const session = await this.readSession(computerId, sessionId)
-    const message = messageId
-      ? session?.messages.find((candidate) => candidate.id === messageId)
-      : session?.messages.findLast((candidate) => candidate.taskCompletion !== undefined)
+    return this.completionCandidateFromSession(session, computerId, sessionId, messageId)
+  }
+
+  private completionCandidateFromSession(
+    session: ManagedSession,
+    computerId: string,
+    sessionId: string,
+    messageId?: string,
+  ): DreamerCompletionCandidate | undefined {
+    if (
+      session.computerId !== computerId
+      || session.id !== sessionId
+      || !Number.isSafeInteger(session.revision)
+      || session.revision! < 0
+    ) return undefined
+    const messageIndex = messageId
+      ? session.messages.findIndex((candidate) => candidate.id === messageId)
+      : session.messages.findLastIndex((candidate) => candidate.taskCompletion !== undefined)
+    const lastUserMessageIndex = session.messages.findLastIndex(
+      (candidate) => candidate.role === 'user',
+    )
+    if (messageIndex < 0 || messageIndex < lastUserMessageIndex) return undefined
+    const message = session.messages[messageIndex]
     if (
       !message
       || message.role !== 'assistant'
@@ -437,8 +615,10 @@ export class DreamerService {
       || !message.content.trim()
     ) return undefined
     return {
+      source: 'root-task-complete',
       computerId,
       sessionId,
+      sessionRevision: session.revision!,
       messageId: message.id,
       toolCallId: message.taskCompletion.toolCallId,
       completedAt: message.taskCompletion.completedAt,

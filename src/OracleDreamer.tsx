@@ -11,6 +11,7 @@ import './dreamer.css'
 const reason = (error: unknown) => error instanceof Error ? error.message : 'Dreamer could not be reached.'
 const dreamerChanged = 'oracle-dreamer-changed'
 export const authoritativeRefresh = 'agentic-remote:authoritative-refresh'
+export const coordinatedAuthoritativeRefresh = 'agentic-remote:coordinated-authoritative-refresh'
 let activeDreamerViews = 0
 
 class AuthoritativeRefreshRequest extends Event {
@@ -29,14 +30,28 @@ export function waitUntilAuthoritativeRefresh(event: Event, work: Promise<unknow
   }
 }
 
-export async function dispatchAuthoritativeRefresh(): Promise<void> {
-  const event = new AuthoritativeRefreshRequest(authoritativeRefresh)
-  window.dispatchEvent(event)
+async function settleAuthoritativeRefresh(event: AuthoritativeRefreshRequest): Promise<void> {
   const settled = await Promise.allSettled(event.pending)
   const failed = settled.find(
     (result): result is PromiseRejectedResult => result.status === 'rejected',
   )
   if (failed) throw failed.reason
+}
+
+export async function dispatchAuthoritativeRefresh(): Promise<void> {
+  const event = new AuthoritativeRefreshRequest(authoritativeRefresh)
+  window.dispatchEvent(event)
+  await settleAuthoritativeRefresh(event)
+}
+
+export async function requestCoordinatedAuthoritativeRefresh(): Promise<void> {
+  const event = new AuthoritativeRefreshRequest(coordinatedAuthoritativeRefresh)
+  window.dispatchEvent(event)
+  if (event.pending.length === 0) {
+    await dispatchAuthoritativeRefresh()
+    return
+  }
+  await settleAuthoritativeRefresh(event)
 }
 
 export function DreamerRefreshOwner() {
@@ -127,14 +142,33 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
 
 export function DreamerSettings({ active = true }: { active?: boolean }) {
   const { snapshot, setSnapshot, error: loadError, failMutation, refresh } = useDreamer(active)
-  const [draft, setDraft] = useState<{ revision: number; enabled: boolean; timeZone: string }>()
+  const [draft, setDraft] = useState<{
+    revision: number
+    enabled: boolean
+    timeZone: string
+    base: { enabled: boolean; timeZone: string }
+  }>()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [saved, setSaved] = useState(false)
   const enabled = draft?.enabled ?? snapshot?.settings.enabled ?? false
   const timeZone = draft?.timeZone ?? snapshot?.settings.timeZone ?? ''
+  const draftRevision = draft && snapshot &&
+    draft.base.enabled === snapshot.settings.enabled &&
+    draft.base.timeZone === snapshot.settings.timeZone
+    ? snapshot.revision
+    : draft?.revision
   function change(input: Partial<{ enabled: boolean; timeZone: string }>) {
-    setDraft({ revision: draft?.revision ?? snapshot?.revision ?? 0, enabled, timeZone, ...input })
+    setDraft({
+      revision: draft?.revision ?? snapshot?.revision ?? 0,
+      enabled,
+      timeZone,
+      base: draft?.base ?? {
+        enabled: snapshot?.settings.enabled ?? enabled,
+        timeZone: snapshot?.settings.timeZone ?? timeZone,
+      },
+      ...input,
+    })
     setSaved(false)
   }
 
@@ -144,16 +178,27 @@ export function DreamerSettings({ active = true }: { active?: boolean }) {
     setError(undefined)
     setSaved(false)
     try {
-      setSnapshot(await saveDreamerSettings({ revision: draft?.revision ?? snapshot.revision, enabled, timeZone: timeZone.trim() }))
+      setSnapshot(await saveDreamerSettings({ revision: draftRevision ?? snapshot.revision, enabled, timeZone: timeZone.trim() }))
       setDraft(undefined)
       setSaved(true)
       window.dispatchEvent(new Event(dreamerChanged))
     } catch (caught) {
       failMutation(caught)
       if (caught instanceof DreamerApiError && caught.status === 409) {
-        if (await refresh()) {
-          setDraft(undefined)
-          setError('Dreamer settings changed elsewhere. Review the refreshed settings before saving again.')
+        const currentDraft = draft
+        const refreshed = await refresh()
+        if (refreshed) {
+          if (
+            currentDraft &&
+            currentDraft.base.enabled === refreshed.settings.enabled &&
+            currentDraft.base.timeZone === refreshed.settings.timeZone
+          ) {
+            setDraft({ ...currentDraft, revision: refreshed.revision })
+            setError('Dreamer review data changed. Your settings are kept; save again.')
+          } else {
+            setDraft(undefined)
+            setError('Dreamer settings changed elsewhere. Review the refreshed settings before saving again.')
+          }
         } else {
           setError('Could not refresh Dreamer settings. Your changes are kept; refresh before saving again.')
         }
@@ -278,6 +323,9 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
     void edit({
       completion: {
         itemId: item.id,
+        computerId: candidate.computerId,
+        sessionId: candidate.sessionId,
+        sessionRevision: candidate.sessionRevision,
         messageId: candidate.messageId,
         resultDigest: candidate.resultDigest,
       },
@@ -296,7 +344,9 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
         ) : null}
         {plan ? <p className="dreamer-date">{plan.localDate} ({plan.timeZone})</p> : null}
         <p className="dialog-message">
-          Review actions update this plan only. A session is marked complete only after you confirm verified task-completion evidence.
+          This is a durable review list; Background Tasks shows live provider work.
+          Review actions update this plan only; completion confirmation records verified
+          evidence here and never changes provider work.
         </p>
         {error || loadError || snapshot?.lastError ? <p className="form-error" role="alert">{error ?? loadError ?? snapshot?.lastError}</p> : null}
         {plan ? (
@@ -306,17 +356,41 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
                 <li className="dreamer-item" data-status={item.status} key={item.id}>
                   <div className="dreamer-item__heading"><strong>{item.label}</strong><span>{item.status}</span></div>
                   <p>{item.reason}</p>
-                  {item.sessionId ? <p className="dreamer-item__source">Session {item.sessionId.slice(0, 12)}</p> : null}
+                  {item.sessionId ? (
+                    <p className="dreamer-item__source">
+                      Session <code>{item.computerId} / {item.sessionId}</code>
+                    </p>
+                  ) : null}
                   {item.memoryId ? <p className="dreamer-item__source">Memory {item.memoryId.slice(0, 12)}</p> : null}
                   {item.completion ? (
                     <p className="dreamer-item__source">
                       Completed from verified session evidence at {item.completion.completedAt}
                     </p>
                   ) : null}
-                  {item.completionSourceUnavailable ? (
+                  {item.sourceStateReason ? (
                     <p className="dreamer-item__source" role="status">
-                      Completion evidence is unavailable. Refresh the morning plan to retry.
+                      {item.sourceStateReason}
                     </p>
+                  ) : item.completionSourceUnavailable ? (
+                    <p className="dreamer-item__source" role="status">
+                      The owning session is offline or unavailable. Reconnect it, then refresh.
+                    </p>
+                  ) : null}
+                  {item.sourceState === 'unavailable' || item.completionSourceUnavailable ? (
+                    <button
+                      aria-label={`Retry evidence for ${item.label}`}
+                      className="secondary-button"
+                      disabled={saving || refreshing}
+                      onClick={() => {
+                        setSaved(false)
+                        void requestCoordinatedAuthoritativeRefresh()
+                          .then(() => setError(undefined))
+                          .catch((caught) => setError(reason(caught)))
+                      }}
+                      type="button"
+                    >
+                      Retry evidence
+                    </button>
                   ) : null}
                   {confirmingCompletion === item.id && item.completionCandidate ? (
                     <div
@@ -329,7 +403,10 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
                         {item.completionCandidate.summary}
                       </p>
                       <p className="dreamer-item__source">
-                        Session {item.completionCandidate.sessionId.slice(0, 12)} · completed {item.completionCandidate.completedAt}
+                        Session <code>
+                          {item.completionCandidate.computerId} / {item.completionCandidate.sessionId}
+                        </code> · revision {item.completionCandidate.sessionRevision}
+                        {' '}· completed {item.completionCandidate.completedAt}
                       </p>
                       <div className="dreamer-actions">
                         <button

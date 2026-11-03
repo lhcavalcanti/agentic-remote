@@ -3550,7 +3550,7 @@ describe('App', () => {
     ))
   })
 
-  it('keeps authoritative refresh pending until Oracle, Dreamer, and task reads settle', async () => {
+  it('refreshes the morning plan and live task bar from authoritative sources without mutating tasks', async () => {
     vi.mocked(listComputers).mockResolvedValue([taskComputer])
     render(<App />)
     await screen.findByRole('textbox', { name: 'Message' })
@@ -3609,6 +3609,63 @@ describe('App', () => {
       supported: true,
     }))
     await waitFor(() => expect(freshness()).not.toBeInTheDocument())
+    expect(cancelBackgroundTask).not.toHaveBeenCalled()
+  })
+
+  it('uses coordinated authoritative refresh when retrying Dreamer evidence', async () => {
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getManager).mockResolvedValue({
+      available: true,
+      status: 'idle',
+      messages: [],
+      queued: 0,
+      managedSessions: [],
+    })
+    vi.mocked(getDreamer).mockResolvedValue({
+      available: true,
+      revision: 3,
+      settings: { enabled: true, timeZone: 'UTC' },
+      plan: {
+        id: 'morning-plan',
+        localDate: '2026-11-02',
+        timeZone: 'America/Los_Angeles',
+        createdAt: '2026-11-02T10:00:00.000Z',
+        coverage: [],
+        omitted: 0,
+        items: [{
+          id: 'session-review',
+          label: 'Session needs attention',
+          reason: 'Authoritative session evidence is unavailable.',
+          status: 'pending',
+          source: 'session',
+          computerId: session.computerId,
+          sessionId: session.id,
+          completionSourceUnavailable: true,
+          sourceState: 'unavailable',
+          sourceStateReason: 'The owning session is offline or unavailable. Reconnect it, then refresh.',
+        }],
+      },
+    })
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Oracle' })).at(-1)!)
+    await screen.findByRole('dialog', { name: 'Oracle' })
+    fireEvent.click(await screen.findByText('Morning plan'))
+    const retry = await screen.findByRole('button', {
+      name: 'Retry evidence for Session needs attention',
+    })
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+    vi.mocked(listSessionListing).mockClear()
+    vi.mocked(getDreamer).mockClear()
+    vi.mocked(listBackgroundTasks).mockClear()
+
+    fireEvent.click(retry)
+
+    await waitFor(() => {
+      expect(listSessionListing).toHaveBeenCalled()
+      expect(getDreamer).toHaveBeenCalled()
+      expect(listBackgroundTasks).toHaveBeenCalledWith(session.computerId, session.id)
+    })
   })
 
   it('still refreshes background tasks when a session event lands during the passive detail read', async () => {

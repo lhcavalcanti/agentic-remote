@@ -22,6 +22,9 @@ export interface DreamerPlanEdit {
   item?: { id: string; status: DreamerPlanItem['status'] }
   completion?: {
     itemId: string
+    computerId: string
+    sessionId: string
+    sessionRevision: number
     messageId: string
     resultDigest: string
   }

@@ -181,12 +181,102 @@ describe('DreamerStore', () => {
     await reopened.initialize()
 
     const migrated = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>
-    expect(DREAMER_STATE_VERSION).toBe(2)
+    expect(DREAMER_STATE_VERSION).toBe(3)
     expect(migrated).toMatchObject({
-      version: 2,
+      version: 3,
       revision: legacy.revision,
       settings: legacy.settings,
     })
+  })
+
+  it('migrates version-two completion provenance to an explicit root source and legacy revision', async () => {
+    const root = await directory()
+    const statePath = path.join(root, 'dreamer.json')
+    const first = new DreamerStore(root, {
+      now: () => new Date('2026-10-29T02:00:00.000Z'),
+      randomUUID: () => 'claim-a',
+    })
+    await first.initialize()
+    await first.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await first.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: first.snapshot().settings.generation,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected a claim')
+    await first.commitRun(claim.claim, plan, [])
+
+    const legacy = JSON.parse(await readFile(statePath, 'utf8')) as {
+      version: number
+      plan: { items: Array<Record<string, unknown>> }
+    }
+    legacy.version = 2
+    legacy.plan.items[0].status = 'done'
+    legacy.plan.items[0].completion = {
+      computerId: 'computer-a',
+      sessionId: 'session-a',
+      messageId: 'message-a',
+      toolCallId: 'tool-call-a',
+      resultDigest: 'a'.repeat(64),
+      completedAt: '2026-10-29T01:58:00.000Z',
+      confirmedAt: '2026-10-29T02:01:00.000Z',
+    }
+    await writeFile(statePath, JSON.stringify(legacy))
+
+    const reopened = new DreamerStore(root)
+    await reopened.initialize()
+
+    expect(reopened.snapshot().plan?.items[0].completion).toMatchObject({
+      source: 'root-task-complete',
+      sessionRevision: 0,
+      sessionId: 'session-a',
+      messageId: 'message-a',
+    })
+    const migrated = JSON.parse(await readFile(statePath, 'utf8')) as {
+      version: number
+      plan: { items: Array<{ completion?: Record<string, unknown> }> }
+    }
+    expect(migrated.version).toBe(3)
+    expect(migrated.plan.items[0].completion).toMatchObject({
+      source: 'root-task-complete',
+      sessionRevision: 0,
+    })
+  })
+
+  it('drops legacy session items with partial source identity during migration', async () => {
+    const root = await directory()
+    const statePath = path.join(root, 'dreamer.json')
+    const first = new DreamerStore(root, {
+      now: () => new Date('2026-10-29T02:00:00.000Z'),
+      randomUUID: () => 'claim-a',
+    })
+    await first.initialize()
+    await first.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await first.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: first.snapshot().settings.generation,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected a claim')
+    await first.commitRun(claim.claim, plan, [])
+
+    const legacy = JSON.parse(await readFile(statePath, 'utf8')) as {
+      version: number
+      plan: { items: Array<Record<string, unknown>> }
+    }
+    legacy.version = 2
+    delete legacy.plan.items[0].sessionId
+    await writeFile(statePath, JSON.stringify(legacy))
+
+    const reopened = new DreamerStore(root)
+    await reopened.initialize()
+
+    expect(reopened.snapshot().plan?.items).toEqual([])
+    expect(reopened.snapshot().plan?.coverage).toContain(
+      'Excluded 1 legacy session item with partial source identity.',
+    )
   })
 
   it('refuses a new timezone at fence capacity without blocking disable or known zones', async () => {
@@ -299,6 +389,63 @@ describe('DreamerStore', () => {
       .rejects.toBeInstanceOf(DreamerConflictError)
     await store.editPlan(current.revision, 'plan-a', { order: ['item-b', 'item-a'] })
     expect(store.snapshot().plan?.items.map(({ id }) => id)).toEqual(['item-b', 'item-a'])
+  })
+
+  it('accumulates repeated durable exclusion counts atomically', async () => {
+    const root = await directory()
+    const store = new DreamerStore(root, {
+      now: () => new Date('2026-10-29T02:00:00.000Z'),
+      randomUUID: () => 'claim-a',
+    })
+    await store.initialize()
+    await store.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await store.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: store.snapshot().settings.generation,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected a claim')
+    await store.commitRun(claim.claim, {
+      ...plan,
+      items: [
+        plan.items[0],
+        { ...plan.items[0], id: 'item-b', sessionId: 'session-b' },
+        { ...plan.items[0], id: 'item-c', sessionId: 'session-c' },
+      ],
+      coverage: ['Excluded 1 duplicate session proposal.'],
+    }, [])
+
+    let snapshot = store.snapshot()
+    await store.reconcilePlanSources(
+      snapshot.revision,
+      snapshot.plan!.id,
+      ['item-b'],
+      [{
+        count: 1,
+        singular: 'duplicate session proposal',
+        plural: 'duplicate session proposals',
+      }],
+    )
+    snapshot = store.snapshot()
+    await store.reconcilePlanSources(
+      snapshot.revision,
+      snapshot.plan!.id,
+      ['item-c'],
+      [{
+        count: 2,
+        singular: 'duplicate session proposal',
+        plural: 'duplicate session proposals',
+      }],
+    )
+
+    expect(store.snapshot().plan?.coverage).toContain(
+      'Excluded 4 duplicate session proposals.',
+    )
+    expect(store.snapshot().plan?.coverage).not.toEqual(expect.arrayContaining([
+      'Excluded 1 duplicate session proposal.',
+      'Excluded 2 duplicate session proposals.',
+    ]))
   })
 
   it('preserves committed bytes and refuses corrupt state instead of resetting', async () => {

@@ -131,7 +131,13 @@ function validTimestamp(value: string | undefined): number | undefined {
 
 function sessionFingerprint(session: DreamerSessionMetadata): string {
   return typeof session.fingerprint === 'string' && session.fingerprint.length <= 200
-    ? session.fingerprint
+    ? digest([
+        'session',
+        session.computerId,
+        session.sessionId,
+        'source-fingerprint',
+        session.fingerprint,
+      ])
     : digest([
         'session',
         session.computerId,
@@ -280,19 +286,15 @@ function candidateForSession(
   session: DreamerSessionMetadata,
   fingerprint: string,
 ): DreamerStoredPlanItem {
-  const status = session.status ?? 'idle'
+  const status = session.status
   const label = status === 'error'
     ? 'Session needs attention'
-    : status === 'waiting'
-      ? 'Session is waiting'
-      : 'Open session review'
+    : 'Session is waiting'
   const reason = status === 'error'
     ? 'Journal metadata reports an unresolved error.'
-    : status === 'waiting'
-      ? 'Journal metadata reports that the session is waiting.'
-      : 'Journal metadata reports an open session.'
+    : 'Journal metadata reports that the session is waiting.'
   return {
-    id: `session-${digest([session.computerId, session.sessionId, fingerprint]).slice(0, 32)}`,
+    id: `session-${digest([session.computerId, session.sessionId]).slice(0, 32)}`,
     label,
     reason,
     status: 'pending',
@@ -308,7 +310,7 @@ function candidateForMemory(
   fingerprint: string,
 ): DreamerStoredPlanItem {
   return {
-    id: `memory-${digest([record.id, fingerprint]).slice(0, 32)}`,
+    id: `memory-${digest([record.id]).slice(0, 32)}`,
     label: 'Memory item needs review',
     reason: 'Structured-memory metadata identifies an active review candidate.',
     status: 'pending',
@@ -322,18 +324,70 @@ function sessionIdentityKey(computerId: string, sessionId: string): string {
   return JSON.stringify([computerId, sessionId])
 }
 
-function carryItem(item: DreamerPreviousItem): DreamerStoredPlanItem {
+function carryItem(
+  item: DreamerPreviousItem,
+  replacement?: DreamerStoredPlanItem,
+): DreamerStoredPlanItem {
   return {
-    id: item.id,
-    label: item.label,
-    reason: item.reason,
+    id: replacement?.id ?? item.id,
+    label: replacement?.label ?? item.label,
+    reason: replacement?.reason ?? item.reason,
     status: 'pending',
     source: 'carry',
-    ...(item.computerId ? { computerId: item.computerId } : {}),
-    ...(item.sessionId ? { sessionId: item.sessionId } : {}),
-    ...(item.memoryId ? { memoryId: item.memoryId } : {}),
-    fingerprint: item.fingerprint,
+    ...(replacement?.computerId || item.computerId
+      ? { computerId: replacement?.computerId ?? item.computerId }
+      : {}),
+    ...(replacement?.sessionId || item.sessionId
+      ? { sessionId: replacement?.sessionId ?? item.sessionId }
+      : {}),
+    ...(replacement?.memoryId || item.memoryId
+      ? { memoryId: replacement?.memoryId ?? item.memoryId }
+      : {}),
+    fingerprint: replacement?.fingerprint ?? item.fingerprint,
   }
+}
+
+function carrySessionItem(
+  item: DreamerPreviousItem,
+  session: DreamerSessionMetadata,
+  fingerprint: string,
+): DreamerStoredPlanItem {
+  const actionable = session.status === 'error' || session.status === 'waiting'
+  const carried = carryItem(
+    item,
+    actionable ? candidateForSession(session, fingerprint) : undefined,
+  )
+  return {
+    ...carried,
+    id: `session-${digest([session.computerId, session.sessionId]).slice(0, 32)}`,
+    computerId: session.computerId,
+    sessionId: session.sessionId,
+    fingerprint,
+  }
+}
+
+function sameSourceIdentity(
+  left: DreamerStoredPlanItem,
+  right: DreamerStoredPlanItem,
+): boolean {
+  if (
+    left.computerId && left.sessionId &&
+    right.computerId && right.sessionId
+  ) {
+    return left.computerId === right.computerId &&
+      left.sessionId === right.sessionId
+  }
+  if (left.memoryId && right.memoryId) return left.memoryId === right.memoryId
+  return false
+}
+
+function addCountedCoverage(
+  coverage: string[],
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+): void {
+  if (count > 0) addCoverage(coverage, `Excluded ${count} ${count === 1 ? singular : plural}.`)
 }
 
 export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
@@ -370,70 +424,96 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
   }
 
   const carry: DreamerStoredPlanItem[] = []
-  const carriedFingerprints = new Set<string>(
-    (previous?.items ?? [])
-      .filter((item) => item.status === 'pending' && !item.memoryId)
-      .map((item) => item.fingerprint),
-  )
-  const sessionPriorityByIdentity = new Map(
-    input.sessions.map((session) => [
-      sessionIdentityKey(session.computerId, session.sessionId),
-      SESSION_PRIORITY[session.status ?? 'idle'] ?? 98,
-    ]),
-  )
   const candidates: Array<{
     item: DreamerStoredPlanItem
     priority: number
   }> = []
-  const sessions = [...input.sessions].sort((left, right) => {
-    const leftRank = SESSION_PRIORITY[left.status ?? 'idle'] ?? 98
-    const rightRank = SESSION_PRIORITY[right.status ?? 'idle'] ?? 98
-    return leftRank - rightRank ||
-      left.computerId.localeCompare(right.computerId) ||
-      left.sessionId.localeCompare(right.sessionId)
-  })
-  for (const session of sessions) {
+  const sessionsByIdentity = new Map<string, DreamerSessionMetadata>()
+  let duplicateSessionProposals = 0
+  let invalidSessionIdentities = 0
+  let removedOrReplacedSessions = 0
+  let closedSessions = 0
+  let invalidSessionMetadata = 0
+  let futureSessions = 0
+  let staleSessions = 0
+  for (const session of input.sessions) {
     if (!safeIdentifier(session.computerId) || !safeIdentifier(session.sessionId)) {
       addCoverage(coverage, 'invalid-scope')
+      invalidSessionIdentities += 1
       continue
     }
     if (session.removedAt || session.replacedBy) {
       addCoverage(coverage, 'removed-or-replaced')
+      removedOrReplacedSessions += 1
       continue
     }
     if (session.status === 'closed') {
       addCoverage(coverage, 'closed-metadata')
+      closedSessions += 1
       continue
     }
     if (session.status && !(session.status in SESSION_PRIORITY)) {
       addCoverage(coverage, 'invalid-metadata')
+      invalidSessionMetadata += 1
       continue
     }
     const seenAt = validTimestamp(session.lastSeenAt)
     if (session.lastSeenAt && seenAt === undefined) {
       addCoverage(coverage, 'invalid-metadata')
+      invalidSessionMetadata += 1
       continue
     }
     if (!session.lastSeenAt) addCoverage(coverage, 'journal-metadata-incomplete')
     if (seenAt !== undefined && seenAt > nowMs) {
       addCoverage(coverage, 'future-metadata')
+      futureSessions += 1
       continue
     }
     if (seenAt !== undefined && nowMs - seenAt > staleAfterMs) {
       addCoverage(coverage, 'stale-metadata')
+      staleSessions += 1
       continue
     }
-    const fingerprint = sessionFingerprint(session)
-    if (carriedFingerprints.has(fingerprint) || previousHistory.has(fingerprint)) continue
-    candidates.push({
-      item: candidateForSession(session, fingerprint),
-      priority: sessionPriorityByIdentity.get(
-        sessionIdentityKey(session.computerId, session.sessionId),
-      ) ?? 98,
-    })
+    const identity = sessionIdentityKey(session.computerId, session.sessionId)
+    const existing = sessionsByIdentity.get(identity)
+    if (!existing) {
+      sessionsByIdentity.set(identity, session)
+      continue
+    }
+    duplicateSessionProposals += 1
+    const existingPriority = SESSION_PRIORITY[existing.status ?? 'idle'] ?? 98
+    const nextPriority = SESSION_PRIORITY[session.status ?? 'idle'] ?? 98
+    const existingSeenAt = validTimestamp(existing.lastSeenAt) ?? 0
+    if (nextPriority < existingPriority || (
+      nextPriority === existingPriority && (seenAt ?? 0) > existingSeenAt
+    )) {
+      sessionsByIdentity.set(identity, session)
+    }
   }
+  addCountedCoverage(
+    coverage,
+    invalidSessionIdentities,
+    'session proposal with invalid identity',
+    'session proposals with invalid identity',
+  )
+  addCountedCoverage(coverage, removedOrReplacedSessions, 'removed or replaced session proposal')
+  addCountedCoverage(coverage, closedSessions, 'closed session proposal')
+  addCountedCoverage(
+    coverage,
+    invalidSessionMetadata,
+    'session proposal with invalid metadata',
+    'session proposals with invalid metadata',
+  )
+  addCountedCoverage(coverage, futureSessions, 'future-dated session proposal')
+  addCountedCoverage(coverage, staleSessions, 'stale session proposal')
 
   const currentMemoryIds = new Set<string>()
+  const currentMemoryCandidates = new Map<string, {
+    item: DreamerStoredPlanItem
+    priority: number
+    updatedAt: number
+  }>()
+  let duplicateMemoryProposals = 0
   if (input.memory?.mode === 'on' && input.memory.available) {
     const tombstones = new Set(input.memory.tombstones.map(({ recordId }) => recordId))
     for (const record of input.memory.records) {
@@ -486,25 +566,131 @@ export function planDreamer(input: DreamerPlannerInput): DreamerPlanDraft {
       currentMemoryIds.add(record.id)
       const fingerprint = memoryFingerprint(record)
       if (previousHistory.has(fingerprint)) continue
-      candidates.push({
+      const current = currentMemoryCandidates.get(record.id)
+      if (current) {
+        duplicateMemoryProposals += 1
+        if (current.updatedAt >= updatedAt) continue
+      }
+      currentMemoryCandidates.set(record.id, {
         item: candidateForMemory(record, fingerprint),
         priority: 4,
+        updatedAt,
       })
     }
   }
+  candidates.push(
+    ...[...currentMemoryCandidates.values()].map(({ item, priority }) => ({ item, priority })),
+  )
 
+  const selectedSessionIdentities = new Set<string>()
+  const selectedMemoryIds = new Set<string>()
+  let invalidPreviousSessionIdentities = 0
+  let historicalSessionOrphans = 0
   for (const item of previous?.items ?? []) {
     if (item.status !== 'pending') continue
-    if (item.memoryId && !currentMemoryIds.has(item.memoryId)) {
-      addCoverage(coverage, 'memory-reference-stale')
+    const hasComputerId = Boolean(item.computerId)
+    const hasSessionId = Boolean(item.sessionId)
+    if (
+      hasComputerId !== hasSessionId ||
+      (item.source === 'session' && (!hasComputerId || !hasSessionId))
+    ) {
+      invalidPreviousSessionIdentities += 1
+      continue
+    }
+    if (item.computerId && item.sessionId) {
+      const identity = sessionIdentityKey(item.computerId, item.sessionId)
+      if (selectedSessionIdentities.has(identity)) {
+        duplicateSessionProposals += 1
+        continue
+      }
+      const currentSession = sessionsByIdentity.get(identity)
+      if (!currentSession) {
+        if (input.registryAvailable) historicalSessionOrphans += 1
+        else {
+          carry.push(carryItem(item))
+          selectedSessionIdentities.add(identity)
+        }
+        continue
+      }
+      const fingerprint = sessionFingerprint(currentSession)
+      selectedSessionIdentities.add(identity)
+      sessionsByIdentity.delete(identity)
+      if (previousHistory.has(fingerprint)) continue
+      if (currentSession.status === 'error' || currentSession.status === 'waiting') {
+        duplicateSessionProposals += 1
+      }
+      carry.push(carrySessionItem(item, currentSession, fingerprint))
+      continue
+    }
+    if (item.memoryId) {
+      if (selectedMemoryIds.has(item.memoryId)) {
+        duplicateMemoryProposals += 1
+        continue
+      }
+      selectedMemoryIds.add(item.memoryId)
+      if (!currentMemoryIds.has(item.memoryId)) {
+        addCoverage(coverage, 'memory-reference-stale')
+        continue
+      }
+      const current = currentMemoryCandidates.get(item.memoryId)
+      if (current) {
+        duplicateMemoryProposals += 1
+        carry.push(carryItem(item, current.item))
+      }
       continue
     }
     carry.push(carryItem(item))
-    carriedFingerprints.add(item.fingerprint)
   }
+  let genericSessionMetadata = 0
+  for (const session of [...sessionsByIdentity.values()].sort((left, right) => {
+    const leftRank = SESSION_PRIORITY[left.status ?? 'idle'] ?? 98
+    const rightRank = SESSION_PRIORITY[right.status ?? 'idle'] ?? 98
+    return leftRank - rightRank ||
+      left.computerId.localeCompare(right.computerId) ||
+      left.sessionId.localeCompare(right.sessionId)
+  })) {
+    if (session.status !== 'error' && session.status !== 'waiting') {
+      genericSessionMetadata += 1
+      continue
+    }
+    const fingerprint = sessionFingerprint(session)
+    if (previousHistory.has(fingerprint)) continue
+    candidates.push({
+      item: candidateForSession(session, fingerprint),
+      priority: SESSION_PRIORITY[session.status] ?? 98,
+    })
+  }
+  addCountedCoverage(
+    coverage,
+    genericSessionMetadata,
+    'generic open-session metadata entry without an actionable source',
+    'generic open-session metadata entries without an actionable source',
+  )
+  addCountedCoverage(
+    coverage,
+    historicalSessionOrphans,
+    'historical session orphan',
+    'historical session orphans',
+  )
+  addCountedCoverage(
+    coverage,
+    duplicateSessionProposals,
+    'duplicate session proposal',
+  )
+  addCountedCoverage(
+    coverage,
+    duplicateMemoryProposals,
+    'duplicate memory proposal',
+  )
+  addCountedCoverage(
+    coverage,
+    invalidPreviousSessionIdentities,
+    'legacy session proposal with partial source identity',
+    'legacy session proposals with partial source identity',
+  )
   if (carry.length > DREAMER_MAX_ITEMS) throw new DreamerPlannerCapacityError()
   const selectedCandidates = candidates.filter(
-    ({ item }) => !carriedFingerprints.has(item.fingerprint),
+    ({ item }) => !carry.some((carried) => sameSourceIdentity(carried, item)),
   )
 
   selectedCandidates.sort((left, right) => {

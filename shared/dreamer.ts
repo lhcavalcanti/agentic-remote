@@ -2,8 +2,10 @@ export type DreamerPlanItemStatus = 'pending' | 'skipped' | 'done'
 export type DreamerPlanItemSource = 'session' | 'memory' | 'carry'
 
 export interface DreamerTaskCompletionProvenance {
+  source: 'root-task-complete'
   computerId: string
   sessionId: string
+  sessionRevision: number
   messageId: string
   toolCallId: string
   resultDigest: string
@@ -12,8 +14,10 @@ export interface DreamerTaskCompletionProvenance {
 }
 
 export interface DreamerCompletionCandidate {
+  source: 'root-task-complete'
   computerId: string
   sessionId: string
+  sessionRevision: number
   messageId: string
   toolCallId: string
   resultDigest: string
@@ -35,6 +39,10 @@ export interface DreamerPlanItem {
   completionCandidate?: DreamerCompletionCandidate
   /** Transient projection; the owning session could not be read for evidence. */
   completionSourceUnavailable?: boolean
+  /** Transient authoritative source state; never persisted in Dreamer state. */
+  sourceState?: 'verified-completion' | 'pending' | 'unavailable'
+  /** Transient user-facing explanation of the authoritative source state. */
+  sourceStateReason?: string
 }
 
 export function isDreamerSessionItem<

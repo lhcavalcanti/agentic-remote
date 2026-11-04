@@ -293,7 +293,11 @@ function UserMessage({
           {expanded ? 'Show less' : 'Show all'}
         </button>
       ) : null}
-      {message.answerOnly ? <span className="manager-message__state">Ask</span> : null}
+      {message.source === 'scheduled' ? (
+        <span className="manager-message__state">Scheduled check</span>
+      ) : message.answerOnly ? (
+        <span className="manager-message__state">Ask</span>
+      ) : null}
       {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
       {message.state === 'failed' && message.error ? (
         <p className="manager-message__error" role="alert">{message.error}</p>
@@ -1313,31 +1317,37 @@ export function ManagerAssistant({
                         <span className="visually-hidden">{`Number ${index + 1}: `}</span>
                         {message.content}
                       </p>
-                      {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
-                      <button
-                        aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
-                        className="icon-button oracle-queue__edit"
-                        disabled={Boolean(editing) || busyMessage === message.id}
-                        onClick={() => startEdit(message)}
-                        ref={(element) => {
-                          if (element) editButtons.current.set(message.id, element)
-                          else editButtons.current.delete(message.id)
-                        }}
-                        title="Edit; it keeps its place in the queue"
-                        type="button"
-                      >
-                        <Pencil aria-hidden="true" size={14} />
-                      </button>
-                      <button
-                        aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
-                        className="icon-button oracle-queue__remove"
-                        disabled={busyMessage === message.id}
-                        onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
-                        title="Remove from the queue"
-                        type="button"
-                      >
-                        <X aria-hidden="true" size={15} />
-                      </button>
+                      {message.source === 'scheduled' ? (
+                        <span className="oracle-queue__tag">Scheduled check</span>
+                      ) : (
+                        <>
+                          {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
+                          <button
+                            aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
+                            className="icon-button oracle-queue__edit"
+                            disabled={Boolean(editing) || busyMessage === message.id}
+                            onClick={() => startEdit(message)}
+                            ref={(element) => {
+                              if (element) editButtons.current.set(message.id, element)
+                              else editButtons.current.delete(message.id)
+                            }}
+                            title="Edit; it keeps its place in the queue"
+                            type="button"
+                          >
+                            <Pencil aria-hidden="true" size={14} />
+                          </button>
+                          <button
+                            aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
+                            className="icon-button oracle-queue__remove"
+                            disabled={busyMessage === message.id}
+                            onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
+                            title="Remove from the queue"
+                            type="button"
+                          >
+                            <X aria-hidden="true" size={15} />
+                          </button>
+                        </>
+                      )}
                     </>
                   )}
                 </li>
@@ -1505,9 +1515,9 @@ export function ManagerAssistant({
               {sending ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={17} /> : <ArrowUp aria-hidden="true" size={18} />}
             </button>
           </div>
-          {!draftStorageError && draft ? (
+          {!draftStorageError && draft && recoveredDraft ? (
             <p className="manager-composer__status" role="status">
-              {recoveredDraft ? 'Recovered saved draft' : 'Saved on this device'}
+              Recovered saved draft
             </p>
           ) : null}
         </div>

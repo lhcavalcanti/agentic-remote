@@ -182,6 +182,13 @@ describe('manager turn context', () => {
     expect(prompt).not.toContain('<user_message>')
   })
 
+  it('wraps scheduled checks separately from user messages', () => {
+    const prompt = managerPrompt('<ctx/>', 'Review current work.', 'scheduled')
+    expect(prompt).toContain('<scheduled_status_check>\nReview current work.\n</scheduled_status_check>')
+    expect(prompt).toContain('read-only')
+    expect(prompt).not.toContain('<user_message>')
+  })
+
   it('briefs a fresh conversation from memory and the latest exchanges', () => {
     const brief = recoveryBrief({
       memoryIndex: '# Index',

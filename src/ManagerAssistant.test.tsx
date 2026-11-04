@@ -216,6 +216,7 @@ describe('ManagerAssistant', () => {
     vi.mocked(removeQueuedManagerMessage).mockResolvedValue({
       id: 'q1', role: 'user', content: 'first waiting', createdAt: 't', updatedAt: '2026-10-15T00:00:09.000Z', state: 'cancelled',
     })
+
     setup({
       ...empty,
       status: 'working',
@@ -239,6 +240,51 @@ describe('ManagerAssistant', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove from the queue: first waiting' }))
     await waitFor(() => expect(removeQueuedManagerMessage).toHaveBeenCalledWith('q1'))
     await waitFor(() => expect(within(screen.getByRole('region', { name: 'Queued for Oracle' })).getAllByRole('listitem')).toHaveLength(1))
+  })
+
+  it('labels scheduled checks and keeps queued ones read-only while failures stay retryable', async () => {
+    vi.mocked(retryManagerMessage).mockResolvedValue({
+      id: 'scheduled-failed',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T12:00:00.000Z',
+      state: 'queued',
+      answerOnly: true,
+      source: 'scheduled',
+    })
+    setup({
+      ...empty,
+      queued: 1,
+      messages: [
+        {
+          id: 'scheduled-failed',
+          role: 'user',
+          content: 'Review current work.',
+          createdAt: '2026-11-04T12:00:00.000Z',
+          state: 'failed',
+          error: 'Oracle could not answer.',
+          answerOnly: true,
+          source: 'scheduled',
+        },
+        {
+          id: 'scheduled-queued',
+          role: 'user',
+          content: 'Review current work.',
+          createdAt: '2026-11-04T14:00:00.000Z',
+          state: 'queued',
+          answerOnly: true,
+          source: 'scheduled',
+        },
+      ],
+    })
+    await openPanel()
+
+    expect(screen.getAllByText('Scheduled check')).toHaveLength(2)
+    const queue = screen.getByRole('region', { name: 'Queued for Oracle' })
+    expect(within(queue).queryByRole('button', { name: /Edit queued message/ })).toBeNull()
+    expect(within(queue).queryByRole('button', { name: /Remove from the queue/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(retryManagerMessage).toHaveBeenCalledWith('scheduled-failed'))
   })
 
   it('switches between Ask and Delegate, remembers it, and sends with it', async () => {
@@ -445,7 +491,7 @@ describe('ManagerAssistant', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Message Oracle' }), {
       target: { value: 'Keep this Oracle draft' },
     })
-    expect(screen.getByText('Saved on this device')).toBeInTheDocument()
+    expect(screen.queryByText('Saved on this device')).not.toBeInTheDocument()
     first.unmount()
 
     setup()

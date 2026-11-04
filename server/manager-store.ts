@@ -6,6 +6,7 @@ import type {
   ManagerClientDefaults,
   ManagerMessage,
   ManagerMessageSource,
+  ManagerProactiveSettings,
   ManagerSettings,
 } from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
@@ -51,6 +52,11 @@ export interface ManagerState {
   baselineAt?: string
   /** The browser defaults the last message carried. */
   defaults?: ManagerClientDefaults
+  /** Hub-owned periodic Oracle check policy and durable next eligible instant. */
+  proactive?: {
+    settings: ManagerProactiveSettings
+    nextCheckAt?: string
+  }
 }
 
 export type JournalKind = 'created' | 'status' | 'renamed' | 'replaced' | 'removed'
@@ -107,7 +113,8 @@ const emptyState = (): ManagerState => ({
 })
 
 function messageSource(source: unknown): ManagerMessageSource {
-  return source === 'voice' ? 'voice' : 'typed'
+  if (source === 'voice' || source === 'scheduled') return source
+  return 'typed'
 }
 
 function storedMessage(

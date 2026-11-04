@@ -105,7 +105,12 @@ draw('', ${timing === 'before paste'})
       : controller.send(id, 'Keep this queued work', false, { idleOnly: true })
     await expect(sending).rejects.toMatchObject({
       statusCode: 409,
-      ...(timing === 'after paste' ? { uncertainDelivery: true } : {}),
+      ...(timing === 'after paste'
+        ? { uncertainDelivery: true }
+        : {
+            uncertainDelivery: false,
+            reasonCode: 'terminal-not-ready.queue',
+          }),
     })
     expect(JSON.parse(await readFile(receipt, 'utf8'))).toEqual({
       pastes: timing === 'after paste' ? ['Keep this queued work'] : [],

@@ -10742,21 +10742,52 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const retry = this.pendingTerminalQueueClaims.get(sessionId)
       if (retry && Date.now() < retry.retryAt) return false
       const stored = await this.store.readAfterWrites(sessionId)
+      const next = stored.queuedPrompts?.[0]
       if (stored.interruption || stored.archivedAt) {
         // Retained work waits, untouched and unpolled, for Reopen to drain it.
         this.pendingTerminalQueueClaims.delete(sessionId)
         this.startupTerminalQueues.delete(sessionId)
+        const previous = this.terminalQueueStates.get(sessionId)
+        if (next) {
+          this.terminalQueueStates.set(sessionId, {
+            state: 'waiting',
+            promptId: next.id,
+            message: 'Reopen the session to resume queued delivery.',
+            updatedAt: new Date().toISOString(),
+          })
+          if (previous?.state !== 'waiting' || previous.promptId !== next.id ||
+              previous.message !== 'Reopen the session to resume queued delivery.') {
+            this.publish(stored)
+          }
+        } else {
+          this.terminalQueueStates.delete(sessionId)
+        }
         return false
       }
-      const next = stored.queuedPrompts?.[0]
       const terminalDispatch = this.store.terminalQueueDispatch(sessionId)
       const startup = this.startupTerminalQueues.has(sessionId)
+      if (!next) {
+        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.startupTerminalQueues.delete(sessionId)
+        return false
+      }
       if (startup && !this.hasStartupQueueLifecycle(sessionId, stored)) {
         this.startupTerminalQueues.delete(sessionId)
         this.pendingTerminalQueueClaims.delete(sessionId)
+        const previous = this.terminalQueueStates.get(sessionId)
+        this.terminalQueueStates.set(sessionId, {
+          state: 'waiting',
+          promptId: next.id,
+          message: 'Reopen the session to resume queued delivery.',
+          updatedAt: new Date().toISOString(),
+        })
+        if (previous?.state !== 'waiting' || previous.promptId !== next.id ||
+            previous.message !== 'Reopen the session to resume queued delivery.') {
+          this.publish(stored)
+        }
         return false
       }
-      if (!next || stored.failedPrompt ||
+      if (stored.failedPrompt ||
           (stored.queueState?.state === 'error' && stored.queueState.promptId === next.id) ||
           terminalDispatch ||
           this.store.recoverySeed(sessionId) ||
@@ -10952,7 +10983,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       return
     }
+    const startup = this.startupTerminalQueues.has(sessionId)
     if (!this.retryTerminalQueueClaim(sessionId, true)) {
+      const current = this.store.get(sessionId)
+      if (!this.stopped && !this.deletingSessions.has(sessionId) &&
+          current?.queuedPrompts?.[0]?.id === promptId &&
+          (current.interruption || current.archivedAt ||
+            (startup && !this.hasStartupQueueLifecycle(sessionId, current)))) {
+        this.terminalQueueStates.set(sessionId, {
+          state: 'waiting',
+          promptId,
+          message: 'Reopen the session to resume queued delivery.',
+          updatedAt: new Date().toISOString(),
+        })
+        if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
+            previous.message !== 'Reopen the session to resume queued delivery.') {
+          this.publish(current)
+        }
+        return
+      }
       if (previous) this.publish(session)
       return
     }
@@ -11115,7 +11164,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return false
     }
     this.pendingTerminalQueueSettlements.delete(sessionId)
-    if (pending.outcome.kind === 'failed' ||
+    if ((pending.outcome.kind === 'failed' && !pending.quiet) ||
         (pending.outcome.kind === 'accepted' && pending.outcome.startedTurn) ||
         !settled.queuedPrompts?.length) {
       this.startupTerminalQueues.delete(sessionId)

@@ -2108,7 +2108,14 @@ export class TmuxTerminalSessionController
         )
       }
       if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
-        throw Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), { statusCode: 409 })
+        throw Object.assign(
+          new Error('The terminal started working before queued delivery; nothing was sent'),
+          {
+            statusCode: 409,
+            uncertainDelivery: false,
+            reasonCode: 'terminal-not-ready.queue',
+          },
+        )
       }
       const allowWorking =
         !idleOnly &&

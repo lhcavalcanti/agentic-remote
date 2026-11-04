@@ -2407,6 +2407,39 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
     expect(await readFile(output, 'utf8')).toBe(before)
   }, 15_000)
 
+  it('classifies work starting after readiness but before idle-only paste as retryable', async () => {
+    const { controller, sessionId, output, panePid } = await deliveryFixture(false)
+    await controller.send(sessionId, 'Warmup', true)
+    await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    const before = await readFile(output, 'utf8')
+    const owner = controller['owner'].bind(controller)
+    let started = false
+    controller['owner'] = async (...args: Parameters<typeof owner>) => {
+      const current = await owner(...args)
+      if (!started && args[2] === true) {
+        started = true
+        process.kill(Number(panePid), 'SIGXCPU')
+        await eventually(
+          () => controller.capture(sessionId),
+          (pane) => isTerminalAgentWorking(pane || ''),
+        )
+      }
+      return current
+    }
+
+    await expect(controller.sendWhenIdle(sessionId, 'Keep this queued'))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      })
+    expect(started).toBe(true)
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
   it('reports a lost paste acknowledgement as uncertain and does not paste again', async () => {
     const { controller, sessionId, output, directory } = await deliveryFixture(false)
     const realTmux = (await execFileAsync('sh', ['-c', 'command -v tmux'])).stdout.trim()

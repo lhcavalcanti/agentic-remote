@@ -568,6 +568,56 @@ describe('SessionStore', () => {
     await restarted.close()
   })
 
+  it('drops a stale queue error when conversation recovery preserves its FIFO', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'before', cwd: '/project', title: 'Recovery project',
+      updatedAt: '2026-09-09T00:00:00.000Z', status: 'idle', messages: [],
+      queuedPrompts: [{
+        id: 'preserved', content: 'Run after recovery',
+        createdAt: '2026-09-09T00:00:01.000Z',
+      }],
+      queueState: {
+        state: 'error',
+        promptId: 'preserved',
+        message: 'The old runtime refused this prompt.',
+        updatedAt: '2026-09-09T00:00:02.000Z',
+      },
+    }, { backend: 'sdk', managedOpen: true })
+
+    const recovered = await store.replaceWithRecoveredSession(
+      'before', 'after', 'provider-error', 0, false, 'Seed first',
+    )
+
+    expect(recovered.queuedPrompts).toMatchObject([{ id: 'preserved' }])
+    expect(recovered.queueState).toBeUndefined()
+    await store.close()
+  })
+
+  it('drops a queue error when clearing a conversation in place', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'before', cwd: '/project', title: 'Clear project',
+      updatedAt: '2026-09-09T00:00:00.000Z', status: 'idle', messages: [],
+      queuedPrompts: [{
+        id: 'blocked', content: 'Discard with conversation',
+        createdAt: '2026-09-09T00:00:01.000Z',
+      }],
+      queueState: {
+        state: 'error',
+        promptId: 'blocked',
+        message: 'The prompt was not sent.',
+        updatedAt: '2026-09-09T00:00:02.000Z',
+      },
+    }, { backend: 'terminal', managedOpen: true })
+
+    const cleared = await store.clearConversation('before')
+
+    expect(cleared.queuedPrompts).toEqual([])
+    expect(cleared.queueState).toBeUndefined()
+    await store.close()
+  })
+
   it.each([
     'pending',
     'dispatching',
@@ -615,18 +665,28 @@ describe('SessionStore', () => {
         active = new SessionStore(directory)
         await active.initialize()
       }
+      await active.update('recovering', (session) => {
+        session.queueState = {
+          state: 'error',
+          promptId: 'preserved',
+          message: 'The old runtime refused this prompt.',
+          updatedAt: '2026-09-09T00:00:02.000Z',
+        }
+      })
 
       const cleared = await active.replaceWithClearedSession(
         'recovering',
         'cleared',
       )
       expect(cleared.failedPrompt).toBeUndefined()
+      expect(cleared.queueState).toBeUndefined()
       expect(active.failedPrompt('cleared')).toBeUndefined()
       expect(active.recoverySeed('cleared')).toBeUndefined()
       const persisted = JSON.parse(
         await readFile(path.join(directory, 'state.json'), 'utf8'),
       )
       expect(persisted.sessions.cleared.failedPrompt).toBeUndefined()
+      expect(persisted.sessions.cleared.queueState).toBeUndefined()
 
       await active.enqueuePrompt('cleared', {
         id: 'next',

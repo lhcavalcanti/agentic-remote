@@ -5902,6 +5902,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertNotRetained(sessionId, 'changing its queue')
     if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+      const previousQueueState = this.getSession(sessionId)?.queueState
       const original = this.getSession(sessionId)?.queuedPrompts
         ?.find((prompt) => prompt.id === promptId)
       const discarded = await this.queuedDispatches.discard(sessionId, promptId, acknowledgesDispatch)
@@ -5913,6 +5914,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!prompt) {
         throw new Error('Queued prompt not found')
       }
+      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
       this.publish(session)
       return { session: this.publicSession(session), prompt }
     }))
@@ -5926,11 +5928,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertNotRetained(sessionId, 'changing its queue')
     const content = await this.normalizeQueuedContent(sessionId, rawContent)
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+      const previousQueueState = this.getSession(sessionId)?.queueState
       this.queuedDispatches.assertAvailable(sessionId)
       const { session, prompt } = await this.store.updateQueuedPrompt(
         sessionId, promptId, content,
       )
       if (!prompt) throw queueConflict('Queued prompt not found')
+      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
       this.publish(session)
       return { session: this.publicSession(session), prompt }
     }))
@@ -5987,11 +5991,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<SessionDetail> {
     this.assertNotRetained(sessionId, 'changing its queue')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+      const previousQueueState = this.getSession(sessionId)?.queueState
       this.queuedDispatches.assertAvailable(sessionId)
       const session = await this.store.reorderQueuedPrompts(sessionId, order)
+      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
       this.publish(session)
       return this.publicSession(session)
     }))
+  }
+
+  private resumeQueueAfterErrorResolution(
+    sessionId: string,
+    previous: QueueState | undefined,
+    session: SessionDetail,
+  ): void {
+    if (previous?.state !== 'error' || session.queueState) return
+    this.terminalQueueStates.delete(sessionId)
+    if (session.queuedPrompts?.length && session.status === 'idle' && !session.suspended) {
+      this.wakeTerminalQueue(sessionId)
+    }
   }
 
   private async enqueuePrompt(
@@ -10738,7 +10756,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.pendingTerminalQueueClaims.delete(sessionId)
         return false
       }
-      if (!next || stored.failedPrompt || terminalDispatch ||
+      if (!next || stored.failedPrompt ||
+          (stored.queueState?.state === 'error' && stored.queueState.promptId === next.id) ||
+          terminalDispatch ||
           this.store.recoverySeed(sessionId) ||
           this.pendingTerminalPromptDispatches.has(sessionId)) {
         this.pendingTerminalQueueClaims.delete(sessionId)
@@ -10849,6 +10869,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         outcome = {
           kind: 'failed',
           uncertain,
+          ...(!uncertain && !quiet
+            ? {
+                queueState: {
+                  state: 'error' as const,
+                  promptId: next.id,
+                  message: `${failureReason}${failureReason.endsWith('.') ? '' : '.'} The queued prompt was not sent.`,
+                  updatedAt: new Date().toISOString(),
+                },
+              }
+            : {}),
         }
         failureMessage = `${failureReason}${
           uncertain
@@ -10883,7 +10913,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !this.store.terminalQueueDispatch(sessionId) && claim?.accepted === true && claim.failedAt === token
   }
 
-  private retryTerminalQueueClaim(sessionId: string, failed = false): void {
+  private retryTerminalQueueClaim(sessionId: string, failed = false): boolean {
     const session = this.store.get(sessionId)
     if (!session?.queuedPrompts?.length || this.stopped || this.deletingSessions.has(sessionId) ||
         (this.startupTerminalQueues.has(sessionId) && !this.hasStartupQueueLifecycle(sessionId, session)) ||
@@ -10891,13 +10921,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.pendingTerminalQueueClaims.delete(sessionId)
       this.terminalQueueStates.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
-      return
+      return false
     }
     const delay = failed ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750 : 750
     this.pendingTerminalQueueClaims.set(sessionId, {
       retryAt: Date.now() + delay,
       retryDelay: failed ? Math.min(delay * 2, 60_000) : 750,
     })
+    return true
   }
 
   private waitForTerminalQueueComposer(
@@ -10906,7 +10937,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
   ): void {
     const previous = this.terminalQueueStates.get(sessionId)
-    this.retryTerminalQueueClaim(sessionId, true)
+    if (session.interruption || session.archivedAt) {
+      this.pendingTerminalQueueClaims.delete(sessionId)
+      this.startupTerminalQueues.delete(sessionId)
+      this.terminalQueueStates.set(sessionId, {
+        state: 'waiting',
+        promptId,
+        message: 'Reopen the session to resume queued delivery.',
+        updatedAt: new Date().toISOString(),
+      })
+      if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
+          previous.message !== 'Reopen the session to resume queued delivery.') {
+        this.publish(session)
+      }
+      return
+    }
+    if (!this.retryTerminalQueueClaim(sessionId, true)) {
+      if (previous) this.publish(session)
+      return
+    }
     const retry = this.pendingTerminalQueueClaims.get(sessionId)
     this.terminalQueueStates.set(sessionId, {
       state: 'waiting',
@@ -11080,15 +11129,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
       return false
     }
-    if (pending.outcome.kind === 'failed') {
-      this.terminalQueueStates.set(sessionId, {
-        state: 'error',
-        promptId: settled.queuedPrompts?.[0]?.id || '',
-        message: `${pending.failureReason || 'The queued prompt could not be delivered'}${
-          pending.failureReason?.endsWith('.') ? '' : '.'
-        } The queued prompt was not sent.`,
-        updatedAt: new Date().toISOString(),
+    if (pending.outcome.kind === 'failed' && pending.outcome.uncertain) {
+      this.terminalQueueStates.delete(sessionId)
+      this.publish(settled)
+      this.emit('event', {
+        type: 'error',
+        sessionId,
+        message: pending.failureMessage || 'The queued prompt delivery could not be confirmed',
+        failedPrompt: settled.failedPrompt?.content,
+        failedPromptAt: settled.failedPrompt?.failedAt,
       })
+      return false
+    }
+    if (pending.outcome.kind === 'failed') {
+      this.terminalQueueStates.delete(sessionId)
       this.publish(settled)
       this.emit('event', {
         type: 'error',
@@ -11333,7 +11387,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publicSession(session: SessionDetail): SessionDetail {
     session = this.queuedDispatches.view(session)
-    const queueState = this.terminalQueueStates.get(session.id)
+    const queueState = this.terminalQueueStates.get(session.id) ?? session.queueState
     session = queueState && session.queuedPrompts?.[0]?.id === queueState.promptId
       ? { ...session, queueState }
       : session.queueState

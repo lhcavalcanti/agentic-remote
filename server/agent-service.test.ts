@@ -9819,6 +9819,144 @@ describe('AgentService deletion', () => {
     }
   })
 
+  it('does not assign an uncertain head failure to the untouched FIFO tail', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => {
+        throw Object.assign(new Error('Delivery confirmation was lost.'), {
+          statusCode: 500,
+          uncertainDelivery: true,
+        })
+      }),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: sessionId,
+        cwd: directory,
+        title: 'Active Copilot session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => [],
+      async () => 'events-v1',
+      terminal,
+    )
+    try {
+      await service.start()
+      await service.store.updateStatus(sessionId, 'running')
+      await service.sendMessage(sessionId, 'possibly delivered head', true)
+      await service.sendMessage(sessionId, 'untouched tail', true)
+      await service.store.updateStatus(sessionId, 'idle')
+
+      await service['drainTerminalQueue'](sessionId)
+
+      expect(terminal.sendWhenIdle).toHaveBeenCalledOnce()
+      expect(service.getSession(sessionId)).toMatchObject({
+        failedPrompt: {
+          content: 'possibly delivered head',
+          uncertain: true,
+        },
+        queuedPrompts: [{ content: 'untouched tail' }],
+      })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('clears composer retry state when the session is retained during refusal', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    const notReady = Object.assign(
+      new Error('The terminal is not ready for this input.'),
+      {
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      },
+    )
+    let service!: AgentService
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => {
+        await service.store.update(sessionId, (session) => {
+          session.isOpen = false
+          session.archivedAt = new Date().toISOString()
+        })
+        throw notReady
+      }),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: sessionId,
+        cwd: directory,
+        title: 'Active Copilot session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => [{
+        type: 'session.idle',
+        id: 'idle',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        data: {},
+        ephemeral: true,
+      }],
+      async () => 'events-v1',
+      terminal,
+    )
+    try {
+      await service.start()
+
+      const retained = await service.sendMessage(sessionId, 'keep this queued', true)
+
+      expect(retained).toMatchObject({
+        isOpen: false,
+        queuedPrompts: [{ content: 'keep this queued' }],
+        queueState: {
+          state: 'waiting',
+          message: expect.stringMatching(/Reopen/),
+        },
+      })
+      expect(retained.queueState?.retryAt).toBeUndefined()
+      expect(service['pendingTerminalQueueClaims'].has(sessionId)).toBe(false)
+    } finally {
+      await service.stop()
+    }
+  })
+
   it('keeps a non-retryable terminal queue failure visible on the session', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -9880,6 +10018,179 @@ describe('AgentService deletion', () => {
       await service.stop()
     }
   })
+
+  it('keeps a non-retryable terminal queue failure blocked across restart', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    const discover = async () => [{
+      id: sessionId,
+      cwd: directory,
+      title: 'Active Copilot session',
+      updatedAt: new Date().toISOString(),
+    }]
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    const failure = Object.assign(new Error('The terminal owner disappeared.'), {
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+    const firstTerminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => {
+        throw failure
+      }),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const first = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      discover,
+      async () => undefined,
+      async () => [{
+        type: 'session.idle',
+        id: 'idle',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        data: {},
+        ephemeral: true,
+      }],
+      async () => 'events-v1',
+      firstTerminal,
+    )
+    await first.start()
+    await first.sendMessage(sessionId, 'keep this blocked', true)
+    expect(first.getSession(sessionId)?.queueState).toMatchObject({
+      state: 'error',
+      message: expect.stringMatching(/was not sent/),
+    })
+    await first.stop()
+
+    const restartedClient = new FakeCopilotClient()
+    restartedClient.nextSessionList = client.nextSessionList
+    const restartedTerminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => true),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const restarted = new AgentService(
+      new SessionStore(stateDirectory),
+      restartedClient,
+      discover,
+      async () => undefined,
+      async () => [{
+        type: 'session.idle',
+        id: 'idle',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        data: {},
+        ephemeral: true,
+      }],
+      async () => 'events-v1',
+      restartedTerminal,
+    )
+    try {
+      await restarted.start()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(restartedTerminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(restarted.getSession(sessionId)).toMatchObject({
+        queuedPrompts: [{ content: 'keep this blocked' }],
+        queueState: {
+          state: 'error',
+          message: expect.stringMatching(/was not sent/),
+        },
+      })
+    } finally {
+      await restarted.stop()
+    }
+  })
+
+  it.each(['remove', 'edit', 'reorder'] as const)(
+    '%s resolves an errored queue head and wakes the next eligible delivery',
+    async (action) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      const sessionId = client.session.sessionId
+      client.nextSessionList = Promise.resolve([{
+        sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      }])
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        sendWhenIdle: vi.fn()
+          .mockRejectedValueOnce(Object.assign(new Error('The terminal owner disappeared.'), {
+            statusCode: 409,
+            uncertainDelivery: false,
+          }))
+          .mockResolvedValue(true),
+        capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+        cancel: vi.fn(async () => true),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [{
+          id: sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => [],
+        async () => 'events-v1',
+        terminal,
+      )
+      try {
+        await service.start()
+        await service.store.updateStatus(sessionId, 'running')
+        await service.sendMessage(sessionId, 'errored head', true)
+        const queued = await service.sendMessage(sessionId, 'untouched tail', true)
+        const [head, tail] = queued.queuedPrompts!
+        await service.store.updateStatus(sessionId, 'idle')
+        await service['drainTerminalQueue'](sessionId)
+        expect(service.getSession(sessionId)?.queueState?.state).toBe('error')
+
+        if (action === 'remove') {
+          await service.removeQueuedPrompt(sessionId, head.id)
+        } else if (action === 'edit') {
+          await service.updateQueuedPrompt(sessionId, head.id, 'edited head')
+        } else {
+          await service.reorderQueuedPrompts(sessionId, [tail.id, head.id])
+        }
+
+        await vi.waitFor(() => expect(terminal.sendWhenIdle).toHaveBeenCalledTimes(2))
+        expect(terminal.sendWhenIdle.mock.calls[1]?.[1]).toBe(
+          action === 'remove'
+            ? 'untouched tail'
+            : action === 'edit'
+              ? 'edited head'
+              : 'untouched tail',
+        )
+        expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+      } finally {
+        await service.stop()
+      }
+    },
+  )
 
   it('surfaces the update the terminal CLI is offering', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-upd-'))

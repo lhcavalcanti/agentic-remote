@@ -870,6 +870,23 @@ process.stdin.on('data', () => undefined)
     expect(await readFile(output, 'utf8')).toBe('')
   }, 30_000)
 
+  it('classifies a cold idle-only composer timeout as a retryable queue wait', async () => {
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, '', '', 'flat',
+      undefined, undefined, undefined, undefined, 'unfamiliar', 'end',
+    )
+    Reflect.set(controller, 'settledOwnerAgeMs', 0)
+    Reflect.set(controller, 'startupTimeoutMs', 200)
+
+    await expect(controller.sendWhenIdle(sessionId, 'Queue after restart'))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      })
+    expect(await readFile(output, 'utf8')).toBe('')
+  }, 15_000)
+
   it.each([
     ['a plain send', 'Sent once the prompt is back', false, undefined, 'enter'],
     ['a natively queued command', '/compact', true, { allowDuringAgentExecution: true }, 'queue'],

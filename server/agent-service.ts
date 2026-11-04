@@ -44,6 +44,7 @@ import type {
   PendingUserInput,
   ProviderRuntimeOptions,
   QueuedPrompt,
+  QueueState,
   QueuedPromptDispatchResult,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -218,11 +219,12 @@ interface PendingTerminalQueueSettlement {
   dispatchId: string
   outcome: TerminalQueueOutcome | { kind: 'feedback'; command: string; before: string | undefined }
   overlayOpen: boolean
+  failureReason?: string
   failureMessage?: string
   retryAt: number
   retryDelay: number
-  // A mid-turn steer refused before anything was typed goes back to the head
-  // of the queue and waits for the composer again, without an error.
+  // Input refused before anything was typed goes back to the head of the queue
+  // and waits for the composer again, without an error.
   quiet?: boolean
 }
 
@@ -375,12 +377,15 @@ function suspendedRuntimeConflict(): Error {
   )
 }
 
-/** A steer the terminal refused, before typing anything, for want of a composer. */
+/** Terminal input refused before typing anything for want of a composer. */
 function isTerminalNotReadyRefusal(error: unknown): boolean {
+  const reason = error && typeof error === 'object'
+    ? Reflect.get(error, 'reasonCode')
+    : undefined
   return Boolean(
     error &&
       typeof error === 'object' &&
-      Reflect.get(error, 'reasonCode') === 'terminal-not-ready.steer' &&
+      (reason === 'terminal-not-ready.steer' || reason === 'terminal-not-ready.queue') &&
       Reflect.get(error, 'uncertainDelivery') === false,
   )
 }
@@ -1869,6 +1874,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   private readonly pendingTerminalQueueSettlements = new Map<string, PendingTerminalQueueSettlement>()
   private readonly pendingTerminalQueueClaims = new Map<string, { retryAt: number; retryDelay: number }>()
+  private readonly terminalQueueStates = new Map<string, QueueState>()
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
   private startupRecoveryPending = false
@@ -2803,6 +2809,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.startupTerminalQueues.clear()
     this.pendingTerminalQueueSettlements.clear()
     this.pendingTerminalQueueClaims.clear()
+    this.terminalQueueStates.clear()
     for (const session of this.store.list()) {
       this.backgroundTaskTracker.remove(session.id)
     }
@@ -3726,6 +3733,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       suspended = true
       this.startupTerminalQueues.delete(id)
       this.pendingTerminalQueueClaims.delete(id)
+      this.terminalQueueStates.delete(id)
       this.terminalDrainRequested.delete(id)
       return result
     } finally {
@@ -7445,6 +7453,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.queueOperations.delete(sessionId)
       this.pendingTerminalQueueSettlements.delete(sessionId)
       this.pendingTerminalQueueClaims.delete(sessionId)
+      this.terminalQueueStates.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
       this.transcriptTakeInCosts.delete(sessionId)
@@ -10770,6 +10779,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.retryTerminalQueueClaim(sessionId, !before?.trim())
         return false
       }
+      const currentQueueState = this.terminalQueueStates.get(sessionId)
+      const composerKnownUnavailable = before !== undefined &&
+        !terminalInputReady(before) &&
+        (
+          !before.trim() ||
+          isTerminalOverlay(before) ||
+          isTerminalAgentWorking(before) ||
+          /waiting for background shells/i.test(before) ||
+          (currentQueueState?.state === 'waiting' && currentQueueState.promptId === next.id)
+        )
+      if (!midTurnSteer && composerKnownUnavailable) {
+        this.waitForTerminalQueueComposer(sessionId, stored, next.id)
+        return false
+      }
       if (next.command && !before?.trim()) {
         throw new Error('The terminal could not be read before command delivery; the command remains queued')
       }
@@ -10791,12 +10814,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const { session, dispatch } = claimed
       this.admissions.markCommitted(sessionId)
       this.pendingTerminalQueueClaims.delete(sessionId)
+      this.terminalQueueStates.delete(sessionId)
       if (this.stopped || this.deletingSessions.has(sessionId)) return false
       this.publish(session)
 
       // Once this claim is durable, neither a refused completion write nor a
       // process restart can put the externally delivered action back in FIFO.
       let outcome: PendingTerminalQueueSettlement['outcome']
+      let failureReason: string | undefined
       let failureMessage: string | undefined
       let quiet = false
       try {
@@ -10819,12 +10844,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           : { kind: 'accepted', startedTurn: !midTurnSteer }
       } catch (error) {
         const uncertain = isUncertainDelivery(error)
-        quiet = midTurnSteer && !uncertain && isTerminalNotReadyRefusal(error)
+        quiet = !uncertain && isTerminalNotReadyRefusal(error)
+        failureReason = error instanceof Error ? error.message : String(error)
         outcome = {
           kind: 'failed',
           uncertain,
         }
-        failureMessage = `${error instanceof Error ? error.message : String(error)}${
+        failureMessage = `${failureReason}${
           uncertain
             ? ''
             : ' The original queued message is unchanged; it was not sent.'
@@ -10834,6 +10860,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         dispatchId: dispatch.id,
         outcome,
         overlayOpen: false,
+        failureReason,
         failureMessage,
         retryAt: 0,
         retryDelay: 750,
@@ -10862,6 +10889,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         (this.startupTerminalQueues.has(sessionId) && !this.hasStartupQueueLifecycle(sessionId, session)) ||
         (session.failedPrompt && !this.awaitingAcceptedStartupRecovery(sessionId, session))) {
       this.pendingTerminalQueueClaims.delete(sessionId)
+      this.terminalQueueStates.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       return
     }
@@ -10870,6 +10898,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       retryAt: Date.now() + delay,
       retryDelay: failed ? Math.min(delay * 2, 60_000) : 750,
     })
+  }
+
+  private waitForTerminalQueueComposer(
+    sessionId: string,
+    session: SessionDetail,
+    promptId: string,
+  ): void {
+    const previous = this.terminalQueueStates.get(sessionId)
+    this.retryTerminalQueueClaim(sessionId, true)
+    const retry = this.pendingTerminalQueueClaims.get(sessionId)
+    this.terminalQueueStates.set(sessionId, {
+      state: 'waiting',
+      promptId,
+      message: 'Waiting for the terminal composer. Delivery will retry automatically.',
+      updatedAt: new Date().toISOString(),
+      ...(retry ? { retryAt: new Date(retry.retryAt).toISOString() } : {}),
+    })
+    if (previous?.state !== 'waiting' || previous.promptId !== promptId) {
+      this.publish(session)
+    }
   }
 
   private settleTerminalRecoveryForActivation(sessionId: string): void {
@@ -10881,6 +10929,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalRecoveryStates.set(sessionId, 'settled')
     this.startupTerminalQueues.delete(sessionId)
     this.pendingTerminalQueueClaims.delete(sessionId)
+    this.terminalQueueStates.delete(sessionId)
   }
 
   private async reconcileReopenedTerminalStatus(
@@ -11023,12 +11072,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.startupTerminalQueues.delete(sessionId)
     }
     if (this.stopped) return false
-    this.publish(settled)
     if (pending.outcome.kind === 'failed' && pending.quiet) {
-      this.retryTerminalQueueClaim(sessionId)
+      this.waitForTerminalQueueComposer(
+        sessionId,
+        settled,
+        settled.queuedPrompts?.[0]?.id || '',
+      )
       return false
     }
     if (pending.outcome.kind === 'failed') {
+      this.terminalQueueStates.set(sessionId, {
+        state: 'error',
+        promptId: settled.queuedPrompts?.[0]?.id || '',
+        message: `${pending.failureReason || 'The queued prompt could not be delivered'}${
+          pending.failureReason?.endsWith('.') ? '' : '.'
+        } The queued prompt was not sent.`,
+        updatedAt: new Date().toISOString(),
+      })
+      this.publish(settled)
       this.emit('event', {
         type: 'error',
         sessionId,
@@ -11038,6 +11099,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       return false
     }
+    this.terminalQueueStates.delete(sessionId)
+    this.publish(settled)
     // A steer now at the head is polled for while the turn runs: the one this
     // delivery started, or the one a delivered steer joined.
     if (pending.overlayOpen || settled.queuedPrompts?.[0]?.steer) this.retryTerminalQueueClaim(sessionId)
@@ -11270,6 +11333,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publicSession(session: SessionDetail): SessionDetail {
     session = this.queuedDispatches.view(session)
+    const queueState = this.terminalQueueStates.get(session.id)
+    session = queueState && session.queuedPrompts?.[0]?.id === queueState.promptId
+      ? { ...session, queueState }
+      : session.queueState
+        ? { ...session, queueState: undefined }
+        : session
     const failed = session.failedPrompt
     if (!failed) return session
     const current = this.store.failedPrompt(session.id)

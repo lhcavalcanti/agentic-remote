@@ -87,6 +87,10 @@ function draw() {
     process.stdout.write('\\x1b[2J\\x1b[HSelect a session\\r\\n- session one\\r\\n\\u2191/\\u2193 to navigate \\u00b7 enter to select \\u00b7 esc to cancel')
     return
   }
+  if (state.mode === 'waiting') {
+    process.stdout.write('\\x1b[2J\\x1b[HWaiting for background shells.\\r\\nBackground shell still running')
+    return
+  }
   process.stdout.write('\\x1b[2J\\x1b[H' + [
     response, '\\u257b\\u2584\\u2584\\u2584\\u2584\\u2584',
     '\\u2503 ' + (draft || ''), '\\u2579\\u2580\\u2580\\u2580\\u2580\\u2580',
@@ -185,7 +189,7 @@ draw(); save()
   }
   return {
     id, pid, connect, seed, stateDirectory, eventsFile,
-    control: async (mode: 'idle' | 'busy' | 'overlay' | 'draft') => {
+    control: async (mode: 'idle' | 'busy' | 'overlay' | 'draft' | 'waiting') => {
       controlSequence += 1
       await writeFile(`${controlFile}.tmp`, JSON.stringify({ mode, sequence: controlSequence }))
       await rename(`${controlFile}.tmp`, controlFile)
@@ -446,6 +450,42 @@ describe('Persisted native queue startup', () => {
     expect(delivered.submits).toEqual(['Held for native readiness'])
     expect(runtime.creates).not.toHaveBeenCalled()
   }, 15_000)
+
+  it('rebuilds a composer-readiness wait after restart and drains the durable FIFO once', async () => {
+    const native = await fixture()
+    const contents = ['/usage first after restart', '/usage second after restart', 'Final message after restart']
+    await native.seed(contents)
+    const first = native.connect()
+    await native.control('waiting')
+    await first.service.start()
+    expect(first.service.getSession(native.id)).toMatchObject({
+      queueState: { state: 'waiting' },
+      queuedPrompts: contents.map((content) => ({ content })),
+    })
+    expect((await native.receipt()).submits).toEqual([])
+    await first.service.stop()
+
+    const restarted = native.connect()
+    await restarted.service.start()
+    expect(restarted.service.getSession(native.id)).toMatchObject({
+      queueState: { state: 'waiting' },
+      queuedPrompts: contents.map((content) => ({ content })),
+    })
+    expect((await native.receipt()).submits).toEqual([])
+
+    await native.control('idle')
+    const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === contents.length, retryReadinessTimeout)
+    expect(delivered.submits).toEqual(contents)
+    expect(delivered.pastes).toEqual(contents)
+    expect((await native.persisted()).queuedPrompts).toEqual([])
+    await Promise.all([
+      restarted.service.refreshTranscripts(),
+      restarted.service.refreshTranscripts(),
+      restarted.service.refreshTranscripts(),
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect((await native.receipt()).submits).toEqual(contents)
+  }, 20_000)
 
   it.each(['missing', 'unrecognized', 'throws'])('retries a transient %s capture without claiming or sending early', async (failure) => {
     const native = await fixture()

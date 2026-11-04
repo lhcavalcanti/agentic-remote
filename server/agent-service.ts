@@ -1885,6 +1885,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly admissions = new SessionAdmissions(() => this.stopped)
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
+  private readonly rediscoveredTerminalQueues = new Set<string>()
   private nativeStartupDiscoveryReady = false
   private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
@@ -2495,6 +2496,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ))
     }
     this.startupRecoveryPending = false
+    this.dispatchRediscoveredTerminalQueues()
     if (![...this.terminalRecoveryStates.values()].includes('pending')) {
       this.terminalRecoveryStates = undefined
     }
@@ -9016,6 +9018,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .map((session) => session.id)
         .filter((id) => !previouslyExternal.has(id))
       : []
+    for (const id of rediscoveredTerminalQueues) {
+      this.rediscoveredTerminalQueues.add(id)
+    }
     this.externalSessionIds = new Set(
       [
         ...activeSessions.map((session) => session.id),
@@ -9118,15 +9123,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.nativeStartupDiscoveryReady = isCurrent()
     if (this.nativeStartupDiscoveryReady) {
       this.nativeDiscoveryCompleted = true
-      if (!this.startupRecoveryPending) {
-        for (const id of rediscoveredTerminalQueues) {
-          if (this.store.isManagedOpen(id) && this.store.get(id)?.queuedPrompts?.length) {
-            this.wakeTerminalQueue(id)
-          }
+      for (const id of [...this.rediscoveredTerminalQueues]) {
+        if (!this.externalSessionIds.has(id) || !this.store.get(id)?.queuedPrompts?.length) {
+          this.rediscoveredTerminalQueues.delete(id)
+          continue
+        }
+        await this.store.claimTerminalRecovery(id)
+        if (!isCurrent()) {
+          this.nativeStartupDiscoveryReady = false
+          return false
         }
       }
+      this.dispatchRediscoveredTerminalQueues()
     }
     return this.nativeStartupDiscoveryReady
+  }
+
+  private dispatchRediscoveredTerminalQueues(): void {
+    if (this.startupRecoveryPending) return
+    for (const id of [...this.rediscoveredTerminalQueues]) {
+      if (!this.externalSessionIds.has(id) || !this.store.get(id)?.queuedPrompts?.length) {
+        this.rediscoveredTerminalQueues.delete(id)
+        continue
+      }
+      if (!this.store.isManagedOpen(id)) continue
+      this.rediscoveredTerminalQueues.delete(id)
+      this.wakeTerminalQueue(id)
+    }
   }
 
   refreshDiscovery(): Promise<void> {

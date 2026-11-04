@@ -400,9 +400,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 226,
+  "communities": 214,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18697,
+  "edges": 18702,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -532,7 +532,7 @@
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "92c19793a5e88d824b38558d743edf862cffabf124fa8faed1b20f5598f860a8",
-    "server/agent-service.ts": "e6e56da60be48ecfc692e2f0b318732562c3881ea0311abd553e10b9c8e816a2",
+    "server/agent-service.ts": "efab2c5c3667b28f422bf9305b586c608b6b8b554afb0effd2eaaed1bfa06b74",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -708,7 +708,7 @@
     "server/session-store-providers.test.ts": "72b8786f3a2ed6cf0d0f97db7349e43476ffcc1fe5cd3e0d12e8a72ee81f909a",
     "server/session-store-serialization.test.ts": "71282d420e93f3c58082becfd38e0f5b7698f303412db76eb9c65a2b5853016c",
     "server/session-store.test.ts": "24a3b3db3b806030f76ddefc5d8dd7288d0fdeb956871f0179fc19b20334fb98",
-    "server/session-store.ts": "b90c9352757b69dbe0f1d4655fb2a0d25f46e1fc692be6114c06225d243f9a7d",
+    "server/session-store.ts": "a2d7a9625ef32fc1b8874519c70bf7f1416dd592a603f049ebff6b30e8718942",
     "server/settings-profile-routes.test.ts": "8418e3a4c4b86a7d596bd2e24ada31d04027d74f30d38aeee5b25d4e58bae812",
     "server/settings-profile-routes.ts": "ba8a58b447078a89855dab2b69c10b06d5458b00799ec16eb072c85430356543",
     "server/settings-profile-store.test.ts": "8474b0ae54bec25b62e7ff3ad639e0278aee0c973b25b52caba220066a046808",
@@ -727,7 +727,7 @@
     "server/terminal-session.test.ts": "19d6ca41205d6dbb8fcb1f1fda26f8e097f0bee86a45ca11b3f60c5298a328e8",
     "server/terminal-session.ts": "07e6ae958449270b1e87028fbc4471db3c1d0c453f1ea6dd711d8f881105d1f4",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
-    "server/terminal-startup-queue.test.ts": "25cbc022cd13380d62cd14355c59d50febb755313d141fedb2e00cf384ed4466",
+    "server/terminal-startup-queue.test.ts": "9934f757806ab8f37623f43e96ceb2490e1bf3731908154be95e4f88eddc3a75",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -896,7 +896,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6778,
+  "nodes": 6779,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -989,18 +989,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b7f98e2320de14eed33798755404f8ce04bf01ac4d82120817fc285ac6f1c812",
-    "communities.json": "6cffa96bbac74376958c500f1b11c48697a1e23a0c48b38f47ff6864250667c5",
-    "graph.html": "564a017076fe0ce52a00ec831aab6d2bd03259f278d708b5c0fae54aaa759da8",
-    "graph.json": "f5cf6c0b3e8e1da2db9232d2fbabe8e3165d54b95cc6c899700be378359a8185"
+    "GRAPH_REPORT.md": "d3aa9e7403bcfd991ee9305fcf0813ff68dd3b7bc22dad4ea7af076374fdf94d",
+    "communities.json": "315037db53bb4a458161e54a398c6612c904ad938360719c6306c4c459a709ef",
+    "graph.html": "b88c718dd7690b365a8a8b9d169c22e54ca1ad1f04a2851028a05e26d9dc5cb5",
+    "graph.json": "4b860612c3261e50f48115f3f3f367bfeb93ef2cab0b71f98b02f159755069c4"
   },
   "schema_version": 1,
-  "source_commit": "1a44ea167ae6e29636a9847422365437d3145683",
-  "source_fingerprint": "e4c3adac2c3c371133f22a6caa94c4592ae4b7d6fe3a3f10d768da5da52c42c4",
+  "source_commit": "1a40c63e4f5fa906740cf7405589bd82435a273c",
+  "source_fingerprint": "f28aca6bbd029947196ae14179b319ba619fd2638d50c2db110d8bcf6b263a01",
   "working_tree_changes": [
     "server/agent-service.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
+    "server/session-store.ts",
     "server/terminal-startup-queue.test.ts"
   ]
 }

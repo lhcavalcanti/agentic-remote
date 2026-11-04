@@ -520,7 +520,7 @@ describe('Persisted native queue startup', () => {
     expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
   }, 15_000)
 
-  it('claims a rediscovered queued owner before resuming delivery', async () => {
+  it('requires explicit Reopen when an intentionally closed queued owner is rediscovered', async () => {
     const native = await fixture()
     await native.seed(['Do not deliver without managed-open intent'])
     await native.control('waiting')
@@ -539,12 +539,19 @@ describe('Persisted native queue startup', () => {
     await runtime.service.refreshDiscovery()
     await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
 
-    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    expect((await native.receipt()).submits).toEqual([])
+    expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+    expect(runtime.service.getSession(native.id)?.queuedPrompts).toHaveLength(1)
+
+    await runtime.service.activateSession(native.id)
+
     expect((await native.receipt()).submits).toEqual(['Do not deliver without managed-open intent'])
     expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
   }, 15_000)
 
-  it('retries a rediscovered queue claim after persistence rejects', async () => {
+  it('retries restoring Reopen after rediscovery persistence rejects', async () => {
     const native = await fixture()
     await native.seed(['Retry the rediscovery claim'])
     await native.control('waiting')
@@ -557,25 +564,31 @@ describe('Persisted native queue startup', () => {
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
     await runtime.service['drainTerminalQueue'](native.id)
 
-    const claim = runtime.store.claimTerminalRecovery.bind(runtime.store)
-    const claimSpy = vi.spyOn(runtime.store, 'claimTerminalRecovery')
+    const markInterrupted = runtime.store.markInterrupted.bind(runtime.store)
+    const interruptionSpy = vi.spyOn(runtime.store, 'markInterrupted')
       .mockRejectedValueOnce(new Error('Synthetic persistence failure'))
-      .mockImplementation(claim)
+      .mockImplementation(markInterrupted)
     await native.control('idle')
     await runtime.service.refreshDiscovery()
-    expect(claimSpy).toHaveBeenCalledTimes(1)
+    expect(interruptionSpy).toHaveBeenCalledTimes(1)
     expect((await native.receipt()).submits).toEqual([])
 
     await runtime.service.refreshDiscovery()
     await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
 
-    expect(claimSpy).toHaveBeenCalledTimes(2)
-    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(interruptionSpy).toHaveBeenCalledTimes(2)
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+    expect((await native.receipt()).submits).toEqual([])
+
+    await runtime.service.activateSession(native.id)
+
     expect((await native.receipt()).submits).toEqual(['Retry the rediscovery claim'])
     expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
   }, 15_000)
 
-  it('retries a rediscovered queue wake after its discovery generation becomes stale', async () => {
+  it('retries restoring Reopen after its discovery generation becomes stale', async () => {
     const native = await fixture()
     await native.seed(['Retry the stale rediscovery'])
     await native.control('waiting')
@@ -588,23 +601,30 @@ describe('Persisted native queue startup', () => {
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
     await runtime.service['drainTerminalQueue'](native.id)
 
-    const claim = runtime.store.claimTerminalRecovery.bind(runtime.store)
-    const claimSpy = vi.spyOn(runtime.store, 'claimTerminalRecovery')
+    const markInterrupted = runtime.store.markInterrupted.bind(runtime.store)
+    const interruptionSpy = vi.spyOn(runtime.store, 'markInterrupted')
       .mockImplementationOnce(async (id) => {
-        await claim(id)
+        const interrupted = await markInterrupted(id)
         runtime.service['discoveryGeneration'] += 1
+        return interrupted
       })
-      .mockImplementation(claim)
+      .mockImplementation(markInterrupted)
     await native.control('idle')
     await runtime.service.refreshDiscovery()
 
-    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
     expect((await native.receipt()).submits).toEqual([])
 
     await runtime.service.refreshDiscovery()
     await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
 
-    expect(claimSpy).toHaveBeenCalledTimes(2)
+    expect(interruptionSpy).toHaveBeenCalledTimes(2)
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+    expect((await native.receipt()).submits).toEqual([])
+
+    await runtime.service.activateSession(native.id)
+
     expect((await native.receipt()).submits).toEqual(['Retry the stale rediscovery'])
     expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
   }, 15_000)

@@ -279,9 +279,8 @@ function clearRecoverySeedFailure(session: StoredSession): void {
 
 /**
  * A live tmux session the app sends work or answers to, relaunches, clears,
- * suspends, resumes, or reclaims queued work on is one the app now owns, so
- * it joins boot recovery like one the app created there. Discovery alone
- * never grants ownership without existing app-owned queued work.
+ * suspends, or resumes is one the app now owns, so it joins boot recovery
+ * like one the app created there. Discovery alone never calls this.
  */
 function grantTerminalRecovery(session: StoredSession): void {
   if (session.backend === 'terminal' && session.isOpen === true) {

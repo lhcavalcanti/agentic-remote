@@ -1885,7 +1885,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly admissions = new SessionAdmissions(() => this.stopped)
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
-  private readonly rediscoveredTerminalQueues = new Set<string>()
+  private readonly rediscoveredTerminalQueues = new Map<string, 'resume' | 'reopen'>()
   private nativeStartupDiscoveryReady = false
   private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
@@ -9018,8 +9018,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .map((session) => session.id)
         .filter((id) => !previouslyExternal.has(id))
       : []
+    // Capture intent before syncBackends marks every observed owner open.
     for (const id of rediscoveredTerminalQueues) {
-      this.rediscoveredTerminalQueues.add(id)
+      if (!this.store.get(id)?.queuedPrompts?.length) continue
+      this.rediscoveredTerminalQueues.set(
+        id,
+        this.store.isManagedOpen(id) ? 'resume' : 'reopen',
+      )
     }
     this.externalSessionIds = new Set(
       [
@@ -9123,16 +9128,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.nativeStartupDiscoveryReady = isCurrent()
     if (this.nativeStartupDiscoveryReady) {
       this.nativeDiscoveryCompleted = true
-      for (const id of [...this.rediscoveredTerminalQueues]) {
+      for (const [id, recovery] of [...this.rediscoveredTerminalQueues]) {
         if (!this.externalSessionIds.has(id) || !this.store.get(id)?.queuedPrompts?.length) {
           this.rediscoveredTerminalQueues.delete(id)
           continue
         }
-        await this.store.claimTerminalRecovery(id)
+        if (recovery !== 'reopen') continue
+        const interrupted = await this.store.markInterrupted(id)
         if (!isCurrent()) {
           this.nativeStartupDiscoveryReady = false
           return false
         }
+        this.rediscoveredTerminalQueues.delete(id)
+        this.publish(interrupted)
+        this.wakeTerminalQueue(id)
       }
       this.dispatchRediscoveredTerminalQueues()
     }
@@ -9141,11 +9150,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private dispatchRediscoveredTerminalQueues(): void {
     if (this.startupRecoveryPending) return
-    for (const id of [...this.rediscoveredTerminalQueues]) {
+    for (const [id, recovery] of [...this.rediscoveredTerminalQueues]) {
       if (!this.externalSessionIds.has(id) || !this.store.get(id)?.queuedPrompts?.length) {
         this.rediscoveredTerminalQueues.delete(id)
         continue
       }
+      if (recovery !== 'resume') continue
       if (!this.store.isManagedOpen(id)) continue
       this.rediscoveredTerminalQueues.delete(id)
       this.wakeTerminalQueue(id)

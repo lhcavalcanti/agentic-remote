@@ -1886,6 +1886,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
   private nativeStartupDiscoveryReady = false
+  private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
   private readonly sdkRecoveryRuns = new Map<string, Promise<void>>()
   private readonly recoveredPermissionReplies = new Map<
@@ -8963,6 +8964,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async discoverSessions(): Promise<boolean> {
     if (this.stopped) return false
+    const hadCompletedDiscovery = this.nativeDiscoveryCompleted
     this.nativeStartupDiscoveryReady = false
     let sessions: SessionMetadata[]
     let activeSessions: DiscoveredSession[]
@@ -9009,6 +9011,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     activeSessions = activeSessions.filter((session) => !excluded(session.id))
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
     const previouslyExternal = this.externalSessionIds
+    const rediscoveredTerminalQueues = hadCompletedDiscovery
+      ? activeSessions
+        .map((session) => session.id)
+        .filter((id) => !previouslyExternal.has(id))
+      : []
     this.externalSessionIds = new Set(
       [
         ...activeSessions.map((session) => session.id),
@@ -9109,6 +9116,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     this.nativeStartupDiscoveryReady = isCurrent()
+    if (this.nativeStartupDiscoveryReady) {
+      this.nativeDiscoveryCompleted = true
+      if (!this.startupRecoveryPending) {
+        for (const id of rediscoveredTerminalQueues) {
+          if (this.store.get(id)?.queuedPrompts?.length) this.wakeTerminalQueue(id)
+        }
+      }
+    }
     return this.nativeStartupDiscoveryReady
   }
 

@@ -400,9 +400,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 218,
+  "communities": 229,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18694,
+  "edges": 18696,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -532,7 +532,7 @@
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "92c19793a5e88d824b38558d743edf862cffabf124fa8faed1b20f5598f860a8",
-    "server/agent-service.ts": "091a5c4c4198fdd71b6258ae5326d3ac57150be6bcac08e9071af922bee626ae",
+    "server/agent-service.ts": "cbec761901d0550af4a0b81f717d1b6a334fcd02e88fab8a0b54f8157238b8ee",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -724,10 +724,10 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "7c597c675a0ed20d24e9cdc152b9bee38bad9a8297b163b3a32a48d0bf23d5c3",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "7c1b2cf0f885a7d065bd552b9f9fbc3d1d027046b221d9480a77b1fbbfaab66e",
-    "server/terminal-session.ts": "292e561bb2b7a4373566bbffd43ed3a73e1a1463a84ca9cf012e6f6e5f39fda9",
+    "server/terminal-session.test.ts": "8948bd3c4aec4474f96b8cf6e8f5b776664abd81a5edcc58806508777ff75c54",
+    "server/terminal-session.ts": "11625209be6f1edec2d4048a7b10e907d8e95b4409d9be51ce1eafe9af334b94",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
-    "server/terminal-startup-queue.test.ts": "c115071e203dc74aae8e0b75fdf69a0c520e483061c8c46147d5387d19833682",
+    "server/terminal-startup-queue.test.ts": "cb99cd429509eb26d623c2ad0feca3bcda7f34d4c7c66879a1d13df0b6ff7d09",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -896,7 +896,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6777,
+  "nodes": 6778,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -989,17 +989,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7ae6cdec89aa7db12c240de7630da4af85c042af0f64a93225eed6994380c9f2",
-    "communities.json": "aea179c0e583241661c37951b23aedbf17170fd96cd3f3471482650618c8e49a",
-    "graph.html": "230a7113a77cec0cc89a4faaf8c7ae1a8c502da9bfe05636d5d3f7e45917bea8",
-    "graph.json": "779014eb1060cc74bd41fd0483f5d5dc8e642a6b409710486fd0842b842950fb"
+    "GRAPH_REPORT.md": "11b765dae22ec6deb7c14078521de00f7a4ec7bd9021fc4f47764f03f16cb00e",
+    "communities.json": "6006be3bcad1c0419da71a6d721ce64db6cc434e86b3b594a18e8744cb5d3341",
+    "graph.html": "d9a8c7aac193e5a16d3f96efbcf2712b7afd4f903db440e5a82f1ec31e5dd1e3",
+    "graph.json": "bcf4ef76815767ad6671ffd463170b8d79bdc732e3b65c7b466c30a93daf7273"
   },
   "schema_version": 1,
-  "source_commit": "c57cf827ae9632205bd4cafcb4ae691eb5166e57",
-  "source_fingerprint": "49f939f5c06b8ce408bc315d65af3dc527c6b754f0acb3c8f46c0db81104fea1",
+  "source_commit": "4bbc54da3797554f5651a727dc2c5b2e2e33f26e",
+  "source_fingerprint": "5c6c57a46174e826af8a5bfdbc31218a503326f393450d567b1e37d1ef47a3f2",
   "working_tree_changes": [
     "server/agent-service.ts",
-    "server/terminal-queue-delivery.test.ts",
     "server/terminal-session.test.ts",
     "server/terminal-session.ts",
     "server/terminal-startup-queue.test.ts"

@@ -477,6 +477,60 @@ describe('Persisted native queue startup', () => {
     expect((await native.persisted()).queuedPrompts).toHaveLength(1)
   }, 15_000)
 
+  it('rearms a retained startup queue when discovery restores its owner', async () => {
+    const native = await fixture()
+    await native.seed(['Deliver after owner rediscovery'])
+    await native.control('waiting')
+    const runtime = native.connect()
+    await runtime.service.start()
+
+    runtime.finder
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('Transient rediscovery failure'))
+    await runtime.service.refreshDiscovery()
+    expect(runtime.store.get(native.id)?.interruption).toBeDefined()
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+    expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+
+    await runtime.service.refreshDiscovery()
+    expect((await native.receipt()).submits).toEqual([])
+
+    await native.control('idle')
+    await runtime.service.refreshDiscovery()
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect((await native.receipt()).submits).toEqual(['Deliver after owner rediscovery'])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
+  }, 15_000)
+
+  it('does not bypass the ordered startup queue phase when recovery rediscovers an owner', async () => {
+    const native = await fixture()
+    await native.seed(['Wait for ordered startup recovery'])
+    await native.control('waiting')
+    const runtime = native.connect()
+    await runtime.service.start()
+
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.refreshDiscovery()
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+
+    runtime.service['startupRecoveryPending'] = true
+    const wake = vi.spyOn(runtime.service as unknown as {
+      wakeTerminalQueue(id: string): void
+    }, 'wakeTerminalQueue')
+    await native.control('idle')
+    await runtime.service['discoverSessions']()
+    await Promise.resolve()
+
+    expect(wake).not.toHaveBeenCalled()
+    expect((await native.receipt()).submits).toEqual([])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts).toHaveLength(1)
+  }, 15_000)
+
   it.each(['interrupted', 'archived'] as const)(
     'requires Reopen after a waiting startup queue becomes %s',
     async (retained) => {

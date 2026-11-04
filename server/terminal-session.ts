@@ -2104,7 +2104,15 @@ export class TmuxTerminalSessionController
           new Error(
             'The terminal is showing a full-screen view. Close it there, then send this again.',
           ),
-          { statusCode: 409 },
+          {
+            statusCode: 409,
+            ...(idleOnly
+              ? {
+                  uncertainDelivery: false,
+                  reasonCode: 'terminal-not-ready.queue',
+                }
+              : {}),
+          },
         )
       }
       if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {

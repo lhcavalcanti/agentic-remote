@@ -2401,8 +2401,12 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
       }
       return owner
     })
-    await expect(controller.send(sessionId, 'Must not reach the overlay', true))
-      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(controller.sendWhenIdle(sessionId, 'Must not reach the overlay'))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      })
     expect(repainted).toBe(true)
     expect(await readFile(output, 'utf8')).toBe(before)
   }, 15_000)

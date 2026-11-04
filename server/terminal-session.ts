@@ -1902,8 +1902,9 @@ export class TmuxTerminalSessionController
         readyOwner.target === owner.target
       ) {
         const pane = await capturePane(owner.target)
+        const overlay = isTerminalOverlay(pane)
         if (
-          isTerminalOverlay(pane) ||
+          overlay ||
           parseTerminalPermission(pane) ||
           parseTerminalUserInput(pane) ||
           parseTerminalFormPrompt(pane)
@@ -1914,7 +1915,15 @@ export class TmuxTerminalSessionController
                 ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
                 : 'The terminal is waiting for user input. Answer it before sending a message.',
             ),
-            { statusCode: 409 },
+            {
+              statusCode: 409,
+              ...(idleOnly && overlay
+                ? {
+                    uncertainDelivery: false,
+                    reasonCode: 'terminal-not-ready.queue',
+                  }
+                : {}),
+            },
           )
         }
       } else {
@@ -1988,13 +1997,22 @@ export class TmuxTerminalSessionController
         }
         if (startup !== 'ready') {
           const pane = await capturePane(owner.target)
+          const overlay = isTerminalOverlay(pane)
           throw Object.assign(
             new Error(
               isTerminalSessionInUsePrompt(pane)
                 ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
                 : 'The terminal is waiting for user input. Answer it before sending a message.',
             ),
-            { statusCode: 409 },
+            {
+              statusCode: 409,
+              ...(idleOnly && overlay
+                ? {
+                    uncertainDelivery: false,
+                    reasonCode: 'terminal-not-ready.queue',
+                  }
+                : {}),
+            },
           )
         }
       }

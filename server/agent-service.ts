@@ -9120,7 +9120,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.nativeDiscoveryCompleted = true
       if (!this.startupRecoveryPending) {
         for (const id of rediscoveredTerminalQueues) {
-          if (this.store.get(id)?.queuedPrompts?.length) this.wakeTerminalQueue(id)
+          if (this.store.isManagedOpen(id) && this.store.get(id)?.queuedPrompts?.length) {
+            this.wakeTerminalQueue(id)
+          }
         }
       }
     }
@@ -11028,7 +11030,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       updatedAt: new Date().toISOString(),
       ...(retry ? { retryAt: new Date(retry.retryAt).toISOString() } : {}),
     })
-    if (previous?.state !== 'waiting' || previous.promptId !== promptId) {
+    if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
+        previous.message !== 'Waiting for the terminal composer. Delivery will retry automatically.') {
       this.publish(session)
     }
   }

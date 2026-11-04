@@ -2411,6 +2411,40 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
     expect(await readFile(output, 'utf8')).toBe(before)
   }, 15_000)
 
+  it('classifies a cached-owner overlay as retryable for idle-only delivery', async () => {
+    const overlay = 'Settings\n↑/↓ navigate · enter edit · esc close'
+    const { controller, sessionId, output } = await deliveryFixture(false, overlay)
+    await controller.send(sessionId, 'Warmup', true)
+    await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    const before = await readFile(output, 'utf8')
+
+    await expect(controller.sendWhenIdle(sessionId, 'Wait behind the overlay'))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      })
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
+  it('classifies a startup overlay as retryable for idle-only delivery', async () => {
+    const overlay = 'Settings\n↑/↓ navigate · enter edit · esc close'
+    const { controller, sessionId, output } = await deliveryFixture(
+      false, undefined, undefined, overlay,
+    )
+
+    await expect(controller.sendWhenIdle(sessionId, 'Wait for startup overlay'))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      })
+    expect(await readFile(output, 'utf8')).toBe('')
+  }, 15_000)
+
   it('classifies work starting after readiness but before idle-only paste as retryable', async () => {
     const { controller, sessionId, output, panePid } = await deliveryFixture(false)
     await controller.send(sessionId, 'Warmup', true)

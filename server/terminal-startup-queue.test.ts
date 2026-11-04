@@ -497,12 +497,51 @@ describe('Persisted native queue startup', () => {
     await runtime.service.refreshDiscovery()
     expect((await native.receipt()).submits).toEqual([])
 
+    const publishedQueueMessages: string[] = []
+    runtime.service.on('event', (event) => {
+      if (event.type === 'session.upserted' && event.session.id === native.id &&
+          event.session.queueState?.message) {
+        publishedQueueMessages.push(event.session.queueState.message)
+      }
+    })
+    await runtime.service.refreshDiscovery()
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+    expect(runtime.service.getSession(native.id)?.queueState?.message)
+      .toMatch(/retry automatically/i)
+    expect(publishedQueueMessages).toContain(
+      'Waiting for the terminal composer. Delivery will retry automatically.',
+    )
+
+    await native.control('idle')
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+
+    expect((await native.receipt()).submits).toEqual(['Deliver after owner rediscovery'])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
+  }, 15_000)
+
+  it('keeps a rediscovered unmanaged queue waiting for Reopen', async () => {
+    const native = await fixture()
+    await native.seed(['Do not deliver without managed-open intent'])
+    await native.control('waiting')
+    const runtime = native.connect()
+    await runtime.service.start()
+
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.refreshDiscovery()
+    await runtime.store.setOpen(native.id, false, true)
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+
     await native.control('idle')
     await runtime.service.refreshDiscovery()
     await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
 
-    expect((await native.receipt()).submits).toEqual(['Deliver after owner rediscovery'])
-    expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
+    expect((await native.receipt()).submits).toEqual([])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts).toHaveLength(1)
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
   }, 15_000)
 
   it('does not bypass the ordered startup queue phase when recovery rediscovers an owner', async () => {

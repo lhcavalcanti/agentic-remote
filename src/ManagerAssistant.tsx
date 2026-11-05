@@ -164,6 +164,8 @@ function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnap
       const streaming = snapshot.streaming?.messageId === event.message.id ? undefined : snapshot.streaming
       return { ...snapshot, messages, streaming }
     }
+    case 'manager.reorder':
+      return { ...snapshot, messages: event.messages }
     case 'manager.delta':
       return { ...snapshot, streaming: { messageId: event.messageId, content: event.content } }
     case 'manager.sessions':

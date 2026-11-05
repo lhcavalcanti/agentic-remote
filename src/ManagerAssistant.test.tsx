@@ -242,6 +242,47 @@ describe('ManagerAssistant', () => {
     await waitFor(() => expect(within(screen.getByRole('region', { name: 'Queued for Oracle' })).getAllByRole('listitem')).toHaveLength(1))
   })
 
+  it('applies a durable queue reorder from the hub', async () => {
+    const scheduled: ManagerSnapshot['messages'][number] = {
+      id: 'scheduled',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T22:00:00.000Z',
+      state: 'queued',
+      answerOnly: true,
+      source: 'scheduled',
+    }
+    const typed: ManagerSnapshot['messages'][number] = {
+      id: 'typed',
+      role: 'user',
+      content: 'Answer this first.',
+      createdAt: '2026-11-04T22:01:00.000Z',
+      state: 'queued',
+      source: 'typed',
+    }
+    const { emit } = setup({
+      ...empty,
+      queued: 2,
+      messages: [scheduled, typed],
+    })
+    await openPanel()
+
+    const items = () => within(
+      screen.getByRole('region', { name: 'Queued for Oracle' }),
+    ).getAllByRole('listitem')
+    expect(items().map((item) => item.textContent)).toEqual([
+      expect.stringContaining('Scheduled check'),
+      expect.stringContaining('Answer this first.'),
+    ])
+
+    emit({ type: 'manager.reorder', messages: [typed, scheduled] })
+
+    expect(items().map((item) => item.textContent)).toEqual([
+      expect.stringContaining('Answer this first.'),
+      expect.stringContaining('Scheduled check'),
+    ])
+  })
+
   it('labels scheduled checks and keeps queued ones read-only while failures stay retryable', async () => {
     vi.mocked(retryManagerMessage).mockResolvedValue({
       id: 'scheduled-failed',

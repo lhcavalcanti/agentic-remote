@@ -669,6 +669,7 @@ export class OracleVoiceCoordinator {
         }
         return
       case 'manager.sessions':
+      case 'manager.reorder':
       case 'manager.settings':
         return
     }

@@ -454,6 +454,17 @@ describe('ManagerAgent', () => {
       'typed-second',
       'scheduled-first',
     ])
+    const reorder = events.find(
+      (event) => (event as { type: string }).type === 'manager.reorder',
+    ) as unknown as {
+      messages: Array<{ id: string; role: string }>
+    } | undefined
+    expect(reorder?.messages.filter(
+      (message) => message.role === 'user',
+    ).map((message) => message.id)).toEqual([
+      'typed-second',
+      'scheduled-first',
+    ])
     const reopened = await openStore()
     expect(reopened.messages().filter(
       (message) => message.role === 'user',
@@ -462,6 +473,63 @@ describe('ManagerAgent', () => {
       'scheduled-first',
     ])
   })
+
+  it.each(['edit', 'remove'] as const)(
+    'claims quiet-hour user work before a racing queue %s',
+    async (action) => {
+      const now = new Date('2026-11-04T22:05:00.000Z')
+      await store.upsertMessage({
+        id: 'scheduled-first',
+        role: 'user',
+        content: 'Review current work.',
+        createdAt: '2026-11-04T21:50:00.000Z',
+        state: 'queued',
+        answerOnly: true,
+        source: 'scheduled',
+      })
+      await store.upsertMessage({
+        id: 'typed-second',
+        role: 'user',
+        content: 'Original user text.',
+        createdAt: '2026-11-04T22:04:00.000Z',
+        state: 'queued',
+        source: 'typed',
+      })
+      await store.updateState((state) => {
+        state.proactive = {
+          settings: { ...managerCheckDefaults(), enabled: true },
+          nextCheckAt: '2026-11-05T07:00:00.000Z',
+        }
+      })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const originalMove = store.moveMessageToEnd.bind(store)
+      const move = vi.spyOn(store, 'moveMessageToEnd')
+      move.mockImplementation(async (id) => {
+        await gate
+        await originalMove(id)
+      })
+
+      await start({ now: () => now })
+      await vi.waitFor(() => expect(move).toHaveBeenCalledWith('scheduled-first'))
+      const mutation = action === 'edit'
+        ? agent!.editQueued('typed-second', 'Edited user text.')
+        : agent!.removeQueued('typed-second')
+      release()
+
+      await expect(mutation).rejects.toMatchObject({ statusCode: 409 })
+      await vi.waitFor(() => expect(agent!.snapshot().messages.find(
+        (message) => message.id === 'typed-second',
+      )?.state).toBe('done'))
+      expect(sdk.prompts).toHaveLength(1)
+      expect(sdk.prompts[0]).toContain(
+        '<user_message>\nOriginal user text.\n</user_message>',
+      )
+      expect(sdk.prompts[0]).not.toContain('Edited user text.')
+    },
+  )
 
   it('keeps queue order when a scheduled check is allowed to run', async () => {
     const now = new Date('2026-11-04T20:05:00.000Z')
@@ -748,6 +816,70 @@ describe('ManagerAgent', () => {
     expect(paused.proactive).toMatchObject({ enabled: false })
     expect(paused.proactive?.nextCheckAt).toBeUndefined()
     expect(agent!.scheduledCheckTimerActive()).toBe(false)
+  })
+
+  it('does not let an old timer overwrite a new cadence while settings persist', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-04T12:00:00.000Z'))
+    try {
+      await start({ now: () => new Date(Date.now()) })
+      await agent!.updateSettings({
+        proactive: { ...managerCheckDefaults(), enabled: true },
+      })
+      await store.updateState((state) => {
+        if (state.proactive) {
+          state.proactive.nextCheckAt = '2026-11-04T12:01:00.000Z'
+        }
+      })
+      ;(agent as unknown as { armScheduledCheckTimer(): void })
+        .armScheduledCheckTimer()
+
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let markWriteStarted!: () => void
+      const writeStarted = new Promise<void>((resolve) => {
+        markWriteStarted = resolve
+      })
+      const writer = store as unknown as {
+        writeJson(name: string, value: unknown): Promise<void>
+      }
+      const originalWrite = writer.writeJson.bind(store)
+      let persistedNextCheckAt: string | undefined
+      const write = vi.spyOn(writer, 'writeJson').mockImplementation(
+        async (name, value) => {
+          persistedNextCheckAt = (value as {
+            proactive?: { nextCheckAt?: string }
+          }).proactive?.nextCheckAt
+          markWriteStarted()
+          await gate
+          await originalWrite(name, value)
+        },
+      )
+      const run = vi.spyOn(agent!, 'runScheduledCheckIfDue')
+
+      const updating = agent!.updateSettings({
+        proactive: {
+          ...managerCheckDefaults(),
+          enabled: true,
+          cadenceMinutes: 240,
+        },
+      })
+      await writeStarted
+      await vi.advanceTimersByTimeAsync(60_000)
+      release()
+      await updating
+      await Promise.all(run.mock.results.map((result) => result.value))
+
+      expect(agent!.snapshot().settings?.proactive).toMatchObject({
+        cadenceMinutes: 240,
+        nextCheckAt: persistedNextCheckAt,
+      })
+      write.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps shadow prompts, system prompt, and tools identical to off while computing structured retrieval', async () => {

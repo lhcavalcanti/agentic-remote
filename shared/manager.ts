@@ -205,6 +205,7 @@ export type ManagerEvent =
       lastError?: string
     }
   | { type: 'manager.message'; message: ManagerMessage }
+  | { type: 'manager.reorder'; messages: ManagerMessage[] }
   | { type: 'manager.delta'; messageId: string; content: string }
   | { type: 'manager.sessions'; managedSessions: string[] }
   | { type: 'manager.reset'; snapshot: ManagerSnapshot }

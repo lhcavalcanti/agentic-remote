@@ -293,6 +293,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private scheduledCheckTimer?: ReturnType<typeof setTimeout>
   private scheduledCheckRetry = 0
   private scheduledCheckGeneration = 0
+  private queueWork: Promise<unknown> = Promise.resolve()
   private currentReplyTo?: string
   private attemptActivities: string[] = []
   private needsMemoryIndex = false
@@ -490,36 +491,41 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       : undefined
     if (proactive) this.scheduledCheckGeneration += 1
     const before = this.runtime()
-    await this.store.updateState((state) => {
-      if (input.model !== undefined) {
-        const model = input.model?.trim() || undefined
-        const reasoningEffort = model ? input.reasoningEffort ?? undefined : undefined
-        state.settings = {
-          ...(model ? { model } : {}),
-          ...(reasoningEffort ? { reasoningEffort } : {}),
+    try {
+      await this.store.updateState((state) => {
+        if (input.model !== undefined) {
+          const model = input.model?.trim() || undefined
+          const reasoningEffort = model ? input.reasoningEffort ?? undefined : undefined
+          state.settings = {
+            ...(model ? { model } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+          }
         }
-      }
-      if (folders) {
-        const next = { ...state.sessionFolders }
-        for (const [computerId, folder] of Object.entries(folders)) {
-          if (folder) next[computerId] = folder
-          else delete next[computerId]
+        if (folders) {
+          const next = { ...state.sessionFolders }
+          for (const [computerId, folder] of Object.entries(folders)) {
+            if (folder) next[computerId] = folder
+            else delete next[computerId]
+          }
+          if (Object.keys(next).length) state.sessionFolders = next
+          else delete state.sessionFolders
         }
-        if (Object.keys(next).length) state.sessionFolders = next
-        else delete state.sessionFolders
-      }
-      // Only a terminal is kept, so the default stays the Copilot SDK.
-      if (input.sessionBackend === 'terminal') state.sessionBackend = 'terminal'
-      else if (input.sessionBackend === 'sdk') delete state.sessionBackend
-      if (proactive) {
-        state.proactive = {
-          settings: proactive,
-          ...(proactive.enabled
-            ? { nextCheckAt: nextManagerCheckAt(this.now(), proactive).toISOString() }
-            : {}),
+        // Only a terminal is kept, so the default stays the Copilot SDK.
+        if (input.sessionBackend === 'terminal') state.sessionBackend = 'terminal'
+        else if (input.sessionBackend === 'sdk') delete state.sessionBackend
+        if (proactive) {
+          state.proactive = {
+            settings: proactive,
+            ...(proactive.enabled
+              ? { nextCheckAt: nextManagerCheckAt(this.now(), proactive).toISOString() }
+              : {}),
+          }
         }
-      }
-    })
+      })
+    } catch (error) {
+      if (proactive) this.armScheduledCheckTimer()
+      throw error
+    }
     // A new choice is tried afresh. The next answer compares it with what
     // the conversation runs on, so nothing in flight can lose it.
     if (!sameRuntime(before, this.runtime())) {
@@ -555,10 +561,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     return this.scheduledCheckTimer !== undefined
   }
 
-  async runScheduledCheckIfDue(): Promise<void> {
+  async runScheduledCheckIfDue(
+    generation = this.scheduledCheckGeneration,
+  ): Promise<void> {
+    if (generation !== this.scheduledCheckGeneration) return
     this.clearScheduledCheckTimer()
     if (!this.started || this.stopped) return
-    const generation = this.scheduledCheckGeneration
     const state = this.store.state()
     const proactive = state.proactive
     if (!proactive?.settings.enabled) return
@@ -649,30 +657,49 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     if (!this.started || this.stopped) return
     const proactive = this.store.state().proactive
     if (!proactive?.settings.enabled || !proactive.nextCheckAt) return
+    const generation = this.scheduledCheckGeneration
     const delayMs = Math.max(0, Date.parse(proactive.nextCheckAt) - this.now().getTime())
-    this.scheduledCheckTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (
+        generation !== this.scheduledCheckGeneration
+        || this.scheduledCheckTimer !== timer
+      ) return
       this.scheduledCheckTimer = undefined
-      void this.runScheduledCheckIfDue().catch((error: unknown) => {
-        this.scheduleCheckRetry(error)
+      void this.runScheduledCheckIfDue(generation).catch((error: unknown) => {
+        this.scheduleCheckRetry(error, generation)
       })
     }, delayMs)
+    this.scheduledCheckTimer = timer
     this.scheduledCheckTimer.unref?.()
   }
 
-  private scheduleCheckRetry(error: unknown): void {
-    if (!this.started || this.stopped || !this.store.state().proactive?.settings.enabled) return
+  private scheduleCheckRetry(
+    error: unknown,
+    generation = this.scheduledCheckGeneration,
+  ): void {
+    if (
+      generation !== this.scheduledCheckGeneration
+      || !this.started
+      || this.stopped
+      || !this.store.state().proactive?.settings.enabled
+    ) return
     console.warn('Oracle scheduled check could not be admitted:', errorMessage(error))
     this.clearScheduledCheckTimer()
     const delayMs = SCHEDULE_RETRY_DELAYS_MS[
       Math.min(this.scheduledCheckRetry, SCHEDULE_RETRY_DELAYS_MS.length - 1)
     ]
     this.scheduledCheckRetry += 1
-    this.scheduledCheckTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (
+        generation !== this.scheduledCheckGeneration
+        || this.scheduledCheckTimer !== timer
+      ) return
       this.scheduledCheckTimer = undefined
-      void this.runScheduledCheckIfDue().catch((caught: unknown) => {
-        this.scheduleCheckRetry(caught)
+      void this.runScheduledCheckIfDue(generation).catch((caught: unknown) => {
+        this.scheduleCheckRetry(caught, generation)
       })
     }, delayMs)
+    this.scheduledCheckTimer = timer
     this.scheduledCheckTimer.unref?.()
   }
 
@@ -768,59 +795,63 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
    * if a restart interrupted that, it is no longer the user's to change.
    */
   async editQueued(messageId: string, content: string): Promise<ManagerMessage> {
-    const message = this.store.message(messageId)
-    if (!message || message.role !== 'user') {
-      throw Object.assign(new Error('Message not found'), { statusCode: 404 })
-    }
-    if (message.source === 'scheduled') {
-      throw Object.assign(
-        new Error('Scheduled checks are managed by Oracle and cannot be edited.'),
-        { statusCode: 409 },
-      )
-    }
-    const started = message.state === 'running'
-      || message.startedAt !== undefined
-      || (this.store.state().interruptions ?? {})[messageId] !== undefined
-    if (message.state !== 'queued' || started) {
-      throw Object.assign(
-        new Error(started
-          ? 'Oracle has already started on this message, so it can no longer be edited.'
-          : 'This message is no longer waiting, so it can no longer be edited.'),
-        { statusCode: 409 },
-      )
-    }
-    const text = content.trim()
-    checkContent(text)
-    const next: ManagerMessage = { ...message, content: text, updatedAt: this.now().toISOString() }
-    await this.updateMessage(next)
-    return next
+    return this.serializeQueue(async () => {
+      const message = this.store.message(messageId)
+      if (!message || message.role !== 'user') {
+        throw Object.assign(new Error('Message not found'), { statusCode: 404 })
+      }
+      if (message.source === 'scheduled') {
+        throw Object.assign(
+          new Error('Scheduled checks are managed by Oracle and cannot be edited.'),
+          { statusCode: 409 },
+        )
+      }
+      const started = message.state === 'running'
+        || message.startedAt !== undefined
+        || (this.store.state().interruptions ?? {})[messageId] !== undefined
+      if (message.state !== 'queued' || started) {
+        throw Object.assign(
+          new Error(started
+            ? 'Oracle has already started on this message, so it can no longer be edited.'
+            : 'This message is no longer waiting, so it can no longer be edited.'),
+          { statusCode: 409 },
+        )
+      }
+      const text = content.trim()
+      checkContent(text)
+      const next: ManagerMessage = { ...message, content: text, updatedAt: this.now().toISOString() }
+      await this.updateMessage(next)
+      return next
+    })
   }
 
   /** Takes a message out of the queue before Oracle starts on it. */
   async removeQueued(messageId: string): Promise<ManagerMessage> {
-    const message = this.store.message(messageId)
-    if (!message || message.role !== 'user') {
-      throw Object.assign(new Error('Message not found'), { statusCode: 404 })
-    }
-    if (message.source === 'scheduled') {
-      throw Object.assign(
-        new Error('Scheduled checks are managed by Oracle and cannot be removed.'),
-        { statusCode: 409 },
-      )
-    }
-    if (message.state !== 'queued') {
-      throw Object.assign(
-        new Error(message.state === 'running'
-          ? 'Oracle is already answering this; use Stop instead.'
-          : 'This message is no longer waiting.'),
-        { statusCode: 409 },
-      )
-    }
-    const next: ManagerMessage = { ...message, state: 'cancelled', updatedAt: this.now().toISOString() }
-    await this.updateMessage(next)
-    this.messageDefaults.delete(messageId)
-    this.publishStatus()
-    return next
+    return this.serializeQueue(async () => {
+      const message = this.store.message(messageId)
+      if (!message || message.role !== 'user') {
+        throw Object.assign(new Error('Message not found'), { statusCode: 404 })
+      }
+      if (message.source === 'scheduled') {
+        throw Object.assign(
+          new Error('Scheduled checks are managed by Oracle and cannot be removed.'),
+          { statusCode: 409 },
+        )
+      }
+      if (message.state !== 'queued') {
+        throw Object.assign(
+          new Error(message.state === 'running'
+            ? 'Oracle is already answering this; use Stop instead.'
+            : 'This message is no longer waiting.'),
+          { statusCode: 409 },
+        )
+      }
+      const next: ManagerMessage = { ...message, state: 'cancelled', updatedAt: this.now().toISOString() }
+      await this.updateMessage(next)
+      this.messageDefaults.delete(messageId)
+      this.publishStatus()
+      return next
+    })
   }
 
   /** Cancels only the captured message, whether it is still queued or now running. */
@@ -1147,18 +1178,20 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }).catch((error: unknown) => console.warn('Could not record manager activity:', error))
   }
 
-  private async pump(): Promise<void> {
-    if (this.pumping || this.stopped || !this.started) return
-    this.pumping = true
-    try {
+  private serializeQueue<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queueWork.then(work, work)
+    this.queueWork = next.catch(() => undefined)
+    return next
+  }
+
+  private claimNextQueued(): Promise<ManagerMessage | undefined> {
+    return this.serializeQueue(async () => {
       for (;;) {
-        if (this.stopped) return
-        await this.retirePersistedVoiceTaint()
         const queued = this.store.messages().filter(
           (message) => message.role === 'user' && message.state === 'queued',
         )
         let next = queued[0]
-        if (!next) break
+        if (!next) return undefined
         const automaticScheduled = next.source === 'scheduled' && !next.startedAt
         if (automaticScheduled) {
           const proactive = this.store.state().proactive
@@ -1175,6 +1208,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
             const userMessage = queued.find((message) => message.source !== 'scheduled')
             if (userMessage) {
               await this.store.moveMessageToEnd(next.id)
+              this.emit('event', {
+                type: 'manager.reorder',
+                messages: this.snapshot().messages,
+              })
               next = userMessage
             } else {
               const deferred = deferManagerCheckUntilAllowed(now, proactive.settings).toISOString()
@@ -1182,10 +1219,39 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
                 if (state.proactive?.settings.enabled) state.proactive.nextCheckAt = deferred
               })
               this.armScheduledCheckTimer()
-              break
+              return undefined
             }
           }
         }
+        const current = this.store.message(next.id)
+        if (!current || current.role !== 'user' || current.state !== 'queued') continue
+        const startedAt = this.now().toISOString()
+        const running: ManagerMessage = {
+          ...current,
+          state: 'running',
+          startedAt: current.startedAt ?? startedAt,
+          updatedAt: startedAt,
+        }
+        try {
+          await this.updateMessage(running)
+        } catch (error) {
+          await this.failUnexpectedly(current, error)
+          return undefined
+        }
+        return running
+      }
+    })
+  }
+
+  private async pump(): Promise<void> {
+    if (this.pumping || this.stopped || !this.started) return
+    this.pumping = true
+    try {
+      for (;;) {
+        if (this.stopped) return
+        await this.retirePersistedVoiceTaint()
+        const next = await this.claimNextQueued()
+        if (!next) break
         this.clearIdleTimer()
         this.processing = this.process(next).catch((error: unknown) => this.failUnexpectedly(next, error))
         await this.processing
@@ -1240,8 +1306,6 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.cancelledMessageId = undefined
     this.streaming = undefined
     const interrupted = (this.store.state().interruptions ?? {})[message.id] !== undefined
-    const startedAt = this.now().toISOString()
-    await this.updateMessage({ ...message, state: 'running', startedAt: message.startedAt ?? startedAt, updatedAt: startedAt })
     this.setStatus('working')
     const rungs: Array<{ rung: Rung; wait: number }> = [
       { rung: 'same', wait: 0 },

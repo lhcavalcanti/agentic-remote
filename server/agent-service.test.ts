@@ -3070,29 +3070,7 @@ describe('AgentService deletion', () => {
     )
     expect(service.store.get(created.id)?.queuedCount).toBe(0)
 
-    client.session.resolvePrompt(
-      JSON.parse(`{
-        "type":"assistant.message",
-        "id":"late-assistant-event",
-        "parentId":"session-complete-task-call",
-        "timestamp":"2026-07-22T00:00:03.000Z",
-        "data":{
-          "messageId":"late-assistant-message",
-          "content":"This late provider response must not replace the canonical summary."
-        }
-      }`) as AssistantMessageEvent,
-    )
-    await vi.waitFor(() =>
-      expect(service.store.get(created.id)?.status).toBe('idle'),
-    )
-    expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
-      role: 'assistant',
-      content: '**Complete.** The authoritative live summary is visible.',
-      taskCompletion: {
-        source: 'root-task-complete',
-        toolCallId: 'task-call',
-      },
-    })
+    client.session.resolvePrompt()
     await service.stop()
   })
 
@@ -7190,7 +7168,29 @@ describe('AgentService deletion', () => {
         .get(created.id)
         ?.messages.some((message) => message.id === 'tool:task-call'),
     ).toBe(false)
-    client.session.resolvePrompt()
+    client.session.resolvePrompt(
+      JSON.parse(`{
+        "type":"assistant.message",
+        "id":"late-assistant-event",
+        "parentId":"session-complete-task-call",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{
+          "messageId":"late-assistant-message",
+          "content":"This late provider response must not replace the canonical summary."
+        }
+      }`) as AssistantMessageEvent,
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.status).toBe('idle'),
+    )
+    expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: '**Complete.** The authoritative live summary is visible.',
+      taskCompletion: {
+        source: 'root-task-complete',
+        toolCallId: 'task-call',
+      },
+    })
 
     client.session.emit(
       JSON.parse(`{

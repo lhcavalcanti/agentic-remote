@@ -382,6 +382,45 @@ describe('session Knowledge routes', () => {
     expect(knowledge.listRoots()).toEqual(before)
   })
 
+  it('serializes simultaneous path updates and keeps only the winning root', async () => {
+    const { putPath, knowledge } = await fixture()
+    const responses = await Promise.all([
+      putPath('knowledge-a'),
+      putPath('knowledge-b'),
+    ])
+    expect(responses.map((response) => response.statusCode).sort())
+      .toEqual([200, 409])
+    const winner = responses.find((response) => response.statusCode === 200)!
+      .json().binding
+    expect(responses.find((response) => response.statusCode === 409)!
+      .json().binding).toEqual(winner)
+    expect(knowledge.listRoots().filter((entry) =>
+      entry.path.startsWith('/projects/current/knowledge-'))).toHaveLength(1)
+  })
+
+  it('rejects a pairing change while the owner resolves the path', async () => {
+    const { putPath, manager, knowledge } = await fixture()
+    const held = gate()
+    manager.ensureSessionKnowledgeBase.mockImplementationOnce(async (
+      _computerId,
+      _sessionId,
+      relativePath,
+    ) => {
+      held.start()
+      await held.wait
+      return `/projects/current/${relativePath}`
+    })
+    const saving = putPath('knowledge')
+    await held.started
+    manager.rePair('hub')
+    held.finish()
+
+    expect((await saving).statusCode).toBe(409)
+    expect(knowledge.listRoots().some(
+      (entry) => entry.path === '/projects/current/knowledge',
+    )).toBe(false)
+  })
+
   it.each([
     { knowledgeBasePath: 'knowledge', expectedRevision: 0, rootId: null },
     { knowledgeBasePath: 'knowledge', expectedRevision: 0, rootPath: '.' },

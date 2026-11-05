@@ -1759,6 +1759,48 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it.each([
+    { label: 'success false', data: { success: false } },
+    { label: 'continue outcome', data: { outcome: 'continue' } },
+    { label: 'blocked outcome', data: { outcome: 'blocked' } },
+  ])('does not render a rejected task completion with $label', ({ data }) => {
+    const events = JSON.parse(JSON.stringify([
+      {
+        type: 'tool.execution_start',
+        id: 'task-start',
+        parentId: null,
+        timestamp: '2026-07-22T00:00:01.000Z',
+        data: {
+          toolCallId: 'task-call',
+          toolName: 'task_complete',
+          arguments: { summary: 'Task argument summary' },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'task-end',
+        parentId: 'task-start',
+        timestamp: '2026-07-22T00:00:02.000Z',
+        data: { toolCallId: 'task-call', success: true },
+      },
+      {
+        type: 'session.task_complete',
+        id: 'session-complete',
+        parentId: 'task-end',
+        timestamp: '2026-07-22T00:00:02.100Z',
+        data: { ...data, summary: 'Rejected canonical summary' },
+      },
+    ])) as SessionEvent[]
+
+    const [message] = messagesFromHistory(events)
+    expect(message).toMatchObject({
+      id: 'tool:task-call',
+      role: 'activity',
+      activityStatus: 'completed',
+    })
+    expect(message.taskCompletion).toBeUndefined()
+  })
+
   it('keeps failed task completion calls as failed activity', () => {
     const events = JSON.parse(`[
       {
@@ -3028,7 +3070,29 @@ describe('AgentService deletion', () => {
     )
     expect(service.store.get(created.id)?.queuedCount).toBe(0)
 
-    client.session.resolvePrompt()
+    client.session.resolvePrompt(
+      JSON.parse(`{
+        "type":"assistant.message",
+        "id":"late-assistant-event",
+        "parentId":"session-complete-task-call",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{
+          "messageId":"late-assistant-message",
+          "content":"This late provider response must not replace the canonical summary."
+        }
+      }`) as AssistantMessageEvent,
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.status).toBe('idle'),
+    )
+    expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: '**Complete.** The authoritative live summary is visible.',
+      taskCompletion: {
+        source: 'root-task-complete',
+        toolCallId: 'task-call',
+      },
+    })
     await service.stop()
   })
 
@@ -7262,6 +7326,71 @@ describe('AgentService deletion', () => {
           message.content.includes('Output too large to read at once'),
         ),
     ).toBe(false)
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('keeps rejected live task completions as completed activity', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+
+    await service.sendMessage(created.id, 'continue after review')
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"This fallback must not be completed."}
+        }
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"toolCallId":"task-call","success":true}
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{
+          "success":false,
+          "outcome":"continue",
+          "summary":"This canonical summary was rejected."
+        }
+      }`) as SessionEvent,
+    )
+
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+        id: 'tool:task-call',
+        role: 'activity',
+        activityStatus: 'completed',
+      }),
+    )
+    expect(
+      service.store.get(created.id)?.messages.at(-1)?.taskCompletion,
+    ).toBeUndefined()
 
     client.session.resolvePrompt()
     await service.stop()

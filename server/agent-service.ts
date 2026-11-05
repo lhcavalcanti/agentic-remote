@@ -500,10 +500,22 @@ interface ActivityToolStart {
 interface LiveTaskCompletion {
   assistantMessageId?: string
   canonicalSummary?: string
+  completionAccepted?: boolean
   completedAt?: string
   completionEventReceived?: boolean
   fallbackSummary?: string
   toolCallId: string
+}
+
+function taskCompletionAccepted(event: SessionEvent): boolean {
+  if (event.type !== 'session.task_complete') {
+    return false
+  }
+  return (
+    event.data.success !== false &&
+    event.data.outcome !== 'continue' &&
+    event.data.outcome !== 'blocked'
+  )
 }
 
 function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
@@ -546,8 +558,11 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const pendingTaskCompletions = new Map<
     string,
     {
+      activityContent: string
       completedAt: string
+      fallbackSummary?: string
       message: ChatMessage
+      startedAt: string
       toolCallId: string
     }
   >()
@@ -602,8 +617,11 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     toolCallId: string,
     summary: string,
     completedAt: string,
+    finishActivities = true,
   ) => {
-    finishRunningActivities()
+    if (finishActivities) {
+      finishRunningActivities()
+    }
     message.role = 'assistant'
     message.content = summary
     message.createdAt = completedAt
@@ -614,7 +632,6 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       completedAt,
     }
   }
-
   for (const event of events) {
     if (event.type === 'user.message') {
       if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
@@ -683,12 +700,19 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
           message.activityDurationMs = duration
         }
         if (event.data.success && taskCompletionSummaries.has(toolCallId)) {
+          const fallbackSummary =
+            taskCompletionSummaries.get(toolCallId) || undefined
+          if (fallbackSummary) {
+            finishRunningActivities()
+          }
           pendingTaskCompletions.set(event.id, {
+            activityContent: message.content,
             completedAt: event.timestamp,
+            fallbackSummary,
             message,
+            startedAt: message.createdAt,
             toolCallId,
           })
-          const fallbackSummary = taskCompletionSummaries.get(toolCallId)
           if (fallbackSummary) {
             renderTaskCompletion(
               message,
@@ -710,14 +734,22 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       const completion = completionEventId
         ? pendingTaskCompletions.get(completionEventId)
         : undefined
-      const summary = event.data.summary?.trim()
-      if (completion && summary) {
+      const summary =
+        event.data.summary?.trim() || completion?.fallbackSummary
+      if (completion && summary && taskCompletionAccepted(event)) {
         renderTaskCompletion(
           completion.message,
           completion.toolCallId,
           summary,
           completion.completedAt,
+          !completion.fallbackSummary,
         )
+      } else if (completion?.fallbackSummary) {
+        completion.message.role = 'activity'
+        completion.message.content = completion.activityContent
+        completion.message.createdAt = completion.startedAt
+        completion.message.activityStatus = 'completed'
+        delete completion.message.taskCompletion
       }
       if (completionEventId) {
         pendingTaskCompletions.delete(completionEventId)
@@ -2146,6 +2178,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly liveTaskCompletions = new Map<string, LiveTaskCompletion>()
+  private readonly completedTaskPromptMessages = new Set<string>()
   private readonly liveActivityEvents = new Map<
     string,
     Map<
@@ -10194,6 +10227,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private finishLiveTaskCompletion(
+    sessionId: string,
+    completion: LiveTaskCompletion,
+    summary: string,
+  ): void {
+    if (!completion.completedAt) {
+      return
+    }
+    if (completion.assistantMessageId) {
+      this.completedTaskPromptMessages.add(
+        `${sessionId}:${completion.assistantMessageId}`,
+      )
+    }
+    void this.store
+      .finishTaskCompletion(
+        sessionId,
+        completion.toolCallId,
+        summary,
+        completion.completedAt,
+        completion.assistantMessageId,
+      )
+      .then((stored) => this.publish(stored))
+      .catch((error: unknown) => this.publishError(sessionId, error))
+  }
+
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
@@ -10289,24 +10347,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return
       }
       completion.completionEventReceived = true
+      completion.completionAccepted = taskCompletionAccepted(event)
       completion.canonicalSummary = event.data.summary?.trim() || undefined
       if (!completion.completedAt) {
         return
       }
       this.liveTaskCompletions.delete(sessionId)
-      if (!completion.canonicalSummary) {
+      const summary =
+        completion.canonicalSummary || completion.fallbackSummary
+      if (!completion.completionAccepted || !summary) {
         return
       }
-      void this.store
-        .finishTaskCompletion(
-          sessionId,
-          completion.toolCallId,
-          completion.canonicalSummary,
-          completion.completedAt,
-          completion.assistantMessageId,
-        )
-        .then((stored) => this.publish(stored))
-        .catch((error: unknown) => this.publishError(sessionId, error))
+      this.finishLiveTaskCompletion(sessionId, completion, summary)
       return
     }
 
@@ -10325,7 +10377,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         completion?.canonicalSummary || completion?.fallbackSummary
       const presentationResult = activityResult(event.data, event.data.success)
       const update =
-        isTaskCompletion && event.data.success && taskCompletionSummary
+        isTaskCompletion &&
+        event.data.success &&
+        completion.completionEventReceived &&
+        completion.completionAccepted &&
+        taskCompletionSummary
           ? this.store.finishTaskCompletion(
               sessionId,
               event.data.toolCallId,
@@ -10340,6 +10396,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               event.timestamp,
               presentationResult,
             )
+      if (
+        isTaskCompletion &&
+        event.data.success &&
+        completion.completionEventReceived &&
+        completion.completionAccepted &&
+        taskCompletionSummary &&
+        activePrompt?.assistantMessageId
+      ) {
+        this.completedTaskPromptMessages.add(
+          `${sessionId}:${activePrompt.assistantMessageId}`,
+        )
+      }
       if (
         isTaskCompletion &&
         (!event.data.success || completion.completionEventReceived)
@@ -10359,7 +10427,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         event.type === 'session.error' ||
         event.type === 'session.shutdown')
     ) {
+      const completion = this.liveTaskCompletions.get(sessionId)
       this.liveTaskCompletions.delete(sessionId)
+      if (
+        event.type === 'session.idle' &&
+        completion?.completedAt &&
+        completion.fallbackSummary
+      ) {
+        this.finishLiveTaskCompletion(
+          sessionId,
+          completion,
+          completion.fallbackSummary,
+        )
+      }
     }
   }
 
@@ -10409,7 +10489,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? assistantMessageId
         : this.activePrompts.get(sessionId)?.assistantMessageId ||
           assistantMessageId
-      if (response?.data.content) {
+      if (
+        response?.data.content &&
+        !this.completedTaskPromptMessages.has(
+          `${sessionId}:${completionAssistantMessageId}`,
+        )
+      ) {
         this.store.setMessageContent(
           sessionId,
           completionAssistantMessageId,
@@ -10503,6 +10588,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.sdkTurnsAwaited.delete(sessionId)
       }
       this.retiredSdkPromptRuns.delete(assistantMessageId)
+      this.completedTaskPromptMessages.delete(
+        `${sessionId}:${assistantMessageId}`,
+      )
+      this.completedTaskPromptMessages.delete(
+        `${sessionId}:${completionAssistantMessageId}`,
+      )
       if (this.activePrompts.get(sessionId)?.assistantMessageId === completionAssistantMessageId) {
         this.activePrompts.delete(sessionId)
         if (!delivery || delivery.accepted) this.wakeSdkQueue(sessionId)

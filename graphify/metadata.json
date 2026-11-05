@@ -587,8 +587,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "170cfa0bc579321ed5ad36fb57078b9a6af006e218ca60454a7f4a77707245da",
-    "server/manager-agent.ts": "8c008ef090d69e147664346fe4932acd4c658d6aefcb1394b6c355834a6a1732",
+    "server/manager-agent.test.ts": "55c8d9e129b55550630b83bc8291e2ad6d24ff4d72fe306eb83b473f82817578",
+    "server/manager-agent.ts": "70720ae0a75337ccbc8be7d8716c4fa1652da94c66186eaf2b3fb54589f7f6db",
     "server/manager-context.test.ts": "59c8226fa7014a728dc628e9c0678fb5c484e7d16761e8b669b7507f58d280af",
     "server/manager-context.ts": "a24df85c277306e399c15156f6f24745da8b036e5589733f28c423bc67ada33d",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -997,20 +997,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7d5465073ad5051cdeb91924f2e30006c99ac12c538f85c138c40accc6517a91",
+    "GRAPH_REPORT.md": "3a65ffe632af208d63bfc4a100b2e3a7e8589264c3747eb6f65d48d74a6fcf54",
     "communities.json": "cf3fa0b9e62b8e8eed7146eef01bda0e9ee6a4791c8d1d199936f9747ed4fe54",
-    "graph.html": "f6343dc7a4b80c56fb90188176b701f75f1effc6064d1cdab76c126ab7c39e6c",
-    "graph.json": "4482523ffc2f81085dec622e543b5dc22f213150f5c48d4221db9edbf7f1cf89"
+    "graph.html": "962af13e2e73d23d6e8b153dd18940cd781dcc34340714d0396534fa21e02b08",
+    "graph.json": "2b0327f660fe7cee8575d8c6b278f71aab6c1d9017bc5a968b3b7063b7d06786"
   },
   "schema_version": 1,
-  "source_commit": "fa1566c0466ab7ba7ca8c9e846dc7ec43af9ad02",
-  "source_fingerprint": "e2201fde5abdf7147139d630ff1bdd7e621de961bd8a87f58ca42c5df8137eac",
+  "source_commit": "d422ed5b0851eadecab0bd16fb153914159890a9",
+  "source_fingerprint": "5c1c48637b087a1c750365272811724e956de91646d66e7dc99094486a6ce177",
   "working_tree_changes": [
     "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-context.test.ts",
-    "server/manager-context.ts",
-    "server/manager-store.test.ts",
-    "server/manager-store.ts"
+    "server/manager-agent.ts"
   ]
 }

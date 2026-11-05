@@ -273,6 +273,32 @@ describe('ManagerAgent', () => {
       .toBe('2026-11-04T16:00:00.000Z')
   })
 
+  it('reports the latest scheduled turn after its reply is stored', async () => {
+    await start()
+    await store.upsertMessage({
+      id: 'scheduled-check',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T14:00:00.000Z',
+      state: 'done',
+      answerOnly: true,
+      source: 'scheduled',
+    })
+    await store.upsertMessage({
+      id: 'scheduled-reply',
+      role: 'assistant',
+      content: 'Nothing needs attention.',
+      createdAt: '2026-11-04T14:05:00.000Z',
+      replyTo: 'scheduled-check',
+      source: 'scheduled',
+    })
+
+    expect(agent!.snapshot().settings?.proactive).toMatchObject({
+      latestCheckAt: '2026-11-04T14:00:00.000Z',
+      latestCheckState: 'done',
+    })
+  })
+
   it('keeps already queued user work ahead of a due scheduled check', async () => {
     const now = new Date('2026-11-04T14:00:00.000Z')
     await store.upsertMessage({

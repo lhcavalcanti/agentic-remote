@@ -453,7 +453,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const proactive = this.store.state().proactive
     const proactiveSettings = proactive?.settings ?? managerCheckDefaults()
     const latestScheduled = this.store.messages()
-      .filter((message) => message.source === 'scheduled')
+      .filter((message) => message.role === 'user' && message.source === 'scheduled')
       .at(-1)
     return {
       ...(settings.model ? { model: settings.model } : {}),

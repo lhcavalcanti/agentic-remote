@@ -1574,9 +1574,17 @@ describe('AgentService deletion', () => {
         }
       },
       {
+        "type":"session.idle",
+        "id":"child-idle",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.050Z",
+        "agentId":"child-agent",
+        "data":{}
+      },
+      {
         "type":"session.task_complete",
         "id":"session-complete",
-        "parentId":"task-end",
+        "parentId":"child-idle",
         "timestamp":"2026-07-22T00:00:02.100Z",
         "data":{"summary":"**Done.** The complete authoritative summary is rendered."}
       }

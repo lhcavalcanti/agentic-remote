@@ -701,8 +701,9 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
     }
     if (event.type === 'session.task_complete' && !eventAgentId(event)) {
-      const completionEventId = event.parentId
-        ? event.parentId
+      const completionEventId =
+        event.parentId && pendingTaskCompletions.has(event.parentId)
+          ? event.parentId
         : pendingTaskCompletions.size === 1
           ? pendingTaskCompletions.keys().next().value
           : undefined

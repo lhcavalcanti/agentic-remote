@@ -871,8 +871,8 @@
     "src/session-presentation.ts": "6b90de22ed86db9d94aceaed6cde51fee1381eca505ee40eaae3f7b91c7190c9",
     "src/session-resource-commands.test.ts": "aad01518e46dd66c0910f8c113f9895712c7628bf9385eee6d33ef0f0e73e62a",
     "src/session-resource-commands.ts": "0ed9df05cac3541796e74ffa8670660e4d7605d933eac10c67ec2f7b96764bd3",
-    "src/session-response-order.test.ts": "7256ba87a3b219d24cbb7a0632ff595def6a9955b0d691a4b52aa8d6b5e2d13c",
-    "src/session-response-order.ts": "3f65e19d42da05cdbb3ff0c40061193b59d50cd6a8c0020db00447ab42a3906e",
+    "src/session-response-order.test.ts": "3d9be8eb973b211be0670e1ef49edbb1b9b575cbe433755ff8fd6de4ca930ebe",
+    "src/session-response-order.ts": "a1c1b41d5ccd6ca9bc7a406b4bc969553ff195774fa87e463c2a6472236a879f",
     "src/settings-profile.test.ts": "924462183efbf7b00dc81750882a4106d15e0a2fa8ad260cc7ec95842206b178",
     "src/settings-profile.ts": "b980e3077240c22c5dc6d9e209256af615e719d6b8efa42ad25e6e5cb486bf5b",
     "src/shell-notifications.test.ts": "d571dfa0a8bc77802139ed279df2ec0d0d54a7eca882e79066946cc1dc45e4ce",
@@ -989,18 +989,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "709ee6693fed9656047758925ccf90347284ffd3951447492ae515d3471fb3e2",
+    "GRAPH_REPORT.md": "d3c7a9563a568f61f230ff1d2ac470b97e2465804f90837b3e2ae448f26f2f14",
     "communities.json": "26b4a73db5b0098cd6e0215f564036c359cd3f24a64081d5ca6c383c27448eab",
-    "graph.html": "f0d3f1e0d04b2426af96b0877497f1afa527cdf7961be3bd7dc0c4d99f362060",
-    "graph.json": "d75d75f70a2659b86a18a2cbd1021e75d36ceb89193b67564996d0e35e4524f8"
+    "graph.html": "b7cdfc3d5153574393b519db9dfe296c74aad5b7770959a785645d4ee9729104",
+    "graph.json": "114e521a67185277d32aa2c8814b7b873477b6b91d95059ce38d788213774eb7"
   },
   "schema_version": 1,
-  "source_commit": "a8063d1a6a452818439439a92708e65e7f4d0bed",
-  "source_fingerprint": "7a66442119d71dfbaf49467482b038515117736b5dd5b6cf8c799d95e37c22c4",
+  "source_commit": "7b7fe33a63fecc60b29401dae55c0d3b97c7c681",
+  "source_fingerprint": "a8617be28fa5f562b110582abc96104054c7b575fb77a96863119f82e0c96573",
   "working_tree_changes": [
-    "server/agent-service.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts",
-    "server/terminal-startup-queue.test.ts"
+    "src/session-response-order.test.ts",
+    "src/session-response-order.ts"
   ]
 }

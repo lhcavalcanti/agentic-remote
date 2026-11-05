@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -255,7 +255,7 @@ describe('ManagerAgent', () => {
     await settled()
 
     const scheduled = agent!.snapshot().messages.filter(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )
     expect(scheduled).toHaveLength(1)
     expect(scheduled[0]).toMatchObject({
@@ -264,6 +264,9 @@ describe('ManagerAgent', () => {
       answerOnly: true,
       state: 'done',
     })
+    expect(agent!.snapshot().messages.find(
+      (message) => message.role === 'assistant' && message.replyTo === scheduled[0].id,
+    )).toMatchObject({ source: 'scheduled' })
     expect(sdk.prompts[0]).toContain('<scheduled_status_check>')
     expect(sdk.prompts[0]).not.toContain('<user_message>')
     expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
@@ -336,7 +339,7 @@ describe('ManagerAgent', () => {
     await agent!.runScheduledCheckIfDue()
 
     expect(agent!.snapshot().messages.filter(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )).toHaveLength(1)
     expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
       .toBe('2026-11-04T18:00:00.000Z')
@@ -379,8 +382,106 @@ describe('ManagerAgent', () => {
 
     expect(sdk.prompts).toHaveLength(1)
     expect(agent!.snapshot().messages.find(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )?.state).toBe('queued')
+  })
+
+  it('lets user work pass a queued scheduled check during quiet hours', async () => {
+    const now = new Date('2026-11-04T22:05:00.000Z')
+    await store.upsertMessage({
+      id: 'scheduled-first',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T21:50:00.000Z',
+      state: 'queued',
+      answerOnly: true,
+      source: 'scheduled',
+    })
+    await store.upsertMessage({
+      id: 'typed-second',
+      role: 'user',
+      content: 'Answer this now.',
+      createdAt: '2026-11-04T22:04:00.000Z',
+      state: 'queued',
+      source: 'typed',
+    })
+    await store.updateState((state) => {
+      state.proactive = {
+        settings: { ...managerCheckDefaults(), enabled: true },
+        nextCheckAt: '2026-11-05T07:00:00.000Z',
+      }
+    })
+
+    await start({ now: () => now })
+    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
+      (message) => message.id === 'typed-second',
+    )?.state).toBe('done'))
+
+    expect(sdk.prompts).toHaveLength(1)
+    expect(sdk.prompts[0]).toContain('<user_message>\nAnswer this now.\n</user_message>')
+    expect(agent!.snapshot().messages.find(
+      (message) => message.id === 'scheduled-first',
+    )?.state).toBe('queued')
+  })
+
+  it('keeps queue order when a scheduled check is allowed to run', async () => {
+    const now = new Date('2026-11-04T20:05:00.000Z')
+    await store.upsertMessage({
+      id: 'scheduled-first',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T20:00:00.000Z',
+      state: 'queued',
+      answerOnly: true,
+      source: 'scheduled',
+    })
+    await store.upsertMessage({
+      id: 'typed-second',
+      role: 'user',
+      content: 'Answer this second.',
+      createdAt: '2026-11-04T20:04:00.000Z',
+      state: 'queued',
+      source: 'typed',
+    })
+    await store.updateState((state) => {
+      state.proactive = {
+        settings: { ...managerCheckDefaults(), enabled: true },
+        nextCheckAt: '2026-11-04T22:05:00.000Z',
+      }
+    })
+
+    await start({ now: () => now })
+    await settled()
+
+    expect(sdk.prompts).toHaveLength(2)
+    expect(sdk.prompts[0]).toContain('<scheduled_status_check>')
+    expect(sdk.prompts[1]).toContain('<user_message>\nAnswer this second.\n</user_message>')
+  })
+
+  it('wakes a quiet queued scheduled check when quiet hours end before its cadence', async () => {
+    const now = new Date('2026-11-04T22:05:00.000Z')
+    await store.upsertMessage({
+      id: 'scheduled-quiet',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T21:50:00.000Z',
+      state: 'queued',
+      answerOnly: true,
+      source: 'scheduled',
+    })
+    await store.updateState((state) => {
+      state.proactive = {
+        settings: { ...managerCheckDefaults(), enabled: true },
+        nextCheckAt: '2026-11-05T09:00:00.000Z',
+      }
+    })
+
+    await start({ now: () => now })
+
+    await vi.waitFor(() => expect(
+      agent!.snapshot().settings?.proactive?.nextCheckAt,
+    ).toBe('2026-11-05T07:00:00.000Z'))
+    expect(agent!.scheduledCheckTimerActive()).toBe(true)
   })
 
   it('cancels a scheduled admission when periodic checks are paused during persistence', async () => {
@@ -412,7 +513,7 @@ describe('ManagerAgent', () => {
     await admission
 
     expect(agent!.snapshot().messages.find(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )?.state).toBe('cancelled')
     expect(sdk.prompts).toHaveLength(0)
     expect(agent!.snapshot().settings?.proactive?.nextCheckAt).toBeUndefined()
@@ -436,7 +537,7 @@ describe('ManagerAgent', () => {
 
     await start({ now: () => now })
     await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )?.state).toBe('running'))
     await vi.waitFor(() => expect(release).toBeTypeOf('function'))
     now = new Date('2026-11-04T22:01:00.000Z')
@@ -444,7 +545,7 @@ describe('ManagerAgent', () => {
     await settled()
 
     expect(agent!.snapshot().messages.find(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )).toMatchObject({
       state: 'done',
       suppressNotification: true,
@@ -461,6 +562,7 @@ describe('ManagerAgent', () => {
         nextCheckAt: now.toISOString(),
       }
     })
+
     const originalUpsert = store.upsertMessage.bind(store)
     let attempts = 0
     vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
@@ -480,13 +582,67 @@ describe('ManagerAgent', () => {
       expect(attempts).toBe(3)
       await vi.advanceTimersByTimeAsync(15 * 60_000)
       expect(attempts).toBe(4)
+      await store.flush()
       expect(store.messages().filter(
-        (message) => message.source === 'scheduled',
+        (message) => message.role === 'user' && message.source === 'scheduled',
       )).toHaveLength(1)
     } finally {
       warn.mockRestore()
       vi.useRealTimers()
     }
+  })
+
+  it('retries a failed scheduled check manually while periodic checks are paused', async () => {
+    await store.upsertMessage({
+      id: 'scheduled-failed',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T14:00:00.000Z',
+      state: 'failed',
+      error: 'Oracle could not answer.',
+      answerOnly: true,
+      source: 'scheduled',
+    })
+    await store.updateState((state) => {
+      state.proactive = {
+        settings: { ...managerCheckDefaults(), enabled: false },
+      }
+    })
+    await start()
+
+    await agent!.retry('scheduled-failed')
+    await settled()
+
+    expect(agent!.snapshot().messages.find(
+      (message) => message.id === 'scheduled-failed',
+    )?.state).toBe('done')
+    expect(sdk.prompts[0]).toContain('<scheduled_status_check>')
+  })
+
+  it('retries a scheduled append that failed after entering the in-memory queue', async () => {
+    let now = new Date('2026-11-04T12:00:00.000Z')
+    await start({ now: () => now })
+    await agent!.updateSettings({
+      proactive: { ...managerCheckDefaults(), enabled: true },
+    })
+    now = new Date('2026-11-04T14:00:00.000Z')
+    const conversationPath = path.join(root, 'manager', 'conversation.jsonl')
+    await mkdir(conversationPath)
+
+    await expect(agent!.runScheduledCheckIfDue()).rejects.toThrow()
+    expect(store.message(managerScheduledMessageId(
+      '2026-11-04T14:00:00.000Z',
+    ))).toBeUndefined()
+    await rm(conversationPath, { recursive: true })
+    await agent!.runScheduledCheckIfDue()
+    await settled()
+    await agent!.stop()
+    agent = undefined
+    store = await openStore()
+
+    expect(store.messages().filter(
+      (message) => message.role === 'user' && message.source === 'scheduled',
+    )).toHaveLength(1)
   })
 
   it('coalesces missed intervals to one catch-up after restart', async () => {
@@ -504,7 +660,7 @@ describe('ManagerAgent', () => {
     await settled()
 
     expect(agent!.snapshot().messages.filter(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )).toHaveLength(1)
     expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
       .toBe('2026-11-05T07:00:00.000Z')
@@ -533,7 +689,7 @@ describe('ManagerAgent', () => {
     await settled()
 
     expect(agent!.snapshot().messages.filter(
-      (message) => message.source === 'scheduled',
+      (message) => message.role === 'user' && message.source === 'scheduled',
     )).toHaveLength(1)
     expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
       .toBe('2026-11-04T16:00:00.000Z')
@@ -1823,7 +1979,7 @@ describe('ManagerAgent', () => {
 
   it('keeps voice provenance through queue edits, failures, retries, and restart recovery', async () => {
     sdk.behaviors.push(async () => new Promise<void>(() => undefined))
-    await start({ turnTimeoutMs: 20 })
+    await start({ turnTimeoutMs: 2_000 })
     const blocking = await agent!.send('block')
     await vi.waitFor(() => expect(agent!.snapshot().messages.find(
       (candidate) => candidate.id === blocking.id,

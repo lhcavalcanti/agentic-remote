@@ -273,15 +273,23 @@ const BRIEF_EXCHANGE_LIMIT = 1500
 export function recoveryBrief(input: { memoryIndex?: string; messages: ManagerMessage[]; exchanges?: number }): string {
   const exchanges = input.exchanges ?? 20
   const recent: ManagerMessage[] = []
-  const voiceMessageIds = new Set(input.messages
-    .filter((message) => message.role === 'user' && message.source === 'voice')
+  const excludedMessageIds = new Set(input.messages
+    .filter((message) =>
+      message.role === 'user'
+      && (message.source === 'voice' || message.source === 'scheduled'))
     .map((message) => message.id))
+  for (const message of input.messages) {
+    if (message.replyTo && excludedMessageIds.has(message.replyTo)) {
+      excludedMessageIds.add(message.id)
+    }
+  }
   let users = 0
   for (const message of [...input.messages].reverse()) {
     if (message.role === 'notice') continue
     if (
       message.source === 'voice'
-      || (message.replyTo && voiceMessageIds.has(message.replyTo))
+      || message.source === 'scheduled'
+      || excludedMessageIds.has(message.id)
     ) continue
     if (message.role === 'user') {
       users += 1

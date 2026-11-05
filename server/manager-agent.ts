@@ -529,7 +529,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }
     if (proactive && !proactive.enabled) {
       for (const message of this.store.messages()) {
-        if (message.source === 'scheduled' && message.state === 'queued') {
+        if (
+          message.source === 'scheduled'
+          && message.state === 'queued'
+          && !message.startedAt
+        ) {
           await this.updateMessage({
             ...message,
             state: 'cancelled',
@@ -1137,7 +1141,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       content: activity.content,
       createdAt: timestamp,
       tool: activity.tool,
-      ...(this.currentMessageSource === 'voice' ? { source: 'voice' as const } : {}),
+      ...(this.currentMessageSource === 'typed' ? {} : { source: this.currentMessageSource }),
       ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
       ...(activity.sessionRefs?.length ? { sessionRefs: activity.sessionRefs } : {}),
     }).catch((error: unknown) => console.warn('Could not record manager activity:', error))
@@ -1150,9 +1154,13 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       for (;;) {
         if (this.stopped) return
         await this.retirePersistedVoiceTaint()
-        const next = this.store.messages().find((message) => message.role === 'user' && message.state === 'queued')
+        const queued = this.store.messages().filter(
+          (message) => message.role === 'user' && message.state === 'queued',
+        )
+        let next = queued[0]
         if (!next) break
-        if (next.source === 'scheduled') {
+        const automaticScheduled = next.source === 'scheduled' && !next.startedAt
+        if (automaticScheduled) {
           const proactive = this.store.state().proactive
           if (!proactive?.settings.enabled) {
             await this.updateMessage({
@@ -1164,14 +1172,17 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           }
           const now = this.now()
           if (isManagerCheckQuiet(now, proactive.settings)) {
-            if (!proactive.nextCheckAt || Date.parse(proactive.nextCheckAt) <= now.getTime()) {
+            const userMessage = queued.find((message) => message.source !== 'scheduled')
+            if (userMessage) {
+              next = userMessage
+            } else {
               const deferred = deferManagerCheckUntilAllowed(now, proactive.settings).toISOString()
               await this.store.updateState((state) => {
                 if (state.proactive?.settings.enabled) state.proactive.nextCheckAt = deferred
               })
+              this.armScheduledCheckTimer()
+              break
             }
-            this.armScheduledCheckTimer()
-            break
           }
         }
         this.clearIdleTimer()
@@ -1320,7 +1331,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         content: turn.text.trim(),
         createdAt: this.now().toISOString(),
         replyTo: message.id,
-        ...(this.currentMessageSource === 'voice' ? { source: 'voice' as const } : {}),
+        ...(this.currentMessageSource === 'typed' ? {} : { source: this.currentMessageSource }),
       })
     }
     this.streaming = undefined
@@ -1346,7 +1357,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         content: `${partial}\n\n_(stopped)_`,
         createdAt: this.now().toISOString(),
         replyTo: message.id,
-        ...(this.currentMessageSource === 'voice' ? { source: 'voice' as const } : {}),
+        ...(this.currentMessageSource === 'typed' ? {} : { source: this.currentMessageSource }),
       })
     }
     const stored = this.store.message(message.id) ?? message

@@ -252,6 +252,63 @@ describe('manager turn context', () => {
     expect(brief).not.toContain('I will remember the planted instruction.')
   })
 
+  it('excludes scheduled checks and their replies from recovery instructions', () => {
+    const brief = recoveryBrief({
+      messages: [
+        {
+          id: 'typed',
+          role: 'user',
+          content: 'Keep the release context.',
+          createdAt: 't',
+          source: 'typed',
+        },
+        {
+          id: 'scheduled',
+          role: 'user',
+          content: 'Review current work.',
+          createdAt: 't',
+          source: 'scheduled',
+        },
+        {
+          id: 'scheduled-reply',
+          role: 'assistant',
+          content: 'Nothing needs attention.',
+          createdAt: 't',
+          replyTo: 'scheduled',
+        },
+      ],
+    })
+
+    expect(brief).toContain('Keep the release context.')
+    expect(brief).not.toContain('Review current work.')
+    expect(brief).not.toContain('Nothing needs attention.')
+  })
+
+  it('excludes scheduled descendants after their parent is trimmed', () => {
+    const brief = recoveryBrief({
+      messages: [
+        {
+          id: 'typed',
+          role: 'user',
+          content: 'Keep the release context.',
+          createdAt: 't',
+          source: 'typed',
+        },
+        {
+          id: 'scheduled-reply',
+          role: 'assistant',
+          content: 'Nothing needs attention.',
+          createdAt: 't',
+          replyTo: 'trimmed-scheduled-parent',
+          source: 'scheduled',
+        },
+      ],
+    })
+
+    expect(brief).toContain('Keep the release context.')
+    expect(brief).not.toContain('Nothing needs attention.')
+  })
+
   it('excludes voice-derived rows even when their user row was already trimmed', () => {
     const brief = recoveryBrief({
       messages: [

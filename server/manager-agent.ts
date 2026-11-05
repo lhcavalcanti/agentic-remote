@@ -1174,6 +1174,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           if (isManagerCheckQuiet(now, proactive.settings)) {
             const userMessage = queued.find((message) => message.source !== 'scheduled')
             if (userMessage) {
+              await this.store.moveMessageToEnd(next.id)
               next = userMessage
             } else {
               const deferred = deferManagerCheckUntilAllowed(now, proactive.settings).toISOString()

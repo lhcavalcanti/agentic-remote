@@ -402,9 +402,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 215,
+  "communities": 211,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18767,
+  "edges": 18770,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -587,8 +587,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "55c8d9e129b55550630b83bc8291e2ad6d24ff4d72fe306eb83b473f82817578",
-    "server/manager-agent.ts": "70720ae0a75337ccbc8be7d8716c4fa1652da94c66186eaf2b3fb54589f7f6db",
+    "server/manager-agent.test.ts": "4e7e39edbfb8816a0580b39288446b5555ddc4b46703c75edce56572ce366aff",
+    "server/manager-agent.ts": "0ea7e26831389b75f60a6ea2725d9aeb08f7fe74dd62e5abdbf0c5cf7f4dae29",
     "server/manager-context.test.ts": "59c8226fa7014a728dc628e9c0678fb5c484e7d16761e8b669b7507f58d280af",
     "server/manager-context.ts": "a24df85c277306e399c15156f6f24745da8b036e5589733f28c423bc67ada33d",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -604,7 +604,7 @@
     "server/manager-schedule.test.ts": "e2b869a44d8d1cf208e53122332a272028a00ec1a624c78eb5c72ff289198446",
     "server/manager-schedule.ts": "703480aa4b6b22823254ed68804e6ec9ebfca7ce4efaba588c2c3a0e645f171b",
     "server/manager-store.test.ts": "b2a119bc54d3f0064baaa6d635ab2818e7a73ba51c7b5baa56cc8963d8fc013d",
-    "server/manager-store.ts": "e4ea4317324ca43b44bd3897d9a8aa3ddbf28b842d4940094c92bf4ae0162bcd",
+    "server/manager-store.ts": "179808da5d51a2ea8316630cd1d6d49b1f8666bd2b5a45c66c9f544f36abfb4b",
     "server/manager-structured-memory-intent.test.ts": "bab8358ddfc0297be4a2873d60dfc064b2d7e3f9213c01ea515ef528ec225354",
     "server/manager-structured-memory-intent.ts": "2518aa9ddf2297039ddc49cc10bbc1ed2dbde890b82c61ad9aa66c45ad84628c",
     "server/manager-structured-memory-performance.test.ts": "e599b5366575ee60fd442b5c2d35969e1bf722963082119e8a715bdc48c97ee4",
@@ -902,7 +902,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6798,
+  "nodes": 6799,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -997,16 +997,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "3a65ffe632af208d63bfc4a100b2e3a7e8589264c3747eb6f65d48d74a6fcf54",
-    "communities.json": "cf3fa0b9e62b8e8eed7146eef01bda0e9ee6a4791c8d1d199936f9747ed4fe54",
-    "graph.html": "962af13e2e73d23d6e8b153dd18940cd781dcc34340714d0396534fa21e02b08",
-    "graph.json": "2b0327f660fe7cee8575d8c6b278f71aab6c1d9017bc5a968b3b7063b7d06786"
+    "GRAPH_REPORT.md": "f2d59e6b0eda78075adf809acc93f3983b963379260dc8227e87fb5941948c0c",
+    "communities.json": "5076985899ed429e5cd575633de71810f4e744ddabd3101cf2033815e2e754fa",
+    "graph.html": "a61bc72cc45712a04fa070cacf31b922f6c2f34ce4d57e3d64f1c0a2297cd8a9",
+    "graph.json": "468bf772a965ecbf364b12cce32ac1a932d94145b8f639da9d35e62c774254b0"
   },
   "schema_version": 1,
-  "source_commit": "d422ed5b0851eadecab0bd16fb153914159890a9",
-  "source_fingerprint": "5c1c48637b087a1c750365272811724e956de91646d66e7dc99094486a6ce177",
+  "source_commit": "19c8c019ebb5818c893a5079027f6d5b8594ab62",
+  "source_fingerprint": "d99ea1c96d9a610cd545aa6a3f66f3c6d1caae8d8fa9b77943b9b3583a4381df",
   "working_tree_changes": [
     "server/manager-agent.test.ts",
-    "server/manager-agent.ts"
+    "server/manager-agent.ts",
+    "server/manager-store.ts"
   ]
 }

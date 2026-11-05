@@ -448,6 +448,19 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().messages.find(
       (message) => message.id === 'scheduled-first',
     )?.state).toBe('queued')
+    expect(store.messages().filter(
+      (message) => message.role === 'user',
+    ).map((message) => message.id)).toEqual([
+      'typed-second',
+      'scheduled-first',
+    ])
+    const reopened = await openStore()
+    expect(reopened.messages().filter(
+      (message) => message.role === 'user',
+    ).map((message) => message.id)).toEqual([
+      'typed-second',
+      'scheduled-first',
+    ])
   })
 
   it('keeps queue order when a scheduled check is allowed to run', async () => {

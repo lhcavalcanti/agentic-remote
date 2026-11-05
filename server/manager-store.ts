@@ -238,6 +238,22 @@ export class ManagerStore {
     })
   }
 
+  moveMessageToEnd(id: string): Promise<void> {
+    return this.serialized(async () => {
+      const message = this.conversation.get(id)
+      if (!message || [...this.conversation.keys()].at(-1) === id) return
+      const conversation = new Map(this.conversation)
+      conversation.delete(id)
+      conversation.set(id, message)
+      const lines = [...conversation.values()]
+        .map((entry) => JSON.stringify(entry))
+        .join('\n') + '\n'
+      await this.writeAtomic('conversation.jsonl', lines)
+      this.conversation = conversation
+      this.conversationLines = conversation.size
+    })
+  }
+
   /** Starts an empty conversation, keeping the old log beside it. */
   resetConversation(): Promise<void> {
     const archive = `conversation-${this.now().toISOString().replaceAll(':', '-')}.jsonl`

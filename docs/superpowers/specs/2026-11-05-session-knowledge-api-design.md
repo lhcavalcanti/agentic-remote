@@ -223,8 +223,13 @@ The hub then:
 2. resolves or creates the directory on the owning computer;
 3. reserves the exact canonical folder in `KnowledgeStore`;
 4. revision-checks and persists the existing `SessionKnowledgeStore` binding;
-5. finalizes the catalog reservation only while ownership remains current;
+5. finalizes the catalog reservation after the guarded binding commit;
 6. rolls back a newly reserved catalog root if the binding fails.
+
+The binding store's existing validation callback owns the registration and
+session-generation checks through its commit point. Finalization is
+unconditional after that commit; attempting a second guarded commit boundary
+could otherwise remove a root that the durable binding already references.
 
 No new persistence file is introduced. Existing `knowledge.json`,
 `session-knowledge.json`, and `session-knowledge-paths.json` remain authoritative.

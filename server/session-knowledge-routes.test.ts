@@ -66,6 +66,11 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
   })
   getSession = vi.fn(async () => { throw new Error('Metadata routes must not open a session') })
   activateSession = vi.fn()
+  ensureSessionKnowledgeBase = vi.fn(async (
+    _computerId: string,
+    _sessionId: string,
+    relativePath: string,
+  ) => `/projects/current/${relativePath}`)
   captureComputerRegistration = vi.fn((computerId: string) => {
     const registration = this.registrations.get(computerId)
     if (!registration) throw new Error('Computer not found')
@@ -187,6 +192,17 @@ async function fixture(options: {
       method: 'PUT', url: route(computerId, sessionId), headers: trusted,
       payload: { rootId, expectedRevision, ...(rootPath ? { rootPath } : {}) },
     })
+  const putPath = (
+    knowledgeBasePath: string,
+    expectedRevision = 0,
+    computerId = 'hub',
+    sessionId = 'one',
+    create = true,
+  ) =>
+    runtime.app.inject({
+      method: 'PUT', url: route(computerId, sessionId), headers: trusted,
+      payload: { knowledgeBasePath, expectedRevision, create },
+    })
   const updates: SessionKnowledgeBinding[] = []
   const errors: Extract<HubEvent, { type: 'error' }>[] = []
   manager.on('event', (event) => {
@@ -195,7 +211,7 @@ async function fixture(options: {
   })
   return {
     directory, runtime, app: runtime.app, service, manager, knowledge, root,
-    secondRoot, store, initialize, route, get, put, updates, errors,
+    secondRoot, store, initialize, route, get, put, putPath, updates, errors,
   }
 }
 
@@ -250,6 +266,7 @@ describe('session Knowledge routes', () => {
         sessionId: 'one',
         rootId: null,
         rootPath: '.',
+        knowledgeBasePath: null,
         revision: 0,
         available: false,
       },
@@ -301,6 +318,83 @@ describe('session Knowledge routes', () => {
       'projects/agentic-remote',
     )
     expect(manager.getSession).not.toHaveBeenCalled()
+  })
+
+  it('creates or reuses a dedicated path on the session owner without changing cwd', async () => {
+    const { putPath, manager, knowledge, service } = await fixture()
+    const before = structuredClone(manager.sessions)
+
+    const first = await putPath('knowledge')
+    expect(first.statusCode, first.body).toBe(200)
+    expect(first.json().binding).toMatchObject({
+      computerId: 'hub',
+      sessionId: 'one',
+      rootPath: '.',
+      knowledgeBasePath: '/projects/current/knowledge',
+      revision: 1,
+      available: true,
+      root: {
+        computerId: 'hub',
+        path: '/projects/current/knowledge',
+        name: 'knowledge',
+      },
+    })
+    expect(manager.ensureSessionKnowledgeBase).toHaveBeenCalledWith(
+      'hub',
+      'one',
+      'knowledge',
+      true,
+    )
+    expect(manager.sessions).toEqual(before)
+    expect(service.openSession).not.toHaveBeenCalled()
+    expect(service.activateSession).not.toHaveBeenCalled()
+    expect(knowledge.listRoots().filter(
+      (entry) => entry.path === '/projects/current/knowledge',
+    )).toHaveLength(1)
+
+    const repeated = await putPath('knowledge', 1)
+    expect(repeated.statusCode, repeated.body).toBe(200)
+    expect(repeated.json().binding.revision).toBe(1)
+    expect(knowledge.listRoots().filter(
+      (entry) => entry.path === '/projects/current/knowledge',
+    )).toHaveLength(1)
+  })
+
+  it('supports suspended and historical sessions without opening them', async () => {
+    const { putPath, manager, service } = await fixture()
+    manager.sessions.push({ ...session('hub', 'suspended'), suspended: true })
+    manager.history.push({ ...session('hub', 'closed'), isOpen: false })
+
+    expect((await putPath('knowledge', 0, 'hub', 'suspended')).statusCode).toBe(200)
+    expect((await putPath('knowledge', 0, 'hub', 'closed')).statusCode).toBe(200)
+    expect(service.openSession).not.toHaveBeenCalled()
+    expect(service.activateSession).not.toHaveBeenCalled()
+  })
+
+  it('rolls back a newly reserved path root when the binding revision is stale', async () => {
+    const { put, putPath, root, knowledge } = await fixture()
+    expect((await put(root.id)).statusCode).toBe(200)
+    const before = knowledge.listRoots()
+
+    const stale = await putPath('private-notes', 0)
+    expect(stale.statusCode).toBe(409)
+    expect(stale.json().binding).toMatchObject({ rootId: root.id, revision: 1 })
+    expect(knowledge.listRoots()).toEqual(before)
+  })
+
+  it.each([
+    { knowledgeBasePath: 'knowledge', expectedRevision: 0, rootId: null },
+    { knowledgeBasePath: 'knowledge', expectedRevision: 0, rootPath: '.' },
+    { knowledgeBasePath: 'knowledge', expectedRevision: 0, create: 'yes' },
+    { knowledgeBasePath: '', expectedRevision: 0 },
+  ])('rejects malformed path mode %#', async (payload) => {
+    const { app, route, store, manager } = await fixture()
+    const response = await app.inject({
+      method: 'PUT', url: route(), headers: trusted, payload,
+    })
+    expect(response.statusCode).toBe(400)
+    expect(store.listBindings()).toEqual([])
+    expect(manager.ensureSessionKnowledgeBase).not.toHaveBeenCalled()
   })
 
   it('preserves an explicit unlink and returns the newest binding with a stale-write conflict', async () => {

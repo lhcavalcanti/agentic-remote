@@ -14,11 +14,21 @@ const sessionParams = z.object({
   computerId: z.string().min(1).max(256),
   sessionId: z.string().min(1).max(256),
 })
-const updateSchema = z.object({
+const rootUpdateSchema = z.object({
   rootId: z.string().min(1).max(256).nullable(),
   rootPath: z.string().trim().max(4096).optional(),
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict()
+const pathUpdateSchema = z.object({
+  knowledgeBasePath: z.string().trim().min(1).max(4096),
+  create: z.boolean().optional().default(false),
+  expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict()
+const updateSchema = z.union([rootUpdateSchema, pathUpdateSchema])
+
+function knowledgeBaseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) || path
+}
 
 interface Lineage {
   replacements: Map<string, string>
@@ -307,6 +317,60 @@ export async function registerSessionKnowledgeRoutes(
     async (request, reply) => {
       const { computerId, sessionId } = sessionParams.parse(request.params)
       const input = updateSchema.parse(request.body)
+      if ('knowledgeBasePath' in input) {
+        const sessionIsCurrent = await knownSessionGuard(computerId, sessionId)
+        const canonicalPath = await manager.ensureSessionKnowledgeBase(
+          computerId,
+          sessionId,
+          input.knowledgeBasePath,
+          input.create,
+        )
+        sessionIsCurrent()
+        const computer = manager.listComputers().find(
+          (entry) => entry.id === computerId,
+        )
+        if (!computer) {
+          throw new SessionKnowledgeReferenceError('Computer is not registered')
+        }
+        const reservation = await knowledge.reserveRoot({
+          computerId,
+          computerName: computer.name,
+          path: canonicalPath,
+          name: knowledgeBaseName(canonicalPath),
+        })
+        const validate = () => {
+          sessionIsCurrent()
+          if (!knowledge.getRoot(reservation.root.id)) {
+            throw new SessionKnowledgeReferenceError(
+              'Knowledge root not found. Choose a saved folder again.',
+            )
+          }
+        }
+        try {
+          const binding = await store.update(
+            computerId,
+            sessionId,
+            {
+              rootId: reservation.root.id,
+              rootPath: '.',
+              expectedRevision: input.expectedRevision,
+            },
+            validate,
+          )
+          await reservation.finalize()
+          reply.header('cache-control', 'no-store')
+          return { binding }
+        } catch (error) {
+          await reservation.rollback()
+          if (error instanceof SessionKnowledgeConflictError) {
+            return reply.code(409).send({
+              error: error.message,
+              binding: error.binding,
+            })
+          }
+          throw error
+        }
+      }
       const root = input.rootId === null ? undefined : knowledge.getRoot(input.rootId)
       if (input.rootId !== null && !root) {
         throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')

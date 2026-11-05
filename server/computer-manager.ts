@@ -359,6 +359,26 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).validateSessionDirectory(inputPath)
   }
 
+  async ensureSessionKnowledgeBase(
+    computerId: string,
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<string> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.ensureSessionKnowledgeBase(
+        sessionId,
+        relativePath,
+        create,
+      )
+      : this.requireClient(computerId).ensureSessionKnowledgeBase(
+        sessionId,
+        relativePath,
+        create,
+      )
+  }
+
   async listKnowledge(
     computerId: string,
     root: string,

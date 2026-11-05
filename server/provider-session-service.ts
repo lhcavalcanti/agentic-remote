@@ -394,6 +394,18 @@ export class ProviderSessionService
     return this.copilot.validateSessionDirectory(inputPath)
   }
 
+  ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<string> {
+    return this.serviceFor(sessionId).ensureSessionKnowledgeBase(
+      sessionId,
+      relativePath,
+      create,
+    )
+  }
+
   listKnowledge(root: string, path?: string): Promise<WorkspaceListing> {
     return this.copilot.listKnowledge(root, path)
   }

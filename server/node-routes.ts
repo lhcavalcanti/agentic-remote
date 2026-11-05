@@ -151,6 +151,10 @@ const directoryQuerySchema = z.object({
 const directoryValidationSchema = z.object({
   path: z.string().trim().min(1).max(4096),
 })
+const sessionKnowledgeBaseSchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+  create: z.boolean().optional().default(false),
+}).strict()
 const knowledgeQuerySchema = z.object({
   root: z.string().trim().min(1).max(4096),
   path: z.string().trim().max(4096).optional(),
@@ -524,6 +528,20 @@ export async function registerNodeRoutes(
         const input = directoryValidationSchema.parse(request.body)
         return { path: await service.validateSessionDirectory(input.path) }
       })
+
+      node.put<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/knowledge-base',
+        async (request) => {
+          const input = sessionKnowledgeBaseSchema.parse(request.body)
+          return {
+            path: await service.ensureSessionKnowledgeBase(
+              request.params.sessionId,
+              input.path,
+              input.create,
+            ),
+          }
+        },
+      )
 
       node.get<{ Querystring: { root?: string; path?: string } }>(
         '/knowledge/entries',

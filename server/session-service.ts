@@ -133,6 +133,11 @@ export interface SessionService {
     scope?: DirectoryScope,
   ): Promise<DirectoryListing>
   validateSessionDirectory(inputPath: string): Promise<string>
+  ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<string>
   listKnowledge(root: string, path?: string): Promise<WorkspaceListing>
   readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile>
   listWorkspace(

@@ -183,6 +183,21 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.path
   }
 
+  async ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<string> {
+    const response = await this.request<{ path: string }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/knowledge-base`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ path: relativePath, create }),
+      },
+    )
+    return response.path
+  }
+
   async listKnowledge(root: string, path = '.'): Promise<WorkspaceListing> {
     return this.request<WorkspaceListing>(
       `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,

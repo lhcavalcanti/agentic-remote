@@ -127,6 +127,7 @@ import { listHomeDirectories,
   type DirectoryScope,
 } from './directory-browser.js'
 import {
+  ensureSessionKnowledgeBase as ensureKnowledgeDirectory,
   validateKnowledgeRoot,
   validateSessionDirectory,
 } from './session-directory.js'
@@ -2891,6 +2892,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   validateSessionDirectory(inputPath: string): Promise<string> {
     return this.validateDirectory(inputPath)
+  }
+
+  ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<string> {
+    return ensureKnowledgeDirectory(
+      this.requireWorkspaceRoot(sessionId),
+      relativePath,
+      create,
+    )
   }
 
   /**

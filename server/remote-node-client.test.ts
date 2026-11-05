@@ -37,6 +37,48 @@ afterEach(async () => {
   }))
 })
 
+describe('session Knowledge base requests', () => {
+  it('encodes the session, authenticates the PUT, and returns the canonical path', async () => {
+    const requests: Array<{
+      path?: string
+      method?: string
+      authenticated: boolean
+      body: string
+    }> = []
+    const node = await listen((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk) => { body += chunk })
+      request.on('end', () => {
+        requests.push({
+          path: request.url,
+          method: request.method,
+          authenticated:
+            request.headers.authorization ===
+            ['Bearer', 'fixture-node-token'].join(' '),
+          body,
+        })
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ path: '/srv/project/knowledge' }))
+      })
+    })
+
+    await expect(
+      client(node).ensureSessionKnowledgeBase(
+        'session/id',
+        'docs/knowledge',
+        true,
+      ),
+    ).resolves.toBe('/srv/project/knowledge')
+    expect(requests).toEqual([{
+      path: '/node-api/sessions/session%2Fid/knowledge-base',
+      method: 'PUT',
+      authenticated: true,
+      body: JSON.stringify({ path: 'docs/knowledge', create: true }),
+    }])
+  })
+})
+
 describe('read-only remote resource requests', () => {
   it.each([true, false])('requests archived snapshot metadata only from retention-capable nodes (%s)', async (retention) => {
     const paths: string[] = []
@@ -45,6 +87,7 @@ describe('read-only remote resource requests', () => {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ sessions: [] }))
     })
+
     const remote = client(node)
     vi.spyOn(remote, 'providers', 'get').mockReturnValue([{
       id: 'copilot', name: 'Copilot', available: true, terminalBacked: true,

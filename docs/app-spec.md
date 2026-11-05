@@ -1366,7 +1366,19 @@ clear replacement IDs without losing, duplicating, or reordering content.
 
 ### 7.1 Documents
 
-- Multiple selected or dropped files MUST process in selection order.
+- Multiple selected, dropped, or pasted files MUST process in source order.
+- When a clipboard event exposes one or more `File` objects, paste MUST attach
+  those files and MUST NOT insert clipboard fallback text into the composer.
+  Text-only clipboard content MUST retain the normal short- and long-paste
+  behavior.
+- Each attachment MUST show its filename, size, and upload state. A failed
+  upload MUST remain available for retry; removing a completed attachment MUST
+  remove its exact draft reference. The stored upload remains session-owned and
+  is removed by the existing clear or delete cleanup.
+- Pasted files are available only when the browser exposes them through
+  `ClipboardEvent`/`DataTransfer`. The app cannot read arbitrary filesystem
+  paths or files copied by browsers that provide text only, so the file picker
+  MUST remain available as the fallback.
 - Supported documents include PDF, CSV/TSV, Kusto Query Language (`.kql`),
   Excel, Word, Markdown, text, JSON/YAML, OFX/QFX, and common images.
 - Maximum file size is 25 MiB.

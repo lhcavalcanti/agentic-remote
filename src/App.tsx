@@ -226,6 +226,10 @@ import {
   submissionReceiptFromError,
 } from '../shared/submission-error'
 import {
+  sessionFileValidationError,
+  supportsSessionFile,
+} from '../shared/session-files'
+import {
   activateSession,
   addComputer,
   cancelBackgroundTask,
@@ -391,6 +395,77 @@ function isAudioFile(file: File): boolean {
     file.type === 'video/mp4' ||
     /\.(?:aac|flac|m4a|mp3|mp4|ogg|wav|webm)$/i.test(file.name)
   )
+}
+
+type ComposerAttachment = {
+  id: string
+  ownerKey: string
+  computerId: string
+  sessionId: string
+  file: File
+  status: 'uploading' | 'attached' | 'failed'
+  error?: string
+  retryable?: boolean
+  promptText?: string
+}
+
+let attachmentSequence = 0
+
+function attachmentId(): string {
+  attachmentSequence += 1
+  return `attachment-${attachmentSequence}`
+}
+
+const clipboardImageExtensions: Record<string, string> = {
+  'image/gif': 'gif',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+}
+
+const normalizedClipboardFiles = new WeakMap<File, File>()
+
+function normalizedClipboardFile(file: File): File {
+  if (supportsSessionFile(file.name)) {
+    return file
+  }
+  const extension = clipboardImageExtensions[file.type]
+  if (!extension || /\.[^./\\]+$/.test(file.name)) {
+    return file
+  }
+  const cached = normalizedClipboardFiles.get(file)
+  if (cached) {
+    return cached
+  }
+  const normalized = new File([file], `clipboard-image.${extension}`, {
+    type: file.type,
+    lastModified: file.lastModified,
+  })
+  normalizedClipboardFiles.set(file, normalized)
+  return normalized
+}
+
+function pastedFiles(data: DataTransfer): File[] {
+  const files = Array.from(data.files || [])
+  if (files.length > 0) {
+    return files.map(normalizedClipboardFile)
+  }
+  return Array.from(data.items || [])
+    .filter((item) => item.kind === 'file')
+    .flatMap((item) => {
+      const file = item.getAsFile()
+      return file ? [normalizedClipboardFile(file)] : []
+    })
+}
+
+function attachmentSize(size: number): string {
+  if (size >= 1024 * 1024) {
+    return `${(size / (1024 * 1024)).toFixed(1)} MiB`
+  }
+  if (size >= 1024) {
+    return `${Math.ceil(size / 1024)} KiB`
+  }
+  return `${size} B`
 }
 
 function recordingDuration(seconds: number): string {
@@ -7266,6 +7341,7 @@ function App() {
   // The fallback below must not treat one as a missing session and select
   // something unrelated in the gap.
   const pendingReplacements = useRef(new Set<string>())
+  const pendingAttachmentReplacements = useRef(new Set<string>())
   // Lineage is carried in every snapshot, so a replacement is claimed once
   // rather than again on each refresh.
   const adoptedReplacements = useRef(new Set<string>())
@@ -7345,6 +7421,9 @@ function App() {
   const [cancelling, setCancelling] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [uploadingFile, setUploadingFile] = useState(false)
+  const [composerAttachments, setComposerAttachments] = useState<
+    Record<string, ComposerAttachment[]>
+  >({})
   const [recording, setRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [permissionBusy, setPermissionBusy] = useState(false)
@@ -7633,6 +7712,13 @@ function App() {
   const requiredActionScrollRef = useRef(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
+  const attachmentQueueRef = useRef<Promise<void> | undefined>(undefined)
+  const composerAttachmentsRef = useRef<
+    Record<string, ComposerAttachment[]>
+  >({})
+  const attachmentFilesRef = useRef(
+    new Map<string, Set<File>>(),
+  )
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
   const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
   const recordingChunksRef = useRef<Blob[]>([])
@@ -7798,6 +7884,7 @@ function App() {
 
   const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {    for (const session of loaded) {
       const replacement = sessionKey(session)
+      let migratedAttachmentState = false
       // Newest first. Each ancestor only fills what the replacement does not
       // already have, so the most recent one has to be offered first or an
       // older ancestor takes the place it should have had.
@@ -7814,6 +7901,7 @@ function App() {
         if (!adoptedReplacements.current.has(ancestor)) {
           adoptedReplacements.current.add(ancestor)
           migrateSessionStateRef.current(ancestor, replacement)
+          migratedAttachmentState = true
         }
         setSelectedKey((current) =>
           current === ancestor ? replacement : current,
@@ -7827,6 +7915,14 @@ function App() {
         setLocationKnowledgeTarget((current) =>
           current?.key === ancestor ? { ...current, key: replacement } : current,
         )
+      }
+      if (session.replacedSessionIds?.length) {
+        rebindAttachments(replacement, session)
+        const pendingCleanup =
+          pendingAttachmentReplacements.current.delete(replacement)
+        if (!session.recovery && (migratedAttachmentState || pendingCleanup)) {
+          discardAttachments(replacement)
+        }
       }
     }
   }, [])
@@ -8381,6 +8477,9 @@ function App() {
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
   const composer = selectedKey ? composerDrafts[selectedKey]?.text || '' : ''
+  const selectedAttachments = selectedKey
+    ? composerAttachments[selectedKey] || []
+    : []
   const composerDraftRecovered = Boolean(
     selectedKey
     && composer
@@ -10559,6 +10658,7 @@ function App() {
           if (event.replacedBy) {
             const replacementKey = `${event.computerId}:${event.replacedBy}`
             migrateSessionStateRef.current(removedKey, replacementKey)
+            pendingAttachmentReplacements.current.add(replacementKey)
             // Removal and upsert are separate events. Following the
             // replacement now stops the fallback from selecting an unrelated
             // session in the gap, which the later upsert would not undo.
@@ -10585,6 +10685,7 @@ function App() {
               return remaining
             })
             forgetKnowledgeSessionRef.current(removedKey)
+            forgetAttachments(removedKey)
           }
           setSessions((current) =>
             current.filter(
@@ -11444,6 +11545,196 @@ function App() {
     })
   }
 
+  function removeComposerBlock(targetKey: string, value: string) {
+    updateComposerDrafts([targetKey], (current) => {
+      const existing = durableComposerDraft(
+        targetKey,
+        current[targetKey] || { text: '', pastes: [] },
+      )
+      const at = existing.text.indexOf(value)
+      if (at < 0) {
+        return current
+      }
+      let start = at
+      let end = at + value.length
+      if (existing.text.slice(Math.max(0, start - 2), start) === '\n\n') {
+        start -= 2
+      } else if (existing.text.slice(end, end + 2) === '\n\n') {
+        end += 2
+      }
+      const edited = applyComposerEdit(
+        existing,
+        start,
+        end,
+        { text: '', pastes: [] },
+      )
+      return writeComposerContent(current, targetKey, edited.content)
+    })
+  }
+
+  function updateAttachment(
+    ownerKey: string,
+    id: string,
+    update: Partial<ComposerAttachment>,
+  ) {
+    updateComposerAttachments((current) => ({
+      ...current,
+      [ownerKey]: (current[ownerKey] || []).map((attachment) =>
+        attachment.id === id ? { ...attachment, ...update } : attachment,
+      ),
+    }))
+  }
+
+  function updateComposerAttachments(
+    update: (
+      current: Record<string, ComposerAttachment[]>,
+    ) => Record<string, ComposerAttachment[]>,
+  ) {
+    const current = composerAttachmentsRef.current
+    const next = update(current)
+    if (next === current) {
+      return
+    }
+    composerAttachmentsRef.current = next
+    setComposerAttachments(next)
+  }
+
+  function removeAttachment(attachment: ComposerAttachment) {
+    if (attachment.status === 'uploading') {
+      return
+    }
+    if (attachment.promptText) {
+      removeComposerBlock(attachment.ownerKey, attachment.promptText)
+    }
+    attachmentFilesRef.current
+      .get(attachment.ownerKey)
+      ?.delete(attachment.file)
+    updateComposerAttachments((current) => {
+      const remaining = (current[attachment.ownerKey] || []).filter(
+        (candidate) => candidate.id !== attachment.id,
+      )
+      if (remaining.length > 0) {
+        return { ...current, [attachment.ownerKey]: remaining }
+      }
+      const { [attachment.ownerKey]: _removed, ...rest } = current
+      return rest
+    })
+    window.requestAnimationFrame(() => focusComposer(attachment.ownerKey))
+  }
+
+  function attachmentsInContent(
+    ownerKey: string,
+    content: string,
+  ): ComposerAttachment[] {
+    return (composerAttachmentsRef.current[ownerKey] || []).filter(
+      (attachment) =>
+        attachment.status === 'attached' &&
+        attachment.promptText !== undefined &&
+        content.includes(attachment.promptText),
+    )
+  }
+
+  function retireAttachments(attachments: ComposerAttachment[]) {
+    if (attachments.length === 0) {
+      return
+    }
+    const retiredByOwner = new Map<string, Set<string>>()
+    for (const attachment of attachments) {
+      const retired = retiredByOwner.get(attachment.ownerKey) ||
+        new Set<string>()
+      retired.add(attachment.id)
+      retiredByOwner.set(attachment.ownerKey, retired)
+      attachmentFilesRef.current
+        .get(attachment.ownerKey)
+        ?.delete(attachment.file)
+    }
+    updateComposerAttachments((current) => {
+      let next = current
+      for (const [ownerKey, retired] of retiredByOwner) {
+        const remaining = (next[ownerKey] || []).filter(
+          (attachment) => !retired.has(attachment.id),
+        )
+        if (remaining.length > 0) {
+          next = { ...next, [ownerKey]: remaining }
+        } else {
+          const { [ownerKey]: _removed, ...rest } = next
+          next = rest
+        }
+      }
+      return next
+    })
+  }
+
+  function forgetAttachments(ownerKey: string) {
+    attachmentFilesRef.current.delete(ownerKey)
+    updateComposerAttachments((current) => {
+      if (!current[ownerKey]) {
+        return current
+      }
+      const { [ownerKey]: _removed, ...rest } = current
+      return rest
+    })
+  }
+
+  function discardAttachments(ownerKey: string) {
+    for (const attachment of composerAttachmentsRef.current[ownerKey] || []) {
+      if (attachment.promptText) {
+        removeComposerBlock(ownerKey, attachment.promptText)
+      }
+    }
+    forgetAttachments(ownerKey)
+  }
+
+  function moveAttachments(fromKey: string, toKey: string) {
+    if (fromKey === toKey) {
+      return
+    }
+    const sourceFiles = attachmentFilesRef.current.get(fromKey)
+    if (sourceFiles) {
+      const destinationFiles = attachmentFilesRef.current.get(toKey) ||
+        new Set<File>()
+      for (const file of sourceFiles) {
+        destinationFiles.add(file)
+      }
+      attachmentFilesRef.current.set(toKey, destinationFiles)
+      attachmentFilesRef.current.delete(fromKey)
+    }
+    updateComposerAttachments((current) => {
+      const source = current[fromKey]
+      if (!source) {
+        return current
+      }
+      const { [fromKey]: _moved, ...rest } = current
+      return {
+        ...rest,
+        [toKey]: [
+          ...(current[toKey] || []),
+          ...source.map((attachment) => ({
+            ...attachment,
+            ownerKey: toKey,
+          })),
+        ],
+      }
+    })
+  }
+
+  function rebindAttachments(ownerKey: string, target: ManagedSession) {
+    updateComposerAttachments((current) => {
+      const attachments = current[ownerKey]
+      if (!attachments) {
+        return current
+      }
+      return {
+        ...current,
+        [ownerKey]: attachments.map((attachment) => ({
+          ...attachment,
+          computerId: target.computerId,
+          sessionId: target.id,
+        })),
+      }
+    })
+  }
+
   function moveComposerDraft(fromKey: string, toKey: string) {
     if (fromKey === toKey) {
       return
@@ -11592,6 +11883,7 @@ function App() {
       return
     }
     moveComposerDraft(fromKey, toKey)
+    moveAttachments(fromKey, toKey)
     // The draft moves, so what it is answering has to move with it. Left
     // behind, an edited recovery arrived under the replacement with no
     // identity, could not clear the marker the replacement still carries, and
@@ -13050,7 +13342,13 @@ function App() {
   async function submitMessage(enqueue = false) {
     const displayContent = composer
     const trimmedDisplay = displayContent.trim()
-    if (!selected || !trimmedDisplay || sending) {
+    if (
+      !selected ||
+      !trimmedDisplay ||
+      sending ||
+      transcribing ||
+      uploadingFile
+    ) {
       return
     }
     // Sending is asking to see what happens next. A reader who had scrolled
@@ -13084,6 +13382,10 @@ function App() {
       composerDrafts[targetKey]?.pastes || [],
     )
     const content = expandComposerPastes(displayContent, submittedPastes)
+    const submittedAttachments = attachmentsInContent(
+      targetKey,
+      displayContent,
+    )
     if (editingQueuedPromptId) {
       if (enqueue || selectedProviderCapability?.supportsQueuedPromptDispatch !== true) {
         await saveQueuedPromptEdit()
@@ -13313,6 +13615,7 @@ function App() {
           },
         }
       })
+      retireAttachments(submittedAttachments)
       const acknowledged = acknowledgedFailure
       acknowledgedStamp = acknowledged
       if (restoredFailures.current.get(liveKey) === acknowledged) {
@@ -13381,6 +13684,7 @@ function App() {
               },
             }
           })
+          retireAttachments(submittedAttachments)
           const tokens = acceptedSubmissionTokens.current.get(liveKey) ?? new Set<string>()
           if (submittedRecoveryToken) tokens.add(submittedRecoveryToken)
           if (receipt.failedAt) tokens.add(receipt.failedAt)
@@ -13450,7 +13754,7 @@ function App() {
     file: File,
     targetSession: ManagedSession | undefined = selected,
   ) {
-    if (!targetSession || transcribing) {
+    if (!targetSession) {
       return
     }
     const targetKey = sessionKey(targetSession)
@@ -13584,32 +13888,44 @@ function App() {
     recorder.stop()
   }
 
-  async function uploadFile(file: File) {
-    if (!selected || uploadingFile) {
-      return
-    }
-    const targetKey = sessionKey(selected)
+  async function uploadFile(attachment: ComposerAttachment) {
     setUploadingFile(true)
     setError(undefined)
+    updateAttachment(attachment.ownerKey, attachment.id, {
+      status: 'uploading',
+      error: undefined,
+      retryable: undefined,
+    })
     try {
       const uploaded = await uploadSessionFile(
-        selected.computerId,
-        selected.id,
-        file,
+        attachment.computerId,
+        attachment.sessionId,
+        attachment.file,
       )
+      const promptText = `Attached file: \`${uploaded.path}\``
       appendComposerForKey(
-        targetKey,
-        `Attached file: \`${uploaded.path}\``,
+        attachment.ownerKey,
+        promptText,
         false,
       )
+      updateAttachment(attachment.ownerKey, attachment.id, {
+        status: 'attached',
+        promptText,
+      })
       if (
         selectedRef.current &&
-        sessionKey(selectedRef.current) === targetKey
+        sessionKey(selectedRef.current) === attachment.ownerKey
       ) {
-        window.requestAnimationFrame(() => focusComposer(targetKey))
+        window.requestAnimationFrame(() => focusComposer(attachment.ownerKey))
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      const message = caught instanceof Error ? caught.message : String(caught)
+      updateAttachment(attachment.ownerKey, attachment.id, {
+        status: 'failed',
+        error: message,
+        retryable: true,
+      })
+      setError(message)
     } finally {
       setUploadingFile(false)
       if (audioInputRef.current) {
@@ -13618,17 +13934,68 @@ function App() {
     }
   }
 
-  async function attachedFiles(files: File[]) {
-    if (recording || transcribing || uploadingFile) {
-      return
-    }
+  async function processAttachedFiles(
+    files: File[],
+    targetSession: ManagedSession,
+  ) {
+    const ownerKey = sessionKey(targetSession)
+    const attachedFiles = attachmentFilesRef.current.get(ownerKey) ||
+      new Set<File>()
+    attachmentFilesRef.current.set(ownerKey, attachedFiles)
     for (const file of files) {
+      if (attachedFiles.has(file)) {
+        continue
+      }
+      attachedFiles.add(file)
       if (isAudioFile(file)) {
-        await transcribeFile(file)
+        await transcribeFile(file, targetSession)
       } else {
-        await uploadFile(file)
+        const error = sessionFileValidationError(file)
+        const attachment: ComposerAttachment = {
+          id: attachmentId(),
+          ownerKey,
+          computerId: targetSession.computerId,
+          sessionId: targetSession.id,
+          file,
+          status: error ? 'failed' : 'uploading',
+          ...(error ? { error } : {}),
+        }
+        updateComposerAttachments((current) => ({
+          ...current,
+          [ownerKey]: [...(current[ownerKey] || []), attachment],
+        }))
+        if (!error) {
+          await uploadFile(attachment)
+        }
       }
     }
+  }
+
+  function queueAttachmentWork(run: () => Promise<void>): Promise<void> {
+    const queued = attachmentQueueRef.current
+      ? attachmentQueueRef.current.then(run)
+      : run()
+    const tracked = queued.finally(() => {
+      if (attachmentQueueRef.current === tracked) {
+        attachmentQueueRef.current = undefined
+      }
+    })
+    attachmentQueueRef.current = tracked
+    return tracked
+  }
+
+  function attachedFiles(
+    files: File[],
+    targetSession: ManagedSession | undefined = selected,
+  ): Promise<void> {
+    if (!targetSession || recording) {
+      return Promise.resolve()
+    }
+    return queueAttachmentWork(() => processAttachedFiles(files, targetSession))
+  }
+
+  function retryAttachment(attachment: ComposerAttachment): Promise<void> {
+    return queueAttachmentWork(() => uploadFile(attachment))
   }
 
   function audioFileChanged(event: ChangeEvent<HTMLInputElement>) {
@@ -13926,7 +14293,7 @@ function App() {
     // What the composer held when the save was asked for, and what is sent.
     // The draft is only cleared if it is still exactly this, so a newline
     // typed while the request was in flight is not thrown away.
-    if (!selected || !promptId || queueActionId ||
+    if (!selected || !promptId || queueActionId || uploadingFile || transcribing ||
       submissionsInFlight.current.has(sessionKey(selected))) {
       return false
     }
@@ -13996,13 +14363,27 @@ function App() {
     }
     const target = selected
     const savedKey = sessionKey(target)
-    return { target, savedKey, promptId, submitted, content }
+    return {
+      target,
+      savedKey,
+      promptId,
+      submitted,
+      content,
+      attachments: attachmentsInContent(savedKey, submitted.text),
+    }
   }
 
   async function saveQueuedPromptEdit(): Promise<boolean> {
     const submission = queuedEditSubmission()
     if (!submission) return false
-    const { target, savedKey, promptId, submitted, content } = submission
+    const {
+      target,
+      savedKey,
+      promptId,
+      submitted,
+      content,
+      attachments,
+    } = submission
     if (!updateComposerDrafts([], (current) => ({ ...current }), true)) return false
     submissionsInFlight.current.add(savedKey)
     submissionAnchors.current.add(savedKey)
@@ -14050,6 +14431,9 @@ function App() {
         const { [savedKey]: _saved, ...rest } = drafts
         return rest
       })
+      if (!composerDraftsRef.current[savedKey]) {
+        retireAttachments(attachments)
+      }
       return true
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
@@ -14091,7 +14475,14 @@ function App() {
   async function sendQueuedPromptEdit(): Promise<boolean> {
     const submission = queuedEditSubmission()
     if (!submission) return false
-    const { target, savedKey, promptId, submitted, content } = submission
+    const {
+      target,
+      savedKey,
+      promptId,
+      submitted,
+      content,
+      attachments,
+    } = submission
     if (target.interruption || target.archivedAt) {
       setError('Reopen this session before sending its queued work.')
       return false
@@ -14151,6 +14542,7 @@ function App() {
             },
           }
         })
+        retireAttachments(attachments)
         if (result.outcome !== 'sent') setError(result.message || 'The provider accepted this work, but its queue receipt could not be saved. Do not resend it.')
         return true
       }
@@ -14315,6 +14707,13 @@ function App() {
     const liveIsGone = removedSessions.current.has(liveKey)
     adoptedReplacements.current.add(targetKey)
     migrateSessionState(targetKey, liveKey)
+    if (liveKey === replacementKey) {
+      pendingAttachmentReplacements.current.delete(liveKey)
+      rebindAttachments(liveKey, replacement)
+      if (!replacement.recovery) {
+        discardAttachments(liveKey)
+      }
+    }
     eventSequenceRef.current = nextSessionEventSequence()
     sessionEventSequenceRef.current.set(targetKey, eventSequenceRef.current)
     sessionEventSequenceRef.current.set(replacementKey, eventSequenceRef.current)
@@ -14360,6 +14759,7 @@ function App() {
     setError(undefined)
     try {
       const cleared = await clearConversation(target.computerId, target.id)
+      discardAttachments(targetKey)
       return adoptConversationReplacement(target, cleared)
     } catch (caught) {
       if (
@@ -14542,6 +14942,12 @@ function App() {
 
   function composerPasted(event: ReactClipboardEvent<HTMLTextAreaElement>) {
     if (!selectedKey) {
+      return
+    }
+    const files = pastedFiles(event.clipboardData)
+    if (files.length > 0) {
+      event.preventDefault()
+      void attachedFiles(files, selected)
       return
     }
     const content = event.clipboardData.getData('text/plain')
@@ -14843,6 +15249,7 @@ function App() {
     try {
       await deleteSession(target.computerId, target.id)
       removedSessions.current.add(closedKey)
+      forgetAttachments(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
         return remaining
@@ -16023,6 +16430,7 @@ function App() {
                 <button
                   className="queued-edit-banner__save"
                   disabled={!composer.trim() || Boolean(queueActionId) ||
+                    uploadingFile || transcribing ||
                     Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
                   onClick={() => void saveQueuedPromptEdit()}
                   title="Put this back in the queue"
@@ -16130,6 +16538,54 @@ function App() {
                     </button>
                   ))}
                 </div>
+              ) : null}
+              {selectedAttachments.length > 0 ? (
+                <ul
+                  aria-label="Attachments"
+                  aria-live="polite"
+                  className="composer-attachments"
+                >
+                  {selectedAttachments.map((attachment) => (
+                    <li
+                      aria-label={`${attachment.file.name} attachment`}
+                      className={`composer-attachment composer-attachment--${attachment.status}`}
+                      key={attachment.id}
+                    >
+                      <FileText aria-hidden="true" size={18} />
+                      <span className="composer-attachment__details">
+                        <strong>{attachment.file.name}</strong>
+                        <small>
+                          {attachment.error ||
+                            (attachment.status === 'uploading'
+                              ? 'Uploading…'
+                              : 'Attached')}
+                          {' · '}
+                          {attachmentSize(attachment.file.size)}
+                        </small>
+                      </span>
+                      {attachment.status === 'failed' && attachment.retryable ? (
+                        <button
+                          aria-label={`Retry ${attachment.file.name}`}
+                          className="composer-attachment__action"
+                          disabled={uploadingFile || transcribing}
+                          onClick={() => void retryAttachment(attachment)}
+                          type="button"
+                        >
+                          <RefreshCw size={15} />
+                        </button>
+                      ) : null}
+                      <button
+                        aria-label={`Remove ${attachment.file.name}`}
+                        className="composer-attachment__action"
+                        disabled={attachment.status === 'uploading'}
+                        onClick={() => removeAttachment(attachment)}
+                        type="button"
+                      >
+                        <X size={15} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               ) : null}
               <div className="composer-text-panel">
                 <textarea
@@ -16288,7 +16744,8 @@ function App() {
                     <button
                       aria-label="Queue message"
                       className="send-button send-button--queue"
-                      disabled={!composer.trim() || sending || Boolean(queueActionId) ||
+                      disabled={!composer.trim() || sending || transcribing ||
+                        uploadingFile || Boolean(queueActionId) ||
                         Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
                       onClick={() => void submitMessage(true)}
                       title="Queue behind the current response"
@@ -16308,7 +16765,8 @@ function App() {
                         : 'Send message'
                     }
                     className="send-button"
-                    disabled={!composer.trim() || sending ||
+                    disabled={!composer.trim() || sending || transcribing ||
+                      uploadingFile ||
                       (!readonlyResourceCommand && (
                       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
                       queuedEditUnconfirmed || selected.suspended === true || Boolean(selected.interruption || selected.archivedAt) ||

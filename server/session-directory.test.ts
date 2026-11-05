@@ -1,8 +1,9 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ensureSessionKnowledgeBase,
   SessionDirectoryError,
   validateKnowledgeRoot,
   validateSessionDirectory,
@@ -158,5 +159,90 @@ describe('validateKnowledgeRoot', () => {
     await expect(validateKnowledgeRoot('relative')).rejects.toThrow(
       'Use an absolute folder path',
     )
+  })
+})
+
+describe('ensureSessionKnowledgeBase', () => {
+  it('creates a private dedicated folder and reuses it idempotently', async () => {
+    const cwd = await homeFixture()
+    const expected = path.join(cwd, 'docs', 'knowledge')
+
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
+    ).resolves.toBe(expected)
+    expect((await stat(expected)).mode & 0o777).toBe(0o700)
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
+    ).resolves.toBe(expected)
+  })
+
+  it('uses an existing readable folder without creating it', async () => {
+    const cwd = await homeFixture()
+    const existing = path.join(cwd, 'knowledge')
+    await mkdir(existing)
+
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'knowledge', false),
+    ).resolves.toBe(existing)
+  })
+
+  it('reports a missing non-created folder as not found', async () => {
+    const cwd = await homeFixture()
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'knowledge', false),
+    ).rejects.toMatchObject({
+      statusCode: 404,
+      message: expect.stringContaining('does not exist'),
+    })
+  })
+
+  it.each([
+    ['', 400],
+    ['.', 400],
+    ['/tmp/knowledge', 400],
+    ['C:/knowledge', 400],
+    ['../knowledge', 403],
+    ['docs/../knowledge', 403],
+    ['.knowledge', 403],
+    ['docs/.private', 403],
+    ['.env.production', 403],
+    ['credentials', 403],
+    ['keychains/project', 403],
+    ['browser profiles/project', 403],
+    ['id_ed25519', 403],
+    ['private.p12', 403],
+  ])('refuses unsafe path %j', async (relativePath, statusCode) => {
+    const cwd = await homeFixture()
+    await expect(
+      ensureSessionKnowledgeBase(cwd, relativePath, true),
+    ).rejects.toMatchObject({ statusCode })
+  })
+
+  it('refuses an existing symlink component before creating descendants', async () => {
+    const cwd = await homeFixture()
+    const outside = await mkdtemp(path.join(tmpdir(), 'knowledge-outside-'))
+    directories.push(outside)
+    await symlink(outside, path.join(cwd, 'linked'))
+
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'linked/notes', true),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      message: expect.stringContaining('symbolic link'),
+    })
+    await expect(stat(path.join(outside, 'notes'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('refuses a symlink target that resolves to a hidden folder', async () => {
+    const cwd = await homeFixture()
+    const hidden = path.join(cwd, '.private')
+    await mkdir(hidden)
+    await symlink(hidden, path.join(cwd, 'notes'))
+
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'notes', false),
+    ).rejects.toMatchObject({ statusCode: 403 })
   })
 })

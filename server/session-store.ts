@@ -288,6 +288,10 @@ function grantTerminalRecovery(session: StoredSession): void {
   }
 }
 
+function requiresExplicitTerminalReopen(session: StoredSession): boolean {
+  return session.managedOpen !== true && Boolean(session.queuedPrompts?.length)
+}
+
 // A committed session is never changed in place: every change installs a new
 // object for the session it changes. Each one's encoded form can therefore be
 // reused by every later write it is still part of, so a write serializes and
@@ -1098,7 +1102,10 @@ export class SessionStore {
           (session.suspended === true && !session.archivedAt) ||
           session.managedOpen === true ||
           (session.isOpen === true && protectedRecord))
-        const interruption = present && !session.sdkRestartRecovery ? undefined
+        const retainQueuedTerminal =
+          present && session.backend === 'terminal' && requiresExplicitTerminalReopen(session)
+        const interruption = present && !session.sdkRestartRecovery && !retainQueuedTerminal
+          ? undefined
           : isOpen && session.backend === 'terminal' && !session.suspended
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
@@ -1133,7 +1140,20 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          if (session.backend === 'terminal' && session.isOpen === true && !session.interruption) {
+          const retainQueuedTerminal = requiresExplicitTerminalReopen(session)
+          const interruption = retainQueuedTerminal
+            ? session.interruption ?? {
+              detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+            }
+            : undefined
+          if (
+            session.backend === 'terminal' &&
+            session.isOpen === true &&
+            session.interruption === interruption &&
+            !session.sdkRestartRecovery &&
+            !session.sdkAcceptedReply &&
+            !session.archivedAt
+          ) {
             continue
           }
           // Observed presence only. Any Copilot process in a tmux pane is
@@ -1145,7 +1165,7 @@ export class SessionStore {
             revision: (session.revision ?? 0) + 1,
             backend: 'terminal',
             isOpen: true,
-            interruption: undefined,
+            interruption,
             sdkRestartRecovery: undefined,
             sdkAcceptedReply: undefined,
             archivedAt: undefined,

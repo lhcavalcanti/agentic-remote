@@ -1161,6 +1161,52 @@ describe('SessionStore', () => {
     ])
   })
 
+  it('keeps an unmanaged queued terminal interrupted while its owner is discovered', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'closed-queued-terminal',
+        cwd: '/tmp/closed-queued-project',
+        title: 'Closed queued terminal',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.enqueuePrompt('closed-queued-terminal', {
+      id: 'queued-prompt',
+      content: 'Wait for explicit Reopen',
+      createdAt: '2026-07-22T00:00:01.000Z',
+    })
+    await store.setOpen('closed-queued-terminal', false, true)
+
+    await store.syncBackends(['closed-queued-terminal'], [])
+
+    expect(store.get('closed-queued-terminal')).toMatchObject({
+      isOpen: true,
+      interruption: expect.any(Object),
+    })
+    expect(store.isManagedOpen('closed-queued-terminal')).toBe(false)
+    const revision = store.get('closed-queued-terminal')!.revision
+    await store.syncOpen(['closed-queued-terminal'])
+    await store.syncBackends(['closed-queued-terminal'], [])
+    expect(store.get('closed-queued-terminal')!.revision).toBe(revision)
+
+    const restarted = new SessionStore(directory)
+    await restarted.initialize()
+    await restarted.syncOpen(['closed-queued-terminal'])
+    await restarted.syncBackends(['closed-queued-terminal'], [])
+
+    expect(restarted.get('closed-queued-terminal')).toMatchObject({
+      isOpen: true,
+      interruption: expect.any(Object),
+      queuedPrompts: [expect.objectContaining({ id: 'queued-prompt' })],
+    })
+    expect(restarted.isManagedOpen('closed-queued-terminal')).toBe(false)
+  })
+
   it('grants boot recovery once the app sends or queues work for a discovered terminal', async () => {
     const { directory, store } = await createStore()
     const ids = ['sent', 'queued', 'answered', 'claimed', 'observed']

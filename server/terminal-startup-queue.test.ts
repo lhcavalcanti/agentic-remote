@@ -545,10 +545,20 @@ describe('Persisted native queue startup', () => {
     expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
     expect(runtime.service.getSession(native.id)?.queuedPrompts).toHaveLength(1)
 
-    await runtime.service.activateSession(native.id)
+    await runtime.service.stop()
+    const restarted = native.connect()
+    await restarted.service.start()
+
+    expect(restarted.store.isManagedOpen(native.id)).toBe(false)
+    expect((await native.receipt()).submits).toEqual([])
+    expect(restarted.service.getSession(native.id)?.interruption).toBeDefined()
+    expect(restarted.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+    expect(restarted.service.getSession(native.id)?.queuedPrompts).toHaveLength(1)
+
+    await restarted.service.activateSession(native.id)
 
     expect((await native.receipt()).submits).toEqual(['Do not deliver without managed-open intent'])
-    expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
+    expect(restarted.service.getSession(native.id)?.queuedPrompts).toEqual([])
   }, 15_000)
 
   it('retries restoring Reopen after rediscovery persistence rejects', async () => {

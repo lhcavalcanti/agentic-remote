@@ -11487,7 +11487,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publicSession(session: SessionDetail): SessionDetail {
     session = this.queuedDispatches.view(session)
-    const queueState = this.terminalQueueStates.get(session.id) ?? session.queueState
+    const queued = session.queuedPrompts?.[0]
+    const retainedQueueState: QueueState | undefined =
+      queued && (session.interruption || session.archivedAt)
+        ? {
+          state: 'waiting',
+          promptId: queued.id,
+          message: 'Reopen the session to resume queued delivery.',
+          updatedAt: session.interruption?.detectedAt ?? session.archivedAt ?? session.updatedAt,
+        }
+        : undefined
+    const queueState =
+      retainedQueueState ?? this.terminalQueueStates.get(session.id) ?? session.queueState
     session = queueState && session.queuedPrompts?.[0]?.id === queueState.promptId
       ? { ...session, queueState }
       : session.queueState

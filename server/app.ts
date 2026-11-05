@@ -333,6 +333,10 @@ export async function buildApp(
     sessionKnowledgeStore = options.sessionKnowledgeStore ??
       new SessionKnowledgeStore(dataDirectory, knowledgeStore)
     await sessionKnowledgeStore.initialize()
+    await knowledgeStore.recoverProvisionalRoots(
+      sessionKnowledgeStore.listBindings()
+        .flatMap((binding) => binding.rootId ? [binding.rootId] : []),
+    )
     // Hub-only: a node serves no UI, so it has no ordering to remember.
     sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
     await sessionOrderStore.initialize()

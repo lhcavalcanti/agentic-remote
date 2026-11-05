@@ -186,4 +186,51 @@ describe('KnowledgeStore', () => {
     ).resolves.toBe(false)
     expect(store.listRoots()).toEqual([])
   })
+
+  it('removes an unreferenced provisional root after restart recovery', async () => {
+    const directory = await temporaryDirectory()
+    const initial = new KnowledgeStore(directory)
+    await initial.initialize()
+    const reservation = await initial.reserveRoot({
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    await expect(restored.recoverProvisionalRoots([])).resolves.toBe(1)
+    expect(restored.listRoots()).toEqual([])
+
+    const persisted = JSON.parse(
+      await readFile(path.join(directory, 'knowledge.json'), 'utf8'),
+    )
+    expect(persisted.provisionalRootIds).toEqual([])
+    expect(persisted.roots).not.toContainEqual(reservation.root)
+  })
+
+  it('finalizes a referenced provisional root after restart recovery', async () => {
+    const directory = await temporaryDirectory()
+    const initial = new KnowledgeStore(directory)
+    await initial.initialize()
+    const reservation = await initial.reserveRoot({
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    await expect(
+      restored.recoverProvisionalRoots([reservation.root.id]),
+    ).resolves.toBe(0)
+    expect(restored.listRoots()).toEqual([reservation.root])
+
+    const finalRestart = new KnowledgeStore(directory)
+    await finalRestart.initialize()
+    await expect(finalRestart.recoverProvisionalRoots([])).resolves.toBe(0)
+    expect(finalRestart.listRoots()).toEqual([reservation.root])
+  })
 })

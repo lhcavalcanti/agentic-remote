@@ -207,10 +207,14 @@ describe('ensureSessionKnowledgeBase', () => {
     ['docs/.private', 403],
     ['.env.production', 403],
     ['credentials', 403],
+    ['credential_store', 403],
+    ['credentials-store', 403],
     ['keychains/project', 403],
     ['browser profiles/project', 403],
+    ['browser-profile', 403],
     ['id_ed25519', 403],
     ['private.p12', 403],
+    ['C:knowledge', 400],
   ])('refuses unsafe path %j', async (relativePath, statusCode) => {
     const cwd = await homeFixture()
     await expect(

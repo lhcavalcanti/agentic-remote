@@ -5,6 +5,7 @@ import type { KnowledgeRoot } from '../shared/contracts.js'
 
 interface KnowledgeState {
   roots: KnowledgeRoot[]
+  provisionalRootIds: string[]
 }
 
 export interface KnowledgeRootReservation {
@@ -16,7 +17,7 @@ export interface KnowledgeRootReservation {
 
 export class KnowledgeStore {
   private readonly statePath: string
-  private state: KnowledgeState = { roots: [] }
+  private state: KnowledgeState = { roots: [], provisionalRootIds: [] }
   private readonly rootReservations = new Map<string, Set<string>>()
   private writeQueue: Promise<void> = Promise.resolve()
 
@@ -32,7 +33,14 @@ export class KnowledgeStore {
       ) as Partial<KnowledgeState>
       // Rebuild from known fields so a file written before roots replaced
       // bookmarks loads, and the obsolete key is not carried forward.
-      this.state = { roots: parsed.roots ?? [] }
+      this.state = {
+        roots: parsed.roots ?? [],
+        provisionalRootIds: Array.isArray(parsed.provisionalRootIds)
+          ? parsed.provisionalRootIds.filter(
+              (id): id is string => typeof id === 'string',
+            )
+          : [],
+      }
       this.rootReservations.clear()
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -49,6 +57,23 @@ export class KnowledgeStore {
   getRoot(id: string): KnowledgeRoot | undefined {
     const root = this.state.roots.find((entry) => entry.id === id)
     return root ? structuredClone(root) : undefined
+  }
+
+  recoverProvisionalRoots(referencedRootIds: Iterable<string>): Promise<number> {
+    const referenced = new Set(referencedRootIds)
+    return this.enqueue(async () => {
+      if (this.state.provisionalRootIds.length === 0) return 0
+      const provisional = new Set(this.state.provisionalRootIds)
+      const roots = this.state.roots.filter(
+        (root) => !provisional.has(root.id) || referenced.has(root.id),
+      )
+      const removed = this.state.roots.length - roots.length
+      const next = { roots, provisionalRootIds: [] }
+      await this.write(next)
+      this.state = next
+      this.rootReservations.clear()
+      return removed
+    })
   }
 
   async addRoot(
@@ -81,7 +106,10 @@ export class KnowledgeStore {
         id: randomUUID(),
         createdAt: new Date().toISOString(),
       }
-      const next = { roots: [created, ...this.state.roots] }
+      const next = {
+        roots: [created, ...this.state.roots],
+        provisionalRootIds: [created.id, ...this.state.provisionalRootIds],
+      }
       await this.write(next)
       this.state = next
       const token = randomUUID()
@@ -94,7 +122,12 @@ export class KnowledgeStore {
     return this.enqueue(async () => {
       const remaining = this.state.roots.filter((entry) => entry.id !== id)
       if (remaining.length === this.state.roots.length) return false
-      const next = { roots: remaining }
+      const next = {
+        roots: remaining,
+        provisionalRootIds: this.state.provisionalRootIds.filter(
+          (rootId) => rootId !== id,
+        ),
+      }
       await this.write(next)
       this.state = next
       this.rootReservations.delete(id)
@@ -118,7 +151,13 @@ export class KnowledgeStore {
       )
       const removed = this.state.roots.length - remaining.length
       if (removed === 0) return 0
-      const next = { roots: remaining }
+      const removedIdSet = new Set(removedIds)
+      const next = {
+        roots: remaining,
+        provisionalRootIds: this.state.provisionalRootIds.filter(
+          (rootId) => !removedIdSet.has(rootId),
+        ),
+      }
       await this.write(next)
       this.state = next
       for (const id of removedIds) this.rootReservations.delete(id)
@@ -169,7 +208,19 @@ export class KnowledgeStore {
         return false
       }
       const reservations = this.rootReservations.get(id)
-      if (reservations?.has(token)) this.rootReservations.delete(id)
+      if (reservations?.has(token)) {
+        if (this.state.provisionalRootIds.includes(id)) {
+          const next = {
+            roots: this.state.roots,
+            provisionalRootIds: this.state.provisionalRootIds.filter(
+              (rootId) => rootId !== id,
+            ),
+          }
+          await this.write(next)
+          this.state = next
+        }
+        this.rootReservations.delete(id)
+      }
       return true
     })
   }
@@ -193,7 +244,12 @@ export class KnowledgeStore {
       this.rootReservations.delete(id)
       return false
     }
-    const next = { roots: remaining }
+    const next = {
+      roots: remaining,
+      provisionalRootIds: this.state.provisionalRootIds.filter(
+        (rootId) => rootId !== id,
+      ),
+    }
     await this.write(next)
     this.state = next
     this.rootReservations.delete(id)

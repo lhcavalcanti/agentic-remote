@@ -118,6 +118,9 @@ Filesystem errors do not expose unsubmitted private paths. If directory creation
 succeeds but metadata persistence fails, Agentic Remote leaves the directory in
 place rather than risking deletion of user or concurrent data. A newly reserved
 catalog entry is rolled back.
+If the hub stops between cataloging and binding, startup recovery keeps the
+root only when a durable session binding references it; otherwise the
+provisional catalog entry is removed.
 
 ## Lifecycle
 
@@ -164,4 +167,3 @@ Copy this into the default session instructions:
 > success, use the returned `binding.knowledgeBasePath` for durable Knowledge
 > files and report `<computerId>/<sessionId> -> <knowledgeBasePath>`. If the hub
 > or IDs are unavailable, report that instead of guessing.
-

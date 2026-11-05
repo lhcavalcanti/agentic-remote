@@ -346,8 +346,9 @@ export async function registerSessionKnowledgeRoutes(
             )
           }
         }
+        let binding: SessionKnowledgeBinding
         try {
-          const binding = await store.update(
+          binding = await store.update(
             computerId,
             sessionId,
             {
@@ -357,9 +358,6 @@ export async function registerSessionKnowledgeRoutes(
             },
             validate,
           )
-          await reservation.finalize()
-          reply.header('cache-control', 'no-store')
-          return { binding }
         } catch (error) {
           await reservation.rollback()
           if (error instanceof SessionKnowledgeConflictError) {
@@ -370,6 +368,9 @@ export async function registerSessionKnowledgeRoutes(
           }
           throw error
         }
+        await reservation.finalize()
+        reply.header('cache-control', 'no-store')
+        return { binding }
       }
       const root = input.rootId === null ? undefined : knowledge.getRoot(input.rootId)
       if (input.rootId !== null && !root) {

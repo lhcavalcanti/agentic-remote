@@ -29,7 +29,7 @@ export function homeDirectory(): Promise<string> {
 }
 
 const sensitiveKnowledgeSegment =
-  /^(?:credentials?|credential stores?|keychains?|browser profiles?|login data|id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|p12|pfx))$/i
+  /^(?:credentials?(?:[ _-]+stores?)?|keychains?|browser[ _-]+profiles?|login[ _-]+data|id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|p12|pfx))$/i
 
 function knowledgePathSegments(inputPath: string): string[] {
   const normalized = inputPath.trim().replaceAll('\\', '/')
@@ -38,7 +38,7 @@ function knowledgePathSegments(inputPath: string): string[] {
       'Choose a dedicated Knowledge folder under the session working directory',
     )
   }
-  if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) {
     throw new SessionDirectoryError(
       'Knowledge base path must be relative to the session working directory',
     )

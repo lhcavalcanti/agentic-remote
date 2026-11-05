@@ -8,7 +8,10 @@ import type {
   SessionKnowledgeBinding,
   UpdateSessionKnowledgeRootInput,
 } from '../shared/contracts.js'
-import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path.js'
+import {
+  knowledgeAbsolutePath,
+  normalizeKnowledgeRelativePath,
+} from '../shared/knowledge-path.js'
 
 const rootSchema = z.object({
   id: z.string().min(1),
@@ -280,6 +283,19 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       if (input.rootId !== null && !root) {
         throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
       }
+      const stored = next.bindings.find(
+        (binding) => bindingKey(binding) === bindingKey(identity),
+      )
+      if (
+        stored &&
+        stored.rootId === input.rootId &&
+        stored.rootPath === rootPath
+      ) {
+        return {
+          changed: false,
+          result: () => this.snapshot(identity),
+        }
+      }
       const binding: StoredBinding = {
         ...identity,
         rootId: input.rootId,
@@ -387,12 +403,16 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     const binding: SessionKnowledgeBinding = stored
       ? {
           ...structuredClone(stored),
+          knowledgeBasePath: stored.root
+            ? knowledgeAbsolutePath(stored.root.path, stored.rootPath)
+            : null,
           available: stored.rootId !== null && this.catalog.getRoot(stored.rootId) !== undefined,
         }
       : {
           ...identity,
           rootId: null,
           rootPath: '.',
+          knowledgeBasePath: null,
           revision: 0,
           available: false,
         }

@@ -489,72 +489,75 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const proactive = input.proactive
       ? validateManagerProactiveSettings(input.proactive)
       : undefined
-    if (proactive) this.scheduledCheckGeneration += 1
-    const before = this.runtime()
-    try {
-      await this.store.updateState((state) => {
-        if (input.model !== undefined) {
-          const model = input.model?.trim() || undefined
-          const reasoningEffort = model ? input.reasoningEffort ?? undefined : undefined
-          state.settings = {
-            ...(model ? { model } : {}),
-            ...(reasoningEffort ? { reasoningEffort } : {}),
+    const apply = async () => {
+      if (proactive) this.scheduledCheckGeneration += 1
+      const before = this.runtime()
+      try {
+        await this.store.updateState((state) => {
+          if (input.model !== undefined) {
+            const model = input.model?.trim() || undefined
+            const reasoningEffort = model ? input.reasoningEffort ?? undefined : undefined
+            state.settings = {
+              ...(model ? { model } : {}),
+              ...(reasoningEffort ? { reasoningEffort } : {}),
+            }
           }
-        }
-        if (folders) {
-          const next = { ...state.sessionFolders }
-          for (const [computerId, folder] of Object.entries(folders)) {
-            if (folder) next[computerId] = folder
-            else delete next[computerId]
+          if (folders) {
+            const next = { ...state.sessionFolders }
+            for (const [computerId, folder] of Object.entries(folders)) {
+              if (folder) next[computerId] = folder
+              else delete next[computerId]
+            }
+            if (Object.keys(next).length) state.sessionFolders = next
+            else delete state.sessionFolders
           }
-          if (Object.keys(next).length) state.sessionFolders = next
-          else delete state.sessionFolders
-        }
-        // Only a terminal is kept, so the default stays the Copilot SDK.
-        if (input.sessionBackend === 'terminal') state.sessionBackend = 'terminal'
-        else if (input.sessionBackend === 'sdk') delete state.sessionBackend
-        if (proactive) {
-          state.proactive = {
-            settings: proactive,
-            ...(proactive.enabled
-              ? { nextCheckAt: nextManagerCheckAt(this.now(), proactive).toISOString() }
-              : {}),
+          // Only a terminal is kept, so the default stays the Copilot SDK.
+          if (input.sessionBackend === 'terminal') state.sessionBackend = 'terminal'
+          else if (input.sessionBackend === 'sdk') delete state.sessionBackend
+          if (proactive) {
+            state.proactive = {
+              settings: proactive,
+              ...(proactive.enabled
+                ? { nextCheckAt: nextManagerCheckAt(this.now(), proactive).toISOString() }
+                : {}),
+            }
           }
-        }
-      })
-    } catch (error) {
-      if (proactive) this.armScheduledCheckTimer()
-      throw error
-    }
-    // A new choice is tried afresh. The next answer compares it with what
-    // the conversation runs on, so nothing in flight can lose it.
-    if (!sameRuntime(before, this.runtime())) {
-      await this.store.updateState((state) => {
-        delete state.unavailableRuntime
-      })
-    }
-    if (proactive && !proactive.enabled) {
-      for (const message of this.store.messages()) {
-        if (
-          message.source === 'scheduled'
-          && message.state === 'queued'
-          && !message.startedAt
-        ) {
-          await this.updateMessage({
-            ...message,
-            state: 'cancelled',
-            updatedAt: this.now().toISOString(),
-          })
+        })
+      } catch (error) {
+        if (proactive) this.armScheduledCheckTimer()
+        throw error
+      }
+      // A new choice is tried afresh. The next answer compares it with what
+      // the conversation runs on, so nothing in flight can lose it.
+      if (!sameRuntime(before, this.runtime())) {
+        await this.store.updateState((state) => {
+          delete state.unavailableRuntime
+        })
+      }
+      if (proactive && !proactive.enabled) {
+        for (const message of this.store.messages()) {
+          if (
+            message.source === 'scheduled'
+            && message.state === 'queued'
+            && !message.startedAt
+          ) {
+            await this.updateMessage({
+              ...message,
+              state: 'cancelled',
+              updatedAt: this.now().toISOString(),
+            })
+          }
         }
       }
+      const settings = this.settingsSnapshot()
+      this.emit('event', { type: 'manager.settings', settings })
+      if (proactive) {
+        this.scheduledCheckRetry = 0
+        this.armScheduledCheckTimer()
+      }
+      return settings
     }
-    const settings = this.settingsSnapshot()
-    this.emit('event', { type: 'manager.settings', settings })
-    if (proactive) {
-      this.scheduledCheckRetry = 0
-      this.armScheduledCheckTimer()
-    }
-    return settings
+    return proactive ? this.serializeQueue(apply) : apply()
   }
 
   scheduledCheckTimerActive(): boolean {

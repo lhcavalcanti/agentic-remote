@@ -626,6 +626,57 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().settings?.proactive?.nextCheckAt).toBeUndefined()
   })
 
+  it('cancels a scheduled claim that starts while pause persistence is pending', async () => {
+    await start()
+    await agent!.updateSettings({
+      proactive: { ...managerCheckDefaults(), enabled: true },
+    })
+    await store.upsertMessage({
+      id: 'scheduled-queued',
+      role: 'user',
+      content: 'Review current work.',
+      createdAt: '2026-11-04T14:00:00.000Z',
+      state: 'queued',
+      answerOnly: true,
+      source: 'scheduled',
+    })
+
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markWriteStarted!: () => void
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve
+    })
+    const writer = store as unknown as {
+      writeJson(name: string, value: unknown): Promise<void>
+    }
+    const originalWrite = writer.writeJson.bind(store)
+    const write = vi.spyOn(writer, 'writeJson').mockImplementation(
+      async (name, value) => {
+        markWriteStarted()
+        await gate
+        await originalWrite(name, value)
+      },
+    )
+
+    const pausing = agent!.updateSettings({
+      proactive: { ...managerCheckDefaults(), enabled: false },
+    })
+    await writeStarted
+    const pumping = (agent as unknown as { pump(): Promise<void> }).pump()
+    release()
+    await pausing
+    await pumping
+
+    expect(sdk.prompts).toHaveLength(0)
+    expect(agent!.snapshot().messages.find(
+      (message) => message.id === 'scheduled-queued',
+    )?.state).toBe('cancelled')
+    write.mockRestore()
+  })
+
   it('suppresses notification when a scheduled check completes after quiet hours begin', async () => {
     let now = new Date('2026-11-04T21:59:00.000Z')
     let release!: () => void

@@ -402,9 +402,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 215,
+  "communities": 221,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18781,
+  "edges": 18783,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -587,8 +587,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "c4a3948638946315ce84d7b80d9e5dee0e937d3d61bd824fc80a6d042708a6a5",
-    "server/manager-agent.ts": "59ac8d3a997ece4d7296a042268cddab5e231b2fe4cffc4b8434a601d8518e3e",
+    "server/manager-agent.test.ts": "afb3bcd34684cec887072db351ace4f48a0df1bddfa7439c21d726a9fb871e04",
+    "server/manager-agent.ts": "8aa0b903d48ef21712c26121f94652246e3fed956a7783a25a5f1bba81c976ab",
     "server/manager-context.test.ts": "59c8226fa7014a728dc628e9c0678fb5c484e7d16761e8b669b7507f58d280af",
     "server/manager-context.ts": "a24df85c277306e399c15156f6f24745da8b036e5589733f28c423bc67ada33d",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -902,7 +902,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6803,
+  "nodes": 6804,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -997,20 +997,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "cc7c94ed9574aa6bb42902aff08cea08f7edeef9cf5ef59483be72a0ca5985b1",
-    "communities.json": "37e5368f426ac67c68fe40e80ec8c72d75dd1e34e03d1bb8da2ea94ae4551243",
-    "graph.html": "e90bfde74f6259f6d5dbf1c4ba65933b81aedfc01769a25ea2331413544f31c4",
-    "graph.json": "4e29a97a9dfb379e97caf17651348d75e7861d96d1ec838f27eb6e96f5ce8af3"
+    "GRAPH_REPORT.md": "b8cfef7c0f73dbf6db6d4a87e37768c75f73e1badf2bf6d073d7f8ff1eeb0030",
+    "communities.json": "97345c614bad678e21397788ca1ae7ef3be354dc0fcc6038b4fa827ff4a645be",
+    "graph.html": "cd8bed7a792c2c45cec2fdca30325b2737de2d3b6c857833f952e6b0ac31bc50",
+    "graph.json": "1d674740a94a674211ecb93d1e54855bf16fa215743d4f1e50ccd52d40718f1c"
   },
   "schema_version": 1,
-  "source_commit": "88731e36d47319f261cb5a47834a4ab3c83d50f5",
-  "source_fingerprint": "71e4862481e438de666f5926475b80fe24a41d5bb78f76567fa21a4729d363d7",
+  "source_commit": "0ce59a0a73c3d15ff7244a31c4a1bc780ecaffb7",
+  "source_fingerprint": "8dfbb7f08a4fde1a6a76ec0b57032bd230f4ff97da7328bee60820281aa0b748",
   "working_tree_changes": [
     "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/oracle-voice-coordinator.ts",
-    "shared/manager.ts",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx"
+    "server/manager-agent.ts"
   ]
 }

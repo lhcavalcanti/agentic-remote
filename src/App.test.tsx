@@ -2107,6 +2107,9 @@ describe('App', () => {
       if (input.expectedRevision !== previous.revision) {
         throw new SessionKnowledgeRequestError('Root changed in another client', 409, previous)
       }
+      if ('knowledgeBasePath' in input) {
+        throw new Error('The UI fixture uses catalog-root mode')
+      }
       const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
       if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
       const binding: SessionKnowledgeBinding = {

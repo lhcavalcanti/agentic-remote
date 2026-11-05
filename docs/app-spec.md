@@ -1482,6 +1482,18 @@ clear replacement IDs without losing, duplicating, or reordering content.
   Several sessions MAY link the same root while keeping separate reading
   positions. Linking MUST NOT copy files, mount a remote folder, activate an
   agent, or send a prompt.
+- The session Knowledge API MAY create or select a dedicated folder by a
+  relative path under the session's unchanged cwd. Path mode MUST resolve and
+  create the folder on the session's owning computer, MUST NOT accept an
+  absolute path or another computer, and MUST reject traversal, hidden or
+  sensitive segments, symbolic links, and resolved escapes. The response MUST
+  expose the canonical absolute Knowledge base path.
+- Path-first updates MUST use the same persisted revision and replacement
+  lineage as catalog-root updates. Saving the same current folder MUST be a
+  no-op. Active, suspended, and historical sessions MUST be handled passively;
+  changing Knowledge MUST NOT open or resume them. Persisted reads MAY succeed
+  while the owner is offline, but path validation or creation MUST fail
+  explicitly until the owner is reachable.
 - A session MAY root its Knowledge tree at a nested folder inside a shared
   root. The nested path MUST persist with the hub-side session association and
   become the true top of that session's tree: parent folders above it MUST NOT

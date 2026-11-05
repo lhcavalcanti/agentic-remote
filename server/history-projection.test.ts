@@ -94,15 +94,14 @@ function quadraticModel(events: SessionEvent[]): ModelMessage[] {
       messages.push({ id: String(data.messageId), role: 'assistant' })
     } else if (event.type === 'tool.execution_start') {
       const summary = String((data.arguments as Record<string, unknown>).summary ?? '').trim()
-      if (data.toolName === 'task_complete' && summary) summaries.set(String(data.toolCallId), summary)
+      if (data.toolName === 'task_complete') summaries.set(String(data.toolCallId), summary)
       messages.push({ id: `tool:${String(data.toolCallId)}`, role: 'activity', status: 'running' })
     } else if (event.type === 'tool.execution_complete') {
       const message = messages.find((entry) => entry.id === `tool:${String(data.toolCallId)}`)
       if (message) {
         message.status = data.success ? 'completed' : 'failed'
-        const result = String((data.result as Record<string, unknown> | undefined)?.content ?? '').trim()
         const summary = summaries.has(String(data.toolCallId))
-          ? result || summaries.get(String(data.toolCallId))
+          ? summaries.get(String(data.toolCallId))
           : undefined
         if (data.success && summary) {
           finish('completed')

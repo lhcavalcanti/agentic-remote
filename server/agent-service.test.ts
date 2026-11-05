@@ -1568,7 +1568,59 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"task-call",
           "success":true,
-          "result":{"content":"**Done.** The requested work is live."}
+          "result":{
+            "content":"Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt"
+          }
+        }
+      },
+      {
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{"summary":"**Done.** The complete authoritative summary is rendered."}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        role: 'assistant',
+        content: '**Done.** The complete authoritative summary is rendered.',
+        activityStatus: undefined,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+          completedAt: '2026-07-22T00:00:02.000Z',
+        },
+      }),
+    ])
+  })
+
+  it('falls back to task completion arguments when the completion event has no summary', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"**Done.** The complete argument summary is rendered."}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "success":true,
+          "result":{
+            "content":"Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt"
+          }
         }
       },
       {
@@ -1584,13 +1636,117 @@ describe('AgentService deletion', () => {
       expect.objectContaining({
         id: 'tool:task-call',
         role: 'assistant',
-        content: '**Done.** The requested work is live.',
-        activityStatus: undefined,
-        taskCompletion: {
-          source: 'root-task-complete',
-          toolCallId: 'task-call',
-          completedAt: '2026-07-22T00:00:02.000Z',
-        },
+        content: '**Done.** The complete argument summary is rendered.',
+      }),
+    ])
+  })
+
+  it('correlates completion event summaries with their task completion result', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-a-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-a",
+          "toolName":"task_complete",
+          "arguments":{"summary":"Task A argument summary"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-a-end",
+        "parentId":"task-a-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"toolCallId":"task-a","success":true}
+      },
+      {
+        "type":"assistant.turn_end",
+        "id":"turn-a-end",
+        "parentId":"task-a-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{}
+      },
+      {
+        "type":"user.message",
+        "id":"user-b",
+        "parentId":"turn-a-end",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{"content":"Run task B"}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"task-b-start",
+        "parentId":"user-b",
+        "timestamp":"2026-07-22T00:00:04.000Z",
+        "data":{
+          "toolCallId":"task-b",
+          "toolName":"task_complete",
+          "arguments":{"summary":"Task B argument summary"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-b-end",
+        "parentId":"task-b-start",
+        "timestamp":"2026-07-22T00:00:05.000Z",
+        "data":{"toolCallId":"task-b","success":true}
+      },
+      {
+        "type":"session.task_complete",
+        "id":"task-b-session-complete",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:05.100Z",
+        "data":{"summary":"Task B canonical summary"}
+      }
+    ]`) as SessionEvent[]
+
+    expect(
+      messagesFromHistory(events)
+        .filter((message) => message.taskCompletion)
+        .map((message) => message.content),
+    ).toEqual(['Task A argument summary', 'Task B canonical summary'])
+  })
+
+  it('uses the completion event summary when task completion arguments are absent', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "success":true,
+          "result":{"content":"Tool result is not the final summary."}
+        }
+      },
+      {
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{"summary":"**Done.** The event-only summary is rendered."}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        role: 'assistant',
+        content: '**Done.** The event-only summary is rendered.',
       }),
     ])
   })
@@ -6912,7 +7068,7 @@ describe('AgentService deletion', () => {
     await service.sendMessage(created.id, 'finish the task')
     client.session.emit(
       start('task-call', 'task_complete', {
-        summary: '**Complete.** The live result is visible.',
+        summary: '**Complete.** The live argument fallback is visible.',
       }),
     )
     client.session.emit(
@@ -6926,8 +7082,22 @@ describe('AgentService deletion', () => {
             toolCallId: 'task-call',
             success: true,
             result: {
-              content: '**Complete.** The live result is visible.',
+              content:
+                'Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt',
             },
+          },
+        }),
+      ) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(
+        JSON.stringify({
+          type: 'session.task_complete',
+          id: 'session-complete-task-call',
+          parentId: 'complete-task-call',
+          timestamp: new Date().toISOString(),
+          data: {
+            summary: '**Complete.** The authoritative live summary is visible.',
           },
         }),
       ) as SessionEvent,
@@ -6935,7 +7105,7 @@ describe('AgentService deletion', () => {
     await vi.waitFor(() =>
       expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
         role: 'assistant',
-        content: '**Complete.** The live result is visible.',
+        content: '**Complete.** The authoritative live summary is visible.',
         streaming: false,
         taskCompletion: {
           source: 'root-task-complete',
@@ -7001,6 +7171,91 @@ describe('AgentService deletion', () => {
       }),
     )
     await new Promise((resolve) => setTimeout(resolve, 20))
+    await service.stop()
+  })
+
+  it('falls back to live task completion arguments instead of truncated results', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+
+    await service.sendMessage(created.id, 'finish with the complete summary')
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"**Complete.** The full argument summary is visible."}
+        }
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.idle",
+        "id":"child-idle",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:01.500Z",
+        "agentId":"child-agent",
+        "data":{}
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "success":true,
+          "result":{
+            "content":"Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt"
+          }
+        }
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{}
+      }`) as SessionEvent,
+    )
+
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '**Complete.** The full argument summary is visible.',
+        streaming: false,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+        },
+      }),
+    )
+    expect(
+      service.store
+        .get(created.id)
+        ?.messages.some((message) =>
+          message.content.includes('Output too large to read at once'),
+        ),
+    ).toBe(false)
+
+    client.session.resolvePrompt()
     await service.stop()
   })
 

@@ -400,9 +400,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 218,
+  "communities": 224,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18709,
+  "edges": 18713,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -464,7 +464,7 @@
     "docs/oracle-conversation.md": "805734476fd214caee7c36be140e3b2091ef8bb27fa223caba815c483eff8538",
     "docs/provider-compatibility.md": "db552cf54844cd6a7a726aab54824d7b87dffac5feeeb9c0a51447f36389dedd",
     "docs/sdk-architecture-roadmap.md": "108720c64bee7a4eda6cf7b0021414de4a5b7bb84cd1b914a8e14c709df1bd39",
-    "docs/session-knowledge-api.md": "725727a3fd04ed6df419fa5b7877d219a59a7c29135ac79ffd7ac032eb311ebb",
+    "docs/session-knowledge-api.md": "00c378dd3b679c2ba6dddcbd156d0d5783400a1edfad42ce939eca6e4e582621",
     "docs/session-retention.md": "86a4b60ce293f288a1dd12edc0cdba940dff7a58867d9490a26a0799a0f6a4f9",
     "docs/slash-command-feedback.md": "7c9b801169b4bd9961ee9987859d77e17784169bc373f274895cd62cffc49f13",
     "docs/superpowers/plans/2026-10-16-oracle-conversation-mode.md": "9e7a1280979b9ba9eece8e79c758d3b794eaf2a757f8240313644f50aa8a26df",
@@ -539,7 +539,7 @@
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
-    "server/app.ts": "9f9a1978118c97c2953cdcd7f620c5b30947e50aac4bfe154e849677d288d4da",
+    "server/app.ts": "e03efa719e2ee587079caacf54213eaddc2f92116ba821092bf4b217296d257f",
     "server/background-task-adapter.test.ts": "63304b3d73481475147682d8f95513beffbbcc9049a43823cc39d5600f4a4760",
     "server/background-task-adapter.ts": "a987390d4403ca4d8c12138f40287085d1c029a41528495c152a45771072b0b8",
     "server/background-task-stop.test.ts": "0d6ce7dc963b1176cacaf415fd78349718ee89448c3aa6cd9f390e03005ddce4",
@@ -584,8 +584,8 @@
     "server/hub-routes.test.ts": "2f221bda0d9335f1eae011bd871310d0e77237246b883a776c19ddb17eee7f1c",
     "server/hub-routes.ts": "b93db255c1b7b96e6b948f69187ba0ccdde48f7752a5a7ae6b79eb0e5784f055",
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
-    "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
-    "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
+    "server/knowledge-store.test.ts": "9c514a7c48aa85209662555db98b1bd589a956f83a432ad9b83e1738f7c8d23f",
+    "server/knowledge-store.ts": "15b7a0f87ab88e12c6f65cf056ffb0a4e639a6fc6c9ca48e18d8d21f785b9eb9",
     "server/manager-agent.test.ts": "63535dfad527939c5b8821f449882bff1711a985fa663ede18748a2018359dfd",
     "server/manager-agent.ts": "67b33fa5b00da4ffdeabb2495f87b8411a5f5aeaa9027724cad9038ae4a151fa",
     "server/manager-context.test.ts": "dd2ebf1a9f578bb72a2e6a428c04f28dedc9b7d9d79df702b457bf631fba4313",
@@ -680,11 +680,11 @@
     "server/session-admission-lifecycle.test.ts": "3deed16f7b5b8874417103f0bf5b93fa22b6717f4e4b0ae6fc91ee09fe6a07ac",
     "server/session-admissions.ts": "227b897b0374e5f57048b1e40b1b23c028240e8f9f688eaf06578ae84b38ddc5",
     "server/session-clear-transcript.test.ts": "9101a9923b577a5dd57cd43efb66415c80e2daa1239ac747268907234bc30759",
-    "server/session-directory.test.ts": "dc255e944a578cf7fbde4ca2d61b707217d35646f31fbbd0c513b4aed7eb4858",
-    "server/session-directory.ts": "61b67da1fcfe090bdf2bf2c711e626a264cd6263b756b698b2585379d39f3fc8",
+    "server/session-directory.test.ts": "f00fd8a3038f5d666a7fd383e29c812f5f8e33006d4c89c1bdbce956e0efb945",
+    "server/session-directory.ts": "0bbd6dfa4145d6ccec949a2f407c8a5ca567ee44692fd2fa23323a89fe24493e",
     "server/session-enqueue-clear.test.ts": "26ab2355e06f3241591ed784090c05a0a3db4e3c3c62954968b111d0be30fe3e",
     "server/session-knowledge-routes.test.ts": "77378e0a9a8e89688161c573acb64631aaef098597a178c0b8d1ee7f55bbabc5",
-    "server/session-knowledge-routes.ts": "6176b754030795542d61e48982cbcfefed0c0e7c97166a576e046b27dbd39eee",
+    "server/session-knowledge-routes.ts": "f7a9b71fc7a958978f948cdf1d443891acd2fe10d4ce712555009586b57c56d2",
     "server/session-knowledge-store.test.ts": "717d078adfb1c9f781486350417a63bf8539fc593c82c264880315b21e655c66",
     "server/session-knowledge-store.ts": "3f74556f13f607860f3d50de322e2ddf3585bc4cfeb0ad3bf1716bda55e5d8f2",
     "server/session-metadata-provenance.test.ts": "be2c62820258c7847f63664e714b26e4b518e41aa9ef7f02bb3efa7aaef97f66",
@@ -899,7 +899,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6789,
+  "nodes": 6790,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -995,13 +995,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "2dc3d7585e8d69c4985822667a35021d482d664fdd3f0c673f2163de51497e31",
-    "communities.json": "b2b96a26bb500d84c50393da8434a07bb416251f8e0279a8f70a639f26fe5b40",
-    "graph.html": "093a5225e450afd90ebf78fa2f2a11465be9061f2bbfc5035dc7ec21994b468e",
-    "graph.json": "9d668a4446265a860d6f4545e7a9d95cd3eafccca799322e1ab2fce68f74f666"
+    "GRAPH_REPORT.md": "b7e685acf0d834e2f804708a0faea306e41c691fd8aaa87f00fde42207a6a52b",
+    "communities.json": "8dabd16984243d2094be7f2614825f4a5610f4de75acc091a391d170c2c58d22",
+    "graph.html": "57cf56f76074cc6b6ef7e1dc8060028fa7263b409d6e67c0b2ccd93ef0c53cbc",
+    "graph.json": "0ec7de8b1bd98906d32c7fc8ce9217754fa3bbc7c3b83d2389f4f741d599ae53"
   },
   "schema_version": 1,
-  "source_commit": "44e981d86384f793389c582781bcc3eafa6e424e",
-  "source_fingerprint": "ee19552a0d4a1e23ae9fe485f9725fd8830326ecf78008cb074b203cdf62709e",
+  "source_commit": "cdf628f449a35397e7d65d8cb11fa1c31c754dd2",
+  "source_fingerprint": "16b7b2e83af9cb3a7ee15ff571577951e069bec640443b1ec6a5dccda6fbd55c",
   "working_tree_changes": []
 }

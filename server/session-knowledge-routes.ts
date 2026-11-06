@@ -269,7 +269,10 @@ export async function registerSessionKnowledgeRoutes(
     store.off('updated', publish)
   })
 
-  async function knownSessionGuard(computerId: string, sessionId: string): Promise<() => void> {
+  async function knownSessionGuard(
+    computerId: string,
+    sessionId: string,
+  ): Promise<{ validate: () => void; cwd?: string }> {
     const generation = generationFor(computerId)
     const registered = registrationGuard(computerId, generation)
     const epoch = generation.epochs.get(sessionId) ?? 0
@@ -298,7 +301,7 @@ export async function registerSessionKnowledgeRoutes(
         )
       }
     }
-    return current
+    return { validate: current, cwd: lookup.session?.cwd }
   }
 
   app.get<{ Params: { computerId: string; sessionId: string } }>(
@@ -306,8 +309,8 @@ export async function registerSessionKnowledgeRoutes(
     async (request, reply) => {
       const { computerId, sessionId } = sessionParams.parse(request.params)
       await store.recover()
-      const validate = await knownSessionGuard(computerId, sessionId)
-      validate()
+      const known = await knownSessionGuard(computerId, sessionId)
+      known.validate()
       reply.header('cache-control', 'no-store')
       return { binding: store.get(computerId, sessionId) }
     },
@@ -318,7 +321,14 @@ export async function registerSessionKnowledgeRoutes(
       const { computerId, sessionId } = sessionParams.parse(request.params)
       const input = updateSchema.parse(request.body)
       if ('knowledgeBasePath' in input) {
-        const sessionIsCurrent = await knownSessionGuard(computerId, sessionId)
+        const known = await knownSessionGuard(computerId, sessionId)
+        const sessionIsCurrent = known.validate
+        if (!known.cwd) {
+          throw new SessionKnowledgeReferenceError(
+            'The owning computer could not provide this session working directory. Reconnect it and try again.',
+            503,
+          )
+        }
         const canonicalPath = await manager.ensureSessionKnowledgeBase(
           computerId,
           sessionId,
@@ -337,6 +347,13 @@ export async function registerSessionKnowledgeRoutes(
           computerName: computer.name,
           path: canonicalPath,
           name: knowledgeBaseName(canonicalPath),
+        }, {
+          confinementPath: known.cwd,
+          binding: {
+            computerId,
+            sessionId,
+            expectedRevision: input.expectedRevision,
+          },
         })
         const validate = () => {
           sessionIsCurrent()
@@ -368,7 +385,25 @@ export async function registerSessionKnowledgeRoutes(
           }
           throw error
         }
-        await reservation.finalize()
+        try {
+          await reservation.finalize()
+        } catch (error) {
+          request.log.error(
+            {
+              err: error,
+              computerId,
+              sessionId,
+              rootId: binding.rootId,
+            },
+            'Session Knowledge catalog finalization failed after binding commit',
+          )
+          reply.header('cache-control', 'no-store')
+          return reply.code(503).send({
+            error:
+              'The Knowledge binding was saved, but catalog cleanup could not finish. Use the returned binding and retry later.',
+            binding,
+          })
+        }
         reply.header('cache-control', 'no-store')
         return { binding }
       }
@@ -387,10 +422,17 @@ export async function registerSessionKnowledgeRoutes(
         )
       }
       if (root) {
-        await manager.listKnowledge(root.computerId, root.path, rootPath)
+        await manager.listKnowledge(
+          root.computerId,
+          root.path,
+          rootPath,
+          knowledge.getRootConfinement(root.id),
+        )
         rootIsCurrent?.()
       }
-      const sessionIsCurrent = await knownSessionGuard(computerId, sessionId)
+      const sessionIsCurrent = (
+        await knownSessionGuard(computerId, sessionId)
+      ).validate
       const validate = () => {
         sessionIsCurrent()
         rootIsCurrent?.()

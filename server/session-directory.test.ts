@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -160,6 +160,23 @@ describe('validateKnowledgeRoot', () => {
       'Use an absolute folder path',
     )
   })
+
+  it('rechecks a session confinement after the root is replaced by a symlink', async () => {
+    const home = await homeFixture()
+    const cwd = path.join(home, 'project')
+    const root = path.join(cwd, 'knowledge')
+    const outside = path.join(home, 'outside')
+    await mkdir(root, { recursive: true })
+    await mkdir(outside)
+
+    await expect(validateKnowledgeRoot(root, cwd)).resolves.toBe(root)
+    await rename(root, `${root}-original`)
+    await symlink(outside, root)
+
+    await expect(validateKnowledgeRoot(root, cwd)).rejects.toMatchObject({
+      statusCode: 403,
+    })
+  })
 })
 
 describe('ensureSessionKnowledgeBase', () => {
@@ -213,6 +230,10 @@ describe('ensureSessionKnowledgeBase', () => {
     ['browser profiles/project', 403],
     ['browser-profile', 403],
     ['id_ed25519', 403],
+    ['private.key', 403],
+    ['private-key', 403],
+    ['private_key', 403],
+    ['private key', 403],
     ['private.p12', 403],
     ['C:knowledge', 400],
   ])('refuses unsafe path %j', async (relativePath, statusCode) => {

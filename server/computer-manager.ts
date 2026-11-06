@@ -383,11 +383,16 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     root: string,
     path?: string,
+    confinementPath?: string,
   ): Promise<WorkspaceListing> {
     this.requireComputer(computerId)
     return computerId === this.identity.info.id
-      ? this.localService.listKnowledge(root, path)
-      : this.requireClient(computerId).listKnowledge(root, path)
+      ? this.localService.listKnowledge(root, path, confinementPath)
+      : this.requireClient(computerId).listKnowledge(
+        root,
+        path,
+        confinementPath,
+      )
   }
 
   captureComputerRegistration(computerId: string): () => boolean {
@@ -403,11 +408,16 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     root: string,
     path: string,
+    confinementPath?: string,
   ): Promise<WorkspaceFile> {
     this.requireComputer(computerId)
     return computerId === this.identity.info.id
-      ? this.localService.readKnowledgeFile(root, path)
-      : this.requireClient(computerId).readKnowledgeFile(root, path)
+      ? this.localService.readKnowledgeFile(root, path, confinementPath)
+      : this.requireClient(computerId).readKnowledgeFile(
+        root,
+        path,
+        confinementPath,
+      )
   }
 
   async listWorkspace(

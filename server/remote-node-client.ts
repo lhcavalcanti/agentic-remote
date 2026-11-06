@@ -41,7 +41,11 @@ import {
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
 import { parseSubmissionReceipt } from '../shared/submission-error.js'
 import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
-import { RemoteNodeRedirectError, RemoteNodeRequestError } from './remote-node-errors.js'
+import {
+  RemoteNodeRedirectError,
+  RemoteNodeRequestError,
+  RemoteNodeTransportError,
+} from './remote-node-errors.js'
 import {
   safeResourceError,
   sanitizeSkillsSnapshot,
@@ -188,28 +192,52 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     relativePath: string,
     create: boolean,
   ): Promise<string> {
-    const response = await this.request<{ path: string }>(
-      `/node-api/sessions/${encodeURIComponent(sessionId)}/knowledge-base`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({ path: relativePath, create }),
-      },
-    )
-    return response.path
+    try {
+      const response = await this.request<{ path: string }>(
+        `/node-api/sessions/${encodeURIComponent(sessionId)}/knowledge-base`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ path: relativePath, create }),
+        },
+      )
+      return response.path
+    } catch (error) {
+      if (
+        error instanceof RemoteNodeRequestError &&
+        error.statusCode >= 500
+      ) {
+        throw new RemoteNodeTransportError(this.computer.name, error)
+      }
+      if (typeof Reflect.get(error as object, 'statusCode') === 'number') {
+        throw error
+      }
+      throw new RemoteNodeTransportError(this.computer.name, error)
+    }
   }
 
-  async listKnowledge(root: string, path = '.'): Promise<WorkspaceListing> {
+  async listKnowledge(
+    root: string,
+    path = '.',
+    confinementPath?: string,
+  ): Promise<WorkspaceListing> {
+    const confinement = confinementPath
+      ? `&confinement=${encodeURIComponent(confinementPath)}`
+      : ''
     return this.request<WorkspaceListing>(
-      `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+      `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}${confinement}`,
     )
   }
 
   async readKnowledgeFile(
     root: string,
     path: string,
+    confinementPath?: string,
   ): Promise<WorkspaceFile> {
+    const confinement = confinementPath
+      ? `&confinement=${encodeURIComponent(confinementPath)}`
+      : ''
     return this.request<WorkspaceFile>(
-      `/node-api/knowledge/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+      `/node-api/knowledge/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}${confinement}`,
     )
   }
 

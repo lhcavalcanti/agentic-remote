@@ -112,7 +112,7 @@ Knowledge root or any filesystem folder.
 | `403` | Host/Origin refusal, traversal, hidden/sensitive path, symbolic link, or escape from the session working directory. |
 | `404` | Computer, session, root, or non-created folder does not exist. |
 | `409` | Stale revision, replaced session, or changed pairing. Revision conflicts include the latest `binding`. |
-| `503` | The owning computer cannot validate the path, or metadata persistence/recovery failed. |
+| `503` | The owning computer cannot validate the path, or metadata persistence/recovery failed. A post-commit catalog-cleanup failure includes the committed `binding`; continue from that revision rather than retrying the stale request. |
 
 Filesystem errors do not expose unsubmitted private paths. If directory creation
 succeeds but metadata persistence fails, Agentic Remote leaves the directory in
@@ -144,8 +144,11 @@ it can select only a dedicated folder beneath the session `cwd`. It rejects
 hidden and common credential-bearing names, including `.env*`, `.ssh`, `.aws`,
 `.gnupg`, credential/keychain/browser-profile folders, private-key filenames,
 and PEM/P12/PFX containers. The owning computer walks existing components
-without following symbolic links and verifies the final real path remains under
-`cwd`.
+without following symbolic links. Every later list and file read re-resolves
+the saved root and verifies that it remains a non-symlinked descendant of the
+original session `cwd`. Adding this confinement to an existing catalog root is
+transactional: startup recovery keeps it only when the intended session
+binding and revision were committed.
 
 The API does not scan file contents for secrets. Do not put credentials,
 provider state, private keys, environment files, or other sensitive material in

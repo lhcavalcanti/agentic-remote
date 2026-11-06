@@ -26,7 +26,7 @@ const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
 
 function session(computerId: string, id: string, replacedSessionIds?: string[]): ManagedSession {
   return {
-    id, computerId, computerName: computerId, title: 'Same title', cwd: '/project',
+    id, computerId, computerName: computerId, title: 'Same title', cwd: '/projects/current',
     updatedAt: '2026-09-05T00:00:00.000Z', status: 'idle', isOpen: true,
     messages: [], replacedSessionIds,
   }
@@ -316,6 +316,7 @@ describe('session Knowledge routes', () => {
       root.computerId,
       root.path,
       'projects/agentic-remote',
+      undefined,
     )
     expect(manager.getSession).not.toHaveBeenCalled()
   })
@@ -360,6 +361,41 @@ describe('session Knowledge routes', () => {
     )).toHaveLength(1)
   })
 
+  it('applies the session cwd confinement whenever a path-created root is read', async () => {
+    const { app, putPath, manager } = await fixture()
+    const created = await putPath('knowledge')
+    const rootId = created.json().binding.rootId
+
+    const listing = await app.inject({
+      url: `/api/knowledge/roots/${rootId}/entries?path=.`,
+      headers: trusted,
+    })
+
+    expect(listing.statusCode, listing.body).toBe(200)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      'hub',
+      '/projects/current/knowledge',
+      '.',
+      '/projects/current',
+    )
+  })
+
+  it('keeps the confinement when selecting a nested path in that root', async () => {
+    const { putPath, put, manager } = await fixture()
+    const created = await putPath('knowledge')
+    const rootId = created.json().binding.rootId
+
+    const nested = await put(rootId, 1, 'hub', 'one', 'docs')
+
+    expect(nested.statusCode, nested.body).toBe(200)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      'hub',
+      '/projects/current/knowledge',
+      'docs',
+      '/projects/current',
+    )
+  })
+
   it('supports suspended and historical sessions without opening them', async () => {
     const { putPath, manager, service } = await fixture()
     manager.sessions.push({ ...session('hub', 'suspended'), suspended: true })
@@ -371,6 +407,18 @@ describe('session Knowledge routes', () => {
     expect(service.activateSession).not.toHaveBeenCalled()
   })
 
+  it('refuses path mode when the owner cannot provide the session cwd', async () => {
+    const { put, putPath, root, manager } = await fixture()
+    expect((await put(root.id)).statusCode).toBe(200)
+    manager.sessions = []
+    manager.answeredComputerIds = ['worker', 'library']
+
+    const response = await putPath('knowledge', 1)
+
+    expect(response.statusCode, response.body).toBe(503)
+    expect(manager.ensureSessionKnowledgeBase).not.toHaveBeenCalled()
+  })
+
   it('rolls back a newly reserved path root when the binding revision is stale', async () => {
     const { put, putPath, root, knowledge } = await fixture()
     expect((await put(root.id)).statusCode).toBe(200)
@@ -380,6 +428,53 @@ describe('session Knowledge routes', () => {
     expect(stale.statusCode).toBe(409)
     expect(stale.json().binding).toMatchObject({ rootId: root.id, revision: 1 })
     expect(knowledge.listRoots()).toEqual(before)
+  })
+
+  it('returns the committed binding when catalog finalization needs recovery', async () => {
+    const { directory, putPath, get, store } = await fixture()
+    let catalogRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge.json') &&
+        ++catalogRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(failed.headers['cache-control']).toBe('no-store')
+    expect(failed.json()).toMatchObject({
+      error: expect.not.stringContaining('PRIVATE_FINALIZATION_IO'),
+      binding: {
+        revision: 1,
+        knowledgeBasePath: '/projects/current/knowledge',
+      },
+    })
+    expect((await get()).json().binding).toEqual(failed.json().binding)
+    expect(JSON.parse(
+      await readFile(path.join(directory, 'knowledge.json'), 'utf8'),
+    ).provisionalRootIds).toEqual([failed.json().binding.rootId])
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const recovered = await putPath(
+      'knowledge',
+      failed.json().binding.revision,
+    )
+    expect(recovered.statusCode, recovered.body).toBe(200)
+    expect(recovered.json().binding).toEqual(failed.json().binding)
+    expect(JSON.parse(
+      await readFile(path.join(directory, 'knowledge.json'), 'utf8'),
+    ).provisionalRootIds).toEqual([])
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRootConfinement(recovered.json().binding.rootId)).toBe(
+      '/projects/current',
+    )
   })
 
   it('serializes simultaneous path updates and keeps only the winning root', async () => {

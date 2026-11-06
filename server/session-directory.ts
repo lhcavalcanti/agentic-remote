@@ -29,7 +29,7 @@ export function homeDirectory(): Promise<string> {
 }
 
 const sensitiveKnowledgeSegment =
-  /^(?:credentials?(?:[ _-]+stores?)?|keychains?|browser[ _-]+profiles?|login[ _-]+data|id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|p12|pfx))$/i
+  /^(?:credentials?(?:[ _-]+stores?)?|keychains?|browser[ _-]+profiles?|login[ _-]+data|private[ ._-]+keys?|id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|p12|pfx))$/i
 
 function knowledgePathSegments(inputPath: string): string[] {
   const normalized = inputPath.trim().replaceAll('\\', '/')
@@ -163,7 +163,10 @@ export async function validateSessionDirectory(
  * can actually read. Session working directories stay confined, because that is
  * where an agent executes.
  */
-export async function validateKnowledgeRoot(inputPath: string): Promise<string> {
+export async function validateKnowledgeRoot(
+  inputPath: string,
+  confinementPath?: string,
+): Promise<string> {
   const trimmed = inputPath.trim()
   if (!trimmed) {
     throw new SessionDirectoryError('Folder path is required')
@@ -192,6 +195,27 @@ export async function validateKnowledgeRoot(inputPath: string): Promise<string> 
       throw new SessionDirectoryError(`Folder does not exist: ${expanded}`)
     }
     throw new SessionDirectoryError(`Folder is not readable: ${expanded}`)
+  }
+  if (confinementPath) {
+    let confinement: string
+    try {
+      confinement = await realpath(confinementPath)
+    } catch {
+      throw new SessionDirectoryError(
+        'Session Knowledge confinement is not available',
+        503,
+      )
+    }
+    if (
+      resolved !== path.resolve(expanded) ||
+      confinement !== path.resolve(confinementPath) ||
+      !isWithin(confinement, resolved)
+    ) {
+      throw new SessionDirectoryError(
+        'Knowledge root no longer stays inside the session working directory',
+        403,
+      )
+    }
   }
   return resolved
 }

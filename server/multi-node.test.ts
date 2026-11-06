@@ -71,6 +71,12 @@ class FakeSessionService extends EventEmitter implements SessionService {
     relativePath: string
     create: boolean
   }
+  readonly knowledgeReads: Array<{
+    kind: 'list' | 'file'
+    root: string
+    path: string
+    confinementPath?: string
+  }> = []
   readonly backgroundTaskSnapshots = new Map<string, BackgroundTaskSnapshot>()
 
   constructor(...sessions: SessionDetail[]) {
@@ -210,14 +216,34 @@ class FakeSessionService extends EventEmitter implements SessionService {
 
   knowledgeError?: Error
 
-  async listKnowledge(root: string, path = '.') {
+  async listKnowledge(
+    root: string,
+    path = '.',
+    confinementPath?: string,
+  ) {
     if (this.knowledgeError) {
       throw this.knowledgeError
     }
+    this.knowledgeReads.push({
+      kind: 'list',
+      root,
+      path,
+      confinementPath,
+    })
     return { path, entries: [{ name: 'note.md', path: 'note.md', kind: 'markdown' as const, size: 12 }], root }
   }
 
-  async readKnowledgeFile(root: string, path: string) {
+  async readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ) {
+    this.knowledgeReads.push({
+      kind: 'file',
+      root,
+      path,
+      confinementPath,
+    })
     return {
       name: path.split('/').at(-1) || path,
       path,
@@ -841,6 +867,48 @@ describe('multi-node hub', () => {
         },
         payload: { path: 'knowledge', create: 'yes' },
       })).statusCode).toBe(400)
+    } finally {
+      await node.app.close()
+    }
+  })
+
+  it('forwards the session confinement on authenticated Knowledge reads', async () => {
+    const service = new FakeSessionService(session('active', 'Active'))
+    const node = await buildApp({
+      dataDirectory: await temporaryDirectory('knowledge-read-node'),
+      logger: false,
+      role: 'node',
+      service,
+    })
+    const headers = {
+      authorization: ['Bearer', node.identity.token].join(' '),
+    }
+    try {
+      const listing = await node.app.inject({
+        url: '/node-api/knowledge/entries?root=%2Fsrv%2Fproject%2Fknowledge&path=.&confinement=%2Fsrv%2Fproject',
+        headers,
+      })
+      const file = await node.app.inject({
+        url: '/node-api/knowledge/file?root=%2Fsrv%2Fproject%2Fknowledge&path=note.md&confinement=%2Fsrv%2Fproject',
+        headers,
+      })
+
+      expect(listing.statusCode, listing.body).toBe(200)
+      expect(file.statusCode, file.body).toBe(200)
+      expect(service.knowledgeReads).toEqual([
+        {
+          kind: 'list',
+          root: '/srv/project/knowledge',
+          path: '.',
+          confinementPath: '/srv/project',
+        },
+        {
+          kind: 'file',
+          root: '/srv/project/knowledge',
+          path: 'note.md',
+          confinementPath: '/srv/project',
+        },
+      ])
     } finally {
       await node.app.close()
     }

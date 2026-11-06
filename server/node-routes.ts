@@ -158,11 +158,13 @@ const sessionKnowledgeBaseSchema = z.object({
 const knowledgeQuerySchema = z.object({
   root: z.string().trim().min(1).max(4096),
   path: z.string().trim().max(4096).optional(),
+  confinement: z.string().trim().min(1).max(4096).optional(),
 })
 
 const knowledgeFileQuerySchema = z.object({
   root: z.string().trim().min(1).max(4096),
   path: z.string().trim().min(1).max(4096),
+  confinement: z.string().trim().min(1).max(4096).optional(),
 })
 
 const workspaceFileQuerySchema = z.object({
@@ -547,7 +549,11 @@ export async function registerNodeRoutes(
         '/knowledge/entries',
         async (request) => {
           const query = knowledgeQuerySchema.parse(request.query)
-          return service.listKnowledge(query.root, query.path)
+          return service.listKnowledge(
+            query.root,
+            query.path,
+            query.confinement,
+          )
         },
       )
 
@@ -555,7 +561,11 @@ export async function registerNodeRoutes(
         '/knowledge/file',
         async (request) => {
           const query = knowledgeFileQuerySchema.parse(request.query)
-          return service.readKnowledgeFile(query.root, query.path)
+          return service.readKnowledgeFile(
+            query.root,
+            query.path,
+            query.confinement,
+          )
         },
       )
 

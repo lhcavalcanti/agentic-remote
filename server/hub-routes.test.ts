@@ -161,6 +161,7 @@ describe('hub routes', () => {
         off: () => undefined,
       } as unknown as ComputerManager,
       {
+        getRootConfinement: () => undefined,
         getRoot: () => ({
           id: 'projects',
           computerId: 'library',
@@ -184,6 +185,7 @@ describe('hub routes', () => {
       'library',
       '/home/demo',
       'projects/agentic-remote',
+      undefined,
     )
 
     const file = await app.inject({
@@ -195,6 +197,7 @@ describe('hub routes', () => {
       'library',
       '/home/demo',
       'projects/agentic-remote/README.md',
+      undefined,
     )
 
     readKnowledgeFile.mockResolvedValueOnce({

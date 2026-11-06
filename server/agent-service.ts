@@ -2911,12 +2911,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * working directory, and the requested path is confined within it by
    * `listWorkspace`, so no session is involved.
    */
-  async listKnowledge(root: string, path = '.') {
-    return listWorkspace(await validateKnowledgeRoot(root), path)
+  async listKnowledge(
+    root: string,
+    path = '.',
+    confinementPath?: string,
+  ) {
+    return listWorkspace(
+      await validateKnowledgeRoot(root, confinementPath),
+      path,
+    )
   }
 
-  async readKnowledgeFile(root: string, path: string) {
-    return readWorkspaceFile(await validateKnowledgeRoot(root), path)
+  async readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ) {
+    return readWorkspaceFile(
+      await validateKnowledgeRoot(root, confinementPath),
+      path,
+    )
   }
 
   listWorkspace(

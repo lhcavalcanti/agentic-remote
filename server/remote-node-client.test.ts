@@ -77,6 +77,83 @@ describe('session Knowledge base requests', () => {
       body: JSON.stringify({ path: 'docs/knowledge', create: true }),
     }])
   })
+
+  it('maps an unreachable paired owner to a retryable service error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      new TypeError('PRIVATE_TRANSPORT_DETAIL'),
+    )
+
+    const error = await client(
+      'http://fixture.invalid',
+    ).ensureSessionKnowledgeBase(
+      'session',
+      'knowledge',
+      true,
+    ).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({
+      statusCode: 503,
+      message: expect.not.stringContaining('PRIVATE_TRANSPORT_DETAIL'),
+    })
+    expect(error).not.toHaveProperty('uncertainDelivery')
+  })
+
+  it('maps an owner HTTP 503 to a non-submission service error', async () => {
+    const node = await listen((_request, response) => {
+      response.writeHead(503, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: 'PRIVATE_NODE_DETAIL' }))
+    })
+
+    const error = await client(node).ensureSessionKnowledgeBase(
+      'session',
+      'knowledge',
+      true,
+    ).catch((caught: unknown) => caught)
+
+    expect(error).toMatchObject({
+      statusCode: 503,
+      message: expect.not.stringContaining('PRIVATE_NODE_DETAIL'),
+    })
+    expect(error).not.toHaveProperty('uncertainDelivery')
+  })
+})
+
+describe('session Knowledge read confinement', () => {
+  it('sends the original session cwd with every paired-node read', async () => {
+    const paths: string[] = []
+    const node = await listen((request, response) => {
+      paths.push(request.url ?? '')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(
+        request.url?.includes('/file?')
+          ? {
+              name: 'note.md',
+              path: 'note.md',
+              kind: 'markdown',
+              mimeType: 'text/plain; charset=utf-8',
+              size: 4,
+              content: 'note',
+            }
+          : { path: '.', entries: [] },
+      ))
+    })
+    const remote = client(node)
+
+    await remote.listKnowledge(
+      '/srv/project/knowledge',
+      '.',
+      '/srv/project',
+    )
+    await remote.readKnowledgeFile(
+      '/srv/project/knowledge',
+      'note.md',
+      '/srv/project',
+    )
+
+    expect(paths).toEqual([
+      '/node-api/knowledge/entries?root=%2Fsrv%2Fproject%2Fknowledge&path=.&confinement=%2Fsrv%2Fproject',
+      '/node-api/knowledge/file?root=%2Fsrv%2Fproject%2Fknowledge&path=note.md&confinement=%2Fsrv%2Fproject',
+    ])
+  })
 })
 
 describe('read-only remote resource requests', () => {

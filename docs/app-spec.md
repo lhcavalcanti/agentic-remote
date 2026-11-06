@@ -1487,13 +1487,19 @@ clear replacement IDs without losing, duplicating, or reordering content.
   create the folder on the session's owning computer, MUST NOT accept an
   absolute path or another computer, and MUST reject traversal, hidden or
   sensitive segments, symbolic links, and resolved escapes. The response MUST
-  expose the canonical absolute Knowledge base path.
+  expose the canonical absolute Knowledge base path. Every later read through
+  a path-created root MUST recheck that the root remains a non-symlinked
+  descendant of the original session cwd. A confinement added to an existing
+  catalog root MUST be recoverable across restart: retain it only when its
+  intended session binding/revision committed, otherwise roll it back.
 - Path-first updates MUST use the same persisted revision and replacement
   lineage as catalog-root updates. Saving the same current folder MUST be a
   no-op. Active, suspended, and historical sessions MUST be handled passively;
   changing Knowledge MUST NOT open or resume them. Persisted reads MAY succeed
   while the owner is offline, but path validation or creation MUST fail
-  explicitly until the owner is reachable.
+  explicitly until the owner is reachable. If catalog finalization fails after
+  the binding commit, the API MUST return `503` with the committed binding so
+  callers continue from its revision instead of retrying stale input.
 - A session MAY root its Knowledge tree at a nested folder inside a shared
   root. The nested path MUST persist with the hub-side session association and
   become the true top of that session's tree: parent folders above it MUST NOT

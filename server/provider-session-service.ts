@@ -406,12 +406,20 @@ export class ProviderSessionService
     )
   }
 
-  listKnowledge(root: string, path?: string): Promise<WorkspaceListing> {
-    return this.copilot.listKnowledge(root, path)
+  listKnowledge(
+    root: string,
+    path?: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceListing> {
+    return this.copilot.listKnowledge(root, path, confinementPath)
   }
 
-  readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile> {
-    return this.copilot.readKnowledgeFile(root, path)
+  readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceFile> {
+    return this.copilot.readKnowledgeFile(root, path, confinementPath)
   }
 
   listWorkspace(

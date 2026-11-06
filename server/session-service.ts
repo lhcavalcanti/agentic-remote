@@ -138,8 +138,16 @@ export interface SessionService {
     relativePath: string,
     create: boolean,
   ): Promise<string>
-  listKnowledge(root: string, path?: string): Promise<WorkspaceListing>
-  readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile>
+  listKnowledge(
+    root: string,
+    path?: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceListing>
+  readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceFile>
   listWorkspace(
     sessionId: string,
     path?: string,

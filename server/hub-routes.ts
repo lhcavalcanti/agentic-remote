@@ -561,6 +561,7 @@ export async function registerHubRoutes(
         root.computerId,
         root.path,
         scopedKnowledgePath(query.basePath, query.path),
+        knowledge.getRootConfinement(root.id),
       )
       return scopeKnowledgeListing(listing, query.basePath)
     },
@@ -578,6 +579,7 @@ export async function registerHubRoutes(
         root.computerId,
         root.path,
         scopedKnowledgePath(query.basePath, query.path),
+        knowledge.getRootConfinement(root.id),
       )
       return scopeKnowledgeFile(file, query.basePath)
     },

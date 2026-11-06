@@ -49,6 +49,137 @@ describe('KnowledgeStore', () => {
     await expect(restored.removeRoot(first.id)).resolves.toBe(false)
   })
 
+  it('persists the read confinement of a session-created root', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const reservation = await store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+    })
+    await reservation.finalize()
+
+    expect(store.getRootConfinement(reservation.root.id)).toBe(
+      '/home/user/project',
+    )
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    expect(restored.getRootConfinement(reservation.root.id)).toBe(
+      '/home/user/project',
+    )
+  })
+
+  it('rolls back a confinement added to an existing root when binding fails', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const existing = await store.addRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    })
+
+    const reservation = await store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+    expect(store.getRootConfinement(existing.id)).toBe('/home/user/project')
+
+    await expect(reservation.rollback()).resolves.toBe(false)
+    expect(store.getRoot(existing.id)).toEqual(existing)
+    expect(store.getRootConfinement(existing.id)).toBeUndefined()
+  })
+
+  it('rolls back an uncommitted existing-root confinement after restart', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const existing = await store.addRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    })
+    await store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    await restored.recoverProvisionalRoots([])
+
+    expect(restored.getRoot(existing.id)).toEqual(existing)
+    expect(restored.getRootConfinement(existing.id)).toBeUndefined()
+  })
+
+  it('finalizes a committed existing-root confinement after restart', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const existing = await store.addRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    })
+    await store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    await restored.recoverProvisionalRoots([{
+      computerId: 'computer',
+      sessionId: 'session',
+      rootId: existing.id,
+      revision: 1,
+    }])
+
+    expect(restored.getRootConfinement(existing.id)).toBe(
+      '/home/user/project',
+    )
+    const finalRestart = new KnowledgeStore(directory)
+    await finalRestart.initialize()
+    await finalRestart.recoverProvisionalRoots([])
+    expect(finalRestart.getRootConfinement(existing.id)).toBe(
+      '/home/user/project',
+    )
+  })
+
   it('loads a state file written before roots replaced bookmarks', async () => {
     const directory = await temporaryDirectory()
     const root = {

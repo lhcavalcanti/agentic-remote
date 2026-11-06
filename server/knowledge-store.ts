@@ -6,6 +6,32 @@ import type { KnowledgeRoot } from '../shared/contracts.js'
 interface KnowledgeState {
   roots: KnowledgeRoot[]
   provisionalRootIds: string[]
+  rootConfinements: Record<string, string>
+  provisionalRootConfinements: Record<string, {
+    path: string
+    claims: Array<{
+      token: string
+      computerId: string
+      sessionId: string
+      expectedRevision: number
+    }>
+  }>
+}
+
+interface KnowledgeRootReference {
+  computerId: string
+  sessionId: string
+  rootId: string | null
+  revision: number
+}
+
+interface KnowledgeRootReservationOptions {
+  confinementPath?: string
+  binding?: {
+    computerId: string
+    sessionId: string
+    expectedRevision: number
+  }
 }
 
 export interface KnowledgeRootReservation {
@@ -17,7 +43,12 @@ export interface KnowledgeRootReservation {
 
 export class KnowledgeStore {
   private readonly statePath: string
-  private state: KnowledgeState = { roots: [], provisionalRootIds: [] }
+  private state: KnowledgeState = {
+    roots: [],
+    provisionalRootIds: [],
+    rootConfinements: {},
+    provisionalRootConfinements: {},
+  }
   private readonly rootReservations = new Map<string, Set<string>>()
   private writeQueue: Promise<void> = Promise.resolve()
 
@@ -40,6 +71,46 @@ export class KnowledgeStore {
               (id): id is string => typeof id === 'string',
             )
           : [],
+        rootConfinements:
+          parsed.rootConfinements &&
+          typeof parsed.rootConfinements === 'object'
+            ? Object.fromEntries(
+                Object.entries(parsed.rootConfinements).filter(
+                  (entry): entry is [string, string] =>
+                    typeof entry[1] === 'string',
+                ),
+              )
+            : {},
+        provisionalRootConfinements:
+          parsed.provisionalRootConfinements &&
+          typeof parsed.provisionalRootConfinements === 'object'
+            ? Object.fromEntries(
+                Object.entries(parsed.provisionalRootConfinements).flatMap(
+                  ([rootId, value]) => {
+                    if (
+                      !value ||
+                      typeof value !== 'object' ||
+                      typeof value.path !== 'string' ||
+                      !Array.isArray(value.claims)
+                    ) {
+                      return []
+                    }
+                    const claims = value.claims.filter((claim) =>
+                      claim &&
+                      typeof claim === 'object' &&
+                      typeof claim.token === 'string' &&
+                      typeof claim.computerId === 'string' &&
+                      typeof claim.sessionId === 'string' &&
+                      Number.isSafeInteger(claim.expectedRevision) &&
+                      claim.expectedRevision >= 0,
+                    )
+                    return claims.length > 0
+                      ? [[rootId, { path: value.path, claims }]]
+                      : []
+                  },
+                ),
+              )
+            : {},
       }
       this.rootReservations.clear()
     } catch (error) {
@@ -59,16 +130,71 @@ export class KnowledgeStore {
     return root ? structuredClone(root) : undefined
   }
 
-  recoverProvisionalRoots(referencedRootIds: Iterable<string>): Promise<number> {
-    const referenced = new Set(referencedRootIds)
+  getRootConfinement(id: string): string | undefined {
+    return this.state.rootConfinements[id]
+  }
+
+  recoverProvisionalRoots(
+    references: Iterable<string | KnowledgeRootReference>,
+  ): Promise<number> {
+    const referenced = new Set<string>()
+    const bindings: KnowledgeRootReference[] = []
+    for (const reference of references) {
+      if (typeof reference === 'string') {
+        referenced.add(reference)
+      } else {
+        bindings.push(reference)
+        if (reference.rootId) referenced.add(reference.rootId)
+      }
+    }
     return this.enqueue(async () => {
-      if (this.state.provisionalRootIds.length === 0) return 0
+      if (
+        this.state.provisionalRootIds.length === 0 &&
+        Object.keys(this.state.provisionalRootConfinements).length === 0
+      ) {
+        return 0
+      }
       const provisional = new Set(this.state.provisionalRootIds)
       const roots = this.state.roots.filter(
         (root) => !provisional.has(root.id) || referenced.has(root.id),
       )
       const removed = this.state.roots.length - roots.length
-      const next = { roots, provisionalRootIds: [] }
+      const keptIds = new Set(roots.map((root) => root.id))
+      const committedConfinements = new Set(
+        Object.entries(this.state.provisionalRootConfinements)
+          .filter(([rootId, pending]) =>
+            pending.claims.some((claim) =>
+              bindings.some((binding) =>
+                binding.rootId === rootId &&
+                binding.computerId === claim.computerId &&
+                binding.sessionId === claim.sessionId &&
+                (
+                  binding.revision === claim.expectedRevision ||
+                  (
+                    claim.expectedRevision < Number.MAX_SAFE_INTEGER &&
+                    binding.revision === claim.expectedRevision + 1
+                  )
+                ),
+              ),
+            ),
+          )
+          .map(([rootId]) => rootId),
+      )
+      const next = {
+        roots,
+        provisionalRootIds: [],
+        rootConfinements: Object.fromEntries(
+          Object.entries(this.state.rootConfinements).filter(
+            ([rootId]) =>
+              keptIds.has(rootId) &&
+              (
+                !this.state.provisionalRootConfinements[rootId] ||
+                committedConfinements.has(rootId)
+              ),
+          ),
+        ),
+        provisionalRootConfinements: {},
+      }
       await this.write(next)
       this.state = next
       this.rootReservations.clear()
@@ -86,6 +212,7 @@ export class KnowledgeStore {
 
   reserveRoot(
     root: Omit<KnowledgeRoot, 'id' | 'createdAt'>,
+    options: KnowledgeRootReservationOptions = {},
   ): Promise<KnowledgeRootReservation> {
     return this.enqueue(async () => {
       const existing = this.state.roots.find(
@@ -94,6 +221,69 @@ export class KnowledgeStore {
       )
       if (existing) {
         const reservations = this.rootReservations.get(existing.id)
+        const pending = this.state.provisionalRootConfinements[existing.id]
+        if (options.confinementPath && pending) {
+          if (!options.binding) {
+            throw new Error(
+              'Existing-root confinement requires a binding recovery claim',
+            )
+          }
+          const token = randomUUID()
+          const next = {
+            ...this.state,
+            provisionalRootConfinements: {
+              ...this.state.provisionalRootConfinements,
+              [existing.id]: {
+                ...pending,
+                claims: [
+                  ...pending.claims,
+                  { token, ...options.binding },
+                ],
+              },
+            },
+          }
+          await this.write(next)
+          this.state = next
+          if (reservations) {
+            reservations.add(token)
+          } else {
+            this.rootReservations.set(existing.id, new Set([token]))
+          }
+          return this.reservation(existing, false, token)
+        }
+        if (
+          options.confinementPath &&
+          !this.state.rootConfinements[existing.id]
+        ) {
+          if (!options.binding) {
+            throw new Error(
+              'Existing-root confinement requires a binding recovery claim',
+            )
+          }
+          const token = randomUUID()
+          const next = {
+            ...this.state,
+            rootConfinements: {
+              ...this.state.rootConfinements,
+              [existing.id]: options.confinementPath,
+            },
+            provisionalRootConfinements: {
+              ...this.state.provisionalRootConfinements,
+              [existing.id]: {
+                path: options.confinementPath,
+                claims: [{ token, ...options.binding }],
+              },
+            },
+          }
+          await this.write(next)
+          this.state = next
+          if (reservations) {
+            reservations.add(token)
+          } else {
+            this.rootReservations.set(existing.id, new Set([token]))
+          }
+          return this.reservation(existing, false, token)
+        }
         if (!reservations) {
           return this.reservation(existing, false)
         }
@@ -109,6 +299,14 @@ export class KnowledgeStore {
       const next = {
         roots: [created, ...this.state.roots],
         provisionalRootIds: [created.id, ...this.state.provisionalRootIds],
+        rootConfinements: {
+          ...this.state.rootConfinements,
+          ...(options.confinementPath
+            ? { [created.id]: options.confinementPath }
+            : {}),
+        },
+        provisionalRootConfinements:
+          this.state.provisionalRootConfinements,
       }
       await this.write(next)
       this.state = next
@@ -126,6 +324,16 @@ export class KnowledgeStore {
         roots: remaining,
         provisionalRootIds: this.state.provisionalRootIds.filter(
           (rootId) => rootId !== id,
+        ),
+        rootConfinements: Object.fromEntries(
+          Object.entries(this.state.rootConfinements).filter(
+            ([rootId]) => rootId !== id,
+          ),
+        ),
+        provisionalRootConfinements: Object.fromEntries(
+          Object.entries(this.state.provisionalRootConfinements).filter(
+            ([rootId]) => rootId !== id,
+          ),
         ),
       }
       await this.write(next)
@@ -156,6 +364,16 @@ export class KnowledgeStore {
         roots: remaining,
         provisionalRootIds: this.state.provisionalRootIds.filter(
           (rootId) => !removedIdSet.has(rootId),
+        ),
+        rootConfinements: Object.fromEntries(
+          Object.entries(this.state.rootConfinements).filter(
+            ([rootId]) => !removedIdSet.has(rootId),
+          ),
+        ),
+        provisionalRootConfinements: Object.fromEntries(
+          Object.entries(this.state.provisionalRootConfinements).filter(
+            ([rootId]) => !removedIdSet.has(rootId),
+          ),
         ),
       }
       await this.write(next)
@@ -209,12 +427,27 @@ export class KnowledgeStore {
       }
       const reservations = this.rootReservations.get(id)
       if (reservations?.has(token)) {
-        if (this.state.provisionalRootIds.includes(id)) {
+        if (this.state.provisionalRootConfinements[id]) {
+          const { [id]: _finalized, ...provisionalRootConfinements } =
+            this.state.provisionalRootConfinements
+          const next = {
+            ...this.state,
+            provisionalRootIds: this.state.provisionalRootIds.filter(
+              (rootId) => rootId !== id,
+            ),
+            provisionalRootConfinements,
+          }
+          await this.write(next)
+          this.state = next
+        } else if (this.state.provisionalRootIds.includes(id)) {
           const next = {
             roots: this.state.roots,
             provisionalRootIds: this.state.provisionalRootIds.filter(
               (rootId) => rootId !== id,
             ),
+            rootConfinements: this.state.rootConfinements,
+            provisionalRootConfinements:
+              this.state.provisionalRootConfinements,
           }
           await this.write(next)
           this.state = next
@@ -235,6 +468,31 @@ export class KnowledgeStore {
   ): Promise<boolean> {
     const reservations = this.rootReservations.get(id)
     if (!reservations?.has(token)) return false
+    const pending = this.state.provisionalRootConfinements[id]
+    if (pending) {
+      const claims = pending.claims.filter((claim) => claim.token !== token)
+      const { [id]: _confinement, ...rootConfinements } =
+        this.state.rootConfinements
+      const { [id]: _pending, ...otherPending } =
+        this.state.provisionalRootConfinements
+      const next = {
+        ...this.state,
+        rootConfinements:
+          claims.length > 0 ? this.state.rootConfinements : rootConfinements,
+        provisionalRootConfinements:
+          claims.length > 0
+            ? {
+                ...otherPending,
+                [id]: { ...pending, claims },
+              }
+            : otherPending,
+      }
+      await this.write(next)
+      this.state = next
+      reservations.delete(token)
+      if (reservations.size === 0) this.rootReservations.delete(id)
+      return false
+    }
     if (reservations.size > 1) {
       reservations.delete(token)
       return false
@@ -248,6 +506,16 @@ export class KnowledgeStore {
       roots: remaining,
       provisionalRootIds: this.state.provisionalRootIds.filter(
         (rootId) => rootId !== id,
+      ),
+      rootConfinements: Object.fromEntries(
+        Object.entries(this.state.rootConfinements).filter(
+          ([rootId]) => rootId !== id,
+        ),
+      ),
+      provisionalRootConfinements: Object.fromEntries(
+        Object.entries(this.state.provisionalRootConfinements).filter(
+          ([rootId]) => rootId !== id,
+        ),
       ),
     }
     await this.write(next)

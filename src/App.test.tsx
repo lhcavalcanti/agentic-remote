@@ -20,6 +20,7 @@ import type {
   ComputerSummary,
   KnowledgeRoot,
   ManagedSession,
+  QueuedPrompt,
   SessionKnowledgeBinding,
   ManagedSessionMcpServersSnapshot,
   ManagedSessionSkillsSnapshot,

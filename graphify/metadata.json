@@ -401,9 +401,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 226,
+  "communities": 217,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18776,
+  "edges": 18777,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -781,7 +781,7 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "5e4eae30c95a02bfe226c33da1f6ba42f7402f93487c4c8347c358ed4d46bf3c",
+    "src/App.test.tsx": "9cef07acec438106c71db176f9fca6d4184717268915f45434d79b89f628ca25",
     "src/App.tsx": "b8f1727fb684f282d9988b13778b6f095cbb7b1072060c61d92542a737113415",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
@@ -991,16 +991,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e4ecd7fc766e61e569d1142c194cd7380af5b17adddc4a9020b2f251d458bbbc",
-    "communities.json": "2b1a423622c5f54602b82909853b9cb51bf7b8288f1802c60359fa48f8e73f08",
-    "graph.html": "46de532abb7b1c919400a23b3a53d4fc0cc17b7e95f8226c60b137c17210ee60",
-    "graph.json": "39b7b776d1b39adcc9558270c45cb11436f6066e53dbe823f567cf2516403408"
+    "GRAPH_REPORT.md": "c7daa24bdcebe81fbece072c23cec2c085ec3e99069b25d8d2cb1d6ad9d98751",
+    "communities.json": "e6d7e726d1e7366555f184a9c53edaa4e8375f7d2d18d1355feacfd0930c84f2",
+    "graph.html": "56fff5989216d533302cbd2e18ffa67c56f2ed1849971f1e488ba805deb1ffe6",
+    "graph.json": "697698e74186c352add131db79783325d5dab4a89a310c5428ca0d4ae7afbc3b"
   },
   "schema_version": 1,
-  "source_commit": "09806b3963ae75e70d41a7c7993dac61dfd710f7",
-  "source_fingerprint": "f59e9e3f74d3997ae9cd3bdcecb50d932ce9240b4faa7c0e8532c70d66bd181b",
+  "source_commit": "d5290fdb1d45ec4cd069a7863559bbdc3c29305d",
+  "source_fingerprint": "a82709bbdc2adbd21c62bec759068084c14fcb68de47e260a76763d6ecc8d673",
   "working_tree_changes": [
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "src/App.test.tsx"
   ]
 }

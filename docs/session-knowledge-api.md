@@ -73,7 +73,8 @@ Content-Type: application/json
 - `knowledgeBasePath` is required and relative. Absolute paths, `.`, `..`,
   hidden segments, sensitive names, symlinks, and escapes are refused.
 - `create` defaults to `false`. `true` creates missing path segments with mode
-  `0700`.
+  `0700` through verified directory handles, so replacing the session `cwd` or
+  an earlier segment with a symbolic link cannot redirect creation.
 - `expectedRevision` comes from the latest `GET`.
 - The folder is created or validated on the session's owning computer and added
   to the existing shared Knowledge catalog.

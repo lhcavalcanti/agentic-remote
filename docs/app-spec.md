@@ -1486,11 +1486,14 @@ clear replacement IDs without losing, duplicating, or reordering content.
   relative path under the session's unchanged cwd. Path mode MUST resolve and
   create the folder on the session's owning computer, MUST NOT accept an
   absolute path or another computer, and MUST reject traversal, hidden or
-  sensitive segments, symbolic links, and resolved escapes. The response MUST
-  expose the canonical absolute Knowledge base path and persist the canonical
-  owner-returned session cwd as its confinement. Every later read through a
-  path-created root MUST atomically resolve and verify that the root remains a
-  non-symlinked descendant of that cwd before resolving the requested entry.
+  sensitive segments, symbolic links, and resolved escapes. Creation MUST use
+  verified no-follow directory handles so a concurrent cwd or ancestor
+  replacement cannot redirect a new segment outside confinement. The response
+  MUST expose the canonical absolute Knowledge base path and persist the
+  canonical owner-returned session cwd as its confinement. Every later read
+  through a path-created root MUST atomically resolve and verify that the root
+  remains a non-symlinked descendant of that cwd before resolving the requested
+  entry.
   File reads MUST open the resolved entry without following a replacement
   symbolic link and verify the opened file identity before reading content.
   Paired nodes MUST acknowledge that they applied this confinement; the hub

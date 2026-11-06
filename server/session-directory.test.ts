@@ -9,6 +9,15 @@ import {
   validateSessionDirectory,
 } from './session-directory.js'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    mkdir: vi.fn(actual.mkdir),
+    stat: vi.fn(actual.stat),
+  }
+})
+
 const directories: string[] = []
 
 afterEach(async () => {
@@ -18,6 +27,13 @@ afterEach(async () => {
       rm(directory, { recursive: true, force: true }),
     ),
   )
+  const actual = await vi.importActual<typeof import('node:fs/promises')>(
+    'node:fs/promises',
+  )
+  vi.mocked(mkdir).mockImplementation(async (target, options) =>
+    actual.mkdir(target, options),
+  )
+  vi.mocked(stat).mockImplementation(async (target) => actual.stat(target))
 })
 
 async function homeFixture(): Promise<string> {
@@ -272,6 +288,71 @@ describe('ensureSessionKnowledgeBase', () => {
       message: expect.stringContaining('symbolic link'),
     })
     await expect(stat(path.join(outside, 'notes'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('does not create outside cwd when cwd becomes a symlink after validation', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-create-race-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const outside = path.join(parent, 'outside')
+    await mkdir(cwd)
+    await mkdir(outside)
+    const actual = await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    )
+    let replaced = false
+    vi.mocked(stat).mockImplementation(async (target) => {
+      const metadata = await actual.stat(target)
+      if (!replaced && String(target) === cwd) {
+        replaced = true
+        await rename(cwd, `${cwd}-original`)
+        await symlink(outside, cwd)
+      }
+      return metadata
+    })
+
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
+    ).rejects.toMatchObject({ statusCode: 403 })
+    await expect(stat(path.join(outside, 'docs'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('rolls back a segment if its opened parent moves outside cwd during mkdir', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-mkdir-race-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const moved = path.join(parent, 'project-moved')
+    const outside = path.join(parent, 'outside')
+    await mkdir(cwd)
+    await mkdir(outside)
+    const actual = await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    )
+    let replaced = false
+    vi.mocked(mkdir).mockImplementation(async (target, options) => {
+      if (
+        !replaced &&
+        String(target).startsWith('/proc/self/fd/') &&
+        path.basename(String(target)) === 'docs'
+      ) {
+        replaced = true
+        await rename(cwd, moved)
+        await symlink(outside, cwd)
+      }
+      return actual.mkdir(target, options)
+    })
+
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
+    ).rejects.toMatchObject({ statusCode: 403 })
+    await expect(stat(path.join(moved, 'docs'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    await expect(stat(path.join(outside, 'docs'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
   })

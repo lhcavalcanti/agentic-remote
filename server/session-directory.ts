@@ -1,5 +1,14 @@
-import { access, lstat, mkdir, realpath, stat } from 'node:fs/promises'
-import { constants } from 'node:fs'
+import {
+  access,
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  rmdir,
+  stat,
+  type FileHandle,
+} from 'node:fs/promises'
+import { constants, type Stats } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -19,6 +28,139 @@ export class SessionDirectoryError extends Error {
 export interface SessionKnowledgeBaseLocation {
   path: string
   confinementPath: string
+}
+
+function directoryDescriptorPath(fileDescriptor: number): string {
+  if (process.platform === 'linux') {
+    return `/proc/self/fd/${fileDescriptor}`
+  }
+  throw new SessionDirectoryError(
+    'Session Knowledge directory confinement cannot be verified on this platform',
+    503,
+  )
+}
+
+async function assertOpenedDirectoryPath(
+  handle: FileHandle,
+  expectedPath: string,
+  root: string,
+): Promise<void> {
+  let openedPath: string
+  try {
+    openedPath = await realpath(directoryDescriptorPath(handle.fd))
+  } catch (error) {
+    if (error instanceof SessionDirectoryError) throw error
+    throw new SessionDirectoryError(
+      'Session Knowledge directory confinement could not be verified',
+      503,
+    )
+  }
+  if (openedPath !== expectedPath || !isWithin(root, openedPath)) {
+    throw new SessionDirectoryError(
+      'Session Knowledge directory changed while opening',
+      403,
+    )
+  }
+}
+
+async function assertOpenedDirectory(
+  handle: FileHandle,
+  metadata: Stats,
+  expectedPath: string,
+  root: string,
+): Promise<void> {
+  const opened = await handle.stat()
+  if (
+    !opened.isDirectory() ||
+    opened.dev !== metadata.dev ||
+    opened.ino !== metadata.ino
+  ) {
+    throw new SessionDirectoryError(
+      'Session Knowledge directory changed while opening',
+      403,
+    )
+  }
+  await assertOpenedDirectoryPath(handle, expectedPath, root)
+}
+
+async function openVerifiedDirectory(
+  openPath: string,
+  metadata: Stats,
+  expectedPath: string,
+  root: string,
+): Promise<FileHandle> {
+  let handle: FileHandle
+  try {
+    handle = await open(
+      openPath,
+      constants.O_RDONLY |
+        (constants.O_DIRECTORY ?? 0) |
+        (constants.O_NOFOLLOW ?? 0),
+    )
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ELOOP') {
+      throw new SessionDirectoryError(
+        'Knowledge base path cannot include a symbolic link',
+        403,
+      )
+    }
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new SessionDirectoryError(
+        'Session Knowledge directory changed while opening',
+        403,
+      )
+    }
+    throw error
+  }
+  try {
+    await assertOpenedDirectory(handle, metadata, expectedPath, root)
+    return handle
+  } catch (error) {
+    await handle.close()
+    throw error
+  }
+}
+
+interface CreatedKnowledgeDirectory {
+  path: string
+  metadata: Stats
+}
+
+async function rollbackCreatedDirectories(
+  created: CreatedKnowledgeDirectory[],
+): Promise<void> {
+  for (const entry of [...created].reverse()) {
+    let metadata: Stats
+    try {
+      metadata = await lstat(entry.path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw new SessionDirectoryError(
+        'Knowledge folder creation could not be rolled back safely',
+        503,
+      )
+    }
+    if (
+      !metadata.isDirectory() ||
+      metadata.dev !== entry.metadata.dev ||
+      metadata.ino !== entry.metadata.ino
+    ) {
+      throw new SessionDirectoryError(
+        'Knowledge folder creation could not be rolled back safely',
+        503,
+      )
+    }
+    try {
+      await rmdir(entry.path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw new SessionDirectoryError(
+        'Knowledge folder creation could not be rolled back safely',
+        503,
+      )
+    }
+  }
 }
 
 export function isWithin(root: string, candidate: string): boolean {
@@ -236,9 +378,11 @@ export async function ensureSessionKnowledgeBase(
 ): Promise<SessionKnowledgeBaseLocation> {
   const segments = knowledgePathSegments(inputPath)
   let root: string
+  let rootMetadata: Stats
   try {
     root = await realpath(cwd)
-    if (!(await stat(root)).isDirectory()) {
+    rootMetadata = await stat(root)
+    if (!rootMetadata.isDirectory()) {
       throw new SessionDirectoryError(
         'Session working directory must point to a directory',
       )
@@ -248,51 +392,106 @@ export async function ensureSessionKnowledgeBase(
     throw new SessionDirectoryError('Session working directory is not available')
   }
 
+  let currentHandle: FileHandle
+  try {
+    currentHandle = await openVerifiedDirectory(
+      root,
+      rootMetadata,
+      root,
+      root,
+    )
+  } catch (error) {
+    if (error instanceof SessionDirectoryError) throw error
+    throw new SessionDirectoryError('Session working directory is not available')
+  }
+  const handles = [currentHandle]
+  const createdDirectories: CreatedKnowledgeDirectory[] = []
   let current = root
-  for (const segment of segments) {
-    const candidate = path.join(current, segment)
-    let metadata
-    try {
-      metadata = await lstat(candidate)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'ENOENT') {
-        throw new SessionDirectoryError(`Knowledge folder is not readable: ${inputPath}`)
-      }
-      if (!create) {
-        throw new SessionDirectoryError(
-          `Knowledge folder does not exist: ${inputPath}`,
-          404,
-        )
-      }
+  try {
+    for (const segment of segments) {
+      await assertOpenedDirectoryPath(currentHandle, current, root)
+      const candidate = path.join(current, segment)
+      const descriptorCandidate = path.join(
+        directoryDescriptorPath(currentHandle.fd),
+        segment,
+      )
+      let metadata: Stats
+      let created = false
       try {
-        await mkdir(candidate, { mode: 0o700 })
-      } catch (mkdirError) {
-        if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') {
+        metadata = await lstat(descriptorCandidate)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code !== 'ENOENT') {
           throw new SessionDirectoryError(
-            `Knowledge folder could not be created: ${inputPath}`,
+            `Knowledge folder is not readable: ${inputPath}`,
           )
         }
+        if (!create) {
+          throw new SessionDirectoryError(
+            `Knowledge folder does not exist: ${inputPath}`,
+            404,
+          )
+        }
+        try {
+          await assertOpenedDirectoryPath(currentHandle, current, root)
+          await mkdir(descriptorCandidate, { mode: 0o700 })
+          created = true
+        } catch (mkdirError) {
+          if (mkdirError instanceof SessionDirectoryError) throw mkdirError
+          if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') {
+            throw new SessionDirectoryError(
+              `Knowledge folder could not be created: ${inputPath}`,
+            )
+          }
+        }
+        metadata = await lstat(descriptorCandidate)
       }
-      metadata = await lstat(candidate)
+      if (metadata.isSymbolicLink()) {
+        throw new SessionDirectoryError(
+          'Knowledge base path cannot include a symbolic link',
+          403,
+        )
+      }
+      if (!metadata.isDirectory()) {
+        throw new SessionDirectoryError(
+          'Knowledge base path must point to a directory',
+        )
+      }
+      if (created) {
+        createdDirectories.push({
+          path: descriptorCandidate,
+          metadata,
+        })
+      }
+      const nextHandle = await openVerifiedDirectory(
+        descriptorCandidate,
+        metadata,
+        candidate,
+        root,
+      )
+      handles.push(nextHandle)
+      currentHandle = nextHandle
+      current = candidate
+      assertSafeResolvedKnowledgePath(root, current)
     }
-    if (metadata.isSymbolicLink()) {
+
+    try {
+      await assertOpenedDirectoryPath(currentHandle, current, root)
+      await access(
+        directoryDescriptorPath(currentHandle.fd),
+        constants.R_OK | constants.X_OK,
+      )
+    } catch (error) {
+      if (error instanceof SessionDirectoryError) throw error
       throw new SessionDirectoryError(
-        'Knowledge base path cannot include a symbolic link',
-        403,
+        `Knowledge folder is not readable: ${inputPath}`,
       )
     }
-    if (!metadata.isDirectory()) {
-      throw new SessionDirectoryError('Knowledge base path must point to a directory')
-    }
-    current = await realpath(candidate)
-    assertSafeResolvedKnowledgePath(root, current)
+    return { path: current, confinementPath: root }
+  } catch (error) {
+    await rollbackCreatedDirectories(createdDirectories)
+    throw error
+  } finally {
+    await Promise.allSettled(handles.map((handle) => handle.close()))
   }
-
-  try {
-    await access(current, constants.R_OK | constants.X_OK)
-  } catch {
-    throw new SessionDirectoryError(`Knowledge folder is not readable: ${inputPath}`)
-  }
-  return { path: current, confinementPath: root }
 }

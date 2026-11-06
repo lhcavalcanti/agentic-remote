@@ -673,6 +673,27 @@ describe('Durable recovery resend ownership', () => {
   })
 
   it.each(['message', 'command'] as const)(
+    'keeps a queued %s behind an earlier recovery message before its claim starts',
+    async (kind) => {
+      const context = await fixture()
+      const held = gate()
+      context.service['terminalImmediateOperations'].set(sessionId, held.pending)
+      const queued = kind === 'message' ? 'Queued independent' : '/usage queued'
+
+      const first = context.send(context.service)
+      const second = kind === 'message'
+        ? context.service.sendMessage(sessionId, queued, true)
+        : context.service.executeCommand(sessionId, queued, true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(context.pastes).toEqual([])
+      held.release()
+      await Promise.all([first, second])
+      expect(context.pastes).toEqual([context.submitted, queued])
+    },
+  )
+
+  it.each(['message', 'command'] as const)(
     'does not admit the replacement %s token while its dispatch is still in flight',
     async (kind) => {
       const context = await fixture(kind)
@@ -1121,14 +1142,9 @@ describe('Recovery and admission integration', () => {
         ? context.service.sendMessage(sessionId, nextContent, enqueue)
         : context.service.executeCommand(sessionId, nextContent, enqueue)
       const results = Promise.allSettled([first, next])
-      if (enqueue) {
-        await vi.waitFor(() =>
-          expect(context.service['terminalAdmissionOperations'].get(sessionId)).not.toBe(admission))
-      } else {
-        await vi.waitFor(() =>
-          expect(context.service['terminalImmediateOperations'].get(sessionId)).not.toBe(immediate))
-        expect(context.service['terminalAdmissionOperations'].get(sessionId)).toBe(admission)
-      }
+      await vi.waitFor(() =>
+        expect(context.service['terminalImmediateOperations'].get(sessionId)).not.toBe(immediate))
+      expect(context.service['terminalAdmissionOperations'].get(sessionId)).toBe(admission)
       held.release()
       const [initial, follower] = await results
       expect(initial.status).toBe('fulfilled')

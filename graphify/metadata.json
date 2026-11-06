@@ -532,7 +532,7 @@
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "d06eb9387baeb74233fdf1aab95cb7db223158e7cbb220373ac314e4e912c6d1",
-    "server/agent-service.ts": "6c134a31b0095c614a70bdfafdba2f8f809b824216a9f4e479862178c0422c7c",
+    "server/agent-service.ts": "491ad9f616299b139d32f7b01d8865c4bf79001b4392fa5512c83a626633c8a8",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -658,7 +658,7 @@
     "server/recovery-context.test.ts": "a74af6cd288e8c848f78c2a7fc655a91f2af7a46aca03913ed6f4561b0e91bdd",
     "server/recovery-context.ts": "5893a9bf0e183e7ce5e6fcbf4526ec2077bfe6292e3e6f06ed45b03fc8e80725",
     "server/recovery-question-styles.test.ts": "a2b2670531022fefdad6728c3d1e0738c07d251f9d7e7207d599b01ddb11d0e8",
-    "server/recovery-resend-durability.test.ts": "3b0ffff2b34dab119830a9ec3525ded7a584432da9a9bee45b4255827f63b80c",
+    "server/recovery-resend-durability.test.ts": "74fb9ef9ff2a08fd2ecab8589e2af3df9fcf980fc7b70114ef40180ca333e60e",
     "server/recovery-seed-guards.test.ts": "160e953bd4df95e34fceef919508b17ba88f5687d978cf2aa8adf4d5cb44a3b2",
     "server/recovery-seed-legacy-fixture.ts": "9826186c940ebbb4c420fc209d23815ccbb43b1468cd9f676c554cde6730952f",
     "server/refusal-metrics-routes.test.ts": "4fd485e8ea02da3badb1519f966f72e660e96c1bfc3c3ad0dba5c3cefd38de57",
@@ -989,16 +989,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5591329aa32cc9609d582419bed5dde22c04b4e9897b284b2b73b6e8f3584394",
+    "GRAPH_REPORT.md": "b78f8d781daacc687848e40b07fbf20022275ba22e1a8902bc444f5bb2d95d20",
     "communities.json": "0fcef4cd453bca1355924e78693cab790839bdb1fdc1c2efd5ae3c36cf0ff91a",
-    "graph.html": "116bca90b4164aaa2a3078a396a30fb00024327f7674188f4c2b1e0002387c86",
-    "graph.json": "acc92cf8a5fa459f4c4e6b3c01a1fc2c909a89b7039665b6186dbac0a382cc27"
+    "graph.html": "e181dda457e9935d344ca405e7c4e2ca52d53ab93840da575d4417a86c430b98",
+    "graph.json": "78b87e2a70152f2e9fe9520e7e044a98e0ee1bf78d02c94f93ee1e89bf537248"
   },
   "schema_version": 1,
-  "source_commit": "501a9ed97fc261daa2d7831ef93e31c770a1656e",
-  "source_fingerprint": "1d61f5beede0834818448bf4acd964fc98711eee30e2843563548c926da771c2",
+  "source_commit": "721a3d57a6de89bfb8fcce61096a16301a7b368e",
+  "source_fingerprint": "64ca2d83738eade903609688ab314da3eb26381ec2da732e97d1bdd314a9e0ca",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
     "server/agent-service.ts",
     "server/recovery-resend-durability.test.ts"
   ]

@@ -4776,7 +4776,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertRecoveryAttemptAvailable(sessionId, acknowledgedFailure)
     if (
       !releaseTerminalImmediate &&
-      !enqueue &&
       !answerDelivery &&
       (
         this.store.backend(sessionId) === 'terminal' ||
@@ -6707,7 +6706,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (
       !releaseTerminalImmediate &&
-      !enqueue &&
       (
         this.store.backend(sessionId) === 'terminal' ||
         this.externalSessionIds.has(sessionId)

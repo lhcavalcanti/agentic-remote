@@ -406,9 +406,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 217,
+  "communities": 210,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19154,
+  "edges": 19156,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -592,7 +592,7 @@
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
     "server/manager-agent.test.ts": "2cad36bb99bb5a9e2e6be68bbfc39efe09c8ac9912cbbdfbfe445b3d806b9b8b",
-    "server/manager-agent.ts": "014e110cbbd625a064099366fde45401122d436312536b1800032fd414a58dae",
+    "server/manager-agent.ts": "8b3bf875f77bba2ed616e4b7afac110ee2c9bf43fe627d73eba7df11717defd8",
     "server/manager-context.test.ts": "6beb63ddb979a3d9a4c41357af3f93cee56562014c60ef41dae46983de27d349",
     "server/manager-context.ts": "e540f6cca6e8e7d074a48f9953e6589f12f7d87808c7f061b63b8202f79f652d",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -1005,37 +1005,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "a1393f7e7c3945ee7a266d44773963b8c9c487ed5033ce4013d05c3e0261ea7d",
-    "communities.json": "fe6993a0a0aecb959391fbfc4eb891f271bad66ec30e8a1b143ff75a10526e52",
-    "graph.html": "cd601c696314d6a0b790b8a1ff31d63d2d537e3c8cf080ab9e16ea6f40601e7a",
-    "graph.json": "b767e298e1eb6dd575a2acd9343ee0fdf11feefe305f3e273b9b18cc160e8baa"
+    "GRAPH_REPORT.md": "a9842314182c5a294b3db71a5fb26c49cdbbd608fa6ae3cf838804effdcfe623",
+    "communities.json": "59f92b8edacd6a2f041fc12e47320ba41c1c78d065328fdbb5dea38e7502979d",
+    "graph.html": "09c5b624514e5b183c624c18787f1655bfeb849eb3d68ea89e3d117926819a67",
+    "graph.json": "2678bce5d96041f0fe5e44a6ee620764cd67ebb9a10b0510fb661264a7cd3d2a"
   },
   "schema_version": 1,
-  "source_commit": "c5471e7ff7905fb5eaa11141f66c878d779d24e3",
-  "source_fingerprint": "d10bebe123c1640aa19224a7adf866fbf5fa28d8f7c5039999276447fb2e3a12",
+  "source_commit": "82dea2e5b88dede43c590cf235b41e231cab117d",
+  "source_fingerprint": "225524de520d2434763e9ff67b61692fbec6f24c19e0c90dbbbc4fe515509296",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/design/oracle-dreamer.md",
-    "docs/superpowers/plans/2026-11-06-oracle-actionable-morning-plan.md",
-    "server/app.ts",
-    "server/dreamer-routes.test.ts",
-    "server/dreamer-routes.ts",
-    "server/dreamer-service.test.ts",
-    "server/dreamer-service.ts",
-    "server/dreamer-store.ts",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-proactive-coordinator.test.ts",
-    "server/manager-proactive-coordinator.ts",
-    "server/manager-tools.test.ts",
-    "server/manager-tools.ts",
-    "server/oracle-task-store.test.ts",
-    "server/oracle-task-store.ts",
-    "shared/manager.ts",
-    "shared/oracle-task.ts",
-    "src/OracleDreamer.test.tsx",
-    "src/OracleDreamer.tsx",
-    "src/dreamer-api.test.ts",
-    "src/dreamer-api.ts"
+    "server/manager-agent.ts"
   ]
 }

@@ -21,6 +21,7 @@ import {
   type ManagerMessage,
   type ManagerMessageSource,
   type ManagerProactiveOutcome,
+  type ManagerSessionRef,
   type ManagerSubmissionOptions,
   type ManagerSessionBackend,
   type ManagerSettings,

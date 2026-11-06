@@ -402,6 +402,7 @@ type ComposerAttachment = {
   ownerKey: string
   computerId: string
   sessionId: string
+  migratedFrom?: string
   name: string
   size: number
   file?: File
@@ -468,6 +469,15 @@ function attachmentSize(size: number): string {
     return `${Math.ceil(size / 1024)} KiB`
   }
   return `${size} B`
+}
+
+function clipboardFileFingerprint(file: File): string {
+  return [
+    file.name,
+    file.type,
+    file.size.toString(),
+    file.lastModified.toString(),
+  ].join('\u0000')
 }
 
 function recordingDuration(seconds: number): string {
@@ -1247,6 +1257,13 @@ function readComposerAttachments(
         typeof attachment.name === 'string' && attachment.name.length > 0 &&
         typeof attachment.size === 'number' && attachment.size >= 0 &&
         Number.isFinite(attachment.size) &&
+        (
+          attachment.migratedFrom === undefined ||
+          (
+            typeof attachment.migratedFrom === 'string' &&
+            attachment.migratedFrom.length > 0
+          )
+        ) &&
         typeof attachment.promptText === 'string' &&
         attachment.promptText.length > 0,
       ))) {
@@ -1257,6 +1274,7 @@ function readComposerAttachments(
         id: string
         name: string
         size: number
+        migratedFrom?: string
         promptText: string
       }>>).flatMap(([ownerKey, attachments]) => {
         const draft = drafts[ownerKey]
@@ -7789,6 +7807,9 @@ function App() {
   const attachmentFilesRef = useRef(
     new Map<string, Set<File>>(),
   )
+  const clipboardPasteBatchesRef = useRef(
+    new Map<string, { at: number; fingerprints: Set<string> }>(),
+  )
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
   const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
   const recordingChunksRef = useRef<Blob[]>([])
@@ -7968,6 +7989,11 @@ function App() {
         // what the ancestor had, while the link is still needed to answer a
         // later Back or deep link to the session that is gone.
         replacedInto.current.set(ancestor, replacement)
+        for (const attachment of composerAttachmentsRef.current[replacement] || []) {
+          if (attachment.migratedFrom === ancestor) {
+            migratedAttachmentIds.add(attachment.id)
+          }
+        }
         if (!adoptedReplacements.current.has(ancestor)) {
           adoptedReplacements.current.add(ancestor)
           for (const attachment of composerAttachmentsRef.current[ancestor] || []) {
@@ -11706,10 +11732,11 @@ function App() {
               attachment.promptText !== undefined &&
               composerDraftContainsAttachment(draft, attachment.promptText),
             )
-            .map(({ id, name, size, promptText }) => ({
+            .map(({ id, name, size, migratedFrom, promptText }) => ({
               id,
               name,
               size,
+              ...(migratedFrom ? { migratedFrom } : {}),
               promptText: promptText!,
             }))
           return durable.length > 0 ? [[ownerKey, durable]] : []
@@ -11818,6 +11845,7 @@ function App() {
 
   function forgetAttachments(ownerKey: string) {
     attachmentFilesRef.current.delete(ownerKey)
+    clipboardPasteBatchesRef.current.delete(ownerKey)
     updateComposerAttachments((current) => {
       if (!current[ownerKey]) {
         return current
@@ -11862,6 +11890,11 @@ function App() {
       attachmentFilesRef.current.set(toKey, destinationFiles)
       attachmentFilesRef.current.delete(fromKey)
     }
+    const clipboardBatch = clipboardPasteBatchesRef.current.get(fromKey)
+    if (clipboardBatch) {
+      clipboardPasteBatchesRef.current.set(toKey, clipboardBatch)
+      clipboardPasteBatchesRef.current.delete(fromKey)
+    }
     updateComposerAttachments((current) => {
       const source = current[fromKey]
       if (!source) {
@@ -11875,6 +11908,7 @@ function App() {
           ...source.map((attachment) => ({
             ...attachment,
             ownerKey: toKey,
+            migratedFrom: fromKey,
           })),
         ],
       }
@@ -14116,11 +14150,15 @@ function App() {
     files: File[],
     targetSession: ManagedSession,
   ) {
+    const targetKey = sessionKey(targetSession)
+    const liveKey = followReplacementsRef.current(targetKey)
+    const lineageAvailable =
+      !removedSessions.current.has(targetKey) || liveKey !== targetKey
     const liveTarget = resolveAttachmentTarget(targetSession)
-    if (!liveTarget) {
+    if (!liveTarget && !lineageAvailable) {
       return
     }
-    const ownerKey = sessionKey(liveTarget)
+    const ownerKey = liveTarget ? sessionKey(liveTarget) : liveKey
     const attachedFiles = attachmentFilesRef.current.get(ownerKey) ||
       new Set<File>()
     attachmentFilesRef.current.set(ownerKey, attachedFiles)
@@ -14136,7 +14174,7 @@ function App() {
       attachedFiles.add(file)
       if (isAudioFile(file)) {
         work.push({ file, audio: true })
-      } else {
+      } else if (liveTarget) {
         const error = sessionFileValidationError(file)
         const attachment: ComposerAttachment = {
           id: attachmentId(),
@@ -14161,12 +14199,24 @@ function App() {
     }
     for (const item of work) {
       if (item.audio) {
-        const targetKey = sessionKey(liveTarget)
-        if (
-          !removedSessions.current.has(targetKey) ||
-          followReplacementsRef.current(targetKey) !== targetKey
-        ) {
-          await transcribeFile(item.file, liveTarget)
+        try {
+          if (
+            !removedSessions.current.has(targetKey) ||
+            followReplacementsRef.current(targetKey) !== targetKey
+          ) {
+            await transcribeFile(item.file, targetSession)
+          }
+        } finally {
+          for (const key of new Set([
+            ownerKey,
+            followReplacementsRef.current(ownerKey),
+          ])) {
+            const retained = attachmentFilesRef.current.get(key)
+            retained?.delete(item.file)
+            if (retained?.size === 0) {
+              attachmentFilesRef.current.delete(key)
+            }
+          }
         }
       } else if (item.attachment.status !== 'failed') {
         const current = currentAttachment(item.attachment.id)
@@ -14193,6 +14243,7 @@ function App() {
   function attachedFiles(
     files: File[],
     targetSession: ManagedSession | undefined = selected,
+    deduplicateClipboard = false,
   ): Promise<void> {
     if (!targetSession) {
       return Promise.resolve()
@@ -14201,7 +14252,22 @@ function App() {
       setError('Stop recording before attaching files.')
       return Promise.resolve()
     }
-    return queueAttachmentWork(() => processAttachedFiles(files, targetSession))
+    let queuedFiles = files
+    if (deduplicateClipboard) {
+      const ownerKey = followReplacementsRef.current(sessionKey(targetSession))
+      const now = Date.now()
+      const recent = clipboardPasteBatchesRef.current.get(ownerKey)
+      const fingerprints = new Set(files.map(clipboardFileFingerprint))
+      if (recent && now - recent.at < 1_500) {
+        queuedFiles = files.filter(
+          (file) => !recent.fingerprints.has(clipboardFileFingerprint(file)),
+        )
+      }
+      clipboardPasteBatchesRef.current.set(ownerKey, { at: now, fingerprints })
+    }
+    return queuedFiles.length > 0
+      ? queueAttachmentWork(() => processAttachedFiles(queuedFiles, targetSession))
+      : Promise.resolve()
   }
 
   function retryAttachment(attachment: ComposerAttachment): Promise<void> {
@@ -15167,7 +15233,7 @@ function App() {
     const files = pastedFiles(event.clipboardData)
     if (files.length > 0) {
       event.preventDefault()
-      void attachedFiles(files, selected)
+      void attachedFiles(files, selected, true)
       return
     }
     const content = event.clipboardData.getData('text/plain')
@@ -16759,7 +16825,7 @@ function App() {
                   ))}
                 </div>
               ) : null}
-              {selectedAttachments.length > 0 ? (
+              {!askingAside && selectedAttachments.length > 0 ? (
                 <ul
                   aria-label="Attachments"
                   aria-live="polite"
@@ -16797,7 +16863,11 @@ function App() {
                       <button
                         aria-label={`Remove ${attachment.name}`}
                         className="composer-attachment__action"
-                        disabled={attachment.status === 'uploading'}
+                        disabled={
+                          attachment.status === 'uploading' ||
+                          sending ||
+                          queueActionId !== undefined
+                        }
                         onClick={() => removeAttachment(attachment)}
                         type="button"
                       >

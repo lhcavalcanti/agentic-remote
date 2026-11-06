@@ -9169,6 +9169,66 @@ describe('App', () => {
     )
   })
 
+  it('transcribes an audio paste queued before Clear after the replacement arrives', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    vi.mocked(transcribeAudio).mockResolvedValueOnce({
+      transcript: 'Queued audio followed the clear',
+      durationSeconds: 2,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const document = new File(['document'], 'blocking-upload.pdf', {
+      type: 'application/pdf',
+      lastModified: 38,
+    })
+    const audio = new File(['audio'], 'queued-after-clear.wav', {
+      type: 'audio/wav',
+      lastModified: 39,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [document], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [audio], items: [], getData: () => '' },
+    })
+    const replacement = {
+      ...session,
+      id: 'queued-audio-cleared-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishUpload?.({
+      name: document.name,
+      path: `/private/uploads/${document.name}`,
+      size: document.size,
+    })
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledWith(audio))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Queued audio followed the clear'),
+    )
+  })
+
   it('removes an accepted attachment preview after its send follows a replacement', async () => {
     vi.mocked(uploadSessionFile).mockResolvedValueOnce({
       name: 'accepted.pdf',
@@ -9290,6 +9350,47 @@ describe('App', () => {
 
     expect(await screen.findByRole('listitem', {
       name: 'rejected.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('keeps attachment metadata when Remove is attempted during a rejected send', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'pending-send.pdf',
+      path: '/private/uploads/pending-send.pdf',
+      size: 7,
+    })
+    let rejectSend: ((reason: unknown) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectSend = reject
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['pending'], 'pending-send.pdf', {
+      type: 'application/pdf',
+      lastModified: 40,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    const attachment = await screen.findByRole('listitem', {
+      name: 'pending-send.pdf attachment',
+    })
+    await waitFor(() => expect(attachment).toHaveTextContent('Attached'))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+
+    fireEvent.click(within(attachment).getByRole('button', {
+      name: 'Remove pending-send.pdf',
+    }))
+    await act(async () => rejectSend?.(new Error('send failed')))
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/pending-send.pdf`',
+      ),
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'pending-send.pdf attachment',
     })).toHaveTextContent('Attached')
   })
 
@@ -9698,6 +9799,66 @@ describe('App', () => {
     expect(textarea).toHaveValue('Clipboard voice note')
   })
 
+  it('releases completed picker audio so it can be intentionally selected again', async () => {
+    vi.mocked(transcribeAudio)
+      .mockResolvedValueOnce({
+        transcript: 'First picker transcription',
+        durationSeconds: 2,
+      })
+      .mockResolvedValueOnce({
+        transcript: 'Second picker transcription',
+        durationSeconds: 2,
+      })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    const file = new File(['audio'], 'repeat-picker.wav', {
+      type: 'audio/wav',
+      lastModified: 42,
+    })
+    const picker = screen.getByLabelText('File attachment')
+
+    fireEvent.change(picker, { target: { files: [file] } })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    fireEvent.change(picker, { target: { files: [file] } })
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledTimes(2))
+  })
+
+  it('deduplicates repeated clipboard files exposed as fresh wrappers', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValue({
+      name: 'fresh-wrapper.pdf',
+      path: '/private/uploads/fresh-wrapper.pdf',
+      size: 7,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const clipboardFile = () => new File(['wrapper'], 'fresh-wrapper.pdf', {
+      type: 'application/pdf',
+      lastModified: 43,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [clipboardFile()],
+        items: [],
+        getData: () => '',
+      },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [clipboardFile()],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    await waitFor(() => expect(screen.getAllByRole('listitem', {
+      name: 'fresh-wrapper.pdf attachment',
+    })).toHaveLength(1))
+    expect(uploadSessionFile).toHaveBeenCalledOnce()
+  })
+
   it('attaches distinct files that share clipboard metadata', async () => {
     vi.mocked(uploadSessionFile)
       .mockResolvedValueOnce({
@@ -9856,6 +10017,54 @@ describe('App', () => {
     expect(screen.getByRole('listitem', {
       name: 'after-clear.pdf attachment',
     })).toHaveTextContent('Attached')
+  })
+
+  it('discards a pre-Clear attachment after reload between removal and replacement upsert', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'before-clear.pdf',
+      path: '/private/uploads/before-clear.pdf',
+      size: 12,
+    })
+    const first = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['before clear'], 'before-clear.pdf', {
+      type: 'application/pdf',
+      lastModified: 41,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/before-clear.pdf`',
+      ),
+    )
+    const replacement = {
+      ...session,
+      id: 'reload-clear-gap-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+    })
+    first.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('Message')).toHaveValue('')
+    expect(screen.queryByRole('listitem', {
+      name: 'before-clear.pdf attachment',
+    })).not.toBeInTheDocument()
   })
 
   it('queues a second pasted file while the first upload is pending', async () => {
@@ -14571,6 +14780,39 @@ describe('App', () => {
       expect(screen.getByLabelText('Side question')).toHaveValue('Typed while waiting')
       fireEvent.click(within(thread()!).getByRole('button', { name: 'Back to message' }))
       expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft')
+    })
+
+    it('hides session attachment controls while asking aside', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+        name: 'aside-hidden.pdf',
+        path: '/private/uploads/aside-hidden.pdf',
+        size: 6,
+      })
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      const file = new File(['aside'], 'aside-hidden.pdf', {
+        type: 'application/pdf',
+        lastModified: 44,
+      })
+      fireEvent.paste(textarea, {
+        clipboardData: { files: [file], items: [], getData: () => '' },
+      })
+      expect(await screen.findByRole('listitem', {
+        name: 'aside-hidden.pdf attachment',
+      })).toBeInTheDocument()
+
+      fireEvent.click(await screen.findByRole('button', {
+        name: 'Ask a side question',
+      }))
+
+      expect(screen.queryByRole('listitem', {
+        name: 'aside-hidden.pdf attachment',
+      })).not.toBeInTheDocument()
+      fireEvent.keyDown(screen.getByLabelText('Side question'), { key: 'Escape' })
+      expect(screen.getByRole('listitem', {
+        name: 'aside-hidden.pdf attachment',
+      })).toBeInTheDocument()
     })
 
     it('keeps history recall and dropped files away from the draft it is holding', async () => {

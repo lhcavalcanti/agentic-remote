@@ -153,6 +153,7 @@ import {
   composerHoldsText,
   isTerminalAgentWorking,
   isTerminalOverlay,
+  isTerminalSessionInUseConflict,
   terminalInputReady,
   isTerminalSessionInUsePrompt,
   isTerminalVisiblyIdle,
@@ -409,6 +410,14 @@ const TRANSCRIPT_ECHO_WAIT_MS = 5_000
 
 const sessionInUseMessage =
   'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
+const passiveSessionInUseMessage =
+  'Copilot says this session is already in use by another client or application. Close or resume it there before sending here.'
+
+function sessionInUseConflictMessage(pane: string): string {
+  return isTerminalSessionInUsePrompt(pane)
+    ? sessionInUseMessage
+    : passiveSessionInUseMessage
+}
 
 class RuntimeConfigurationError extends Error {
   constructor(
@@ -5293,6 +5302,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         startupLocked &&
         (this.terminalController.ownsStartupPrompt?.(sessionId) ?? false)
       if (ownsStartup || (pane && isTerminalOverlay(pane))) {
+        if (
+          enqueue &&
+          pane &&
+          isTerminalSessionInUseConflict(pane) &&
+          !isTerminalSessionInUsePrompt(pane)
+        ) {
+          return this.enqueueTerminalPrompt(
+            sessionId,
+            content,
+            false,
+            answers,
+            delivery,
+          )
+        }
         if (!startupLocked) {
           return this.serializeTerminalAdmission(sessionId, () =>
             this.sendAdmittedWithBackend(
@@ -5308,7 +5331,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           )
         }
         const canHandleStartup =
-          !(pane && isTerminalSessionInUsePrompt(pane)) &&
+          !(pane && isTerminalSessionInUseConflict(pane)) &&
           (ownsStartup ||
             (pane
               ? ((await this.terminalController.canHandleStartupPrompt?.(
@@ -5326,11 +5349,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           // them no better off than the silent loss this replaces.
           throw Object.assign(
             new Error(
-              pane && isTerminalSessionInUsePrompt(pane)
-                ? sessionInUseMessage
+              pane && isTerminalSessionInUseConflict(pane)
+                ? sessionInUseConflictMessage(pane)
                 : 'The terminal is showing a full-screen view. Close it there, then send this again.',
             ),
-            { statusCode: 409 },
+            { statusCode: 409, uncertainDelivery: false },
           )
         }
         const currentPane = await this.terminalController.capture?.(sessionId)
@@ -6715,7 +6738,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.terminalAdmissionOperations.has(sessionId)
       ) {
         return await this.serializeTerminalAdmission(sessionId, async () => {
-          await this.prepareTerminalCommandAdmission(sessionId)
+          const queueForPassiveConflict =
+            await this.prepareTerminalCommandAdmission(sessionId, enqueue)
           return this.dispatchCommand(
             sessionId,
             name,
@@ -6725,6 +6749,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             fromQueue,
             delivery,
             replaceTerminalDraft,
+            queueForPassiveConflict,
           )
         })
       }
@@ -6745,17 +6770,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async prepareTerminalCommandAdmission(
     sessionId: string,
-  ): Promise<void> {
+    enqueue: boolean,
+  ): Promise<boolean> {
     const pane = await this.terminalController.capture?.(sessionId)
     if (!pane) {
-      return
+      return false
     }
     let currentPane = pane
+    if (isTerminalSessionInUseConflict(currentPane)) {
+      if (enqueue && !isTerminalSessionInUsePrompt(currentPane)) {
+        return true
+      }
+      throw Object.assign(
+        new Error(sessionInUseConflictMessage(currentPane)),
+        { statusCode: 409, uncertainDelivery: false },
+      )
+    }
     const ownsStartup =
       this.terminalController.ownsStartupPrompt?.(sessionId) ?? false
     if (ownsStartup || isTerminalOverlay(currentPane)) {
       const canHandle =
-        !isTerminalSessionInUsePrompt(currentPane) &&
+        !isTerminalSessionInUseConflict(currentPane) &&
         (ownsStartup ||
           ((await this.terminalController.canHandleStartupPrompt?.(
             sessionId,
@@ -6768,11 +6803,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!resolved) {
         throw Object.assign(
           new Error(
-            isTerminalSessionInUsePrompt(currentPane)
-              ? sessionInUseMessage
+            isTerminalSessionInUseConflict(currentPane)
+              ? sessionInUseConflictMessage(currentPane)
               : 'The terminal is showing a full-screen view. Close it there, then run this command again.',
           ),
-          { statusCode: 409 },
+          { statusCode: 409, uncertainDelivery: false },
         )
       }
       const refreshed = await this.terminalController.capture?.(sessionId)
@@ -6805,6 +6840,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       this.publish(idle)
     }
+    return false
   }
 
   private async dispatchCommand(
@@ -6818,6 +6854,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     fromQueue = false,
     delivery?: DeliveryBoundary | QueuedDelivery,
     replaceTerminalDraft = false,
+    queueForPassiveConflict = false,
   ): Promise<SessionDetail> {
     const queuedDelivery =
       delivery instanceof QueuedDelivery ? delivery : undefined
@@ -6840,6 +6877,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
     if (!catalog.session) this.assertStartupDispatchSettled(sessionId, enqueue)
+    if (!catalog.session && enqueue && queueForPassiveConflict) {
+      return this.enqueueTerminalPrompt(
+        sessionId,
+        canonicalCommand,
+        true,
+        answers,
+        delivery,
+      )
+    }
     const busy =
       this.activePrompts.has(sessionId) ||
       // The queue's own command is the work the drain marker stands for, so it
@@ -10766,7 +10812,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       const before = await this.terminalController.capture?.(sessionId)
-      if (startup && (!before?.trim() || composerHoldsText(before) || isTerminalSessionInUsePrompt(before))) {
+      if (before && isTerminalSessionInUseConflict(before)) {
+        this.retryTerminalQueueClaim(sessionId)
+        return false
+      }
+      if (startup && (!before?.trim() || composerHoldsText(before))) {
         this.retryTerminalQueueClaim(sessionId, !before?.trim())
         return false
       }

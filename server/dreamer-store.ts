@@ -474,12 +474,15 @@ function validatePlanItem(item: unknown, version: number): DreamerPlanItem {
     !isSafeString(value.label, 120) ||
     !isSafeString(value.reason, 240) ||
     !['pending', 'skipped', 'done'].includes(String(value.status)) ||
-    !['session', 'memory', 'carry'].includes(String(value.source)) ||
+    !['session', 'memory', 'carry', 'task'].includes(String(value.source)) ||
     (value.computerId !== undefined && !isSafeIdentifier(value.computerId)) ||
     (value.sessionId !== undefined && !isSafeIdentifier(value.sessionId)) ||
     (value.memoryId !== undefined && !isSafeIdentifier(value.memoryId)) ||
+    (value.taskId !== undefined && !isSafeIdentifier(value.taskId)) ||
     hasComputerId !== hasSessionId ||
-    (value.source === 'session' && (!hasComputerId || !hasSessionId))
+    (value.source === 'session' && (!hasComputerId || !hasSessionId)) ||
+    (value.source === 'task' && value.taskId === undefined) ||
+    (value.source !== 'task' && value.taskId !== undefined)
   ) {
     throw new DreamerRecoveryError('Dreamer state has an invalid plan item.')
   }
@@ -530,6 +533,7 @@ function validatePlanItem(item: unknown, version: number): DreamerPlanItem {
     ...(value.computerId ? { computerId: value.computerId as string } : {}),
     ...(value.sessionId ? { sessionId: value.sessionId as string } : {}),
     ...(value.memoryId ? { memoryId: value.memoryId as string } : {}),
+    ...(value.taskId ? { taskId: value.taskId as string } : {}),
     ...(completion ? { completion } : {}),
   }
 }

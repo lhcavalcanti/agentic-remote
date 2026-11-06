@@ -8474,6 +8474,7 @@ function App() {
     !selected.failedPrompt &&
     !selected.queuedDispatch &&
     !selected.terminalQueueDispatchPending &&
+    selected.queueState?.state !== 'error' &&
     selected.recoverySeedState !== 'pending' &&
     selected.recoverySeedState !== 'dispatching' &&
     selected.queuedPrompts?.[0]?.steer === true &&

@@ -402,7 +402,7 @@
   ],
   "communities": 216,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18724,
+  "edges": 18727,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -531,8 +531,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "d6137081dd5f7f46518bd84ad736e8b4d2ba3d8af05a957617875dbcfc2d7e49",
-    "server/agent-service.ts": "7ea8cc7b545875fea4ce2b104297ba2cdc775f4930eb948c1e806d95844a1439",
+    "server/agent-service.test.ts": "31e4d1451ef6d819e760c5de8cf482bc9eeaec482f0d6ee98faa43037ec7af97",
+    "server/agent-service.ts": "886c4200e6bb838f314e0c00abc82de1a24d4ba37cc376aabb65534efe69f6d3",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -779,8 +779,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "cc0723a0aa1b143860bac06d92990988c567953c5b6b97e54ed5c00cde063f1d",
-    "src/App.tsx": "d42d7b61874fe0c744f460f226ca85e38373e37048f951a08404c5a35d32f62c",
+    "src/App.test.tsx": "afe653be7ef22ba3afc4c42474943beed75be0f5cd8da040a7365a45179a61d4",
+    "src/App.tsx": "478612d7efe634e459259f367e07d4e7c37f8b0f3ecc98503554ec2a1d41f1a1",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -989,34 +989,18 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ca5dbeeff67da58183ac1913f0f367b49766d0c077a74496950b6c42e0b8fd8b",
-    "communities.json": "13ec41440916e146786a694c1eb9902072c6d9dd710be0beb38e21ddaa704266",
-    "graph.html": "8fab718ae45a693b50c636fe1beb697ff92e732d7c30d184593fb842f0c8fc7c",
-    "graph.json": "2d02228a2ee69f2023fd2299bc2999f00c1be25943f78c002e9981257898a6d1"
+    "GRAPH_REPORT.md": "32b57406b7430003cacc911712593058f8abc22461c934ffa23070a80e489926",
+    "communities.json": "c1ce47633c67c793dcc9eb14a281a61d67294aaf9c7c5921f019aaff2fd4623e",
+    "graph.html": "2f506be310fe44dd58b2b559d487229b1b06881c4298dbff4451e4f2a9fee546",
+    "graph.json": "c31a42ca6bc24cf4622149e7b27e88ca5dad33ff45685012731ad363cde39187"
   },
   "schema_version": 1,
-  "source_commit": "1abf3428f8c7f28f47e360a2f246aa30d5cf08d1",
-  "source_fingerprint": "3c9b9136305115e6d11436196546048e5c0fc8bf0df7ba342a0b57d12f3937f1",
+  "source_commit": "ad41e644cc3e98cd20aca7d13b87a7117bc976f5",
+  "source_fingerprint": "406766cc23bd55026c5eb9a1369eddd8db0be2df8568fc36dfe8e4af3f14c518",
   "working_tree_changes": [
     "server/agent-service.test.ts",
     "server/agent-service.ts",
-    "server/queued-dispatch.ts",
-    "server/queued-provider-dispatch.test.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts",
-    "server/terminal-queue-delivery.test.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "server/terminal-startup-queue.test.ts",
-    "shared/contracts.ts",
     "src/App.test.tsx",
-    "src/App.tsx",
-    "src/index.css",
-    "src/session-presentation.test.ts",
-    "src/session-presentation.ts",
-    "src/session-response-order.test.ts",
-    "src/session-response-order.ts",
-    "src/shell.test.ts",
-    "src/shell.ts"
+    "src/App.tsx"
   ]
 }

@@ -6095,7 +6095,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): void {
     if (previous?.state !== 'error' || session.queueState) return
     this.terminalQueueStates.delete(sessionId)
-    if (session.queuedPrompts?.length && session.status === 'idle' && !session.suspended) {
+    const next = session.queuedPrompts?.[0]
+    if (!next || session.suspended) return
+    const runnableSteer =
+      session.status === 'running' &&
+      next.steer === true &&
+      !next.command &&
+      !session.pendingPermission &&
+      !session.pendingUserInput &&
+      !session.failedPrompt &&
+      !session.queuedDispatch &&
+      !this.store.terminalQueueDispatch(sessionId) &&
+      (this.store.backend(sessionId) === 'terminal' || this.externalSessionIds.has(sessionId))
+    if (runnableSteer) {
+      this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
+    } else if (session.status === 'idle') {
       this.wakeTerminalQueue(sessionId)
     }
   }
@@ -10990,8 +11004,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         next.steer === true && !next.command &&
         stored.status === 'running' &&
         !stored.pendingPermission && !stored.pendingUserInput
-      if ((stored.status !== 'idle' && !midTurnSteer) || !isCurrent()) {
+      if (stored.status !== 'idle' && !midTurnSteer) {
         this.retryTerminalQueueClaim(sessionId)
+        return false
+      }
+      if (!isCurrent()) {
+        this.retryTerminalQueueClaim(
+          sessionId,
+          false,
+          midTurnSteer && this.terminalController.sending?.(sessionId)
+            ? TERMINAL_STEER_RETRY_MS
+            : undefined,
+        )
         return false
       }
       if (startup && !(await this.terminalController.has(sessionId))) {

@@ -8670,6 +8670,95 @@ describe('AgentService deletion', () => {
       }
     })
 
+    it.each(['remove', 'reorder', 'edit'] as const)(
+      '%s re-arms a fast retry when queue error resolution exposes a runnable steer',
+      async (action) => {
+        const { service, terminal, pane, sessionId } = await busyTerminal([
+          () => true,
+        ])
+        const ordinary = {
+          id: randomUUID(),
+          content: 'Ordinary head',
+          createdAt: new Date().toISOString(),
+        }
+        const steer = {
+          id: randomUUID(),
+          content: 'Retained steer',
+          createdAt: new Date().toISOString(),
+          steer: true,
+        }
+        try {
+          await service.store.update(sessionId, (session) => {
+            session.queuedPrompts = action === 'edit' ? [steer] : [ordinary, steer]
+            session.queuedCount = session.queuedPrompts.length
+            session.queueState = {
+              state: 'error',
+              promptId: action === 'edit' ? steer.id : ordinary.id,
+              message: 'The queued prompt was not sent.',
+              updatedAt: new Date().toISOString(),
+            }
+          })
+
+          if (action === 'remove') {
+            await service.removeQueuedPrompt(sessionId, ordinary.id)
+          } else if (action === 'reorder') {
+            await service.reorderQueuedPrompts(sessionId, [steer.id, ordinary.id])
+          } else {
+            await service.updateQueuedPrompt(sessionId, steer.id, 'Edited steer')
+          }
+
+          const timers = Reflect.get(
+            service,
+            'terminalQueueRetryTimers',
+          ) as Map<string, NodeJS.Timeout>
+          expect(timers.has(sessionId)).toBe(true)
+
+          pane.current = composerBack
+          await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledWith(
+            sessionId,
+            action === 'edit' ? 'Edited steer' : 'Retained steer',
+            false,
+            { allowDuringAgentExecution: true },
+          ), { interval: 25, timeout: 350 })
+        } finally {
+          await service.stop()
+        }
+      },
+    )
+
+    it('re-arms a fast retry when its wake overlaps another terminal send', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const sending = { current: false }
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+      ])
+      Object.assign(terminal, {
+        sending: vi.fn(() => sending.current),
+      })
+      try {
+        await service.sendMessage(sessionId, 'Steer after the other send')
+        pane.current = composerBack
+        sending.current = true
+
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const timers = Reflect.get(
+          service,
+          'terminalQueueRetryTimers',
+        ) as Map<string, NodeJS.Timeout>
+        expect(timers.has(sessionId)).toBe(true)
+
+        sending.current = false
+        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), {
+          interval: 25,
+          timeout: 350,
+        })
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
     it.each([
       ['typed', composerBack.replace('\n┃\n', '\n┃ terminal owner draft\n')],
       ['unreadable', ''],

@@ -9089,6 +9089,31 @@ describe('App', () => {
       )).toBeNull()
     })
 
+    it('does not label an errored steer as steering until its error is resolved', async () => {
+      const queued = {
+        ...running,
+        queuedPrompts: [{
+          id: 'q1',
+          content: steer,
+          createdAt: new Date().toISOString(),
+          steer: true,
+        }],
+        queueState: {
+          state: 'error' as const,
+          promptId: 'q1',
+          message: 'The terminal owner disappeared. The queued prompt was not sent.',
+          updatedAt: new Date().toISOString(),
+        },
+      }
+      vi.mocked(listSessions).mockResolvedValue([queued])
+      vi.mocked(getSession).mockResolvedValue(queued)
+      render(<App />)
+
+      const delivery = await screen.findByRole('region', { name: 'Queued prompts' })
+      expect(delivery).toHaveTextContent('Queued for later')
+      expect(delivery).not.toHaveTextContent('Steering when ready')
+    })
+
     it.each([
       {
         name: 'a running mixed queue whose head can steer',

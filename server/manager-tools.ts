@@ -14,6 +14,7 @@ import type {
 import type {
   ManagerClientDefaults,
   ManagerMessageSource,
+  ManagerProactiveOutcome,
   ManagerSessionBackend,
   ManagerSessionRef,
 } from '../shared/manager.js'
@@ -64,6 +65,8 @@ export interface ManagerToolHost {
   answerOnly(): boolean
   /** Trusted provenance of the message whose tool call is being handled. */
   messageSource(): ManagerMessageSource
+  /** Commits exactly one disposition for every event in the current proactive batch. */
+  recordProactiveOutcomes?(outcomes: ManagerProactiveOutcome[]): Promise<string>
   /** Where Oracle starts new sessions, by computer ID. */
   sessionFolders(): Record<string, string>
   /** Validates and keeps the folder, or returns the computer to its default; gives back what was kept. */
@@ -135,6 +138,25 @@ const sessionIdField = z.string().trim().min(1).max(200)
   .describe('The session id from the roster; a unique prefix of at least 6 characters also works.')
 const computerField = z.string().trim().min(1).max(200)
   .describe('Computer id or name. Only needed when the same session id exists on two computers.')
+const proactiveEventId = z.string().regex(/^[a-f0-9]{64}$/)
+const proactiveOutcomesSchema = z.object({
+  outcomes: z.array(z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('task'),
+      eventIds: z.array(proactiveEventId).min(1).max(20),
+      title: z.string().trim().min(1).max(120),
+      summary: z.string().trim().min(1).max(1000),
+      nextAction: z.string().trim().min(1).max(1000),
+      owner: z.enum(['oracle', 'user']),
+      executionPrompt: z.string().trim().min(1).max(20_000).optional(),
+    }).strict(),
+    z.object({
+      kind: z.literal('no-action'),
+      eventIds: z.array(proactiveEventId).min(1).max(20),
+      reason: z.string().trim().min(1).max(500),
+    }).strict(),
+  ])).min(1).max(20),
+}).strict()
 
 function failure(message: string): ManagerToolResult {
   return { textResultForLlm: `Error: ${message}`, resultType: 'failure', error: message }
@@ -349,6 +371,13 @@ export function createManagerTools(
         // the handler so prompts and future tools cannot bypass it.
         if (host.messageSource() === 'voice' && managerToolMutability(name) !== 'read') {
           return failure('This voice turn is acoustically untrusted and read-only. It cannot change sessions, permissions, trust, confirmations, Oracle settings, or memory. Ask a typed message to make changes.')
+        }
+        if (
+          host.messageSource() === 'proactive' &&
+          name !== 'record_proactive_outcomes' &&
+          managerToolMutability(name) !== 'read'
+        ) {
+          return failure('This proactive observation is read-only. It may inspect state and record its bounded outcomes, but it cannot change sessions, permissions, trust, confirmations, Oracle settings, or memory.')
         }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
@@ -607,7 +636,21 @@ export function createManagerTools(
     }
   }
 
+  const proactiveTools = host.recordProactiveOutcomes
+    ? [
+        define(
+          'record_proactive_outcomes',
+          'Record exactly one durable task or no-action disposition for every event in the current proactive observation batch.',
+          proactiveOutcomesSchema,
+          async ({ outcomes }) => host.recordProactiveOutcomes!(
+            outcomes as ManagerProactiveOutcome[],
+          ),
+        ),
+      ]
+    : []
+
   return [
+    ...proactiveTools,
     define(
       'list_computers',
       'List the computers sessions can run on, whether each is online, and which providers it offers.',

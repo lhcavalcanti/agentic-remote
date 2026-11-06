@@ -80,6 +80,6 @@ export interface DreamerSnapshot {
   revision: number
   settings: DreamerSettings
   plan?: DreamerPlan
-  tasks: OracleTaskView[]
+  tasks?: OracleTaskView[]
   lastError?: string
 }

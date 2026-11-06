@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
-import type { ManagerSessionBackend } from '../shared/manager.js'
+import type { ManagerMessageSource, ManagerSessionBackend } from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import {
@@ -39,7 +39,7 @@ describe('manager tools', () => {
   let activities: ManagerToolActivity[]
   let tools: Map<string, ManagerTool>
   let answerOnly: boolean
-  let source: 'typed' | 'voice'
+  let source: ManagerMessageSource
   let oracleFolders: Record<string, string>
   let backend: ManagerSessionBackend
 
@@ -82,6 +82,7 @@ describe('manager tools', () => {
       registry: () => ({}),
       answerOnly: () => answerOnly,
       messageSource: () => source,
+      recordProactiveOutcomes: vi.fn(async () => 'Recorded 1 proactive outcome.'),
       sessionFolders: () => oracleFolders,
       setSessionFolder: vi.fn(async (computerId: string, folder?: string) => {
         if (folder === '~/missing') throw new Error('Folder does not exist')
@@ -111,8 +112,8 @@ describe('manager tools', () => {
     expect([...tools.keys()].sort()).toEqual([
       'answer_session', 'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
       'list_computers', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
-      'memory_list', 'memory_read', 'memory_write', 'rename_session', 'send_to_session',
-      'set_session_backend', 'set_session_folder',
+      'memory_list', 'memory_read', 'memory_write', 'record_proactive_outcomes',
+      'rename_session', 'send_to_session', 'set_session_backend', 'set_session_folder',
     ])
     for (const tool of tools.values()) {
       expect(tool.skipPermission).toBe(true)
@@ -763,6 +764,28 @@ describe('manager tools', () => {
     expect(String(await call('list_skills', {}))).toContain('brainstorming')
     expect(String(await call('memory_list', {}))).toContain('MEMORY.md')
     expect(await call('memory_read', { path: 'MEMORY.md' })).toBe('# Trusted')
+  })
+
+  it('lets proactive turns record outcomes but refuses every other mutation', async () => {
+    source = 'proactive'
+    const eventId = 'a'.repeat(64)
+    expect(await call('record_proactive_outcomes', {
+      outcomes: [{
+        kind: 'task',
+        eventIds: [eventId],
+        title: 'Run the focused queue test',
+        summary: 'The queue regression needs execution.',
+        nextAction: 'Start a session and run the focused test.',
+        owner: 'oracle',
+        executionPrompt: 'Reproduce the queue regression and run its focused test.',
+      }],
+    })).toContain('Recorded')
+
+    const result = await call('create_session', { title: 'X', prompt: 'Y' })
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(result)).toContain('proactive')
+    expect(JSON.stringify(result)).toContain('read-only')
+    expect(host.createSession).not.toHaveBeenCalled()
   })
 
   it('classifies unknown future tools as mutations so voice fails closed', () => {

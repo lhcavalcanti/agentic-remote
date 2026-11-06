@@ -7,6 +7,10 @@ export interface RegisteredComputer {
   name: string
   baseUrl: string
   token: string
+  lifecycleGeneration?: string
+}
+
+interface DurableRegisteredComputer extends RegisteredComputer {
   lifecycleGeneration: string
 }
 
@@ -24,7 +28,7 @@ interface LegacyRegistryState {
 
 interface RegistryState {
   version: 2
-  computers: RegisteredComputer[]
+  computers: DurableRegisteredComputer[]
 }
 
 export class ComputerRegistry {
@@ -78,13 +82,17 @@ export class ComputerRegistry {
     }
   }
 
-  list(): RegisteredComputer[] {
+  list(): DurableRegisteredComputer[] {
     return structuredClone(this.state.computers)
   }
 
   async upsert(computer: RegisteredComputer): Promise<void> {
+    const durable: DurableRegisteredComputer = {
+      ...computer,
+      lifecycleGeneration: computer.lifecycleGeneration ?? this.nextUUID(),
+    }
     this.state.computers = [
-      computer,
+      durable,
       ...this.state.computers.filter((entry) => entry.id !== computer.id),
     ]
     await this.persist()

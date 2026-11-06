@@ -18,7 +18,29 @@ export type ManagerStatus = 'idle' | 'working' | 'recovering' | 'offline'
 export type ManagerMessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
 /** Trusted hub-side provenance for a user message. */
-export type ManagerMessageSource = 'typed' | 'voice'
+export type ManagerMessageSource = 'typed' | 'voice' | 'proactive' | 'task'
+
+export interface ManagerAutomaticContext {
+  kind: 'proactive' | 'task'
+  taskId?: string
+  eventIds?: string[]
+}
+
+export type ManagerProactiveOutcome =
+  | {
+      kind: 'task'
+      eventIds: string[]
+      title: string
+      summary: string
+      nextAction: string
+      owner: 'oracle' | 'user'
+      executionPrompt?: string
+    }
+  | {
+      kind: 'no-action'
+      eventIds: string[]
+      reason: string
+    }
 
 /** Delivery state of a message you sent the manager. */
 export type ManagerMessageState =
@@ -68,6 +90,8 @@ export interface ManagerMessage {
    * persisted user messages without it are treated as typed.
    */
   readonly source?: ManagerMessageSource
+  /** Trusted automatic-turn scope, immutable after the message is queued. */
+  readonly automatic?: ManagerAutomaticContext
   /**
    * When Oracle first started on it. From then on it is no longer the user's
    * to edit, even if a restart or Retry puts it back in the queue.
@@ -105,6 +129,14 @@ export type ManagerSubmissionSource = ManagerMessageSource
 export interface ManagerSubmissionOptions {
   answerOnly?: boolean
   source?: ManagerSubmissionSource
+}
+
+export interface ManagerInternalSubmission {
+  id: string
+  content: string
+  source: 'proactive' | 'task'
+  answerOnly: boolean
+  automatic: ManagerAutomaticContext
 }
 
 /** Oracle's own runtime settings, kept on the hub. */

@@ -234,6 +234,60 @@ describe('ManagerAgent', () => {
       .toEqual(expect.arrayContaining(['working', 'idle']))
   })
 
+  it('runs a later typed message before an automatic proactive message', async () => {
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      retryDelaysMs: [0, 0],
+      idleStopMs: 60_000,
+      sessionIdFactory: () => `sdk-${++ids}`,
+    })
+    await agent.enqueueInternal({
+      id: 'oracle-proactive-batch-a',
+      content: 'Inspect failed event a.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['a'.repeat(64)],
+      },
+    })
+    await agent.send('User request')
+
+    await agent.start()
+    await settled()
+
+    expect(sdk.prompts[0]).toContain('<user_message>\nUser request')
+    expect(sdk.prompts[1]).toContain('<proactive_observation')
+  })
+
+  it('deduplicates an identical internal message and rejects an ID collision', async () => {
+    await start()
+    const input = {
+      id: 'oracle-task-message-a',
+      content: 'Run the focused queue test.',
+      source: 'task' as const,
+      answerOnly: false,
+      automatic: {
+        kind: 'task' as const,
+        taskId: 'oracle-task-a',
+      },
+    }
+    const first = await agent!.enqueueInternal(input)
+    const replay = await agent!.enqueueInternal(input)
+    expect(replay.id).toBe(first.id)
+    expect(replay).toMatchObject({
+      source: 'task',
+      automatic: { kind: 'task', taskId: 'oracle-task-a' },
+    })
+    await expect(agent!.enqueueInternal({
+      ...input,
+      content: 'Different payload.',
+    })).rejects.toMatchObject({ statusCode: 409 })
+  })
+
   it('keeps shadow prompts, system prompt, and tools identical to off while computing structured retrieval', async () => {
     const fixedNow = () => new Date('2026-10-16T12:00:00.000Z')
 

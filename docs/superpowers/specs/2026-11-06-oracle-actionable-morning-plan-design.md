@@ -275,8 +275,10 @@ idempotent and never creates a new attempt.
 
 **Review result** expands the trusted completion summary and execution
 evidence. **Confirm completed** re-reads the exact session message and persists
-the provenance. The same candidate is idempotent; changed or stale evidence is
-refused with refresh guidance.
+the provenance. The linked session must contain a root user prompt from the
+current attempt, and both that prompt and the completion must be no older than
+the durable attempt start. The same candidate is idempotent; changed, stale, or
+pre-dispatch evidence is refused with refresh guidance.
 
 ## Morning Plan UI
 
@@ -321,11 +323,14 @@ PUT /api/manager/dreamer/plan
 { revision, planId, taskCompletion: { taskId, attemptId, ...evidenceRef } }
 ```
 
-Add only the explicit task action route:
+Add explicit task action routes:
 
 ```text
 POST /api/manager/dreamer/tasks/:taskId/dispatch
 { revision, requestId }
+
+POST /api/manager/dreamer/tasks/:taskId/complete
+{ revision, attemptId, computerId, sessionId, sessionRevision, messageId, resultDigest }
 ```
 
 There is no `/proactive`, `/wake`, scheduler, browser polling, force-run, or

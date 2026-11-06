@@ -142,15 +142,25 @@ describe('DreamerService', () => {
       managerMessages.push(message)
       return message
     })
-    let execution = completionSession(false, 'Tests passed.', {
+    let execution = completionSession(true, 'Old tests passed.', {
       id: 'execution-a',
       revision: 1,
       status: 'idle',
       messages: [{
-        id: 'plain-result',
+        id: 'old-prompt',
+        role: 'user',
+        content: 'Earlier unrelated work.',
+        createdAt: '2026-10-29T03:00:00.000Z',
+      }, {
+        id: 'old-completion',
         role: 'assistant',
-        content: 'Tests passed.',
+        content: 'Old tests passed.',
         createdAt: '2026-10-29T03:20:00.000Z',
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'old-task-complete-call',
+          completedAt: '2026-10-29T03:20:00.000Z',
+        },
       }],
     })
     const service = new DreamerService(directory, options(now, {
@@ -204,6 +214,22 @@ describe('DreamerService', () => {
       id: 'execution-a',
       revision: 2,
       status: 'idle',
+      messages: [{
+        id: 'task-prompt',
+        role: 'user',
+        content: 'Run the focused queue test.',
+        createdAt: '2026-10-29T04:00:00.000Z',
+      }, {
+        id: 'task-completion',
+        role: 'assistant',
+        content: 'Focused queue test passed.',
+        createdAt: '2026-10-29T04:01:00.000Z',
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-complete-call',
+          completedAt: '2026-10-29T04:01:00.000Z',
+        },
+      }],
     })
     managerMessage.state = 'failed'
     managerMessage.error = 'Oracle turn ended after starting the execution session.'
@@ -285,6 +311,17 @@ describe('DreamerService', () => {
     })
     managerMessages[0]!.state = 'failed'
     managerMessages[0]!.error = 'Execution backend unavailable.'
+    managerMessages.push({
+      id: 'failed-session-link',
+      role: 'activity',
+      content: 'Linked the failed execution session.',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-failed',
+      }],
+    })
     await service.reconcileTasks()
     const failed = service.snapshot().tasks![0]!
     expect(failed).toMatchObject({
@@ -303,6 +340,9 @@ describe('DreamerService', () => {
       attempts: [{ status: 'failed' }, { status: 'queued' }],
     })
     expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
+    expect(enqueueManagerTask.mock.calls[1]![0].content).toContain(
+      'Previous execution sessions: computer-a/execution-failed.',
+    )
 
     await taskStore.reconcileAttempt({
       revision: retried.revision,

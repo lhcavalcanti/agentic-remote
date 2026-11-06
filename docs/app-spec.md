@@ -816,10 +816,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   endpoint.
 - An Oracle task MUST reach `completed` only after the user reviews and confirms
   a successful root `task_complete` marker from the exact linked execution
-  session after its latest root user turn. Journal text, assistant prose, task
-  labels, idle state and failed tools MUST NOT imply completion. Late evidence
-  from an older attempt MAY update that attempt's history but MUST NOT replace
-  the current attempt's status.
+  session after a root user prompt from the current attempt. The prompt and
+  completion MUST be no older than the durable attempt start. Journal text,
+  assistant prose, task labels, idle state and failed tools MUST NOT imply
+  completion. Late evidence from an older attempt MAY update that attempt's
+  history but MUST NOT replace the current attempt's status.
 - Dreamer MUST NOT raise overnight notifications, send speech or automatically
   dispatch work. Proactive analysis uses the existing hub lifecycle stream and
   durable Oracle queue; execution begins only from an explicit task action.

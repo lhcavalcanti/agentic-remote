@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  completeDreamerTask,
   dispatchDreamerTask,
   getDreamer,
   saveDreamerSettings,
@@ -31,6 +32,19 @@ describe('Dreamer API', () => {
         method: 'POST',
         body: JSON.stringify({ revision: 2, requestId: 'request-a' }),
       }),
+    )
+    await completeDreamerTask('task/a', {
+      revision: 3,
+      attemptId: 'attempt-a',
+      computerId: 'computer-a',
+      sessionId: 'session-a',
+      sessionRevision: 7,
+      messageId: 'completion-a',
+      resultDigest: 'a'.repeat(64),
+    })
+    expect(fetch).toHaveBeenLastCalledWith(
+      '/api/manager/dreamer/tasks/task%2Fa/complete',
+      expect.objectContaining({ method: 'POST' }),
     )
   })
 

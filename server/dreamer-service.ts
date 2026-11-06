@@ -438,7 +438,7 @@ export class DreamerService {
   const session = await this.readSession(input.computerId, input.sessionId)
   const candidate = this.oracleCompletionCandidate(
     session,
-    input.attemptId,
+    attempt,
     input.messageId,
   )
   if (
@@ -1062,6 +1062,11 @@ export class DreamerService {
     task: OracleTask,
     attempt: OracleTaskAttempt,
   ): ManagerInternalSubmission {
+    const priorSessionRefs = uniqueSessionRefs(
+      task.attempts
+        .filter(({ id }) => id !== attempt.id)
+        .flatMap(({ sessionRefs }) => sessionRefs),
+    )
     return {
       id: attempt.managerMessageId,
       source: 'task',
@@ -1072,6 +1077,14 @@ export class DreamerService {
         '',
         `Durable task: ${task.title}`,
         `Next action: ${task.nextAction}`,
+        ...(priorSessionRefs.length
+          ? [
+              `Previous execution sessions: ${priorSessionRefs
+                .map(({ computerId, sessionId }) => `${computerId}/${sessionId}`)
+                .join(', ')}.`,
+              'Inspect and continue a previous execution session when safe; create a replacement only when it cannot be continued.',
+            ]
+          : []),
         'Use a real execution session for repository work. Report blockers explicitly.',
       ].join('\n'),
     }
@@ -1139,7 +1152,7 @@ export class DreamerService {
           }
         }
         const candidate = sessions
-          .map((session) => this.oracleCompletionCandidate(session, attempt.id))
+          .map((session) => this.oracleCompletionCandidate(session, attempt))
           .find((value) => value !== undefined)
         if (candidate) {
           status = 'review'
@@ -1258,7 +1271,7 @@ export class DreamerService {
             }
             completionCandidate ??= this.oracleCompletionCandidate(
               session,
-              attempt.id,
+              attempt,
             )
           } catch {
             // Reconciliation exposes the unavailable session as a blocked reason.
@@ -1288,16 +1301,33 @@ export class DreamerService {
 
   private oracleCompletionCandidate(
     session: ManagedSession,
-    attemptId: string,
+    attempt: OracleTaskAttempt,
     messageId?: string,
   ): OracleTaskCompletionCandidate | undefined {
+    if (!attempt.startedAt) return undefined
+    const lastUserMessage = session.messages.findLast(
+      ({ role }) => role === 'user',
+    )
+    const attemptStartedAt = Date.parse(attempt.startedAt)
+    const lastUserAt = Date.parse(lastUserMessage?.createdAt ?? '')
+    if (
+      !lastUserMessage ||
+      !Number.isFinite(attemptStartedAt) ||
+      !Number.isFinite(lastUserAt) ||
+      lastUserAt < attemptStartedAt
+    ) return undefined
     const candidate = this.completionCandidateFromSession(
       session,
       session.computerId,
       session.id,
       messageId,
     )
-    return candidate ? { ...candidate, attemptId } : undefined
+    if (
+      !candidate ||
+      !Number.isFinite(Date.parse(candidate.completedAt)) ||
+      Date.parse(candidate.completedAt) < attemptStartedAt
+    ) return undefined
+    return { ...candidate, attemptId: attempt.id }
   }
 
   private async reconcileStaleMemory(): Promise<void> {

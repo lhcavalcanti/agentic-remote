@@ -442,6 +442,7 @@ export async function buildApp(
       proactiveInbox
     ) {
       const dreamerManager = manager
+      const dreamerAgent = managerAgent
       dreamerService = new DreamerService(
         path.join(dataDirectory, 'manager', 'dreamer'),
         {
@@ -450,8 +451,8 @@ export async function buildApp(
           readSession: (computerId, sessionId) =>
             dreamerManager.readSession(computerId, sessionId),
           taskStore: oracleTaskStore,
-          enqueueManagerTask: (input) => managerAgent.enqueueInternal(input),
-          managerMessages: () => managerAgent.snapshot().messages,
+          enqueueManagerTask: (input) => dreamerAgent.enqueueInternal(input),
+          managerMessages: () => dreamerAgent.snapshot().messages,
           setProactiveEnabled: async (enabled) => {
             await proactiveCoordinator?.setEnabled(enabled)
           },
@@ -462,7 +463,7 @@ export async function buildApp(
         proactiveCoordinator = new ManagerProactiveCoordinator({
           inbox: proactiveInbox,
           taskStore: oracleTaskStore,
-          agent: managerAgent,
+          agent: dreamerAgent,
           computers: () => dreamerManager.listComputers(),
           registry: () => managerStore!.registry(),
           listSessions: () => dreamerManager.listSessions(),
@@ -482,7 +483,7 @@ export async function buildApp(
         }
         forwardManagerToDreamer = forwardHubToDreamer
         manager.on('event', forwardHubToDreamer)
-        managerAgent.on('event', forwardManagerToDreamer)
+        dreamerAgent.on('event', forwardManagerToDreamer)
       } catch (error) {
         app.log.error({ err: error }, 'Dreamer could not initialize')
         await proactiveCoordinator?.stop().catch(() => undefined)

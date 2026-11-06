@@ -6,6 +6,7 @@ import {
 } from '../shared/dreamer'
 import type { OracleTaskView } from '../shared/oracle-task'
 import {
+  completeDreamerTask,
   dispatchDreamerTask,
   DreamerApiError,
   getDreamer,
@@ -378,21 +379,34 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
       setActiveTask(undefined)
     }
   }
-  function confirmTaskCompletion(task: OracleTaskView) {
+  async function confirmTaskCompletion(task: OracleTaskView) {
     const candidate = task.completionCandidate
-    if (!candidate) return
-    void edit({
-      taskCompletion: {
-        taskId: task.id,
-        taskRevision: task.revision,
+    if (!candidate || readOnly || activeTask) return
+    setActiveTask(task.id)
+    setError(undefined)
+    try {
+      setSnapshot(await completeDreamerTask(task.id, {
+        revision: task.revision,
         attemptId: candidate.attemptId,
         computerId: candidate.computerId,
         sessionId: candidate.sessionId,
         sessionRevision: candidate.sessionRevision,
         messageId: candidate.messageId,
         resultDigest: candidate.resultDigest,
-      },
-    })
+      }))
+      setConfirmingCompletion(undefined)
+    } catch (caught) {
+      failMutation(caught)
+      if (caught instanceof DreamerApiError && caught.status === 409) {
+        if (await refresh()) {
+          setError('This completion evidence changed. Review the refreshed result before confirming.')
+        } else {
+          setError('Could not refresh completion evidence. Refresh before confirming.')
+        }
+      } else setError(reason(caught))
+    } finally {
+      setActiveTask(undefined)
+    }
   }
   if (
     snapshot &&
@@ -512,7 +526,7 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
                               <button
                                 className="primary-button"
                                 disabled={readOnly}
-                                onClick={() => confirmTaskCompletion(task)}
+                                onClick={() => void confirmTaskCompletion(task)}
                                 type="button"
                               >
                                 Confirm completed

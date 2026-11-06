@@ -157,6 +157,29 @@ describe('ManagerProactiveCoordinator', () => {
     })
   })
 
+  it('leaves failed proactive analysis pending without an automatic retry loop', async () => {
+    const root = await directory()
+    const { coordinator, inbox, agent, setCurrent } = await fixture(root)
+    await coordinator.setEnabled(true)
+    coordinator.handle(event(managed('running', 1)))
+    setCurrent(managed('error', 2))
+    coordinator.handle(event(managed('error', 2)))
+    await coordinator.drain()
+    const message = agent.messages[0]!
+    message.state = 'failed'
+    message.error = 'Oracle analysis failed.'
+    agent.emit('event', { type: 'manager.message', message })
+
+    await coordinator.drain()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(agent.retry).not.toHaveBeenCalled()
+    expect(agent.messages).toEqual([
+      expect.objectContaining({ id: message.id, state: 'failed' }),
+    ])
+    expect(inbox.pending(20)).toHaveLength(1)
+  })
+
   it('writes one task before acknowledging replayed events after restart', async () => {
     const root = await directory()
     const first = await fixture(root)

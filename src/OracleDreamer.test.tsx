@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DreamerMorningPlan, DreamerSettings } from './OracleDreamer'
 import {
+  completeDreamerTask,
   dispatchDreamerTask,
   DreamerApiError,
   getDreamer,
@@ -13,6 +14,7 @@ import {
 
 vi.mock('./dreamer-api', () => ({
   getDreamer: vi.fn(),
+  completeDreamerTask: vi.fn(),
   dispatchDreamerTask: vi.fn(),
   saveDreamerSettings: vi.fn(),
   updateDreamerPlan: vi.fn(),
@@ -63,6 +65,7 @@ async function openMorningPlan() {
 describe('Dreamer settings and morning review', () => {
   beforeEach(() => {
     vi.mocked(getDreamer).mockReset().mockResolvedValue(initial)
+    vi.mocked(completeDreamerTask).mockReset()
     vi.mocked(dispatchDreamerTask).mockReset()
     vi.mocked(saveDreamerSettings).mockReset()
     vi.mocked(updateDreamerPlan).mockReset()
@@ -211,23 +214,23 @@ describe('Dreamer settings and morning review', () => {
       createdAt: '2026-10-29T04:00:00.000Z',
       updatedAt: '2026-10-29T04:10:00.000Z',
     }
-    vi.mocked(getDreamer).mockResolvedValue({ ...ready, tasks: [task] })
-    vi.mocked(updateDreamerPlan).mockResolvedValue({
+    vi.mocked(getDreamer).mockResolvedValue({ ...initial, tasks: [task] })
+    vi.mocked(completeDreamerTask).mockResolvedValue({
       ...ready,
       tasks: [{ ...task, revision: 7, status: 'completed' as const }],
     })
     render(<DreamerMorningPlan />)
-    await openMorningPlan()
+    fireEvent.click(await screen.findByText('Morning plan'))
+    await screen.findByText('Follow-up work')
+    expect(screen.getByText('No morning suggestions yet.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Review result' }))
     expect(screen.getByText('Verified execution result')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm completed' }))
-    await waitFor(() => expect(updateDreamerPlan).toHaveBeenCalledWith({
-      revision: 3,
-      planId: 'daily-plan',
-      taskCompletion: {
-        taskId: 'oracle-task-a',
-        taskRevision: 6,
+    await waitFor(() => expect(completeDreamerTask).toHaveBeenCalledWith(
+      'oracle-task-a',
+      {
+        revision: 6,
         attemptId: 'attempt-a',
         computerId: 'computer-a',
         sessionId: 'execution-a',
@@ -235,7 +238,7 @@ describe('Dreamer settings and morning review', () => {
         messageId: 'completion-message',
         resultDigest: 'a'.repeat(64),
       },
-    }))
+    ))
   })
   afterEach(() => {
     cleanup()

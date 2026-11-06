@@ -360,6 +360,7 @@ export class OracleTaskStore {
         managerMessageId: input.managerMessageId,
         status: 'queued',
         sessionRefs: [],
+        startedAt: this.now().toISOString(),
       }
       task.attempts.push(attempt)
       task.status = 'queued'

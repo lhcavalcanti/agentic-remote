@@ -55,6 +55,16 @@ const dispatchSchema = z.object({
   requestId: z.string().uuid(),
 }).strict()
 
+const taskCompletionSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  attemptId: z.string().trim().min(1).max(200),
+  computerId: z.string().trim().min(1).max(200),
+  sessionId: z.string().trim().min(1).max(200),
+  sessionRevision: z.number().int().nonnegative(),
+  messageId: z.string().trim().min(1).max(200),
+  resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict()
+
 function parse<T>(
   schema: z.ZodType<T>,
   value: unknown,
@@ -102,5 +112,15 @@ export async function registerDreamerRoutes(
     const params = parse(taskParamsSchema, request.params ?? {})
     const input = parse(dispatchSchema, request.body ?? {})
     return requireService().dispatchTask({ ...input, taskId: params.taskId })
+  })
+
+  app.post('/api/manager/dreamer/tasks/:taskId/complete', async (request, reply) => {
+    reply.header('cache-control', 'no-store')
+    const params = parse(taskParamsSchema, request.params ?? {})
+    const input = parse(taskCompletionSchema, request.body ?? {})
+    return requireService().confirmTaskCompletion({
+      ...input,
+      taskId: params.taskId,
+    })
   })
 }

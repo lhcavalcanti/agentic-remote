@@ -322,7 +322,7 @@ export class ManagerProactiveCoordinator {
     if (active) return
     const events = this.inbox.pending(20)
     if (events.length === 0) return
-    const message = await this.agent.enqueueInternal({
+    await this.agent.enqueueInternal({
       id: batchMessageId(events),
       content: await this.prompt(events),
       source: 'proactive',
@@ -332,7 +332,6 @@ export class ManagerProactiveCoordinator {
         eventIds: events.map(({ id }) => id),
       },
     })
-    if (isTerminal(message)) await this.agent.retry(message.id)
   }
 
   private async prompt(

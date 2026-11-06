@@ -67,14 +67,19 @@ async function setup() {
       updatedAt: '2026-10-29T03:30:00.000Z',
       status: 'waiting',
       messages: [{
+        id: 'task-prompt',
+        role: 'user',
+        content: 'Run the focused queue test.',
+        createdAt: '2026-10-29T04:00:00.000Z',
+      }, {
         id: 'completion-message',
         role: 'assistant',
         content: '**Done.** Verified result.',
-        createdAt: '2026-10-29T03:20:00.000Z',
+        createdAt: '2026-10-29T04:01:00.000Z',
         taskCompletion: {
           source: 'root-task-complete',
           toolCallId: 'task-complete-call',
-          completedAt: '2026-10-29T03:20:00.000Z',
+          completedAt: '2026-10-29T04:01:00.000Z',
         },
       }],
     }),
@@ -197,6 +202,66 @@ describe('Dreamer routes', () => {
       }),
     ]))
     expect(managerMessages.some(({ source }) => source === 'task')).toBe(true)
+  })
+
+  it('confirms a durable task without requiring a daily plan', async () => {
+    const { app, task, managerMessages } = await setup()
+    const dispatched = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/dispatch`,
+      payload: {
+        revision: task.revision,
+        requestId: '51e5ab4f-884a-44af-9de8-45e3701b0c41',
+      },
+    })
+    const managerMessage = managerMessages[0]!
+    managerMessage.state = 'done'
+    managerMessages.push({
+      id: 'task-session-link',
+      role: 'activity',
+      content: 'Started the focused execution session.',
+      createdAt: '2026-10-29T04:00:00.000Z',
+      replyTo: managerMessage.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'session-a',
+      }],
+    })
+    const reviewed = await app.inject({ url: '/api/manager/dreamer' })
+    const reviewedTask = reviewed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === task.id,
+    )
+    expect(reviewedTask).toMatchObject({
+      status: 'review',
+      completionCandidate: {
+        attemptId: dispatched.json().tasks.find(
+          (candidate: { id: string }) => candidate.id === task.id,
+        ).attempts[0].id,
+      },
+    })
+
+    const completed = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/complete`,
+      payload: {
+        revision: reviewedTask.revision,
+        attemptId: reviewedTask.completionCandidate.attemptId,
+        computerId: reviewedTask.completionCandidate.computerId,
+        sessionId: reviewedTask.completionCandidate.sessionId,
+        sessionRevision: reviewedTask.completionCandidate.sessionRevision,
+        messageId: reviewedTask.completionCandidate.messageId,
+        resultDigest: reviewedTask.completionCandidate.resultDigest,
+      },
+    })
+    expect(completed.statusCode).toBe(200)
+    expect(completed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === task.id,
+    )).toMatchObject({
+      status: 'completed',
+      completion: {
+        messageId: 'completion-message',
+      },
+    })
   })
 
   it('validates and idempotently confirms authoritative completion evidence', async () => {

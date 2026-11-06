@@ -8920,7 +8920,9 @@ describe('App', () => {
     }
     const steer = 'End the story with the word mango'
     const pendingBubble = () =>
-      screen.queryByRole('article', { name: 'Your message, pending in the terminal' })
+      screen.queryByRole('article', {
+        name: 'Your message was sent to the terminal and is waiting for the agent',
+      })
     const emit = (event: unknown) => act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
       data: JSON.stringify(event),
     } as MessageEvent))
@@ -8937,10 +8939,10 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
       const bubble = await screen.findByRole('article', {
-        name: 'Your message, pending in the terminal',
+        name: 'Your message was sent to the terminal and is waiting for the agent',
       })
       expect(bubble).toHaveTextContent(steer)
-      expect(bubble).toHaveTextContent('Pending')
+      expect(bubble).toHaveTextContent('Pending in terminal')
       expect(textarea).toHaveValue('')
       expect(sendMessage).toHaveBeenCalledOnce()
 
@@ -8973,7 +8975,7 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
       const bubble = await screen.findByRole('article', {
-        name: 'Your message, pending in the terminal',
+        name: 'Your message was sent to the terminal and is waiting for the agent',
       })
       expect(bubble.parentElement).toHaveClass('message-stack')
       expect(
@@ -8994,7 +8996,7 @@ describe('App', () => {
       fireEvent.change(textarea, { target: { value: steer } })
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
       expect(await screen.findByRole('article', {
-        name: 'Your message, pending in the terminal',
+        name: 'Your message was sent to the terminal and is waiting for the agent',
       })).toHaveTextContent(steer)
     })
 
@@ -9013,6 +9015,27 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
       await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
       await waitFor(() => expect(textarea).not.toBeDisabled())
+      expect(pendingBubble()).toBeNull()
+    })
+
+    it('queues with Ctrl+Enter without showing the terminal-pending echo', async () => {
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      vi.mocked(sendMessage).mockResolvedValue({
+        ...running,
+        queuedPrompts: [{ id: 'q1', content: steer, createdAt: new Date().toISOString() }],
+      })
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        { content: steer, enqueue: true },
+      ))
       expect(pendingBubble()).toBeNull()
     })
 
@@ -12712,6 +12735,21 @@ describe('App', () => {
       })
     render(<App />)
     await screen.findByText('First queued prompt')
+    const queue = screen.getByRole('region', { name: 'Queued prompts' })
+    expect(queue).toHaveTextContent('Queued for later')
+    expect(queue).toHaveAttribute(
+      'aria-description',
+      'Messages waiting to run after the current response',
+    )
+    expect(screen.getByRole('button', { name: 'Queue message' }))
+      .toHaveAttribute('title', 'Queue for after the current response')
+    expect(screen.getByRole('button', { name: 'Queue message' }))
+      .toHaveAttribute(
+        'aria-description',
+        'Queues this message for after the current response',
+      )
+    expect(screen.getByLabelText('Composer keyboard shortcuts'))
+      .toHaveTextContent('Ctrl/⌘+Enter queue for later')
 
     // Editing opens the message for rewriting and leaves it where it is. It
     // used to take it off the queue, so changing your mind, or simply closing

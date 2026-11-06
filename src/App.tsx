@@ -4899,7 +4899,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
 function PendingEchoMessage({ content }: { content: string }) {
   return (
     <article
-      aria-label="Your message, pending in the terminal"
+      aria-label="Your message was sent to the terminal and is waiting for the agent"
       className="message message--user message--pending"
     >
       <div className="message__metadata">
@@ -4908,7 +4908,7 @@ function PendingEchoMessage({ content }: { content: string }) {
           className="message__pending"
           title="Sent to the terminal. Copilot takes it in when the current step finishes."
         >
-          Pending
+          Pending in terminal
         </span>
       </div>
       <div className="message__content message__content--plain">{content}</div>
@@ -15967,9 +15967,13 @@ function App() {
               </div>
             ) : null}
             {selected.queuedPrompts?.length ? (
-              <section aria-label="Queued prompts" className="queued-prompts">
+              <section
+                aria-description="Messages waiting to run after the current response"
+                aria-label="Queued prompts"
+                className="queued-prompts"
+              >
                 <header>
-                  <strong>Queued</strong>
+                  <strong>Queued for later</strong>
                   <span>{selected.queuedPrompts.length}</span>
                 </header>
                 <DndContext
@@ -16286,12 +16290,13 @@ function App() {
                   <span className="composer-actions__spacer" />
                   {selectedQueueAvailable ? (
                     <button
+                      aria-description="Queues this message for after the current response"
                       aria-label="Queue message"
                       className="send-button send-button--queue"
                       disabled={!composer.trim() || sending || Boolean(queueActionId) ||
                         Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
                       onClick={() => void submitMessage(true)}
-                      title="Queue behind the current response"
+                      title="Queue for after the current response"
                       type="button"
                     >
                       <ListPlus size={17} />
@@ -16416,7 +16421,7 @@ function App() {
                 ) : null}
               </button>
             ) : null}
-            <p className="composer-hint">
+            <p aria-label="Composer keyboard shortcuts" className="composer-hint">
               {askingAside
                 ? (
                   <>
@@ -16445,7 +16450,7 @@ function App() {
                           ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
                             ? 'Enter saves it back · ↑ sends this queued edit now · Esc leaves it as it was'
                             : 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'
-                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue'}
+                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue for later'}
                       </span>
                       <span className="composer-hint__mobile">
                         {editingQueuedPromptId

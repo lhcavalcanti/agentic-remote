@@ -779,8 +779,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "a5f680c8d7cf4412d014ffb4b673e340f4ef13183059bbfebba4020c2edc96c7",
-    "src/App.tsx": "fcad21b92ea70a9d0c6705188057300f8a9e88ed4e66c9c14990a12f57112360",
+    "src/App.test.tsx": "1a2a29db1292bb6a50e2025b3bd2559cb5361223a4625d6cdfdd4d962bd9f53b",
+    "src/App.tsx": "956ac2cbb17a6330438421d5cd0ebcfe0d448dec73b06a799e65d9ed3482643f",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -989,24 +989,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d0601a0b82d3cc8365428d94209435a6d55a9ae75d59a511cf40414d40a128d3",
+    "GRAPH_REPORT.md": "9a7a61d0760bb4d12b4f87414c0801957dfddedecfa26abd4b037e672fbaee6f",
     "communities.json": "10aeeb8bcb790087540e9a10715420d8fa4a380a324e62c3c32d55e2008f61da",
-    "graph.html": "0c38cba551c8b708a76b25306ff6cb2f401c803e3c0f6ce6690a5c1c29350dc8",
-    "graph.json": "17575cd5d4bcf6aab06e4c07909c3516478db629501eb63c7e9f52e26f3fb126"
+    "graph.html": "8fe38ab653fec5b540c353c8eaead52ac759cf0e1aafa8edc444f96000193633",
+    "graph.json": "f5a9d1fa579d85848b64598f4dfd9c8a4a9661dff06be0c28629bc2bcbd5f8f3"
   },
   "schema_version": 1,
-  "source_commit": "de27ec15ac95d1f04ac949259e07e2a2e8c426f7",
-  "source_fingerprint": "5b6d16990c3d6b3fb29e0b66b268f1b69ed989367ff4e1fa78a535ebefcb0a96",
+  "source_commit": "5e9188ab95c914a8c34329ab9b45c517320432df",
+  "source_fingerprint": "80fcab8f6ae7e7a2f9e54537521f4cb59297323996bf4beb5d387bf287ae5ea4",
   "working_tree_changes": [
-    "server/dreamer-planner.test.ts",
-    "server/dreamer-planner.ts",
-    "server/dreamer-service.test.ts",
-    "server/dreamer-service.ts",
-    "server/dreamer-store.test.ts",
-    "server/dreamer-store.ts",
     "src/App.test.tsx",
-    "src/App.tsx",
-    "src/OracleDreamer.test.tsx",
-    "src/OracleDreamer.tsx"
+    "src/App.tsx"
   ]
 }

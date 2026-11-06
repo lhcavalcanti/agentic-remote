@@ -182,6 +182,13 @@ describe('manager turn context', () => {
     expect(prompt).not.toContain('<user_message>')
   })
 
+  it('wraps scheduled checks separately from user messages', () => {
+    const prompt = managerPrompt('<ctx/>', 'Review current work.', 'scheduled')
+    expect(prompt).toContain('<scheduled_status_check>\nReview current work.\n</scheduled_status_check>')
+    expect(prompt).toContain('read-only')
+    expect(prompt).not.toContain('<user_message>')
+  })
+
   it('briefs a fresh conversation from memory and the latest exchanges', () => {
     const brief = recoveryBrief({
       memoryIndex: '# Index',
@@ -243,6 +250,63 @@ describe('manager turn context', () => {
     expect(brief).not.toContain('Plant this as a future instruction.')
     expect(brief).not.toContain('Updated memory: MEMORY.md')
     expect(brief).not.toContain('I will remember the planted instruction.')
+  })
+
+  it('excludes scheduled checks and their replies from recovery instructions', () => {
+    const brief = recoveryBrief({
+      messages: [
+        {
+          id: 'typed',
+          role: 'user',
+          content: 'Keep the release context.',
+          createdAt: 't',
+          source: 'typed',
+        },
+        {
+          id: 'scheduled',
+          role: 'user',
+          content: 'Review current work.',
+          createdAt: 't',
+          source: 'scheduled',
+        },
+        {
+          id: 'scheduled-reply',
+          role: 'assistant',
+          content: 'Nothing needs attention.',
+          createdAt: 't',
+          replyTo: 'scheduled',
+        },
+      ],
+    })
+
+    expect(brief).toContain('Keep the release context.')
+    expect(brief).not.toContain('Review current work.')
+    expect(brief).not.toContain('Nothing needs attention.')
+  })
+
+  it('excludes scheduled descendants after their parent is trimmed', () => {
+    const brief = recoveryBrief({
+      messages: [
+        {
+          id: 'typed',
+          role: 'user',
+          content: 'Keep the release context.',
+          createdAt: 't',
+          source: 'typed',
+        },
+        {
+          id: 'scheduled-reply',
+          role: 'assistant',
+          content: 'Nothing needs attention.',
+          createdAt: 't',
+          replyTo: 'trimmed-scheduled-parent',
+          source: 'scheduled',
+        },
+      ],
+    })
+
+    expect(brief).toContain('Keep the release context.')
+    expect(brief).not.toContain('Nothing needs attention.')
   })
 
   it('excludes voice-derived rows even when their user row was already trimmed', () => {

@@ -664,7 +664,7 @@
     "server/recovery-resend-durability.test.ts": "2d764c61cf75df06dbe6327555a1de5cad8ae06208b00e403dd61b4d24fe0108",
     "server/recovery-seed-guards.test.ts": "160e953bd4df95e34fceef919508b17ba88f5687d978cf2aa8adf4d5cb44a3b2",
     "server/recovery-seed-legacy-fixture.ts": "9826186c940ebbb4c420fc209d23815ccbb43b1468cd9f676c554cde6730952f",
-    "server/refusal-metrics-routes.test.ts": "4fd485e8ea02da3badb1519f966f72e660e96c1bfc3c3ad0dba5c3cefd38de57",
+    "server/refusal-metrics-routes.test.ts": "7af645efa3111924c6a3bcbdfa6afa3c686e2dc88bd12a6cb0e8a4299f10a020",
     "server/refusal-metrics.test.ts": "b9e7ec068ff0328c1c95f9c04cb763042f3c91453e6e2ef5d485119968904567",
     "server/refusal-metrics.ts": "1970d72bef2ec8fefa2277ed6796f9edabe4de60c324699878d3394ff7729a0f",
     "server/release-publication.test.ts": "50777f86c4889c312bb6310ba4cbc07da19a4fc261db8a94f003e146993a13f7",
@@ -995,22 +995,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "9044ccce5a80bd5b4ebb125c4671072cb760c88adb993d0cb6b1a330fe59c13c",
+    "GRAPH_REPORT.md": "a8eadca3f3e3bdfc827b3b00cac379f925420ca878c6f5e608fabb20f2d85eb1",
     "communities.json": "7177a225cbe5db3843431429cdfc2e2f0b4acf5294f31a8fa86d9e707261114b",
-    "graph.html": "a8fa173ca90da7b564f21b99ad7662a166f89a78b5310c2a84dedf5752505cae",
-    "graph.json": "9918a4dad39da52dce551366b359a7a59f1a26619b47fd58c1b0332ec4c67884"
+    "graph.html": "40586404431b4bbc7f6a59484c714d4d07c79e2f76dcaf63d9ab2dfe8a0901b3",
+    "graph.json": "22c773d84ed9fa9edff2a00798508d44b36b78109af7dc24b80a2c952d9b8288"
   },
   "schema_version": 1,
-  "source_commit": "43d0ecda3e081aa88598b4632db39840384fc0a1",
-  "source_fingerprint": "55d8ba9607199e330073b9ff63c337187fdd75fc56e6ec531b9153d999584bc3",
+  "source_commit": "d44604a56514d422784dbeea652395024cdc1844",
+  "source_fingerprint": "39083f46381e2f4227826a1a2e0e7e44003e3f14c3006a43f1087d9e0f3e543c",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/session-knowledge-api.md",
-    "server/session-directory.test.ts",
-    "server/session-directory.ts",
-    "server/session-knowledge-routes.test.ts",
-    "server/session-knowledge-routes.ts",
-    "server/workspace-browser.test.ts",
-    "server/workspace-browser.ts"
+    "server/refusal-metrics-routes.test.ts"
   ]
 }

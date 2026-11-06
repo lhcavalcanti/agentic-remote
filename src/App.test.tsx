@@ -9042,6 +9042,196 @@ describe('App', () => {
     })).toHaveTextContent('Attached')
   })
 
+  it('uploads later files in a pasted batch to the recovered replacement', async () => {
+    let finishFirst:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishFirst = resolve
+      }))
+      .mockImplementationOnce(async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['first'], 'first.pdf', {
+      type: 'application/pdf',
+      lastModified: 31,
+    })
+    const second = new File(['second'], 'second.pdf', {
+      type: 'application/pdf',
+      lastModified: 32,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first, second], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'batch-recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishFirst?.({
+      name: first.name,
+      path: `/private/uploads/${first.name}`,
+      size: first.size,
+    })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls[1]?.slice(0, 2)).toEqual([
+      replacement.computerId,
+      replacement.id,
+    ])
+  })
+
+  it('removes an accepted attachment preview after its send follows a replacement', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'accepted.pdf',
+      path: '/private/uploads/accepted.pdf',
+      size: 8,
+    })
+    let finishSend: ((value: ManagedSession) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => {
+      finishSend = resolve
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['accepted'], 'accepted.pdf', {
+      type: 'application/pdf',
+      lastModified: 33,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/accepted.pdf`'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'accepted-recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishSend?.(replacement)
+
+    await waitFor(() =>
+      expect(screen.queryByRole('listitem', {
+        name: 'accepted.pdf attachment',
+      })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('restores a rejected attachment send after replacement and reload', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'rejected.pdf',
+      path: '/private/uploads/rejected.pdf',
+      size: 8,
+    })
+    let rejectSend: ((reason: unknown) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectSend = reject
+    }))
+    const first = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['rejected'], 'rejected.pdf', {
+      type: 'application/pdf',
+      lastModified: 34,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/rejected.pdf`'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'rejected-recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    await act(async () => rejectSend?.(new Error('send failed')))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/rejected.pdf`'),
+    )
+    first.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    expect(await screen.findByRole('listitem', {
+      name: 'rejected.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
   it('rejects unsupported and oversized pasted files without uploading them', async () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')

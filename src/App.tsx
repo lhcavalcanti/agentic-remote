@@ -1261,7 +1261,9 @@ function readComposerAttachments(
       }>>).flatMap(([ownerKey, attachments]) => {
         const draft = drafts[ownerKey]
         const restored = attachments
-          .filter((attachment) => draft?.text.includes(attachment.promptText))
+          .filter((attachment) =>
+            composerDraftContainsAttachment(draft, attachment.promptText),
+          )
           .map((attachment) => {
             const separator = ownerKey.indexOf(':')
             return {
@@ -1278,6 +1280,19 @@ function readComposerAttachments(
   } catch {
     return {}
   }
+}
+
+function composerDraftContainsAttachment(
+  draft: ComposerDraft | undefined,
+  promptText: string,
+): boolean {
+  return Boolean(
+    draft?.text.includes(promptText) ||
+    (
+      draft?.pendingSubmission?.accepted !== true &&
+      draft?.pendingSubmission?.text.includes(promptText)
+    ),
+  )
 }
 
 function readComposerDrafts(snapshot: ComposerStorageSnapshot): ComposerDrafts {
@@ -11668,7 +11683,7 @@ function App() {
             .filter((attachment) =>
               attachment.status === 'attached' &&
               attachment.promptText !== undefined &&
-              draft?.text.includes(attachment.promptText),
+              composerDraftContainsAttachment(draft, attachment.promptText),
             )
             .map(({ id, name, size, promptText }) => ({
               id,
@@ -11734,33 +11749,50 @@ function App() {
     if (attachments.length === 0) {
       return
     }
-    const retiredByOwner = new Map<string, Set<string>>()
+    const retiredIds = new Set(attachments.map((attachment) => attachment.id))
     for (const attachment of attachments) {
-      const retired = retiredByOwner.get(attachment.ownerKey) ||
-        new Set<string>()
-      retired.add(attachment.id)
-      retiredByOwner.set(attachment.ownerKey, retired)
-      if (attachment.file) {
+      const liveAttachment = currentAttachment(attachment.id)
+      if (liveAttachment?.file) {
         attachmentFilesRef.current
-          .get(attachment.ownerKey)
-          ?.delete(attachment.file)
+          .get(liveAttachment.ownerKey)
+          ?.delete(liveAttachment.file)
       }
     }
     updateComposerAttachments((current) => {
-      let next = current
-      for (const [ownerKey, retired] of retiredByOwner) {
-        const remaining = (next[ownerKey] || []).filter(
-          (attachment) => !retired.has(attachment.id),
-        )
-        if (remaining.length > 0) {
-          next = { ...next, [ownerKey]: remaining }
-        } else {
-          const { [ownerKey]: _removed, ...rest } = next
-          next = rest
-        }
-      }
-      return next
+      let changed = false
+      const next = Object.fromEntries(
+        Object.entries(current).flatMap(([ownerKey, currentAttachments]) => {
+          const remaining = currentAttachments.filter(
+            (attachment) => !retiredIds.has(attachment.id),
+          )
+          if (remaining.length === currentAttachments.length) {
+            return [[ownerKey, currentAttachments]]
+          }
+          changed = true
+          return remaining.length > 0 ? [[ownerKey, remaining]] : []
+        }),
+      )
+      return changed
+        ? next
+        : current
     })
+  }
+
+  function resolveAttachmentTarget(
+    targetSession: ManagedSession,
+  ): ManagedSession | undefined {
+    const requestedKey = sessionKey(targetSession)
+    const liveKey = followReplacementsRef.current(requestedKey)
+    if (requestedKey === liveKey) {
+      return removedSessions.current.has(requestedKey)
+        ? undefined
+        : targetSession
+    }
+    return sessionsRef.current.find(
+      (candidate) =>
+        sessionKey(candidate) === liveKey &&
+        candidate.recovery !== undefined,
+    )
   }
 
   function forgetAttachments(ownerKey: string) {
@@ -14051,36 +14083,59 @@ function App() {
     files: File[],
     targetSession: ManagedSession,
   ) {
-    const ownerKey = sessionKey(targetSession)
+    const liveTarget = resolveAttachmentTarget(targetSession)
+    if (!liveTarget) {
+      return
+    }
+    const ownerKey = sessionKey(liveTarget)
     const attachedFiles = attachmentFilesRef.current.get(ownerKey) ||
       new Set<File>()
     attachmentFilesRef.current.set(ownerKey, attachedFiles)
+    const work: Array<
+      | { file: File; audio: true }
+      | { attachment: ComposerAttachment; audio: false }
+    > = []
+    const attachments: ComposerAttachment[] = []
     for (const file of files) {
       if (attachedFiles.has(file)) {
         continue
       }
       attachedFiles.add(file)
       if (isAudioFile(file)) {
-        await transcribeFile(file, targetSession)
+        work.push({ file, audio: true })
       } else {
         const error = sessionFileValidationError(file)
         const attachment: ComposerAttachment = {
           id: attachmentId(),
           ownerKey,
-          computerId: targetSession.computerId,
-          sessionId: targetSession.id,
+          computerId: liveTarget.computerId,
+          sessionId: liveTarget.id,
           name: file.name,
           size: file.size,
           file,
           status: error ? 'failed' : 'uploading',
           ...(error ? { error } : {}),
         }
-        updateComposerAttachments((current) => ({
-          ...current,
-          [ownerKey]: [...(current[ownerKey] || []), attachment],
-        }))
-        if (!error) {
-          await uploadFile(attachment)
+        attachments.push(attachment)
+        work.push({ attachment, audio: false })
+      }
+    }
+    if (attachments.length > 0) {
+      updateComposerAttachments((current) => ({
+        ...current,
+        [ownerKey]: [...(current[ownerKey] || []), ...attachments],
+      }))
+    }
+    for (const item of work) {
+      if (item.audio) {
+        const currentTarget = resolveAttachmentTarget(liveTarget)
+        if (currentTarget) {
+          await transcribeFile(item.file, currentTarget)
+        }
+      } else if (item.attachment.status !== 'failed') {
+        const current = currentAttachment(item.attachment.id)
+        if (current) {
+          await uploadFile(current)
         }
       }
     }

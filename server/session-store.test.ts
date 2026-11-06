@@ -568,6 +568,56 @@ describe('SessionStore', () => {
     await restarted.close()
   })
 
+  it('drops a stale queue error when conversation recovery preserves its FIFO', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'before', cwd: '/project', title: 'Recovery project',
+      updatedAt: '2026-09-09T00:00:00.000Z', status: 'idle', messages: [],
+      queuedPrompts: [{
+        id: 'preserved', content: 'Run after recovery',
+        createdAt: '2026-09-09T00:00:01.000Z',
+      }],
+      queueState: {
+        state: 'error',
+        promptId: 'preserved',
+        message: 'The old runtime refused this prompt.',
+        updatedAt: '2026-09-09T00:00:02.000Z',
+      },
+    }, { backend: 'sdk', managedOpen: true })
+
+    const recovered = await store.replaceWithRecoveredSession(
+      'before', 'after', 'provider-error', 0, false, 'Seed first',
+    )
+
+    expect(recovered.queuedPrompts).toMatchObject([{ id: 'preserved' }])
+    expect(recovered.queueState).toBeUndefined()
+    await store.close()
+  })
+
+  it('drops a queue error when clearing a conversation in place', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'before', cwd: '/project', title: 'Clear project',
+      updatedAt: '2026-09-09T00:00:00.000Z', status: 'idle', messages: [],
+      queuedPrompts: [{
+        id: 'blocked', content: 'Discard with conversation',
+        createdAt: '2026-09-09T00:00:01.000Z',
+      }],
+      queueState: {
+        state: 'error',
+        promptId: 'blocked',
+        message: 'The prompt was not sent.',
+        updatedAt: '2026-09-09T00:00:02.000Z',
+      },
+    }, { backend: 'terminal', managedOpen: true })
+
+    const cleared = await store.clearConversation('before')
+
+    expect(cleared.queuedPrompts).toEqual([])
+    expect(cleared.queueState).toBeUndefined()
+    await store.close()
+  })
+
   it.each([
     'pending',
     'dispatching',
@@ -615,18 +665,28 @@ describe('SessionStore', () => {
         active = new SessionStore(directory)
         await active.initialize()
       }
+      await active.update('recovering', (session) => {
+        session.queueState = {
+          state: 'error',
+          promptId: 'preserved',
+          message: 'The old runtime refused this prompt.',
+          updatedAt: '2026-09-09T00:00:02.000Z',
+        }
+      })
 
       const cleared = await active.replaceWithClearedSession(
         'recovering',
         'cleared',
       )
       expect(cleared.failedPrompt).toBeUndefined()
+      expect(cleared.queueState).toBeUndefined()
       expect(active.failedPrompt('cleared')).toBeUndefined()
       expect(active.recoverySeed('cleared')).toBeUndefined()
       const persisted = JSON.parse(
         await readFile(path.join(directory, 'state.json'), 'utf8'),
       )
       expect(persisted.sessions.cleared.failedPrompt).toBeUndefined()
+      expect(persisted.sessions.cleared.queueState).toBeUndefined()
 
       await active.enqueuePrompt('cleared', {
         id: 'next',
@@ -1099,6 +1159,52 @@ describe('SessionStore', () => {
     expect(rebooted.terminalRecoverySessions()).toEqual([
       expect.objectContaining({ id: 'managed-terminal', isOpen: true }),
     ])
+  })
+
+  it('keeps an unmanaged queued terminal interrupted while its owner is discovered', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'closed-queued-terminal',
+        cwd: '/tmp/closed-queued-project',
+        title: 'Closed queued terminal',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.enqueuePrompt('closed-queued-terminal', {
+      id: 'queued-prompt',
+      content: 'Wait for explicit Reopen',
+      createdAt: '2026-07-22T00:00:01.000Z',
+    })
+    await store.setOpen('closed-queued-terminal', false, true)
+
+    await store.syncBackends(['closed-queued-terminal'], [])
+
+    expect(store.get('closed-queued-terminal')).toMatchObject({
+      isOpen: true,
+      interruption: expect.any(Object),
+    })
+    expect(store.isManagedOpen('closed-queued-terminal')).toBe(false)
+    const revision = store.get('closed-queued-terminal')!.revision
+    await store.syncOpen(['closed-queued-terminal'])
+    await store.syncBackends(['closed-queued-terminal'], [])
+    expect(store.get('closed-queued-terminal')!.revision).toBe(revision)
+
+    const restarted = new SessionStore(directory)
+    await restarted.initialize()
+    await restarted.syncOpen(['closed-queued-terminal'])
+    await restarted.syncBackends(['closed-queued-terminal'], [])
+
+    expect(restarted.get('closed-queued-terminal')).toMatchObject({
+      isOpen: true,
+      interruption: expect.any(Object),
+      queuedPrompts: [expect.objectContaining({ id: 'queued-prompt' })],
+    })
+    expect(restarted.isManagedOpen('closed-queued-terminal')).toBe(false)
   })
 
   it('grants boot recovery once the app sends or queues work for a discovered terminal', async () => {

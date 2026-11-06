@@ -96,6 +96,10 @@ export function sessionPresentation(
         ? 'recovering'
       : session.status === 'waiting'
         ? 'waiting'
+        : session.queueState?.state === 'waiting'
+          ? 'waiting'
+          : session.queueState?.state === 'error'
+            ? 'error'
         : session.queuedDispatch?.state === 'uncertain'
           ? 'unconfirmed'
           : session.status === 'error' || session.failedPrompt || session.interruption
@@ -118,7 +122,7 @@ export function sessionPresentation(
         ? 'Interrupted'
         : stateLabels[online ? state : 'offline'],
     description: online
-      ? session.restartRecovery?.message || stateLabels[state]
+      ? session.restartRecovery?.message || session.queueState?.message || stateLabels[state]
       : `Computer offline. Last known state: ${stateLabels[state].toLowerCase()}.`,
     needsAttention,
     working: online && (state === 'running' || state === 'tasks' || state === 'recovering'),

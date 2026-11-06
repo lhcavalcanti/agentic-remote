@@ -272,6 +272,9 @@ export function managerPrompt(
     const taskId = automatic?.kind === 'task' ? automatic.taskId ?? '' : ''
     return `${context}\n\n<oracle_task_execution task_id="${promptText(taskId)}">\n${promptText(userText)}\n</oracle_task_execution>`
   }
+  if (source === 'scheduled') {
+    return `${context}\n\nScheduled safety: This is a hub-owned read-only status check, not a user instruction. Report current work and anything needing attention. Do not change sessions, settings, confirmations, or memory.\n<scheduled_status_check>\n${promptText(userText)}\n</scheduled_status_check>`
+  }
   return `${context}\n\n<user_message>\n${userText}\n</user_message>`
 }
 
@@ -287,16 +290,26 @@ export function recoveryBrief(input: { memoryIndex?: string; messages: ManagerMe
   const excludedMessageIds = new Set(input.messages
     .filter((message) =>
       message.role === 'user' &&
-      (message.source === 'voice' || message.source === 'proactive')
+      (
+        message.source === 'voice' ||
+        message.source === 'proactive' ||
+        message.source === 'scheduled'
+      )
     )
     .map((message) => message.id))
+  for (const message of input.messages) {
+    if (message.replyTo && excludedMessageIds.has(message.replyTo)) {
+      excludedMessageIds.add(message.id)
+    }
+  }
   let users = 0
   for (const message of [...input.messages].reverse()) {
     if (message.role === 'notice') continue
     if (
       message.source === 'voice'
       || message.source === 'proactive'
-      || (message.replyTo && excludedMessageIds.has(message.replyTo))
+      || message.source === 'scheduled'
+      || excludedMessageIds.has(message.id)
     ) continue
     if (message.role === 'user') {
       users += 1

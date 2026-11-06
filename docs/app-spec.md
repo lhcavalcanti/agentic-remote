@@ -679,6 +679,33 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   from before this setting does not report it and still opens terminals, so
   App settings MUST say so instead of offering the choice, and MUST show an
   error rather than "Saved" when a hub's answer does not keep the choice.
+- **App settings → Oracle → Periodic checks** MAY opt Oracle into read-only
+  status reviews. It MUST be disabled by default and offer 1, 2, 4, or 8 hour
+  cadences, an IANA timezone, and local whole-hour quiet hours; equal quiet
+  start and end disables the quiet window. The default policy is every 2 hours
+  in UTC with quiet hours from 22:00 to 07:00. Settings, the next eligible
+  check, and the latest scheduled-check state are hub-owned and visible in App
+  settings. Pausing MUST clear the next check and timer, cancel a scheduled
+  check that is still waiting, and retain transcript history.
+- Periodic checks MUST reuse Oracle's single durable queue and runtime. Exactly
+  one timeout MAY wait for the next eligible instant; there MUST NOT be a
+  polling loop or second Oracle process. A due check appends one deterministic
+  **Scheduled check** after user work already waiting, advances the persisted
+  cursor only after the message is durable, and coalesces missed intervals
+  after restart or while a prior scheduled check is still queued/running into
+  at most one catch-up rather than replaying a backlog. Quiet hours MUST defer
+  inference itself, not only notification delivery. A scheduled result that
+  crosses into quiet hours MUST remain in the transcript without raising a
+  push or native notification.
+- A scheduled check MUST be answer-only and handler-enforced read-only. It MAY
+  inspect computers, sessions, history, and Oracle's read-only memory surfaces,
+  but MUST NOT start, steer, rename, stop, close, or answer for a session,
+  change settings, request confirmation, or mutate Markdown or structured
+  memory. Unclassified tools MUST fail closed. Model/runtime failures use
+  Oracle's normal recovery ladder and remain visible with **Retry**. Failure to
+  admit the durable check retries after 1, 5, then 15 minutes while enabled,
+  with only one retry timer. Replies use the existing Oracle unread and push
+  notification scope; quiet hours do not create delayed duplicate notices.
 - Every turn MUST start with a context block the hub generates: computers, open
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.
@@ -724,8 +751,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Sending MUST NOT be refused because Oracle is busy, recovering, or offline.
   Messages wait in a durable first-in, first-out queue and are answered one at
   a time. Waiting messages are shown above the message bar, numbered in the
-  order they will be answered and marked **Ask** where chosen; each can
-  be edited or removed before Oracle starts on it. **Edit** rewrites the
+  order they will be answered and marked **Ask** where chosen. User-created
+  messages can be edited or removed before Oracle starts on them; scheduled
+  checks are labelled **Scheduled check** and are not editable or removable.
+  **Edit** rewrites the
   message where it stands, keeping its identity and place in the queue rather
   than queueing a replacement, with **Save** and **Cancel** (Ctrl+Enter and
   Esc on a keyboard). Once Oracle has started on a message, including one a
@@ -1386,9 +1415,10 @@ Best-effort preference storage MUST NOT authorize composer submission or retire
 delivery receipts. If saved draft storage cannot be read at startup, typing
 remains available but sends and draft writes stay blocked until a reload can
 recover the saved state. The UI MUST warn the user to copy new text first.
-Every non-empty writable session draft MUST show **Saved on this device** or,
-until edited, **Recovered saved draft**. The indicator MUST NOT replace
-storage, delivery-uncertainty, failed-submission, or queue warnings.
+A recovered writable session draft MUST show **Recovered saved draft** until
+edited. Ordinary draft persistence does not need a permanent success label.
+The recovery indicator MUST NOT replace storage, delivery-uncertainty,
+failed-submission, or queue warnings.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact

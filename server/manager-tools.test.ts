@@ -1027,6 +1027,24 @@ describe('manager tools', () => {
     }
   })
 
+  it('fails closed at the handler for scheduled mutations but permits status reads', async () => {
+    source = 'scheduled'
+    answerOnly = true
+    for (const [name, args] of [
+      ['create_session', { title: 'X', prompt: 'Y' }],
+      ['set_session_folder', { folder: '~/src/scheduled' }],
+      ['send_to_session', { sessionId: 'abc12345', message: 'hi' }],
+      ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
+      ['memory_write', { path: 'MEMORY.md', content: '# Replaced' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('Scheduled Oracle checks are read-only')
+    }
+    expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
+  })
+
   it('classifies unknown future tools as mutations so voice fails closed', () => {
     const classify = (
       managerToolsModule as typeof managerToolsModule & {

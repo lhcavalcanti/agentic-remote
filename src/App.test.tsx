@@ -6732,6 +6732,46 @@ describe('App', () => {
     },
   )
 
+  it('retires an attachment consumed by a local restart command', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'restart-note.pdf',
+      path: '/private/uploads/restart-note.pdf',
+      size: 4,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: '/restart' } })
+    const file = new File(['note'], 'restart-note.pdf', {
+      type: 'application/pdf',
+      lastModified: 68,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        '/restart\n\nAttached file: `/private/uploads/restart-note.pdf`',
+      ),
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'restart-note.pdf attachment',
+    })).toHaveTextContent('Attached')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(restartSession).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
+    expect(screen.queryByRole('listitem', {
+      name: 'restart-note.pdf attachment',
+    })).not.toBeInTheDocument()
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it('does not overwrite unreadable saved drafts while keeping new text editable', async () => {
     const original = JSON.stringify({
       'computer-1:session-1': { text: 'Original saved draft', pastes: [] },

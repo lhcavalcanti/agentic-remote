@@ -13679,15 +13679,16 @@ function App() {
     const consumeLocalCommand = () => {
       if (!preview) {
         setComposer('')
-        return
+      } else {
+        const liveKey = followReplacementsRef.current(targetKey)
+        updateComposerDrafts([liveKey], (current) =>
+          writeComposerContent(current, liveKey, {
+            text: preview.draft,
+            pastes: preview.draftPastes,
+          }),
+        )
       }
-      const liveKey = followReplacementsRef.current(targetKey)
-      updateComposerDrafts([liveKey], (current) =>
-        writeComposerContent(current, liveKey, {
-          text: preview.draft,
-          pastes: preview.draftPastes,
-        }),
-      )
+      retireAttachments(submittedAttachments)
     }
     const submittedPastes = activeComposerPastes(
       displayContent,

@@ -781,8 +781,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "0066380740351474d92ca23a0feca4f767e30023bcaf3f9fc875a2454cee8180",
-    "src/App.tsx": "ab71c34477f805679d9ce4477df0ef285d7b0f739eb1c5a858ab81fcfed385a6",
+    "src/App.test.tsx": "2f8c5f99b2f43884c2313e88e9b305e094126145688acec8b8d572258da92b4e",
+    "src/App.tsx": "d35505f92508e283bac3a3cc77c960dd88760a0ca3a57d92c1464a749f067393",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -991,34 +991,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b35f71d8be04c20c48eea3786177fbef1135ac57f1d126ba68b49f31d99c20e5",
+    "GRAPH_REPORT.md": "0db0b768a0745f49d0a9e9c54b0f4e0584a0a9be21f5916b52772391124fbd83",
     "communities.json": "6c8b61a9abb35c37d09d81cf5e51e8205c121b76a6c22d6557b8c0786d1a26d4",
-    "graph.html": "5874fe4e2a7f2489b61ae4bdabc92018f0d9d6f64066584ba1fc64534e80e204",
-    "graph.json": "54bb4f4a3767132c1108e4d6606d1b37f18e68d289c92277b71985aeabca5e1e"
+    "graph.html": "b04319c20b3ae2e71318a31fbb47fa067988bf34aa19e5c47743ae7f6755da35",
+    "graph.json": "8d6d6504b7b454d0c83175a9c1964ba0d2cd02084b262daa8fe6f5585d589dcb"
   },
   "schema_version": 1,
-  "source_commit": "399b157ade9915b12151e86c75d601bfce9a36dd",
-  "source_fingerprint": "fa86430e9653157e3c066a3e78869ac1daba179911d10c531909c9813bb4b59c",
+  "source_commit": "cb49ca8effe5f2bc8be04233708f2407be958898",
+  "source_fingerprint": "adff77a7c66d07938dace1fb762ab021789bb6d2fea10a5fac5995b247295d68",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/queued-dispatch.ts",
-    "server/queued-provider-dispatch.test.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts",
-    "server/terminal-queue-delivery.test.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "server/terminal-startup-queue.test.ts",
-    "shared/contracts.ts",
     "src/App.test.tsx",
-    "src/App.tsx",
-    "src/index.css",
-    "src/session-presentation.test.ts",
-    "src/session-presentation.ts",
-    "src/session-response-order.test.ts",
-    "src/session-response-order.ts",
-    "src/shell.test.ts",
-    "src/shell.ts"
+    "src/App.tsx"
   ]
 }

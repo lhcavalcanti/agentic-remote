@@ -369,6 +369,36 @@ describe('ManagerAgent', () => {
     })).rejects.toMatchObject({ statusCode: 409 })
   })
 
+  it('refuses generic edits of queued deterministic proactive messages', async () => {
+    sdk.behaviors.push(async () => new Promise<void>(() => undefined))
+    await start()
+    const blocking = await agent!.send('Keep Oracle busy.')
+    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
+      (message) => message.id === blocking.id,
+    )?.state).toBe('running'))
+    const proactive = await agent!.enqueueInternal({
+      id: 'oracle-proactive-immutable',
+      content: 'Analyze the admitted lifecycle event.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['c'.repeat(64)],
+      },
+    })
+
+    await expect(agent!.editQueued(
+      proactive.id,
+      'Replace the deterministic event payload.',
+    )).rejects.toMatchObject({ statusCode: 409 })
+    expect(agent!.snapshot().messages.find(
+      (message) => message.id === proactive.id,
+    )).toMatchObject({
+      state: 'queued',
+      content: 'Analyze the admitted lifecycle event.',
+    })
+  })
+
   it('enqueues one durable scheduled status check when its persisted time is due', async () => {
     let now = new Date('2026-11-04T12:00:00.000Z')
     await start({ now: () => now })
@@ -834,6 +864,29 @@ describe('ManagerAgent', () => {
 
     expect(agent!.snapshot().messages.find(
       (message) => message.role === 'user' && message.source === 'scheduled',
+    )).toMatchObject({
+      state: 'done',
+      suppressNotification: true,
+    })
+  })
+
+  it('suppresses notification when automatic proactive analysis completes', async () => {
+    await start()
+
+    await agent!.enqueueInternal({
+      id: 'proactive-notification-silent',
+      content: 'Analyze the admitted lifecycle event.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['a'.repeat(64)],
+      },
+    })
+    await settled()
+
+    expect(agent!.snapshot().messages.find(
+      (message) => message.id === 'proactive-notification-silent',
     )).toMatchObject({
       state: 'done',
       suppressNotification: true,

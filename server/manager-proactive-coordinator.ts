@@ -23,6 +23,7 @@ import { OracleTaskStore } from './oracle-task-store.js'
 interface ProactiveManager {
   enqueueInternal(input: ManagerInternalSubmission): Promise<ManagerMessage>
   retry(messageId: string): Promise<ManagerMessage>
+  cancelMessage(messageId: string): Promise<ManagerMessage>
   snapshot(): ManagerSnapshot
   on(event: 'event', listener: (event: ManagerEvent) => void): unknown
   off(event: 'event', listener: (event: ManagerEvent) => void): unknown
@@ -33,7 +34,7 @@ export interface ManagerProactiveCoordinatorOptions {
   taskStore: OracleTaskStore
   agent: ProactiveManager | Pick<
     ManagerAgent,
-    'enqueueInternal' | 'retry' | 'snapshot' | 'on' | 'off'
+    'enqueueInternal' | 'retry' | 'cancelMessage' | 'snapshot' | 'on' | 'off'
   >
   computers: () => ComputerSummary[]
   registry: () => ManagerRegistry
@@ -127,6 +128,14 @@ export class ManagerProactiveCoordinator {
       if (!enabled) {
         this.pendingEvents.length = 0
         this.clearTimer()
+        const admitted = this.agent.snapshot().messages.filter((message) =>
+          message.role === 'user' &&
+          message.source === 'proactive' &&
+          (message.state === 'queued' || message.state === 'running')
+        )
+        for (const message of admitted) {
+          await this.agent.cancelMessage(message.id)
+        }
         return
       }
       await this.reconcileCurrentSessions()
@@ -150,6 +159,12 @@ export class ManagerProactiveCoordinator {
   }): Promise<string> {
     this.requireReady()
     return this.enqueue(async () => {
+      if (!this.enabled) {
+        throw Object.assign(
+          new Error('Dreamer is disabled; proactive outcomes are not accepted.'),
+          { statusCode: 409 },
+        )
+      }
       const eventIds = input.message.automatic?.kind === 'proactive'
         ? input.message.automatic.eventIds ?? []
         : []
@@ -182,13 +197,19 @@ export class ManagerProactiveCoordinator {
 
       const handled: string[] = []
       const irrelevant: string[] = []
+      const claimed = new Set(
+        this.taskStore.snapshot().tasks.flatMap((task) => task.sourceEventIds),
+      )
       let tasks = 0
       for (const outcome of input.outcomes) {
         if (outcome.kind === 'no-action') {
           irrelevant.push(...outcome.eventIds)
           continue
         }
-        const events = outcome.eventIds.map((id) => pendingById.get(id)!)
+        handled.push(...outcome.eventIds)
+        const unclaimedEventIds = outcome.eventIds.filter((id) => !claimed.has(id))
+        if (unclaimedEventIds.length === 0) continue
+        const events = unclaimedEventIds.map((id) => pendingById.get(id)!)
         const first = events[0]!
         const oneSource = events.every((event) =>
           event.computerId === first.computerId &&
@@ -196,7 +217,7 @@ export class ManagerProactiveCoordinator {
           event.taskGeneration === first.taskGeneration
         )
         await this.taskStore.upsertFinding({
-          sourceEventIds: outcome.eventIds,
+          sourceEventIds: unclaimedEventIds,
           ...(oneSource
             ? {
                 sourceSession: {
@@ -214,8 +235,8 @@ export class ManagerProactiveCoordinator {
             ? { executionPrompt: outcome.executionPrompt }
             : {}),
         })
+        unclaimedEventIds.forEach((id) => claimed.add(id))
         tasks += 1
-        handled.push(...outcome.eventIds)
       }
       if (handled.length) await this.inbox.acknowledge(handled, 'handled')
       if (irrelevant.length) {

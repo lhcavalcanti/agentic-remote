@@ -1245,6 +1245,9 @@ export class DreamerService {
         )) {
           status = 'queued'
           error = undefined
+        } else if (managerMessage?.state === 'running') {
+          status = 'running'
+          error = undefined
         } else if (managerFailure) {
           status = 'failed'
           error = managerFailure
@@ -1311,12 +1314,10 @@ export class DreamerService {
               reference.computerId,
               reference.sessionId,
             )
-            const lastUserIndex = session.messages.findLastIndex(
-              ({ role }) => role === 'user',
-            )
-            for (const message of session.messages.slice(
-              lastUserIndex < 0 ? 0 : lastUserIndex,
-            )) {
+            const promptTurn = this.oraclePromptTurn(session, attempt)
+            for (const message of promptTurn
+              ? session.messages.slice(promptTurn.promptIndex + 1, promptTurn.endIndex)
+              : []) {
               if (message.role === 'activity') {
                 evidence.push({
                   id: `${reference.computerId}:${reference.sessionId}:${message.id}`,
@@ -1369,11 +1370,10 @@ export class DreamerService {
     return { ...snapshot, tasks: views }
   }
 
-  private oracleCompletionCandidate(
+  private oraclePromptTurn(
     session: ManagedSession,
     attempt: OracleTaskAttempt,
-    messageId?: string,
-  ): OracleTaskCompletionCandidate | undefined {
+  ): { promptIndex: number; endIndex: number } | undefined {
     const promptReference = attempt.sessionRefs.find(
       (reference) =>
         reference.computerId === session.computerId &&
@@ -1421,6 +1421,17 @@ export class DreamerService {
     const endIndex = nextUserOffset < 0
       ? session.messages.length
       : promptIndex + 1 + nextUserOffset
+    return { promptIndex, endIndex }
+  }
+
+  private oracleCompletionCandidate(
+    session: ManagedSession,
+    attempt: OracleTaskAttempt,
+    messageId?: string,
+  ): OracleTaskCompletionCandidate | undefined {
+    const promptTurn = this.oraclePromptTurn(session, attempt)
+    if (!promptTurn) return undefined
+    const { promptIndex, endIndex } = promptTurn
     const candidateIndex = messageId
       ? session.messages.findIndex(
           (message, index) =>

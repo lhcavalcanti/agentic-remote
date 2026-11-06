@@ -19,6 +19,7 @@ import type {
   ManagerSessionRef,
 } from '../shared/manager.js'
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
+import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH } from '../shared/oracle-task.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { rosterLine } from './manager-context.js'
 import { ManagerMemoryError, type ManagerMemory } from './manager-memory.js'
@@ -159,7 +160,8 @@ const proactiveOutcomesSchema = z.object({
       summary: z.string().trim().min(1).max(1000),
       nextAction: z.string().trim().min(1).max(1000),
       owner: z.enum(['oracle', 'user']),
-      executionPrompt: z.string().trim().min(1).max(20_000).optional(),
+      executionPrompt: z.string().trim().min(1)
+        .max(ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH).optional(),
     }).strict(),
     z.object({
       kind: z.literal('no-action'),

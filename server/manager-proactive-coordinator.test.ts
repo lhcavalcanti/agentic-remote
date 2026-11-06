@@ -54,6 +54,7 @@ function managed(status: ManagedSession['status'], revision: number): ManagedSes
 class FakeAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   readonly submissions: ManagerInternalSubmission[] = []
   readonly messages: ManagerMessage[] = []
+  readonly cancellations: string[] = []
   enqueueInternal = vi.fn(async (input: ManagerInternalSubmission) => {
     this.submissions.push(structuredClone(input))
     const existing = this.messages.find(({ id }) => id === input.id)
@@ -72,6 +73,12 @@ class FakeAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     message.state = 'queued'
     message.retryCount = (message.retryCount ?? 0) + 1
     delete message.error
+    return message
+  })
+  cancelMessage = vi.fn(async (id: string) => {
+    const message = this.messages.find((candidate) => candidate.id === id)!
+    this.cancellations.push(id)
+    message.state = 'cancelled'
     return message
   })
   snapshot(): ManagerSnapshot {
@@ -227,4 +234,93 @@ describe('ManagerProactiveCoordinator', () => {
     expect(restarted.taskStore.snapshot().tasks).toHaveLength(1)
     expect(restarted.inbox.pending()).toHaveLength(0)
   })
+
+  it('does not regroup events already durably linked before acknowledgement', async () => {
+    const root = await directory()
+    const first = await fixture(root)
+    await first.coordinator.setEnabled(true)
+    first.coordinator.handle(event(managed('running', 1)))
+    first.setCurrent(managed('error', 2))
+    first.coordinator.handle(event(managed('error', 2)))
+    first.setCurrent(managed('running', 3))
+    first.coordinator.handle(event(managed('running', 3)))
+    first.setCurrent(managed('error', 4))
+    first.coordinator.handle(event(managed('error', 4)))
+    await first.coordinator.drain()
+    const message = first.agent.messages[0]!
+    const eventIds = message.automatic!.eventIds!
+    expect(eventIds).toHaveLength(2)
+    vi.spyOn(first.inbox, 'acknowledge')
+      .mockRejectedValueOnce(new Error('Synthetic crash before acknowledgement.'))
+
+    await expect(first.coordinator.recordProactiveOutcomes({
+      message,
+      outcomes: [{
+        kind: 'task',
+        eventIds,
+        title: 'Investigate both queue failures',
+        summary: 'Both lifecycle failures need one investigation.',
+        nextAction: 'Run the focused queue tests.',
+        owner: 'oracle',
+        executionPrompt: 'Investigate both failures and run focused tests.',
+      }],
+    })).rejects.toThrow('Synthetic crash')
+    expect(first.taskStore.snapshot().tasks).toHaveLength(1)
+    expect(first.inbox.pending()).toHaveLength(2)
+    await first.coordinator.stop()
+
+    const restarted = await fixture(root)
+    restarted.setCurrent(managed('error', 4))
+    await restarted.coordinator.setEnabled(true)
+    await restarted.coordinator.drain()
+    const replay = restarted.agent.messages[0]!
+
+    await restarted.coordinator.recordProactiveOutcomes({
+      message: replay,
+      outcomes: eventIds.map((eventId, index) => ({
+        kind: 'task' as const,
+        eventIds: [eventId],
+        title: `Regrouped queue failure ${index + 1}`,
+        summary: 'Replay proposed a narrower overlapping task.',
+        nextAction: 'Run the focused queue test.',
+        owner: 'oracle' as const,
+        executionPrompt: 'Investigate this failure and run its focused test.',
+      })),
+    })
+
+    expect(restarted.taskStore.snapshot().tasks).toHaveLength(1)
+    expect(restarted.inbox.pending()).toHaveLength(0)
+  })
+
+  it.each(['queued', 'running'] as const)(
+    'cancels admitted %s proactive work when Dreamer is disabled',
+    async (state) => {
+      const harness = await fixture(await directory())
+      await harness.coordinator.setEnabled(true)
+      harness.setCurrent(managed('error', 2))
+      harness.coordinator.handle(event(managed('error', 2)))
+      await harness.coordinator.drain()
+      const message = harness.agent.messages[0]!
+      message.state = state
+
+      await harness.coordinator.setEnabled(false)
+
+      expect(harness.agent.cancellations).toEqual([message.id])
+      expect(message.state).toBe('cancelled')
+      await expect(harness.coordinator.recordProactiveOutcomes({
+        message,
+        outcomes: [{
+          kind: 'task',
+          eventIds: message.automatic!.eventIds!,
+          title: 'Post opt-out task',
+          summary: 'This outcome arrived after Dreamer was disabled.',
+          nextAction: 'Do not persist this task.',
+          owner: 'oracle',
+          executionPrompt: 'Do not run this prompt.',
+        }],
+      })).rejects.toMatchObject({ statusCode: 409 })
+      expect(harness.taskStore.snapshot().tasks).toHaveLength(0)
+      expect(harness.inbox.pending()).toHaveLength(1)
+    },
+  )
 })

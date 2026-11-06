@@ -930,6 +930,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           { statusCode: 409 },
         )
       }
+      if (message.source === 'proactive') {
+        throw Object.assign(
+          new Error('Proactive event batches are deterministic and cannot be edited.'),
+          { statusCode: 409 },
+        )
+      }
       const started = message.state === 'running'
         || message.startedAt !== undefined
         || (this.store.state().interruptions ?? {})[messageId] !== undefined
@@ -2143,12 +2149,19 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   private async updateMessage(message: ManagerMessage): Promise<void> {
     let next = message
-    if (message.role === 'user' && message.source === 'scheduled') {
+    if (
+      message.role === 'user' &&
+      (message.source === 'scheduled' || message.source === 'proactive')
+    ) {
       const terminal = message.state === 'done' || message.state === 'failed'
       const settings = this.store.state().proactive?.settings
-      const suppressNotification = terminal
-        && settings !== undefined
-        && isManagerCheckQuiet(this.now(), settings)
+      const suppressNotification = terminal && (
+        message.source === 'proactive' ||
+        (
+          settings !== undefined &&
+          isManagerCheckQuiet(this.now(), settings)
+        )
+      )
       next = { ...message }
       if (suppressNotification) next.suppressNotification = true
       else delete next.suppressNotification

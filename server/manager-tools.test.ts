@@ -956,6 +956,29 @@ describe('manager tools', () => {
     expect(host.recordProactiveOutcomes).not.toHaveBeenCalled()
   })
 
+  it('enforces the durable execution prompt limit for proactive tasks', async () => {
+    source = 'proactive'
+    const outcome = {
+      kind: 'task' as const,
+      eventIds: ['d'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The queue regression needs execution.',
+      nextAction: 'Start a session and run its focused test.',
+      owner: 'oracle' as const,
+    }
+
+    expect(await call('record_proactive_outcomes', {
+      outcomes: [{ ...outcome, executionPrompt: 'x'.repeat(4_000) }],
+    })).toContain('Recorded')
+    vi.mocked(host.recordProactiveOutcomes!).mockClear()
+
+    const rejected = await call('record_proactive_outcomes', {
+      outcomes: [{ ...outcome, executionPrompt: 'x'.repeat(4_001) }],
+    })
+    expect(rejected).toMatchObject({ resultType: 'failure' })
+    expect(host.recordProactiveOutcomes).not.toHaveBeenCalled()
+  })
+
   it('limits proactive transcript reads to sessions in the current batch', async () => {
     source = 'proactive'
     proactiveSessionIds = new Set(['abc12345-aaaa'])

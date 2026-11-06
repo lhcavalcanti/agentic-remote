@@ -10,6 +10,7 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import type { ManagerSessionRef } from '../shared/manager.js'
+import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH } from '../shared/oracle-task.js'
 import type {
   OracleTask,
   OracleTaskAttempt,
@@ -244,11 +245,14 @@ function validateTask(
     task.sourceEventIds.every((id) => typeof id === 'string' && EVENT_ID_PATTERN.test(id)) &&
     (task.sourceSession === undefined || validateSourceSession(task.sourceSession)) &&
     (task.sourcePlan === undefined || validateSourcePlan(task.sourcePlan)) &&
-    (task.executionPrompt === undefined || isText(task.executionPrompt, 4_000)) &&
+    (
+      task.executionPrompt === undefined ||
+      isText(task.executionPrompt, ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH)
+    ) &&
     (
       !requireOraclePrompt ||
       task.owner !== 'oracle' ||
-      isText(task.executionPrompt, 4_000)
+      isText(task.executionPrompt, ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH)
     ) &&
     Array.isArray(task.attempts) &&
     task.attempts.length <= ORACLE_TASK_MAX_ATTEMPTS &&
@@ -377,8 +381,14 @@ export class OracleTaskStore {
       (input.owner !== 'oracle' && input.owner !== 'user') ||
       (input.sourceSession !== undefined && !validateSourceSession(input.sourceSession)) ||
       (input.sourcePlan !== undefined && !validateSourcePlan(input.sourcePlan)) ||
-      (input.executionPrompt !== undefined && !isText(input.executionPrompt, 4_000)) ||
-      (input.owner === 'oracle' && !isText(input.executionPrompt, 4_000))
+      (
+        input.executionPrompt !== undefined &&
+        !isText(input.executionPrompt, ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH)
+      ) ||
+      (
+        input.owner === 'oracle' &&
+        !isText(input.executionPrompt, ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH)
+      )
     ) {
       throw new OracleTaskConflictError('Oracle finding is invalid.')
     }

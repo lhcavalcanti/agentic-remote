@@ -346,6 +346,70 @@ describe('DreamerService', () => {
     })
   })
 
+  it('keeps a newly linked idle execution running with its active Oracle turn', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['a'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'Oracle is still dispatching the linked execution.',
+      nextAction: 'Wait for the active Oracle turn.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, 'No result yet.', {
+        id: 'execution-linking',
+        status: 'idle',
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '1dc6cd0e-a913-444a-bbd6-a97145e102b1',
+    })
+    managerMessages[0]!.state = 'running'
+    managerMessages.push({
+      id: 'linking-session-link',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-linking',
+        promptId: 'task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'running',
+      attempts: [{
+        id: dispatched.tasks![0]!.attempts[0]!.id,
+        status: 'running',
+      }],
+    })
+  })
+
   it('keeps a task queued while its exact linked execution prompt awaits delivery', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')
@@ -651,10 +715,22 @@ describe('DreamerService', () => {
           content: 'Run the focused queue test.',
           createdAt: '2026-10-29T04:00:00.000Z',
         }, {
+          id: 'task-test-evidence',
+          role: 'activity',
+          content: 'vitest focused queue test passed',
+          createdAt: '2026-10-29T04:00:30.000Z',
+          activityStatus: 'completed',
+        }, {
           id: 'unrelated-prompt',
           role: 'user',
           content: 'Clean up an unrelated file.',
           createdAt: '2026-10-29T04:01:00.000Z',
+        }, {
+          id: 'unrelated-test-evidence',
+          role: 'activity',
+          content: 'vitest unrelated cleanup test passed',
+          createdAt: '2026-10-29T04:01:30.000Z',
+          activityStatus: 'completed',
         }, {
           id: 'unrelated-completion',
           role: 'assistant',
@@ -692,6 +768,17 @@ describe('DreamerService', () => {
 
     expect(snapshot.tasks![0]).toMatchObject({ status: 'blocked' })
     expect(snapshot.tasks![0]!.completionCandidate).toBeUndefined()
+    expect(snapshot.tasks![0]!.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'computer-a:execution-unrelated:task-test-evidence',
+        kind: 'test',
+      }),
+    ]))
+    expect(snapshot.tasks![0]!.evidence).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'computer-a:execution-unrelated:unrelated-test-evidence',
+      }),
+    ]))
   })
 
   it('reconciles an exact durable manager message outside the public snapshot', async () => {

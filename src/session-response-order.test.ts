@@ -63,6 +63,19 @@ describe('Session response causal ordering', () => {
       .toEqual(failure)
   })
 
+  it('does not erase a newer queue wait with an older same-revision response', () => {
+    const incoming = rememberSessionResponse({ ...session }, currentSessionEventSequence())
+    const eventAt = nextSessionEventSequence()
+    const queueState = {
+      state: 'waiting' as const,
+      promptId: 'queued',
+      message: 'Waiting for the terminal composer. Delivery will retry automatically.',
+      updatedAt: '2026-09-06T00:00:01Z',
+    }
+    expect(projectSessionResponse(incoming, { ...session, queueState }, eventAt).queueState)
+      .toEqual(queueState)
+  })
+
   it('does not cross session or computer ownership', () => {
     const incoming = rememberSessionResponse({ ...session, failedPrompt: failure }, currentSessionEventSequence())
     const eventAt = nextSessionEventSequence()

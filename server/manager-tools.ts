@@ -350,6 +350,9 @@ export function createManagerTools(
         if (host.messageSource() === 'voice' && managerToolMutability(name) !== 'read') {
           return failure('This voice turn is acoustically untrusted and read-only. It cannot change sessions, permissions, trust, confirmations, Oracle settings, or memory. Ask a typed message to make changes.')
         }
+        if (host.messageSource() === 'scheduled' && managerToolMutability(name) !== 'read') {
+          return failure('Scheduled Oracle checks are read-only. They cannot change sessions, permissions, confirmations, Oracle settings, or memory.')
+        }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {

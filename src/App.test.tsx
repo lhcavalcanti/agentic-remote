@@ -3514,8 +3514,9 @@ describe('App', () => {
     render(<App />)
     const composer = await screen.findByRole('textbox', { name: 'Message' })
     fireEvent.change(composer, { target: { value: 'Keep my session draft' } })
-    expect(screen.getByRole('status', { name: 'Session draft status' }))
-      .toHaveTextContent('Saved on this device')
+    expect(screen.queryByText('Saved on this device')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: 'Session draft status' }))
+      .not.toBeInTheDocument()
     composer.focus()
     const listingsBefore = vi.mocked(listSessionListing).mock.calls.length
     const managerBefore = vi.mocked(getManager).mock.calls.length
@@ -12765,6 +12766,35 @@ describe('App', () => {
         'queue-1',
       ),
     )
+  })
+
+  it.each([
+    ['waiting', 'Waiting for the terminal composer. Delivery will retry automatically.'],
+    ['error', 'The terminal owner disappeared. The queued prompt was not sent.'],
+  ] as const)('shows the queued prompt %s state', async (state, message) => {
+    const queuedSession = {
+      ...session,
+      status: 'idle' as const,
+      queuedCount: 1,
+      queuedPrompts: [{
+        id: 'queue-1',
+        content: 'Queued prompt',
+        createdAt: '2026-07-25T01:00:00.000Z',
+      }],
+      queueState: {
+        state,
+        promptId: 'queue-1',
+        message,
+        updatedAt: '2026-07-25T01:00:01.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+
+    render(<App />)
+
+    const status = (await screen.findByText(message)).closest('[role]')
+    expect(status).toHaveAttribute('role', state === 'error' ? 'alert' : 'status')
   })
 
   it('shows and answers ask-user prompts', async () => {

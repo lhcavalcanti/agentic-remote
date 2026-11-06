@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ManagerMessage } from '../shared/manager.js'
+import { managerCheckDefaults } from './manager-schedule.js'
 import { ManagerStore } from './manager-store.js'
 
 describe('ManagerStore', () => {
@@ -55,6 +56,45 @@ describe('ManagerStore', () => {
       ['a', 'done'],
       ['b', undefined],
     ])
+  })
+
+  it('does not expose a message whose durable append failed', async () => {
+    const store = await open()
+    const conversationPath = path.join(root, 'manager', 'conversation.jsonl')
+    await mkdir(conversationPath)
+
+    await expect(store.upsertMessage({
+      id: 'not-durable',
+      role: 'user',
+      content: 'Do not expose this.',
+      createdAt: 't1',
+      state: 'queued',
+    })).rejects.toThrow()
+
+    expect(store.message('not-durable')).toBeUndefined()
+    expect(store.messages()).toEqual([])
+  })
+
+  it('does not apply a state update whose durable write failed', async () => {
+    const store = await open()
+    const statePath = path.join(root, 'manager', 'state.json')
+    await mkdir(statePath)
+
+    await expect(store.updateState((state) => {
+      state.proactive = {
+        settings: { ...managerCheckDefaults(), enabled: true },
+        nextCheckAt: '2026-11-04T14:00:00.000Z',
+      }
+    })).rejects.toThrow()
+
+    expect(store.state().proactive).toBeUndefined()
+    await rm(statePath, { recursive: true })
+    await store.updateState((state) => {
+      state.generation = 1
+    })
+    const reopened = await open()
+    expect(reopened.state().generation).toBe(1)
+    expect(reopened.state().proactive).toBeUndefined()
   })
 
   it('keeps persisted voice provenance immutable across reloads and legacy updates', async () => {
@@ -173,6 +213,22 @@ describe('ManagerStore', () => {
     await store.flush()
     const names = await readdir(path.join(root, 'manager'))
     expect(names.some((name) => name.startsWith('conversation-') && name.endsWith('.jsonl'))).toBe(true)
+    expect((await open()).messages()).toEqual([])
+  })
+
+  it('does not restore an append queued before a conversation reset', async () => {
+    const store = await open()
+    const append = store.upsertMessage({
+      id: 'a',
+      role: 'user',
+      content: 'hi',
+      createdAt: 't1',
+    })
+    const reset = store.resetConversation()
+
+    await Promise.all([append, reset])
+
+    expect(store.messages()).toEqual([])
     expect((await open()).messages()).toEqual([])
   })
 })

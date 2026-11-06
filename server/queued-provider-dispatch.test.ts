@@ -188,6 +188,48 @@ afterEach(async () => {
 })
 
 describe('provider queued delivery', () => {
+  it.each(['sent', 'uncertain', 'refused'] as const)(
+    'reconciles a matching durable queue error when Send now is %s',
+    async (outcome) => {
+      const { service, sdk, store, terminal } = await copilotFixture(outcome === 'refused')
+      await store.update('session', (session) => {
+        session.queueState = {
+          state: 'error',
+          promptId: 'first',
+          message: 'The original first prompt was not sent.',
+          updatedAt: timestamp,
+        }
+      })
+      if (outcome === 'uncertain') {
+        sdk.send.mockRejectedValueOnce(new Error('Connection reset after submission'))
+      } else if (outcome === 'refused') {
+        terminal.send.mockResolvedValueOnce(false)
+      }
+
+      expect(await service.dispatchQueuedPrompt('session', 'first', 'rewritten first'))
+        .toMatchObject(outcome === 'sent'
+          ? { outcome: 'sent' }
+          : outcome === 'uncertain'
+            ? { outcome: 'uncertain', delivery: 'unknown' }
+            : { outcome: 'refused', restored: true })
+      expect(store.get('session')?.queueState).toEqual(outcome === 'refused'
+        ? {
+            state: 'error',
+            promptId: 'first',
+            message: 'The original first prompt was not sent.',
+            updatedAt: timestamp,
+          }
+        : undefined)
+      expect(store.get('session')?.queuedPrompts?.map((prompt) => prompt.id))
+        .toEqual(outcome === 'refused'
+          ? ['first', 'middle', 'last']
+          : ['middle', 'last'])
+      if (outcome === 'uncertain') {
+        expect(store.get('session')?.queuedDispatch?.state).toBe('uncertain')
+      }
+    },
+  )
+
   it('sends the exact middle rewrite once and acknowledges the SDK receipt before completion', async () => {
     const { service, sdk, store } = await copilotFixture()
     const content = '  first line\n    indented line\n'

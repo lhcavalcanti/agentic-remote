@@ -227,8 +227,6 @@ interface PendingTerminalQueueSettlement {
   // Input refused before anything was typed goes back to the head of the queue
   // and waits for the composer again, without an error.
   quiet?: boolean
-  /** Mid-turn steers retry promptly once the composer becomes available. */
-  retrySteer?: boolean
 }
 
 type UserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
@@ -3743,7 +3741,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       suspended = true
       this.startupTerminalQueues.delete(id)
-      this.pendingTerminalQueueClaims.delete(id)
+      this.clearTerminalQueueRetry(id)
       this.terminalQueueStates.delete(id)
       this.terminalDrainRequested.delete(id)
       return result
@@ -3757,7 +3755,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!suspended && startupQueueWasPending && current?.queuedPrompts?.length &&
           this.hasStartupQueueLifecycle(id, current)) {
         this.startupTerminalQueues.add(id)
-        this.pendingTerminalQueueClaims.delete(id)
+        this.clearTerminalQueueRetry(id)
         this.terminalDrainRequested.add(id)
       }
       if (!suspended) this.wakeDeferredQueue(id)
@@ -4570,7 +4568,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.liveActivityEvents.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
-      this.pendingTerminalQueueClaims.delete(id)
+      this.clearTerminalQueueRetry(id)
       this.startupTerminalQueues.delete(id)
       this.terminalUserInputChecks.delete(id)
       this.terminalUpdateChecks.delete(id)
@@ -5990,7 +5988,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertNotRetained(sessionId, 'changing its queue')
     if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
-      const previousQueueState = this.getSession(sessionId)?.queueState
       const original = this.getSession(sessionId)?.queuedPrompts
         ?.find((prompt) => prompt.id === promptId)
       const discarded = await this.queuedDispatches.discard(sessionId, promptId, acknowledgesDispatch)
@@ -6002,7 +5999,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!prompt) {
         throw new Error('Queued prompt not found')
       }
-      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
+      this.resumeQueueAfterMutation(sessionId, session)
       this.publish(session)
       return { session: this.publicSession(session), prompt }
     }))
@@ -6016,13 +6013,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertNotRetained(sessionId, 'changing its queue')
     const content = await this.normalizeQueuedContent(sessionId, rawContent)
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
-      const previousQueueState = this.getSession(sessionId)?.queueState
       this.queuedDispatches.assertAvailable(sessionId)
       const { session, prompt } = await this.store.updateQueuedPrompt(
         sessionId, promptId, content,
       )
       if (!prompt) throw queueConflict('Queued prompt not found')
-      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
+      this.resumeQueueAfterMutation(sessionId, session)
       this.publish(session)
       return { session: this.publicSession(session), prompt }
     }))
@@ -6079,36 +6075,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<SessionDetail> {
     this.assertNotRetained(sessionId, 'changing its queue')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
-      const previousQueueState = this.getSession(sessionId)?.queueState
       this.queuedDispatches.assertAvailable(sessionId)
       const session = await this.store.reorderQueuedPrompts(sessionId, order)
-      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
+      this.resumeQueueAfterMutation(sessionId, session)
       this.publish(session)
       return this.publicSession(session)
     }))
   }
 
-  private resumeQueueAfterErrorResolution(
+  private resumeQueueAfterMutation(
     sessionId: string,
-    previous: QueueState | undefined,
     session: SessionDetail,
   ): void {
-    if (previous?.state !== 'error' || session.queueState) return
-    this.terminalQueueStates.delete(sessionId)
+    this.clearTerminalQueueRetry(sessionId)
+    if (!session.queueState) this.terminalQueueStates.delete(sessionId)
     const next = session.queuedPrompts?.[0]
     if (!next || session.suspended) return
-    const runnableSteer =
-      session.status === 'running' &&
-      next.steer === true &&
-      !next.command &&
-      !session.pendingPermission &&
-      !session.pendingUserInput &&
-      !session.failedPrompt &&
-      !session.queuedDispatch &&
-      !this.store.terminalQueueDispatch(sessionId) &&
-      (this.store.backend(sessionId) === 'terminal' || this.externalSessionIds.has(sessionId))
-    if (runnableSteer) {
-      this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
+    const terminalBacked =
+      this.store.backend(sessionId) === 'terminal' ||
+      this.externalSessionIds.has(sessionId)
+    if (!terminalBacked) return
+    if (this.terminalSteerRetryDelay(sessionId, session) !== undefined) {
+      this.retryTerminalQueueClaim(sessionId)
     } else if (session.status === 'idle') {
       this.wakeTerminalQueue(sessionId)
     }
@@ -6174,7 +6162,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     if (!wasIdle) {
       // Nothing else drains mid-turn, so the queue is polled for the composer.
-      if (steer) this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
+      if (steer) this.retryTerminalQueueClaim(sessionId)
       return queued
     }
     await this.drainTerminalQueue(sessionId, true)
@@ -7610,7 +7598,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
       this.pendingTerminalQueueSettlements.delete(sessionId)
-      this.pendingTerminalQueueClaims.delete(sessionId)
+      this.clearTerminalQueueRetry(sessionId)
       this.terminalQueueStates.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
@@ -10888,7 +10876,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // session as working, which the last idleness check reads as a turn
       // having begun -- the pane already killed, and the suspension abandoned
       // with nothing running it.
-      if (this.startupTerminalQueues.delete(sessionId)) this.pendingTerminalQueueClaims.delete(sessionId)
+      this.startupTerminalQueues.delete(sessionId)
+      this.clearTerminalQueueRetry(sessionId)
       return
     }
     this.drainingSessions.add(sessionId)
@@ -10919,7 +10908,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async drainNextTerminalPrompt(sessionId: string, withinAdmission: boolean): Promise<boolean> {
     return await this.serializeQueue(sessionId, async () => {
       if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
-        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.clearTerminalQueueRetry(sessionId)
         this.startupTerminalQueues.delete(sessionId)
         return false
       }
@@ -10932,7 +10921,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const next = stored.queuedPrompts?.[0]
       if (stored.interruption || stored.archivedAt) {
         // Retained work waits, untouched and unpolled, for Reopen to drain it.
-        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.clearTerminalQueueRetry(sessionId)
         this.startupTerminalQueues.delete(sessionId)
         const previous = this.terminalQueueStates.get(sessionId)
         if (next) {
@@ -10954,13 +10943,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const terminalDispatch = this.store.terminalQueueDispatch(sessionId)
       const startup = this.startupTerminalQueues.has(sessionId)
       if (!next) {
-        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.clearTerminalQueueRetry(sessionId)
         this.startupTerminalQueues.delete(sessionId)
         return false
       }
       if (startup && !this.hasStartupQueueLifecycle(sessionId, stored)) {
         this.startupTerminalQueues.delete(sessionId)
-        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.clearTerminalQueueRetry(sessionId)
         const previous = this.terminalQueueStates.get(sessionId)
         this.terminalQueueStates.set(sessionId, {
           state: 'waiting',
@@ -10979,7 +10968,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           terminalDispatch ||
           this.store.recoverySeed(sessionId) ||
           this.pendingTerminalPromptDispatches.has(sessionId)) {
-        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.clearTerminalQueueRetry(sessionId)
         // The acknowledgement's later wake still needs startup owner/composer/claim checks.
         if (!this.awaitingAcceptedStartupRecovery(sessionId, stored)) this.startupTerminalQueues.delete(sessionId)
         return false
@@ -11009,13 +10998,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       if (!isCurrent()) {
-        this.retryTerminalQueueClaim(
-          sessionId,
-          false,
-          midTurnSteer && this.terminalController.sending?.(sessionId)
-            ? TERMINAL_STEER_RETRY_MS
-            : undefined,
-        )
+        this.retryTerminalQueueClaim(sessionId)
         return false
       }
       if (startup && !(await this.terminalController.has(sessionId))) {
@@ -11024,11 +11007,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const before = await this.terminalController.capture?.(sessionId)
       if (startup && (!before?.trim() || composerHoldsText(before) || isTerminalSessionInUsePrompt(before))) {
-        this.retryTerminalQueueClaim(
-          sessionId,
-          !before?.trim(),
-          midTurnSteer ? TERMINAL_STEER_RETRY_MS : undefined,
-        )
+        this.retryTerminalQueueClaim(sessionId, !before?.trim())
         return false
       }
       const currentQueueState = this.terminalQueueStates.get(sessionId)
@@ -11051,11 +11030,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (midTurnSteer
         ? !before || !terminalInputReady(before, true) || composerHoldsText(before)
         : before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
-        this.retryTerminalQueueClaim(
-          sessionId,
-          false,
-          midTurnSteer ? TERMINAL_STEER_RETRY_MS : undefined,
-        )
+        this.retryTerminalQueueClaim(sessionId)
         return false
       }
       let claimed: Awaited<ReturnType<SessionStore['claimTerminalQueuedPrompt']>>
@@ -11063,13 +11038,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         claimed = await this.store.claimTerminalQueuedPrompt(sessionId, next, isCurrent, startup, midTurnSteer)
       } catch (error) {
         if (!isRetainedRefusal(error)) throw error
-        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.clearTerminalQueueRetry(sessionId)
         this.startupTerminalQueues.delete(sessionId)
         return false
       }
       const { session, dispatch } = claimed
       this.admissions.markCommitted(sessionId)
-      this.pendingTerminalQueueClaims.delete(sessionId)
+      this.clearTerminalQueueRetry(sessionId)
       this.terminalQueueStates.delete(sessionId)
       if (this.stopped || this.deletingSessions.has(sessionId)) return false
       this.publish(session)
@@ -11130,7 +11105,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         failureMessage,
         retryAt: 0,
         retryDelay: 750,
-        ...(quiet ? { quiet, retrySteer: midTurnSteer } : {}),
+        ...(quiet ? { quiet } : {}),
       })
       return await this.settleTerminalQueue(sessionId)
     })
@@ -11149,23 +11124,49 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !this.store.terminalQueueDispatch(sessionId) && claim?.accepted === true && claim.failedAt === token
   }
 
-  private retryTerminalQueueClaim(
+  private clearTerminalQueueRetry(sessionId: string): void {
+    this.pendingTerminalQueueClaims.delete(sessionId)
+    const timer = this.terminalQueueRetryTimers.get(sessionId)
+    if (timer) clearTimeout(timer)
+    this.terminalQueueRetryTimers.delete(sessionId)
+  }
+
+  private terminalSteerRetryDelay(
     sessionId: string,
-    failed = false,
-    readyDelay?: number,
-  ): boolean {
+    session = this.store.get(sessionId),
+  ): number | undefined {
+    const next = session?.queuedPrompts?.[0]
+    return session &&
+      session.status === 'running' &&
+      !session.interruption &&
+      !session.archivedAt &&
+      !session.suspended &&
+      !session.pendingPermission &&
+      !session.pendingUserInput &&
+      !session.failedPrompt &&
+      !session.queuedDispatch &&
+      !(session.queueState?.state === 'error' && session.queueState.promptId === next?.id) &&
+      !this.store.terminalQueueDispatch(sessionId) &&
+      !this.store.recoverySeed(sessionId) &&
+      !this.pendingTerminalPromptDispatches.has(sessionId) &&
+      next?.steer === true &&
+      !next.command &&
+      (this.store.backend(sessionId) === 'terminal' || this.externalSessionIds.has(sessionId))
+      ? TERMINAL_STEER_RETRY_MS
+      : undefined
+  }
+
+  private retryTerminalQueueClaim(sessionId: string, failed = false): boolean {
     const session = this.store.get(sessionId)
     if (!session?.queuedPrompts?.length || this.stopped || this.deletingSessions.has(sessionId) ||
         (this.startupTerminalQueues.has(sessionId) && !this.hasStartupQueueLifecycle(sessionId, session)) ||
         (session.failedPrompt && !this.awaitingAcceptedStartupRecovery(sessionId, session))) {
-      this.pendingTerminalQueueClaims.delete(sessionId)
-      const timer = this.terminalQueueRetryTimers.get(sessionId)
-      if (timer) clearTimeout(timer)
-      this.terminalQueueRetryTimers.delete(sessionId)
+      this.clearTerminalQueueRetry(sessionId)
       this.terminalQueueStates.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       return false
     }
+    const readyDelay = this.terminalSteerRetryDelay(sessionId, session)
     const delay = readyDelay ?? (
       failed
         ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750
@@ -11194,7 +11195,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.terminalQueueRetryTimers.set(sessionId, timer)
         return
       }
-      this.terminalQueueRetryTimers.delete(sessionId)
+      // The fired timer still owns liveness while its wake waits for queue
+      // serialization. Claim, invalidation, or rearm clears or replaces it.
       this.wakeTerminalQueue(sessionId)
     }
     timer = setTimeout(wake, delay)
@@ -11207,11 +11209,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     session: SessionDetail,
     promptId: string,
-    readyDelay?: number,
   ): void {
     const previous = this.terminalQueueStates.get(sessionId)
     if (session.interruption || session.archivedAt) {
-      this.pendingTerminalQueueClaims.delete(sessionId)
+      this.clearTerminalQueueRetry(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       this.terminalQueueStates.set(sessionId, {
         state: 'waiting',
@@ -11226,11 +11227,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     const startup = this.startupTerminalQueues.has(sessionId)
-    if (!this.retryTerminalQueueClaim(
-      sessionId,
-      readyDelay === undefined,
-      readyDelay,
-    )) {
+    if (!this.retryTerminalQueueClaim(sessionId, true)) {
       const current = this.store.get(sessionId)
       if (!this.stopped && !this.deletingSessions.has(sessionId) &&
           current?.queuedPrompts?.[0]?.id === promptId &&
@@ -11273,7 +11270,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     this.terminalRecoveryStates.set(sessionId, 'settled')
     this.startupTerminalQueues.delete(sessionId)
-    this.pendingTerminalQueueClaims.delete(sessionId)
+    this.clearTerminalQueueRetry(sessionId)
     this.terminalQueueStates.delete(sessionId)
   }
 
@@ -11422,7 +11419,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         settled,
         settled.queuedPrompts?.[0]?.id || '',
-        pending.retrySteer ? TERMINAL_STEER_RETRY_MS : undefined,
       )
       return false
     }
@@ -11457,7 +11453,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (pending.overlayOpen) {
       this.retryTerminalQueueClaim(sessionId)
     } else if (settled.queuedPrompts?.[0]?.steer) {
-      this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
+      this.retryTerminalQueueClaim(sessionId)
     }
     return !pending.overlayOpen && settled.status === 'idle' && !settled.suspended
   }

@@ -8671,7 +8671,7 @@ describe('AgentService deletion', () => {
     })
 
     it.each(['remove', 'reorder', 'edit'] as const)(
-      '%s re-arms a fast retry when queue error resolution exposes a runnable steer',
+      '%s re-arms a fast retry when a queue mutation exposes a runnable steer',
       async (action) => {
         const { service, terminal, pane, sessionId } = await busyTerminal([
           () => true,
@@ -8691,12 +8691,14 @@ describe('AgentService deletion', () => {
           await service.store.update(sessionId, (session) => {
             session.queuedPrompts = action === 'edit' ? [steer] : [ordinary, steer]
             session.queuedCount = session.queuedPrompts.length
-            session.queueState = {
-              state: 'error',
-              promptId: action === 'edit' ? steer.id : ordinary.id,
-              message: 'The queued prompt was not sent.',
-              updatedAt: new Date().toISOString(),
-            }
+            session.queueState = action === 'edit'
+              ? {
+                  state: 'error',
+                  promptId: steer.id,
+                  message: 'The queued prompt was not sent.',
+                  updatedAt: new Date().toISOString(),
+                }
+              : undefined
           })
 
           if (action === 'remove') {
@@ -8758,6 +8760,73 @@ describe('AgentService deletion', () => {
         await service.stop()
       }
     })
+
+    it.each(['capture', 'persistence'] as const)(
+      're-arms a fast retry when its wake overlaps pre-send %s',
+      async (phase) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const { service, terminal, pane, sessionId } = await busyTerminal([
+          () => { throw notReady() },
+          () => true,
+          () => true,
+        ])
+        let enterPhase = () => {}
+        let releasePhase = () => {}
+        const enteredPhase = new Promise<void>((resolve) => { enterPhase = resolve })
+        const phaseGate = new Promise<void>((resolve) => { releasePhase = resolve })
+        let restorePersistence: (() => void) | undefined
+        let second: Promise<unknown> | undefined
+        try {
+          await service.sendMessage(sessionId, 'First retained steer')
+
+          if (phase === 'capture') {
+            terminal.capture.mockImplementationOnce(async () => {
+              enterPhase()
+              await phaseGate
+              return pane.current
+            })
+          } else {
+            const enqueuePrompt = service.store.enqueuePrompt.bind(service.store)
+            const spy = vi.spyOn(service.store, 'enqueuePrompt').mockImplementation(async (...args) => {
+              enterPhase()
+              await phaseGate
+              return enqueuePrompt(...args)
+            })
+            restorePersistence = () => spy.mockRestore()
+          }
+
+          second = service.sendMessage(sessionId, 'Second retained steer')
+          await enteredPhase
+          await new Promise((resolve) => setTimeout(resolve, 300))
+
+          const timers = Reflect.get(
+            service,
+            'terminalQueueRetryTimers',
+          ) as Map<string, NodeJS.Timeout>
+          expect(timers.has(sessionId)).toBe(true)
+
+          releasePhase()
+          await second
+          restorePersistence?.()
+          restorePersistence = undefined
+          pane.current = composerBack
+          await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(3), {
+            interval: 25,
+            timeout: 1_000,
+          })
+          expect(terminal.send.mock.calls.slice(1)).toEqual([
+            steerSend(sessionId, 'First retained steer'),
+            steerSend(sessionId, 'Second retained steer'),
+          ])
+        } finally {
+          releasePhase()
+          restorePersistence?.()
+          await second?.catch(() => undefined)
+          warn.mockRestore()
+          await service.stop()
+        }
+      },
+    )
 
     it.each([
       ['typed', composerBack.replace('\n┃\n', '\n┃ terminal owner draft\n')],

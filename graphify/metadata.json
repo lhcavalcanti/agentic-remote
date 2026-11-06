@@ -400,9 +400,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 216,
+  "communities": 212,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18727,
+  "edges": 18739,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -531,8 +531,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "31e4d1451ef6d819e760c5de8cf482bc9eeaec482f0d6ee98faa43037ec7af97",
-    "server/agent-service.ts": "886c4200e6bb838f314e0c00abc82de1a24d4ba37cc376aabb65534efe69f6d3",
+    "server/agent-service.test.ts": "0afa1388d66789162494183463d52a9c05c18a85cda9c0a08f1fc630aebd0f82",
+    "server/agent-service.ts": "8b3ed237d0c692bfa7b80438257bcc9ab7fd756de3a36060540469758183272f",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -896,7 +896,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6783,
+  "nodes": 6785,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -989,18 +989,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "32b57406b7430003cacc911712593058f8abc22461c934ffa23070a80e489926",
-    "communities.json": "c1ce47633c67c793dcc9eb14a281a61d67294aaf9c7c5921f019aaff2fd4623e",
-    "graph.html": "2f506be310fe44dd58b2b559d487229b1b06881c4298dbff4451e4f2a9fee546",
-    "graph.json": "c31a42ca6bc24cf4622149e7b27e88ca5dad33ff45685012731ad363cde39187"
+    "GRAPH_REPORT.md": "04d829c53f86cf2dc2c4d732eb98ec7a56a537e8ecd1d78022522e5082d74fd2",
+    "communities.json": "c61d2f8e523d4ea48a5dee578d23850aef46373ecfa219aa66ee384d857b422b",
+    "graph.html": "da53e7a4c54fe4a0619f4aa19c8c44193587e0098dae4f4e8a7c7f87fc27e08e",
+    "graph.json": "d23483ecb200253e2762d85355e1b445790e6b2461accd5d2505f010df2b2018"
   },
   "schema_version": 1,
-  "source_commit": "ad41e644cc3e98cd20aca7d13b87a7117bc976f5",
-  "source_fingerprint": "406766cc23bd55026c5eb9a1369eddd8db0be2df8568fc36dfe8e4af3f14c518",
+  "source_commit": "cc8e1e5ec4082012b14aac0909d14046e56db26e",
+  "source_fingerprint": "5cfbdba0a7928f5aa0298f2d40e3b560068986ded722ae457ba28f28cb622d2e",
   "working_tree_changes": [
     "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/agent-service.ts"
   ]
 }

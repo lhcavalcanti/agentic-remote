@@ -469,6 +469,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     ...detail,
     messages: [...(archivedMessages || []), ...detail.messages],
     executionMode: backend === 'terminal' ? 'tmux' : 'sdk',
+    ...(terminalQueueDispatch ? { terminalQueueDispatchPending: true } : {}),
     ...(recoverySeed ? { recoverySeedState: recoverySeed.state } : {}),
     ...(restartRecovery ? { restartRecovery } : {}),
   }
@@ -2436,13 +2437,14 @@ export class SessionStore {
     sessionId: string,
     prompt: QueuedPrompt,
     answers: string | undefined,
+    priority = false,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       if (session.terminalQueueDispatch || session.sdkQueueAdmission) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
       const queue = session.queuedPrompts || []
-      session.queuedPrompts = [...queue, prompt]
+      session.queuedPrompts = priority ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
       grantTerminalRecovery(session)
       if (

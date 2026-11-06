@@ -185,6 +185,7 @@ describe('Durable queue claims', () => {
     gate.finish()
     const { session: claimed, dispatch } = await claiming
     expect(claimed).not.toHaveProperty('terminalQueueDispatch')
+    expect(claimed.terminalQueueDispatchPending).toBe(true)
     expect(claimed.failedPrompt).toBeUndefined()
     expect(claimed).toMatchObject({ status: 'running', queuedPrompts: [prompt('second')], queuedCount: 1 })
     expect(store.terminalQueueDispatch('session')).toEqual(dispatch)

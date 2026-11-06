@@ -8163,7 +8163,7 @@ describe('AgentService deletion', () => {
     })
   })
 
-  it('steers a running tmux turn through the live composer', async () => {
+  it('keeps a running tmux steer behind older queued work', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -8221,16 +8221,14 @@ describe('AgentService deletion', () => {
       'Focus on the queue race first',
     )
 
-    expect(terminal.send).toHaveBeenCalledWith(
-      client.session.sessionId,
-      'Focus on the queue race first',
-      false,
-      { allowDuringAgentExecution: true },
-    )
+    expect(terminal.send).not.toHaveBeenCalled()
     expect(client.session.sentPrompts).toEqual([])
     expect(
       service.store.get(client.session.sessionId)?.queuedPrompts,
-    ).toMatchObject([{ content: 'Run this after the current turn' }])
+    ).toMatchObject([
+      { content: 'Run this after the current turn' },
+      { content: 'Focus on the queue race first', steer: true },
+    ])
     await service.stop()
   })
 
@@ -8272,13 +8270,17 @@ describe('AgentService deletion', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
       const sent = await service.sendMessage(client.session.sessionId, 'Steer when you can')
-      expect(terminal.send).toHaveBeenCalledTimes(1)
-      expect(terminal.send).toHaveBeenCalledWith(
-        client.session.sessionId, 'Steer when you can', false, { allowDuringAgentExecution: true },
-      )
+      if (waiting) {
+        expect(terminal.send).not.toHaveBeenCalled()
+      } else {
+        expect(terminal.send).toHaveBeenCalledOnce()
+        expect(terminal.send).toHaveBeenCalledWith(
+          client.session.sessionId, 'Steer when you can', false, { allowDuringAgentExecution: true },
+        )
+      }
       const expected = [
         ...(waiting ? [{ content: 'Older queued prompt' }] : []),
-        { content: 'Steer when you can' },
+        { content: 'Steer when you can', steer: true },
       ]
       expect(sent.queuedPrompts).toMatchObject(expected)
       expect(service.store.get(client.session.sessionId)?.queuedPrompts).toMatchObject(expected)
@@ -8341,7 +8343,7 @@ describe('AgentService deletion', () => {
     ].join('\n')
 
     async function busyTerminal(
-      sends: Array<() => boolean>,
+      sends: Array<() => boolean | Promise<boolean>>,
       options: { olderQueued?: boolean } = {},
     ) {
       const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
@@ -8426,6 +8428,203 @@ describe('AgentService deletion', () => {
       }
     })
 
+    it('keeps a later steer behind the retained runnable head', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+        () => true,
+      ])
+      try {
+        await service.sendMessage(sessionId, 'First retained steer')
+        pane.current = composerBack
+
+        const second = await service.sendMessage(sessionId, 'Second steer')
+
+        expect(terminal.send.mock.calls).not.toContainEqual(
+          steerSend(sessionId, 'Second steer'),
+        )
+        expect(second.queuedPrompts).toMatchObject([
+          { content: 'First retained steer', steer: true },
+          { content: 'Second steer', steer: true },
+        ])
+        await vi.waitFor(
+          () => expect(terminal.send).toHaveBeenCalledTimes(3),
+          { interval: 25, timeout: 1_000 },
+        )
+        expect(terminal.send.mock.calls.slice(1)).toEqual([
+          steerSend(sessionId, 'First retained steer'),
+          steerSend(sessionId, 'Second steer'),
+        ])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('keeps an overlapping steer behind a head that is still being retained', async () => {
+      let releaseFirstCapture: ((pane: string) => void) | undefined
+      const firstCapture = new Promise<string>((resolve) => {
+        releaseFirstCapture = resolve
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+        () => true,
+        () => true,
+      ])
+      terminal.capture
+        .mockImplementationOnce(async () => firstCapture)
+        .mockImplementation(async () => pane.current)
+      try {
+        const first = service.sendMessage(sessionId, 'First overlapping steer')
+        await vi.waitFor(() => expect(terminal.capture).toHaveBeenCalledTimes(1))
+
+        const second = service.sendMessage(sessionId, 'Second overlapping steer')
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(terminal.capture).toHaveBeenCalledTimes(1)
+        expect(terminal.send).not.toHaveBeenCalled()
+
+        releaseFirstCapture?.(pane.current)
+        const [, retained] = await Promise.all([first, second])
+        expect(retained.queuedPrompts).toMatchObject([
+          { content: 'First overlapping steer', steer: true },
+          { content: 'Second overlapping steer', steer: true },
+        ])
+
+        pane.current = composerBack
+        await vi.waitFor(
+          () => expect(terminal.send).toHaveBeenCalledTimes(3),
+          { interval: 25, timeout: 1_000 },
+        )
+        expect(terminal.send.mock.calls.slice(1)).toEqual([
+          steerSend(sessionId, 'First overlapping steer'),
+          steerSend(sessionId, 'Second overlapping steer'),
+        ])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('resends a matching failed prompt ahead of queued followers', async () => {
+      const { service, terminal, sessionId } = await busyTerminal([
+        () => true,
+      ], { olderQueued: true })
+      const failedAt = new Date().toISOString()
+      try {
+        await service.store.update(sessionId, (session) => {
+          session.failedPrompt = {
+            content: 'Recover this first',
+            failedAt,
+          }
+        })
+
+        const sent = await service.sendMessage(
+          sessionId,
+          'Recover this first',
+          false,
+          failedAt,
+        )
+
+        expect(terminal.send).toHaveBeenCalledExactlyOnceWith(
+          sessionId,
+          'Recover this first',
+          false,
+          { allowDuringAgentExecution: true },
+        )
+        expect(sent.failedPrompt).toBeUndefined()
+        expect(sent.queuedPrompts).toMatchObject([
+          { content: 'Older queued prompt' },
+        ])
+      } finally {
+        await service.stop()
+      }
+    })
+
+    it('retains a safely refused recovery ahead of queued followers', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, terminal, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+      ], { olderQueued: true })
+      const failedAt = new Date().toISOString()
+      try {
+        await service.store.update(sessionId, (session) => {
+          session.failedPrompt = {
+            content: 'Recover this first',
+            failedAt,
+          }
+        })
+
+        const retained = await service.sendMessage(
+          sessionId,
+          'Recover this first',
+          false,
+          failedAt,
+        )
+
+        expect(terminal.send).toHaveBeenCalledTimes(1)
+        expect(retained.failedPrompt).toBeUndefined()
+        expect(retained.queuedPrompts).toMatchObject([
+          { content: 'Recover this first', steer: true },
+          { content: 'Older queued prompt' },
+        ])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('queues a stale draft-replacement steer behind older work', async () => {
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => true,
+      ], { olderQueued: true })
+      pane.current = composerBack
+      try {
+        const sent = await service.sendMessage(
+          sessionId,
+          'Follow the queued work',
+          false,
+          undefined,
+          true,
+        )
+
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect(sent.queuedPrompts).toMatchObject([
+          { content: 'Older queued prompt' },
+          { content: 'Follow the queued work', steer: true },
+        ])
+      } finally {
+        await service.stop()
+      }
+    })
+
+    it('does not replace a terminal draft ahead of older queued work', async () => {
+      const { service, terminal, pane, sessionId } = await busyTerminal([
+        () => true,
+      ], { olderQueued: true })
+      pane.current = composerBack.replace('\n┃\n', '\n┃ terminal owner draft\n')
+      try {
+        await expect(service.sendMessage(
+          sessionId,
+          'Follow the queued work',
+          false,
+          undefined,
+          true,
+        )).rejects.toMatchObject({
+          statusCode: 409,
+          uncertainDelivery: false,
+        })
+
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([
+          { content: 'Older queued prompt' },
+        ])
+      } finally {
+        await service.stop()
+      }
+    })
+
     it('does not type it over text already in the composer', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       const { service, terminal, pane, sessionId } = await busyTerminal([
@@ -8471,6 +8670,116 @@ describe('AgentService deletion', () => {
       }
     })
 
+    it.each([
+      ['typed', composerBack.replace('\n┃\n', '\n┃ terminal owner draft\n')],
+      ['unreadable', ''],
+    ])('restores a fast steer wake after restart when the composer is %s', async (_kind, blockedPane) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-steer-restart-'))
+      directories.push(directory)
+      const sessionId = randomUUID()
+      const stateDirectory = path.join(directory, 'state')
+      const store = new SessionStore(stateDirectory)
+      await store.initialize()
+      await store.create({
+        id: sessionId,
+        cwd: directory,
+        title: 'Recovered steer',
+        updatedAt: new Date().toISOString(),
+        status: 'running',
+        isOpen: true,
+        queuedCount: 1,
+        queuedPrompts: [{
+          id: randomUUID(),
+          content: 'Retained across restart',
+          createdAt: new Date().toISOString(),
+          steer: true,
+        }],
+        messages: [],
+      }, { managedOpen: true, backend: 'terminal' })
+      const client = new FakeCopilotClient()
+      client.models = [configurableModel()]
+      client.nextSessionList = Promise.resolve([{
+        sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Recovered steer',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      }])
+      let currentPane = blockedPane
+      const events = [
+        {
+          type: 'user.message',
+          id: 'user-1',
+          parentId: null,
+          timestamp: '2026-07-22T00:00:00.000Z',
+          data: { content: 'Keep working' },
+        },
+        {
+          type: 'assistant.turn_start',
+          id: 'turn-1',
+          parentId: 'user-1',
+          timestamp: '2026-07-22T00:00:00.100Z',
+          data: { turnId: '0' },
+        },
+      ] as SessionEvent[]
+      const terminal = {
+        create: vi.fn(async () => ({ sessionName: 'agentic-remote', windowId: '@1' })),
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+        capture: vi.fn(async () => currentPane),
+      }
+      const service = new AgentService(
+        new SessionStore(stateDirectory),
+        client,
+        async () => [{
+          id: sessionId,
+          cwd: directory,
+          title: 'Recovered steer',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => events,
+        async () => 'events-1',
+        terminal,
+      )
+      try {
+        await service.start()
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect({
+          status: service.listSessions().find((session) => session.id === sessionId)?.status,
+          startup: (
+            Reflect.get(service, 'startupTerminalQueues') as Set<string>
+          ).has(sessionId),
+          claim: (
+            Reflect.get(service, 'pendingTerminalQueueClaims') as Map<string, unknown>
+          ).has(sessionId),
+          timer: (
+            Reflect.get(service, 'terminalQueueRetryTimers') as Map<string, NodeJS.Timeout>
+          ).has(sessionId),
+        }).toEqual({
+          status: 'running',
+          startup: true,
+          claim: true,
+          timer: true,
+        })
+
+        currentPane = composerBack
+        await vi.waitFor(
+          () => expect(terminal.send).toHaveBeenCalledWith(
+            sessionId,
+            'Retained across restart',
+            false,
+            { allowDuringAgentExecution: true },
+          ),
+          { interval: 25, timeout: 350 },
+        )
+      } finally {
+        await service.stop()
+      }
+    })
+
     it('stays behind an older queued prompt, then steers the turn that prompt starts', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       const { service, terminal, pane, errors, sessionId } = await busyTerminal([
@@ -8481,7 +8790,7 @@ describe('AgentService deletion', () => {
         await service.sendMessage(sessionId, 'Steer when you can')
         pane.current = composerBack
         await new Promise((resolve) => setTimeout(resolve, 2_000))
-        expect(terminal.send).toHaveBeenCalledTimes(1)
+        expect(terminal.send).not.toHaveBeenCalled()
         expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
         expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([
           { content: 'Older queued prompt' },

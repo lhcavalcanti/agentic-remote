@@ -347,6 +347,8 @@ export interface SessionSummary {
   archivedAt?: string
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
+  /** A claimed terminal queue head is still awaiting a safe delivery outcome. */
+  terminalQueueDispatchPending?: boolean
   /** A durable dispatch intent. It must never be retried automatically. */
   queuedDispatch?: QueuedPromptDispatch
   /**

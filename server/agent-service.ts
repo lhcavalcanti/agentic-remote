@@ -1898,6 +1898,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     string,
     Promise<unknown>
   >()
+  private readonly terminalImmediateOperations = new Map<string, Promise<unknown>>()
   private readonly terminalAdmissionDispatched = new Set<string>()
   private readonly pendingTerminalPromptDispatches = new Map<string, string>()
   private readonly deletingSessions = new Set<string>()
@@ -4754,6 +4755,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     acknowledgedFailure?: string,
     replaceTerminalDraft = false,
     answerDelivery?: TerminalAnswerDelivery,
+    terminalImmediateSerialized = false,
   ): Promise<SessionDetail> {
     const content = rawContent.trim()
     if (this.stopped) throw queueConflict('The session service is stopping.')
@@ -4768,6 +4770,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         new Error('Terminal draft replacement is only available for immediate sends.'),
         { statusCode: 409, uncertainDelivery: false },
       )
+    }
+    if (
+      !terminalImmediateSerialized &&
+      !enqueue &&
+      !answerDelivery &&
+      (
+        this.store.backend(sessionId) === 'terminal' ||
+        this.externalSessionIds.has(sessionId)
+      )
+    ) {
+      return this.serializeTerminalImmediate(sessionId, () =>
+        this.sendAdmittedMessage(
+          sessionId,
+          rawContent,
+          enqueue,
+          acknowledgedFailure,
+          replaceTerminalDraft,
+          answerDelivery,
+          true,
+        ))
     }
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
@@ -5228,6 +5250,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let resolvedStartup = false
     let startupIdle = false
     let terminalWorking = false
+    let terminalPane: string | undefined
     if (terminalBacked) {
       if (
         answerDelivery &&
@@ -5258,6 +5281,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // it, and nothing says the prompt was never delivered. Refusing is
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
+      terminalPane = pane
       terminalWorking = Boolean(
         pane &&
           (isTerminalAgentWorking(pane) ||
@@ -5426,6 +5450,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const dispatchedAt = new Date().toISOString()
     const steer =
       terminalBacked && !answerDelivery && !nativeEnqueue && terminalWorking
+    if (
+      steer &&
+      current.queuedPrompts?.length &&
+      (answers === undefined || current.failedPrompt?.failedAt !== answers) &&
+      (await this.shouldEnqueueTerminalPrompt(sessionId))
+    ) {
+      if (
+        replaceTerminalDraft &&
+        (!terminalPane || composerHoldsText(terminalPane))
+      ) {
+        throw Object.assign(
+          new Error(
+            'Older prompts are waiting in the queue. The terminal draft was not replaced.',
+          ),
+          { statusCode: 409, uncertainDelivery: false },
+        )
+      }
+      return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
+    }
     let terminalSent: boolean
     try {
       terminalSent = await this.sendTerminalInput(
@@ -5456,7 +5499,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         (await this.shouldEnqueueTerminalPrompt(sessionId))
       ) {
         console.warn('A steer found the terminal not ready, so it waits for the composer')
-        return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
+        const priorityRecovery =
+          answers !== undefined &&
+          this.store.get(sessionId)?.failedPrompt?.failedAt === answers
+        return this.enqueueTerminalPrompt(
+          sessionId,
+          content,
+          false,
+          answers,
+          delivery,
+          true,
+          priorityRecovery,
+        )
       }
       throw error
     }
@@ -5997,6 +6051,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers?: string,
     delivery?: DeliveryBoundary,
     steer = false,
+    priority = false,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
@@ -6011,7 +6066,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // and after a restart the reader is handed the text again while the
       // copy they already sent is still waiting to go.
       const queued = answers
-        ? await this.store.enqueueAnsweringPrompt(sessionId, prompt, answers)
+        ? await this.store.enqueueAnsweringPrompt(
+            sessionId,
+            prompt,
+            answers,
+            priority,
+          )
         : await this.store.enqueuePrompt(sessionId, prompt)
       if (delivery) delivery.accepted = true
       this.admissions.markCommitted(sessionId)
@@ -6029,9 +6089,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers?: string,
     delivery?: DeliveryBoundary,
     steer = false,
+    priority = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content, command, answers, delivery, steer)
+    const queued = await this.enqueuePrompt(
+      sessionId,
+      content,
+      command,
+      answers,
+      delivery,
+      steer,
+      priority,
+    )
     if (!wasIdle) {
       // Nothing else drains mid-turn, so the queue is polled for the composer.
       if (steer) this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
@@ -10771,7 +10840,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const before = await this.terminalController.capture?.(sessionId)
       if (startup && (!before?.trim() || composerHoldsText(before) || isTerminalSessionInUsePrompt(before))) {
-        this.retryTerminalQueueClaim(sessionId, !before?.trim())
+        this.retryTerminalQueueClaim(
+          sessionId,
+          !before?.trim(),
+          midTurnSteer ? TERMINAL_STEER_RETRY_MS : undefined,
+        )
         return false
       }
       if (next.command && !before?.trim()) {
@@ -10880,9 +10953,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.startupTerminalQueues.delete(sessionId)
       return
     }
-    const delay = failed
-      ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750
-      : readyDelay ?? 750
+    const delay = readyDelay ?? (
+      failed
+        ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750
+        : 750
+    )
     const retryAt = Date.now() + delay
     this.pendingTerminalQueueClaims.set(sessionId, {
       retryAt,
@@ -11163,6 +11238,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.terminalAdmissionOperations.get(sessionId) === current) {
         this.terminalAdmissionOperations.delete(sessionId)
         this.terminalAdmissionDispatched.delete(sessionId)
+      }
+    }
+  }
+
+  private async serializeTerminalImmediate<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous =
+      this.terminalImmediateOperations.get(sessionId) || Promise.resolve()
+    const current = previous.catch(() => undefined).then(operation)
+    this.terminalImmediateOperations.set(sessionId, current)
+    try {
+      return await current
+    } finally {
+      if (this.terminalImmediateOperations.get(sessionId) === current) {
+        this.terminalImmediateOperations.delete(sessionId)
       }
     }
   }

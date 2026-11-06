@@ -5120,6 +5120,7 @@ function SortableQueuedPrompt({
   busy,
   suspended,
   retained,
+  steering,
   onEdit,
   onRemove,
 }: {
@@ -5129,6 +5130,7 @@ function SortableQueuedPrompt({
   busy: boolean
   suspended: boolean
   retained: boolean
+  steering: boolean
   onEdit: () => void
   onRemove: () => void
 }) {
@@ -5159,7 +5161,7 @@ function SortableQueuedPrompt({
         <GripVertical size={13} />
       </span>
       <span>
-        {prompt.steer && !prompt.command && (
+        {steering && (
           <strong
             className="queued-prompt__steer"
             title="Waits for an empty terminal composer, then joins the running turn at the next safe input point"
@@ -8461,11 +8463,21 @@ function App() {
   // An interrupted or archived record is read-only until it is reopened; the
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
-  const selectedQueueIsSteering = Boolean(
-    selected?.queuedPrompts?.length &&
-    selected.queuedPrompts.every(
-      (prompt) => prompt.steer === true && !prompt.command,
-    ),
+  const selectedQueueHeadIsSteering = Boolean(
+    selected?.status === 'running' &&
+    selected.executionMode === 'tmux' &&
+    selectedComputerOnline &&
+    !selectedRetained &&
+    selected?.suspended !== true &&
+    !selected.pendingUserInput &&
+    !selected.pendingPermission &&
+    !selected.failedPrompt &&
+    !selected.queuedDispatch &&
+    !selected.terminalQueueDispatchPending &&
+    selected.recoverySeedState !== 'pending' &&
+    selected.recoverySeedState !== 'dispatching' &&
+    selected.queuedPrompts?.[0]?.steer === true &&
+    !selected.queuedPrompts[0].command,
   )
   const selectedLifecycleBlocked = !selectedComputerOnline ||
     selectedRetained ||
@@ -15974,15 +15986,29 @@ function App() {
             ) : null}
             {selected.queuedPrompts?.length ? (
               <section
-                aria-description={selectedQueueIsSteering
-                  ? 'Messages waiting for a safe terminal composer to join the running turn'
-                  : 'Messages waiting for later delivery'}
-                aria-label={selectedQueueIsSteering ? 'Steering prompts' : 'Queued prompts'}
+                aria-description={
+                  selectedRetained
+                    ? 'Messages retained until this session is reopened'
+                    : selectedQueueHeadIsSteering
+                      ? 'The next message is waiting for a safe terminal composer to join the running turn'
+                      : 'Messages waiting for later delivery'
+                }
+                aria-label={
+                  selectedRetained
+                    ? 'Retained prompts'
+                    : selectedQueueHeadIsSteering
+                      ? 'Steering prompts'
+                      : 'Queued prompts'
+                }
                 className="queued-prompts"
               >
                 <header>
                   <strong>
-                    {selectedQueueIsSteering ? 'Steering when ready' : 'Queued for later'}
+                    {selectedRetained
+                      ? 'Retained until reopened'
+                      : selectedQueueHeadIsSteering
+                        ? 'Steering when ready'
+                        : 'Queued for later'}
                   </strong>
                   <span>{selected.queuedPrompts.length}</span>
                 </header>
@@ -16012,6 +16038,7 @@ function App() {
                           suspended={selected.suspended === true}
                           retained={selectedRetained}
                           prompt={prompt}
+                          steering={index === 0 && selectedQueueHeadIsSteering}
                         />
                       ))}
                     </div>

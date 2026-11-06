@@ -979,10 +979,15 @@ Questions and permissions are the highest-priority UI state.
   into the running turn as soon as the composer is ready and empty again, not
   held until the turn ends or coupled only to transcript polling. This
   includes a turn that outlived a hub restart. A steer behind an older queued
-  prompt keeps its place and steers the turn that prompt starts. A steer the
-  terminal refuses again before anything was typed stays at the head without
-  a new error; an uncertain one is never retyped. Steers that would replace a
-  terminal draft, and refusals for any other reason, still return a 409.
+  prompt keeps its place and steers the turn that prompt starts. While a
+  runnable retained head exists, a later immediate steer MUST join behind it
+  instead of attempting direct delivery, including when both sends overlap
+  before the first refusal settles. After restart, a running steer head blocked
+  by a typed or unreadable composer MUST regain the same short steer-only
+  readiness wake. A steer the terminal refuses again before anything was typed
+  stays at the head without a new error; an uncertain one is never retyped.
+  Steers that would replace a terminal draft, and refusals for any other
+  reason, still return a 409.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
@@ -1202,6 +1207,13 @@ keyboard Return inserts a newline.
 The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
+
+The queue region MUST say **Steering when ready** only while a tmux session is
+running and its runnable head is a non-command steer. An SDK fallback or idle
+queue remains **Queued for later**, later steers behind an ordinary head do not
+relabel the queue, and archived or interrupted queues say **Retained until
+reopened**. The region's accessible name, description, and per-prompt steer
+marker MUST match that same current state.
 
 An app-queued terminal prompt MUST be durably removed from automatic retry
 before delivery begins. A failed completion write MUST NOT resend the prompt;

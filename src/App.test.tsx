@@ -9057,7 +9057,7 @@ describe('App', () => {
       expect(delivery).not.toHaveTextContent('Queued for later')
       expect(delivery).toHaveAttribute(
         'aria-description',
-        'Messages waiting for a safe terminal composer to join the running turn',
+        'The next message is waiting for a safe terminal composer to join the running turn',
       )
       const label = await screen.findByTitle(
         'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
@@ -9087,6 +9087,133 @@ describe('App', () => {
       expect(screen.queryByTitle(
         'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
       )).toBeNull()
+    })
+
+    it.each([
+      {
+        name: 'a running mixed queue whose head can steer',
+        state: {
+          ...running,
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+            { id: 'q2', content: 'Later work', createdAt: new Date().toISOString() },
+          ],
+        },
+        region: 'Steering prompts',
+        heading: 'Steering when ready',
+        description: 'The next message is waiting for a safe terminal composer to join the running turn',
+        steering: true,
+      },
+      {
+        name: 'a running mixed queue whose head waits for later',
+        state: {
+          ...running,
+          queuedPrompts: [
+            { id: 'q1', content: 'Older work', createdAt: new Date().toISOString() },
+            { id: 'q2', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'an idle all-steer queue',
+        state: {
+          ...running,
+          status: 'idle' as const,
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'an archived all-steer queue',
+        state: {
+          ...running,
+          isOpen: false,
+          archivedAt: new Date().toISOString(),
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Retained prompts',
+        heading: 'Retained until reopened',
+        description: 'Messages retained until this session is reopened',
+        steering: false,
+      },
+      {
+        name: 'a running steer queue blocked by failed delivery recovery',
+        state: {
+          ...running,
+          failedPrompt: {
+            content: 'Confirm delivery first',
+            failedAt: new Date().toISOString(),
+          },
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'a running SDK fallback queue with stale steer metadata',
+        state: {
+          ...running,
+          executionMode: 'sdk' as const,
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'a running steer follower behind an unsettled terminal dispatch',
+        state: {
+          ...running,
+          terminalQueueDispatchPending: true,
+          queuedPrompts: [
+            { id: 'q2', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+    ])('labels $name from lifecycle and its runnable head', async ({
+      state,
+      region,
+      heading,
+      description,
+      steering,
+    }) => {
+      vi.mocked(listSessions).mockResolvedValue([state])
+      vi.mocked(getSession).mockResolvedValue(state)
+      render(<App />)
+
+      const delivery = await screen.findByRole('region', { name: region })
+      expect(delivery).toHaveTextContent(heading)
+      expect(delivery).toHaveAttribute('aria-description', description)
+      if (steering) {
+        expect(within(delivery).getByText(/^Steer ·/)).toHaveAttribute(
+          'title',
+          'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
+        )
+      } else {
+        expect(within(delivery).queryByText(/^Steer ·/)).toBeNull()
+      }
     })
 
     it('is not shown for a failed send, which goes back to the composer', async () => {

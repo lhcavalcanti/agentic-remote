@@ -333,6 +333,7 @@ export function createManagerTools(
       (prompt) => prompt.content === content && !previousIds.has(prompt.id),
     )
     if (queued) {
+      if (queued.command || queued.steer) return undefined
       const queueIndex = after.queuedPrompts!.findIndex(
         ({ id }) => id === queued.id,
       )
@@ -343,15 +344,13 @@ export function createManagerTools(
       const anchor = after.messages?.findLast(({ role }) => role === 'user')
       return {
         promptId: queued.id,
-        ...(
-          !queued.command && !queued.steer && position > 0
-            ? {
-                ...(anchor ? { promptAnchorId: anchor.id } : {}),
-                promptQueuePosition: position,
-                promptDigest: createHash('sha256').update(content).digest('hex'),
-              }
-            : {}
-        ),
+        ...(position > 0
+          ? {
+              ...(anchor ? { promptAnchorId: anchor.id } : {}),
+              promptQueuePosition: position,
+              promptDigest: createHash('sha256').update(content).digest('hex'),
+            }
+          : {}),
       }
     }
     const delivered = after.messages?.findLast(

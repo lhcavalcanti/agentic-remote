@@ -23,7 +23,7 @@ import { OracleTaskStore } from './oracle-task-store.js'
 interface ProactiveManager {
   enqueueInternal(input: ManagerInternalSubmission): Promise<ManagerMessage>
   retry(messageId: string): Promise<ManagerMessage>
-  cancelMessage(messageId: string): Promise<ManagerMessage>
+  setProactiveMessagesEnabled(enabled: boolean): Promise<void>
   snapshot(): ManagerSnapshot
   on(event: 'event', listener: (event: ManagerEvent) => void): unknown
   off(event: 'event', listener: (event: ManagerEvent) => void): unknown
@@ -34,15 +34,11 @@ export interface ManagerProactiveCoordinatorOptions {
   taskStore: OracleTaskStore
   agent: ProactiveManager | Pick<
     ManagerAgent,
-    'enqueueInternal' | 'retry' | 'cancelMessage' | 'snapshot' | 'on' | 'off'
+    'enqueueInternal' | 'retry' | 'setProactiveMessagesEnabled' | 'snapshot' | 'on' | 'off'
   >
   computers: () => ComputerSummary[]
   registry: () => ManagerRegistry
   listSessions?: () => Promise<ManagedSession[]>
-  readSession?: (
-    computerId: string,
-    sessionId: string,
-  ) => Promise<ManagedSession>
   debounceMs?: number
 }
 
@@ -52,13 +48,6 @@ function batchMessageId(events: readonly ManagerProactiveInboxEvent[]): string {
     .digest('hex')
     .slice(0, 40)
   return `proactive-${digest}`
-}
-
-function oneLine(value: string | undefined, maximum: number): string | undefined {
-  if (!value) return undefined
-  const text = value.replace(/\s+/g, ' ').trim()
-  if (!text) return undefined
-  return text.length > maximum ? `${text.slice(0, maximum - 1)}…` : text
 }
 
 function isTerminal(message: ManagerMessage): boolean {
@@ -76,10 +65,6 @@ export class ManagerProactiveCoordinator {
   private readonly computers: () => ComputerSummary[]
   private readonly registry: () => ManagerRegistry
   private readonly listSessions?: () => Promise<ManagedSession[]>
-  private readonly readSession?: (
-    computerId: string,
-    sessionId: string,
-  ) => Promise<ManagedSession>
   private readonly debounceMs: number
   private readonly pendingEvents: HubEvent[] = []
   private queue: Promise<unknown> = Promise.resolve()
@@ -95,7 +80,6 @@ export class ManagerProactiveCoordinator {
     this.computers = options.computers
     this.registry = options.registry
     this.listSessions = options.listSessions
-    this.readSession = options.readSession
     this.debounceMs = options.debounceMs ?? 25
   }
 
@@ -123,21 +107,18 @@ export class ManagerProactiveCoordinator {
 
   setEnabled(enabled: boolean): Promise<void> {
     this.requireReady()
+    if (!enabled) {
+      this.enabled = false
+      this.pendingEvents.length = 0
+      this.clearTimer()
+      const disabling = this.agent.setProactiveMessagesEnabled(false)
+      return this.enqueue(async () => {
+        await disabling
+      })
+    }
     return this.enqueue(async () => {
-      this.enabled = enabled
-      if (!enabled) {
-        this.pendingEvents.length = 0
-        this.clearTimer()
-        const admitted = this.agent.snapshot().messages.filter((message) =>
-          message.role === 'user' &&
-          message.source === 'proactive' &&
-          (message.state === 'queued' || message.state === 'running')
-        )
-        for (const message of admitted) {
-          await this.agent.cancelMessage(message.id)
-        }
-        return
-      }
+      await this.agent.setProactiveMessagesEnabled(true)
+      this.enabled = true
       await this.reconcileCurrentSessions()
       await this.flushEvents()
       await this.drainNow()
@@ -347,7 +328,7 @@ export class ManagerProactiveCoordinator {
     if (events.length === 0) return
     const message = await this.agent.enqueueInternal({
       id: batchMessageId(events),
-      content: await this.prompt(events),
+      content: this.prompt(events),
       source: 'proactive',
       answerOnly: true,
       automatic: {
@@ -370,9 +351,9 @@ export class ManagerProactiveCoordinator {
     }
   }
 
-  private async prompt(
+  private prompt(
     events: readonly ManagerProactiveInboxEvent[],
-  ): Promise<string> {
+  ): string {
     const lines = [
       'Review these durable manager-owned lifecycle events. Read state only, then record exactly one outcome for every event.',
     ]
@@ -380,24 +361,6 @@ export class ManagerProactiveCoordinator {
       lines.push(
         `Event ${event.id}: kind=${event.kind}; computer=${event.computerId}; session=${event.sessionId}; taskGeneration=${event.taskGeneration}; revision=${event.revision}.`,
       )
-      if (!this.readSession) continue
-      const session = await this.readSession(
-        event.computerId,
-        event.sessionId,
-      ).catch(() => undefined)
-      if (!session) continue
-      const details = [
-        `status=${session.status}`,
-        oneLine(session.title, 120)
-          ? `title=${oneLine(session.title, 120)}`
-          : undefined,
-        oneLine(session.activity, 240)
-          ? `activity=${oneLine(session.activity, 240)}`
-          : undefined,
-        session.pendingPermission ? 'pending=permission' : undefined,
-        session.pendingUserInput ? 'pending=user-input' : undefined,
-      ].filter(Boolean)
-      lines.push(`Current passive projection: ${details.join('; ')}.`)
     }
     return lines.join('\n')
   }

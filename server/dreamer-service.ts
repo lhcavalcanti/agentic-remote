@@ -1245,8 +1245,11 @@ export class DreamerService {
         )) {
           status = 'queued'
           error = undefined
-        } else if (managerMessage?.state === 'running') {
-          status = 'running'
+        } else if (
+          managerMessage?.state === 'queued' ||
+          managerMessage?.state === 'running'
+        ) {
+          status = managerMessage.state
           error = undefined
         } else if (managerFailure) {
           status = 'failed'

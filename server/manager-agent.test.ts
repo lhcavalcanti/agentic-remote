@@ -2382,6 +2382,51 @@ describe('ManagerAgent', () => {
     )?.state).toBe('cancelled')
   })
 
+  it('does not invoke the model when proactive disable races a queue claim', async () => {
+    let releaseClaim!: () => void
+    let markClaimed!: () => void
+    const claimGate = new Promise<void>((resolve) => {
+      releaseClaim = resolve
+    })
+    const claimed = new Promise<void>((resolve) => {
+      markClaimed = resolve
+    })
+    const originalUpsert = store.upsertMessage.bind(store)
+    vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
+      await originalUpsert(message)
+      if (
+        message.id === 'proactive-disable-claim-race' &&
+        message.role === 'user' &&
+        message.state === 'running'
+      ) {
+        markClaimed()
+        await claimGate
+      }
+    })
+    await start()
+    await agent!.enqueueInternal({
+      id: 'proactive-disable-claim-race',
+      content: 'Analyze the admitted lifecycle event.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['e'.repeat(64)],
+      },
+    })
+    await claimed
+
+    const disabling = agent!.setProactiveMessagesEnabled(false)
+    releaseClaim()
+    await disabling
+    await settled()
+
+    expect(sdk.prompts).toHaveLength(0)
+    expect(agent!.message('proactive-disable-claim-race')).toMatchObject({
+      state: 'cancelled',
+    })
+  })
+
   it('keeps voice provenance through queue edits, failures, retries, and restart recovery', async () => {
     sdk.behaviors.push(async () => new Promise<void>(() => undefined))
     await start({ turnTimeoutMs: 2_000 })

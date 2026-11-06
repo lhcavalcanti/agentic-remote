@@ -55,10 +55,23 @@ class FakeAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   readonly submissions: ManagerInternalSubmission[] = []
   readonly messages: ManagerMessage[] = []
   readonly cancellations: string[] = []
+  readonly proactiveEnabled: boolean[] = []
   enqueueInternal = vi.fn(async (input: ManagerInternalSubmission) => {
     this.submissions.push(structuredClone(input))
     const existing = this.messages.find(({ id }) => id === input.id)
-    if (existing) return existing
+    if (existing) {
+      if (
+        existing.content !== input.content ||
+        existing.source !== input.source ||
+        JSON.stringify(existing.automatic) !== JSON.stringify(input.automatic)
+      ) {
+        throw Object.assign(
+          new Error('An Oracle message already uses this deterministic ID.'),
+          { statusCode: 409 },
+        )
+      }
+      return existing
+    }
     const message: ManagerMessage = {
       ...input,
       role: 'user',
@@ -75,11 +88,18 @@ class FakeAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     delete message.error
     return message
   })
-  cancelMessage = vi.fn(async (id: string) => {
-    const message = this.messages.find((candidate) => candidate.id === id)!
-    this.cancellations.push(id)
-    message.state = 'cancelled'
-    return message
+  setProactiveMessagesEnabled = vi.fn(async (enabled: boolean) => {
+    this.proactiveEnabled.push(enabled)
+    if (enabled) return
+    for (const message of this.messages) {
+      if (
+        message.source === 'proactive' &&
+        (message.state === 'queued' || message.state === 'running')
+      ) {
+        this.cancellations.push(message.id)
+        message.state = 'cancelled'
+      }
+    }
   })
   snapshot(): ManagerSnapshot {
     return {
@@ -92,7 +112,7 @@ class FakeAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   }
 }
 
-async function fixture(root: string) {
+async function fixture(root: string, agent = new FakeAgent()) {
   const inbox = new ManagerProactiveInbox(path.join(root, 'inbox'), {
     enabled: true,
     hubId: 'hub-a',
@@ -100,7 +120,6 @@ async function fixture(root: string) {
   const taskStore = new OracleTaskStore(path.join(root, 'tasks'), {
     hubId: 'hub-a',
   })
-  const agent = new FakeAgent()
   let current = managed('running', 1)
   const registry: ManagerRegistry = {
     [registryKey('computer-a', 'session-a')]: {
@@ -125,7 +144,6 @@ async function fixture(root: string) {
     }],
     registry: () => registry,
     listSessions: async () => [current],
-    readSession: async () => current,
     debounceMs: 1,
   })
   await coordinator.initialize()
@@ -233,6 +251,37 @@ describe('ManagerProactiveCoordinator', () => {
 
     expect(restarted.taskStore.snapshot().tasks).toHaveLength(1)
     expect(restarted.inbox.pending()).toHaveLength(0)
+  })
+
+  it('replays the same batch content after session projection changes', async () => {
+    const root = await directory()
+    const agent = new FakeAgent()
+    const first = await fixture(root, agent)
+    await first.coordinator.setEnabled(true)
+    first.coordinator.handle(event(managed('running', 1)))
+    first.setCurrent({
+      ...managed('error', 2),
+      activity: 'Initial failure details.',
+    })
+    first.coordinator.handle(event({
+      ...managed('error', 2),
+      activity: 'Initial failure details.',
+    }))
+    await first.coordinator.drain()
+    const original = agent.messages[0]!
+    original.state = 'failed'
+    original.retryCount = 1
+    await first.coordinator.stop()
+
+    const restarted = await fixture(root, agent)
+    restarted.setCurrent({
+      ...managed('idle', 3),
+      activity: 'Later unrelated session state.',
+    })
+
+    await expect(restarted.coordinator.setEnabled(true)).resolves.toBeUndefined()
+    expect(agent.submissions).toHaveLength(2)
+    expect(agent.submissions[1]).toEqual(agent.submissions[0])
   })
 
   it('does not regroup events already durably linked before acknowledgement', async () => {

@@ -410,6 +410,69 @@ describe('DreamerService', () => {
     })
   })
 
+  it('keeps a linked idle execution queued with its recovered Oracle turn', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['b'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The recovered Oracle turn is still queued.',
+      nextAction: 'Wait for the recovered Oracle queue.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, 'No result yet.', {
+        id: 'execution-recovered-queue',
+        status: 'idle',
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'ecda856c-4415-48ac-96fd-d44bfc2c05b6',
+    })
+    managerMessages.push({
+      id: 'recovered-queue-session-link',
+      role: 'activity',
+      content: 'Linked execution session before restart',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-recovered-queue',
+        promptId: 'task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [{
+        id: dispatched.tasks![0]!.attempts[0]!.id,
+        status: 'queued',
+      }],
+    })
+  })
+
   it('keeps a task queued while its exact linked execution prompt awaits delivery', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')

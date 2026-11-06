@@ -358,6 +358,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private currentAnswerOnly = false
   /** Trusted hub-side provenance of the message being answered. */
   private currentMessageSource: ManagerMessageSource = 'typed'
+  private proactiveMessagesEnabled = true
   private pendingAcknowledgement?: { journalSeq: number; memoryHash?: string; notesShown: number }
   /** The turn being answered, settled once its outcome is stored. */
   private processing?: Promise<void>
@@ -1034,6 +1035,34 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     )
   }
 
+  setProactiveMessagesEnabled(enabled: boolean): Promise<void> {
+    this.proactiveMessagesEnabled = enabled
+    return this.serializeQueue(async () => {
+      if (enabled) return
+      const admitted = this.store.messages().filter((message) =>
+        message.role === 'user' &&
+        message.source === 'proactive' &&
+        (message.state === 'queued' || message.state === 'running')
+      )
+      for (const message of admitted) {
+        await this.updateMessage({
+          ...message,
+          state: 'cancelled',
+          updatedAt: this.now().toISOString(),
+        })
+      }
+      if (
+        this.processing &&
+        this.currentMessageSource === 'proactive' &&
+        this.currentReplyTo
+      ) {
+        this.cancelledMessageId = this.currentReplyTo
+        this.running?.cancel()
+      }
+      this.publishStatus()
+    })
+  }
+
   async retry(messageId: string): Promise<ManagerMessage> {
     const message = this.store.message(messageId)
     if (!message || message.role !== 'user') {
@@ -1373,6 +1402,14 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         ).sort((left, right) => messagePriority(left) - messagePriority(right))
         let next = queued[0]
         if (!next) return undefined
+        if (next.source === 'proactive' && !this.proactiveMessagesEnabled) {
+          await this.updateMessage({
+            ...next,
+            state: 'cancelled',
+            updatedAt: this.now().toISOString(),
+          })
+          continue
+        }
         const automaticScheduled = next.source === 'scheduled' && !next.startedAt
         if (automaticScheduled) {
           const proactive = this.store.state().proactive
@@ -1469,7 +1506,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private async process(message: ManagerMessage): Promise<void> {
     const epoch = this.epoch
     const current = () => !this.stopped && this.epoch === epoch
-    const cancelled = () => this.cancelledMessageId === message.id
+    const cancelled = () =>
+      this.cancelledMessageId === message.id ||
+      (message.source === 'proactive' && !this.proactiveMessagesEnabled)
     this.currentReplyTo = message.id
     this.currentAnswerOnly = message.answerOnly === true
     if (this.structuredMemoryEnabled()) {

@@ -607,6 +607,49 @@ describe('manager tools', () => {
     expect(result).not.toContain('queued')
   })
 
+  it('does not replace a task root prompt with a busy-session steer receipt', async () => {
+    source = 'task'
+    taskSessionIds = new Set(['def67890-bbbb'])
+    const rootPrompt = {
+      id: 'root-task-prompt',
+      role: 'user' as const,
+      content: 'Run the focused queue test.',
+      createdAt: '2026-10-15T11:50:00.000Z',
+    }
+    vi.mocked(host.listSessions).mockResolvedValue([
+      session('def67890-bbbb', {
+        status: 'running',
+        messages: [rootPrompt],
+      }),
+    ])
+    vi.mocked(host.sendMessage).mockResolvedValueOnce(
+      session('def67890-bbbb', {
+        status: 'running',
+        messages: [rootPrompt],
+        queuedPrompts: [{
+          id: 'steer-receipt',
+          content: 'Focus on the failing test',
+          createdAt: '2026-10-15T12:00:00.000Z',
+          steer: true,
+        }],
+      }),
+    )
+
+    await call('send_to_session', {
+      sessionId: 'def67890',
+      message: 'Focus on the failing test',
+    })
+
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'send_to_session',
+      sessionRefs: [{
+        computerId: 'hub',
+        sessionId: 'def67890-bbbb',
+      }],
+    })
+    expect(activities.at(-1)!.sessionRefs![0]!.promptId).toBeUndefined()
+  })
+
   it('queues for a busy session only when the steer was refused before anything was sent', async () => {
     vi.mocked(host.sendMessage).mockRejectedValueOnce(Object.assign(
       new Error('A follow-up prompt is already being sent.'), { statusCode: 409, uncertainDelivery: false },

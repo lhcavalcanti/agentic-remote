@@ -468,8 +468,6 @@ export async function buildApp(
           computers: () => dreamerManager.listComputers(),
           registry: () => managerStore!.registry(),
           listSessions: () => dreamerManager.listSessions(),
-          readSession: (computerId, sessionId) =>
-            dreamerManager.readSession(computerId, sessionId),
         })
         await proactiveCoordinator.initialize()
         await proactiveCoordinator.setEnabled(

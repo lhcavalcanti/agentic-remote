@@ -50,3 +50,14 @@ export class RemoteNodeTransportError extends Error {
     this.name = 'RemoteNodeTransportError'
   }
 }
+
+export class RemoteNodeCapabilityError extends Error {
+  readonly statusCode = 409
+
+  constructor(computerName: string) {
+    super(
+      `${computerName} does not support confined Knowledge reads yet. Update it to the latest release.`,
+    )
+    this.name = 'RemoteNodeCapabilityError'
+  }
+}

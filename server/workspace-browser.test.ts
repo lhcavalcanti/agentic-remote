@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -65,6 +65,24 @@ describe('workspace browser', () => {
     await expect(readWorkspaceFile(root, 'outside.md')).rejects.toThrow(
       'restricted to the session folder',
     )
+  })
+
+  it('refuses a confined read after the root is replaced by a symlink', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-read-race-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const root = path.join(cwd, 'knowledge')
+    const outside = path.join(parent, 'outside')
+    await mkdir(root, { recursive: true })
+    await mkdir(outside)
+    await writeFile(path.join(root, 'safe.md'), 'safe')
+    await writeFile(path.join(outside, 'private.md'), 'private')
+    await rename(root, `${root}-original`)
+    await symlink(outside, root)
+
+    await expect(
+      readWorkspaceFile(root, 'private.md', cwd),
+    ).rejects.toMatchObject({ statusCode: 403 })
   })
 
   it('searches names and bounded text while skipping hidden metadata', async () => {

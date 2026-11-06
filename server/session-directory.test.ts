@@ -180,17 +180,33 @@ describe('validateKnowledgeRoot', () => {
 })
 
 describe('ensureSessionKnowledgeBase', () => {
+  it('returns the canonical owner cwd with the selected folder', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-cwd-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const alias = path.join(parent, 'project-alias')
+    await mkdir(cwd)
+    await symlink(cwd, alias)
+
+    await expect(
+      ensureSessionKnowledgeBase(alias, 'knowledge', true),
+    ).resolves.toEqual({
+      path: path.join(cwd, 'knowledge'),
+      confinementPath: cwd,
+    })
+  })
+
   it('creates a private dedicated folder and reuses it idempotently', async () => {
     const cwd = await homeFixture()
     const expected = path.join(cwd, 'docs', 'knowledge')
 
     await expect(
       ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
-    ).resolves.toBe(expected)
+    ).resolves.toEqual({ path: expected, confinementPath: cwd })
     expect((await stat(expected)).mode & 0o777).toBe(0o700)
     await expect(
       ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
-    ).resolves.toBe(expected)
+    ).resolves.toEqual({ path: expected, confinementPath: cwd })
   })
 
   it('uses an existing readable folder without creating it', async () => {
@@ -200,7 +216,7 @@ describe('ensureSessionKnowledgeBase', () => {
 
     await expect(
       ensureSessionKnowledgeBase(cwd, 'knowledge', false),
-    ).resolves.toBe(existing)
+    ).resolves.toEqual({ path: existing, confinementPath: cwd })
   })
 
   it('reports a missing non-created folder as not found', async () => {

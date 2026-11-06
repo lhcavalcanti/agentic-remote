@@ -329,7 +329,7 @@ export async function registerSessionKnowledgeRoutes(
             503,
           )
         }
-        const canonicalPath = await manager.ensureSessionKnowledgeBase(
+        const location = await manager.ensureSessionKnowledgeBase(
           computerId,
           sessionId,
           input.knowledgeBasePath,
@@ -345,10 +345,10 @@ export async function registerSessionKnowledgeRoutes(
         const reservation = await knowledge.reserveRoot({
           computerId,
           computerName: computer.name,
-          path: canonicalPath,
-          name: knowledgeBaseName(canonicalPath),
+          path: location.path,
+          name: knowledgeBaseName(location.path),
         }, {
-          confinementPath: known.cwd,
+          confinementPath: location.confinementPath,
           binding: {
             computerId,
             sessionId,
@@ -374,6 +374,7 @@ export async function registerSessionKnowledgeRoutes(
               expectedRevision: input.expectedRevision,
             },
             validate,
+            { force: reservation.requiresBindingCommit },
           )
         } catch (error) {
           await reservation.rollback()
@@ -422,13 +423,20 @@ export async function registerSessionKnowledgeRoutes(
         )
       }
       if (root) {
-        await manager.listKnowledge(
+        const confinementPath = knowledge.getRootConfinement(root.id)
+        const canonicalPath = await manager.validateKnowledgeRoot(
           root.computerId,
           root.path,
+          confinementPath,
+        )
+        await manager.listKnowledge(
+          root.computerId,
+          canonicalPath,
           rootPath,
-          knowledge.getRootConfinement(root.id),
+          confinementPath,
         )
         rootIsCurrent?.()
+        root.path = canonicalPath
       }
       const sessionIsCurrent = (
         await knownSessionGuard(computerId, sessionId)
@@ -446,6 +454,7 @@ export async function registerSessionKnowledgeRoutes(
           sessionId,
           { ...input, rootPath },
           validate,
+          { root },
         )
         reply.header('cache-control', 'no-store')
         return { binding }

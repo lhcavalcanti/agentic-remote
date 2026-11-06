@@ -77,6 +77,8 @@ Content-Type: application/json
 - `expectedRevision` comes from the latest `GET`.
 - The folder is created or validated on the session's owning computer and added
   to the existing shared Knowledge catalog.
+- The owning computer supplies the canonical folder path and canonical session
+  `cwd`; aliases and symbolic-link spellings are not persisted.
 - Repeating the same current binding with its current revision is a no-op.
 
 Path mode intentionally cannot choose another computer. Existing catalog-root
@@ -111,7 +113,7 @@ Knowledge root or any filesystem folder.
 | `400` | Malformed/mixed request, unsafe path syntax, invalid revision, unreadable path, or non-directory target. |
 | `403` | Host/Origin refusal, traversal, hidden/sensitive path, symbolic link, or escape from the session working directory. |
 | `404` | Computer, session, root, or non-created folder does not exist. |
-| `409` | Stale revision, replaced session, or changed pairing. Revision conflicts include the latest `binding`. |
+| `409` | Stale revision, replaced session, changed pairing, or a paired node that cannot prove it enforced read confinement. Revision conflicts include the latest `binding`; incompatible nodes must be updated before confined roots can be read. |
 | `503` | The owning computer cannot validate the path, or metadata persistence/recovery failed. A post-commit catalog-cleanup failure includes the committed `binding`; continue from that revision rather than retrying the stale request. |
 
 Filesystem errors do not expose unsubmitted private paths. If directory creation
@@ -119,8 +121,10 @@ succeeds but metadata persistence fails, Agentic Remote leaves the directory in
 place rather than risking deletion of user or concurrent data. A newly reserved
 catalog entry is rolled back.
 If the hub stops between cataloging and binding, startup recovery keeps the
-root only when a durable session binding references it; otherwise the
-provisional catalog entry is removed.
+root only when a durable path-mode session binding references its exact claimed
+root path at the exact committed revision; otherwise the provisional catalog
+entry or confinement is removed. Post-commit finalization can promote only the
+reservation claim that performed that binding commit.
 
 ## Lifecycle
 
@@ -154,6 +158,12 @@ The API does not scan file contents for secrets. Do not put credentials,
 provider state, private keys, environment files, or other sensitive material in
 a Knowledge base. Knowledge remains read-only through Agentic Remote and
 continues to omit hidden entries.
+
+For paired computers, every confined list or file response must explicitly
+acknowledge that the node applied confinement. The hub rejects responses from
+older or rolled-back nodes that omit that acknowledgment rather than trusting
+an unconstrained read. Root-ID associations also persist the canonical
+owner-returned root path, so aliases cannot weaken later validation.
 
 ## Default `.copilot-instructions` text
 

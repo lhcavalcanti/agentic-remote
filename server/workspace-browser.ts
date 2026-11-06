@@ -8,6 +8,7 @@ import type {
   WorkspaceSearchResponse,
   WorkspaceSearchResult,
 } from '../shared/contracts.js'
+import { validateKnowledgeRoot } from './session-directory.js'
 
 const MAX_DIRECTORY_ENTRIES = 2_000
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
@@ -56,8 +57,11 @@ export class WorkspaceBrowserError extends Error {
 export async function listWorkspace(
   rootPath: string,
   requestedPath = '.',
+  confinementPath?: string,
 ): Promise<WorkspaceListing> {
-  const root = await realpath(rootPath)
+  const root = confinementPath
+    ? await validateKnowledgeRoot(rootPath, confinementPath)
+    : await realpath(rootPath)
   const resolved = await resolveWorkspacePath(root, requestedPath)
   if (!(await stat(resolved)).isDirectory()) {
     throw new WorkspaceBrowserError('Workspace path must be a folder', 400)
@@ -114,8 +118,11 @@ export async function listWorkspace(
 export async function readWorkspaceFile(
   rootPath: string,
   requestedPath: string,
+  confinementPath?: string,
 ): Promise<WorkspaceFile> {
-  const root = await realpath(rootPath)
+  const root = confinementPath
+    ? await validateKnowledgeRoot(rootPath, confinementPath)
+    : await realpath(rootPath)
   const resolved = await resolveWorkspacePath(root, requestedPath)
   const metadata = await stat(resolved)
   if (!metadata.isFile()) {

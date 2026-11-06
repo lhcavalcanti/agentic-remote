@@ -42,6 +42,7 @@ import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
 import { parseSubmissionReceipt } from '../shared/submission-error.js'
 import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import {
+  RemoteNodeCapabilityError,
   RemoteNodeRedirectError,
   RemoteNodeRequestError,
   RemoteNodeTransportError,
@@ -53,6 +54,7 @@ import {
   SessionResourceError,
   ResourceReads,
 } from './session-resources.js'
+import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -187,20 +189,40 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.path
   }
 
+  async validateKnowledgeRoot(
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    const response = await this.request<{ path: string }>(
+      '/node-api/knowledge/validate',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          path: inputPath,
+          ...(confinementPath ? { confinement: confinementPath } : {}),
+        }),
+      },
+    )
+    return response.path
+  }
+
   async ensureSessionKnowledgeBase(
     sessionId: string,
     relativePath: string,
     create: boolean,
-  ): Promise<string> {
+  ): Promise<SessionKnowledgeBaseLocation> {
     try {
-      const response = await this.request<{ path: string }>(
+      const response = await this.request<SessionKnowledgeBaseLocation>(
         `/node-api/sessions/${encodeURIComponent(sessionId)}/knowledge-base`,
         {
           method: 'PUT',
           body: JSON.stringify({ path: relativePath, create }),
         },
       )
-      return response.path
+      if (!response.confinementPath) {
+        throw new RemoteNodeCapabilityError(this.computer.name)
+      }
+      return response
     } catch (error) {
       if (
         error instanceof RemoteNodeRequestError &&
@@ -223,9 +245,16 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     const confinement = confinementPath
       ? `&confinement=${encodeURIComponent(confinementPath)}`
       : ''
-    return this.request<WorkspaceListing>(
+    const response = await this.request<
+      WorkspaceListing & { confinementApplied?: boolean }
+    >(
       `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}${confinement}`,
     )
+    if (confinementPath && response.confinementApplied !== true) {
+      throw new RemoteNodeCapabilityError(this.computer.name)
+    }
+    const { confinementApplied: _confinementApplied, ...listing } = response
+    return listing
   }
 
   async readKnowledgeFile(
@@ -236,9 +265,16 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     const confinement = confinementPath
       ? `&confinement=${encodeURIComponent(confinementPath)}`
       : ''
-    return this.request<WorkspaceFile>(
+    const response = await this.request<
+      WorkspaceFile & { confinementApplied?: boolean }
+    >(
       `/node-api/knowledge/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}${confinement}`,
     )
+    if (confinementPath && response.confinementApplied !== true) {
+      throw new RemoteNodeCapabilityError(this.computer.name)
+    }
+    const { confinementApplied: _confinementApplied, ...file } = response
+    return file
   }
 
   async listWorkspace(

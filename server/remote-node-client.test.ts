@@ -59,7 +59,10 @@ describe('session Knowledge base requests', () => {
           body,
         })
         response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ path: '/srv/project/knowledge' }))
+        response.end(JSON.stringify({
+          path: '/srv/project/knowledge',
+          confinementPath: '/srv/project',
+        }))
       })
     })
 
@@ -69,7 +72,10 @@ describe('session Knowledge base requests', () => {
         'docs/knowledge',
         true,
       ),
-    ).resolves.toBe('/srv/project/knowledge')
+    ).resolves.toEqual({
+      path: '/srv/project/knowledge',
+      confinementPath: '/srv/project',
+    })
     expect(requests).toEqual([{
       path: '/node-api/sessions/session%2Fid/knowledge-base',
       method: 'PUT',
@@ -132,8 +138,9 @@ describe('session Knowledge read confinement', () => {
               mimeType: 'text/plain; charset=utf-8',
               size: 4,
               content: 'note',
+              confinementApplied: true,
             }
-          : { path: '.', entries: [] },
+          : { path: '.', entries: [], confinementApplied: true },
       ))
     })
     const remote = client(node)
@@ -154,6 +161,38 @@ describe('session Knowledge read confinement', () => {
       '/node-api/knowledge/file?root=%2Fsrv%2Fproject%2Fknowledge&path=note.md&confinement=%2Fsrv%2Fproject',
     ])
   })
+
+  it.each(['list', 'file'] as const)(
+    'rejects a confined %s response from a node that did not enforce it',
+    async (operation) => {
+      const node = await listen((request, response) => {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify(
+          request.url?.includes('/file?')
+            ? {
+                name: 'private.md',
+                path: 'private.md',
+                kind: 'markdown',
+                mimeType: 'text/plain; charset=utf-8',
+                size: 7,
+                content: 'private',
+              }
+            : { path: '.', entries: [] },
+        ))
+      })
+      const remote = client(node)
+
+      const reading = operation === 'list'
+        ? remote.listKnowledge('/srv/project/knowledge', '.', '/srv/project')
+        : remote.readKnowledgeFile(
+            '/srv/project/knowledge',
+            'private.md',
+            '/srv/project',
+          )
+
+      await expect(reading).rejects.toMatchObject({ statusCode: 409 })
+    },
+  )
 })
 
 describe('read-only remote resource requests', () => {

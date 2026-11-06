@@ -44,6 +44,7 @@ import { listHomeDirectories,
 } from './directory-browser.js'
 import {
   ensureSessionKnowledgeBase as ensureKnowledgeDirectory,
+  type SessionKnowledgeBaseLocation,
   validateKnowledgeRoot,
   validateSessionDirectory,
 } from './session-directory.js'
@@ -1712,11 +1713,18 @@ export class ClaudeAgentService
     return this.validateDirectory(inputPath)
   }
 
+  validateKnowledgeRoot(
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    return validateKnowledgeRoot(inputPath, confinementPath)
+  }
+
   ensureSessionKnowledgeBase(
     sessionId: string,
     relativePath: string,
     create: boolean,
-  ): Promise<string> {
+  ): Promise<SessionKnowledgeBaseLocation> {
     return ensureKnowledgeDirectory(
       this.requireSession(sessionId).cwd,
       relativePath,
@@ -1731,10 +1739,7 @@ export class ClaudeAgentService
     path = '.',
     confinementPath?: string,
   ) {
-    return listWorkspace(
-      await validateKnowledgeRoot(root, confinementPath),
-      path,
-    )
+    return listWorkspace(root, path, confinementPath)
   }
 
   async readKnowledgeFile(
@@ -1742,10 +1747,7 @@ export class ClaudeAgentService
     path: string,
     confinementPath?: string,
   ) {
-    return readWorkspaceFile(
-      await validateKnowledgeRoot(root, confinementPath),
-      path,
-    )
+    return readWorkspaceFile(root, path, confinementPath)
   }
 
   listWorkspace(

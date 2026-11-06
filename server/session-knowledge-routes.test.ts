@@ -66,11 +66,18 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
   })
   getSession = vi.fn(async () => { throw new Error('Metadata routes must not open a session') })
   activateSession = vi.fn()
+  validateKnowledgeRoot = vi.fn(async (
+    _computerId: string,
+    rootPath: string,
+  ) => rootPath)
   ensureSessionKnowledgeBase = vi.fn(async (
     _computerId: string,
     _sessionId: string,
     relativePath: string,
-  ) => `/projects/current/${relativePath}`)
+  ) => ({
+    path: `/projects/current/${relativePath}`,
+    confinementPath: '/projects/current',
+  }))
   captureComputerRegistration = vi.fn((computerId: string) => {
     const registration = this.registrations.get(computerId)
     if (!registration) throw new Error('Computer not found')
@@ -132,6 +139,7 @@ async function fixture(options: {
       path: requestedPath,
       entries: [],
     })),
+    validateKnowledgeRoot: vi.fn(async (rootPath: string) => rootPath),
     getSession: vi.fn(),
     openSession: vi.fn(async () => { throw new Error('Must not hydrate or resume an agent') }),
     activateSession: vi.fn(),
@@ -396,6 +404,38 @@ describe('session Knowledge routes', () => {
     )
   })
 
+  it('persists the canonical root path for root-ID aliases', async () => {
+    const { put, root, manager } = await fixture()
+    manager.validateKnowledgeRoot.mockResolvedValueOnce('/canonical/notes')
+
+    const response = await put(root.id)
+
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().binding).toMatchObject({
+      knowledgeBasePath: '/canonical/notes',
+      root: { id: root.id, path: '/canonical/notes' },
+    })
+  })
+
+  it('commits confinement when path mode converts the current catalog binding', async () => {
+    const { put, putPath, knowledge } = await fixture()
+    const existing = await knowledge.addRoot({
+      computerId: 'hub',
+      computerName: 'Hub',
+      path: '/projects/current/knowledge',
+      name: 'knowledge',
+    })
+    expect((await put(existing.id)).json().binding.revision).toBe(1)
+
+    const converted = await putPath('knowledge', 1)
+    expect(converted.statusCode, converted.body).toBe(200)
+    expect(converted.json().binding.revision).toBe(2)
+
+    const repeated = await putPath('knowledge', 2)
+    expect(repeated.statusCode, repeated.body).toBe(200)
+    expect(repeated.json().binding.revision).toBe(2)
+  })
+
   it('supports suspended and historical sessions without opening them', async () => {
     const { putPath, manager, service } = await fixture()
     manager.sessions.push({ ...session('hub', 'suspended'), suspended: true })
@@ -503,7 +543,10 @@ describe('session Knowledge routes', () => {
     ) => {
       held.start()
       await held.wait
-      return `/projects/current/${relativePath}`
+      return {
+        path: `/projects/current/${relativePath}`,
+        confinementPath: '/projects/current',
+      }
     })
     const saving = putPath('knowledge')
     await held.started

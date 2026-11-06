@@ -33,6 +33,7 @@ import type {
   WorkspaceSearchResponse,
   SideQuestionExchange,
 } from '../shared/contracts.js'
+import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import {
   ComputerRegistry,
   type RegisteredComputer,
@@ -359,12 +360,26 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).validateSessionDirectory(inputPath)
   }
 
+  async validateKnowledgeRoot(
+    computerId: string,
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.validateKnowledgeRoot(inputPath, confinementPath)
+      : this.requireClient(computerId).validateKnowledgeRoot(
+          inputPath,
+          confinementPath,
+        )
+  }
+
   async ensureSessionKnowledgeBase(
     computerId: string,
     sessionId: string,
     relativePath: string,
     create: boolean,
-  ): Promise<string> {
+  ): Promise<SessionKnowledgeBaseLocation> {
     this.requireComputer(computerId)
     return computerId === this.identity.info.id
       ? this.localService.ensureSessionKnowledgeBase(

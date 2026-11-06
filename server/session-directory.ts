@@ -16,6 +16,11 @@ export class SessionDirectoryError extends Error {
   }
 }
 
+export interface SessionKnowledgeBaseLocation {
+  path: string
+  confinementPath: string
+}
+
 export function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
   return (
@@ -228,7 +233,7 @@ export async function ensureSessionKnowledgeBase(
   cwd: string,
   inputPath: string,
   create: boolean,
-): Promise<string> {
+): Promise<SessionKnowledgeBaseLocation> {
   const segments = knowledgePathSegments(inputPath)
   let root: string
   try {
@@ -289,5 +294,5 @@ export async function ensureSessionKnowledgeBase(
   } catch {
     throw new SessionDirectoryError(`Knowledge folder is not readable: ${inputPath}`)
   }
-  return current
+  return { path: current, confinementPath: root }
 }

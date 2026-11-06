@@ -256,10 +256,22 @@ describe('hub routes', () => {
     let paired = true
     const stored = new Map<string, { id: string; computerId: string }>()
     const knowledge = {
-      addRoot: async (root: { computerId: string }) => {
+      listRoots: () => [...stored.values()],
+      getRootConfinement: () => undefined,
+      reserveRoot: async (root: { computerId: string }) => {
         const created = { ...root, id: `root-${stored.size + 1}` }
         stored.set(created.id, created)
-        return created
+        return {
+          root: created,
+          created: true,
+          requiresBindingCommit: false,
+          finalize: async (guard?: () => boolean) => {
+            if (guard?.() ?? true) return true
+            stored.delete(created.id)
+            return false
+          },
+          rollback: async () => stored.delete(created.id),
+        }
       },
       removeRoot: async (id: string) => stored.delete(id),
     } as unknown as KnowledgeStore
@@ -270,6 +282,8 @@ describe('hub routes', () => {
         listComputers: () =>
           paired ? [{ id: 'worker', name: 'worker-node' }] : [],
         captureComputerRegistration: () => () => paired,
+        validateKnowledgeRoot: async (_computerId: string, rootPath: string) =>
+          rootPath,
         // Browsing the folder is a round trip to the other computer, and the
         // computer can be unpaired while it is in flight.
         listKnowledge: async () => {
@@ -309,10 +323,14 @@ describe('hub routes', () => {
         const captured = registration
         return () => captured === registration
       },
+      validateKnowledgeRoot: async (_computerId: string, rootPath: string) =>
+        rootPath,
       listKnowledge: async () => ({ path: '.', entries: [] }),
       on: () => undefined,
       off: () => undefined,
     } as unknown as ComputerManager, {
+      listRoots: () => [...roots.values()],
+      getRootConfinement: () => undefined,
       reserveRoot: async (input: { computerId: string }) => {
         const root = { ...input, id: 'old-root' }
         roots.set(root.id, root)
@@ -367,10 +385,14 @@ describe('hub routes', () => {
         const captured = registration
         return () => captured === registration
       },
+      validateKnowledgeRoot: async (_computerId: string, rootPath: string) =>
+        rootPath,
       listKnowledge: async () => ({ path: '.', entries: [] }),
       on: () => undefined,
       off: () => undefined,
     } as unknown as ComputerManager, {
+      listRoots: () => [existing],
+      getRootConfinement: () => undefined,
       reserveRoot: async () => {
         stale()
         return {
@@ -395,6 +417,58 @@ describe('hub routes', () => {
     await app.close()
   })
 
+  it('uses stored confinement when a root POST reuses a session-created root', async () => {
+    const root = {
+      id: 'existing',
+      computerId: 'worker',
+      computerName: 'Worker',
+      path: '/project/knowledge',
+      name: 'knowledge',
+      createdAt: '2026-11-06T00:00:00.000Z',
+    }
+    const listKnowledge = vi.fn(async () => ({
+      root: root.path,
+      path: '.',
+      entries: [],
+    }))
+    const app = Fastify()
+    await registerHubRoutes(app, {
+      listComputers: () => [{ id: 'worker', name: 'Worker' }],
+      captureComputerRegistration: () => () => true,
+      validateKnowledgeRoot: async () => root.path,
+      listKnowledge,
+      on: () => undefined,
+      off: () => undefined,
+    } as unknown as ComputerManager, {
+      listRoots: () => [root],
+      getRootConfinement: () => '/project',
+      reserveRoot: async () => ({
+        root,
+        created: false,
+        finalize: async () => true,
+        rollback: async () => false,
+      }),
+    } as unknown as KnowledgeStore)
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/knowledge/roots',
+        headers: { host: 'localhost' },
+        payload: { computerId: 'worker', path: root.path },
+      })
+
+      expect(response.statusCode, response.body).toBe(201)
+      expect(listKnowledge).toHaveBeenCalledWith(
+        'worker',
+        root.path,
+        undefined,
+        '/project',
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
   it('rejects a registration that turns stale while finalization waits', async () => {
     let registration = Symbol('original')
     let release!: () => void
@@ -408,10 +482,14 @@ describe('hub routes', () => {
         const captured = registration
         return () => captured === registration
       },
+      validateKnowledgeRoot: async (_computerId: string, rootPath: string) =>
+        rootPath,
       listKnowledge: async () => ({ path: '.', entries: [] }),
       on: () => undefined,
       off: () => undefined,
     } as unknown as ComputerManager, {
+      listRoots: () => [],
+      getRootConfinement: () => undefined,
       reserveRoot: async () => ({
         root: { id: 'provisional', computerId: 'worker' },
         created: true,

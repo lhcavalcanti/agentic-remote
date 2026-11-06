@@ -73,6 +73,27 @@ describe('KnowledgeStore', () => {
     )
   })
 
+  it('rejects a confinement claim whose binding revision cannot advance', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+
+    await expect(store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: Number.MAX_SAFE_INTEGER,
+      },
+    })).rejects.toThrow('cannot advance')
+    expect(store.listRoots()).toEqual([])
+  })
+
   it('rolls back a confinement added to an existing root when binding fails', async () => {
     const directory = await temporaryDirectory()
     const store = new KnowledgeStore(directory)
@@ -166,6 +187,7 @@ describe('KnowledgeStore', () => {
       computerId: 'computer',
       sessionId: 'session',
       rootId: existing.id,
+      rootPath: '.',
       revision: 1,
     }])
 
@@ -178,6 +200,201 @@ describe('KnowledgeStore', () => {
     expect(finalRestart.getRootConfinement(existing.id)).toBe(
       '/home/user/project',
     )
+  })
+
+  it('does not recover confinement from the pre-update binding revision', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const existing = await store.addRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    })
+    await store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    await restored.recoverProvisionalRoots([{
+      computerId: 'computer',
+      sessionId: 'session',
+      rootId: existing.id,
+      rootPath: '.',
+      revision: 0,
+    }])
+
+    expect(restored.getRootConfinement(existing.id)).toBeUndefined()
+  })
+
+  it('does not recover path-mode confinement from a nested root binding', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const existing = await store.addRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    })
+    await store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    await restored.recoverProvisionalRoots([{
+      computerId: 'computer',
+      sessionId: 'session',
+      rootId: existing.id,
+      rootPath: 'docs',
+      revision: 1,
+    }])
+
+    expect(restored.getRootConfinement(existing.id)).toBeUndefined()
+  })
+
+  it('does not let a duplicate-root reservation finalize another claim', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }
+    await store.addRoot(input)
+    const pathReservation = await store.reserveRoot(input, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+    const duplicateRoot = await store.reserveRoot(input)
+
+    await expect(duplicateRoot.finalize()).resolves.toBe(true)
+    await expect(pathReservation.rollback()).resolves.toBe(false)
+
+    expect(
+      store.getRootConfinement(pathReservation.root.id),
+    ).toBeUndefined()
+  })
+
+  it('requires each concurrent confinement claim to commit its binding', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }
+    await store.addRoot(input)
+    const first = await store.reserveRoot(input, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'first',
+        expectedRevision: 0,
+      },
+    })
+    const second = await store.reserveRoot(input, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'second',
+        expectedRevision: 0,
+      },
+    })
+
+    expect(first.requiresBindingCommit).toBe(true)
+    expect(second.requiresBindingCommit).toBe(true)
+  })
+
+  it('rejects a conflicting confinement while another claim is pending', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }
+    await store.addRoot(input)
+    await store.reserveRoot(input, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'first',
+        expectedRevision: 0,
+      },
+    })
+
+    await expect(store.reserveRoot(input, {
+      confinementPath: '/home/user',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'second',
+        expectedRevision: 0,
+      },
+    })).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('rejects a conflicting confinement after the root is finalized', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }
+    const first = await store.reserveRoot(input, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'first',
+        expectedRevision: 0,
+      },
+    })
+    await first.finalize()
+
+    await expect(store.reserveRoot(input, {
+      confinementPath: '/home/user',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'second',
+        expectedRevision: 0,
+      },
+    })).rejects.toMatchObject({ statusCode: 409 })
   })
 
   it('loads a state file written before roots replaced bookmarks', async () => {

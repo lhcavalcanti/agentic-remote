@@ -3,18 +3,31 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { KnowledgeRoot } from '../shared/contracts.js'
 
+interface KnowledgeConfinementClaim {
+  token: string
+  computerId: string
+  sessionId: string
+  committedRevision: number
+  rootPath: string
+}
+
 interface KnowledgeState {
   roots: KnowledgeRoot[]
   provisionalRootIds: string[]
   rootConfinements: Record<string, string>
   provisionalRootConfinements: Record<string, {
     path: string
-    claims: Array<{
-      token: string
-      computerId: string
-      sessionId: string
-      expectedRevision: number
-    }>
+    claims: KnowledgeConfinementClaim[]
+  }>
+}
+
+interface PersistedKnowledgeState
+  extends Partial<Omit<KnowledgeState, 'provisionalRootConfinements'>> {
+  provisionalRootConfinements?: Record<string, {
+    path?: unknown
+    claims?: Array<
+      Partial<KnowledgeConfinementClaim> & { expectedRevision?: number }
+    >
   }>
 }
 
@@ -23,6 +36,7 @@ interface KnowledgeRootReference {
   sessionId: string
   rootId: string | null
   revision: number
+  rootPath?: string
 }
 
 interface KnowledgeRootReservationOptions {
@@ -31,14 +45,38 @@ interface KnowledgeRootReservationOptions {
     computerId: string
     sessionId: string
     expectedRevision: number
+    rootPath?: string
   }
+}
+
+function committedRevision(expectedRevision: number): number {
+  if (
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 0 ||
+    expectedRevision >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new RangeError('The Knowledge binding revision cannot advance.')
+  }
+  return expectedRevision + 1
 }
 
 export interface KnowledgeRootReservation {
   root: KnowledgeRoot
   created: boolean
+  requiresBindingCommit: boolean
   finalize: (guard?: () => boolean) => Promise<boolean>
   rollback: () => Promise<boolean>
+}
+
+export class KnowledgeRootConfinementConflictError extends Error {
+  readonly statusCode = 409
+
+  constructor() {
+    super(
+      'This Knowledge root is already confined to a different session working directory.',
+    )
+    this.name = 'KnowledgeRootConfinementConflictError'
+  }
 }
 
 export class KnowledgeStore {
@@ -61,7 +99,7 @@ export class KnowledgeStore {
     try {
       const parsed = JSON.parse(
         await readFile(this.statePath, 'utf8'),
-      ) as Partial<KnowledgeState>
+      ) as PersistedKnowledgeState
       // Rebuild from known fields so a file written before roots replaced
       // bookmarks loads, and the obsolete key is not carried forward.
       this.state = {
@@ -95,15 +133,39 @@ export class KnowledgeStore {
                     ) {
                       return []
                     }
-                    const claims = value.claims.filter((claim) =>
-                      claim &&
-                      typeof claim === 'object' &&
-                      typeof claim.token === 'string' &&
-                      typeof claim.computerId === 'string' &&
-                      typeof claim.sessionId === 'string' &&
-                      Number.isSafeInteger(claim.expectedRevision) &&
-                      claim.expectedRevision >= 0,
-                    )
+                    const claims = value.claims.flatMap((claim) => {
+                      if (
+                        !claim ||
+                        typeof claim !== 'object' ||
+                        typeof claim.token !== 'string' ||
+                        typeof claim.computerId !== 'string' ||
+                        typeof claim.sessionId !== 'string'
+                      ) {
+                        return []
+                      }
+                      const committedRevision =
+                        typeof claim.committedRevision === 'number' &&
+                        Number.isSafeInteger(claim.committedRevision) &&
+                        claim.committedRevision > 0
+                          ? claim.committedRevision
+                          : typeof claim.expectedRevision === 'number' &&
+                              Number.isSafeInteger(claim.expectedRevision) &&
+                              claim.expectedRevision >= 0 &&
+                              claim.expectedRevision < Number.MAX_SAFE_INTEGER
+                            ? claim.expectedRevision + 1
+                            : undefined
+                      if (committedRevision === undefined) return []
+                      return [{
+                        token: claim.token,
+                        computerId: claim.computerId,
+                        sessionId: claim.sessionId,
+                        committedRevision,
+                        rootPath:
+                          typeof claim.rootPath === 'string'
+                            ? claim.rootPath
+                            : '.',
+                      }]
+                    })
                     return claims.length > 0
                       ? [[rootId, { path: value.path, claims }]]
                       : []
@@ -168,13 +230,8 @@ export class KnowledgeStore {
                 binding.rootId === rootId &&
                 binding.computerId === claim.computerId &&
                 binding.sessionId === claim.sessionId &&
-                (
-                  binding.revision === claim.expectedRevision ||
-                  (
-                    claim.expectedRevision < Number.MAX_SAFE_INTEGER &&
-                    binding.revision === claim.expectedRevision + 1
-                  )
-                ),
+                binding.revision === claim.committedRevision &&
+                binding.rootPath === claim.rootPath,
               ),
             ),
           )
@@ -222,13 +279,39 @@ export class KnowledgeStore {
       if (existing) {
         const reservations = this.rootReservations.get(existing.id)
         const pending = this.state.provisionalRootConfinements[existing.id]
+        const confinement = this.state.rootConfinements[existing.id]
+        if (
+          options.confinementPath &&
+          confinement &&
+          confinement !== options.confinementPath
+        ) {
+          throw new KnowledgeRootConfinementConflictError()
+        }
         if (options.confinementPath && pending) {
           if (!options.binding) {
             throw new Error(
               'Existing-root confinement requires a binding recovery claim',
             )
           }
+          const binding = options.binding
           const token = randomUUID()
+          const rootPath = binding.rootPath ?? '.'
+          const alreadyCommitted = pending.claims.some(
+            (existingClaim) =>
+              existingClaim.computerId === binding.computerId &&
+              existingClaim.sessionId === binding.sessionId &&
+              existingClaim.rootPath === rootPath &&
+              existingClaim.committedRevision === binding.expectedRevision,
+          )
+          const claim = {
+            token,
+            computerId: binding.computerId,
+            sessionId: binding.sessionId,
+            committedRevision: alreadyCommitted
+              ? binding.expectedRevision
+              : committedRevision(binding.expectedRevision),
+            rootPath,
+          }
           const next = {
             ...this.state,
             provisionalRootConfinements: {
@@ -237,7 +320,7 @@ export class KnowledgeStore {
                 ...pending,
                 claims: [
                   ...pending.claims,
-                  { token, ...options.binding },
+                  claim,
                 ],
               },
             },
@@ -249,7 +332,7 @@ export class KnowledgeStore {
           } else {
             this.rootReservations.set(existing.id, new Set([token]))
           }
-          return this.reservation(existing, false, token)
+          return this.reservation(existing, false, !alreadyCommitted, token)
         }
         if (
           options.confinementPath &&
@@ -261,6 +344,15 @@ export class KnowledgeStore {
             )
           }
           const token = randomUUID()
+          const claim = {
+            token,
+            computerId: options.binding.computerId,
+            sessionId: options.binding.sessionId,
+            committedRevision: committedRevision(
+              options.binding.expectedRevision,
+            ),
+            rootPath: options.binding.rootPath ?? '.',
+          }
           const next = {
             ...this.state,
             rootConfinements: {
@@ -271,7 +363,7 @@ export class KnowledgeStore {
               ...this.state.provisionalRootConfinements,
               [existing.id]: {
                 path: options.confinementPath,
-                claims: [{ token, ...options.binding }],
+                claims: [claim],
               },
             },
           }
@@ -282,15 +374,31 @@ export class KnowledgeStore {
           } else {
             this.rootReservations.set(existing.id, new Set([token]))
           }
-          return this.reservation(existing, false, token)
+          return this.reservation(existing, false, true, token)
         }
         if (!reservations) {
-          return this.reservation(existing, false)
+          return this.reservation(existing, false, false)
         }
         const token = randomUUID()
         reservations.add(token)
-        return this.reservation(existing, false, token)
+        return this.reservation(existing, false, false, token)
       }
+      const token = randomUUID()
+      const pendingConfinement =
+        options.confinementPath && options.binding
+          ? {
+              path: options.confinementPath,
+              claims: [{
+                token,
+                computerId: options.binding.computerId,
+                sessionId: options.binding.sessionId,
+                committedRevision: committedRevision(
+                  options.binding.expectedRevision,
+                ),
+                rootPath: options.binding.rootPath ?? '.',
+              }],
+            }
+          : undefined
       const created: KnowledgeRoot = {
         ...root,
         id: randomUUID(),
@@ -306,13 +414,22 @@ export class KnowledgeStore {
             : {}),
         },
         provisionalRootConfinements:
-          this.state.provisionalRootConfinements,
+          pendingConfinement
+            ? {
+                ...this.state.provisionalRootConfinements,
+                [created.id]: pendingConfinement,
+              }
+            : this.state.provisionalRootConfinements,
       }
       await this.write(next)
       this.state = next
-      const token = randomUUID()
       this.rootReservations.set(created.id, new Set([token]))
-      return this.reservation(created, true, token)
+      return this.reservation(
+        created,
+        true,
+        pendingConfinement !== undefined,
+        token,
+      )
     })
   }
 
@@ -390,12 +507,14 @@ export class KnowledgeStore {
   private reservation(
     root: KnowledgeRoot,
     created: boolean,
+    requiresBindingCommit: boolean,
     token?: string,
   ): KnowledgeRootReservation {
     let outcome: boolean | undefined
     return {
       root: structuredClone(root),
       created,
+      requiresBindingCommit,
       finalize: async (guard) => {
         if (outcome !== undefined) return outcome
         const finalized = token
@@ -427,7 +546,11 @@ export class KnowledgeStore {
       }
       const reservations = this.rootReservations.get(id)
       if (reservations?.has(token)) {
-        if (this.state.provisionalRootConfinements[id]) {
+        const pending = this.state.provisionalRootConfinements[id]
+        const ownsConfinement = pending?.claims.some(
+          (claim) => claim.token === token,
+        )
+        if (ownsConfinement) {
           const { [id]: _finalized, ...provisionalRootConfinements } =
             this.state.provisionalRootConfinements
           const next = {
@@ -439,6 +562,20 @@ export class KnowledgeStore {
           }
           await this.write(next)
           this.state = next
+          this.rootReservations.delete(id)
+        } else if (pending) {
+          if (this.state.provisionalRootIds.includes(id)) {
+            const next = {
+              ...this.state,
+              provisionalRootIds: this.state.provisionalRootIds.filter(
+                (rootId) => rootId !== id,
+              ),
+            }
+            await this.write(next)
+            this.state = next
+          }
+          reservations.delete(token)
+          if (reservations.size === 0) this.rootReservations.delete(id)
         } else if (this.state.provisionalRootIds.includes(id)) {
           const next = {
             roots: this.state.roots,
@@ -451,8 +588,10 @@ export class KnowledgeStore {
           }
           await this.write(next)
           this.state = next
+          this.rootReservations.delete(id)
+        } else {
+          this.rootReservations.delete(id)
         }
-        this.rootReservations.delete(id)
       }
       return true
     })
@@ -471,12 +610,28 @@ export class KnowledgeStore {
     const pending = this.state.provisionalRootConfinements[id]
     if (pending) {
       const claims = pending.claims.filter((claim) => claim.token !== token)
+      if (claims.length === pending.claims.length) {
+        reservations.delete(token)
+        if (reservations.size === 0) this.rootReservations.delete(id)
+        return false
+      }
+      reservations.delete(token)
       const { [id]: _confinement, ...rootConfinements } =
         this.state.rootConfinements
       const { [id]: _pending, ...otherPending } =
         this.state.provisionalRootConfinements
+      const removeRoot =
+        claims.length === 0 &&
+        reservations.size === 0 &&
+        this.state.provisionalRootIds.includes(id)
       const next = {
         ...this.state,
+        roots: removeRoot
+          ? this.state.roots.filter((entry) => entry.id !== id)
+          : this.state.roots,
+        provisionalRootIds: removeRoot
+          ? this.state.provisionalRootIds.filter((rootId) => rootId !== id)
+          : this.state.provisionalRootIds,
         rootConfinements:
           claims.length > 0 ? this.state.rootConfinements : rootConfinements,
         provisionalRootConfinements:
@@ -489,9 +644,8 @@ export class KnowledgeStore {
       }
       await this.write(next)
       this.state = next
-      reservations.delete(token)
       if (reservations.size === 0) this.rootReservations.delete(id)
-      return false
+      return removeRoot
     }
     if (reservations.size > 1) {
       reservations.delete(token)

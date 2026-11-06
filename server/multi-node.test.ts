@@ -134,16 +134,26 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return inputPath
   }
 
+  async validateKnowledgeRoot(
+    inputPath: string,
+    _confinementPath?: string,
+  ): Promise<string> {
+    return inputPath
+  }
+
   async ensureSessionKnowledgeBase(
     sessionId: string,
     relativePath: string,
     create: boolean,
-  ): Promise<string> {
+  ): Promise<{ path: string; confinementPath: string }> {
     if (!this.sessions.has(sessionId)) {
       throw Object.assign(new Error('Session not found'), { statusCode: 404 })
     }
     this.lastKnowledgeBase = { sessionId, relativePath, create }
-    return `/srv/project/${relativePath}`
+    return {
+      path: `/srv/project/${relativePath}`,
+      confinementPath: '/srv/project',
+    }
   }
 
   async listWorkspace(
@@ -853,7 +863,10 @@ describe('multi-node hub', () => {
         payload: { path: 'knowledge', create: true },
       })
       expect(response.statusCode, response.body).toBe(200)
-      expect(response.json()).toEqual({ path: '/srv/project/knowledge' })
+      expect(response.json()).toEqual({
+        path: '/srv/project/knowledge',
+        confinementPath: '/srv/project',
+      })
       expect(service.lastKnowledgeBase).toEqual({
         sessionId: 'active',
         relativePath: 'knowledge',

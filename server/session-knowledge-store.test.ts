@@ -151,8 +151,36 @@ describe('SessionKnowledgeStore', () => {
     })).resolves.toMatchObject({
       knowledgeBasePath: '/read-only/notes/projects/agentic-remote',
     })
+
     expect(JSON.parse(await readFile(statePath, 'utf8')).bindings[0])
       .not.toHaveProperty('knowledgeBasePath')
+  })
+
+  it('replaces an alias snapshot with the canonical root path', async () => {
+    const { store, roots } = await fixture()
+    roots.get('one')!.path = '~/notes'
+    expect((await store.update('computer', 'session', {
+      rootId: 'one',
+      expectedRevision: 0,
+    })).revision).toBe(1)
+
+    const canonical = {
+      ...roots.get('one')!,
+      path: '/home/user/notes',
+    }
+    const updated = await store.update(
+      'computer',
+      'session',
+      { rootId: 'one', expectedRevision: 1 },
+      undefined,
+      { root: canonical },
+    )
+
+    expect(updated).toMatchObject({
+      revision: 2,
+      knowledgeBasePath: '/home/user/notes',
+      root: { path: '/home/user/notes' },
+    })
   })
 
   it('keeps an unavailable root snapshot path visible', async () => {

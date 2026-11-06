@@ -57,6 +57,7 @@ export function projectSessionResponse(
   return rememberSessionResponse({
     ...incoming,
     failedPrompt: current.failedPrompt,
+    queueState: current.queueState,
   }, startedAt)
 }
 

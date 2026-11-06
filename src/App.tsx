@@ -16898,6 +16898,14 @@ function App() {
                 ) : null}
               </div>
             ) : null}
+            {selected.queueState ? (
+              <div
+                className={`queued-edit-banner queued-edit-banner--queue-${selected.queueState.state}`}
+                role={selected.queueState.state === 'error' ? 'alert' : 'status'}
+              >
+                <span>{selected.queueState.message}</span>
+              </div>
+            ) : null}
             {selected.queuedPrompts?.length ? (
               <section aria-label="Queued prompts" className="queued-prompts">
                 <header>

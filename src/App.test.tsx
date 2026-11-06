@@ -9108,6 +9108,67 @@ describe('App', () => {
     ])
   })
 
+  it('transcribes later audio in a pasted batch after clear replaces the session', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    vi.mocked(transcribeAudio).mockResolvedValueOnce({
+      transcript: 'Audio that followed the clear',
+      durationSeconds: 2,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const document = new File(['document'], 'before-clear.pdf', {
+      type: 'application/pdf',
+      lastModified: 35,
+    })
+    const audio = new File(['audio'], 'after-clear.wav', {
+      type: 'audio/wav',
+      lastModified: 36,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [document, audio],
+        items: [],
+        getData: () => '',
+      },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'cleared-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishUpload?.({
+      name: document.name,
+      path: `/private/uploads/${document.name}`,
+      size: document.size,
+    })
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledWith(audio))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Audio that followed the clear'),
+    )
+  })
+
   it('removes an accepted attachment preview after its send follows a replacement', async () => {
     vi.mocked(uploadSessionFile).mockResolvedValueOnce({
       name: 'accepted.pdf',

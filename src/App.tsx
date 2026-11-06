@@ -14128,9 +14128,12 @@ function App() {
     }
     for (const item of work) {
       if (item.audio) {
-        const currentTarget = resolveAttachmentTarget(liveTarget)
-        if (currentTarget) {
-          await transcribeFile(item.file, currentTarget)
+        const targetKey = sessionKey(liveTarget)
+        if (
+          !removedSessions.current.has(targetKey) ||
+          followReplacementsRef.current(targetKey) !== targetKey
+        ) {
+          await transcribeFile(item.file, liveTarget)
         }
       } else if (item.attachment.status !== 'failed') {
         const current = currentAttachment(item.attachment.id)

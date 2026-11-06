@@ -781,8 +781,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "6b51c66a3c04575763110f08c0b9423659ed5009aad0fcbc498ff7b751b8d0c2",
-    "src/App.tsx": "d9afa2b5b3d4050eb11891a6223335656e325d3604de6567bfeffb37e831f72e",
+    "src/App.test.tsx": "4d37c13cb4085dc6447de60e81543f77f6a43e35850992f8f548fbd35f7287a5",
+    "src/App.tsx": "2d784cdd9486dfec746b6417bb5168176bb56a04c8fc0806802dbcf04dfd8b00",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -991,14 +991,14 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "056586eb00a5cbadb93c749a10183b450a94102c66ccfe60f7c1593da8ea60c6",
+    "GRAPH_REPORT.md": "a136fd91d0a73e421d9b777d81a695cd2cd3154f0bb3d314752495e3c91d82c1",
     "communities.json": "8f1d0f26f0fa684a1b5b6072d0d715c1d105cad3d3baff4fa1cc8b2808701a04",
-    "graph.html": "6cca9cd56c546a56103c0cd8fd7b6f0c90e1e14c9b6382e3201b6afa3a4cb76b",
-    "graph.json": "244b886d1f04e32555aaf6d961b06dc2512ada6b872002e985a7d29cde7c0d82"
+    "graph.html": "243c42eec11e933c655794268edd181462be1b5e8265dd441efef40e218e36a0",
+    "graph.json": "42e87b205583829d5ed5facd5d9031bb17dab60bccc071faa0a7ab5597450064"
   },
   "schema_version": 1,
-  "source_commit": "6c865655d034ee57e96a6151ecfff4377b007514",
-  "source_fingerprint": "616744cd120cc4d04967b3dd6b8d1c2754313e4cffcbc91036dbd8858bb5c857",
+  "source_commit": "228ecd22c8ab6cb9ad5e07c033693cdc1b505520",
+  "source_fingerprint": "375b53097cdd4daf56096312227a324f31994c15c655b6ba8f0ab8e7738c3cf9",
   "working_tree_changes": [
     "src/App.test.tsx",
     "src/App.tsx"

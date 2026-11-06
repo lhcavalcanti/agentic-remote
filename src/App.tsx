@@ -471,12 +471,21 @@ function attachmentSize(size: number): string {
   return `${size} B`
 }
 
-function clipboardFileFingerprint(file: File): string {
+async function clipboardFileFingerprint(file: File): Promise<string> {
+  const buffer = typeof file.arrayBuffer === 'function'
+    ? await file.arrayBuffer()
+    : await new Response(file).arrayBuffer()
+  let hash = 2_166_136_261
+  for (const byte of new Uint8Array(buffer)) {
+    hash ^= byte
+    hash = Math.imul(hash, 16_777_619)
+  }
   return [
     file.name,
     file.type,
     file.size.toString(),
     file.lastModified.toString(),
+    (hash >>> 0).toString(36),
   ].join('\u0000')
 }
 
@@ -807,6 +816,7 @@ type ComposerAcceptanceReceipt = { key: string; id: string }
 type ComposerQueuedEdit = {
   promptId: string
   dispatchPending?: boolean
+  attachmentIds?: string[]
 }
 
 type ComposerDraft = ComposerContent & {
@@ -909,7 +919,14 @@ function isStoredComposerDraft(value: unknown): boolean {
       isComposerObject(queuedEdit) &&
       typeof queuedEdit.promptId === 'string' && queuedEdit.promptId.length > 0 &&
       (queuedEdit.dispatchPending === undefined ||
-        typeof queuedEdit.dispatchPending === 'boolean')
+        typeof queuedEdit.dispatchPending === 'boolean') &&
+      (queuedEdit.attachmentIds === undefined || (
+        Array.isArray(queuedEdit.attachmentIds) &&
+        queuedEdit.attachmentIds.every((id) =>
+          typeof id === 'string' && id.length > 0,
+        ) &&
+        new Set(queuedEdit.attachmentIds).size === queuedEdit.attachmentIds.length
+      ))
     )) &&
     (unresolved === undefined ||
       (Array.isArray(unresolved) && unresolved.every((paste) =>
@@ -1342,6 +1359,9 @@ function readComposerDrafts(snapshot: ComposerStorageSnapshot): ComposerDrafts {
       draft.queuedEdit = {
         promptId: candidate.queuedEdit.promptId,
         ...(candidate.queuedEdit.dispatchPending === true ? { dispatchPending: true } : {}),
+        ...(candidate.queuedEdit.attachmentIds?.length
+          ? { attachmentIds: candidate.queuedEdit.attachmentIds }
+          : {}),
       }
     }
     const pending = candidate.pendingSubmission
@@ -7810,8 +7830,11 @@ function App() {
   const clipboardPasteBatchesRef = useRef(
     new Map<string, { at: number; fingerprints: Set<string> }>(),
   )
-  const queuedEditAttachmentBaselineRef = useRef(
-    new Map<string, Set<string>>(),
+  const attachmentTargetWaitersRef = useRef(
+    new Map<
+      string,
+      Set<(target: ManagedSession) => void>
+    >(),
   )
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
   const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
@@ -8027,6 +8050,13 @@ function App() {
         }
         if (!session.recovery && migratedAttachmentIds.size > 0) {
           discardAttachmentsById(migratedAttachmentIds)
+        }
+      }
+      const waiters = attachmentTargetWaitersRef.current.get(replacement)
+      if (waiters) {
+        attachmentTargetWaitersRef.current.delete(replacement)
+        for (const resolve of waiters) {
+          resolve(session)
         }
       }
     }
@@ -11194,6 +11224,7 @@ function App() {
       }
       return writeComposerEdit(current, targetKey, edited)
     })
+    reconcileComposerAttachmentRows(targetKey)
     if (cursor !== undefined) {
       focusComposer(targetKey, cursor)
     }
@@ -11733,6 +11764,21 @@ function App() {
     return undefined
   }
 
+  function reconcileComposerAttachmentRows(ownerKey: string) {
+    const storedDraft = composerDraftsRef.current[ownerKey]
+    const draft = storedDraft
+      ? durableComposerDraft(ownerKey, storedDraft)
+      : undefined
+    retireAttachments(
+      (composerAttachmentsRef.current[ownerKey] || []).filter(
+        (attachment) =>
+          attachment.status === 'attached' &&
+          attachment.promptText !== undefined &&
+          !composerDraftContainsAttachment(draft, attachment.promptText),
+      ),
+    )
+  }
+
   function updateComposerAttachments(
     update: (
       current: Record<string, ComposerAttachment[]>,
@@ -11748,7 +11794,10 @@ function App() {
     try {
       const stored = Object.fromEntries(
         Object.entries(next).flatMap(([ownerKey, attachments]) => {
-          const draft = composerDraftsRef.current[ownerKey]
+          const storedDraft = composerDraftsRef.current[ownerKey]
+          const draft = storedDraft
+            ? durableComposerDraft(ownerKey, storedDraft)
+            : undefined
           const durable = attachments
             .filter((attachment) =>
               attachment.status === 'attached' &&
@@ -11870,6 +11919,25 @@ function App() {
     )
   }
 
+  function waitForAttachmentTarget(
+    targetSession: ManagedSession,
+  ): Promise<ManagedSession | undefined> {
+    const immediate = resolveAttachmentTarget(targetSession)
+    if (immediate) {
+      return Promise.resolve(immediate)
+    }
+    const liveKey = followReplacementsRef.current(sessionKey(targetSession))
+    if (!pendingReplacements.current.has(liveKey)) {
+      return Promise.resolve(undefined)
+    }
+    return new Promise((resolve) => {
+      const waiters = attachmentTargetWaitersRef.current.get(liveKey) ||
+        new Set<(target: ManagedSession) => void>()
+      waiters.add(resolve)
+      attachmentTargetWaitersRef.current.set(liveKey, waiters)
+    })
+  }
+
   function forgetAttachments(ownerKey: string) {
     attachmentFilesRef.current.delete(ownerKey)
     clipboardPasteBatchesRef.current.delete(ownerKey)
@@ -11968,11 +12036,6 @@ function App() {
     }
     if (submissionAnchors.current.delete(fromKey)) {
       submissionAnchors.current.add(toKey)
-    }
-    const attachmentBaseline = queuedEditAttachmentBaselineRef.current.get(fromKey)
-    if (attachmentBaseline) {
-      queuedEditAttachmentBaselineRef.current.set(toKey, attachmentBaseline)
-      queuedEditAttachmentBaselineRef.current.delete(fromKey)
     }
     updateComposerDrafts([fromKey, toKey], (current) => {
       const source = current[fromKey]
@@ -14186,9 +14249,12 @@ function App() {
     const liveKey = followReplacementsRef.current(targetKey)
     const lineageAvailable =
       !removedSessions.current.has(targetKey) || liveKey !== targetKey
-    const liveTarget = resolveAttachmentTarget(targetSession)
+    let liveTarget = resolveAttachmentTarget(targetSession)
     if (!liveTarget && !lineageAvailable) {
       return
+    }
+    if (!liveTarget && files.some((file) => !isAudioFile(file))) {
+      liveTarget = await waitForAttachmentTarget(targetSession)
     }
     const ownerKey = liveTarget ? sessionKey(liveTarget) : liveKey
     const attachedFiles = attachmentFilesRef.current.get(ownerKey) ||
@@ -14284,21 +14350,33 @@ function App() {
       setError('Stop recording before attaching files.')
       return Promise.resolve()
     }
-    let queuedFiles = files
     if (deduplicateClipboard) {
       const ownerKey = followReplacementsRef.current(sessionKey(targetSession))
       const now = Date.now()
-      const recent = clipboardPasteBatchesRef.current.get(ownerKey)
-      const fingerprints = new Set(files.map(clipboardFileFingerprint))
-      if (recent && now - recent.at < 1_500) {
-        queuedFiles = files.filter(
-          (file) => !recent.fingerprints.has(clipboardFileFingerprint(file)),
+      return queueAttachmentWork(async () => {
+        let queuedFiles = files
+        const recent = clipboardPasteBatchesRef.current.get(ownerKey)
+        const fingerprintList = await Promise.all(
+          files.map(clipboardFileFingerprint),
         )
-      }
-      clipboardPasteBatchesRef.current.set(ownerKey, { at: now, fingerprints })
+        const fingerprints = new Set(fingerprintList)
+        if (recent && now - recent.at < 1_500) {
+          queuedFiles = files.filter(
+            (_file, index) =>
+              !recent.fingerprints.has(fingerprintList[index]!),
+          )
+        }
+        clipboardPasteBatchesRef.current.set(ownerKey, {
+          at: now,
+          fingerprints,
+        })
+        if (queuedFiles.length > 0) {
+          await processAttachedFiles(queuedFiles, targetSession)
+        }
+      })
     }
-    return queuedFiles.length > 0
-      ? queueAttachmentWork(() => processAttachedFiles(queuedFiles, targetSession))
+    return files.length > 0
+      ? queueAttachmentWork(() => processAttachedFiles(files, targetSession))
       : Promise.resolve()
   }
 
@@ -14411,7 +14489,6 @@ function App() {
     terminalDraftExpandedContent,
   ), [editingQueuedPromptId, terminalDraftExpandedContent])
   function forgetQueuedEdit(key: string, promptId: string) {
-    queuedEditAttachmentBaselineRef.current.delete(key)
     updateComposerDrafts([], (current) => {
       const draft = current[key]
       if (draft?.queuedEdit?.promptId !== promptId) return current
@@ -14455,18 +14532,20 @@ function App() {
       return
     }
     const key = sessionKey(selected)
+    const attachmentIds = (composerAttachmentsRef.current[key] || []).map(
+      (attachment) => attachment.id,
+    )
     if (updateComposerDrafts([key], (current) => ({
       ...current,
-      [key]: { text: prompt.content, pastes: [], queuedEdit: { promptId: prompt.id } },
+      [key]: {
+        text: prompt.content,
+        pastes: [],
+        queuedEdit: {
+          promptId: prompt.id,
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        },
+      },
     }), true)) {
-      queuedEditAttachmentBaselineRef.current.set(
-        key,
-        new Set(
-          (composerAttachmentsRef.current[key] || []).map(
-            (attachment) => attachment.id,
-          ),
-        ),
-      )
       focusComposer(key)
     }
   }
@@ -14486,9 +14565,9 @@ function App() {
       'Delivery was not confirmed. Check the provider before discarding this rewrite. Leaving the editor does not cancel provider work.',
     )) return
     if (!selectedKey) return
-    const baseline =
-      queuedEditAttachmentBaselineRef.current.get(selectedKey) ||
-      new Set<string>()
+    const baseline = new Set(
+      composerDraftsRef.current[selectedKey]?.queuedEdit?.attachmentIds || [],
+    )
     const attachments = composerAttachmentsRef.current[selectedKey] || []
     discardAttachmentsById(
       attachments
@@ -14501,7 +14580,6 @@ function App() {
       )
       .map((attachment) => attachment.promptText!)
       .join('\n\n')
-    queuedEditAttachmentBaselineRef.current.delete(selectedKey)
     updateComposerDrafts([selectedKey], (current) => {
       if (retainedPromptText) {
         return writeComposerContent(current, selectedKey, {
@@ -14773,7 +14851,6 @@ function App() {
       if (!composerDraftsRef.current[savedKey]) {
         retireAttachments(attachments)
       }
-      queuedEditAttachmentBaselineRef.current.delete(savedKey)
       return true
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
@@ -14840,7 +14917,16 @@ function App() {
       ...current,
       [savedKey]: {
         text: '', pastes: [],
-        queuedEdit: { promptId, dispatchPending: true },
+        queuedEdit: {
+          promptId,
+          dispatchPending: true,
+          ...(composerDraftsRef.current[savedKey]?.queuedEdit?.attachmentIds
+            ? {
+                attachmentIds:
+                  composerDraftsRef.current[savedKey]?.queuedEdit?.attachmentIds,
+              }
+            : {}),
+        },
         pendingSubmission: pending,
       },
     }), true)) return false
@@ -14858,7 +14944,13 @@ function App() {
           ...current,
           [liveKey]: {
             ...recoverPendingComposerDraft(durableComposerDraft(liveKey, draft)),
-            queuedEdit: { promptId, ...(uncertain ? { dispatchPending: true } : {}) },
+            queuedEdit: {
+              promptId,
+              ...(uncertain ? { dispatchPending: true } : {}),
+              ...(draft.queuedEdit?.attachmentIds
+                ? { attachmentIds: draft.queuedEdit.attachmentIds }
+                : {}),
+            },
             deliveryUncertain: uncertain || undefined,
           },
         }
@@ -14883,8 +14975,6 @@ function App() {
           }
         })
         retireAttachments(attachments)
-        queuedEditAttachmentBaselineRef.current.delete(savedKey)
-        queuedEditAttachmentBaselineRef.current.delete(liveKey)
         if (result.outcome !== 'sent') setError(result.message || 'The provider accepted this work, but its queue receipt could not be saved. Do not resend it.')
         return true
       }

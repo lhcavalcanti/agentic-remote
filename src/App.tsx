@@ -11760,6 +11760,7 @@ function App() {
     if (attachment.status === 'uploading') {
       return
     }
+    clipboardPasteBatchesRef.current.delete(attachment.ownerKey)
     if (attachment.promptText) {
       removeComposerBlock(attachment.ownerKey, attachment.promptText)
     }
@@ -11804,6 +11805,9 @@ function App() {
         attachmentFilesRef.current
           .get(liveAttachment.ownerKey)
           ?.delete(liveAttachment.file)
+      }
+      if (liveAttachment) {
+        clipboardPasteBatchesRef.current.delete(liveAttachment.ownerKey)
       }
     }
     updateComposerAttachments((current) => {

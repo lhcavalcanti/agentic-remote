@@ -9859,6 +9859,61 @@ describe('App', () => {
     expect(uploadSessionFile).toHaveBeenCalledOnce()
   })
 
+  it.each(['remove', 'send'] as const)(
+    'allows an immediate intentional repaste after attachment %s',
+    async (action) => {
+      vi.mocked(uploadSessionFile).mockImplementation(
+        async (_computerId, _sessionId, file) => ({
+          name: file.name,
+          path: `/private/uploads/${file.name}`,
+          size: file.size,
+        }),
+      )
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      const clipboardFile = () => new File(['repaste'], 'repaste.pdf', {
+        type: 'application/pdf',
+        lastModified: 45,
+      })
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          files: [clipboardFile()],
+          items: [],
+          getData: () => '',
+        },
+      })
+      const attachment = await screen.findByRole('listitem', {
+        name: 'repaste.pdf attachment',
+      })
+      await waitFor(() => expect(attachment).toHaveTextContent('Attached'))
+      if (action === 'remove') {
+        fireEvent.click(within(attachment).getByRole('button', {
+          name: 'Remove repaste.pdf',
+        }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      }
+      await waitFor(() =>
+        expect(screen.queryByRole('listitem', {
+          name: 'repaste.pdf attachment',
+        })).not.toBeInTheDocument(),
+      )
+
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          files: [clipboardFile()],
+          items: [],
+          getData: () => '',
+        },
+      })
+
+      await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+      expect(await screen.findByRole('listitem', {
+        name: 'repaste.pdf attachment',
+      })).toHaveTextContent('Attached')
+    },
+  )
+
   it('attaches distinct files that share clipboard metadata', async () => {
     vi.mocked(uploadSessionFile)
       .mockResolvedValueOnce({

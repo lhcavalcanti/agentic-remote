@@ -34,6 +34,7 @@ import {
   type DreamerPlanWithFingerprints,
   type DreamerCoverageIncrement,
 } from './dreamer-store.js'
+import { OracleTaskStore } from './oracle-task-store.js'
 import {
   dreamerScheduleDecision,
   validateDreamerTimeZone,
@@ -56,6 +57,8 @@ export interface DreamerServiceOptions {
   setInterval?: typeof globalThis.setInterval
   clearInterval?: typeof globalThis.clearInterval
   readSession?: (computerId: string, sessionId: string) => Promise<ManagedSession>
+  taskStore?: OracleTaskStore
+  setProactiveEnabled?: (enabled: boolean) => Promise<void>
 }
 
 export class DreamerUnavailableError extends Error {
@@ -157,6 +160,8 @@ export class DreamerService {
   private readonly setIntervalImpl: typeof globalThis.setInterval
   private readonly clearIntervalImpl: typeof globalThis.clearInterval
   private readonly readSession?: DreamerServiceOptions['readSession']
+  private readonly taskStore?: OracleTaskStore
+  private readonly setProactiveEnabled?: DreamerServiceOptions['setProactiveEnabled']
   private initialized = false
   private initializing?: Promise<void>
   private started = false
@@ -181,12 +186,15 @@ export class DreamerService {
     this.setIntervalImpl = options.setInterval ?? globalThis.setInterval
     this.clearIntervalImpl = options.clearInterval ?? globalThis.clearInterval
     this.readSession = options.readSession
+    this.taskStore = options.taskStore
+    this.setProactiveEnabled = options.setProactiveEnabled
   }
 
   initialize(): Promise<void> {
     if (this.initialized) return Promise.resolve()
     if (this.initializing) return this.initializing
-    const operation = this.store.initialize().then(() => {
+    const operation = this.store.initialize().then(async () => {
+      await this.taskStore?.initialize()
       this.initialized = true
     })
     this.initializing = operation
@@ -219,7 +227,10 @@ export class DreamerService {
 
   snapshot(): DreamerSnapshot {
     this.requireAvailable()
-    return publicSnapshot(this.store.snapshot(), this.now())
+    return {
+      ...publicSnapshot(this.store.snapshot(), this.now()),
+      tasks: this.taskStore?.snapshot().tasks ?? [],
+    }
   }
 
   async snapshotForApi(): Promise<DreamerSnapshot> {
@@ -253,17 +264,18 @@ export class DreamerService {
       enabled: settings.enabled,
       timeZone: settings.timeZone,
     })
-    const after = this.store.snapshot()
     if (!settings.enabled) {
       this.lifecycleGeneration += 1
       this.stopTimer()
-      return publicSnapshot(after, this.now())
+      await this.setProactiveEnabled?.(false)
+      return this.snapshot()
     }
     if (before.settings.timeZone !== settings.timeZone) {
       this.lifecycleGeneration += 1
     }
     this.started = true
     this.startTimer()
+    await this.setProactiveEnabled?.(true)
     // A settings save is also the startup/enablement check. This keeps the
     // route deterministic without adding a manual-run endpoint.
     if (!before.settings.enabled || before.settings.timeZone !== settings.timeZone) {

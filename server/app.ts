@@ -27,6 +27,9 @@ import { JournalRecorder } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
+import { ManagerProactiveCoordinator } from './manager-proactive-coordinator.js'
+import { ManagerProactiveInbox } from './manager-proactive-inbox.js'
+import { OracleTaskStore } from './oracle-task-store.js'
 import {
   initializeManagerStructuredMemory,
   ManagerStructuredMemoryRuntime,
@@ -151,6 +154,7 @@ export async function buildApp(
   voiceEngineFactory?: VoiceEngineFactory
   voiceCapability: VoiceBackendCapability
   dreamerService?: DreamerService
+  proactiveCoordinator?: ManagerProactiveCoordinator
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -315,10 +319,14 @@ export async function buildApp(
   let managerStore: ManagerStore | undefined
   let managerStoreReady = false
   let dreamerService: DreamerService | undefined
+  let proactiveCoordinator: ManagerProactiveCoordinator | undefined
+  let proactiveInbox: ManagerProactiveInbox | undefined
+  let oracleTaskStore: OracleTaskStore | undefined
   let dreamerUnavailable: string | undefined
   let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
+  let forwardToProactive: ((event: HubEvent) => void) | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -377,6 +385,23 @@ export async function buildApp(
       })
       managerStoreReady = initialized
       const recorder = initialized ? new JournalRecorder(managerStore) : undefined
+      if (initialized) {
+        const dreamerDirectory = path.join(
+          dataDirectory,
+          'manager',
+          'dreamer',
+        )
+        oracleTaskStore = new OracleTaskStore(dreamerDirectory, {
+          hubId: identity.info.id,
+        })
+        proactiveInbox = new ManagerProactiveInbox(
+          path.join(dataDirectory, 'manager', 'proactive'),
+          {
+            enabled: true,
+            hubId: identity.info.id,
+          },
+        )
+      }
       if (recorder) {
         forwardToJournal = (event) => recorder.handle(event)
         manager.on('event', forwardToJournal)
@@ -392,12 +417,28 @@ export async function buildApp(
         // The synced settings profile on this same hub, read per turn.
         responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
         structuredMemory: managerStructuredMemory,
+        recordProactiveOutcomes: (input) => {
+          if (!proactiveCoordinator) {
+            throw Object.assign(
+              new Error('Oracle proactive task storage is unavailable.'),
+              { statusCode: 503 },
+            )
+          }
+          return proactiveCoordinator.recordProactiveOutcomes(input)
+        },
       })
       // Before the session service starts, so its first discovery already
       // leaves the manager's own conversations out.
       if (managerAgent) agent.excludeFromDiscovery(managerAgent.hiddenSessionIds())
     }
-    if (managerStoreReady && managerStore && manager) {
+    if (
+      managerStoreReady &&
+      managerStore &&
+      manager &&
+      managerAgent &&
+      oracleTaskStore &&
+      proactiveInbox
+    ) {
       const dreamerManager = manager
       dreamerService = new DreamerService(
         path.join(dataDirectory, 'manager', 'dreamer'),
@@ -406,12 +447,34 @@ export async function buildApp(
           structuredMemory: managerStructuredMemory,
           readSession: (computerId, sessionId) =>
             dreamerManager.readSession(computerId, sessionId),
+          taskStore: oracleTaskStore,
+          setProactiveEnabled: async (enabled) => {
+            await proactiveCoordinator?.setEnabled(enabled)
+          },
         },
       )
       try {
         await dreamerService.initialize()
+        proactiveCoordinator = new ManagerProactiveCoordinator({
+          inbox: proactiveInbox,
+          taskStore: oracleTaskStore,
+          agent: managerAgent,
+          computers: () => dreamerManager.listComputers(),
+          registry: () => managerStore!.registry(),
+          listSessions: () => dreamerManager.listSessions(),
+          readSession: (computerId, sessionId) =>
+            dreamerManager.readSession(computerId, sessionId),
+        })
+        await proactiveCoordinator.initialize()
+        await proactiveCoordinator.setEnabled(
+          dreamerService.snapshot().settings.enabled,
+        )
+        forwardToProactive = (event) => proactiveCoordinator?.handle(event)
+        manager.on('event', forwardToProactive)
       } catch (error) {
         app.log.error({ err: error }, 'Dreamer could not initialize')
+        await proactiveCoordinator?.stop().catch(() => undefined)
+        proactiveCoordinator = undefined
         dreamerService = undefined
         dreamerUnavailable = 'Dreamer storage is unavailable on this hub.'
       }
@@ -533,7 +596,9 @@ export async function buildApp(
   app.addHook('onClose', async () => {
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
+    if (forwardToProactive) manager?.off('event', forwardToProactive)
     await voiceService?.stop()
+    await proactiveCoordinator?.stop()
     await dreamerService?.stop()
     await managerAgent?.stop()
     manager?.stop()
@@ -559,5 +624,6 @@ export async function buildApp(
     voiceEngineFactory,
     voiceCapability,
     dreamerService,
+    proactiveCoordinator,
   }
 }

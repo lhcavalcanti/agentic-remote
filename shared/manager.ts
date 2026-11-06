@@ -56,8 +56,14 @@ export interface ManagerSessionRef {
   computerId: string
   sessionId: string
   title?: string
-  /** Exact root user prompt dispatched for this task attempt. */
+  /** Immediate root prompt ID, or the durable queued prompt receipt. */
   promptId?: string
+  /** Root user message before a queued delivery was appended. */
+  promptAnchorId?: string
+  /** One-based FIFO position after the anchor for a queued delivery. */
+  promptQueuePosition?: number
+  /** SHA-256 of the exact queued prompt content. */
+  promptDigest?: string
 }
 
 /**

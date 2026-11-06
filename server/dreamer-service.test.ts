@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -431,6 +431,110 @@ describe('DreamerService', () => {
       completionCandidate: {
         attemptId: dispatched.tasks![0]!.attempts[0]!.id,
         messageId: 'task-completion-skewed',
+      },
+    })
+  })
+
+  it('resolves a queued prompt receipt to its later root transcript message', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['9'.repeat(64)],
+      title: 'Run the queued focused test',
+      summary: 'The task prompt waited behind existing work.',
+      nextAction: 'Review the queued execution result.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(true, 'Queued focused test passed.', {
+        id: 'execution-queued',
+        status: 'idle',
+        messages: [{
+          id: 'previous-root',
+          role: 'user',
+          content: 'Finish the existing work.',
+          createdAt: '2026-10-29T03:55:00.000Z',
+        }, {
+          id: 'previous-reply',
+          role: 'assistant',
+          content: 'Existing work finished.',
+          createdAt: '2026-10-29T03:56:00.000Z',
+        }, {
+          id: 'earlier-queued-root',
+          role: 'user',
+          content: 'Run the earlier queued check.',
+          createdAt: '2026-10-29T03:57:00.000Z',
+        }, {
+          id: 'earlier-queued-reply',
+          role: 'assistant',
+          content: 'Earlier queued check passed.',
+          createdAt: '2026-10-29T03:58:00.000Z',
+        }, {
+          id: 'transcript-task-prompt',
+          role: 'user',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-29T03:59:00.000Z',
+        }, {
+          id: 'queued-task-completion',
+          role: 'assistant',
+          content: 'Queued focused test passed.',
+          createdAt: '2026-10-29T03:59:30.000Z',
+          taskCompletion: {
+            source: 'root-task-complete',
+            toolCallId: 'queued-task-complete',
+            completedAt: '2026-10-29T03:59:30.000Z',
+          },
+        }],
+      }),
+    }))
+    await service.initialize()
+    await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'f137172b-34e9-4cd7-81bf-b4c17660126a',
+    })
+    managerMessages[0]!.state = 'done'
+    managerMessages.push({
+      id: 'queued-session-link',
+      role: 'activity',
+      content: 'Queued execution prompt',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-queued',
+        promptId: 'queued-task-receipt',
+        promptAnchorId: 'previous-root',
+        promptQueuePosition: 2,
+        promptDigest: createHash('sha256')
+          .update('Run the focused queue test.')
+          .digest('hex'),
+      }],
+    })
+
+    const snapshot = await service.snapshotForApi()
+
+    expect(snapshot.tasks![0]).toMatchObject({
+      status: 'review',
+      completionCandidate: {
+        messageId: 'queued-task-completion',
+        sessionId: 'execution-queued',
       },
     })
   })

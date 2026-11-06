@@ -1363,15 +1363,46 @@ export class DreamerService {
     attempt: OracleTaskAttempt,
     messageId?: string,
   ): OracleTaskCompletionCandidate | undefined {
-    const promptId = attempt.sessionRefs.find(
+    const promptReference = attempt.sessionRefs.find(
       (reference) =>
         reference.computerId === session.computerId &&
         reference.sessionId === session.id,
-    )?.promptId
-    if (!promptId) return undefined
-    const promptIndex = session.messages.findIndex(
-      (message) => message.id === promptId && message.role === 'user',
     )
+    if (!promptReference?.promptId) return undefined
+    let promptIndex = session.messages.findIndex(
+      (message) =>
+        message.id === promptReference.promptId &&
+        message.role === 'user',
+    )
+    if (
+      promptIndex < 0 &&
+      promptReference.promptDigest &&
+      promptReference.promptQueuePosition
+    ) {
+      const anchorIndex = promptReference.promptAnchorId
+        ? session.messages.findIndex(
+            (message) =>
+              message.id === promptReference.promptAnchorId &&
+              message.role === 'user',
+          )
+        : -1
+      if (promptReference.promptAnchorId && anchorIndex < 0) return undefined
+      const queuedRootIndexes = session.messages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message, index }) =>
+          index > anchorIndex && message.role === 'user')
+      const resolved = queuedRootIndexes[
+        promptReference.promptQueuePosition - 1
+      ]
+      if (
+        resolved &&
+        createHash('sha256')
+          .update(resolved.message.content)
+          .digest('hex') === promptReference.promptDigest
+      ) {
+        promptIndex = resolved.index
+      }
+    }
     if (promptIndex < 0) return undefined
     const nextUserOffset = session.messages.slice(promptIndex + 1).findIndex(
       ({ role }) => role === 'user',
@@ -1524,6 +1555,15 @@ function uniqueSessionRefs(
       ...existing,
       ...(existing.title ? {} : reference.title ? { title: reference.title } : {}),
       ...(reference.promptId ? { promptId: reference.promptId } : {}),
+      ...(reference.promptAnchorId
+        ? { promptAnchorId: reference.promptAnchorId }
+        : {}),
+      ...(reference.promptQueuePosition
+        ? { promptQueuePosition: reference.promptQueuePosition }
+        : {}),
+      ...(reference.promptDigest
+        ? { promptDigest: reference.promptDigest }
+        : {}),
     }
   }
   return unique

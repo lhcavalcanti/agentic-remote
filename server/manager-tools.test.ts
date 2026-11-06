@@ -182,6 +182,112 @@ describe('manager tools', () => {
         computerId: 'hub',
         sessionId: 'new1',
         promptId: 'queued-task-prompt',
+        promptDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        promptQueuePosition: 1,
+      }],
+    })
+  })
+
+  it.each([
+    {
+      name: 'ignores queued commands and steers that do not become root turns',
+      before: session('abc12345-aaaa', {
+        messages: [{
+          id: 'anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-command',
+          content: '/help',
+          createdAt: '2026-10-15T11:51:00.000Z',
+          command: true,
+        }, {
+          id: 'queued-steer',
+          content: 'Adjust the running turn.',
+          createdAt: '2026-10-15T11:52:00.000Z',
+          steer: true,
+        }],
+      }),
+      after: session('abc12345-aaaa', {
+        messages: [{
+          id: 'anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-command',
+          content: '/help',
+          createdAt: '2026-10-15T11:51:00.000Z',
+          command: true,
+        }, {
+          id: 'queued-steer',
+          content: 'Adjust the running turn.',
+          createdAt: '2026-10-15T11:52:00.000Z',
+          steer: true,
+        }, {
+          id: 'queued-task',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-15T12:00:00.000Z',
+        }],
+      }),
+      anchor: 'anchor-root',
+    },
+    {
+      name: 'uses the post-enqueue anchor when an earlier prompt drains',
+      before: session('abc12345-aaaa', {
+        messages: [{
+          id: 'old-anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-earlier',
+          content: 'Run the earlier check.',
+          createdAt: '2026-10-15T11:51:00.000Z',
+        }],
+      }),
+      after: session('abc12345-aaaa', {
+        messages: [{
+          id: 'old-anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }, {
+          id: 'drained-root',
+          role: 'user',
+          content: 'Run the earlier check.',
+          createdAt: '2026-10-15T11:59:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-task',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-15T12:00:00.000Z',
+        }],
+      }),
+      anchor: 'drained-root',
+    },
+  ])('$name', async ({ before, after, anchor }) => {
+    vi.mocked(host.listSessions).mockResolvedValue([before])
+    vi.mocked(host.sendMessage).mockResolvedValueOnce(after)
+
+    await call('send_to_session', {
+      sessionId: 'abc12345',
+      message: 'Run the focused queue test.',
+    })
+
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'send_to_session',
+      sessionRefs: [{
+        computerId: 'hub',
+        sessionId: 'abc12345-aaaa',
+        promptId: 'queued-task',
+        promptAnchorId: anchor,
+        promptQueuePosition: 1,
+        promptDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       }],
     })
   })

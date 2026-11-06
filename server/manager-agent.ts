@@ -250,6 +250,15 @@ function uniqueManagerSessionRefs(
       ...existing,
       ...(existing.title ? {} : reference.title ? { title: reference.title } : {}),
       ...(reference.promptId ? { promptId: reference.promptId } : {}),
+      ...(reference.promptAnchorId
+        ? { promptAnchorId: reference.promptAnchorId }
+        : {}),
+      ...(reference.promptQueuePosition
+        ? { promptQueuePosition: reference.promptQueuePosition }
+        : {}),
+      ...(reference.promptDigest
+        ? { promptDigest: reference.promptDigest }
+        : {}),
     }
   }
   return unique

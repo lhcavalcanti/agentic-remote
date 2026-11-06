@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -122,6 +122,49 @@ describe('OracleTaskStore', () => {
       nextAction: 'Run the focused tests.',
       owner: 'oracle',
     })).toThrow(OracleTaskConflictError)
+  })
+
+  it('migrates legacy promptless Oracle tasks to explicit user-owned follow-up', async () => {
+    const root = await directory()
+    const statePath = path.join(root, 'dreamer-tasks.json')
+    await writeFile(statePath, JSON.stringify({
+      version: 1,
+      revision: 1,
+      tasks: [{
+        id: 'oracle-task-legacy',
+        revision: 1,
+        title: 'Review the legacy finding',
+        summary: 'The old task has no executable prompt.',
+        nextAction: 'Decide how to follow up.',
+        owner: 'oracle',
+        status: 'blocked',
+        sourceEventIds: ['f'.repeat(64)],
+        attempts: [],
+        createdAt: '2026-11-06T02:00:00.000Z',
+        updatedAt: '2026-11-06T02:00:00.000Z',
+      }],
+    }))
+    const store = new OracleTaskStore(root, { hubId: 'hub-a' })
+
+    await store.initialize()
+
+    expect(store.snapshot().tasks).toEqual([
+      expect.objectContaining({
+        id: 'oracle-task-legacy',
+        owner: 'user',
+        status: 'ready',
+      }),
+    ])
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      version: 2,
+      revision: 2,
+      tasks: [{
+        id: 'oracle-task-legacy',
+        revision: 2,
+        owner: 'user',
+        status: 'ready',
+      }],
+    })
   })
 
   it('releases active capacity when a user-owned task is completed', async () => {

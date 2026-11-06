@@ -197,13 +197,16 @@ function link(session: Pick<ManagedSession, 'computerId' | 'id' | 'title'>): str
 
 function ref(
   session: Pick<ManagedSession, 'computerId' | 'id' | 'title'>,
-  promptId?: string,
+  prompt?: Pick<
+    ManagerSessionRef,
+    'promptId' | 'promptAnchorId' | 'promptQueuePosition' | 'promptDigest'
+  >,
 ): ManagerSessionRef {
   return {
     computerId: session.computerId,
     sessionId: session.id,
     title: session.title,
-    ...(promptId ? { promptId } : {}),
+    ...prompt,
   }
 }
 
@@ -312,23 +315,50 @@ export function createManagerTools(
     }
   }
 
-  function deliveredPromptId(
+  function deliveredPromptIdentity(
     before: ManagedSession,
     after: ManagedSession,
     content: string,
-  ): string | undefined {
+  ): Pick<
+    ManagerSessionRef,
+    'promptId' | 'promptAnchorId' | 'promptQueuePosition' | 'promptDigest'
+  > | undefined {
     const previousIds = new Set([
       ...(before.queuedPrompts ?? []).map(({ id }) => id),
       ...(before.messages ?? []).map(({ id }) => id),
     ])
-    return after.queuedPrompts?.findLast(
+    const queued = after.queuedPrompts?.findLast(
       (prompt) => prompt.content === content && !previousIds.has(prompt.id),
-    )?.id ?? after.messages?.findLast(
+    )
+    if (queued) {
+      const queueIndex = after.queuedPrompts!.findIndex(
+        ({ id }) => id === queued.id,
+      )
+      const position = after.queuedPrompts!
+        .slice(0, queueIndex + 1)
+        .filter((prompt) => !prompt.command && !prompt.steer)
+        .length
+      const anchor = after.messages?.findLast(({ role }) => role === 'user')
+      return {
+        promptId: queued.id,
+        ...(
+          !queued.command && !queued.steer && position > 0
+            ? {
+                ...(anchor ? { promptAnchorId: anchor.id } : {}),
+                promptQueuePosition: position,
+                promptDigest: createHash('sha256').update(content).digest('hex'),
+              }
+            : {}
+        ),
+      }
+    }
+    const delivered = after.messages?.findLast(
       (message) =>
         message.role === 'user' &&
         message.content === content &&
         !previousIds.has(message.id),
-    )?.id
+    )
+    return delivered ? { promptId: delivered.id } : undefined
   }
 
   /** Delivers a message, first answering a folder-trust prompt, and once more if one appears. */
@@ -909,7 +939,10 @@ export function createManagerTools(
         onActivity({
           tool: 'create_session',
           content: `Started "${session.title}" on ${computer.name}`,
-          sessionRefs: [ref(session, deliveredPromptId(session, delivered, args.prompt))],
+          sessionRefs: [ref(
+            session,
+            deliveredPromptIdentity(session, delivered, args.prompt),
+          )],
         })
         return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}. Its task was sent.`
       },
@@ -982,7 +1015,7 @@ export function createManagerTools(
           content: `Sent a message to "${session.title}"`,
           sessionRefs: [ref(
             session,
-            deliveredPromptId(session, delivery.delivered, message),
+            deliveredPromptIdentity(session, delivery.delivered, message),
           )],
         })
         const { outcome } = delivery

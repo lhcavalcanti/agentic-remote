@@ -25,7 +25,8 @@ export const ORACLE_TASK_MAX_ATTEMPTS = 20
 export const ORACLE_TASK_MAX_SOURCE_EVENTS = 20
 export const ORACLE_TASK_MAX_STATE_BYTES = 1_048_576
 
-const STATE_VERSION = 1 as const
+const STATE_VERSION = 2 as const
+const LEGACY_STATE_VERSION = 1 as const
 const STATE_FILE = 'dreamer-tasks.json'
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~+=:@-]{0,127}$/
 const EVENT_ID_PATTERN = /^[a-f0-9]{64}$/
@@ -171,7 +172,22 @@ function validateSessionRef(value: unknown): value is ManagerSessionRef {
   return isId(reference.computerId) &&
     isId(reference.sessionId) &&
     (reference.title === undefined || isText(reference.title, 200)) &&
-    (reference.promptId === undefined || isId(reference.promptId))
+    (reference.promptId === undefined || isId(reference.promptId)) &&
+    (reference.promptAnchorId === undefined || isId(reference.promptAnchorId)) &&
+    (
+      reference.promptQueuePosition === undefined ||
+      (
+        Number.isSafeInteger(reference.promptQueuePosition) &&
+        (reference.promptQueuePosition as number) > 0
+      )
+    ) &&
+    (
+      reference.promptDigest === undefined ||
+      (
+        typeof reference.promptDigest === 'string' &&
+        EVENT_ID_PATTERN.test(reference.promptDigest)
+      )
+    )
 }
 
 function validateCompletion(value: unknown): value is OracleTaskCompletionProvenance {
@@ -207,7 +223,10 @@ function validateAttempt(value: unknown): value is OracleTaskAttempt {
     (attempt.finishedAt === undefined || isTimestamp(attempt.finishedAt))
 }
 
-function validateTask(value: unknown): value is OracleTask {
+function validateTask(
+  value: unknown,
+  requireOraclePrompt = true,
+): value is OracleTask {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const task = value as Record<string, unknown>
   return isId(task.id) &&
@@ -226,7 +245,11 @@ function validateTask(value: unknown): value is OracleTask {
     (task.sourceSession === undefined || validateSourceSession(task.sourceSession)) &&
     (task.sourcePlan === undefined || validateSourcePlan(task.sourcePlan)) &&
     (task.executionPrompt === undefined || isText(task.executionPrompt, 4_000)) &&
-    (task.owner !== 'oracle' || isText(task.executionPrompt, 4_000)) &&
+    (
+      !requireOraclePrompt ||
+      task.owner !== 'oracle' ||
+      isText(task.executionPrompt, 4_000)
+    ) &&
     Array.isArray(task.attempts) &&
     task.attempts.length <= ORACLE_TASK_MAX_ATTEMPTS &&
     task.attempts.every(validateAttempt) &&
@@ -249,28 +272,45 @@ function validateTask(value: unknown): value is OracleTask {
     isTimestamp(task.updatedAt)
 }
 
-function validateState(value: unknown): OracleTaskStoreState {
+function validateState(value: unknown): {
+  state: OracleTaskStoreState
+  migrated: boolean
+} {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new OracleTaskUnavailableError('Oracle task state is malformed.')
   }
   const state = value as Record<string, unknown>
+  const legacy = state.version === LEGACY_STATE_VERSION
   if (
-    state.version !== STATE_VERSION ||
+    (!legacy && state.version !== STATE_VERSION) ||
     !Number.isSafeInteger(state.revision) ||
     (state.revision as number) < 0 ||
     !Array.isArray(state.tasks) ||
-    !state.tasks.every(validateTask)
+    !state.tasks.every((task) => validateTask(task, !legacy))
   ) {
     throw new OracleTaskUnavailableError('Oracle task state is corrupt or unsupported.')
   }
-  const tasks = state.tasks as OracleTask[]
+  const tasks = structuredClone(state.tasks as OracleTask[])
   if (new Set(tasks.map(({ id }) => id)).size !== tasks.length) {
     throw new OracleTaskUnavailableError('Oracle task state contains duplicate tasks.')
   }
+  if (legacy) {
+    for (const task of tasks) {
+      if (task.owner !== 'oracle' || task.executionPrompt) continue
+      task.owner = 'user'
+      if (task.status !== 'completed' && task.status !== 'dismissed') {
+        task.status = 'ready'
+      }
+      task.revision += 1
+    }
+  }
   return {
-    version: STATE_VERSION,
-    revision: state.revision as number,
-    tasks: structuredClone(tasks),
+    state: {
+      version: STATE_VERSION,
+      revision: (state.revision as number) + (legacy ? 1 : 0),
+      tasks,
+    },
+    migrated: legacy,
   }
 }
 
@@ -532,7 +572,9 @@ export class OracleTaskStore {
       } finally {
         await handle.close()
       }
-      this.state = validateState(JSON.parse(serialized))
+      const loaded = validateState(JSON.parse(serialized))
+      if (loaded.migrated) await this.persist(loaded.state)
+      this.state = loaded.state
       this.initialized = true
     } catch (error) {
       if (error instanceof OracleTaskUnavailableError) throw error

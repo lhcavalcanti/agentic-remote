@@ -402,7 +402,9 @@ type ComposerAttachment = {
   ownerKey: string
   computerId: string
   sessionId: string
-  file: File
+  name: string
+  size: number
+  file?: File
   status: 'uploading' | 'attached' | 'failed'
   error?: string
   retryable?: boolean
@@ -413,7 +415,7 @@ let attachmentSequence = 0
 
 function attachmentId(): string {
   attachmentSequence += 1
-  return `attachment-${attachmentSequence}`
+  return `attachment-${Date.now().toString(36)}-${attachmentSequence.toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
 const clipboardImageExtensions: Record<string, string> = {
@@ -823,6 +825,7 @@ type ComposerStorageSnapshot = {
 
 const collapsedPasteLineThreshold = 20
 const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
+const composerAttachmentsStorageKey = 'agentic-remote:composer-attachments-v1'
 const queuedEditsStorageKey = 'agentic-remote:queued-edit'
 const queuedDispatchPendingStorageKey = 'agentic-remote:queued-dispatch-pending'
 // Set the first time this build persists, and never cleared. Its presence is
@@ -1228,6 +1231,55 @@ function writeComposerEdit(
   return writeComposerContent(updated, key, edit.content)
 }
 
+function readComposerAttachments(
+  drafts: ComposerDrafts,
+): Record<string, ComposerAttachment[]> {
+  try {
+    const raw = localStorage.getItem(composerAttachmentsStorageKey)
+    if (!raw) {
+      return {}
+    }
+    const parsed: unknown = JSON.parse(raw)
+    if (!isComposerRecord(parsed, (value) =>
+      Array.isArray(value) && value.every((attachment) =>
+        isComposerObject(attachment) &&
+        typeof attachment.id === 'string' && attachment.id.length > 0 &&
+        typeof attachment.name === 'string' && attachment.name.length > 0 &&
+        typeof attachment.size === 'number' && attachment.size >= 0 &&
+        Number.isFinite(attachment.size) &&
+        typeof attachment.promptText === 'string' &&
+        attachment.promptText.length > 0,
+      ))) {
+      return {}
+    }
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, Array<{
+        id: string
+        name: string
+        size: number
+        promptText: string
+      }>>).flatMap(([ownerKey, attachments]) => {
+        const draft = drafts[ownerKey]
+        const restored = attachments
+          .filter((attachment) => draft?.text.includes(attachment.promptText))
+          .map((attachment) => {
+            const separator = ownerKey.indexOf(':')
+            return {
+              ...attachment,
+              ownerKey,
+              computerId: ownerKey.slice(0, separator),
+              sessionId: ownerKey.slice(separator + 1),
+              status: 'attached' as const,
+            }
+          })
+        return restored.length > 0 ? [[ownerKey, restored]] : []
+      }),
+    )
+  } catch {
+    return {}
+  }
+}
+
 function readComposerDrafts(snapshot: ComposerStorageSnapshot): ComposerDrafts {
   const stored = snapshot.drafts
   const result: ComposerDrafts = {}
@@ -1239,6 +1291,7 @@ function readComposerDrafts(snapshot: ComposerStorageSnapshot): ComposerDrafts {
       text: candidate.text,
       pastes: decoded.pastes,
     }
+
     const savedUnresolved = candidate.unresolvedPastes
     if (savedUnresolved || decoded.unresolvedPastes.length > 0) {
       draft.unresolvedPastes = mergeUnresolvedComposerPastes(
@@ -7423,7 +7476,7 @@ function App() {
   const [uploadingFile, setUploadingFile] = useState(false)
   const [composerAttachments, setComposerAttachments] = useState<
     Record<string, ComposerAttachment[]>
-  >({})
+  >(() => readComposerAttachments(composerDrafts))
   const [recording, setRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [permissionBusy, setPermissionBusy] = useState(false)
@@ -7715,7 +7768,7 @@ function App() {
   const attachmentQueueRef = useRef<Promise<void> | undefined>(undefined)
   const composerAttachmentsRef = useRef<
     Record<string, ComposerAttachment[]>
-  >({})
+  >(composerAttachments)
   const attachmentFilesRef = useRef(
     new Map<string, Set<File>>(),
   )
@@ -11585,6 +11638,16 @@ function App() {
     }))
   }
 
+  function currentAttachment(id: string): ComposerAttachment | undefined {
+    for (const attachments of Object.values(composerAttachmentsRef.current)) {
+      const attachment = attachments.find((candidate) => candidate.id === id)
+      if (attachment) {
+        return attachment
+      }
+    }
+    return undefined
+  }
+
   function updateComposerAttachments(
     update: (
       current: Record<string, ComposerAttachment[]>,
@@ -11597,6 +11660,37 @@ function App() {
     }
     composerAttachmentsRef.current = next
     setComposerAttachments(next)
+    try {
+      const stored = Object.fromEntries(
+        Object.entries(next).flatMap(([ownerKey, attachments]) => {
+          const draft = composerDraftsRef.current[ownerKey]
+          const durable = attachments
+            .filter((attachment) =>
+              attachment.status === 'attached' &&
+              attachment.promptText !== undefined &&
+              draft?.text.includes(attachment.promptText),
+            )
+            .map(({ id, name, size, promptText }) => ({
+              id,
+              name,
+              size,
+              promptText: promptText!,
+            }))
+          return durable.length > 0 ? [[ownerKey, durable]] : []
+        }),
+      )
+      if (Object.keys(stored).length > 0) {
+        localStorage.setItem(composerAttachmentsStorageKey, JSON.stringify(stored))
+      } else {
+        localStorage.removeItem(composerAttachmentsStorageKey)
+      }
+    } catch (caught) {
+      setComposerStorageError(
+        `Attachment previews could not be saved (${
+          caught instanceof Error ? `${caught.name}: ${caught.message}` : String(caught)
+        }). The attached file path remains in your draft; keep this page open to retain its preview.`,
+      )
+    }
   }
 
   function removeAttachment(attachment: ComposerAttachment) {
@@ -11606,9 +11700,11 @@ function App() {
     if (attachment.promptText) {
       removeComposerBlock(attachment.ownerKey, attachment.promptText)
     }
-    attachmentFilesRef.current
-      .get(attachment.ownerKey)
-      ?.delete(attachment.file)
+    if (attachment.file) {
+      attachmentFilesRef.current
+        .get(attachment.ownerKey)
+        ?.delete(attachment.file)
+    }
     updateComposerAttachments((current) => {
       const remaining = (current[attachment.ownerKey] || []).filter(
         (candidate) => candidate.id !== attachment.id,
@@ -11644,9 +11740,11 @@ function App() {
         new Set<string>()
       retired.add(attachment.id)
       retiredByOwner.set(attachment.ownerKey, retired)
-      attachmentFilesRef.current
-        .get(attachment.ownerKey)
-        ?.delete(attachment.file)
+      if (attachment.file) {
+        attachmentFilesRef.current
+          .get(attachment.ownerKey)
+          ?.delete(attachment.file)
+      }
     }
     updateComposerAttachments((current) => {
       let next = current
@@ -13889,6 +13987,14 @@ function App() {
   }
 
   async function uploadFile(attachment: ComposerAttachment) {
+    if (!attachment.file) {
+      updateAttachment(attachment.ownerKey, attachment.id, {
+        status: 'failed',
+        error: 'Select the file again before retrying this upload.',
+        retryable: false,
+      })
+      return
+    }
     setUploadingFile(true)
     setError(undefined)
     updateAttachment(attachment.ownerKey, attachment.id, {
@@ -13903,29 +14009,36 @@ function App() {
         attachment.file,
       )
       const promptText = `Attached file: \`${uploaded.path}\``
+      const liveAttachment = currentAttachment(attachment.id)
+      if (!liveAttachment) {
+        return
+      }
       appendComposerForKey(
-        attachment.ownerKey,
+        liveAttachment.ownerKey,
         promptText,
         false,
       )
-      updateAttachment(attachment.ownerKey, attachment.id, {
+      updateAttachment(liveAttachment.ownerKey, attachment.id, {
         status: 'attached',
         promptText,
       })
       if (
         selectedRef.current &&
-        sessionKey(selectedRef.current) === attachment.ownerKey
+        sessionKey(selectedRef.current) === liveAttachment.ownerKey
       ) {
-        window.requestAnimationFrame(() => focusComposer(attachment.ownerKey))
+        window.requestAnimationFrame(() => focusComposer(liveAttachment.ownerKey))
       }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
-      updateAttachment(attachment.ownerKey, attachment.id, {
-        status: 'failed',
-        error: message,
-        retryable: true,
-      })
-      setError(message)
+      const liveAttachment = currentAttachment(attachment.id)
+      if (liveAttachment) {
+        updateAttachment(liveAttachment.ownerKey, attachment.id, {
+          status: 'failed',
+          error: message,
+          retryable: true,
+        })
+        setError(message)
+      }
     } finally {
       setUploadingFile(false)
       if (audioInputRef.current) {
@@ -13956,6 +14069,8 @@ function App() {
           ownerKey,
           computerId: targetSession.computerId,
           sessionId: targetSession.id,
+          name: file.name,
+          size: file.size,
           file,
           status: error ? 'failed' : 'uploading',
           ...(error ? { error } : {}),
@@ -13988,7 +14103,11 @@ function App() {
     files: File[],
     targetSession: ManagedSession | undefined = selected,
   ): Promise<void> {
-    if (!targetSession || recording) {
+    if (!targetSession) {
+      return Promise.resolve()
+    }
+    if (recording) {
+      setError('Stop recording before attaching files.')
       return Promise.resolve()
     }
     return queueAttachmentWork(() => processAttachedFiles(files, targetSession))
@@ -14169,6 +14288,7 @@ function App() {
       'Delivery was not confirmed. Check the provider before discarding this rewrite. Leaving the editor does not cancel provider work.',
     )) return
     if (!selectedKey) return
+    discardAttachments(selectedKey)
     updateComposerDrafts([selectedKey], (current) => {
       const { [selectedKey]: _left, ...rest } = current
       return rest
@@ -16547,25 +16667,25 @@ function App() {
                 >
                   {selectedAttachments.map((attachment) => (
                     <li
-                      aria-label={`${attachment.file.name} attachment`}
+                      aria-label={`${attachment.name} attachment`}
                       className={`composer-attachment composer-attachment--${attachment.status}`}
                       key={attachment.id}
                     >
                       <FileText aria-hidden="true" size={18} />
                       <span className="composer-attachment__details">
-                        <strong>{attachment.file.name}</strong>
+                        <strong>{attachment.name}</strong>
                         <small>
                           {attachment.error ||
                             (attachment.status === 'uploading'
                               ? 'Uploading…'
                               : 'Attached')}
                           {' · '}
-                          {attachmentSize(attachment.file.size)}
+                          {attachmentSize(attachment.size)}
                         </small>
                       </span>
                       {attachment.status === 'failed' && attachment.retryable ? (
                         <button
-                          aria-label={`Retry ${attachment.file.name}`}
+                          aria-label={`Retry ${attachment.name}`}
                           className="composer-attachment__action"
                           disabled={uploadingFile || transcribing}
                           onClick={() => void retryAttachment(attachment)}
@@ -16575,7 +16695,7 @@ function App() {
                         </button>
                       ) : null}
                       <button
-                        aria-label={`Remove ${attachment.file.name}`}
+                        aria-label={`Remove ${attachment.name}`}
                         className="composer-attachment__action"
                         disabled={attachment.status === 'uploading'}
                         onClick={() => removeAttachment(attachment)}

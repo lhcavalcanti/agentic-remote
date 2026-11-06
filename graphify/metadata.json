@@ -401,9 +401,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 222,
+  "communities": 230,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18741,
+  "edges": 18748,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -781,8 +781,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "43e202e65f3ab4f91e953f3526be7405ed0a97d67ec2e4de789c65f6477cdaab",
-    "src/App.tsx": "f5f208f99eff8fed95314f97cf5e6edb583f10b89c42835f6cccf5427c11b213",
+    "src/App.test.tsx": "4e583cd4faea50283fb77bb429925f10a253e9c80b6222594ce1f907756ea411",
+    "src/App.tsx": "69ceca2a75ddbfe9de5867ded6bb9f8b657a5120afcc2047575c7a98a00d37e7",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -898,7 +898,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6796,
+  "nodes": 6798,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -991,26 +991,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e6a06d58083cc25711f69e7d9fb045ed2101eaf90c132aba30962c63400e1f49",
-    "communities.json": "336a62df45ac5ec59ddbe3c740f281b9aa3e1ba59c5971323d5c563592d733ff",
-    "graph.html": "4952862d8ca204bcf73139338d82fd2cbb15163e6486c058826cb631dc3d0583",
-    "graph.json": "048c202b2b53459e6944e9aa043c8883cfa53e3ced06ee20b6c411c7ac07d0cf"
+    "GRAPH_REPORT.md": "2a1a32da412ad4e7cf1e0f41f4b277b31c2f28f1e825d8821047e38e8fd3c998",
+    "communities.json": "42bd11b4219e206588f9f8e024abe4352837a79df696bd3aadf886d3f7a518fe",
+    "graph.html": "f48669932cdae781f100bd6c19d919ba3192d9f7d7845e34113136a8a1edf859",
+    "graph.json": "01ac0e8c2065a996e81ddd1f73626335bbee4f2e7e9a62443a468fc0e80419e7"
   },
   "schema_version": 1,
-  "source_commit": "5e9188ab95c914a8c34329ab9b45c517320432df",
-  "source_fingerprint": "cbade967803e1b81e32861c97e78f70d8e2ee5e265bb914fbedc63e52e78560b",
+  "source_commit": "aa9b7da7f62544deefcea92d8c0daa3f2c52fe26",
+  "source_fingerprint": "f8f9abbe1696ddb24d388c15e31a71b1a045913d63347e0abccc3be08ce9da9f",
   "working_tree_changes": [
-    "README.md",
-    "docs/app-spec.md",
-    "package.json",
-    "server/file-upload-routes.ts",
-    "shared/session-files.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
     "src/App.test.tsx",
-    "src/App.tsx",
-    "src/index.css"
+    "src/App.tsx"
   ]
 }

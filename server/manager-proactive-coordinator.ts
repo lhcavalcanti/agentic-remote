@@ -71,6 +71,7 @@ export class ManagerProactiveCoordinator {
   private timer?: ReturnType<typeof setTimeout>
   private initialized = false
   private enabled = false
+  private enableGeneration = 0
   private stopped = false
 
   constructor(options: ManagerProactiveCoordinatorOptions) {
@@ -107,6 +108,7 @@ export class ManagerProactiveCoordinator {
 
   setEnabled(enabled: boolean): Promise<void> {
     this.requireReady()
+    const generation = ++this.enableGeneration
     if (!enabled) {
       this.enabled = false
       this.pendingEvents.length = 0
@@ -117,7 +119,9 @@ export class ManagerProactiveCoordinator {
       })
     }
     return this.enqueue(async () => {
+      if (generation !== this.enableGeneration) return
       await this.agent.setProactiveMessagesEnabled(true)
+      if (generation !== this.enableGeneration) return
       this.enabled = true
       await this.reconcileCurrentSessions()
       await this.flushEvents()

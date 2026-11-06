@@ -372,4 +372,15 @@ describe('ManagerProactiveCoordinator', () => {
       expect(harness.inbox.pending()).toHaveLength(1)
     },
   )
+
+  it('keeps disable final against an older queued enable callback', async () => {
+    const harness = await fixture(await directory())
+
+    const enabling = harness.coordinator.setEnabled(true)
+    const disabling = harness.coordinator.setEnabled(false)
+    await Promise.all([enabling, disabling])
+
+    expect(harness.coordinator.isEnabled()).toBe(false)
+    expect(harness.agent.proactiveEnabled.at(-1)).toBe(false)
+  })
 })

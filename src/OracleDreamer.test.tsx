@@ -640,6 +640,58 @@ describe('Dreamer settings and morning review', () => {
     }))
   })
 
+  it('can investigate a restored session suggestion with a fresh task identity', async () => {
+    const investigatedItem = {
+      ...plan.items[0],
+      status: 'skipped' as const,
+      computerId: 'computer-a',
+      sessionId: 'session-a',
+      taskId: 'oracle-task-old',
+    }
+    const investigated = {
+      ...ready,
+      revision: 4,
+      plan: { ...plan, items: [investigatedItem, plan.items[1]] },
+    }
+    const restored = {
+      ...investigated,
+      revision: 5,
+      plan: {
+        ...investigated.plan,
+        items: [{ ...investigatedItem, status: 'pending' as const, taskId: undefined }, plan.items[1]],
+      },
+    }
+    vi.mocked(getDreamer).mockResolvedValue(investigated)
+    vi.mocked(updateDreamerPlan)
+      .mockResolvedValueOnce(restored)
+      .mockResolvedValueOnce({
+        ...restored,
+        revision: 6,
+        plan: {
+          ...restored.plan,
+          items: [{
+            ...investigatedItem,
+            taskId: 'oracle-task-new',
+          }, plan.items[1]],
+        },
+      })
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Review failed session' }))
+    const investigate = await screen.findByRole('button', { name: 'Ask Oracle to investigate' })
+    fireEvent.click(investigate)
+
+    await waitFor(() => expect(updateDreamerPlan).toHaveBeenLastCalledWith({
+      revision: 5,
+      planId: 'daily-plan',
+      investigate: {
+        itemId: 'a',
+        requestId: expect.any(String),
+      },
+    }))
+  })
+
   it('refreshes stale plans and does not replay a conflicting action', async () => {
     vi.mocked(getDreamer).mockResolvedValue(ready)
     vi.mocked(updateDreamerPlan).mockRejectedValue(new DreamerApiError('Stale plan.', 409))

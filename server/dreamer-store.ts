@@ -1211,7 +1211,14 @@ export class DreamerStore {
         }
       } else if (edit.item && !edit.order) {
         const existing = candidate.plan.items.find(({ id }) => id === edit.item!.id)
-        if (existing?.status === edit.item.status) {
+        if (
+          existing?.status === edit.item.status &&
+          !(
+            edit.item.status === 'pending' &&
+            existing.taskId &&
+            ['session', 'carry'].includes(existing.source)
+          )
+        ) {
           return { result: undefined, changed: false }
         }
       }
@@ -1245,6 +1252,12 @@ export class DreamerStore {
         }
         item.status = edit.item.status
         if (edit.item.status !== 'done') item.completion = undefined
+        if (
+          edit.item.status === 'pending' &&
+          ['session', 'carry'].includes(item.source)
+        ) {
+          item.taskId = undefined
+        }
         const fingerprint = next.fingerprints[item.id]
         if (!fingerprint) {
           throw new DreamerRecoveryError('Dreamer plan item fingerprint is missing.')

@@ -635,7 +635,9 @@ export class DreamerService {
     }
     if (edit.item?.status === 'pending') {
       const current = this.store.snapshot()
-      const item = current.plan?.items.find(({ id }) => id === edit.item!.id)
+      const item = current.plan?.id === edit.planId
+        ? current.plan.items.find(({ id }) => id === edit.item!.id)
+        : undefined
       if (item?.memoryId) {
         const memory = this.captureMemory()
         if (!memory || memory.mode !== 'on' || !memory.available) {
@@ -647,6 +649,21 @@ export class DreamerService {
         if (!activeMemoryIds.has(item.memoryId)) {
           throw new DreamerConflictError(
             'Dreamer memory item is no longer available; refresh and retry.',
+          )
+        }
+      }
+      if (item?.taskId) {
+        const linked = this.taskStore?.snapshot().tasks.find(
+          ({ id }) => id === item.taskId,
+        )
+        if (!linked) {
+          throw new DreamerConflictError(
+            'The linked Oracle task is unavailable; refresh and retry.',
+          )
+        }
+        if (linked.status !== 'completed' && linked.status !== 'dismissed') {
+          throw new DreamerConflictError(
+            'The linked Oracle task is still active; resolve it before restoring this suggestion.',
           )
         }
       }
@@ -673,6 +690,11 @@ export class DreamerService {
     const currentItem = current.plan?.id === input.planId
       ? current.plan.items.find(({ id }) => id === input.itemId)
       : undefined
+    const sourceTasks = this.taskStore.snapshot().tasks.filter(
+      ({ sourcePlan }) =>
+        sourcePlan?.planId === input.planId &&
+        sourcePlan.itemId === input.itemId,
+    )
     if (currentItem?.taskId) {
       const linked = this.taskStore.snapshot().tasks.find(
         ({ id }) => id === currentItem.taskId,
@@ -705,10 +727,32 @@ export class DreamerService {
         'This Morning Plan suggestion is no longer available for investigation.',
       )
     }
+    const recoverable = sourceTasks.findLast(
+      ({ status }) => status !== 'completed' && status !== 'dismissed',
+    )
+    if (recoverable) {
+      await this.store.editPlan(input.revision, input.planId, {
+        task: {
+          itemId: input.itemId,
+          taskId: recoverable.id,
+        },
+      })
+      await this.dispatchTask({
+        revision: recoverable.revision,
+        taskId: recoverable.id,
+        requestId: input.requestId,
+      })
+      return this.snapshotForApi()
+    }
     const task = await this.taskStore.upsertFinding({
       sourceEventIds: [
         createHash('sha256')
-          .update(['dreamer-investigate', input.planId, input.itemId].join('\0'))
+          .update([
+            'dreamer-investigate',
+            input.planId,
+            input.itemId,
+            ...sourceTasks.map(({ id }) => id).sort(),
+          ].join('\0'))
           .digest('hex'),
       ],
       sourcePlan: {
@@ -1174,8 +1218,9 @@ export class DreamerService {
         ...(managerMessage?.sessionRefs ?? []),
         ...related.flatMap(({ sessionRefs }) => sessionRefs ?? []),
       ])
-      let status: OracleTaskAttempt['status'] = 'queued'
-      let error: string | undefined
+      let status: OracleTaskAttempt['status'] =
+        attempt.status === 'failed' ? 'failed' : 'queued'
+      let error = attempt.status === 'failed' ? attempt.error : undefined
       const managerFailure = (
         managerMessage?.state === 'failed' ||
         managerMessage?.state === 'cancelled' ||

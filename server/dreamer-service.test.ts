@@ -980,6 +980,69 @@ describe('DreamerService', () => {
     })
   })
 
+  it('keeps an enqueue failure failed until the user explicitly retries', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['d'.repeat(64)],
+      title: 'Retry the failed dispatch',
+      summary: 'Oracle could not persist its manager message.',
+      nextAction: 'Retry execution explicitly.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn()
+      .mockRejectedValueOnce(new Error('manager store unavailable'))
+      .mockImplementation(async (input: ManagerInternalSubmission) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+    }))
+    await service.initialize()
+
+    await expect(service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'fc088477-e2ef-41a3-a421-f235729e9a43',
+    })).rejects.toThrow('manager store unavailable')
+    await service.reconcileTasks()
+    await service.reconcileTasks()
+
+    const failed = service.snapshot().tasks![0]!
+    expect(failed).toMatchObject({
+      status: 'failed',
+      attempts: [{
+        status: 'failed',
+        error: 'Oracle could not queue this task: manager store unavailable',
+      }],
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+
+    await service.dispatchTask({
+      revision: failed.revision,
+      taskId: task.id,
+      requestId: 'e7744556-fb8f-49a7-b10b-28ee68fc07d5',
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [{ status: 'failed' }, { status: 'queued' }],
+    })
+  })
+
   it('re-enqueues a persisted queued attempt once during reconciliation', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')
@@ -1118,6 +1181,52 @@ describe('DreamerService', () => {
       },
       attempts: [{ requestId: request.investigate.requestId }],
     })
+
+    await expect(service.editPlan({
+      revision: first.revision,
+      planId: first.plan!.id,
+      item: { id: 'carried-session-item', status: 'pending' },
+    })).rejects.toMatchObject({ statusCode: 409 })
+
+    const firstTask = taskStore.snapshot().tasks[0]!
+    const firstAttempt = firstTask.attempts[0]!
+    await taskStore.confirmCompletion({
+      revision: firstTask.revision,
+      taskId: firstTask.id,
+      completion: {
+        source: 'root-task-complete',
+        attemptId: firstAttempt.id,
+        computerId: 'computer-a',
+        sessionId: 'execution-a',
+        sessionRevision: 1,
+        messageId: 'completion-a',
+        toolCallId: 'task-complete-a',
+        resultDigest: 'f'.repeat(64),
+        completedAt: now().toISOString(),
+        confirmedAt: now().toISOString(),
+      },
+    })
+    const restored = await service.editPlan({
+      revision: first.revision,
+      planId: first.plan!.id,
+      item: { id: 'carried-session-item', status: 'pending' },
+    })
+    expect(restored.plan!.items[0]).toMatchObject({
+      status: 'pending',
+      taskId: undefined,
+    })
+
+    const reinvestigated = await service.editPlan({
+      revision: restored.revision,
+      planId: restored.plan!.id,
+      investigate: {
+        itemId: 'carried-session-item',
+        requestId: '5c02c9f5-c8c1-4d79-aab9-b84ee8a7f465',
+      },
+    })
+    expect(reinvestigated.plan!.items[0]!.taskId).not.toBe(firstTask.id)
+    expect(reinvestigated.tasks).toHaveLength(2)
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
   })
 
   it('returns reconciled task evidence after a plan mutation', async () => {

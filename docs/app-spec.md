@@ -1497,9 +1497,9 @@ clear replacement IDs without losing, duplicating, or reordering content.
   MUST reject a confined response from an older or rolled-back node that omits
   that acknowledgment. A confinement added to an existing catalog root MUST be
   recoverable across restart: retain it only when a path-mode binding for the
-  claimed root path exists at the exact committed revision, otherwise roll it
-  back. Finalization MUST promote only the claim token associated with that
-  binding commit.
+  claimed root ID and root path exists at the exact committed revision,
+  otherwise roll it back. Finalization MUST promote only the claim token
+  associated with that binding commit.
 - Path-first updates MUST use the same persisted revision and replacement
   lineage as catalog-root updates. Saving the same current folder MUST be a
   no-op. Active, suspended, and historical sessions MUST be handled passively;

@@ -342,6 +342,7 @@ export async function registerSessionKnowledgeRoutes(
         if (!computer) {
           throw new SessionKnowledgeReferenceError('Computer is not registered')
         }
+        const committed = store.get(computerId, sessionId)
         const reservation = await knowledge.reserveRoot({
           computerId,
           computerName: computer.name,
@@ -353,6 +354,11 @@ export async function registerSessionKnowledgeRoutes(
             computerId,
             sessionId,
             expectedRevision: input.expectedRevision,
+            committed: {
+              rootId: committed.rootId,
+              rootPath: committed.rootPath ?? '.',
+              revision: committed.revision,
+            },
           },
         })
         const validate = () => {

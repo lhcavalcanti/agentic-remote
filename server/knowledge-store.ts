@@ -46,6 +46,11 @@ interface KnowledgeRootReservationOptions {
     sessionId: string
     expectedRevision: number
     rootPath?: string
+    committed?: {
+      rootId: string | null
+      rootPath: string
+      revision: number
+    }
   }
 }
 
@@ -296,12 +301,16 @@ export class KnowledgeStore {
           const binding = options.binding
           const token = randomUUID()
           const rootPath = binding.rootPath ?? '.'
+          const committed = binding.committed
           const alreadyCommitted = pending.claims.some(
             (existingClaim) =>
               existingClaim.computerId === binding.computerId &&
               existingClaim.sessionId === binding.sessionId &&
               existingClaim.rootPath === rootPath &&
-              existingClaim.committedRevision === binding.expectedRevision,
+              existingClaim.committedRevision === binding.expectedRevision &&
+              committed?.rootId === existing.id &&
+              committed.rootPath === rootPath &&
+              committed.revision === binding.expectedRevision,
           )
           const claim = {
             token,

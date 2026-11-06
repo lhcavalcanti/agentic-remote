@@ -337,6 +337,59 @@ describe('KnowledgeStore', () => {
     expect(second.requiresBindingCommit).toBe(true)
   })
 
+  it('does not treat another root at the claimed revision as a committed retry', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }
+    const existing = await store.addRoot(input)
+    const other = await store.addRoot({
+      ...input,
+      path: '/home/user/project/other',
+      name: 'other',
+    })
+    await store.reserveRoot(input, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+    const retry = await store.reserveRoot(input, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 1,
+        committed: {
+          rootId: other.id,
+          rootPath: '.',
+          revision: 1,
+        },
+      },
+    })
+
+    expect(retry.requiresBindingCommit).toBe(true)
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    await restored.recoverProvisionalRoots([{
+      computerId: 'computer',
+      sessionId: 'session',
+      rootId: existing.id,
+      rootPath: '.',
+      revision: 2,
+    }])
+    expect(restored.getRootConfinement(existing.id)).toBe(
+      '/home/user/project',
+    )
+  })
+
   it('rejects a conflicting confinement while another claim is pending', async () => {
     const directory = await temporaryDirectory()
     const store = new KnowledgeStore(directory)

@@ -121,10 +121,10 @@ succeeds but metadata persistence fails, Agentic Remote leaves the directory in
 place rather than risking deletion of user or concurrent data. A newly reserved
 catalog entry is rolled back.
 If the hub stops between cataloging and binding, startup recovery keeps the
-root only when a durable path-mode session binding references its exact claimed
-root path at the exact committed revision; otherwise the provisional catalog
-entry or confinement is removed. Post-commit finalization can promote only the
-reservation claim that performed that binding commit.
+root only when a durable path-mode session binding references its exact root ID
+and claimed root path at the exact committed revision; otherwise the
+provisional catalog entry or confinement is removed. Post-commit finalization
+can promote only the reservation claim that performed that binding commit.
 
 ## Lifecycle
 

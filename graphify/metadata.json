@@ -400,9 +400,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 232,
+  "communities": 226,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18676,
+  "edges": 18688,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -531,8 +531,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "e52a747f92afa2ba26189bfa07be18180838eb0534ab0b09bee7962344524db6",
-    "server/agent-service.ts": "2f950ab36397e605caffc12f78fb35ee317fbca7102ab3ae5d1b98f9ae85d8ec",
+    "server/agent-service.test.ts": "d06eb9387baeb74233fdf1aab95cb7db223158e7cbb220373ac314e4e912c6d1",
+    "server/agent-service.ts": "6c134a31b0095c614a70bdfafdba2f8f809b824216a9f4e479862178c0422c7c",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -658,7 +658,7 @@
     "server/recovery-context.test.ts": "a74af6cd288e8c848f78c2a7fc655a91f2af7a46aca03913ed6f4561b0e91bdd",
     "server/recovery-context.ts": "5893a9bf0e183e7ce5e6fcbf4526ec2077bfe6292e3e6f06ed45b03fc8e80725",
     "server/recovery-question-styles.test.ts": "a2b2670531022fefdad6728c3d1e0738c07d251f9d7e7207d599b01ddb11d0e8",
-    "server/recovery-resend-durability.test.ts": "2d764c61cf75df06dbe6327555a1de5cad8ae06208b00e403dd61b4d24fe0108",
+    "server/recovery-resend-durability.test.ts": "3b0ffff2b34dab119830a9ec3525ded7a584432da9a9bee45b4255827f63b80c",
     "server/recovery-seed-guards.test.ts": "160e953bd4df95e34fceef919508b17ba88f5687d978cf2aa8adf4d5cb44a3b2",
     "server/recovery-seed-legacy-fixture.ts": "9826186c940ebbb4c420fc209d23815ccbb43b1468cd9f676c554cde6730952f",
     "server/refusal-metrics-routes.test.ts": "4fd485e8ea02da3badb1519f966f72e660e96c1bfc3c3ad0dba5c3cefd38de57",
@@ -896,7 +896,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6774,
+  "nodes": 6776,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -989,22 +989,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6b36a53a43189cfd2b159cd6a4b1d552ae7cfa26b8cc019f30b28420e6dbfc2c",
-    "communities.json": "0df946f095e00af1c96ce4104c367f5b86f72aaae0b45f4d42336ef55b337351",
-    "graph.html": "7f376aad074a2516d41afa625577049294da88d6a2ea7e41104cfe5467d8eb22",
-    "graph.json": "4df58dcdd409e899b3252ed924508502e3369522847a7a652d48db22a0406e67"
+    "GRAPH_REPORT.md": "5591329aa32cc9609d582419bed5dde22c04b4e9897b284b2b73b6e8f3584394",
+    "communities.json": "0fcef4cd453bca1355924e78693cab790839bdb1fdc1c2efd5ae3c36cf0ff91a",
+    "graph.html": "116bca90b4164aaa2a3078a396a30fb00024327f7674188f4c2b1e0002387c86",
+    "graph.json": "acc92cf8a5fa459f4c4e6b3c01a1fc2c909a89b7039665b6186dbac0a382cc27"
   },
   "schema_version": 1,
-  "source_commit": "fec5063f62560dda388094979566c18d51a16e05",
-  "source_fingerprint": "a12418d6db2553beee7a599231f398e0ed81bdcd3951cdd3767a34128be2e881",
+  "source_commit": "501a9ed97fc261daa2d7831ef93e31c770a1656e",
+  "source_fingerprint": "1d61f5beede0834818448bf4acd964fc98711eee30e2843563548c926da771c2",
   "working_tree_changes": [
-    "docs/app-spec.md",
     "server/agent-service.test.ts",
     "server/agent-service.ts",
-    "server/session-store-durability.test.ts",
-    "server/session-store.ts",
-    "shared/contracts.ts",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/recovery-resend-durability.test.ts"
   ]
 }

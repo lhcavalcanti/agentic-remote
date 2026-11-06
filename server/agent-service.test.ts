@@ -2569,9 +2569,8 @@ describe('AgentService deletion', () => {
   })
 
   it('keeps the reservation while a second send is still on its way', async () => {
-    // Two sends can overlap. Marked with a flag rather than counted, the first
-    // to finish cleared it while the second was still awaiting delivery, and
-    // suspension saw an idle session with nothing holding it.
+    // Immediate terminal sends are FIFO. Once the first delivery releases the
+    // lane, the second still needs its own reservation until it is delivered.
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-hold-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -2606,10 +2605,11 @@ describe('AgentService deletion', () => {
 
     const first = service.sendMessage(client.session.sessionId, 'one', false)
     const second = service.sendMessage(client.session.sessionId, 'two', false)
-    await vi.waitFor(() => expect(gates.length).toBe(2))
+    await vi.waitFor(() => expect(gates.length).toBe(1))
 
-    // The first finishes; the second is still on its way.
+    // The first delivery releases the lane, then the second begins.
     gates[0]()
+    await vi.waitFor(() => expect(gates.length).toBe(2))
     await first.catch(() => undefined)
 
     await expect(

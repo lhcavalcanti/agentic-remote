@@ -207,6 +207,7 @@ type TerminalRecoveryResult = 'created' | 'existing' | 'skipped' | 'deferred'
 
 interface DeliveryBoundary {
   accepted: boolean
+  ordered?: () => void
 }
 
 interface RecoveryResendClaim extends DeliveryBoundary {
@@ -4755,7 +4756,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     acknowledgedFailure?: string,
     replaceTerminalDraft = false,
     answerDelivery?: TerminalAnswerDelivery,
-    terminalImmediateSerialized = false,
+    releaseTerminalImmediate?: () => void,
   ): Promise<SessionDetail> {
     const content = rawContent.trim()
     if (this.stopped) throw queueConflict('The session service is stopping.')
@@ -4771,8 +4772,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { statusCode: 409, uncertainDelivery: false },
       )
     }
+    this.assertRecoveryClaimAvailable(sessionId, acknowledgedFailure)
+    this.assertRecoveryAttemptAvailable(sessionId, acknowledgedFailure)
     if (
-      !terminalImmediateSerialized &&
+      !releaseTerminalImmediate &&
       !enqueue &&
       !answerDelivery &&
       (
@@ -4780,7 +4783,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.externalSessionIds.has(sessionId)
       )
     ) {
-      return this.serializeTerminalImmediate(sessionId, () =>
+      return this.serializeTerminalImmediate(sessionId, (releaseOrder) =>
         this.sendAdmittedMessage(
           sessionId,
           rawContent,
@@ -4788,7 +4791,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           acknowledgedFailure,
           replaceTerminalDraft,
           answerDelivery,
-          true,
+          releaseOrder,
         ))
     }
     await this.store.readAfterWrites(sessionId)
@@ -4827,6 +4830,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const claim = await this.claimFailure(sessionId, content, acknowledgedFailure)
     const delivery: DeliveryBoundary = claim ?? { accepted: false }
+    delivery.ordered = releaseTerminalImmediate
     let sent: SessionDetail
     try {
       // The failure this send is answering, and only when it is answering
@@ -4866,19 +4870,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     submitted: string,
     acknowledged?: string,
   ): Promise<RecoveryResendClaim | undefined> {
-    const outstanding = acknowledged === undefined ? undefined : this.recoveryClaims.get(acknowledged)
-    if (outstanding) {
-      throw new SubmissionError(
-        outstanding.accepted
-          ? 'That recovery was already delivered. Its acknowledgement is still pending; do not resend it.'
-          : 'That recovery decision is still being dispatched. Check the conversation before trying again.',
-        409,
-        { sessionId: this.recoverySessionId(sessionId), failedAt: acknowledged, accepted: false },
-      )
-    }
-    if (acknowledged !== undefined && this.claimedFailures.has(`${sessionId}:${acknowledged}`)) {
-      throw Object.assign(new Error('That recovery decision is still being dispatched.'), { statusCode: 409 })
-    }
+    this.assertRecoveryClaimAvailable(sessionId, acknowledged)
     const stored = this.store.get(sessionId)?.failedPrompt
     if (acknowledged === undefined && stored?.failedAt?.startsWith('resend:') &&
       stored.content.trim() === submitted.trim()) {
@@ -4961,6 +4953,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private assertRecoveryClaimAvailable(
+    sessionId: string,
+    acknowledged?: string,
+  ): void {
+    const outstanding = acknowledged === undefined ? undefined : this.recoveryClaims.get(acknowledged)
+    if (outstanding) {
+      throw new SubmissionError(
+        outstanding.accepted
+          ? 'That recovery was already delivered. Its acknowledgement is still pending; do not resend it.'
+          : 'That recovery decision is still being dispatched. Check the conversation before trying again.',
+        409,
+        { sessionId: this.recoverySessionId(sessionId), failedAt: acknowledged, accepted: false },
+      )
+    }
+    if (acknowledged !== undefined && this.claimedFailures.has(`${sessionId}:${acknowledged}`)) {
+      throw Object.assign(new Error('That recovery decision is still being dispatched.'), { statusCode: 409 })
+    }
+  }
+
+  private assertRecoveryAttemptAvailable(
+    sessionId: string,
+    acknowledged?: string,
+  ): void {
+    const attempt = this.store.recoveryResend(sessionId)
+    if (!attempt || attempt.accepted || acknowledged !== undefined) return
+    throw new SubmissionError(
+      'A recovery attempt is still awaiting a durable delivery receipt. Resolve it before sending other work.',
+      409,
+      { sessionId, failedAt: attempt.failedAt, accepted: false },
+      { uncertainDelivery: true },
+    )
+  }
+
   private recoverySessionId(sessionId: string): string {
     let current = sessionId
     const seen = new Set<string>()
@@ -4999,6 +5024,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const accepted = await this.store.acceptRecoveryResend(currentId, answers)
       this.publish(accepted)
     }
+    delivery?.ordered?.()
   }
 
   private submissionFailure(
@@ -6078,6 +6104,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.externalSessionIds.has(sessionId)) this.terminalDrainRequested.add(sessionId)
       else this.sdkDrainRequested.add(sessionId)
       this.publish(queued)
+      delivery?.ordered?.()
       return queued
     })
   }
@@ -6661,6 +6688,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue: boolean,
     acknowledgedFailure?: string,
     replaceTerminalDraft = false,
+    releaseTerminalImmediate?: () => void,
   ): Promise<SessionDetail> {
     if (this.stopped) throw queueConflict('The session service is stopping.')
     this.queuedDispatches.assertAvailable(sessionId)
@@ -6677,6 +6705,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { statusCode: 409, uncertainDelivery: false },
       )
     }
+    if (
+      !releaseTerminalImmediate &&
+      !enqueue &&
+      (
+        this.store.backend(sessionId) === 'terminal' ||
+        this.externalSessionIds.has(sessionId)
+      )
+    ) {
+      this.assertRecoveryClaimAvailable(sessionId, acknowledgedFailure)
+      this.assertRecoveryAttemptAvailable(sessionId, acknowledgedFailure)
+      return this.serializeTerminalImmediate(sessionId, (releaseOrder) =>
+        this.executeAdmittedCommand(
+          sessionId,
+          rawCommand,
+          enqueue,
+          acknowledgedFailure,
+          replaceTerminalDraft,
+          releaseOrder,
+        ))
+    }
     await this.store.readAfterWrites(sessionId)
     if (
       replaceTerminalDraft &&
@@ -6689,8 +6737,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.assertRecoverySeedSettled(sessionId)
     this.assertNotRetained(sessionId, 'running commands')
+    this.assertRecoveryAttemptAvailable(sessionId, acknowledgedFailure)
     const claim = await this.claimFailure(sessionId, command, acknowledgedFailure)
     const delivery: DeliveryBoundary = claim ?? { accepted: false }
+    delivery.ordered = releaseTerminalImmediate
     let ran: SessionDetail
     try {
       ran = await this.runCommand(
@@ -11244,15 +11294,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async serializeTerminalImmediate<T>(
     sessionId: string,
-    operation: () => Promise<T>,
+    operation: (releaseOrder: () => void) => Promise<T>,
   ): Promise<T> {
     const previous =
       this.terminalImmediateOperations.get(sessionId) || Promise.resolve()
-    const current = previous.catch(() => undefined).then(operation)
+    let released = false
+    let resolveOrder = () => {}
+    const current = new Promise<void>((resolve) => {
+      resolveOrder = resolve
+    })
+    const releaseOrder = () => {
+      if (released) return
+      released = true
+      resolveOrder()
+    }
+    const result = previous.catch(() => undefined).then(() => operation(releaseOrder))
     this.terminalImmediateOperations.set(sessionId, current)
     try {
-      return await current
+      return await result
     } finally {
+      releaseOrder()
       if (this.terminalImmediateOperations.get(sessionId) === current) {
         this.terminalImmediateOperations.delete(sessionId)
       }

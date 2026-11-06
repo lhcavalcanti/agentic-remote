@@ -346,6 +346,82 @@ describe('DreamerService', () => {
     })
   })
 
+  it('keeps a task queued while its exact linked execution prompt awaits delivery', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['d'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The execution prompt is waiting for the linked session.',
+      nextAction: 'Wait for the linked session queue to drain.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, 'Earlier work completed.', {
+        id: 'execution-queued',
+        status: 'idle',
+        queuedCount: 1,
+        queuedPrompts: [{
+          id: 'queued-task-prompt',
+          content: 'Run the focused queue test.',
+          createdAt: now().toISOString(),
+        }],
+        queueState: {
+          state: 'waiting',
+          promptId: 'queued-task-prompt',
+          message: 'Waiting for the terminal composer. Delivery will retry automatically.',
+          updatedAt: now().toISOString(),
+        },
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'fef46906-87a8-4701-ab37-d98086d9bc8d',
+    })
+    managerMessages[0]!.state = 'done'
+    managerMessages.push({
+      id: 'queued-session-link',
+      role: 'activity',
+      content: 'Queued execution prompt',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-queued',
+        promptId: 'queued-task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [{
+        id: dispatched.tasks![0]!.attempts[0]!.id,
+        status: 'queued',
+      }],
+    })
+  })
+
   it('matches completion to the exact dispatched prompt despite clock skew', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')

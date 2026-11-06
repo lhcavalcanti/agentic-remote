@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "deb80510b598a7b97c8e8d02f582f6d864f6d1d7",
+  "built_at_commit": "8a4b6e7c76df8cebe5ee33d11e8c93459cba7628",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -63746,7 +63746,7 @@
       "relation": "contains",
       "source": "server_dreamer_service",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1572",
+      "source_location": "L1583",
       "target": "server_dreamer_service_boundedtext",
       "weight": 1.0
     },
@@ -63856,7 +63856,7 @@
       "relation": "contains",
       "source": "server_dreamer_service",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1540",
+      "source_location": "L1551",
       "target": "server_dreamer_service_uniquesessionrefs",
       "weight": 1.0
     },
@@ -64463,7 +64463,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1505",
+      "source_location": "L1516",
       "target": "server_dreamer_service_dreamerservice_handlescheduledfailure",
       "weight": 1.0
     },
@@ -64496,7 +64496,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1459",
+      "source_location": "L1470",
       "target": "server_dreamer_service_dreamerservice_iscurrent",
       "weight": 1.0
     },
@@ -64507,7 +64507,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1515",
+      "source_location": "L1526",
       "target": "server_dreamer_service_dreamerservice_markscheduledfailure",
       "weight": 1.0
     },
@@ -64518,7 +64518,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1361",
+      "source_location": "L1372",
       "target": "server_dreamer_service_dreamerservice_oraclecompletioncandidate",
       "weight": 1.0
     },
@@ -64529,7 +64529,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1440",
+      "source_location": "L1451",
       "target": "server_dreamer_service_dreamerservice_reconcilestalememory",
       "weight": 1.0
     },
@@ -64540,7 +64540,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1450",
+      "source_location": "L1461",
       "target": "server_dreamer_service_dreamerservice_reconcilestalememoryinternal",
       "weight": 1.0
     },
@@ -64573,7 +64573,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1484",
+      "source_location": "L1495",
       "target": "server_dreamer_service_dreamerservice_requireavailable",
       "weight": 1.0
     },
@@ -64628,7 +64628,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1497",
+      "source_location": "L1508",
       "target": "server_dreamer_service_dreamerservice_safeunavailablesnapshot",
       "weight": 1.0
     },
@@ -64639,7 +64639,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1523",
+      "source_location": "L1534",
       "target": "server_dreamer_service_dreamerservice_scheduleafteractive",
       "weight": 1.0
     },
@@ -64683,7 +64683,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1467",
+      "source_location": "L1478",
       "target": "server_dreamer_service_dreamerservice_starttimer",
       "weight": 1.0
     },
@@ -64705,7 +64705,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1478",
+      "source_location": "L1489",
       "target": "server_dreamer_service_dreamerservice_stoptimer",
       "weight": 1.0
     },
@@ -64760,7 +64760,7 @@
       "relation": "method",
       "source": "server_dreamer_service_dreamerservice",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1275",
+      "source_location": "L1286",
       "target": "server_dreamer_service_dreamerservice_withtaskviews",
       "weight": 1.0
     },
@@ -65348,7 +65348,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_handlescheduledfailure",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1511",
+      "source_location": "L1522",
       "target": "server_dreamer_service_dreamerservice_markscheduledfailure",
       "weight": 1.0
     },
@@ -65360,7 +65360,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_handlescheduledfailure",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1512",
+      "source_location": "L1523",
       "target": "server_dreamer_service_dreamerservice_safeunavailablesnapshot",
       "weight": 1.0
     },
@@ -65372,7 +65372,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_handlescheduledfailure",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1505",
+      "source_location": "L1516",
       "target": "shared_dreamer_dreamersnapshot",
       "weight": 1.0
     },
@@ -65468,7 +65468,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_iscurrent",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1459",
+      "source_location": "L1470",
       "target": "server_dreamer_store_dreamerrunclaim",
       "weight": 1.0
     },
@@ -65480,7 +65480,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_markscheduledfailure",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1520",
+      "source_location": "L1531",
       "target": "server_dreamer_service_dreamerservice_stoptimer",
       "weight": 1.0
     },
@@ -65492,7 +65492,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_oraclecompletioncandidate",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1399",
+      "source_location": "L1410",
       "target": "server_dreamer_service_digest",
       "weight": 1.0
     },
@@ -65504,7 +65504,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_oraclecompletioncandidate",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1427",
+      "source_location": "L1438",
       "target": "server_dreamer_service_dreamerservice_completioncandidatefromsession",
       "weight": 1.0
     },
@@ -65516,7 +65516,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_oraclecompletioncandidate",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1361",
+      "source_location": "L1372",
       "target": "shared_contracts_managedsession",
       "weight": 1.0
     },
@@ -65528,7 +65528,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_oraclecompletioncandidate",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1361",
+      "source_location": "L1372",
       "target": "shared_oracle_task_oracletaskattempt",
       "weight": 1.0
     },
@@ -65540,7 +65540,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_oraclecompletioncandidate",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1361",
+      "source_location": "L1372",
       "target": "shared_oracle_task_oracletaskcompletioncandidate",
       "weight": 1.0
     },
@@ -65552,7 +65552,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_reconcilestalememory",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1442",
+      "source_location": "L1453",
       "target": "server_dreamer_service_dreamerservice_reconcilestalememoryinternal",
       "weight": 1.0
     },
@@ -65564,7 +65564,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_reconcilestalememoryinternal",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1455",
+      "source_location": "L1466",
       "target": "server_dreamer_planner_activedreamermemoryids",
       "weight": 1.0
     },
@@ -65576,7 +65576,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_reconcilestalememoryinternal",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1453",
+      "source_location": "L1464",
       "target": "server_dreamer_service_dreamerservice_capturememory",
       "weight": 1.0
     },
@@ -65636,7 +65636,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_requireavailable",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1485",
+      "source_location": "L1496",
       "target": "server_dreamer_service_dreamerunavailableerror",
       "weight": 1.0
     },
@@ -65936,7 +65936,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_safeunavailablesnapshot",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1499",
+      "source_location": "L1510",
       "target": "server_dreamer_service_unavailablesnapshot",
       "weight": 1.0
     },
@@ -65948,7 +65948,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_safeunavailablesnapshot",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1497",
+      "source_location": "L1508",
       "target": "shared_dreamer_dreamersnapshot",
       "weight": 1.0
     },
@@ -65960,7 +65960,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_scheduleafteractive",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1531",
+      "source_location": "L1542",
       "target": "server_dreamer_service_dreamerservice_markscheduledfailure",
       "weight": 1.0
     },
@@ -65972,7 +65972,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_scheduleafteractive",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1530",
+      "source_location": "L1541",
       "target": "server_dreamer_service_dreamerservice_runifdue",
       "weight": 1.0
     },
@@ -65984,7 +65984,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_scheduleafteractive",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1523",
+      "source_location": "L1534",
       "target": "shared_dreamer_dreamersnapshot",
       "weight": 1.0
     },
@@ -66188,7 +66188,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_starttimer",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1471",
+      "source_location": "L1482",
       "target": "server_dreamer_service_dreamerservice_markscheduledfailure",
       "weight": 1.0
     },
@@ -66200,7 +66200,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_starttimer",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1470",
+      "source_location": "L1481",
       "target": "server_dreamer_service_dreamerservice_runifdue",
       "weight": 1.0
     },
@@ -66440,7 +66440,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_withtaskviews",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1293",
+      "source_location": "L1304",
       "target": "server_dreamer_service_boundedtext",
       "weight": 1.0
     },
@@ -66452,7 +66452,7 @@
       "relation": "calls",
       "source": "server_dreamer_service_dreamerservice_withtaskviews",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1331",
+      "source_location": "L1342",
       "target": "server_dreamer_service_dreamerservice_oraclecompletioncandidate",
       "weight": 1.0
     },
@@ -66464,7 +66464,7 @@
       "relation": "references",
       "source": "server_dreamer_service_dreamerservice_withtaskviews",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1275",
+      "source_location": "L1286",
       "target": "shared_dreamer_dreamersnapshot",
       "weight": 1.0
     },
@@ -244805,7 +244805,7 @@
       "label": "boundedText()",
       "norm_label": "boundedtext()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1572"
+      "source_location": "L1583"
     },
     {
       "_callable": true,
@@ -244963,7 +244963,7 @@
       "label": ".handleScheduledFailure()",
       "norm_label": ".handlescheduledfailure()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1505"
+      "source_location": "L1516"
     },
     {
       "_callable": true,
@@ -244999,7 +244999,7 @@
       "label": ".isCurrent()",
       "norm_label": ".iscurrent()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1459"
+      "source_location": "L1470"
     },
     {
       "_callable": true,
@@ -245011,7 +245011,7 @@
       "label": ".markScheduledFailure()",
       "norm_label": ".markscheduledfailure()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1515"
+      "source_location": "L1526"
     },
     {
       "_callable": true,
@@ -245023,7 +245023,7 @@
       "label": ".oracleCompletionCandidate()",
       "norm_label": ".oraclecompletioncandidate()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1361"
+      "source_location": "L1372"
     },
     {
       "_callable": true,
@@ -245035,7 +245035,7 @@
       "label": ".reconcileStaleMemory()",
       "norm_label": ".reconcilestalememory()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1440"
+      "source_location": "L1451"
     },
     {
       "_callable": true,
@@ -245047,7 +245047,7 @@
       "label": ".reconcileStaleMemoryInternal()",
       "norm_label": ".reconcilestalememoryinternal()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1450"
+      "source_location": "L1461"
     },
     {
       "_callable": true,
@@ -245083,7 +245083,7 @@
       "label": ".requireAvailable()",
       "norm_label": ".requireavailable()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1484"
+      "source_location": "L1495"
     },
     {
       "_callable": true,
@@ -245143,7 +245143,7 @@
       "label": ".safeUnavailableSnapshot()",
       "norm_label": ".safeunavailablesnapshot()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1497"
+      "source_location": "L1508"
     },
     {
       "_callable": true,
@@ -245155,7 +245155,7 @@
       "label": ".scheduleAfterActive()",
       "norm_label": ".scheduleafteractive()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1523"
+      "source_location": "L1534"
     },
     {
       "_callable": true,
@@ -245203,7 +245203,7 @@
       "label": ".startTimer()",
       "norm_label": ".starttimer()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1467"
+      "source_location": "L1478"
     },
     {
       "_callable": true,
@@ -245227,7 +245227,7 @@
       "label": ".stopTimer()",
       "norm_label": ".stoptimer()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1478"
+      "source_location": "L1489"
     },
     {
       "_callable": true,
@@ -245287,7 +245287,7 @@
       "label": ".withTaskViews()",
       "norm_label": ".withtaskviews()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1275"
+      "source_location": "L1286"
     },
     {
       "_callable": true,
@@ -245455,7 +245455,7 @@
       "label": "uniqueSessionRefs()",
       "norm_label": "uniquesessionrefs()",
       "source_file": "server/dreamer-service.ts",
-      "source_location": "L1540"
+      "source_location": "L1551"
     },
     {
       "_origin": "ast",

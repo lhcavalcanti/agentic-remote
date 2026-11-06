@@ -576,8 +576,8 @@
     "server/dreamer-routes.ts": "c75e2ea5815d8abb93ea6c3ad1df42c90845be8ff0a4b71e578f1a5a48ea5058",
     "server/dreamer-schedule.test.ts": "04ac650b774ee0489777e41d9c2c3701d779df7c86db197c31d6725aabf66a91",
     "server/dreamer-schedule.ts": "1c2d17a7c9b7b8d523a7fa016dc2e30633d8163bef63a599b0bd4892ccee50db",
-    "server/dreamer-service.test.ts": "924262ce1975bf5e69abafff49a3b6233cfe1a326f0d46affcdfca154a6056a1",
-    "server/dreamer-service.ts": "7c7de689500d761a904b9bdfa2e933b938ad0cc41d28a92e8aab5f410aeab6a7",
+    "server/dreamer-service.test.ts": "958f6daf416a024d50069d511c3fa8af28315e2f10469fdba036d6f6c43b067f",
+    "server/dreamer-service.ts": "fbfc71ad16e74bd138c5aebce3c0985270cea32bae6d0c3c35286e15dca010a3",
     "server/dreamer-store.test.ts": "7454ea83b799ac1d4830123a2cbde0f2e6e6e09ab2a091e0176b3cc84581c6d5",
     "server/dreamer-store.ts": "881f6e6c5e6a3e4c486be953135148b94e938c303a6148b21d9fc6bc8daec24b",
     "server/event-log.test.ts": "840651d409ca9522c0174f95eba464bf17bc7aebd6664c8714755e2dc448baef",
@@ -1005,39 +1005,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "2bcc18f99e38c9da9e1fd71a2824612d7226b301962edcba339d4ae315faaae1",
+    "GRAPH_REPORT.md": "e10733d0cc414a6e29572807070c8662c12cb8952f642b0a02a412734ba1a1f2",
     "communities.json": "34a08b42c035697885c10601c529a96317d2bca4d334abcbc6c259dd04adf228",
-    "graph.html": "6af98950a267948385960280b80e1b7abdd33d91d99661009d7254106b545a21",
-    "graph.json": "a43ecb237c3dccb3e1f053d9307e93830e07112c987e22b27afe3f0a450f884f"
+    "graph.html": "697a6c4680593a910c47cc0c568537150a056985a8162e7e149efb94dd32e353",
+    "graph.json": "14356c1e8966fb90bd582ec20853a97c7cfda5f910bfb5d7d0272f43297ac232"
   },
   "schema_version": 1,
-  "source_commit": "deb80510b598a7b97c8e8d02f582f6d864f6d1d7",
-  "source_fingerprint": "8b9695a0da7c7cae2990c9c342c4df898d8846f7bbf7da61934543cd028d121a",
+  "source_commit": "8a4b6e7c76df8cebe5ee33d11e8c93459cba7628",
+  "source_fingerprint": "ba625fbf193551801620b1055d6be394d745728a73fdc161783963a29d51c2a5",
   "working_tree_changes": [
-    "package.json",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/queued-dispatch.ts",
-    "server/queued-provider-dispatch.test.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts",
-    "server/terminal-queue-delivery.test.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "server/terminal-startup-queue.test.ts",
-    "shared/contracts.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/index.css",
-    "src/session-presentation.test.ts",
-    "src/session-presentation.ts",
-    "src/session-response-order.test.ts",
-    "src/session-response-order.ts",
-    "src/shell.test.ts",
-    "src/shell.ts"
+    "server/dreamer-service.test.ts",
+    "server/dreamer-service.ts"
   ]
 }

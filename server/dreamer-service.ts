@@ -1234,6 +1234,17 @@ export class DreamerService {
         } else if (sessions.some(({ status: state }) => state === 'running')) {
           status = 'running'
           error = undefined
+        } else if (sessions.some((session) =>
+          session.queueState?.state !== 'error' &&
+          sessionRefs.some((reference) =>
+            reference.computerId === session.computerId &&
+            reference.sessionId === session.id &&
+            reference.promptId !== undefined &&
+            session.queuedPrompts?.some(({ id }) => id === reference.promptId)
+          )
+        )) {
+          status = 'queued'
+          error = undefined
         } else if (managerFailure) {
           status = 'failed'
           error = managerFailure

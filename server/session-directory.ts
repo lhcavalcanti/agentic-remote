@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import {
   access,
   lstat,
   mkdir,
   open,
   realpath,
+  rename,
   rmdir,
   stat,
   type FileHandle,
@@ -111,6 +113,11 @@ async function openVerifiedDirectory(
         403,
       )
     }
+    if (code === 'EACCES' || code === 'EPERM') {
+      throw new SessionDirectoryError(
+        'Knowledge folder is not readable',
+      )
+    }
     throw error
   }
   try {
@@ -131,11 +138,23 @@ async function rollbackCreatedDirectories(
   created: CreatedKnowledgeDirectory[],
 ): Promise<void> {
   for (const entry of [...created].reverse()) {
-    let metadata: Stats
+    const quarantinePath = path.join(
+      path.dirname(entry.path),
+      `.agentic-remote-rollback-${randomUUID()}`,
+    )
     try {
-      metadata = await lstat(entry.path)
+      await rename(entry.path, quarantinePath)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw new SessionDirectoryError(
+        'Knowledge folder creation could not be rolled back safely',
+        503,
+      )
+    }
+    let metadata: Stats
+    try {
+      metadata = await lstat(quarantinePath)
+    } catch {
       throw new SessionDirectoryError(
         'Knowledge folder creation could not be rolled back safely',
         503,
@@ -146,15 +165,15 @@ async function rollbackCreatedDirectories(
       metadata.dev !== entry.metadata.dev ||
       metadata.ino !== entry.metadata.ino
     ) {
+      await rename(quarantinePath, entry.path).catch(() => undefined)
       throw new SessionDirectoryError(
         'Knowledge folder creation could not be rolled back safely',
         503,
       )
     }
     try {
-      await rmdir(entry.path)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      await rmdir(quarantinePath)
+    } catch {
       throw new SessionDirectoryError(
         'Knowledge folder creation could not be rolled back safely',
         503,

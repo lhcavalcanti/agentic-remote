@@ -400,9 +400,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 222,
+  "communities": 227,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18792,
+  "edges": 18797,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -441,7 +441,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "368e1a4bd203d895072dee1d105f52cb81a9cbacc0ec32b04a5e6d553cfe1add",
+    "docs/app-spec.md": "642d72eb9dc18de0b6d999d2ae2b2597a786004bad461246f2dc65210b1e20eb",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -464,7 +464,7 @@
     "docs/oracle-conversation.md": "805734476fd214caee7c36be140e3b2091ef8bb27fa223caba815c483eff8538",
     "docs/provider-compatibility.md": "db552cf54844cd6a7a726aab54824d7b87dffac5feeeb9c0a51447f36389dedd",
     "docs/sdk-architecture-roadmap.md": "108720c64bee7a4eda6cf7b0021414de4a5b7bb84cd1b914a8e14c709df1bd39",
-    "docs/session-knowledge-api.md": "4ab457ea57856d14134b91b4e2e57eed4dc48792769abfb1ce22c8ca54115428",
+    "docs/session-knowledge-api.md": "5f98ea646d674d304fae81a4bd172967d1e7d7dd69ca21e908a7a92522687224",
     "docs/session-retention.md": "86a4b60ce293f288a1dd12edc0cdba940dff7a58867d9490a26a0799a0f6a4f9",
     "docs/slash-command-feedback.md": "7c9b801169b4bd9961ee9987859d77e17784169bc373f274895cd62cffc49f13",
     "docs/superpowers/plans/2026-10-16-oracle-conversation-mode.md": "9e7a1280979b9ba9eece8e79c758d3b794eaf2a757f8240313644f50aa8a26df",
@@ -585,7 +585,7 @@
     "server/hub-routes.ts": "b34228247975314e056b0fcfac9ee28a56450f4a4ea530725042a6d59f755d9f",
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "036ff78d5242b56bd556ce526149d8a5f44ea105e1ff5dae46eb98aa75599def",
-    "server/knowledge-store.ts": "f5ae2e16b64b3e7a76f0e81be25514576b845a84b5dbef27770d28000812482e",
+    "server/knowledge-store.ts": "f18b8a17202801387d3bff72bd3c352d456e4b80a419631859bb825b7f8ade0c",
     "server/manager-agent.test.ts": "63535dfad527939c5b8821f449882bff1711a985fa663ede18748a2018359dfd",
     "server/manager-agent.ts": "67b33fa5b00da4ffdeabb2495f87b8411a5f5aeaa9027724cad9038ae4a151fa",
     "server/manager-context.test.ts": "dd2ebf1a9f578bb72a2e6a428c04f28dedc9b7d9d79df702b457bf631fba4313",
@@ -680,11 +680,11 @@
     "server/session-admission-lifecycle.test.ts": "3deed16f7b5b8874417103f0bf5b93fa22b6717f4e4b0ae6fc91ee09fe6a07ac",
     "server/session-admissions.ts": "227b897b0374e5f57048b1e40b1b23c028240e8f9f688eaf06578ae84b38ddc5",
     "server/session-clear-transcript.test.ts": "9101a9923b577a5dd57cd43efb66415c80e2daa1239ac747268907234bc30759",
-    "server/session-directory.test.ts": "f775b2d0decb089b575c5156996ef02b15b6977d8183a4375b04a9d2ce2260c8",
-    "server/session-directory.ts": "fc50475e0395d2d85ba87cd08c401cf3e4d9f4772513f42490b8883c71f6d6d3",
+    "server/session-directory.test.ts": "cca107c9b65cfa72a61a2fce2d4edf137a044c9028d36d10a7a1c83fe84a2aef",
+    "server/session-directory.ts": "a034a38b53422fa37ada5eb11ae7579f731b91ae59c609e51a7bcb4cb414b393",
     "server/session-enqueue-clear.test.ts": "26ab2355e06f3241591ed784090c05a0a3db4e3c3c62954968b111d0be30fe3e",
-    "server/session-knowledge-routes.test.ts": "e9255e22c68acea6ee131894e11a33de944f7bbb1c11807599009baedd79d193",
-    "server/session-knowledge-routes.ts": "f5e7857f2a032b05f790e616deca737ba39e0a233e4e08f2ae1fd3729f659334",
+    "server/session-knowledge-routes.test.ts": "51e09d40d01b1b2bc1d720c0f28a71d6045eac7e7f475b2e866b0f9cd2a57698",
+    "server/session-knowledge-routes.ts": "957de89eb66079a857ec53a41e1c2024186db3f9616c425e765aecbab1d5021c",
     "server/session-knowledge-store.test.ts": "d2f592b28cb44ec0bbbabcd0b8eeb1a1ab5e5be243dd195befbc6f20a44e45d8",
     "server/session-knowledge-store.ts": "4ebe43018e24063320d91da1361cb498a2bb93a74b35ec67c692fab8b0e742cf",
     "server/session-metadata-provenance.test.ts": "be2c62820258c7847f63664e714b26e4b518e41aa9ef7f02bb3efa7aaef97f66",
@@ -899,7 +899,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6818,
+  "nodes": 6819,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -995,18 +995,21 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ba4404257d5b6d7478101b7feb4393dbb0abb21e7ec306a1aa6ee7e033388ee9",
-    "communities.json": "bd6e143bc7772e847cda0850d56c57492490861540d5935ce247613cf4734222",
-    "graph.html": "0f8b7e6e1d3a3e113c2ccede4b55a16a52ccad5f355d3d2291528350f3025d5d",
-    "graph.json": "2de4dd8e55b9638558e1905c06005fb8d8cbfbe4b3c530a9798ec8c298d9411c"
+    "GRAPH_REPORT.md": "19020cd6974a6d18134b3919dceb30e94b76d690dc85fe2eca57fe37b85e8950",
+    "communities.json": "1ef209487ed0cebf70819f0f351dffdae86b40313c1da5b77cd290229217631c",
+    "graph.html": "c39d86a59bbb2c65f0de2d9ba9aa5b271eda881e92baa41321f40b3d192ed83a",
+    "graph.json": "1c89f0f5b9f8e9f3b2735834b1d8ca0dac794a01f859028b2aa9a98db8dd9d97"
   },
   "schema_version": 1,
-  "source_commit": "e6567c75c8820011801c1ebf3b963224ef856318",
-  "source_fingerprint": "09f936471f7acc2628073debc6bd9c3791200c2ddbd56de368e1f3f31eb13662",
+  "source_commit": "8cf85ee732c4062a42551644cb6cb2dee1836f84",
+  "source_fingerprint": "3f66d0d7f3a6fd048a65b685f7cdcf2314c2a2d5654249f19ce808a4216933d6",
   "working_tree_changes": [
     "docs/app-spec.md",
     "docs/session-knowledge-api.md",
+    "server/knowledge-store.ts",
     "server/session-directory.test.ts",
-    "server/session-directory.ts"
+    "server/session-directory.ts",
+    "server/session-knowledge-routes.test.ts",
+    "server/session-knowledge-routes.ts"
   ]
 }

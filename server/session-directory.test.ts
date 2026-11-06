@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +24,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     mkdir: vi.fn(actual.mkdir),
+    rmdir: vi.fn(actual.rmdir),
     stat: vi.fn(actual.stat),
   }
 })
@@ -33,6 +44,7 @@ afterEach(async () => {
   vi.mocked(mkdir).mockImplementation(async (target, options) =>
     actual.mkdir(target, options),
   )
+  vi.mocked(rmdir).mockImplementation(async (target) => actual.rmdir(target))
   vi.mocked(stat).mockImplementation(async (target) => actual.stat(target))
 })
 
@@ -235,6 +247,23 @@ describe('ensureSessionKnowledgeBase', () => {
     ).resolves.toEqual({ path: existing, confinementPath: cwd })
   })
 
+  it('reports an execute-only component as an unreadable path', async () => {
+    const cwd = await homeFixture()
+    const existing = path.join(cwd, 'knowledge')
+    await mkdir(existing, { mode: 0o100 })
+
+    const error = await ensureSessionKnowledgeBase(
+      cwd,
+      'knowledge',
+      false,
+    ).catch((caught: unknown) => caught)
+    await chmod(existing, 0o700)
+
+    expect(error).toBeInstanceOf(SessionDirectoryError)
+    expect((error as SessionDirectoryError).statusCode).toBe(400)
+    expect((error as Error).message).toContain('not readable')
+  })
+
   it('reports a missing non-created folder as not found', async () => {
     const cwd = await homeFixture()
     await expect(
@@ -351,6 +380,58 @@ describe('ensureSessionKnowledgeBase', () => {
     ).rejects.toMatchObject({ statusCode: 403 })
     await expect(stat(path.join(moved, 'docs'))).rejects.toMatchObject({
       code: 'ENOENT',
+    })
+    await expect(stat(path.join(outside, 'docs'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('does not delete a replacement directory during rollback', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-rollback-race-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const moved = path.join(parent, 'project-moved')
+    const outside = path.join(parent, 'outside')
+    await mkdir(cwd)
+    await mkdir(outside)
+    const actual = await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    )
+    let relocated = false
+    vi.mocked(mkdir).mockImplementation(async (target, options) => {
+      if (
+        !relocated &&
+        String(target).startsWith('/proc/self/fd/') &&
+        path.basename(String(target)) === 'docs'
+      ) {
+        relocated = true
+        await rename(cwd, moved)
+        await symlink(outside, cwd)
+      }
+      return actual.mkdir(target, options)
+    })
+    let replaced = false
+    vi.mocked(rmdir).mockImplementation(async (target) => {
+      if (!replaced) {
+        replaced = true
+        try {
+          await actual.rename(
+            path.join(moved, 'docs'),
+            path.join(moved, 'created-original'),
+          )
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+        await actual.mkdir(path.join(moved, 'docs'))
+      }
+      return actual.rmdir(target)
+    })
+
+    await expect(
+      ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
+    ).rejects.toMatchObject({ statusCode: 403 })
+    await expect(stat(path.join(moved, 'docs'))).resolves.toMatchObject({
+      mode: expect.any(Number),
     })
     await expect(stat(path.join(outside, 'docs'))).rejects.toMatchObject({
       code: 'ENOENT',

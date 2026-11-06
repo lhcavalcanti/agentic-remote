@@ -517,6 +517,54 @@ describe('session Knowledge routes', () => {
     )
   })
 
+  it('finalizes a committed path root before a later clear advances the binding', async () => {
+    const { directory, put, putPath, store } = await fixture()
+    let catalogRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge.json') &&
+        ++catalogRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    const rootId = failed.json().binding.rootId
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const cleared = await put(null, failed.json().binding.revision)
+    expect(cleared.statusCode, cleared.body).toBe(200)
+    expect(cleared.json().binding).toMatchObject({
+      rootId: null,
+      revision: 2,
+    })
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRoot(rootId)).toBeDefined()
+    expect(restarted.getRootConfinement(rootId)).toBe('/projects/current')
+  })
+
+  it('maps catalog reservation persistence failures to a retryable response', async () => {
+    const { putPath, store } = await fixture()
+    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+      if (String(args[1]).endsWith('/knowledge.json')) {
+        throw new Error('PRIVATE_RESERVATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(failed.json().error).not.toContain('PRIVATE_RESERVATION_IO')
+    expect(store.get('hub', 'one').revision).toBe(0)
+  })
+
   it('serializes simultaneous path updates and keeps only the winning root', async () => {
     const { putPath, knowledge } = await fixture()
     const responses = await Promise.all([

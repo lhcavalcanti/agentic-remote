@@ -125,7 +125,10 @@ If the hub stops between cataloging and binding, startup recovery keeps the
 root only when a durable path-mode session binding references its exact root ID
 and claimed root path at the exact committed revision; otherwise the
 provisional catalog entry or confinement is removed. Post-commit finalization
-can promote only the reservation claim that performed that binding commit.
+can promote only the reservation claim that performed that binding commit. A
+later clear or nested update first finalizes any claim already proven by the
+current durable binding, so advancing the revision cannot make restart
+recovery discard it.
 
 ## Lifecycle
 

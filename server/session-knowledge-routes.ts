@@ -3,7 +3,10 @@ import { z } from 'zod'
 import type { HubEvent, ManagedSession, SessionKnowledgeBinding } from '../shared/contracts.js'
 import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path.js'
 import type { ComputerManager } from './computer-manager.js'
-import type { KnowledgeStore } from './knowledge-store.js'
+import {
+  KnowledgeRootConfinementConflictError,
+  type KnowledgeStore,
+} from './knowledge-store.js'
 import {
   SessionKnowledgeConflictError,
   SessionKnowledgeReferenceError,
@@ -329,6 +332,25 @@ export async function registerSessionKnowledgeRoutes(
             503,
           )
         }
+        const committed = store.get(computerId, sessionId)
+        try {
+          await knowledge.finalizeCommittedBinding({
+            computerId,
+            sessionId,
+            rootId: committed.rootId,
+            rootPath: committed.rootPath ?? '.',
+            revision: committed.revision,
+          })
+        } catch (error) {
+          request.log.error(
+            { err: error, computerId, sessionId },
+            'Session Knowledge catalog recovery failed before path update',
+          )
+          throw new SessionKnowledgeReferenceError(
+            'Knowledge folder metadata could not be recovered. Try again.',
+            503,
+          )
+        }
         const location = await manager.ensureSessionKnowledgeBase(
           computerId,
           sessionId,
@@ -342,25 +364,44 @@ export async function registerSessionKnowledgeRoutes(
         if (!computer) {
           throw new SessionKnowledgeReferenceError('Computer is not registered')
         }
-        const committed = store.get(computerId, sessionId)
-        const reservation = await knowledge.reserveRoot({
-          computerId,
-          computerName: computer.name,
-          path: location.path,
-          name: knowledgeBaseName(location.path),
-        }, {
-          confinementPath: location.confinementPath,
-          binding: {
+        let reservation: Awaited<
+          ReturnType<KnowledgeStore['reserveRoot']>
+        >
+        try {
+          reservation = await knowledge.reserveRoot({
             computerId,
-            sessionId,
-            expectedRevision: input.expectedRevision,
-            committed: {
-              rootId: committed.rootId,
-              rootPath: committed.rootPath ?? '.',
-              revision: committed.revision,
+            computerName: computer.name,
+            path: location.path,
+            name: knowledgeBaseName(location.path),
+          }, {
+            confinementPath: location.confinementPath,
+            binding: {
+              computerId,
+              sessionId,
+              expectedRevision: input.expectedRevision,
+              committed: {
+                rootId: committed.rootId,
+                rootPath: committed.rootPath ?? '.',
+                revision: committed.revision,
+              },
             },
-          },
-        })
+          })
+        } catch (error) {
+          if (error instanceof KnowledgeRootConfinementConflictError) {
+            throw error
+          }
+          if (error instanceof RangeError) {
+            throw new SessionKnowledgeReferenceError(error.message, 409)
+          }
+          request.log.error(
+            { err: error, computerId, sessionId },
+            'Session Knowledge catalog reservation failed',
+          )
+          throw new SessionKnowledgeReferenceError(
+            'Knowledge folder metadata could not be saved. Try again.',
+            503,
+          )
+        }
         const validate = () => {
           sessionIsCurrent()
           if (!knowledge.getRoot(reservation.root.id)) {
@@ -447,6 +488,25 @@ export async function registerSessionKnowledgeRoutes(
       const sessionIsCurrent = (
         await knownSessionGuard(computerId, sessionId)
       ).validate
+      const committed = store.get(computerId, sessionId)
+      try {
+        await knowledge.finalizeCommittedBinding({
+          computerId,
+          sessionId,
+          rootId: committed.rootId,
+          rootPath: committed.rootPath ?? '.',
+          revision: committed.revision,
+        })
+      } catch (error) {
+        request.log.error(
+          { err: error, computerId, sessionId },
+          'Session Knowledge catalog recovery failed before root update',
+        )
+        throw new SessionKnowledgeReferenceError(
+          'Knowledge folder metadata could not be recovered. Try again.',
+          503,
+        )
+      }
       const validate = () => {
         sessionIsCurrent()
         rootIsCurrent?.()

@@ -201,6 +201,41 @@ export class KnowledgeStore {
     return this.state.rootConfinements[id]
   }
 
+  finalizeCommittedBinding(binding: KnowledgeRootReference): Promise<boolean> {
+    if (!binding.rootId) return Promise.resolve(false)
+    return this.enqueue(async () => {
+      const rootId = binding.rootId!
+      const pending = this.state.provisionalRootConfinements[rootId]
+      const committedClaim = pending?.claims.some(
+        (claim) =>
+          claim.computerId === binding.computerId &&
+          claim.sessionId === binding.sessionId &&
+          claim.committedRevision === binding.revision &&
+          claim.rootPath === binding.rootPath,
+      )
+      const provisionalRoot = this.state.provisionalRootIds.includes(rootId)
+      if (!committedClaim && (!provisionalRoot || pending)) {
+        return false
+      }
+      const { [rootId]: _finalized, ...provisionalRootConfinements } =
+        this.state.provisionalRootConfinements
+      const next = {
+        ...this.state,
+        provisionalRootIds: this.state.provisionalRootIds.filter(
+          (id) => id !== rootId,
+        ),
+        provisionalRootConfinements:
+          committedClaim
+            ? provisionalRootConfinements
+            : this.state.provisionalRootConfinements,
+      }
+      await this.write(next)
+      this.state = next
+      this.rootReservations.delete(rootId)
+      return true
+    })
+  }
+
   recoverProvisionalRoots(
     references: Iterable<string | KnowledgeRootReference>,
   ): Promise<number> {

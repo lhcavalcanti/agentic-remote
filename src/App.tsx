@@ -7409,7 +7409,9 @@ function App() {
   // The fallback below must not treat one as a missing session and select
   // something unrelated in the gap.
   const pendingReplacements = useRef(new Set<string>())
-  const pendingAttachmentReplacements = useRef(new Set<string>())
+  const pendingAttachmentReplacements = useRef(
+    new Map<string, Set<string>>(),
+  )
   // Lineage is carried in every snapshot, so a replacement is claimed once
   // rather than again on each refresh.
   const adoptedReplacements = useRef(new Set<string>())
@@ -7952,7 +7954,7 @@ function App() {
 
   const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {    for (const session of loaded) {
       const replacement = sessionKey(session)
-      let migratedAttachmentState = false
+      const migratedAttachmentIds = new Set<string>()
       // Newest first. Each ancestor only fills what the replacement does not
       // already have, so the most recent one has to be offered first or an
       // older ancestor takes the place it should have had.
@@ -7968,8 +7970,10 @@ function App() {
         replacedInto.current.set(ancestor, replacement)
         if (!adoptedReplacements.current.has(ancestor)) {
           adoptedReplacements.current.add(ancestor)
+          for (const attachment of composerAttachmentsRef.current[ancestor] || []) {
+            migratedAttachmentIds.add(attachment.id)
+          }
           migrateSessionStateRef.current(ancestor, replacement)
-          migratedAttachmentState = true
         }
         setSelectedKey((current) =>
           current === ancestor ? replacement : current,
@@ -7987,9 +7991,13 @@ function App() {
       if (session.replacedSessionIds?.length) {
         rebindAttachments(replacement, session)
         const pendingCleanup =
-          pendingAttachmentReplacements.current.delete(replacement)
-        if (!session.recovery && (migratedAttachmentState || pendingCleanup)) {
-          discardAttachments(replacement)
+          pendingAttachmentReplacements.current.get(replacement)
+        pendingAttachmentReplacements.current.delete(replacement)
+        for (const id of pendingCleanup || []) {
+          migratedAttachmentIds.add(id)
+        }
+        if (!session.recovery && migratedAttachmentIds.size > 0) {
+          discardAttachmentsById(migratedAttachmentIds)
         }
       }
     }
@@ -10725,8 +10733,21 @@ function App() {
           // all of them instead of being discarded on any of them.
           if (event.replacedBy) {
             const replacementKey = `${event.computerId}:${event.replacedBy}`
+            const movedAttachmentIds = new Set(
+              (composerAttachmentsRef.current[removedKey] || []).map(
+                (attachment) => attachment.id,
+              ),
+            )
             migrateSessionStateRef.current(removedKey, replacementKey)
-            pendingAttachmentReplacements.current.add(replacementKey)
+            if (movedAttachmentIds.size > 0) {
+              const pending =
+                pendingAttachmentReplacements.current.get(replacementKey) ||
+                new Set<string>()
+              for (const id of movedAttachmentIds) {
+                pending.add(id)
+              }
+              pendingAttachmentReplacements.current.set(replacementKey, pending)
+            }
             // Removal and upsert are separate events. Following the
             // replacement now stops the fallback from selecting an unrelated
             // session in the gap, which the later upsert would not undo.
@@ -11807,12 +11828,24 @@ function App() {
   }
 
   function discardAttachments(ownerKey: string) {
-    for (const attachment of composerAttachmentsRef.current[ownerKey] || []) {
+    discardAttachmentsById(
+      (composerAttachmentsRef.current[ownerKey] || []).map(
+        (attachment) => attachment.id,
+      ),
+    )
+  }
+
+  function discardAttachmentsById(ids: Iterable<string>) {
+    const attachments = Array.from(ids).flatMap((id) => {
+      const attachment = currentAttachment(id)
+      return attachment ? [attachment] : []
+    })
+    for (const attachment of attachments) {
       if (attachment.promptText) {
-        removeComposerBlock(ownerKey, attachment.promptText)
+        removeComposerBlock(attachment.ownerKey, attachment.promptText)
       }
     }
-    forgetAttachments(ownerKey)
+    retireAttachments(attachments)
   }
 
   function moveAttachments(fromKey: string, toKey: string) {
@@ -14884,12 +14917,21 @@ function App() {
     const liveKey = followReplacementsRef.current(replacementKey)
     const liveIsGone = removedSessions.current.has(liveKey)
     adoptedReplacements.current.add(targetKey)
+    const migratedAttachmentIds = new Set(
+      (composerAttachmentsRef.current[targetKey] || []).map(
+        (attachment) => attachment.id,
+      ),
+    )
     migrateSessionState(targetKey, liveKey)
     if (liveKey === replacementKey) {
+      const pendingCleanup = pendingAttachmentReplacements.current.get(liveKey)
       pendingAttachmentReplacements.current.delete(liveKey)
+      for (const id of pendingCleanup || []) {
+        migratedAttachmentIds.add(id)
+      }
       rebindAttachments(liveKey, replacement)
-      if (!replacement.recovery) {
-        discardAttachments(liveKey)
+      if (!replacement.recovery && migratedAttachmentIds.size > 0) {
+        discardAttachmentsById(migratedAttachmentIds)
       }
     }
     eventSequenceRef.current = nextSessionEventSequence()

@@ -9804,6 +9804,60 @@ describe('App', () => {
     })).not.toBeInTheDocument()
   })
 
+  it('restores an attachment added after Clear when the replacement reloads', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'after-clear.pdf',
+      path: '/private/uploads/after-clear.pdf',
+      size: 11,
+    })
+    const first = render(<App />)
+    await screen.findByLabelText('Message')
+    const replacement = {
+      ...session,
+      id: 'cleared-then-reloaded-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['after clear'], 'after-clear.pdf', {
+      type: 'application/pdf',
+      lastModified: 37,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/after-clear.pdf`',
+      ),
+    )
+    first.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('Message')).toHaveValue(
+      'Attached file: `/private/uploads/after-clear.pdf`',
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'after-clear.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
   it('queues a second pasted file while the first upload is pending', async () => {
     let finishFirst:
       | ((value: { name: string; path: string; size: number }) => void)

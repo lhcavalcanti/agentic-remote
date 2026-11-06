@@ -15968,7 +15968,7 @@ function App() {
             ) : null}
             {selected.queuedPrompts?.length ? (
               <section
-                aria-description="Messages waiting to run after the current response"
+                aria-description="Messages waiting for later delivery"
                 aria-label="Queued prompts"
                 className="queued-prompts"
               >
@@ -16290,13 +16290,13 @@ function App() {
                   <span className="composer-actions__spacer" />
                   {selectedQueueAvailable ? (
                     <button
-                      aria-description="Queues this message for after the current response"
+                      aria-description="Queues this message for later delivery"
                       aria-label="Queue message"
                       className="send-button send-button--queue"
                       disabled={!composer.trim() || sending || Boolean(queueActionId) ||
                         Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
                       onClick={() => void submitMessage(true)}
-                      title="Queue for after the current response"
+                      title="Queue for later delivery"
                       type="button"
                     >
                       <ListPlus size={17} />
@@ -16421,7 +16421,7 @@ function App() {
                 ) : null}
               </button>
             ) : null}
-            <p aria-label="Composer keyboard shortcuts" className="composer-hint">
+            <p className="composer-hint">
               {askingAside
                 ? (
                   <>

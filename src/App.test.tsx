@@ -12739,17 +12739,16 @@ describe('App', () => {
     expect(queue).toHaveTextContent('Queued for later')
     expect(queue).toHaveAttribute(
       'aria-description',
-      'Messages waiting to run after the current response',
+      'Messages waiting for later delivery',
     )
     expect(screen.getByRole('button', { name: 'Queue message' }))
-      .toHaveAttribute('title', 'Queue for after the current response')
+      .toHaveAttribute('title', 'Queue for later delivery')
     expect(screen.getByRole('button', { name: 'Queue message' }))
       .toHaveAttribute(
         'aria-description',
-        'Queues this message for after the current response',
+        'Queues this message for later delivery',
       )
-    expect(screen.getByLabelText('Composer keyboard shortcuts'))
-      .toHaveTextContent('Ctrl/⌘+Enter queue for later')
+    expect(screen.getByText(/Ctrl\/⌘\+Enter queue for later/)).toBeInTheDocument()
 
     // Editing opens the message for rewriting and leaves it where it is. It
     // used to take it off the queue, so changing your mind, or simply closing

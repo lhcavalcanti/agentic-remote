@@ -6,9 +6,10 @@
 - Development counts as stable only when the release is active, the runtime
   answers `/health`, paired computers are still `online`, sessions survived the
   restart, and the behavior the change was made for has been exercised.
-- Once development is stable, roll the same commit out to production without
-  asking again.
-- Always ask first when development cannot actually prove the change:
+- Merging and successful development validation do not authorize a production
+  deployment or restart. Wait for explicit user authorization before every
+  production rollout, then roll out only the same commit that was validated.
+- Before requesting or acting on that authorization, state whether:
   - the behavior only exists on a node and was not exercised through the hub,
   - the change migrates, rewrites, or deletes stored state,
   - development verification was inconclusive, or

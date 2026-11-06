@@ -8685,6 +8685,91 @@ describe('App', () => {
     })
   })
 
+  it('queues pasted audio behind a stopped recording transcription', async () => {
+    class MockMediaRecorder extends EventTarget {
+      static isTypeSupported = vi.fn(() => true)
+      state: RecordingState = 'inactive'
+      mimeType = 'audio/mp4'
+
+      start() {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(
+          new BlobEvent('dataavailable', {
+            data: new Blob(['voice'], { type: this.mimeType }),
+          }),
+        )
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    let finishRecording:
+      | ((value: { transcript: string; durationSeconds: number }) => void)
+      | undefined
+    let finishPaste:
+      | ((value: { transcript: string; durationSeconds: number }) => void)
+      | undefined
+    vi.mocked(transcribeAudio)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishRecording = resolve
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishPaste = resolve
+      }))
+    const originalMediaDevices = navigator.mediaDevices
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(async () => ({ getTracks: () => [] })),
+      },
+    })
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Start microphone recording',
+    }))
+    await waitFor(() =>
+      expect(document.querySelector('.recording-panel')).toHaveTextContent(
+        'Recording 0:00',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Stop & transcribe/ }))
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    const textarea = screen.getByLabelText('Message')
+    const pasted = new File(['paste'], 'while-transcribing.wav', {
+      type: 'audio/wav',
+      lastModified: 46,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [pasted], items: [], getData: () => '' },
+    })
+
+    expect(transcribeAudio).toHaveBeenCalledOnce()
+    finishRecording?.({
+      transcript: 'Recorded first',
+      durationSeconds: 1,
+    })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', {
+      name: 'Transcribing audio',
+    })).toBeDisabled()
+    finishPaste?.({
+      transcript: 'Pasted second',
+      durationSeconds: 1,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Recorded first\n\nPasted second'),
+    )
+
+    vi.unstubAllGlobals()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: originalMediaDevices,
+    })
+  })
+
   it('cancels microphone audio without transcribing it', async () => {
     class MockMediaRecorder extends EventTarget {
       static isTypeSupported = () => true
@@ -9392,6 +9477,61 @@ describe('App', () => {
     expect(screen.getByRole('listitem', {
       name: 'pending-send.pdf attachment',
     })).toHaveTextContent('Attached')
+  })
+
+  it('removes a deleted upload path when Clear wins before a send rejects', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'cleared-send.pdf',
+      path: '/private/uploads/cleared-send.pdf',
+      size: 7,
+    })
+    let rejectSend: ((reason: unknown) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectSend = reject
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this text' } })
+    const file = new File(['cleared'], 'cleared-send.pdf', {
+      type: 'application/pdf',
+      lastModified: 47,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Keep this text\n\nAttached file: `/private/uploads/cleared-send.pdf`',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'cleared-during-send',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    await act(async () => rejectSend?.(new Error('send failed')))
+
+    await waitFor(() => expect(textarea).toHaveValue('Keep this text'))
+    expect(screen.queryByRole('listitem', {
+      name: 'cleared-send.pdf attachment',
+    })).not.toBeInTheDocument()
   })
 
   it('rejects unsupported and oversized pasted files without uploading them', async () => {
@@ -12636,7 +12776,7 @@ describe('App', () => {
     )
   })
 
-  async function openTargetedQueueEditor() {
+  async function renderTargetedQueueSession() {
     const prompts = ['first original', 'second original', 'third original'].map((content, index) => ({
       id: `q${index + 1}`, content, createdAt: '2026-09-05T00:00:00.000Z',
     }))
@@ -12652,10 +12792,16 @@ describe('App', () => {
     vi.mocked(listSessions).mockResolvedValue([queuedSession])
     vi.mocked(getSession).mockResolvedValue(queuedSession)
     const rendered = render(<App />)
+    await screen.findByRole('button', { name: 'Edit queued prompt 2' })
+    return { rendered, queuedSession, prompts, key: 'computer-1:session-1' }
+  }
+
+  async function openTargetedQueueEditor() {
+    const result = await renderTargetedQueueSession()
     fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 2' }))
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
     expect(textarea).toHaveValue('second original')
-    return { rendered, textarea, queuedSession, prompts, key: 'computer-1:session-1' }
+    return { ...result, textarea }
   }
 
   it('does not save a queued edit before its pasted attachment finishes uploading', async () => {
@@ -12732,6 +12878,81 @@ describe('App', () => {
     expect(screen.queryByRole('listitem', {
       name: 'cancel.pdf attachment',
     })).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed pre-edit attachment when canceling a queued rewrite', async () => {
+    vi.mocked(uploadSessionFile).mockRejectedValueOnce(new Error('upload failed'))
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['failed'], 'pre-edit-failed.pdf', {
+      type: 'application/pdf',
+      lastModified: 48,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    const attachment = await screen.findByRole('listitem', {
+      name: 'pre-edit-failed.pdf attachment',
+    })
+    await waitFor(() => expect(attachment).toHaveTextContent('upload failed'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    expect(textarea).toHaveValue('second original')
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+
+    expect(textarea).toHaveValue('')
+    expect(screen.getByRole('listitem', {
+      name: 'pre-edit-failed.pdf attachment',
+    })).toHaveTextContent('upload failed')
+    expect(screen.getByRole('button', {
+      name: 'Retry pre-edit-failed.pdf',
+    })).toBeEnabled()
+  })
+
+  it('keeps a pre-edit upload path when canceling after it completes', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['uploading'], 'pre-edit-upload.pdf', {
+      type: 'application/pdf',
+      lastModified: 49,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await screen.findByRole('listitem', {
+      name: 'pre-edit-upload.pdf attachment',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    expect(textarea).toHaveValue('second original')
+    finishUpload?.({
+      name: file.name,
+      path: '/private/uploads/pre-edit-upload.pdf',
+      size: file.size,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'second original\n\nAttached file: `/private/uploads/pre-edit-upload.pdf`',
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+
+    expect(textarea).toHaveValue(
+      'Attached file: `/private/uploads/pre-edit-upload.pdf`',
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'pre-edit-upload.pdf attachment',
+    })).toHaveTextContent('Attached')
   })
 
   it.each(['save', 'send'])('expands pasted queued rewrites without trimming them on %s', async (action) => {

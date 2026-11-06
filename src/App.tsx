@@ -7810,6 +7810,9 @@ function App() {
   const clipboardPasteBatchesRef = useRef(
     new Map<string, { at: number; fingerprints: Set<string> }>(),
   )
+  const queuedEditAttachmentBaselineRef = useRef(
+    new Map<string, Set<string>>(),
+  )
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
   const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
   const recordingChunksRef = useRef<Blob[]>([])
@@ -11662,28 +11665,48 @@ function App() {
 
   function removeComposerBlock(targetKey: string, value: string) {
     updateComposerDrafts([targetKey], (current) => {
+      const removeBlock = (content: ComposerContent): ComposerContent => {
+        const at = content.text.indexOf(value)
+        if (at < 0) {
+          return content
+        }
+        let start = at
+        let end = at + value.length
+        if (content.text.slice(Math.max(0, start - 2), start) === '\n\n') {
+          start -= 2
+        } else if (content.text.slice(end, end + 2) === '\n\n') {
+          end += 2
+        }
+        return applyComposerEdit(
+          content,
+          start,
+          end,
+          { text: '', pastes: [] },
+        ).content
+      }
+      const draft = current[targetKey]
       const existing = durableComposerDraft(
         targetKey,
-        current[targetKey] || { text: '', pastes: [] },
+        draft || { text: '', pastes: [] },
       )
-      const at = existing.text.indexOf(value)
-      if (at < 0) {
+      const content = removeBlock(existing)
+      const pendingSubmission = draft?.pendingSubmission
+      const pending = pendingSubmission
+        ? removeBlock(pendingSubmission)
+        : undefined
+      if (content === existing && pending === pendingSubmission) {
         return current
       }
-      let start = at
-      let end = at + value.length
-      if (existing.text.slice(Math.max(0, start - 2), start) === '\n\n') {
-        start -= 2
-      } else if (existing.text.slice(end, end + 2) === '\n\n') {
-        end += 2
-      }
-      const edited = applyComposerEdit(
-        existing,
-        start,
-        end,
-        { text: '', pastes: [] },
-      )
-      return writeComposerContent(current, targetKey, edited.content)
+      const updated = writeComposerContent(current, targetKey, content)
+      return pendingSubmission && pending !== pendingSubmission
+        ? {
+            ...updated,
+            [targetKey]: {
+              ...(updated[targetKey] || { text: '', pastes: [] }),
+              pendingSubmission: { ...pendingSubmission, ...pending },
+            },
+          }
+        : updated
     })
   }
 
@@ -11945,6 +11968,11 @@ function App() {
     }
     if (submissionAnchors.current.delete(fromKey)) {
       submissionAnchors.current.add(toKey)
+    }
+    const attachmentBaseline = queuedEditAttachmentBaselineRef.current.get(fromKey)
+    if (attachmentBaseline) {
+      queuedEditAttachmentBaselineRef.current.set(toKey, attachmentBaseline)
+      queuedEditAttachmentBaselineRef.current.delete(fromKey)
     }
     updateComposerDrafts([fromKey, toKey], (current) => {
       const source = current[fromKey]
@@ -14048,7 +14076,7 @@ function App() {
         const file = new File(chunks, `recording.${extension}`, {
           type: mimeType,
         })
-        void transcribeFile(file, targetSession)
+        void queueAttachmentWork(() => transcribeFile(file, targetSession))
       })
       recorder.addEventListener('error', () => {
         releaseRecording()
@@ -14383,6 +14411,7 @@ function App() {
     terminalDraftExpandedContent,
   ), [editingQueuedPromptId, terminalDraftExpandedContent])
   function forgetQueuedEdit(key: string, promptId: string) {
+    queuedEditAttachmentBaselineRef.current.delete(key)
     updateComposerDrafts([], (current) => {
       const draft = current[key]
       if (draft?.queuedEdit?.promptId !== promptId) return current
@@ -14430,6 +14459,14 @@ function App() {
       ...current,
       [key]: { text: prompt.content, pastes: [], queuedEdit: { promptId: prompt.id } },
     }), true)) {
+      queuedEditAttachmentBaselineRef.current.set(
+        key,
+        new Set(
+          (composerAttachmentsRef.current[key] || []).map(
+            (attachment) => attachment.id,
+          ),
+        ),
+      )
       focusComposer(key)
     }
   }
@@ -14449,8 +14486,29 @@ function App() {
       'Delivery was not confirmed. Check the provider before discarding this rewrite. Leaving the editor does not cancel provider work.',
     )) return
     if (!selectedKey) return
-    discardAttachments(selectedKey)
+    const baseline =
+      queuedEditAttachmentBaselineRef.current.get(selectedKey) ||
+      new Set<string>()
+    const attachments = composerAttachmentsRef.current[selectedKey] || []
+    discardAttachmentsById(
+      attachments
+        .filter((attachment) => !baseline.has(attachment.id))
+        .map((attachment) => attachment.id),
+    )
+    const retainedPromptText = attachments
+      .filter((attachment) =>
+        baseline.has(attachment.id) && attachment.promptText !== undefined,
+      )
+      .map((attachment) => attachment.promptText!)
+      .join('\n\n')
+    queuedEditAttachmentBaselineRef.current.delete(selectedKey)
     updateComposerDrafts([selectedKey], (current) => {
+      if (retainedPromptText) {
+        return writeComposerContent(current, selectedKey, {
+          text: retainedPromptText,
+          pastes: [],
+        })
+      }
       const { [selectedKey]: _left, ...rest } = current
       return rest
     })
@@ -14715,6 +14773,7 @@ function App() {
       if (!composerDraftsRef.current[savedKey]) {
         retireAttachments(attachments)
       }
+      queuedEditAttachmentBaselineRef.current.delete(savedKey)
       return true
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
@@ -14824,6 +14883,8 @@ function App() {
           }
         })
         retireAttachments(attachments)
+        queuedEditAttachmentBaselineRef.current.delete(savedKey)
+        queuedEditAttachmentBaselineRef.current.delete(liveKey)
         if (result.outcome !== 'sent') setError(result.message || 'The provider accepted this work, but its queue receipt could not be saved. Do not resend it.')
         return true
       }

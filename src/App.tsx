@@ -8058,13 +8058,10 @@ function App() {
           discardAttachmentsById(migratedAttachmentIds)
         }
       }
-      const waiters = attachmentTargetWaitersRef.current.get(replacement)
-      if (waiters) {
-        attachmentTargetWaitersRef.current.delete(replacement)
-        for (const resolve of waiters) {
-          resolve(session.recovery ? session : undefined)
-        }
-      }
+      settleAttachmentTargetWaiters(
+        replacement,
+        session.recovery ? session : undefined,
+      )
     }
   }, [])
 
@@ -10535,6 +10532,7 @@ function App() {
         const computerId = key.slice(0, key.indexOf(':'))
         if (announcedAt <= startedAtSequence && answeredFor.has(computerId)) {
           pendingReplacements.current.delete(key)
+          settleAttachmentTargetWaiters(key, undefined)
         }
       }
       // As above: the links a rejected session carries are still the truth
@@ -10788,6 +10786,7 @@ function App() {
           // conversation, with the overlapping snapshot unable to settle it
           // because this very removal moved its watermark on.
           pendingReplacements.current.delete(removedKey)
+          settleAttachmentTargetWaiters(removedKey, undefined)
           eventSequenceRef.current = nextSessionEventSequence()
           sessionEventSequenceRef.current.set(
             removedKey,
@@ -10924,6 +10923,7 @@ function App() {
           for (const key of [...pendingReplacements.current]) {
             if (key.slice(0, key.indexOf(':')) === event.computerId) {
               pendingReplacements.current.delete(key)
+              settleAttachmentTargetWaiters(key, undefined)
             }
           }
           for (const session of sessionsRef.current) {
@@ -11942,6 +11942,20 @@ function App() {
       waiters.add(resolve)
       attachmentTargetWaitersRef.current.set(liveKey, waiters)
     })
+  }
+
+  function settleAttachmentTargetWaiters(
+    key: string,
+    target: ManagedSession | undefined,
+  ) {
+    const waiters = attachmentTargetWaitersRef.current.get(key)
+    if (!waiters) {
+      return
+    }
+    attachmentTargetWaitersRef.current.delete(key)
+    for (const resolve of waiters) {
+      resolve(target)
+    }
   }
 
   function forgetAttachments(ownerKey: string) {
@@ -14266,6 +14280,15 @@ function App() {
     if (!liveTarget && files.some((file) => !isAudioFile(file))) {
       liveTarget = await waitForAttachmentTarget(targetSession)
     }
+    if (!liveTarget && files.some((file) => !isAudioFile(file))) {
+      clipboardPasteBatchesRef.current.delete(liveKey)
+    }
+    const processableFiles = liveTarget
+      ? files
+      : files.filter(isAudioFile)
+    if (processableFiles.length === 0) {
+      return
+    }
     const ownerKey = liveTarget ? sessionKey(liveTarget) : liveKey
     const attachedFiles = attachmentFilesRef.current.get(ownerKey) ||
       new Set<File>()
@@ -14275,7 +14298,7 @@ function App() {
       | { attachment: ComposerAttachment; audio: false }
     > = []
     const attachments: ComposerAttachment[] = []
-    for (const file of files) {
+    for (const file of processableFiles) {
       if (attachedFiles.has(file)) {
         continue
       }
@@ -14386,9 +14409,17 @@ function App() {
               validFiles.push(file)
             }
           }
-          const fingerprintResults = await Promise.allSettled(
-            validFiles.map(clipboardFileFingerprint),
-          )
+          const fingerprintResults: PromiseSettledResult<string>[] = []
+          for (const file of validFiles) {
+            try {
+              fingerprintResults.push({
+                status: 'fulfilled',
+                value: await clipboardFileFingerprint(file),
+              })
+            } catch (reason) {
+              fingerprintResults.push({ status: 'rejected', reason })
+            }
+          }
           const fingerprints = new Map<File, string>()
           for (const [index, result] of fingerprintResults.entries()) {
             const file = validFiles[index]!

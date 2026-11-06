@@ -9342,7 +9342,7 @@ describe('App', () => {
       clipboardData: { files: [first], items: [], getData: () => '' },
     })
     await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
-    fireEvent.paste(textarea, {
+    fireEvent.paste(screen.getByLabelText('Message'), {
       clipboardData: { files: [second], items: [], getData: () => '' },
     })
     const replacement = {
@@ -9410,7 +9410,7 @@ describe('App', () => {
       clipboardData: { files: [first], items: [], getData: () => '' },
     })
     await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
-    fireEvent.paste(textarea, {
+    fireEvent.paste(screen.getByLabelText('Message'), {
       clipboardData: { files: [second], items: [], getData: () => '' },
     })
     const replacement = {
@@ -9446,6 +9446,88 @@ describe('App', () => {
     expect(screen.queryByRole('listitem', {
       name: 'must-not-upload.pdf attachment',
     })).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', {
+        name: /^Project chat,/,
+      }).some((button) => button.getAttribute('aria-current') === 'page'))
+        .toBe(true),
+    )
+
+    fireEvent.paste(screen.getByLabelText('Message'), {
+      clipboardData: { files: [second], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls[1]?.slice(0, 2)).toEqual([
+      replacement.computerId,
+      replacement.id,
+    ])
+  })
+
+  it('settles queued attachment work when a pending replacement vanishes', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    let finishFirst:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishFirst = resolve
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['first'], 'first-vanish.pdf', {
+      type: 'application/pdf',
+      lastModified: 63,
+    })
+    const waiting = new File(['waiting'], 'waiting-vanish.pdf', {
+      type: 'application/pdf',
+      lastModified: 64,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [waiting], items: [], getData: () => '' },
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: 'missing-replacement',
+        }),
+      } as MessageEvent)
+    })
+    finishFirst?.({
+      name: first.name,
+      path: `/private/uploads/${first.name}`,
+      size: first.size,
+    })
+    await act(() => Promise.resolve())
+    vi.mocked(listSessionListing).mockResolvedValue({
+      sessions: [secondSession],
+      answeredComputerIds: [computer.id],
+    })
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', {
+        name: /^Second chat,/,
+      })).toHaveAttribute('aria-current', 'page'),
+    )
+
+    const later = new File(['later'], 'after-vanish.pdf', {
+      type: 'application/pdf',
+      lastModified: 65,
+    })
+    fireEvent.paste(screen.getByLabelText('Message'), {
+      clipboardData: { files: [later], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls[1]?.slice(0, 2)).toEqual([
+      secondSession.computerId,
+      secondSession.id,
+    ])
   })
 
   it('removes an accepted attachment preview after its send follows a replacement', async () => {
@@ -10064,6 +10146,66 @@ describe('App', () => {
       finishFingerprint?.(new TextEncoder().encode('hashing').buffer)
     }
     await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+  })
+
+  it('reads pasted file fingerprints sequentially', async () => {
+    vi.mocked(uploadSessionFile).mockImplementation(
+      async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    let activeReads = 0
+    let maxActiveReads = 0
+    const finishReads: Array<() => void> = []
+    const nearLimitFile = (name: string, lastModified: number) => {
+      const file = new File(['sample'], name, {
+        type: 'application/pdf',
+        lastModified,
+      })
+      Object.defineProperty(file, 'size', {
+        configurable: true,
+        value: 25 * 1024 * 1024,
+      })
+      Object.defineProperty(file, 'arrayBuffer', {
+        value: () => {
+          activeReads += 1
+          maxActiveReads = Math.max(maxActiveReads, activeReads)
+          return new Promise<ArrayBuffer>((resolve) => {
+            finishReads.push(() => {
+              activeReads -= 1
+              resolve(new TextEncoder().encode(name).buffer)
+            })
+          })
+        },
+      })
+      return file
+    }
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [
+          nearLimitFile('near-limit-1.pdf', 66),
+          nearLimitFile('near-limit-2.pdf', 67),
+        ],
+        items: [],
+        getData: () => '',
+      },
+    })
+    try {
+      await waitFor(() => expect(finishReads).toHaveLength(1))
+      expect(maxActiveReads).toBe(1)
+      finishReads.shift()?.()
+      await waitFor(() => expect(finishReads).toHaveLength(1))
+      expect(maxActiveReads).toBe(1)
+    } finally {
+      for (const finish of finishReads.splice(0)) {
+        finish()
+      }
+    }
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
   })
 
   it('does not attach the same clipboard file twice while its preview remains', async () => {

@@ -1491,6 +1491,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
   owner-returned session cwd as its confinement. Every later read through a
   path-created root MUST atomically resolve and verify that the root remains a
   non-symlinked descendant of that cwd before resolving the requested entry.
+  File reads MUST open the resolved entry without following a replacement
+  symbolic link and verify the opened file identity before reading content.
   Paired nodes MUST acknowledge that they applied this confinement; the hub
   MUST reject a confined response from an older or rolled-back node that omits
   that acknowledgment. A confinement added to an existing catalog root MUST be

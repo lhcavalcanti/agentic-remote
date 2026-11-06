@@ -153,6 +153,9 @@ the saved root and verifies that it remains a non-symlinked descendant of the
 original session `cwd`. Adding this confinement to an existing catalog root is
 transactional: startup recovery keeps it only when the intended session
 binding and revision were committed.
+File previews also open the resolved file without following a replacement
+symbolic link and verify that the opened file is the same regular file that was
+validated before reading.
 
 The API does not scan file contents for secrets. Do not put credentials,
 provider state, private keys, environment files, or other sensitive material in

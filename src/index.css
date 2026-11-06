@@ -3449,6 +3449,18 @@ button {
   color: var(--text);
 }
 
+.queued-edit-banner--queue-waiting {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 38%, transparent);
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+}
+
+.queued-edit-banner--queue-error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+
 /* A way to put the message back that does not depend on Enter, which makes a
    newline on a phone. */
 .queued-edit-banner__save {

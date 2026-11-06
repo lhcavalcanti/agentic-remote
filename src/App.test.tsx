@@ -12963,6 +12963,35 @@ describe('App', () => {
     )
   })
 
+  it.each([
+    ['waiting', 'Waiting for the terminal composer. Delivery will retry automatically.'],
+    ['error', 'The terminal owner disappeared. The queued prompt was not sent.'],
+  ] as const)('shows the queued prompt %s state', async (state, message) => {
+    const queuedSession = {
+      ...session,
+      status: 'idle' as const,
+      queuedCount: 1,
+      queuedPrompts: [{
+        id: 'queue-1',
+        content: 'Queued prompt',
+        createdAt: '2026-07-25T01:00:00.000Z',
+      }],
+      queueState: {
+        state,
+        promptId: 'queue-1',
+        message,
+        updatedAt: '2026-07-25T01:00:01.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+
+    render(<App />)
+
+    const status = (await screen.findByText(message)).closest('[role]')
+    expect(status).toHaveAttribute('role', state === 'error' ? 'alert' : 'status')
+  })
+
   it('shows and answers ask-user prompts', async () => {
     const askingSession = {
       ...session,

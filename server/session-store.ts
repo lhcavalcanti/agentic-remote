@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   PendingPermission,
   PendingUserInput,
+  QueueState,
   QueuedPrompt,
   SessionFileUpload,
   SessionDetail,
@@ -94,7 +95,7 @@ interface SdkQueueAdmission {
 
 export type TerminalQueueOutcome =
   | { kind: 'accepted'; startedTurn: boolean; notice?: string }
-  | { kind: 'failed'; uncertain: boolean }
+  | { kind: 'failed'; uncertain: boolean; queueState?: QueueState }
 
 /**
  * Refuses work on a session kept for review: an interrupted or archived
@@ -188,6 +189,19 @@ function isSessionIdList(value: unknown): value is string[] {
     value.every((id) => typeof id === 'string' && id.length > 0)
 }
 
+function validateQueueState(state: QueueState): void {
+  if (
+    !state || typeof state !== 'object' || Array.isArray(state) ||
+    !['waiting', 'error'].includes(state.state) ||
+    typeof state.promptId !== 'string' || !state.promptId ||
+    typeof state.message !== 'string' || !state.message ||
+    !Number.isFinite(Date.parse(state.updatedAt)) ||
+    (state.retryAt !== undefined && !Number.isFinite(Date.parse(state.retryAt)))
+  ) {
+    throw new Error('Invalid terminal queue state')
+  }
+}
+
 function validateSdkRestartRecovery(recovery: SdkRestartRecovery): void {
   if (
     !recovery || typeof recovery !== 'object' || Array.isArray(recovery) ||
@@ -272,6 +286,10 @@ function grantTerminalRecovery(session: StoredSession): void {
   if (session.backend === 'terminal' && session.isOpen === true) {
     session.managedOpen = true
   }
+}
+
+function requiresExplicitTerminalReopen(session: StoredSession): boolean {
+  return session.managedOpen !== true && Boolean(session.queuedPrompts?.length)
 }
 
 // A committed session is never changed in place: every change installs a new
@@ -584,6 +602,7 @@ export class SessionStore {
           (typeof session.lastClaimedRecovery !== 'string' || !session.lastClaimedRecovery)) {
         throw new Error('Invalid recovery claim metadata')
       }
+      if (session.queueState !== undefined) validateQueueState(session.queueState)
       session.provider ??= 'copilot'
       session.isOpen = session.managedOpen === true || (session.isOpen === true && Boolean(
         session.retention?.pinned || session.queuedPrompts?.length || session.pendingPermission ||
@@ -624,6 +643,11 @@ export class SessionStore {
       }
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
+      if (session.queueState &&
+          session.queuedPrompts[0]?.id !== session.queueState.promptId) {
+        session.queueState = undefined
+        staleSdkInteractionMarked = true
+      }
       session.queuedPromptReservation = undefined
       const staleSdkInteraction =
         session.backend === 'sdk' &&
@@ -1079,7 +1103,10 @@ export class SessionStore {
           (session.suspended === true && !session.archivedAt) ||
           session.managedOpen === true ||
           (session.isOpen === true && protectedRecord))
-        const interruption = present && !session.sdkRestartRecovery ? undefined
+        const retainQueuedTerminal =
+          present && session.backend === 'terminal' && requiresExplicitTerminalReopen(session)
+        const interruption = present && !session.sdkRestartRecovery && !retainQueuedTerminal
+          ? undefined
           : isOpen && session.backend === 'terminal' && !session.suspended
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
@@ -1114,7 +1141,20 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          if (session.backend === 'terminal' && session.isOpen === true && !session.interruption) {
+          const retainQueuedTerminal = requiresExplicitTerminalReopen(session)
+          const interruption = retainQueuedTerminal
+            ? session.interruption ?? {
+              detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+            }
+            : undefined
+          if (
+            session.backend === 'terminal' &&
+            session.isOpen === true &&
+            session.interruption === interruption &&
+            !session.sdkRestartRecovery &&
+            !session.sdkAcceptedReply &&
+            !session.archivedAt
+          ) {
             continue
           }
           // Observed presence only. Any Copilot process in a tmux pane is
@@ -1126,7 +1166,7 @@ export class SessionStore {
             revision: (session.revision ?? 0) + 1,
             backend: 'terminal',
             isOpen: true,
-            interruption: undefined,
+            interruption,
             sdkRestartRecovery: undefined,
             sdkAcceptedReply: undefined,
             archivedAt: undefined,
@@ -1613,6 +1653,7 @@ export class SessionStore {
       session.recoverySeed = undefined
       session.queuedPrompts = []
       session.queuedCount = 0
+      session.queueState = undefined
       session.queueDispatchAt = undefined
       session.terminalQueueDispatch = undefined
       if (session.runtime) {
@@ -1680,6 +1721,7 @@ export class SessionStore {
         recoveryResend: clearSeedFailure ? undefined : existing.recoveryResend,
         queuedPrompts: [],
         queuedCount: 0,
+        queueState: undefined,
         queueDispatchAt: undefined,
         terminalQueueDispatch: undefined,
         queuedPromptReservation: undefined,
@@ -1793,6 +1835,7 @@ export class SessionStore {
         lastClaimedRecovery: undefined,
         queuedPrompts: [...(existing.queuedPrompts || [])],
         queuedCount: existing.queuedPrompts?.length || 0,
+        queueState: undefined,
         queueDispatchAt: undefined,
         terminalQueueDispatch: undefined,
         queuedPromptReservation: undefined,
@@ -2238,7 +2281,9 @@ export class SessionStore {
         (midTurnSteer ? stored.status !== 'running' || head?.steer !== true : stored.status !== 'idle') ||
         (requireManagedTerminal && (!stored.isOpen || stored.managedOpen !== true || stored.backend !== 'terminal')) ||
         stored.pendingPermission || stored.pendingUserInput || stored.recoverySeed ||
-        stored.terminalQueueDispatch || stored.failedPrompt || stored.recoverySeed ||
+        stored.terminalQueueDispatch || stored.failedPrompt ||
+        (stored.queueState?.state === 'error' && stored.queueState.promptId === head?.id) ||
+        stored.recoverySeed ||
         !head || head.id !== expected.id || head.content !== expected.content ||
         head.createdAt !== expected.createdAt || head.command !== expected.command ||
         head.steer !== expected.steer
@@ -2272,6 +2317,9 @@ export class SessionStore {
         throw Object.assign(new Error('The terminal queue dispatch no longer owns this recovery'), { statusCode: 409 })
       }
       stored.terminalQueueDispatch = undefined
+      stored.queueState = outcome.kind === 'failed' && !outcome.uncertain
+        ? outcome.queueState
+        : undefined
       if (outcome.kind === 'accepted') {
         stored.failedPrompt = undefined
         if (outcome.notice) {
@@ -2315,6 +2363,7 @@ export class SessionStore {
         removed = queue[index]
         stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
         stored.queuedCount = stored.queuedPrompts.length
+        if (stored.queueState?.promptId === promptId) stored.queueState = undefined
       }
     })
     return { session, prompt: removed }
@@ -2349,6 +2398,7 @@ export class SessionStore {
       stored.queuedPrompts = queue.map((prompt, at) =>
         at === index ? updated! : prompt,
       )
+      if (stored.queueState?.promptId === promptId) stored.queueState = undefined
     })
     return { session, prompt: updated }
   }
@@ -2395,6 +2445,10 @@ export class SessionStore {
         next.push(prompt)
       }
       stored.queuedPrompts = next
+      if (stored.queueState &&
+          stored.queuedPrompts[0]?.id !== stored.queueState.promptId) {
+        stored.queueState = undefined
+      }
     })
   }
 

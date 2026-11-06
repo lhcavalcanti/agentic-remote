@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  QueueState,
   QueuedPrompt,
   QueuedPromptDispatchResult,
   SessionDetail,
@@ -300,6 +301,7 @@ export class QueuedDispatches {
     )
     const recoveryFailedAt = new Date(this.lastRecoveryAt).toISOString()
     let originalIndex = before.queuedPrompts!.findIndex((entry) => entry.id === original.id)
+    let previousQueueState: QueueState | undefined
     const prompt: QueuedPrompt = {
       ...original,
       content,
@@ -335,6 +337,10 @@ export class QueuedDispatches {
           }
           session.queuedPrompts = session.queuedPrompts.filter((entry) => entry.id !== original.id)
           session.queuedCount = session.queuedPrompts.length
+          if (session.queueState?.promptId === original.id) {
+            previousQueueState = structuredClone(session.queueState)
+            session.queueState = undefined
+          }
           session.failedPrompt = { content, failedAt: recoveryFailedAt, uncertain: true }
         })
       } catch (error) {
@@ -410,6 +416,10 @@ export class QueuedDispatches {
               }
               session.queuedPrompts = queue
               session.queuedCount = queue.length
+              if (previousQueueState &&
+                  queue[0]?.id === previousQueueState.promptId) {
+                session.queueState = previousQueueState
+              }
               if (ownsDispatchRecovery(session)) session.failedPrompt = undefined
               session.queuedDispatch = undefined
               session.messages = session.messages.filter((message) =>

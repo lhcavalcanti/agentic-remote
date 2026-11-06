@@ -90,6 +90,13 @@ describe('attentionCount', () => {
     ).toBe(1)
   })
 
+  it('counts queue waiting and delivery errors', () => {
+    expect(attentionCount([
+      { status: 'idle', queueState: { state: 'waiting' } },
+      { status: 'idle', queueState: { state: 'error' } },
+    ])).toBe(2)
+  })
+
   it('is zero for no sessions', () => {
     expect(attentionCount([])).toBe(0)
   })

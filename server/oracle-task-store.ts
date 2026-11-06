@@ -15,6 +15,7 @@ import type {
   OracleTaskAttempt,
   OracleTaskCompletionProvenance,
   OracleTaskOwner,
+  OracleTaskSourcePlan,
   OracleTaskSourceSession,
   OracleTaskStatus,
 } from '../shared/oracle-task.js'
@@ -43,6 +44,7 @@ export interface OracleTaskStoreSnapshot {
 export interface OracleTaskFindingInput {
   sourceEventIds: string[]
   sourceSession?: OracleTaskSourceSession
+  sourcePlan?: OracleTaskSourcePlan
   title: string
   summary: string
   nextAction: string
@@ -72,6 +74,12 @@ export interface ConfirmOracleTaskCompletionInput {
   revision: number
   taskId: string
   completion: OracleTaskCompletionProvenance
+}
+
+export interface ResolveUserOracleTaskInput {
+  revision: number
+  taskId: string
+  status: 'completed' | 'dismissed'
 }
 
 export interface OracleTaskStoreOptions {
@@ -151,10 +159,19 @@ function validateSourceSession(value: unknown): value is OracleTaskSourceSession
     (source.taskGeneration as number) > 0
 }
 
+function validateSourcePlan(value: unknown): value is OracleTaskSourcePlan {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const source = value as Record<string, unknown>
+  return isId(source.planId) && isId(source.itemId)
+}
+
 function validateSessionRef(value: unknown): value is ManagerSessionRef {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const reference = value as Record<string, unknown>
-  return isId(reference.computerId) && isId(reference.sessionId)
+  return isId(reference.computerId) &&
+    isId(reference.sessionId) &&
+    (reference.title === undefined || isText(reference.title, 200)) &&
+    (reference.promptId === undefined || isId(reference.promptId))
 }
 
 function validateCompletion(value: unknown): value is OracleTaskCompletionProvenance {
@@ -207,11 +224,27 @@ function validateTask(value: unknown): value is OracleTask {
     task.sourceEventIds.length <= ORACLE_TASK_MAX_SOURCE_EVENTS &&
     task.sourceEventIds.every((id) => typeof id === 'string' && EVENT_ID_PATTERN.test(id)) &&
     (task.sourceSession === undefined || validateSourceSession(task.sourceSession)) &&
+    (task.sourcePlan === undefined || validateSourcePlan(task.sourcePlan)) &&
     (task.executionPrompt === undefined || isText(task.executionPrompt, 4_000)) &&
+    (task.owner !== 'oracle' || isText(task.executionPrompt, 4_000)) &&
     Array.isArray(task.attempts) &&
     task.attempts.length <= ORACLE_TASK_MAX_ATTEMPTS &&
     task.attempts.every(validateAttempt) &&
     (task.completion === undefined || validateCompletion(task.completion)) &&
+    (
+      task.userDisposition === undefined ||
+      (
+        task.userDisposition !== null &&
+        typeof task.userDisposition === 'object' &&
+        !Array.isArray(task.userDisposition) &&
+        ['completed', 'dismissed'].includes(
+          String((task.userDisposition as Record<string, unknown>).status),
+        ) &&
+        isTimestamp(
+          (task.userDisposition as Record<string, unknown>).resolvedAt,
+        )
+      )
+    ) &&
     isTimestamp(task.createdAt) &&
     isTimestamp(task.updatedAt)
 }
@@ -303,7 +336,9 @@ export class OracleTaskStore {
       !isText(input.nextAction, 1_000) ||
       (input.owner !== 'oracle' && input.owner !== 'user') ||
       (input.sourceSession !== undefined && !validateSourceSession(input.sourceSession)) ||
-      (input.executionPrompt !== undefined && !isText(input.executionPrompt, 4_000))
+      (input.sourcePlan !== undefined && !validateSourcePlan(input.sourcePlan)) ||
+      (input.executionPrompt !== undefined && !isText(input.executionPrompt, 4_000)) ||
+      (input.owner === 'oracle' && !isText(input.executionPrompt, 4_000))
     ) {
       throw new OracleTaskConflictError('Oracle finding is invalid.')
     }
@@ -326,6 +361,7 @@ export class OracleTaskStore {
         status: 'ready',
         sourceEventIds,
         ...(input.sourceSession ? { sourceSession: structuredClone(input.sourceSession) } : {}),
+        ...(input.sourcePlan ? { sourcePlan: structuredClone(input.sourcePlan) } : {}),
         ...(input.executionPrompt ? { executionPrompt: input.executionPrompt.trim() } : {}),
         attempts: [],
         createdAt: timestamp,
@@ -373,6 +409,9 @@ export class OracleTaskStore {
   reconcileAttempt(input: ReconcileOracleTaskAttemptInput): Promise<OracleTask> {
     return this.commit((candidate) => {
       const task = this.requireTask(candidate, input.taskId)
+      if (task.status === 'completed' || task.status === 'dismissed') {
+        return { value: structuredClone(task), changed: false }
+      }
       this.requireTaskRevision(task, input.revision)
       const attempt = task.attempts.find(({ id }) => id === input.attemptId)
       if (!attempt) throw new OracleTaskConflictError('Oracle task attempt was not found.')
@@ -431,6 +470,34 @@ export class OracleTaskStore {
       task.completion = structuredClone(input.completion)
       task.revision += 1
       task.updatedAt = input.completion.confirmedAt
+      return { value: structuredClone(task), changed: true }
+    })
+  }
+
+  resolveUserTask(input: ResolveUserOracleTaskInput): Promise<OracleTask> {
+    return this.commit((candidate) => {
+      const task = this.requireTask(candidate, input.taskId)
+      if (
+        task.owner === 'user' &&
+        task.status === input.status &&
+        task.userDisposition?.status === input.status
+      ) {
+        return { value: structuredClone(task), changed: false }
+      }
+      this.requireTaskRevision(task, input.revision)
+      if (task.owner !== 'user') {
+        throw new OracleTaskConflictError(
+          'Oracle-owned tasks require verified execution evidence.',
+        )
+      }
+      if (task.status === 'completed' || task.status === 'dismissed') {
+        throw new OracleTaskConflictError('This user task is already resolved.')
+      }
+      const resolvedAt = this.now().toISOString()
+      task.status = input.status
+      task.userDisposition = { status: input.status, resolvedAt }
+      task.revision += 1
+      task.updatedAt = resolvedAt
       return { value: structuredClone(task), changed: true }
     })
   }

@@ -65,6 +65,10 @@ export interface ManagerToolHost {
   answerOnly(): boolean
   /** Trusted provenance of the message whose tool call is being handled. */
   messageSource(): ManagerMessageSource
+  /** Sessions whose untrusted transcript belongs to the current proactive batch. */
+  proactiveSessionRefs(): ManagerSessionRef[]
+  /** Sessions already linked to the current durable task attempt. */
+  taskSessionRefs(): ManagerSessionRef[]
   /** Commits exactly one disposition for every event in the current proactive batch. */
   recordProactiveOutcomes?(outcomes: ManagerProactiveOutcome[]): Promise<string>
   /** Where Oracle starts new sessions, by computer ID. */
@@ -128,6 +132,13 @@ const VOICE_READ_ONLY_TOOLS = new Set([
   'memory_read',
 ])
 
+const TASK_EXECUTION_MUTATION_TOOLS = new Set([
+  'create_session',
+  'send_to_session',
+  'answer_session',
+  'cancel_session',
+])
+
 /** Unknown tools are mutations until explicitly reviewed and allowlisted. */
 export function managerToolMutability(name: string): ManagerToolMutability {
   return VOICE_READ_ONLY_TOOLS.has(name) ? 'read' : 'mutation'
@@ -156,7 +167,21 @@ const proactiveOutcomesSchema = z.object({
       reason: z.string().trim().min(1).max(500),
     }).strict(),
   ])).min(1).max(20),
-}).strict()
+}).strict().superRefine(({ outcomes }, context) => {
+  outcomes.forEach((outcome, index) => {
+    if (
+      outcome.kind === 'task' &&
+      outcome.owner === 'oracle' &&
+      !outcome.executionPrompt
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['outcomes', index, 'executionPrompt'],
+        message: 'executionPrompt is required for Oracle-owned tasks.',
+      })
+    }
+  })
+})
 
 function failure(message: string): ManagerToolResult {
   return { textResultForLlm: `Error: ${message}`, resultType: 'failure', error: message }
@@ -170,8 +195,16 @@ function link(session: Pick<ManagedSession, 'computerId' | 'id' | 'title'>): str
   return `[${session.title.replaceAll(/[[\]]/g, '')}](?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)})`
 }
 
-function ref(session: Pick<ManagedSession, 'computerId' | 'id' | 'title'>): ManagerSessionRef {
-  return { computerId: session.computerId, sessionId: session.id, title: session.title }
+function ref(
+  session: Pick<ManagedSession, 'computerId' | 'id' | 'title'>,
+  promptId?: string,
+): ManagerSessionRef {
+  return {
+    computerId: session.computerId,
+    sessionId: session.id,
+    title: session.title,
+    ...(promptId ? { promptId } : {}),
+  }
 }
 
 /** A title the session list accepts: one line, no control characters or double quotes. */
@@ -279,14 +312,33 @@ export function createManagerTools(
     }
   }
 
+  function deliveredPromptId(
+    before: ManagedSession,
+    after: ManagedSession,
+    content: string,
+  ): string | undefined {
+    const previousIds = new Set([
+      ...(before.queuedPrompts ?? []).map(({ id }) => id),
+      ...(before.messages ?? []).map(({ id }) => id),
+    ])
+    return after.queuedPrompts?.findLast(
+      (prompt) => prompt.content === content && !previousIds.has(prompt.id),
+    )?.id ?? after.messages?.findLast(
+      (message) =>
+        message.role === 'user' &&
+        message.content === content &&
+        !previousIds.has(message.id),
+    )?.id
+  }
+
   /** Delivers a message, first answering a folder-trust prompt, and once more if one appears. */
-  async function deliver(session: ManagedSession, content: string): Promise<void> {
+  async function deliver(session: ManagedSession, content: string): Promise<ManagedSession> {
     await trustFolder(session)
     try {
-      await host.sendMessage(session.computerId, session.id, content)
+      return await host.sendMessage(session.computerId, session.id, content)
     } catch (error) {
       if (!(await trustFolder(session, trustWaitMs))) throw error
-      await host.sendMessage(session.computerId, session.id, content)
+      return await host.sendMessage(session.computerId, session.id, content)
     }
   }
 
@@ -294,25 +346,56 @@ export function createManagerTools(
    * Steers a busy session. Only a refusal that certainly sent nothing falls back to its queue, so
    * a steer that may have been typed is never sent a second time.
    */
-  async function steer(session: ManagedSession, content: string): Promise<'steered' | 'queued'> {
+  async function steer(
+    session: ManagedSession,
+    content: string,
+  ): Promise<{ outcome: 'steered' | 'queued'; delivered: ManagedSession }> {
     try {
-      await host.sendMessage(session.computerId, session.id, content, { steer: true })
-      return 'steered'
+      const delivered = await host.sendMessage(
+        session.computerId,
+        session.id,
+        content,
+        { steer: true },
+      )
+      return { outcome: 'steered', delivered }
     } catch (error) {
       if (deliveryUncertaintyFromError(error) !== false) throw error
-      await host.sendMessage(session.computerId, session.id, content)
-      return 'queued'
+      const delivered = await host.sendMessage(session.computerId, session.id, content)
+      return { outcome: 'queued', delivered }
     }
+  }
+
+  function proactiveSessionAllowed(session: ManagedSession): boolean {
+    if (host.messageSource() !== 'proactive') return true
+    return host.proactiveSessionRefs().some(
+      (reference) =>
+        reference.computerId === session.computerId &&
+        reference.sessionId === session.id,
+    )
+  }
+
+  function taskSessionAllowed(session: ManagedSession): boolean {
+    if (host.messageSource() !== 'task') return true
+    return host.taskSessionRefs().some(
+      (reference) =>
+        reference.computerId === session.computerId &&
+        reference.sessionId === session.id,
+    )
   }
 
   async function resolveSession(
     sessionId: string,
     computer?: string,
-    options: { history?: boolean } = {},
+    options: { history?: boolean; taskOwned?: boolean } = {},
   ): Promise<ManagedSession> {
     const computerId = computer ? requireComputer(computer, false).id : undefined
     const match = (sessions: ManagedSession[]) => {
-      const candidates = sessions.filter((session) => !computerId || session.computerId === computerId)
+      const candidates = sessions.filter(
+        (session) =>
+          proactiveSessionAllowed(session) &&
+          (!options.taskOwned || taskSessionAllowed(session)) &&
+          (!computerId || session.computerId === computerId),
+      )
       const exact = candidates.filter((session) => session.id === sessionId)
       if (exact.length === 1) return exact[0]
       if (exact.length > 1) {
@@ -330,6 +413,16 @@ export function createManagerTools(
     if (options.history) {
       const closed = match(await host.listHistory())
       if (closed) return closed
+    }
+    if (host.messageSource() === 'proactive') {
+      throw new ToolFailure(
+        `Session ${sessionId} is outside the current proactive batch.`,
+      )
+    }
+    if (host.messageSource() === 'task' && options.taskOwned) {
+      throw new ToolFailure(
+        `Session ${sessionId} is not linked to the current durable task.`,
+      )
     }
     throw new ToolFailure(
       `No open session matches ${sessionId}${computerId ? ` on ${computerId}` : ''}. Check the roster or call list_sessions.`,
@@ -378,6 +471,13 @@ export function createManagerTools(
           managerToolMutability(name) !== 'read'
         ) {
           return failure('This proactive observation is read-only. It may inspect state and record its bounded outcomes, but it cannot change sessions, permissions, trust, confirmations, Oracle settings, or memory.')
+        }
+        if (
+          host.messageSource() === 'task' &&
+          managerToolMutability(name) !== 'read' &&
+          !TASK_EXECUTION_MUTATION_TOOLS.has(name)
+        ) {
+          return failure('This task turn may execute its durable task, but unrelated session settings, naming, closure, proactive outcomes, and memory mutations are not allowed.')
         }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
@@ -675,6 +775,7 @@ export function createManagerTools(
         const computerId = computer ? requireComputer(computer, false).id : undefined
         const needle = query?.toLowerCase()
         const keep = (session: ManagedSession) =>
+          proactiveSessionAllowed(session) &&
           (!computerId || session.computerId === computerId) &&
           (!needle || `${session.title} ${session.cwd} ${session.id}`.toLowerCase().includes(needle))
         const open = (await host.listSessions()).filter(keep)
@@ -792,18 +893,24 @@ export function createManagerTools(
         }
         const session = { ...named, title: named.title || title }
         await host.markManaged(session, args.prompt)
-        onActivity({
-          tool: 'create_session',
-          content: `Started "${session.title}" on ${computer.name}`,
-          sessionRefs: [ref(session)],
-        })
+        let delivered: ManagedSession
         try {
-          await deliver(session, args.prompt)
+          delivered = await deliver(session, args.prompt)
         } catch (error) {
+          onActivity({
+            tool: 'create_session',
+            content: `Started "${session.title}" on ${computer.name}, but its task was not delivered`,
+            sessionRefs: [ref(session)],
+          })
           throw new ToolFailure(
             `Session ${session.id} (${link(session)}) was created on ${computer.name}, but its task was not delivered: ${errorMessage(error)}. Read it with get_session, answer anything it is waiting on with answer_session, then send the task with send_to_session using that id; do not create another session.`,
           )
         }
+        onActivity({
+          tool: 'create_session',
+          content: `Started "${session.title}" on ${computer.name}`,
+          sessionRefs: [ref(session, deliveredPromptId(session, delivered, args.prompt))],
+        })
         return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}. Its task was sent.`
       },
       { actsOnSessions: true }
@@ -851,7 +958,10 @@ export function createManagerTools(
         message: z.string().trim().min(1).max(100_000),
       }),
       async ({ sessionId, computer, message }) => {
-        let session = await resolveSession(sessionId, computer, { history: true })
+        let session = await resolveSession(sessionId, computer, {
+          history: true,
+          taskOwned: true,
+        })
         if (session.isOpen === false) {
           session = { ...session, ...(await host.reopenSession(session.computerId, session.id)), title: session.title }
           onActivity({ tool: 'send_to_session', content: `Reopened "${session.title}"`, sessionRefs: [ref(session)] })
@@ -861,10 +971,21 @@ export function createManagerTools(
         }
         // Claude sessions have no way to take a message mid-turn, so theirs is queued as before.
         const busy = session.status === 'running' && (session.provider ?? 'copilot') === 'copilot'
-        const outcome = busy
+        const delivery = busy
           ? await steer(session, message)
-          : (await deliver(session, message), session.status === 'running' ? 'queued' : 'sent')
-        onActivity({ tool: 'send_to_session', content: `Sent a message to "${session.title}"`, sessionRefs: [ref(session)] })
+          : {
+              outcome: session.status === 'running' ? 'queued' as const : 'sent' as const,
+              delivered: await deliver(session, message),
+            }
+        onActivity({
+          tool: 'send_to_session',
+          content: `Sent a message to "${session.title}"`,
+          sessionRefs: [ref(
+            session,
+            deliveredPromptId(session, delivery.delivered, message),
+          )],
+        })
+        const { outcome } = delivery
         if (outcome === 'steered') return `Sent to ${link(session)}; it was busy, so the message was steered into the work it is doing.`
         if (outcome === 'queued') return `Sent to ${link(session)}; it was busy and could not take the message yet, so it is queued for when it can.`
         return `Sent to ${link(session)}.`
@@ -897,7 +1018,9 @@ export function createManagerTools(
           .describe('The request you read with get_session, so a different prompt is never answered by mistake.'),
       }),
       async ({ sessionId, computer, response, responses, values, dismiss, requestId }) => {
-        const found = await resolveSession(sessionId, computer)
+        const found = await resolveSession(sessionId, computer, {
+          taskOwned: true,
+        })
         const detail = await host.readSession(found.computerId, found.id)
         const permission = detail.pendingPermission && !detail.pendingPermission.stale ? detail.pendingPermission : undefined
         const question = detail.pendingUserInput && !detail.pendingUserInput.stale ? detail.pendingUserInput : undefined
@@ -962,7 +1085,9 @@ export function createManagerTools(
       "Stop a session's current turn. The session stays open.",
       z.object({ sessionId: sessionIdField, computer: computerField.optional() }),
       async ({ sessionId, computer }) => {
-        const session = await resolveSession(sessionId, computer)
+        const session = await resolveSession(sessionId, computer, {
+          taskOwned: true,
+        })
         await host.cancel(session.computerId, session.id)
         onActivity({ tool: 'cancel_session', content: `Stopped "${session.title}"`, sessionRefs: [ref(session)] })
         return `Stopped the current turn of ${link(session)}.`

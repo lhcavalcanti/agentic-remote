@@ -40,6 +40,8 @@ describe('manager tools', () => {
   let tools: Map<string, ManagerTool>
   let answerOnly: boolean
   let source: ManagerMessageSource
+  let proactiveSessionIds: Set<string>
+  let taskSessionIds: Set<string>
   let oracleFolders: Record<string, string>
   let backend: ManagerSessionBackend
 
@@ -54,6 +56,8 @@ describe('manager tools', () => {
     activities = []
     answerOnly = false
     source = 'typed'
+    proactiveSessionIds = new Set()
+    taskSessionIds = new Set()
     oracleFolders = {}
     backend = 'sdk'
     const created = session('new1', { cwd: '/home/me/src/web' })
@@ -82,6 +86,14 @@ describe('manager tools', () => {
       registry: () => ({}),
       answerOnly: () => answerOnly,
       messageSource: () => source,
+      proactiveSessionRefs: () => [...proactiveSessionIds].map((sessionId) => ({
+        computerId: 'hub',
+        sessionId,
+      })),
+      taskSessionRefs: () => [...taskSessionIds].map((sessionId) => ({
+        computerId: 'hub',
+        sessionId,
+      })),
       recordProactiveOutcomes: vi.fn(async () => 'Recorded 1 proactive outcome.'),
       sessionFolders: () => oracleFolders,
       setSessionFolder: vi.fn(async (computerId: string, folder?: string) => {
@@ -100,7 +112,14 @@ describe('manager tools', () => {
       defaults: () => ({ computerId: 'hub', mode: 'autopilot', provider: 'copilot', model: 'gpt-6-sol', folders: { hub: '~/src/web' } }),
       now: () => new Date('2026-10-15T12:00:00.000Z'),
     }
-    tools = new Map(createManagerTools(host, (activity) => activities.push(activity), { pollMs: 1, trustWaitMs: 40 })
+    tools = new Map(createManagerTools(host, (activity) => {
+      activities.push(activity)
+      if (source === 'task') {
+        for (const reference of activity.sessionRefs ?? []) {
+          taskSessionIds.add(reference.sessionId)
+        }
+      }
+    }, { pollMs: 1, trustWaitMs: 40 })
       .map((tool) => [tool.name, tool]))
   })
 
@@ -140,6 +159,31 @@ describe('manager tools', () => {
       content: 'Started "Fix \'login\' bug" on development',
       sessionRefs: [{ computerId: 'hub', sessionId: 'new1', title: "Fix 'login' bug" }],
     }])
+  })
+
+  it('records the exact delivered prompt identity on task session activity', async () => {
+    vi.mocked(host.sendMessage).mockResolvedValueOnce(session('new1', {
+      title: "Fix 'login' bug",
+      queuedPrompts: [{
+        id: 'queued-task-prompt',
+        content: 'Fix the login bug.',
+        createdAt: '2026-10-15T12:00:00.000Z',
+      }],
+    }))
+
+    await call('create_session', {
+      title: 'Fix login bug',
+      prompt: 'Fix the login bug.',
+    })
+
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'create_session',
+      sessionRefs: [{
+        computerId: 'hub',
+        sessionId: 'new1',
+        promptId: 'queued-task-prompt',
+      }],
+    })
   })
 
   it('opens a terminal session when its setting says so, for a provider that has one', async () => {
@@ -347,8 +391,8 @@ describe('manager tools', () => {
       .toBeLessThan(vi.mocked(host.sendMessage).mock.invocationCallOrder[0])
     expect(String(result)).toContain('Its task was sent.')
     expect(activities.map((activity) => activity.content)).toEqual([
-      'Started "LLM lab" on development',
       'Trusted /home/me/src/llmlab for "LLM lab"',
+      'Started "LLM lab" on development',
     ])
   })
 
@@ -786,6 +830,95 @@ describe('manager tools', () => {
     expect(JSON.stringify(result)).toContain('proactive')
     expect(JSON.stringify(result)).toContain('read-only')
     expect(host.createSession).not.toHaveBeenCalled()
+  })
+
+  it('requires an execution prompt for every Oracle-owned proactive task', async () => {
+    source = 'proactive'
+    const result = await call('record_proactive_outcomes', {
+      outcomes: [{
+        kind: 'task',
+        eventIds: ['b'.repeat(64)],
+        title: 'Run the focused queue test',
+        summary: 'The queue regression needs execution.',
+        nextAction: 'Start a session and run its focused test.',
+        owner: 'oracle',
+      }],
+    })
+
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(result)).toContain('executionPrompt')
+    expect(host.recordProactiveOutcomes).not.toHaveBeenCalled()
+  })
+
+  it('limits proactive transcript reads to sessions in the current batch', async () => {
+    source = 'proactive'
+    proactiveSessionIds = new Set(['abc12345-aaaa'])
+
+    expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('list_sessions', {}))).not.toContain('def67890-bbbb')
+    expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
+    expect(await call('ask_session', {
+      sessionId: 'abc12345',
+      question: 'What did you find?',
+    })).toBe('It fixed the bug and opened PR #12.')
+
+    for (const [name, args] of [
+      ['get_session', { sessionId: 'def67890' }],
+      ['ask_session', { sessionId: 'def67890', question: 'What did you find?' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('proactive batch')
+    }
+  })
+
+  it('allows task execution tools only on sessions owned by the durable task', async () => {
+    source = 'task'
+    taskSessionIds = new Set(['def67890-bbbb'])
+    expect(String(await call('create_session', {
+      title: 'Task execution',
+      prompt: 'Run the focused queue test.',
+    }))).toContain('Started')
+    vi.mocked(host.listSessions).mockResolvedValue([
+      session('abc12345-aaaa'),
+      session('def67890-bbbb', { status: 'running' }),
+      session('new1', { cwd: '/home/me/src/web' }),
+    ])
+    expect(String(await call('send_to_session', {
+      sessionId: 'def67890',
+      message: 'Continue the focused queue test.',
+    }))).toContain('Sent')
+    expect(String(await call('send_to_session', {
+      sessionId: 'new1',
+      message: 'Run the focused assertion too.',
+    }))).toContain('Sent')
+
+    for (const [name, args] of [
+      ['send_to_session', { sessionId: 'abc12345', message: 'Unrelated work.' }],
+      ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
+      ['cancel_session', { sessionId: 'abc12345' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('durable task')
+    }
+
+    for (const [name, args] of [
+      ['set_session_folder', { folder: '~/src/task' }],
+      ['set_session_backend', { backend: 'terminal' }],
+      ['rename_session', { sessionId: 'abc12345', title: 'Changed by task' }],
+      ['close_session', { sessionId: 'abc12345' }],
+      ['memory_write', { path: 'MEMORY.md', content: '# Task mutation' }],
+      ['record_proactive_outcomes', { outcomes: [{
+        kind: 'no-action',
+        eventIds: ['c'.repeat(64)],
+        reason: 'Not a proactive turn.',
+      }] }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('task')
+    }
   })
 
   it('classifies unknown future tools as mutations so voice fails closed', () => {

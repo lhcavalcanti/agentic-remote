@@ -70,6 +70,8 @@ class FakeAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   retry = vi.fn(async (id: string) => {
     const message = this.messages.find((candidate) => candidate.id === id)!
     message.state = 'queued'
+    message.retryCount = (message.retryCount ?? 0) + 1
+    delete message.error
     return message
   })
   snapshot(): ManagerSnapshot {
@@ -153,11 +155,15 @@ describe('ManagerProactiveCoordinator', () => {
       automatic: {
         kind: 'proactive',
         eventIds: [expect.stringMatching(/^[a-f0-9]{64}$/)],
+        sessionRefs: [{
+          computerId: 'computer-a',
+          sessionId: 'session-a',
+        }],
       },
     })
   })
 
-  it('leaves failed proactive analysis pending without an automatic retry loop', async () => {
+  it('retries an unacknowledged proactive batch once without an automatic loop', async () => {
     const root = await directory()
     const { coordinator, inbox, agent, setCurrent } = await fixture(root)
     await coordinator.setEnabled(true)
@@ -173,9 +179,17 @@ describe('ManagerProactiveCoordinator', () => {
     await coordinator.drain()
     await new Promise((resolve) => setTimeout(resolve, 5))
 
-    expect(agent.retry).not.toHaveBeenCalled()
+    expect(agent.retry).toHaveBeenCalledTimes(1)
+    expect(agent.retry).toHaveBeenCalledWith(message.id)
+    message.state = 'failed'
+    message.error = 'Oracle analysis failed again.'
+    agent.emit('event', { type: 'manager.message', message })
+    await coordinator.drain()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(agent.retry).toHaveBeenCalledTimes(1)
     expect(agent.messages).toEqual([
-      expect.objectContaining({ id: message.id, state: 'failed' }),
+      expect.objectContaining({ id: message.id, state: 'failed', retryCount: 1 }),
     ])
     expect(inbox.pending(20)).toHaveLength(1)
   })

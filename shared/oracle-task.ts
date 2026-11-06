@@ -17,6 +17,11 @@ export interface OracleTaskSourceSession {
   taskGeneration: number
 }
 
+export interface OracleTaskSourcePlan {
+  planId: string
+  itemId: string
+}
+
 export interface OracleTaskAttempt {
   id: string
   requestId: string
@@ -54,6 +59,11 @@ export interface OracleTaskCompletionCandidate {
   summary: string
 }
 
+export interface OracleTaskUserDisposition {
+  status: 'completed' | 'dismissed'
+  resolvedAt: string
+}
+
 export interface OracleTaskEvidence {
   id: string
   kind: 'tool' | 'test' | 'completion'
@@ -73,9 +83,11 @@ export interface OracleTask {
   status: OracleTaskStatus
   sourceEventIds: string[]
   sourceSession?: OracleTaskSourceSession
+  sourcePlan?: OracleTaskSourcePlan
   executionPrompt?: string
   attempts: OracleTaskAttempt[]
   completion?: OracleTaskCompletionProvenance
+  userDisposition?: OracleTaskUserDisposition
   createdAt: string
   updatedAt: string
 }

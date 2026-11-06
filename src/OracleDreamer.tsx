@@ -11,6 +11,7 @@ import {
   DreamerApiError,
   getDreamer,
   saveDreamerSettings,
+  resolveDreamerTask,
   updateDreamerPlan,
 } from './dreamer-api'
 import type { DreamerPlanEdit } from './dreamer-api'
@@ -218,8 +219,10 @@ export function DreamerSettings({ active = true }: { active?: boolean }) {
     <section aria-label="Dreamer settings" className="app-settings-section" id="settings-dreamer">
       <h4>Dreamer</h4>
       <p className="dialog-message">
-        A local, metadata-only morning review at 02:00 in the saved timezone.
-        No model calls, session actions or overnight notifications.
+        Enabling Dreamer opts this hub into a 02:00 metadata review and proactive
+        Oracle analysis. Oracle may use the selected model to turn lifecycle
+        findings into follow-up tasks; session work still starts only when you
+        choose it.
       </p>
       {!snapshot && !loadError ? <p className="dialog-message">Loading Dreamer...</p> : null}
       {snapshot?.available ? (
@@ -408,6 +411,31 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
       setActiveTask(undefined)
     }
   }
+  async function resolveTask(
+    task: OracleTaskView,
+    status: 'completed' | 'dismissed',
+  ) {
+    if (readOnly || activeTask) return
+    setActiveTask(task.id)
+    setError(undefined)
+    try {
+      setSnapshot(await resolveDreamerTask(task.id, {
+        revision: task.revision,
+        status,
+      }))
+    } catch (caught) {
+      failMutation(caught)
+      if (caught instanceof DreamerApiError && caught.status === 409) {
+        if (await refresh()) {
+          setError('This follow-up changed elsewhere. Review its current status before trying again.')
+        } else {
+          setError('Could not refresh this follow-up. Refresh before trying again.')
+        }
+      } else setError(reason(caught))
+    } finally {
+      setActiveTask(undefined)
+    }
+  }
   if (
     snapshot &&
     !snapshot.settings.enabled &&
@@ -565,6 +593,28 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
                                   ? 'Retry'
                                   : 'Start work'}
                             </button>
+                          ) : null}
+                          {task.owner === 'user' &&
+                          task.status !== 'completed' &&
+                          task.status !== 'dismissed' ? (
+                            <>
+                              <button
+                                className="secondary-button"
+                                disabled={readOnly || Boolean(activeTask)}
+                                onClick={() => void resolveTask(task, 'dismissed')}
+                                type="button"
+                              >
+                                Dismiss
+                              </button>
+                              <button
+                                className="primary-button"
+                                disabled={readOnly || Boolean(activeTask)}
+                                onClick={() => void resolveTask(task, 'completed')}
+                                type="button"
+                              >
+                                Mark complete
+                              </button>
+                            </>
                           ) : null}
                           {task.status === 'review' && task.completionCandidate ? (
                             <button

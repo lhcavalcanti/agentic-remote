@@ -1280,3 +1280,26 @@ bin/agentic-remote-gate <PR_NUMBER>
 Expected: `agentic-remote/full-gate` success for the exact PR head. If the
 host-wide tmux test is blocked by another namespace, wait for that gate to
 finish and rerun once; do not kill or alter another worktree's process.
+
+---
+
+## Supervisor review follow-up for PR #497
+
+- [x] Make linked running execution authoritative over a failed Oracle turn.
+- [x] Persist and match exact dispatched root prompt identity without timestamp
+  or latest-user heuristics; merge duplicate session refs without losing it.
+- [x] Use exact durable Oracle message lookup outside the 200-message public
+  snapshot.
+- [x] Enforce task-source mutation policy and reject generic edit/remove/retry
+  controls for internal task messages.
+- [x] Scope proactive transcript tools to the current batch session identities
+  and require executable prompts for Oracle-owned findings.
+- [x] Persist bidirectional suggestion/task provenance, support carried-session
+  investigation, and make replay reuse the same task and attempt.
+- [x] Return reconciled task/evidence projections after plan mutations.
+- [x] Add terminal complete/dismiss actions for user-owned tasks and release
+  active capacity.
+- [x] Correct Dreamer enablement copy to disclose proactive Oracle model use.
+- [ ] Run the complete affected matrix and refresh Graphify.
+- [ ] Commit, push, and request one exact-head Supervisor review without running
+  the coordinator-blocked heavy gate.

@@ -65,6 +65,11 @@ const taskCompletionSchema = z.object({
   resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict()
 
+const taskDispositionSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  status: z.enum(['completed', 'dismissed']),
+}).strict()
+
 function parse<T>(
   schema: z.ZodType<T>,
   value: unknown,
@@ -119,6 +124,16 @@ export async function registerDreamerRoutes(
     const params = parse(taskParamsSchema, request.params ?? {})
     const input = parse(taskCompletionSchema, request.body ?? {})
     return requireService().confirmTaskCompletion({
+      ...input,
+      taskId: params.taskId,
+    })
+  })
+
+  app.post('/api/manager/dreamer/tasks/:taskId/disposition', async (request, reply) => {
+    reply.header('cache-control', 'no-store')
+    const params = parse(taskParamsSchema, request.params ?? {})
+    const input = parse(taskDispositionSchema, request.body ?? {})
+    return requireService().resolveUserTask({
       ...input,
       taskId: params.taskId,
     })

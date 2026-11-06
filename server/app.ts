@@ -453,6 +453,7 @@ export async function buildApp(
           taskStore: oracleTaskStore,
           enqueueManagerTask: (input) => dreamerAgent.enqueueInternal(input),
           managerMessages: () => dreamerAgent.snapshot().messages,
+          managerMessage: (id) => dreamerAgent.message(id),
           setProactiveEnabled: async (enabled) => {
             await proactiveCoordinator?.setEnabled(enabled)
           },

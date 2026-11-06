@@ -77,6 +77,7 @@ export interface DreamerServiceOptions {
     input: ManagerInternalSubmission,
   ) => Promise<ManagerMessage>
   managerMessages?: () => ManagerMessage[]
+  managerMessage?: (id: string) => ManagerMessage | undefined
 }
 
 export class DreamerUnavailableError extends Error {
@@ -182,6 +183,7 @@ export class DreamerService {
   private readonly setProactiveEnabled?: DreamerServiceOptions['setProactiveEnabled']
   private readonly enqueueManagerTask?: DreamerServiceOptions['enqueueManagerTask']
   private readonly managerMessages?: DreamerServiceOptions['managerMessages']
+  private readonly managerMessage?: DreamerServiceOptions['managerMessage']
   private initialized = false
   private initializing?: Promise<void>
   private started = false
@@ -211,6 +213,7 @@ export class DreamerService {
     this.setProactiveEnabled = options.setProactiveEnabled
     this.enqueueManagerTask = options.enqueueManagerTask
     this.managerMessages = options.managerMessages
+    this.managerMessage = options.managerMessage
   }
 
   initialize(): Promise<void> {
@@ -469,6 +472,20 @@ export class DreamerService {
   return this.snapshotForApi()
   }
 
+  async resolveUserTask(input: {
+    revision: number
+    taskId: string
+    status: 'completed' | 'dismissed'
+  }): Promise<DreamerSnapshot> {
+    await this.initialize()
+    this.requireAvailable()
+    if (!this.taskStore) {
+      throw new DreamerUnavailableError('Oracle task resolution is unavailable.')
+    }
+    await this.taskStore.resolveUserTask(input)
+    return this.snapshotForApi()
+  }
+
   async editPlan(
     input: {
       revision: number
@@ -551,7 +568,7 @@ export class DreamerService {
         && item.completion.messageId === edit.completion.messageId
         && item.completion.resultDigest === edit.completion.resultDigest
       ) {
-        return this.withCompletionCandidates(this.snapshot())
+        return this.snapshotForApi()
       }
 
       let candidate: DreamerCompletionCandidate | undefined
@@ -640,7 +657,7 @@ export class DreamerService {
       ...(activeMemoryIds ? { activeMemoryIds } : {}),
       ...(completion ? { completion } : {}),
     })
-    return this.withCompletionCandidates(this.snapshot())
+    return this.snapshotForApi()
   }
 
   private async investigatePlanItem(input: {
@@ -653,11 +670,37 @@ export class DreamerService {
       throw new DreamerUnavailableError('Oracle investigation is unavailable.')
     }
     const current = this.store.snapshot()
+    const currentItem = current.plan?.id === input.planId
+      ? current.plan.items.find(({ id }) => id === input.itemId)
+      : undefined
+    if (currentItem?.taskId) {
+      const linked = this.taskStore.snapshot().tasks.find(
+        ({ id }) => id === currentItem.taskId,
+      )
+      if (!linked) {
+        throw new DreamerConflictError(
+          'The linked Oracle task is unavailable; refresh and retry.',
+        )
+      }
+      if (linked.attempts.some(({ requestId }) => requestId === input.requestId)) {
+        return this.snapshotForApi()
+      }
+      await this.dispatchTask({
+        revision: linked.revision,
+        taskId: linked.id,
+        requestId: input.requestId,
+      })
+      return this.snapshotForApi()
+    }
     if (current.revision !== input.revision || current.plan?.id !== input.planId) {
       throw new DreamerConflictError('Dreamer plan changed; refresh and retry.')
     }
-    const item = current.plan.items.find(({ id }) => id === input.itemId)
-    if (!item || item.source !== 'session' || !hasDreamerSessionIdentity(item)) {
+    const item = currentItem
+    if (
+      !item ||
+      !['session', 'carry'].includes(item.source) ||
+      !hasDreamerSessionIdentity(item)
+    ) {
       throw new DreamerConflictError(
         'This Morning Plan suggestion is no longer available for investigation.',
       )
@@ -668,6 +711,10 @@ export class DreamerService {
           .update(['dreamer-investigate', input.planId, input.itemId].join('\0'))
           .digest('hex'),
       ],
+      sourcePlan: {
+        planId: input.planId,
+        itemId: input.itemId,
+      },
       title: item.label,
       summary: item.reason,
       nextAction: 'Oracle will investigate the linked session and produce verified follow-up.',
@@ -679,13 +726,16 @@ export class DreamerService {
         'Reproduce the issue when possible, run focused tests, and leave an explicit blocker or root task completion.',
       ].join('\n'),
     })
+    await this.store.editPlan(input.revision, input.planId, {
+      task: {
+        itemId: input.itemId,
+        taskId: task.id,
+      },
+    })
     await this.dispatchTask({
       revision: task.revision,
       taskId: task.id,
       requestId: input.requestId,
-    })
-    await this.store.editPlan(input.revision, input.planId, {
-      item: { id: input.itemId, status: 'skipped' },
     })
     return this.snapshotForApi()
   }
@@ -1071,7 +1121,11 @@ export class DreamerService {
       id: attempt.managerMessageId,
       source: 'task',
       answerOnly: false,
-      automatic: { kind: 'task', taskId: task.id },
+      automatic: {
+        kind: 'task',
+        taskId: task.id,
+        sessionRefs: priorSessionRefs,
+      },
       content: [
         task.executionPrompt!,
         '',
@@ -1100,6 +1154,7 @@ export class DreamerService {
       let task = original
       let messages = this.managerMessages()
       let managerMessage = messages.find(({ id }) => id === attempt.managerMessageId)
+        ?? this.managerMessage?.(attempt.managerMessageId)
       if (
         !managerMessage &&
         attempt.status === 'queued' &&
@@ -1109,6 +1164,7 @@ export class DreamerService {
         await this.enqueueManagerTask(this.taskSubmission(task, attempt))
         messages = this.managerMessages()
         managerMessage = messages.find(({ id }) => id === attempt.managerMessageId)
+          ?? this.managerMessage?.(attempt.managerMessageId)
       }
       const related = messages.filter(
         ({ replyTo }) => replyTo === attempt.managerMessageId,
@@ -1152,14 +1208,14 @@ export class DreamerService {
           }
         }
         const candidate = sessions
-          .map((session) => this.oracleCompletionCandidate(session, attempt))
+          .map((session) => this.oracleCompletionCandidate(
+            session,
+            { ...attempt, sessionRefs },
+          ))
           .find((value) => value !== undefined)
         if (candidate) {
           status = 'review'
           error = undefined
-        } else if (managerFailure) {
-          status = 'failed'
-          error = managerFailure
         } else if (unavailableError) {
           status = 'blocked'
           error = unavailableError
@@ -1178,6 +1234,9 @@ export class DreamerService {
         } else if (sessions.some(({ status: state }) => state === 'running')) {
           status = 'running'
           error = undefined
+        } else if (managerFailure) {
+          status = 'failed'
+          error = managerFailure
         } else if (sessions.length > 0) {
           status = 'blocked'
           error = 'Execution stopped without verified completion.'
@@ -1304,29 +1363,46 @@ export class DreamerService {
     attempt: OracleTaskAttempt,
     messageId?: string,
   ): OracleTaskCompletionCandidate | undefined {
-    if (!attempt.startedAt) return undefined
-    const lastUserMessage = session.messages.findLast(
+    const promptId = attempt.sessionRefs.find(
+      (reference) =>
+        reference.computerId === session.computerId &&
+        reference.sessionId === session.id,
+    )?.promptId
+    if (!promptId) return undefined
+    const promptIndex = session.messages.findIndex(
+      (message) => message.id === promptId && message.role === 'user',
+    )
+    if (promptIndex < 0) return undefined
+    const nextUserOffset = session.messages.slice(promptIndex + 1).findIndex(
       ({ role }) => role === 'user',
     )
-    const attemptStartedAt = Date.parse(attempt.startedAt)
-    const lastUserAt = Date.parse(lastUserMessage?.createdAt ?? '')
-    if (
-      !lastUserMessage ||
-      !Number.isFinite(attemptStartedAt) ||
-      !Number.isFinite(lastUserAt) ||
-      lastUserAt < attemptStartedAt
-    ) return undefined
+    const endIndex = nextUserOffset < 0
+      ? session.messages.length
+      : promptIndex + 1 + nextUserOffset
+    const candidateIndex = messageId
+      ? session.messages.findIndex(
+          (message, index) =>
+            index > promptIndex &&
+            index < endIndex &&
+            message.id === messageId,
+        )
+      : session.messages.findLastIndex(
+          (message, index) =>
+            index > promptIndex &&
+            index < endIndex &&
+            message.taskCompletion?.source === 'root-task-complete',
+        )
+    if (candidateIndex < 0) return undefined
     const candidate = this.completionCandidateFromSession(
-      session,
+      {
+        ...session,
+        messages: session.messages.slice(promptIndex, endIndex),
+      },
       session.computerId,
       session.id,
-      messageId,
+      session.messages[candidateIndex]!.id,
     )
-    if (
-      !candidate ||
-      !Number.isFinite(Date.parse(candidate.completedAt)) ||
-      Date.parse(candidate.completedAt) < attemptStartedAt
-    ) return undefined
+    if (!candidate) return undefined
     return { ...candidate, attemptId: attempt.id }
   }
 
@@ -1433,13 +1509,24 @@ export class DreamerService {
 function uniqueSessionRefs(
   refs: OracleTaskAttempt['sessionRefs'],
 ): OracleTaskAttempt['sessionRefs'] {
-  const seen = new Set<string>()
-  return refs.filter((reference) => {
+  const positions = new Map<string, number>()
+  const unique: OracleTaskAttempt['sessionRefs'] = []
+  for (const reference of refs) {
     const key = `${reference.computerId}\0${reference.sessionId}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+    const position = positions.get(key)
+    if (position === undefined) {
+      positions.set(key, unique.length)
+      unique.push({ ...reference })
+      continue
+    }
+    const existing = unique[position]!
+    unique[position] = {
+      ...existing,
+      ...(existing.title ? {} : reference.title ? { title: reference.title } : {}),
+      ...(reference.promptId ? { promptId: reference.promptId } : {}),
+    }
+  }
+  return unique
 }
 
 function boundedText(value: string, maximum: number): string {

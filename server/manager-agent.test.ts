@@ -15,7 +15,7 @@ import {
 } from './manager-agent.js'
 import { JournalRecorder } from './manager-journal.js'
 import { MANAGER_SYSTEM_PROMPT } from './manager-context.js'
-import { ManagerStore } from './manager-store.js'
+import { ManagerStore, registryKey } from './manager-store.js'
 import { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 
@@ -261,6 +261,82 @@ describe('ManagerAgent', () => {
 
     expect(sdk.prompts[0]).toContain('<user_message>\nUser request')
     expect(sdk.prompts[1]).toContain('<proactive_observation')
+  })
+
+  it('limits proactive prompt context to sessions in the bound event batch', async () => {
+    sessions = [
+      session('batch-session', {
+        title: 'Batch session',
+        messages: [{
+          id: 'batch-reply',
+          role: 'assistant',
+          content: 'Batch-visible result.',
+          createdAt: '2026-10-15T11:55:00.000Z',
+        }],
+      }),
+      session('unrelated-session', {
+        title: 'Unrelated secret session',
+        messages: [{
+          id: 'secret-reply',
+          role: 'assistant',
+          content: 'Secret unrelated transcript.',
+          createdAt: '2026-10-15T11:55:00.000Z',
+        }],
+      }),
+    ]
+    await store.updateRegistry((registry) => {
+      registry[registryKey('hub', 'batch-session')] = {
+        computerId: 'hub',
+        sessionId: 'batch-session',
+        title: 'Batch session',
+        origin: 'manager',
+        task: 'Batch-visible task.',
+        firstSeenAt: '2026-10-15T11:00:00.000Z',
+      }
+      registry[registryKey('hub', 'unrelated-session')] = {
+        computerId: 'hub',
+        sessionId: 'unrelated-session',
+        title: 'Unrelated secret session',
+        origin: 'manager',
+        task: 'Secret unrelated task.',
+        firstSeenAt: '2026-10-15T11:00:00.000Z',
+      }
+    })
+    await store.appendJournal([{
+      kind: 'status',
+      computerId: 'hub',
+      sessionId: 'batch-session',
+      title: 'Batch session',
+      from: 'running',
+      to: 'idle',
+    }, {
+      kind: 'status',
+      computerId: 'hub',
+      sessionId: 'unrelated-session',
+      title: 'Unrelated secret session',
+      from: 'running',
+      to: 'error',
+    }])
+    await start()
+    await agent!.enqueueInternal({
+      id: 'oracle-proactive-scoped-context',
+      content: 'Inspect the bound session.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['b'.repeat(64)],
+        sessionRefs: [{ computerId: 'hub', sessionId: 'batch-session' }],
+      },
+    })
+
+    await settled()
+
+    expect(sdk.prompts[0]).toContain('Batch-visible result.')
+    expect(sdk.prompts[0]).toContain('Batch-visible task.')
+    expect(sdk.prompts[0]).not.toContain('Secret unrelated transcript.')
+    expect(sdk.prompts[0]).not.toContain('Secret unrelated task.')
+    expect(sdk.prompts[0]).not.toContain('Unrelated secret session')
   })
 
   it('deduplicates an identical internal message and rejects an ID collision', async () => {
@@ -1931,6 +2007,38 @@ describe('ManagerAgent', () => {
     await settled()
     expect(sdk.prompts.map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0])).toEqual(['one', 'three'])
     expect(agent!.snapshot().messages.find((m) => m.id === third.id)!.state).toBe('done')
+  })
+
+  it('rejects generic edit, remove, and retry controls for internal task messages', async () => {
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      retryDelaysMs: [0, 0],
+      idleStopMs: 60_000,
+      sessionIdFactory: () => `sdk-${++ids}`,
+    })
+    const queued = await agent.enqueueInternal({
+      id: 'oracle-task-queued',
+      content: 'Run the focused queue test.',
+      source: 'task',
+      answerOnly: false,
+      automatic: { kind: 'task', taskId: 'durable-task-a' },
+    })
+    await expect(agent.editQueued(queued.id, 'Run something else.'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(agent.removeQueued(queued.id))
+      .rejects.toMatchObject({ statusCode: 409 })
+
+    await store.upsertMessage({
+      ...queued,
+      id: 'oracle-task-failed',
+      state: 'failed',
+      error: 'Execution backend unavailable.',
+    })
+    await expect(agent.retry('oracle-task-failed'))
+      .rejects.toMatchObject({ statusCode: 409 })
   })
 
   it('edits a waiting message in place, keeping its identity and place in the queue', async () => {

@@ -59,13 +59,19 @@ export interface DreamerTaskCompletion {
   resultDigest: string
 }
 
+export interface DreamerTaskDisposition {
+  revision: number
+  status: 'completed' | 'dismissed'
+}
+
 async function request(
   path: string,
   input?:
     | DreamerSettingsEdit
     | DreamerPlanEdit
     | DreamerTaskDispatch
-    | DreamerTaskCompletion,
+    | DreamerTaskCompletion
+    | DreamerTaskDisposition,
   method: 'PUT' | 'POST' = 'PUT',
 ): Promise<DreamerSnapshot> {
   const response = await fetch(`/api/manager/dreamer${path}`, {
@@ -105,3 +111,5 @@ export const dispatchDreamerTask = (taskId: string, input: DreamerTaskDispatch) 
   request(`/tasks/${encodeURIComponent(taskId)}/dispatch`, input, 'POST')
 export const completeDreamerTask = (taskId: string, input: DreamerTaskCompletion) =>
   request(`/tasks/${encodeURIComponent(taskId)}/complete`, input, 'POST')
+export const resolveDreamerTask = (taskId: string, input: DreamerTaskDisposition) =>
+  request(`/tasks/${encodeURIComponent(taskId)}/disposition`, input, 'POST')

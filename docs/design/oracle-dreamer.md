@@ -24,10 +24,11 @@ an OpenClaw runtime.
    due date, scope and revision; define owner metadata replay for offline and
    closed sessions. Then collect these sources with bounded cancellable reads,
    visible per-source completeness and scope isolation.
-4. **Semantic planning, separately approved.** Explicitly opt into bounded
-   redacted summaries, provider egress and spend ceilings; use a read-only
-   capability with schema-validated proposals. No planner tool may send
-   prompts, answer permissions, create/delete/modify sessions or memory.
+4. **Actionable lifecycle follow-up.** Enabling Dreamer also opts into bounded
+   Oracle model analysis of admitted lifecycle events. Proactive turns are
+   read-only outside exact batch-scoped session transcripts and may only record
+   schema-validated outcomes. Oracle-owned outcomes require an execution prompt;
+   execution still starts only from an explicit task action.
 5. **Presentation refinements.** Optional morning delivery after quiet hours
    through the existing notification policy/outbox; no 02:00 push or speech.
    Do not add a second notification/control plane.
@@ -40,12 +41,15 @@ todo store. Structured memory has no todo kind. The UI must name these limits.
 
 ## Safety and privacy
 
-No model calls, embeddings, general transcript/prompt reads, directory walks,
-external services, task/session mutations, automatic execution or new memory authority.
-Use only identity/status/update metadata and structured-memory identity/kind/
-scope/authority/validity metadata. Never persist or render source titles,
-canonical keys, paths, prompts, task descriptions or memory content in a plan.
-Use generic evidence-based labels plus opaque source IDs.
+The deterministic daily plan makes no model call. Enabling Dreamer also enables
+proactive Oracle analysis, which may call the selected Oracle model for
+admitted lifecycle events. That turn receives bounded event metadata and may
+read or ask only the exact sessions named by its batch. It cannot mutate
+sessions, settings or memory; its only mutation records one bounded outcome per
+event. There are no embeddings, directory walks, external services, automatic
+execution or new memory authority. Plans continue to use identity/status/update
+metadata and structured-memory identity/kind/scope/authority/validity metadata,
+not source prompts or memory contents.
 
 Respect structured-memory mode: off/shadow must not expose record contents or
 turn shadow retrieval into visible memory authority. Use active on-mode records
@@ -62,9 +66,11 @@ transient summary plus SHA-256 digest. Plain assistant text, background-agent
 results, failed tools and stale UI state are not completion evidence. Result
 text is never persisted in Dreamer state. Confirmation binds the evidence to
 the exact computer ID, session ID, authoritative session revision, root result
-source, message and tool call before storing provenance. Evidence must occur
-after the latest root user turn; a historical completion cannot complete a
-newer task.
+source, message and tool call before storing provenance. Plan-item evidence must occur after the latest root user turn. Durable Oracle
+task evidence is stricter: every execution activity records the exact
+dispatched root prompt ID, and only a trusted completion in that prompt's turn
+can complete the attempt. Transcript order, not timestamps across computers,
+binds the evidence.
 
 Single trusted hub owner and single process writer; this does not add hostile
 multi-user isolation. APIs inherit hub Host/Origin checks and no-store responses;
@@ -142,6 +148,12 @@ cards. Display failures, empty results, off mode and counted exclusions
 explicitly. No overnight notification; ordinary morning opening of Oracle reads
 the persisted plan, not triggers a hidden model turn.
 
+An investigated current or carried session suggestion is linked to a
+deterministic durable task before dispatch. The task stores its source plan and
+item, while one plan mutation stores the task ID and retires the suggestion.
+Replaying the same request resumes that link rather than creating another task
+or attempt.
+
 The morning plan and Background Tasks intentionally differ: Dreamer is durable
 review state, while Background Tasks is live provider runtime state. Review
 actions and completion confirmation never mutate provider tasks or sessions.
@@ -157,9 +169,14 @@ Shared types live in `shared/dreamer.ts`:
 - `DreamerPlan`: `id`, `localDate`, `timeZone`, `createdAt`, ordered `items`,
   `coverage: string[]`, `omitted: number`.
 - `DreamerPlanItem`: `id`, `label`, `reason`, `status: pending|skipped|done`,
-  `source: session|memory|carry`, optional `computerId`, `sessionId`,
-  `memoryId`, transient `completionCandidate`, and persisted metadata-only
-  `completion`. Labels/reasons are generic server-authored text only.
+  `source: session|memory|carry|task`, optional `computerId`, `sessionId`,
+  `memoryId`, linked `taskId`, transient `completionCandidate`, and persisted
+  metadata-only `completion`. Labels/reasons are generic server-authored text
+  only.
+- `OracleTask`: durable owner/status/next action, source event and optional
+  source plan/session provenance, attempts, exact prompt-bearing session refs,
+  evidence, and either trusted execution completion or explicit user terminal
+  disposition.
 
 Routes (JSON snapshot responses, no envelope):
 
@@ -175,9 +192,13 @@ PUT /api/manager/dreamer/plan
       itemId, computerId, sessionId, sessionRevision, messageId, resultDigest
     }
   }
+POST /api/manager/dreamer/tasks/:taskId/dispatch
+POST /api/manager/dreamer/tasks/:taskId/complete
+POST /api/manager/dreamer/tasks/:taskId/disposition
 ```
 
-No manual run endpoint, task mutations, force-unlock or model tool. All invalid
+No manual run endpoint, proactive wake endpoint, force-unlock or second polling
+control plane. All invalid
 inputs reject with 400; absent/unavailable subsystem 503; stale revisions,
 plan IDs or item references 409. Errors never echo sensitive field values.
 

@@ -37,7 +37,7 @@ import {
   recoveryBrief,
 } from './manager-context.js'
 import type { JournalRecorder } from './manager-journal.js'
-import type { ManagerStore } from './manager-store.js'
+import { registryKey, type ManagerStore } from './manager-store.js'
 import {
   formatStructuredMemoryContext,
 } from './manager-structured-memory-search.js'
@@ -231,6 +231,29 @@ function automaticPayload(message: ManagerMessage): string {
   })
 }
 
+function uniqueManagerSessionRefs(
+  refs: ManagerSessionRef[],
+): ManagerSessionRef[] {
+  const positions = new Map<string, number>()
+  const unique: ManagerSessionRef[] = []
+  for (const reference of refs) {
+    const key = `${reference.computerId}\0${reference.sessionId}`
+    const position = positions.get(key)
+    if (position === undefined) {
+      positions.set(key, unique.length)
+      unique.push({ ...reference })
+      continue
+    }
+    const existing = unique[position]!
+    unique[position] = {
+      ...existing,
+      ...(existing.title ? {} : reference.title ? { title: reference.title } : {}),
+      ...(reference.promptId ? { promptId: reference.promptId } : {}),
+    }
+  }
+  return unique
+}
+
 function sameRuntime(left: ManagerSettings, right: ManagerSettings): boolean {
   return (left.model ?? undefined) === (right.model ?? undefined)
     && (left.reasoningEffort ?? undefined) === (right.reasoningEffort ?? undefined)
@@ -301,6 +324,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private deltaTimer?: ReturnType<typeof setTimeout>
   private currentReplyTo?: string
   private attemptActivities: string[] = []
+  private currentTaskSessionRefs: ManagerSessionRef[] = []
   private needsMemoryIndex = false
   private needsBrief = false
   private skillCache?: { at: number; key: string; skills: ManagerSkillSummary[] }
@@ -449,6 +473,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       ...(this.streaming ? { streaming: { ...this.streaming } } : {}),
       settings: this.settingsSnapshot(),
     }
+  }
+
+  /** Exact durable lookup for callers that cannot rely on the bounded snapshot. */
+  message(id: string): ManagerMessage | undefined {
+    return this.store.message(id)
   }
 
   settingsSnapshot(): ManagerSettingsSnapshot {
@@ -654,6 +683,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     if (!message || message.role !== 'user') {
       throw Object.assign(new Error('Message not found'), { statusCode: 404 })
     }
+    if (message.source === 'task') {
+      throw Object.assign(
+        new Error('Durable task messages are controlled by their task actions.'),
+        { statusCode: 409 },
+      )
+    }
     const started = message.state === 'running'
       || message.startedAt !== undefined
       || (this.store.state().interruptions ?? {})[messageId] !== undefined
@@ -677,6 +712,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const message = this.store.message(messageId)
     if (!message || message.role !== 'user') {
       throw Object.assign(new Error('Message not found'), { statusCode: 404 })
+    }
+    if (message.source === 'task') {
+      throw Object.assign(
+        new Error('Durable task messages are controlled by their task actions.'),
+        { statusCode: 409 },
+      )
     }
     if (message.state !== 'queued') {
       throw Object.assign(
@@ -742,11 +783,23 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     if (!message || message.role !== 'user') {
       throw Object.assign(new Error('Message not found'), { statusCode: 404 })
     }
+    if (message.source === 'task') {
+      throw Object.assign(
+        new Error('Durable task messages must be retried from the task card.'),
+        { statusCode: 409 },
+      )
+    }
     if (message.state === 'queued' || message.state === 'running') return message
     const timestamp = this.now().toISOString()
     // A message being retried has been tried, even one from before startedAt
     // was recorded, so it stays the user's no longer to edit.
-    const next: ManagerMessage = { ...message, state: 'queued', startedAt: message.startedAt ?? timestamp, updatedAt: timestamp }
+    const next: ManagerMessage = {
+      ...message,
+      state: 'queued',
+      startedAt: message.startedAt ?? timestamp,
+      updatedAt: timestamp,
+      retryCount: (message.retryCount ?? 0) + 1,
+    }
     delete next.error
     await this.updateMessage(next)
     this.publishStatus()
@@ -912,6 +965,16 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       registry: () => this.store.registry(),
       answerOnly: () => this.currentAnswerOnly,
       messageSource: () => this.currentMessageSource,
+      proactiveSessionRefs: () => {
+        const message = this.currentReplyTo
+          ? this.store.message(this.currentReplyTo)
+          : undefined
+        return message?.source === 'proactive' &&
+          message.automatic?.kind === 'proactive'
+          ? structuredClone(message.automatic.sessionRefs ?? [])
+          : []
+      },
+      taskSessionRefs: () => structuredClone(this.currentTaskSessionRefs),
       ...(this.recordProactiveOutcomes
         ? {
             recordProactiveOutcomes: async (outcomes: ManagerProactiveOutcome[]) => {
@@ -1020,6 +1083,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   private recordActivity(activity: ManagerToolActivity): void {
     this.attemptActivities.push(activity.content)
+    if (this.currentMessageSource === 'task' && activity.sessionRefs?.length) {
+      this.currentTaskSessionRefs = uniqueManagerSessionRefs([
+        ...this.currentTaskSessionRefs,
+        ...activity.sessionRefs,
+      ])
+    }
     this.flushDelta()
     const timestamp = this.now().toISOString()
     void this.updateMessage({
@@ -1100,6 +1169,16 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       }
     }
     this.currentMessageSource = message.source ?? 'typed'
+    this.currentTaskSessionRefs = message.source === 'task'
+      ? uniqueManagerSessionRefs([
+          ...(message.automatic?.kind === 'task'
+            ? message.automatic.sessionRefs ?? []
+            : []),
+          ...this.store.messages()
+            .filter((candidate) => candidate.replyTo === message.id)
+            .flatMap((candidate) => candidate.sessionRefs ?? []),
+        ])
+      : []
     this.cancelledMessageId = undefined
     this.streaming = undefined
     const interrupted = (this.store.state().interruptions ?? {})[message.id] !== undefined
@@ -1259,6 +1338,26 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       await this.recorder.flush()
     }
     const changes = this.store.journalSince(state.acknowledgedJournalSeq)
+    const proactiveScope = message.source === 'proactive' &&
+      message.automatic?.kind === 'proactive'
+      ? new Set((message.automatic.sessionRefs ?? []).map(
+          ({ computerId, sessionId }) => registryKey(computerId, sessionId),
+        ))
+      : undefined
+    const contextSessions = proactiveScope
+      ? sessions.filter((session) =>
+          proactiveScope.has(registryKey(session.computerId, session.id)))
+      : sessions
+    const registry = this.store.registry()
+    const contextRegistry = proactiveScope
+      ? Object.fromEntries(
+          Object.entries(registry).filter(([key]) => proactiveScope.has(key)),
+        )
+      : registry
+    const contextChanges = proactiveScope
+      ? changes.filter((change) =>
+          proactiveScope.has(registryKey(change.computerId, change.sessionId)))
+      : changes
     const index = await this.store.memory.index().catch(() => undefined)
     const indexHash = index === undefined ? undefined : hash(index)
     const showIndex = index !== undefined && (this.needsMemoryIndex || this.needsBrief || indexHash !== state.memoryHashShown)
@@ -1285,9 +1384,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     let context = buildTurnContext({
       now: this.now(),
       computers: this.hub.listComputers(),
-      sessions,
-      registry: this.store.registry(),
-      changes,
+      sessions: contextSessions,
+      registry: contextRegistry,
+      changes: contextChanges,
       sessionFolders: this.store.state().sessionFolders,
       sessionBackend: this.sessionBackend(),
       ...(showIndex && !this.needsBrief ? { memoryIndex: index } : {}),

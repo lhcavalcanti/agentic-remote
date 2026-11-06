@@ -24,6 +24,7 @@ export interface ManagerAutomaticContext {
   kind: 'proactive' | 'task'
   taskId?: string
   eventIds?: string[]
+  sessionRefs?: ManagerSessionRef[]
 }
 
 export type ManagerProactiveOutcome =
@@ -55,6 +56,8 @@ export interface ManagerSessionRef {
   computerId: string
   sessionId: string
   title?: string
+  /** Exact root user prompt dispatched for this task attempt. */
+  promptId?: string
 }
 
 /**
@@ -99,6 +102,8 @@ export interface ManagerMessage {
   startedAt?: string
   /** Why a message failed, shown beside its Retry. */
   error?: string
+  /** Durable retries of the same message after its first terminal result. */
+  retryCount?: number
   /** The message of yours a reply or activity belongs to. */
   replyTo?: string
   /** The tool behind an activity. */

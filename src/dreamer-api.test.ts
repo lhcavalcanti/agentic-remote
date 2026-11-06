@@ -3,6 +3,7 @@ import {
   completeDreamerTask,
   dispatchDreamerTask,
   getDreamer,
+  resolveDreamerTask,
   saveDreamerSettings,
   updateDreamerPlan,
 } from './dreamer-api'
@@ -45,6 +46,17 @@ describe('Dreamer API', () => {
     expect(fetch).toHaveBeenLastCalledWith(
       '/api/manager/dreamer/tasks/task%2Fa/complete',
       expect.objectContaining({ method: 'POST' }),
+    )
+    await resolveDreamerTask('task/a', {
+      revision: 4,
+      status: 'dismissed',
+    })
+    expect(fetch).toHaveBeenLastCalledWith(
+      '/api/manager/dreamer/tasks/task%2Fa/disposition',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ revision: 4, status: 'dismissed' }),
+      }),
     )
   })
 

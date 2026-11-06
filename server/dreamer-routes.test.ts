@@ -99,7 +99,7 @@ async function setup() {
   })
   await registerDreamerRoutes(app, service)
   apps.push(app)
-  return { app, service, task, managerMessages }
+  return { app, service, task, taskStore, managerMessages }
 }
 
 afterEach(async () => {
@@ -157,6 +157,54 @@ describe('Dreamer routes', () => {
       payload: { revision: task.revision, requestId: 'not-a-uuid' },
     })
     expect(malformed.statusCode).toBe(400)
+  })
+
+  it('lets the user complete or dismiss user-owned tasks idempotently', async () => {
+    const { app, taskStore } = await setup()
+    const completeTask = await taskStore.upsertFinding({
+      sourceEventIds: ['d'.repeat(64)],
+      title: 'Choose the production window',
+      summary: 'Oracle needs an explicit user decision.',
+      nextAction: 'Choose the rollout window.',
+      owner: 'user',
+    })
+    const dismissTask = await taskStore.upsertFinding({
+      sourceEventIds: ['e'.repeat(64)],
+      title: 'Review optional cleanup',
+      summary: 'This follow-up is optional.',
+      nextAction: 'Dismiss it if it is no longer relevant.',
+      owner: 'user',
+    })
+
+    const completed = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${completeTask.id}/disposition`,
+      payload: { revision: completeTask.revision, status: 'completed' },
+    })
+    expect(completed.statusCode).toBe(200)
+    expect(completed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === completeTask.id,
+    )).toMatchObject({ status: 'completed' })
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${completeTask.id}/disposition`,
+      payload: { revision: completeTask.revision, status: 'completed' },
+    })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === completeTask.id,
+    )).toMatchObject({ status: 'completed' })
+
+    const dismissed = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${dismissTask.id}/disposition`,
+      payload: { revision: dismissTask.revision, status: 'dismissed' },
+    })
+    expect(dismissed.statusCode).toBe(200)
+    expect(dismissed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === dismissTask.id,
+    )).toMatchObject({ status: 'dismissed' })
   })
 
   it('turns a journal suggestion into durable assigned follow-up work', async () => {
@@ -225,6 +273,7 @@ describe('Dreamer routes', () => {
       sessionRefs: [{
         computerId: 'computer-a',
         sessionId: 'session-a',
+        promptId: 'task-prompt',
       }],
     })
     const reviewed = await app.inject({ url: '/api/manager/dreamer' })

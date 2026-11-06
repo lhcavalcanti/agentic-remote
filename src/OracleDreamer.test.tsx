@@ -8,12 +8,14 @@ import {
   dispatchDreamerTask,
   DreamerApiError,
   getDreamer,
+  resolveDreamerTask,
   saveDreamerSettings,
   updateDreamerPlan,
 } from './dreamer-api'
 
 vi.mock('./dreamer-api', () => ({
   getDreamer: vi.fn(),
+  resolveDreamerTask: vi.fn(),
   completeDreamerTask: vi.fn(),
   dispatchDreamerTask: vi.fn(),
   saveDreamerSettings: vi.fn(),
@@ -65,6 +67,7 @@ async function openMorningPlan() {
 describe('Dreamer settings and morning review', () => {
   beforeEach(() => {
     vi.mocked(getDreamer).mockReset().mockResolvedValue(initial)
+    vi.mocked(resolveDreamerTask).mockReset()
     vi.mocked(completeDreamerTask).mockReset()
     vi.mocked(dispatchDreamerTask).mockReset()
     vi.mocked(saveDreamerSettings).mockReset()
@@ -258,6 +261,65 @@ describe('Dreamer settings and morning review', () => {
       revision: 3, enabled: true, timeZone: 'Asia/Kathmandu',
     })
     expect(screen.getByText(/02:00/)).toBeInTheDocument()
+  })
+
+  it('discloses that enabling Dreamer opts into Oracle model analysis', async () => {
+    render(<DreamerSettings />)
+
+    expect(await screen.findByText(/Oracle may use the selected model/i))
+      .toBeInTheDocument()
+    expect(screen.queryByText(/No model calls/i)).not.toBeInTheDocument()
+  })
+
+  it('lets the user complete or dismiss user-owned follow-up work', async () => {
+    const userTask = {
+      id: 'oracle-task-user',
+      revision: 2,
+      title: 'Choose the production window',
+      summary: 'Oracle needs an explicit decision.',
+      nextAction: 'Choose the rollout window.',
+      owner: 'user' as const,
+      status: 'ready' as const,
+      sourceEventIds: ['d'.repeat(64)],
+      attempts: [],
+      createdAt: '2026-10-29T04:00:00.000Z',
+      updatedAt: '2026-10-29T04:00:00.000Z',
+    }
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...ready,
+      tasks: [userTask],
+    })
+    vi.mocked(resolveDreamerTask)
+      .mockResolvedValueOnce({
+        ...ready,
+        tasks: [{ ...userTask, revision: 3, status: 'completed' as const }],
+      })
+      .mockResolvedValueOnce({
+        ...ready,
+        tasks: [{ ...userTask, revision: 3, status: 'dismissed' as const }],
+      })
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark complete' }))
+    await waitFor(() => expect(resolveDreamerTask).toHaveBeenCalledWith(
+      userTask.id,
+      { revision: userTask.revision, status: 'completed' },
+    ))
+    expect(await screen.findByText('completed · Needs you')).toBeInTheDocument()
+
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...ready,
+      tasks: [userTask],
+    })
+    await act(async () => {
+      window.dispatchEvent(new Event('agentic-remote:authoritative-refresh'))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(resolveDreamerTask).toHaveBeenLastCalledWith(
+      userTask.id,
+      { revision: userTask.revision, status: 'dismissed' },
+    ))
   })
 
   it('retains the input and shows a save failure instead of claiming success', async () => {

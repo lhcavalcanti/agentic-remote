@@ -66,6 +66,8 @@ function isTerminal(message: ManagerMessage): boolean {
     !['queued', 'running'].includes(message.state ?? '')
 }
 
+const PROACTIVE_AUTOMATIC_RETRY_LIMIT = 1
+
 export class ManagerProactiveCoordinator {
   private readonly inbox: ManagerProactiveInbox
   private readonly taskStore: OracleTaskStore
@@ -322,7 +324,7 @@ export class ManagerProactiveCoordinator {
     if (active) return
     const events = this.inbox.pending(20)
     if (events.length === 0) return
-    await this.agent.enqueueInternal({
+    const message = await this.agent.enqueueInternal({
       id: batchMessageId(events),
       content: await this.prompt(events),
       source: 'proactive',
@@ -330,8 +332,21 @@ export class ManagerProactiveCoordinator {
       automatic: {
         kind: 'proactive',
         eventIds: events.map(({ id }) => id),
+        sessionRefs: [...new Map(events.map((event) => [
+          registryKey(event.computerId, event.sessionId),
+          {
+            computerId: event.computerId,
+            sessionId: event.sessionId,
+          },
+        ])).values()],
       },
     })
+    if (
+      isTerminal(message) &&
+      (message.retryCount ?? 0) < PROACTIVE_AUTOMATIC_RETRY_LIMIT
+    ) {
+      await this.agent.retry(message.id)
+    }
   }
 
   private async prompt(

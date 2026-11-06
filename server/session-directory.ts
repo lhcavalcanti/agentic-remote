@@ -6,7 +6,6 @@ import {
   open,
   realpath,
   rename,
-  rmdir,
   stat,
   type FileHandle,
 } from 'node:fs/promises'
@@ -165,20 +164,13 @@ async function rollbackCreatedDirectories(
       metadata.dev !== entry.metadata.dev ||
       metadata.ino !== entry.metadata.ino
     ) {
-      await rename(quarantinePath, entry.path).catch(() => undefined)
       throw new SessionDirectoryError(
         'Knowledge folder creation could not be rolled back safely',
         503,
       )
     }
-    try {
-      await rmdir(quarantinePath)
-    } catch {
-      throw new SessionDirectoryError(
-        'Knowledge folder creation could not be rolled back safely',
-        503,
-      )
-    }
+    // Node has no pathname-free directory removal. Retain the randomized
+    // quarantine rather than let a watcher replace it before rmdir.
   }
 }
 

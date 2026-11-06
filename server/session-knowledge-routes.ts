@@ -33,6 +33,12 @@ function knowledgeBaseName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path
 }
 
+function errorStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const statusCode = Reflect.get(error, 'statusCode')
+  return typeof statusCode === 'number' ? statusCode : undefined
+}
+
 interface Lineage {
   replacements: Map<string, string>
   predecessors: Map<string, Set<string>>
@@ -109,6 +115,34 @@ export async function registerSessionKnowledgeRoutes(
   function markRemoved(generation: RegistrationGeneration, sessionId: string): void {
     generation.removed.add(sessionId)
     generation.epochs.set(sessionId, (generation.epochs.get(sessionId) ?? 0) + 1)
+  }
+
+  async function finalizeLifecycleBinding(
+    computerId: string,
+    sessionId: string,
+    validate: () => void,
+  ): Promise<void> {
+    validate()
+    const binding = store.get(computerId, sessionId)
+    try {
+      await knowledge.finalizeCommittedBinding({
+        computerId,
+        sessionId,
+        rootId: binding.rootId,
+        rootPath: binding.rootPath ?? '.',
+        revision: binding.revision,
+      })
+    } catch (error) {
+      app.log.error(
+        { err: error, computerId, sessionId },
+        'Session Knowledge catalog recovery failed before lifecycle update',
+      )
+      throw new SessionKnowledgeReferenceError(
+        'Knowledge folder metadata could not be recovered. Try again.',
+        503,
+      )
+    }
+    validate()
   }
 
   function recordReplacement(lineage: Lineage, evidence: ReplacementEvidence): void {
@@ -194,6 +228,13 @@ export async function registerSessionKnowledgeRoutes(
       if (previous.length > 0) {
         const signature = JSON.stringify(previous)
         if (lineage.reconciled.get(target) !== signature) {
+          for (const previousSessionId of previous) {
+            await finalizeLifecycleBinding(
+              computerId,
+              previousSessionId,
+              validate,
+            )
+          }
           await store.replaceSession(computerId, target, previous, validate)
           lineage.reconciled.set(target, signature)
         }
@@ -424,7 +465,24 @@ export async function registerSessionKnowledgeRoutes(
             { force: reservation.requiresBindingCommit },
           )
         } catch (error) {
-          await reservation.rollback()
+          try {
+            await reservation.rollback()
+          } catch (rollbackError) {
+            request.log.error(
+              {
+                err: rollbackError,
+                bindingError: error,
+                computerId,
+                sessionId,
+                rootId: reservation.root.id,
+              },
+              'Session Knowledge catalog rollback failed after binding rejection',
+            )
+            throw new SessionKnowledgeReferenceError(
+              'Knowledge folder metadata could not be recovered. Try again.',
+              503,
+            )
+          }
           if (error instanceof SessionKnowledgeConflictError) {
             return reply.code(409).send({
               error: error.message,
@@ -471,12 +529,17 @@ export async function registerSessionKnowledgeRoutes(
       }
       if (root) {
         const confinementPath = knowledge.getRootConfinement(root.id)
-        const canonicalPath = await manager.validateKnowledgeRoot(
-          root.computerId,
-          root.path,
-          confinementPath,
-        )
-        await manager.listKnowledge(
+        let canonicalPath = root.path
+        try {
+          canonicalPath = await manager.validateKnowledgeRoot(
+            root.computerId,
+            root.path,
+            confinementPath,
+          )
+        } catch (error) {
+          if (errorStatusCode(error) !== 404) throw error
+        }
+        const listing = await manager.listKnowledge(
           root.computerId,
           canonicalPath,
           rootPath,
@@ -484,6 +547,7 @@ export async function registerSessionKnowledgeRoutes(
         )
         rootIsCurrent?.()
         root.path = canonicalPath
+        rootPath = listing.path
       }
       const sessionIsCurrent = (
         await knownSessionGuard(computerId, sessionId)
@@ -557,6 +621,7 @@ export async function registerSessionKnowledgeRoutes(
       }
       validate()
       markRemoved(generation, sessionId)
+      await finalizeLifecycleBinding(computerId, sessionId, validate)
       await store.removeSession(computerId, sessionId, validate)
     },
     removedComputerCleanup(computerId) {

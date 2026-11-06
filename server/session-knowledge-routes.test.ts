@@ -83,7 +83,11 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
     if (!registration) throw new Error('Computer not found')
     return () => this.registrations.get(computerId) === registration
   })
-  listKnowledge = vi.fn(async () => ({ path: '.', entries: [] }))
+  listKnowledge = vi.fn(async (
+    _computerId: string,
+    _root: string,
+    requestedPath = '.',
+  ) => ({ path: requestedPath, entries: [] }))
   deleteSession = vi.fn(async (computerId: string, sessionId: string) => {
     if (![...this.sessions, ...this.history].some((entry) => entry.computerId === computerId && entry.id === sessionId)) {
       throw Object.assign(new Error('Session not found'), { statusCode: 404 })
@@ -417,6 +421,73 @@ describe('session Knowledge routes', () => {
     })
   })
 
+  it('uses the legacy unconfined listing path on older paired nodes', async () => {
+    const { put, root, manager } = await fixture()
+    manager.validateKnowledgeRoot.mockRejectedValueOnce(
+      Object.assign(new Error('Validation endpoint not found'), {
+        statusCode: 404,
+      }),
+    )
+
+    const response = await put(root.id)
+
+    expect(response.statusCode, response.body).toBe(200)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      root.computerId,
+      root.path,
+      '.',
+      undefined,
+    )
+    expect(response.json().binding).toMatchObject({
+      rootId: root.id,
+      rootPath: '.',
+      knowledgeBasePath: root.path,
+    })
+  })
+
+  it('keeps the capability refusal for confined roots on older paired nodes', async () => {
+    const { put, putPath, manager } = await fixture()
+    const created = await putPath('knowledge')
+    const rootId = created.json().binding.rootId
+    manager.validateKnowledgeRoot.mockRejectedValueOnce(
+      Object.assign(new Error('Validation endpoint not found'), {
+        statusCode: 404,
+      }),
+    )
+    manager.listKnowledge.mockRejectedValueOnce(
+      Object.assign(new Error('Update this runtime for confined reads'), {
+        statusCode: 409,
+      }),
+    )
+
+    const response = await put(rootId, 1, 'hub', 'one', 'docs')
+
+    expect(response.statusCode, response.body).toBe(409)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      'hub',
+      '/projects/current/knowledge',
+      'docs',
+      '/projects/current',
+    )
+  })
+
+  it('persists the canonical listed path for an in-root symlink alias', async () => {
+    const { put, root, manager } = await fixture()
+    manager.listKnowledge.mockResolvedValueOnce({
+      path: 'docs/canonical',
+      entries: [],
+    })
+
+    const response = await put(root.id, 0, 'hub', 'one', 'docs/alias')
+
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().binding).toMatchObject({
+      rootId: root.id,
+      rootPath: 'docs/canonical',
+      knowledgeBasePath: `${root.path}/docs/canonical`,
+    })
+  })
+
   it('commits confinement when path mode converts the current catalog binding', async () => {
     const { put, putPath, knowledge } = await fixture()
     const existing = await knowledge.addRoot({
@@ -549,6 +620,75 @@ describe('session Knowledge routes', () => {
     expect(restarted.getRootConfinement(rootId)).toBe('/projects/current')
   })
 
+  it('finalizes a committed path root before replacement moves its binding', async () => {
+    const { app, directory, putPath, store } = await fixture()
+    let catalogRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge.json') &&
+        ++catalogRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    const rootId = failed.json().binding.rootId
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const cleared = await app.inject({
+      method: 'POST',
+      url: '/api/computers/hub/sessions/one/clear',
+      headers: trusted,
+    })
+    expect(cleared.statusCode, cleared.body).toBe(200)
+    expect(store.get('hub', 'one-cleared')).toMatchObject({
+      rootId,
+      revision: 1,
+    })
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRoot(rootId)).toBeDefined()
+    expect(restarted.getRootConfinement(rootId)).toBe('/projects/current')
+  })
+
+  it('finalizes a committed path root before deletion removes its binding', async () => {
+    const { app, directory, putPath, store } = await fixture()
+    let catalogRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge.json') &&
+        ++catalogRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    const rootId = failed.json().binding.rootId
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/api/computers/hub/sessions/one',
+      headers: trusted,
+    })
+    expect(deleted.statusCode, deleted.body).toBe(204)
+    expect(store.get('hub', 'one').revision).toBe(0)
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRoot(rootId)).toBeDefined()
+    expect(restarted.getRootConfinement(rootId)).toBe('/projects/current')
+  })
+
   it('maps catalog reservation persistence failures to a retryable response', async () => {
     const { putPath, store } = await fixture()
     vi.mocked(rename).mockImplementationOnce(async (...args) => {
@@ -563,6 +703,74 @@ describe('session Knowledge routes', () => {
     expect(failed.statusCode, failed.body).toBe(503)
     expect(failed.json().error).not.toContain('PRIVATE_RESERVATION_IO')
     expect(store.get('hub', 'one').revision).toBe(0)
+  })
+
+  it('maps conflict rollback persistence failure to a recoverable response', async () => {
+    const { directory, knowledge, put, putPath, root, store } = await fixture()
+    expect((await put(root.id)).statusCode).toBe(200)
+    let catalogRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge.json') &&
+        ++catalogRenames === 2
+      ) {
+        throw new Error('PRIVATE_ROLLBACK_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('private-notes', 0)
+
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(failed.json().error).not.toContain('PRIVATE_ROLLBACK_IO')
+    expect(store.get('hub', 'one')).toMatchObject({
+      rootId: root.id,
+      revision: 1,
+    })
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.listRoots()).toEqual(knowledge.listRoots().filter(
+      (entry) => entry.path !== '/projects/current/private-notes',
+    ))
+  })
+
+  it('maps binding and rollback persistence failures to a recoverable response', async () => {
+    const { directory, knowledge, putPath, store } = await fixture()
+    const bindingPath = path.join(directory, 'session-knowledge.json')
+    let catalogRenames = 0
+    let bindingRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      const destination = String(args[1])
+      if (destination === bindingPath && ++bindingRenames === 1) {
+        throw new Error('PRIVATE_BINDING_IO')
+      }
+      if (
+        destination.endsWith('/knowledge.json') &&
+        ++catalogRenames === 2
+      ) {
+        throw new Error('PRIVATE_ROLLBACK_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('private-notes')
+
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(failed.json().error).not.toMatch(
+      /PRIVATE_(?:BINDING|ROLLBACK)_IO/,
+    )
+    expect(store.get('hub', 'one').revision).toBe(0)
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.listRoots()).toEqual(knowledge.listRoots().filter(
+      (entry) => entry.path !== '/projects/current/private-notes',
+    ))
   })
 
   it('serializes simultaneous path updates and keeps only the winning root', async () => {

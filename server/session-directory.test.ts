@@ -1,10 +1,10 @@
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   rename,
   rm,
-  rmdir,
   stat,
   symlink,
   writeFile,
@@ -23,8 +23,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    lstat: vi.fn(actual.lstat),
     mkdir: vi.fn(actual.mkdir),
-    rmdir: vi.fn(actual.rmdir),
     stat: vi.fn(actual.stat),
   }
 })
@@ -44,7 +44,7 @@ afterEach(async () => {
   vi.mocked(mkdir).mockImplementation(async (target, options) =>
     actual.mkdir(target, options),
   )
-  vi.mocked(rmdir).mockImplementation(async (target) => actual.rmdir(target))
+  vi.mocked(lstat).mockImplementation(async (target) => actual.lstat(target))
   vi.mocked(stat).mockImplementation(async (target) => actual.stat(target))
 })
 
@@ -386,7 +386,7 @@ describe('ensureSessionKnowledgeBase', () => {
     })
   })
 
-  it('does not delete a replacement directory during rollback', async () => {
+  it('does not delete a replacement quarantine directory during rollback', async () => {
     const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-rollback-race-'))
     directories.push(parent)
     const cwd = path.join(parent, 'project')
@@ -410,27 +410,27 @@ describe('ensureSessionKnowledgeBase', () => {
       }
       return actual.mkdir(target, options)
     })
-    let replaced = false
-    vi.mocked(rmdir).mockImplementation(async (target) => {
-      if (!replaced) {
-        replaced = true
-        try {
-          await actual.rename(
-            path.join(moved, 'docs'),
-            path.join(moved, 'created-original'),
-          )
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        }
-        await actual.mkdir(path.join(moved, 'docs'))
+    let replacementPath: string | undefined
+    vi.mocked(lstat).mockImplementation(async (target) => {
+      const metadata = await actual.lstat(target)
+      if (
+        !replacementPath &&
+        path.basename(String(target)).startsWith(
+          '.agentic-remote-rollback-',
+        )
+      ) {
+        replacementPath = path.join(moved, path.basename(String(target)))
+        await actual.rename(target, `${String(target)}-original`)
+        await actual.mkdir(target)
       }
-      return actual.rmdir(target)
+      return metadata
     })
 
     await expect(
       ensureSessionKnowledgeBase(cwd, 'docs/knowledge', true),
     ).rejects.toMatchObject({ statusCode: 403 })
-    await expect(stat(path.join(moved, 'docs'))).resolves.toMatchObject({
+    expect(replacementPath).toBeDefined()
+    await expect(stat(replacementPath!)).resolves.toMatchObject({
       mode: expect.any(Number),
     })
     await expect(stat(path.join(outside, 'docs'))).rejects.toMatchObject({

@@ -119,8 +119,12 @@ Knowledge root or any filesystem folder.
 
 Filesystem errors do not expose unsubmitted private paths. If directory creation
 succeeds but metadata persistence fails, Agentic Remote leaves the directory in
-place rather than risking deletion of user or concurrent data. A newly reserved
-catalog entry is rolled back.
+place rather than risking deletion of user or concurrent data. Creation-race
+rollback moves new segments to randomized hidden quarantine names; when the
+platform cannot remove one by verified identity, it retains the quarantine
+rather than deleting a replacement directory. A newly reserved catalog entry
+is rolled back. If that rollback cannot be persisted, the API returns `503`
+and startup recovery retains enough metadata to finish safely.
 If the hub stops between cataloging and binding, startup recovery keeps the
 root only when a durable path-mode session binding references its exact root ID
 and claimed root path at the exact committed revision; otherwise the
@@ -128,7 +132,8 @@ provisional catalog entry or confinement is removed. Post-commit finalization
 can promote only the reservation claim that performed that binding commit. A
 later clear or nested update first finalizes any claim already proven by the
 current durable binding, so advancing the revision cannot make restart
-recovery discard it.
+recovery discard it. Session replacement and deletion likewise finalize the
+matching claim before moving or removing its binding.
 
 ## Lifecycle
 
@@ -169,8 +174,10 @@ continues to omit hidden entries.
 For paired computers, every confined list or file response must explicitly
 acknowledge that the node applied confinement. The hub rejects responses from
 older or rolled-back nodes that omit that acknowledgment rather than trusting
-an unconstrained read. Root-ID associations also persist the canonical
-owner-returned root path, so aliases cannot weaken later validation.
+an unconstrained read. An unconfined shared root retains the legacy listing
+path when an older node lacks the newer validation endpoint. Root-ID
+associations persist both the canonical owner-returned root and nested listing
+paths, so aliases cannot weaken later validation.
 
 ## Default `.copilot-instructions` text
 

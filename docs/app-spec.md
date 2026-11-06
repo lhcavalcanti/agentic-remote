@@ -1504,7 +1504,11 @@ clear replacement IDs without losing, duplicating, or reordering content.
   otherwise roll it back. Finalization MUST promote only the claim token
   associated with that binding commit. Before a later update advances the
   binding revision, any pending claim proven by the current durable binding
-  MUST be finalized.
+  MUST be finalized. Session replacement and deletion MUST also finalize a
+  matching committed claim before moving or removing its binding. Creation
+  rollback MUST NOT remove a pathname after only a prior identity check; when
+  identity-bound directory removal is unavailable, it MUST retain a randomized
+  quarantine rather than risk deleting a replacement.
 - Path-first updates MUST use the same persisted revision and replacement
   lineage as catalog-root updates. Saving the same current folder MUST be a
   no-op. Active, suspended, and historical sessions MUST be handled passively;
@@ -1515,6 +1519,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
   callers continue from its revision instead of retrying stale input.
 - A session MAY root its Knowledge tree at a nested folder inside a shared
   root. The nested path MUST persist with the hub-side session association and
+  MUST use the canonical path returned by the owning computer's listing, not a
+  caller-supplied symbolic-link alias. The nested path MUST
   become the true top of that session's tree: parent folders above it MUST NOT
   appear in scoped list, file, breadcrumb, or relative-link responses.
 - Choosing a shared root or the session folder MUST open a recursive subfolder
@@ -1532,7 +1538,11 @@ clear replacement IDs without losing, duplicating, or reordering content.
   from a session that has never had an association.
 - Choosing a root MUST allow any folder on the owning computer that the user can
   read, not only the home directory. Session working directories remain
-  confined; a root is read-only.
+  confined; a root is read-only. Legacy unconfined roots MUST still pass
+  through readable-directory validation so missing or unreadable roots return
+  mapped client errors. An older paired node that lacks the standalone
+  validation endpoint MAY use its legacy unconfined listing path; confined
+  roots MUST continue to fail closed without capability acknowledgment.
 - A root MUST be validated on its owning computer, and every path browsed under
   it MUST stay inside it. Catalog and session root snapshots MUST persist the
   canonical path returned by the owning computer rather than an alias or

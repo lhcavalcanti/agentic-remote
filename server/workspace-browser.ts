@@ -67,9 +67,7 @@ export async function listWorkspace(
   requestedPath = '.',
   confinementPath?: string,
 ): Promise<WorkspaceListing> {
-  const root = confinementPath
-    ? await validateKnowledgeRoot(rootPath, confinementPath)
-    : await realpath(rootPath)
+  const root = await validateKnowledgeRoot(rootPath, confinementPath)
   const resolved = await resolveWorkspacePath(root, requestedPath)
   if (!(await stat(resolved)).isDirectory()) {
     throw new WorkspaceBrowserError('Workspace path must be a folder', 400)
@@ -128,9 +126,7 @@ export async function readWorkspaceFile(
   requestedPath: string,
   confinementPath?: string,
 ): Promise<WorkspaceFile> {
-  const root = confinementPath
-    ? await validateKnowledgeRoot(rootPath, confinementPath)
-    : await realpath(rootPath)
+  const root = await validateKnowledgeRoot(rootPath, confinementPath)
   const resolved = await resolveWorkspacePath(root, requestedPath)
   const metadata = await stat(resolved)
   if (!metadata.isFile()) {
@@ -236,7 +232,7 @@ export async function searchWorkspace(
       400,
     )
   }
-  const root = await realpath(rootPath)
+  const root = await validateKnowledgeRoot(rootPath)
   const searchRoot = await resolveWorkspacePath(root, requestedPath)
   if (!(await stat(searchRoot)).isDirectory()) {
     throw new WorkspaceBrowserError('Search path must be a folder', 400)

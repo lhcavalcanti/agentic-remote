@@ -92,6 +92,40 @@ describe('workspace browser', () => {
     )
   })
 
+  it('maps a deleted legacy unconfined root through folder validation', async () => {
+    const { root } = await fixture()
+    await rm(root, { recursive: true })
+
+    await expect(listWorkspace(root)).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining('does not exist'),
+    })
+  })
+
+  it('maps an unreadable legacy unconfined root through folder validation', async () => {
+    const { root } = await fixture()
+    const actual = await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    )
+    vi.mocked(realpath).mockImplementation(async (target) => {
+      if (String(target) === root) {
+        throw Object.assign(new Error('PRIVATE_REALPATH_IO'), {
+          code: 'EACCES',
+        })
+      }
+      return actual.realpath(target)
+    })
+
+    const error = await readWorkspaceFile(root, 'README.md').catch(
+      (caught: unknown) => caught,
+    )
+    expect(error).toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining('not readable'),
+    })
+    expect((error as Error).message).not.toContain('PRIVATE_REALPATH_IO')
+  })
+
   it('refuses a confined read after the root is replaced by a symlink', async () => {
     const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-read-race-'))
     directories.push(parent)

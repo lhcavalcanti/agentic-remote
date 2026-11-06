@@ -223,7 +223,7 @@ interface PendingTerminalQueueSettlement {
   retryDelay: number
   // A mid-turn steer refused before anything was typed goes back to the head
   // of the queue and waits for the composer again, without an error.
-  quiet?: boolean
+  retrySteer?: boolean
 }
 
 type UserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
@@ -406,6 +406,7 @@ const TRANSCRIPT_WAKE_MS = 100
 const TRANSCRIPT_PACE_COST_FACTOR = 8
 // How long a message handed to a terminal is watched for in its event log.
 const TRANSCRIPT_ECHO_WAIT_MS = 5_000
+const TERMINAL_STEER_RETRY_MS = 250
 
 const sessionInUseMessage =
   'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
@@ -1869,6 +1870,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   private readonly pendingTerminalQueueSettlements = new Map<string, PendingTerminalQueueSettlement>()
   private readonly pendingTerminalQueueClaims = new Map<string, { retryAt: number; retryDelay: number }>()
+  private readonly terminalQueueRetryTimers = new Map<string, NodeJS.Timeout>()
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
   private startupRecoveryPending = false
@@ -2803,6 +2805,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.startupTerminalQueues.clear()
     this.pendingTerminalQueueSettlements.clear()
     this.pendingTerminalQueueClaims.clear()
+    for (const timer of this.terminalQueueRetryTimers.values()) clearTimeout(timer)
+    this.terminalQueueRetryTimers.clear()
     for (const session of this.store.list()) {
       this.backgroundTaskTracker.remove(session.id)
     }
@@ -6030,7 +6034,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const queued = await this.enqueuePrompt(sessionId, content, command, answers, delivery, steer)
     if (!wasIdle) {
       // Nothing else drains mid-turn, so the queue is polled for the composer.
-      if (steer) this.retryTerminalQueueClaim(sessionId)
+      if (steer) this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
       return queued
     }
     await this.drainTerminalQueue(sessionId, true)
@@ -10776,7 +10780,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (midTurnSteer
         ? !before || !terminalInputReady(before, true) || composerHoldsText(before)
         : before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
-        this.retryTerminalQueueClaim(sessionId)
+        this.retryTerminalQueueClaim(
+          sessionId,
+          false,
+          midTurnSteer ? TERMINAL_STEER_RETRY_MS : undefined,
+        )
         return false
       }
       let claimed: Awaited<ReturnType<SessionStore['claimTerminalQueuedPrompt']>>
@@ -10837,7 +10845,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         failureMessage,
         retryAt: 0,
         retryDelay: 750,
-        ...(quiet ? { quiet } : {}),
+        ...(quiet ? { retrySteer: true } : {}),
       })
       return await this.settleTerminalQueue(sessionId)
     })
@@ -10856,20 +10864,54 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !this.store.terminalQueueDispatch(sessionId) && claim?.accepted === true && claim.failedAt === token
   }
 
-  private retryTerminalQueueClaim(sessionId: string, failed = false): void {
+  private retryTerminalQueueClaim(
+    sessionId: string,
+    failed = false,
+    readyDelay?: number,
+  ): void {
     const session = this.store.get(sessionId)
     if (!session?.queuedPrompts?.length || this.stopped || this.deletingSessions.has(sessionId) ||
         (this.startupTerminalQueues.has(sessionId) && !this.hasStartupQueueLifecycle(sessionId, session)) ||
         (session.failedPrompt && !this.awaitingAcceptedStartupRecovery(sessionId, session))) {
       this.pendingTerminalQueueClaims.delete(sessionId)
+      const timer = this.terminalQueueRetryTimers.get(sessionId)
+      if (timer) clearTimeout(timer)
+      this.terminalQueueRetryTimers.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       return
     }
-    const delay = failed ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750 : 750
+    const delay = failed
+      ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750
+      : readyDelay ?? 750
+    const retryAt = Date.now() + delay
     this.pendingTerminalQueueClaims.set(sessionId, {
-      retryAt: Date.now() + delay,
+      retryAt,
       retryDelay: failed ? Math.min(delay * 2, 60_000) : 750,
     })
+    const previous = this.terminalQueueRetryTimers.get(sessionId)
+    if (previous) clearTimeout(previous)
+    this.terminalQueueRetryTimers.delete(sessionId)
+    if (readyDelay === undefined) return
+    let timer: NodeJS.Timeout
+    const wake = () => {
+      if (this.terminalQueueRetryTimers.get(sessionId) !== timer) return
+      if (this.pendingTerminalQueueClaims.get(sessionId)?.retryAt !== retryAt) {
+        this.terminalQueueRetryTimers.delete(sessionId)
+        return
+      }
+      const remaining = retryAt - Date.now()
+      if (remaining > 0) {
+        timer = setTimeout(wake, remaining)
+        timer.unref()
+        this.terminalQueueRetryTimers.set(sessionId, timer)
+        return
+      }
+      this.terminalQueueRetryTimers.delete(sessionId)
+      this.wakeTerminalQueue(sessionId)
+    }
+    timer = setTimeout(wake, delay)
+    timer.unref()
+    this.terminalQueueRetryTimers.set(sessionId, timer)
   }
 
   private settleTerminalRecoveryForActivation(sessionId: string): void {
@@ -11024,8 +11066,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.stopped) return false
     this.publish(settled)
-    if (pending.outcome.kind === 'failed' && pending.quiet) {
-      this.retryTerminalQueueClaim(sessionId)
+    if (pending.outcome.kind === 'failed' && pending.retrySteer) {
+      this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
       return false
     }
     if (pending.outcome.kind === 'failed') {
@@ -11040,7 +11082,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     // A steer now at the head is polled for while the turn runs: the one this
     // delivery started, or the one a delivered steer joined.
-    if (pending.overlayOpen || settled.queuedPrompts?.[0]?.steer) this.retryTerminalQueueClaim(sessionId)
+    if (pending.overlayOpen) {
+      this.retryTerminalQueueClaim(sessionId)
+    } else if (settled.queuedPrompts?.[0]?.steer) {
+      this.retryTerminalQueueClaim(sessionId, false, TERMINAL_STEER_RETRY_MS)
+    }
     return !pending.overlayOpen && settled.status === 'idle' && !settled.suspended
   }
 

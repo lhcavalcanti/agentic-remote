@@ -301,9 +301,9 @@ const REPLACEMENT_READY_FRAMES = 30
 // first message to it only needs its prompt seen steady once.
 const SETTLED_OWNER_AGE_MS = 30_000
 const SETTLED_READY_FRAMES = 2
-// A settled Copilot that is working shows its prompt at once or not at all, so
-// a steer is refused after this rather than waiting out startup under the lock.
-const SETTLED_STEER_READY_TIMEOUT_MS = 5_000
+// Give a settled working Copilot enough time to paint two stable composer
+// frames, then release the send lock so AgentService can retain and retry it.
+const SETTLED_STEER_READY_TIMEOUT_MS = 500
 const PROBE_COLUMNS = 80
 const PROBE_ROWS = 24
 const PROBE_ANSWER_TIMEOUT_MS = 10_000

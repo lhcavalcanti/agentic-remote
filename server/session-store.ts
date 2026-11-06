@@ -2341,6 +2341,7 @@ export class SessionStore {
       updated = { ...queue[index], content }
       if (isCommand) {
         updated.command = true
+        delete updated.steer
       } else {
         delete updated.command
       }

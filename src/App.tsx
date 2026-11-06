@@ -5159,10 +5159,10 @@ function SortableQueuedPrompt({
         <GripVertical size={13} />
       </span>
       <span>
-        {prompt.steer && (
+        {prompt.steer && !prompt.command && (
           <strong
             className="queued-prompt__steer"
-            title="Typed into the running turn as soon as the terminal is ready"
+            title="Waits for an empty terminal composer, then joins the running turn at the next safe input point"
           >
             Steer ·{' '}
           </strong>
@@ -8461,6 +8461,12 @@ function App() {
   // An interrupted or archived record is read-only until it is reopened; the
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
+  const selectedQueueIsSteering = Boolean(
+    selected?.queuedPrompts?.length &&
+    selected.queuedPrompts.every(
+      (prompt) => prompt.steer === true && !prompt.command,
+    ),
+  )
   const selectedLifecycleBlocked = !selectedComputerOnline ||
     selectedRetained ||
     selected?.status !== 'idle' ||
@@ -15968,12 +15974,16 @@ function App() {
             ) : null}
             {selected.queuedPrompts?.length ? (
               <section
-                aria-description="Messages waiting for later delivery"
-                aria-label="Queued prompts"
+                aria-description={selectedQueueIsSteering
+                  ? 'Messages waiting for a safe terminal composer to join the running turn'
+                  : 'Messages waiting for later delivery'}
+                aria-label={selectedQueueIsSteering ? 'Steering prompts' : 'Queued prompts'}
                 className="queued-prompts"
               >
                 <header>
-                  <strong>Queued for later</strong>
+                  <strong>
+                    {selectedQueueIsSteering ? 'Steering when ready' : 'Queued for later'}
+                  </strong>
                   <span>{selected.queuedPrompts.length}</span>
                 </header>
                 <DndContext

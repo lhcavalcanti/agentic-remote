@@ -8398,11 +8398,14 @@ describe('AgentService deletion', () => {
         const sent = await service.sendMessage(sessionId, 'Steer when you can')
         expect(sent.queuedPrompts).toMatchObject([{ content: 'Steer when you can', steer: true }])
         // Still no composer: nothing more is typed.
-        await new Promise((resolve) => setTimeout(resolve, 1_600))
+        await new Promise((resolve) => setTimeout(resolve, 100))
         expect(terminal.send).toHaveBeenCalledTimes(1)
 
         pane.current = composerBack
-        await vi.waitFor(() => expect(terminal.send).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+        await vi.waitFor(
+          () => expect(terminal.send).toHaveBeenCalledTimes(2),
+          { interval: 25, timeout: 350 },
+        )
         expect(terminal.send.mock.calls[1]).toEqual(steerSend(sessionId, 'Steer when you can'))
         expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
         await vi.waitFor(() => {
@@ -8435,6 +8438,33 @@ describe('AgentService deletion', () => {
         await new Promise((resolve) => setTimeout(resolve, 2_000))
         expect(terminal.send).toHaveBeenCalledTimes(1)
         expect(service.store.get(sessionId)?.queuedPrompts).toMatchObject([{ content: 'Steer when you can', steer: true }])
+      } finally {
+        warn.mockRestore()
+        await service.stop()
+      }
+    })
+
+    it('releases its retry timer when claim ownership disappears before wake', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { service, sessionId } = await busyTerminal([
+        () => { throw notReady() },
+      ])
+      try {
+        await service.sendMessage(sessionId, 'Steer when you can')
+        const claims = Reflect.get(
+          service,
+          'pendingTerminalQueueClaims',
+        ) as Map<string, unknown>
+        const timers = Reflect.get(
+          service,
+          'terminalQueueRetryTimers',
+        ) as Map<string, NodeJS.Timeout>
+        expect(timers.has(sessionId)).toBe(true)
+
+        claims.delete(sessionId)
+        await new Promise((resolve) => setTimeout(resolve, 350))
+
+        expect(timers.has(sessionId)).toBe(false)
       } finally {
         warn.mockRestore()
         await service.stop()
@@ -8848,12 +8878,14 @@ describe('AgentService deletion', () => {
       id: 'p1',
       content: 'plain text',
       createdAt: '2026-09-02T00:00:00.000Z',
+      steer: true,
     })
 
     // Rewritten into a command, it has to wait as one: kept as it was, the
     // queue ran it as the kind it used to be.
     const asCommand = await service.updateQueuedPrompt(created.id, 'p1', '/usage')
     expect(asCommand.prompt.command).toBe(true)
+    expect(asCommand.prompt.steer).toBeUndefined()
 
     // A command this session does not have would stop the drain when it was
     // reached, with everything behind it waiting. Refused before it is stored,

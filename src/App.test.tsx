@@ -9052,9 +9052,41 @@ describe('App', () => {
 
       fireEvent.change(textarea, { target: { value: steer } })
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-      const label = await screen.findByTitle('Typed into the running turn as soon as the terminal is ready')
+      const delivery = await screen.findByRole('region', { name: 'Steering prompts' })
+      expect(delivery).toHaveTextContent('Steering when ready')
+      expect(delivery).not.toHaveTextContent('Queued for later')
+      expect(delivery).toHaveAttribute(
+        'aria-description',
+        'Messages waiting for a safe terminal composer to join the running turn',
+      )
+      const label = await screen.findByTitle(
+        'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
+      )
       expect(label).toHaveTextContent('Steer')
       expect(label.parentElement).toHaveTextContent(steer)
+    })
+
+    it('does not label a queued command with stale steer metadata as steering', async () => {
+      const queued = {
+        ...running,
+        queuedPrompts: [{
+          id: 'q1',
+          content: '/usage',
+          createdAt: new Date().toISOString(),
+          command: true,
+          steer: true,
+        }],
+      }
+      vi.mocked(listSessions).mockResolvedValue([queued])
+      vi.mocked(getSession).mockResolvedValue(queued)
+      render(<App />)
+
+      const delivery = await screen.findByRole('region', { name: 'Queued prompts' })
+      expect(delivery).toHaveTextContent('Queued for later')
+      expect(delivery).not.toHaveTextContent('Steering when ready')
+      expect(screen.queryByTitle(
+        'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
+      )).toBeNull()
     })
 
     it('is not shown for a failed send, which goes back to the composer', async () => {

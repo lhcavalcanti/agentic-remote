@@ -39,6 +39,7 @@ export interface ShellAttentionState {
   status?: string
   pendingPermission?: unknown
   pendingUserInput?: unknown
+  queueState?: { state?: string }
 }
 
 interface ShellBridge {
@@ -108,7 +109,9 @@ export function attentionCount(
     (total, session) =>
       session.pendingPermission != null ||
       session.pendingUserInput != null ||
-      session.status === 'waiting'
+      session.status === 'waiting' ||
+      session.queueState?.state === 'waiting' ||
+      session.queueState?.state === 'error'
         ? total + 1
         : total,
     0,

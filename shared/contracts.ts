@@ -222,6 +222,14 @@ export interface QueuedPromptDispatchResult {
   delivery?: 'accepted' | 'unknown'
 }
 
+export interface QueueState {
+  state: 'waiting' | 'error'
+  promptId: string
+  message: string
+  updatedAt: string
+  retryAt?: string
+}
+
 export interface SessionRuntimeInfo {
   model?: string
   reasoningEffort?: string
@@ -347,6 +355,7 @@ export interface SessionSummary {
   archivedAt?: string
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
+  queueState?: QueueState
   /** A durable dispatch intent. It must never be retried automatically. */
   queuedDispatch?: QueuedPromptDispatch
   /**

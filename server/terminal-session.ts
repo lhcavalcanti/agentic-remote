@@ -375,6 +375,7 @@ export class TmuxTerminalSessionController
   }
   private readonly replacementComposerTimeoutMs =
     REPLACEMENT_COMPOSER_TIMEOUT_MS
+  private readonly startupTimeoutMs = TERMINAL_STARTUP_TIMEOUT_MS
   private readonly settledOwnerAgeMs = SETTLED_OWNER_AGE_MS
   /** When Stop last sent each session Ctrl+C. */
   private readonly interruptedAt = new Map<string, number>()
@@ -1901,8 +1902,9 @@ export class TmuxTerminalSessionController
         readyOwner.target === owner.target
       ) {
         const pane = await capturePane(owner.target)
+        const overlay = isTerminalOverlay(pane)
         if (
-          isTerminalOverlay(pane) ||
+          overlay ||
           parseTerminalPermission(pane) ||
           parseTerminalUserInput(pane) ||
           parseTerminalFormPrompt(pane)
@@ -1913,7 +1915,15 @@ export class TmuxTerminalSessionController
                 ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
                 : 'The terminal is waiting for user input. Answer it before sending a message.',
             ),
-            { statusCode: 409 },
+            {
+              statusCode: 409,
+              ...(idleOnly && overlay
+                ? {
+                    uncertainDelivery: false,
+                    reasonCode: 'terminal-not-ready.queue',
+                  }
+                : {}),
+            },
           )
         }
       } else {
@@ -1946,12 +1956,24 @@ export class TmuxTerminalSessionController
             },
             boundedSteer
               ? SETTLED_STEER_READY_TIMEOUT_MS
-              : TERMINAL_STARTUP_TIMEOUT_MS,
+              : this.startupTimeoutMs,
             settled ? SETTLED_READY_FRAMES : undefined,
           )
         } catch (error) {
           const notReady =
             error instanceof Error && /did not become ready/i.test(error.message)
+          if (idleOnly && notReady) {
+            throw Object.assign(
+              new Error(
+                'The terminal is not ready for this input. Wait for its composer, or queue the message while the agent is working.',
+              ),
+              {
+                statusCode: 409,
+                uncertainDelivery: false,
+                reasonCode: 'terminal-not-ready.queue',
+              },
+            )
+          }
           if (boundedSteer && notReady && !options.replaceExistingInput) {
             throw Object.assign(
               new Error(
@@ -1975,13 +1997,22 @@ export class TmuxTerminalSessionController
         }
         if (startup !== 'ready') {
           const pane = await capturePane(owner.target)
+          const overlay = isTerminalOverlay(pane)
           throw Object.assign(
             new Error(
               isTerminalSessionInUsePrompt(pane)
                 ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
                 : 'The terminal is waiting for user input. Answer it before sending a message.',
             ),
-            { statusCode: 409 },
+            {
+              statusCode: 409,
+              ...(idleOnly && overlay
+                ? {
+                    uncertainDelivery: false,
+                    reasonCode: 'terminal-not-ready.queue',
+                  }
+                : {}),
+            },
           )
         }
       }
@@ -2091,11 +2122,26 @@ export class TmuxTerminalSessionController
           new Error(
             'The terminal is showing a full-screen view. Close it there, then send this again.',
           ),
-          { statusCode: 409 },
+          {
+            statusCode: 409,
+            ...(idleOnly
+              ? {
+                  uncertainDelivery: false,
+                  reasonCode: 'terminal-not-ready.queue',
+                }
+              : {}),
+          },
         )
       }
       if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
-        throw Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), { statusCode: 409 })
+        throw Object.assign(
+          new Error('The terminal started working before queued delivery; nothing was sent'),
+          {
+            statusCode: 409,
+            uncertainDelivery: false,
+            reasonCode: 'terminal-not-ready.queue',
+          },
+        )
       }
       const allowWorking =
         !idleOnly &&
@@ -2108,9 +2154,11 @@ export class TmuxTerminalSessionController
           {
             statusCode: 409,
             uncertainDelivery: false,
-            ...(allowWorking && !enqueue && !options.replaceExistingInput
-              ? { reasonCode: 'terminal-not-ready.steer' }
-              : {}),
+            ...(idleOnly
+              ? { reasonCode: 'terminal-not-ready.queue' }
+              : allowWorking && !enqueue && !options.replaceExistingInput
+                ? { reasonCode: 'terminal-not-ready.steer' }
+                : {}),
           },
         )
       }

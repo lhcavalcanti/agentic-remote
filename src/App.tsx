@@ -472,6 +472,15 @@ function attachmentSize(size: number): string {
 }
 
 async function clipboardFileFingerprint(file: File): Promise<string> {
+  const metadata = [
+    file.name,
+    file.type,
+    file.size.toString(),
+    file.lastModified.toString(),
+  ]
+  if (isAudioFile(file)) {
+    return metadata.join('\u0000')
+  }
   const buffer = typeof file.arrayBuffer === 'function'
     ? await file.arrayBuffer()
     : await new Response(file).arrayBuffer()
@@ -480,13 +489,7 @@ async function clipboardFileFingerprint(file: File): Promise<string> {
     hash ^= byte
     hash = Math.imul(hash, 16_777_619)
   }
-  return [
-    file.name,
-    file.type,
-    file.size.toString(),
-    file.lastModified.toString(),
-    (hash >>> 0).toString(36),
-  ].join('\u0000')
+  return [...metadata, (hash >>> 0).toString(36)].join('\u0000')
 }
 
 function recordingDuration(seconds: number): string {
@@ -1387,6 +1390,9 @@ function readComposerDrafts(snapshot: ComposerStorageSnapshot): ComposerDrafts {
         draft.queuedEdit = {
           promptId: draft.pendingSubmission.queuedPromptId,
           dispatchPending: true,
+          ...(candidate.queuedEdit?.attachmentIds?.length
+            ? { attachmentIds: candidate.queuedEdit.attachmentIds }
+            : {}),
         }
       }
     }
@@ -7833,7 +7839,7 @@ function App() {
   const attachmentTargetWaitersRef = useRef(
     new Map<
       string,
-      Set<(target: ManagedSession) => void>
+      Set<(target: ManagedSession | undefined) => void>
     >(),
   )
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
@@ -8056,7 +8062,7 @@ function App() {
       if (waiters) {
         attachmentTargetWaitersRef.current.delete(replacement)
         for (const resolve of waiters) {
-          resolve(session)
+          resolve(session.recovery ? session : undefined)
         }
       }
     }
@@ -11932,7 +11938,7 @@ function App() {
     }
     return new Promise((resolve) => {
       const waiters = attachmentTargetWaitersRef.current.get(liveKey) ||
-        new Set<(target: ManagedSession) => void>()
+        new Set<(target: ManagedSession | undefined) => void>()
       waiters.add(resolve)
       attachmentTargetWaitersRef.current.set(liveKey, waiters)
     })
@@ -14244,6 +14250,10 @@ function App() {
   async function processAttachedFiles(
     files: File[],
     targetSession: ManagedSession,
+    preflightErrors = new Map<
+      File,
+      { message: string; retryable: boolean }
+    >(),
   ) {
     const targetKey = sessionKey(targetSession)
     const liveKey = followReplacementsRef.current(targetKey)
@@ -14273,7 +14283,8 @@ function App() {
       if (isAudioFile(file)) {
         work.push({ file, audio: true })
       } else if (liveTarget) {
-        const error = sessionFileValidationError(file)
+        const preflightError = preflightErrors.get(file)
+        const error = preflightError?.message || sessionFileValidationError(file)
         const attachment: ComposerAttachment = {
           id: attachmentId(),
           ownerKey,
@@ -14284,6 +14295,7 @@ function App() {
           file,
           status: error ? 'failed' : 'uploading',
           ...(error ? { error } : {}),
+          ...(preflightError?.retryable ? { retryable: true } : {}),
         }
         attachments.push(attachment)
         work.push({ attachment, audio: false })
@@ -14354,24 +14366,65 @@ function App() {
       const ownerKey = followReplacementsRef.current(sessionKey(targetSession))
       const now = Date.now()
       return queueAttachmentWork(async () => {
-        let queuedFiles = files
-        const recent = clipboardPasteBatchesRef.current.get(ownerKey)
-        const fingerprintList = await Promise.all(
-          files.map(clipboardFileFingerprint),
-        )
-        const fingerprints = new Set(fingerprintList)
-        if (recent && now - recent.at < 1_500) {
-          queuedFiles = files.filter(
-            (_file, index) =>
-              !recent.fingerprints.has(fingerprintList[index]!),
+        setUploadingFile(true)
+        try {
+          const preflightErrors = new Map<
+            File,
+            { message: string; retryable: boolean }
+          >()
+          const validFiles: File[] = []
+          for (const file of files) {
+            const validationError = isAudioFile(file)
+              ? undefined
+              : sessionFileValidationError(file)
+            if (validationError) {
+              preflightErrors.set(file, {
+                message: validationError,
+                retryable: false,
+              })
+            } else {
+              validFiles.push(file)
+            }
+          }
+          const fingerprintResults = await Promise.allSettled(
+            validFiles.map(clipboardFileFingerprint),
           )
-        }
-        clipboardPasteBatchesRef.current.set(ownerKey, {
-          at: now,
-          fingerprints,
-        })
-        if (queuedFiles.length > 0) {
-          await processAttachedFiles(queuedFiles, targetSession)
+          const fingerprints = new Map<File, string>()
+          for (const [index, result] of fingerprintResults.entries()) {
+            const file = validFiles[index]!
+            if (result.status === 'fulfilled') {
+              fingerprints.set(file, result.value)
+            } else {
+              preflightErrors.set(file, {
+                message: result.reason instanceof Error
+                  ? result.reason.message
+                  : String(result.reason),
+                retryable: true,
+              })
+            }
+          }
+          const recent = clipboardPasteBatchesRef.current.get(ownerKey)
+          const queuedFiles = files.filter((file) => {
+            const fingerprint = fingerprints.get(file)
+            return preflightErrors.has(file) ||
+              fingerprint === undefined ||
+              !recent ||
+              now - recent.at >= 1_500 ||
+              !recent.fingerprints.has(fingerprint)
+          })
+          clipboardPasteBatchesRef.current.set(ownerKey, {
+            at: now,
+            fingerprints: new Set(fingerprints.values()),
+          })
+          if (queuedFiles.length > 0) {
+            await processAttachedFiles(
+              queuedFiles,
+              targetSession,
+              preflightErrors,
+            )
+          }
+        } finally {
+          setUploadingFile(false)
         }
       })
     }

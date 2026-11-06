@@ -401,9 +401,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 217,
+  "communities": 226,
   "community_algorithm": "louvain-seed-42",
-  "edges": 18777,
+  "edges": 18780,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -781,8 +781,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "9cef07acec438106c71db176f9fca6d4184717268915f45434d79b89f628ca25",
-    "src/App.tsx": "b8f1727fb684f282d9988b13778b6f095cbb7b1072060c61d92542a737113415",
+    "src/App.test.tsx": "7251a7dee7165dca2ad9f888d3839d8474063716cefbc671f2f38b34445b1cef",
+    "src/App.tsx": "434f35b9bfc81eac0ab914f80c095c69559ec1dab036609402f2b7c9edce3195",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -991,15 +991,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "c7daa24bdcebe81fbece072c23cec2c085ec3e99069b25d8d2cb1d6ad9d98751",
-    "communities.json": "e6d7e726d1e7366555f184a9c53edaa4e8375f7d2d18d1355feacfd0930c84f2",
-    "graph.html": "56fff5989216d533302cbd2e18ffa67c56f2ed1849971f1e488ba805deb1ffe6",
-    "graph.json": "697698e74186c352add131db79783325d5dab4a89a310c5428ca0d4ae7afbc3b"
+    "GRAPH_REPORT.md": "c77eb02ae191e7dbb1b2aa0d28ac464a97e56b706934a6d8b3254d67fa70b94b",
+    "communities.json": "1d4fc3eff0ec475d87eef91acee126ddd292554e6b2c70a634a2f8119c02122e",
+    "graph.html": "2ba687972577ff0a81a9bb1ab10aeacbd7faf913ff31ee0b75521f592f02dbd1",
+    "graph.json": "1d8ccf4eea403afc3f3aad0eb2a6556840cb9c207fe2eae53ebba3bd6da96fd2"
   },
   "schema_version": 1,
-  "source_commit": "d5290fdb1d45ec4cd069a7863559bbdc3c29305d",
-  "source_fingerprint": "a82709bbdc2adbd21c62bec759068084c14fcb68de47e260a76763d6ecc8d673",
+  "source_commit": "97aea923a2f8951adad6e8e23b0b8f1fd4c641bc",
+  "source_fingerprint": "f4aafbdbec7b242a35bf38bac65703bc17d40b64a03b1ceb2b36876ff9f24742",
   "working_tree_changes": [
-    "src/App.test.tsx"
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

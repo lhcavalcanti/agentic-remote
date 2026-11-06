@@ -9,6 +9,17 @@ import {
   type DreamerTaskCompletionProvenance,
 } from '../shared/dreamer.js'
 import type { ManagedSession } from '../shared/contracts.js'
+import type {
+  ManagerInternalSubmission,
+  ManagerMessage,
+} from '../shared/manager.js'
+import type {
+  OracleTask,
+  OracleTaskAttempt,
+  OracleTaskCompletionCandidate,
+  OracleTaskEvidence,
+  OracleTaskView,
+} from '../shared/oracle-task.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import type { ManagerRegistry } from './manager-store.js'
 import {
@@ -34,7 +45,10 @@ import {
   type DreamerPlanWithFingerprints,
   type DreamerCoverageIncrement,
 } from './dreamer-store.js'
-import { OracleTaskStore } from './oracle-task-store.js'
+import {
+  OracleTaskConflictError,
+  OracleTaskStore,
+} from './oracle-task-store.js'
 import {
   dreamerScheduleDecision,
   validateDreamerTimeZone,
@@ -59,6 +73,10 @@ export interface DreamerServiceOptions {
   readSession?: (computerId: string, sessionId: string) => Promise<ManagedSession>
   taskStore?: OracleTaskStore
   setProactiveEnabled?: (enabled: boolean) => Promise<void>
+  enqueueManagerTask?: (
+    input: ManagerInternalSubmission,
+  ) => Promise<ManagerMessage>
+  managerMessages?: () => ManagerMessage[]
 }
 
 export class DreamerUnavailableError extends Error {
@@ -162,6 +180,8 @@ export class DreamerService {
   private readonly readSession?: DreamerServiceOptions['readSession']
   private readonly taskStore?: OracleTaskStore
   private readonly setProactiveEnabled?: DreamerServiceOptions['setProactiveEnabled']
+  private readonly enqueueManagerTask?: DreamerServiceOptions['enqueueManagerTask']
+  private readonly managerMessages?: DreamerServiceOptions['managerMessages']
   private initialized = false
   private initializing?: Promise<void>
   private started = false
@@ -170,6 +190,7 @@ export class DreamerService {
   private activeRun?: Promise<DreamerSnapshot>
   private activeCommit?: Promise<void>
   private memoryReconciliation?: Promise<void>
+  private taskReconciliation?: Promise<void>
   private runtimeError?: string
 
   constructor(
@@ -188,6 +209,8 @@ export class DreamerService {
     this.readSession = options.readSession
     this.taskStore = options.taskStore
     this.setProactiveEnabled = options.setProactiveEnabled
+    this.enqueueManagerTask = options.enqueueManagerTask
+    this.managerMessages = options.managerMessages
   }
 
   initialize(): Promise<void> {
@@ -207,6 +230,7 @@ export class DreamerService {
   async start(): Promise<void> {
     await this.initialize()
     this.started = true
+    await this.reconcileTasks()
     const snapshot = this.store.snapshot()
     if (!snapshot.settings.enabled) return
     this.startTimer()
@@ -237,7 +261,10 @@ export class DreamerService {
     await this.initialize()
     this.requireAvailable()
     await this.reconcileStaleMemory()
-    return this.withCompletionCandidates(this.snapshot())
+    await this.reconcileTasks()
+    return this.withTaskViews(
+      await this.withCompletionCandidates(this.snapshot()),
+    )
   }
 
   getSnapshot(): DreamerSnapshot {
@@ -288,6 +315,160 @@ export class DreamerService {
     return this.snapshot()
   }
 
+  async dispatchTask(input: {
+  revision: number
+  taskId: string
+  requestId: string
+  }): Promise<DreamerSnapshot> {
+  await this.initialize()
+  this.requireAvailable()
+  if (!this.taskStore || !this.enqueueManagerTask) {
+    throw new DreamerUnavailableError('Oracle task dispatch is unavailable.')
+  }
+  const task = this.taskStore.snapshot().tasks.find(({ id }) => id === input.taskId)
+  if (!task) throw new OracleTaskConflictError('Oracle task was not found.')
+  const existing = task.attempts.find(({ requestId }) => requestId === input.requestId)
+  if (existing) return this.snapshotForApi()
+  if (task.status === 'queued' || task.status === 'running' || task.status === 'review') {
+    return this.snapshotForApi()
+  }
+  if (
+    task.status !== 'ready' &&
+    task.status !== 'failed' &&
+    task.status !== 'blocked'
+  ) {
+    throw new OracleTaskConflictError('This Oracle task cannot be dispatched.')
+  }
+  if (task.owner !== 'oracle') {
+    throw new OracleTaskConflictError(
+      'This task needs your action and cannot be dispatched.',
+    )
+  }
+  if (!task.executionPrompt) {
+    throw new OracleTaskConflictError(
+      'This Oracle task has no executable next step.',
+    )
+  }
+  const attemptDigest = createHash('sha256')
+    .update([task.id, input.requestId].join('\0'))
+    .digest('hex')
+    .slice(0, 32)
+  const managerMessageId = `task-attempt-${attemptDigest}`
+  const started = await this.taskStore.beginAttempt({
+    revision: input.revision,
+    taskId: task.id,
+    requestId: input.requestId,
+    managerMessageId,
+  })
+  const attempt = started.attempts.find(
+    ({ requestId }) => requestId === input.requestId,
+  )!
+  try {
+    await this.enqueueManagerTask(
+      this.taskSubmission(started, attempt),
+    )
+  } catch (error) {
+    await this.taskStore.reconcileAttempt({
+      revision: started.revision,
+      taskId: started.id,
+      attemptId: attempt.id,
+      status: 'failed',
+      error: `Oracle could not queue this task: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      finishedAt: this.now().toISOString(),
+    })
+    throw error
+  }
+  return this.snapshotForApi()
+  }
+
+  async reconcileTasks(): Promise<void> {
+  if (this.taskReconciliation) return this.taskReconciliation
+  const operation = this.reconcileTasksInternal()
+  this.taskReconciliation = operation
+  operation.finally(() => {
+    if (this.taskReconciliation === operation) {
+      this.taskReconciliation = undefined
+    }
+  }).catch(() => undefined)
+  return operation
+  }
+
+  async confirmTaskCompletion(input: {
+  revision: number
+  taskId: string
+  attemptId: string
+  computerId: string
+  sessionId: string
+  sessionRevision: number
+  messageId: string
+  resultDigest: string
+  }): Promise<DreamerSnapshot> {
+  await this.initialize()
+  this.requireAvailable()
+  if (!this.taskStore || !this.readSession) {
+    throw new DreamerUnavailableError('Oracle task completion is unavailable.')
+  }
+  const task = this.taskStore.snapshot().tasks.find(({ id }) => id === input.taskId)
+  const attempt = task?.attempts.find(({ id }) => id === input.attemptId)
+  if (
+    task?.status === 'completed' &&
+    task.completion?.attemptId === input.attemptId &&
+    task.completion.computerId === input.computerId &&
+    task.completion.sessionId === input.sessionId &&
+    task.completion.sessionRevision === input.sessionRevision &&
+    task.completion.messageId === input.messageId &&
+    task.completion.resultDigest === input.resultDigest
+  ) {
+    return this.snapshotForApi()
+  }
+  if (
+    !task ||
+    !attempt ||
+    !attempt.sessionRefs.some((reference) =>
+      reference.computerId === input.computerId &&
+      reference.sessionId === input.sessionId
+    )
+  ) {
+    throw new OracleTaskConflictError(
+      'Verified Oracle task completion is no longer available.',
+    )
+  }
+  const session = await this.readSession(input.computerId, input.sessionId)
+  const candidate = this.oracleCompletionCandidate(
+    session,
+    input.attemptId,
+    input.messageId,
+  )
+  if (
+    !candidate ||
+    candidate.sessionRevision !== input.sessionRevision ||
+    candidate.resultDigest !== input.resultDigest
+  ) {
+    throw new OracleTaskConflictError(
+      'Verified Oracle task completion changed; refresh and review it again.',
+    )
+  }
+  await this.taskStore.confirmCompletion({
+    revision: input.revision,
+    taskId: input.taskId,
+    completion: {
+      source: candidate.source,
+      attemptId: candidate.attemptId,
+      computerId: candidate.computerId,
+      sessionId: candidate.sessionId,
+      sessionRevision: candidate.sessionRevision,
+      messageId: candidate.messageId,
+      toolCallId: candidate.toolCallId,
+      resultDigest: candidate.resultDigest,
+      completedAt: candidate.completedAt,
+      confirmedAt: this.now().toISOString(),
+    },
+  })
+  return this.snapshotForApi()
+  }
+
   async editPlan(
     input: {
       revision: number
@@ -302,11 +483,38 @@ export class DreamerService {
         messageId: string
         resultDigest: string
       }
+      investigate?: {
+        itemId: string
+        requestId: string
+      }
+      taskCompletion?: {
+        taskId: string
+        taskRevision: number
+        attemptId: string
+        computerId: string
+        sessionId: string
+        sessionRevision: number
+        messageId: string
+        resultDigest: string
+      }
     },
   ): Promise<DreamerSnapshot> {
     await this.initialize()
     this.requireAvailable()
     await this.reconcileStaleMemory()
+    if (input.investigate) {
+      return this.investigatePlanItem({
+        revision: input.revision,
+        planId: input.planId,
+        ...input.investigate,
+      })
+    }
+    if (input.taskCompletion) {
+      return this.confirmTaskCompletion({
+        revision: input.taskCompletion.taskRevision,
+        ...input.taskCompletion,
+      })
+    }
     const edit = {
       revision: input.revision,
       planId: input.planId,
@@ -345,6 +553,7 @@ export class DreamerService {
       ) {
         return this.withCompletionCandidates(this.snapshot())
       }
+
       let candidate: DreamerCompletionCandidate | undefined
       try {
         candidate = await this.completionCandidate(
@@ -432,6 +641,53 @@ export class DreamerService {
       ...(completion ? { completion } : {}),
     })
     return this.withCompletionCandidates(this.snapshot())
+  }
+
+  private async investigatePlanItem(input: {
+    revision: number
+    planId: string
+    itemId: string
+    requestId: string
+  }): Promise<DreamerSnapshot> {
+    if (!this.taskStore || !this.enqueueManagerTask) {
+      throw new DreamerUnavailableError('Oracle investigation is unavailable.')
+    }
+    const current = this.store.snapshot()
+    if (current.revision !== input.revision || current.plan?.id !== input.planId) {
+      throw new DreamerConflictError('Dreamer plan changed; refresh and retry.')
+    }
+    const item = current.plan.items.find(({ id }) => id === input.itemId)
+    if (!item || item.source !== 'session' || !hasDreamerSessionIdentity(item)) {
+      throw new DreamerConflictError(
+        'This Morning Plan suggestion is no longer available for investigation.',
+      )
+    }
+    const task = await this.taskStore.upsertFinding({
+      sourceEventIds: [
+        createHash('sha256')
+          .update(['dreamer-investigate', input.planId, input.itemId].join('\0'))
+          .digest('hex'),
+      ],
+      title: item.label,
+      summary: item.reason,
+      nextAction: 'Oracle will investigate the linked session and produce verified follow-up.',
+      owner: 'oracle',
+      executionPrompt: [
+        `Investigate the Morning Plan suggestion "${item.label}".`,
+        item.reason,
+        `Start from session ${item.computerId}/${item.sessionId}.`,
+        'Reproduce the issue when possible, run focused tests, and leave an explicit blocker or root task completion.',
+      ].join('\n'),
+    })
+    await this.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: input.requestId,
+    })
+    await this.store.editPlan(input.revision, input.planId, {
+      item: { id: input.itemId, status: 'skipped' },
+    })
+    return this.snapshotForApi()
   }
 
   private async withCompletionCandidates(
@@ -802,6 +1058,248 @@ export class DreamerService {
     )
   }
 
+  private taskSubmission(
+    task: OracleTask,
+    attempt: OracleTaskAttempt,
+  ): ManagerInternalSubmission {
+    return {
+      id: attempt.managerMessageId,
+      source: 'task',
+      answerOnly: false,
+      automatic: { kind: 'task', taskId: task.id },
+      content: [
+        task.executionPrompt!,
+        '',
+        `Durable task: ${task.title}`,
+        `Next action: ${task.nextAction}`,
+        'Use a real execution session for repository work. Report blockers explicitly.',
+      ].join('\n'),
+    }
+  }
+
+  private async reconcileTasksInternal(): Promise<void> {
+    if (!this.taskStore || !this.managerMessages) return
+    for (const original of this.taskStore.snapshot().tasks) {
+      const attempt = original.attempts.at(-1)
+      if (!attempt || original.status === 'completed' || original.status === 'dismissed') {
+        continue
+      }
+      let task = original
+      let messages = this.managerMessages()
+      let managerMessage = messages.find(({ id }) => id === attempt.managerMessageId)
+      if (
+        !managerMessage &&
+        attempt.status === 'queued' &&
+        this.enqueueManagerTask &&
+        task.executionPrompt
+      ) {
+        await this.enqueueManagerTask(this.taskSubmission(task, attempt))
+        messages = this.managerMessages()
+        managerMessage = messages.find(({ id }) => id === attempt.managerMessageId)
+      }
+      const related = messages.filter(
+        ({ replyTo }) => replyTo === attempt.managerMessageId,
+      )
+      const sessionRefs = uniqueSessionRefs([
+        ...attempt.sessionRefs,
+        ...(managerMessage?.sessionRefs ?? []),
+        ...related.flatMap(({ sessionRefs }) => sessionRefs ?? []),
+      ])
+      let status: OracleTaskAttempt['status'] = 'queued'
+      let error: string | undefined
+      const managerFailure = (
+        managerMessage?.state === 'failed' ||
+        managerMessage?.state === 'cancelled' ||
+        managerMessage?.state === 'interrupted'
+      )
+        ? managerMessage.error?.trim() ||
+          `Oracle task dispatch ${managerMessage.state}.`
+        : undefined
+      if (sessionRefs.length > 0 && this.readSession) {
+        const sessions: ManagedSession[] = []
+        let unavailableError: string | undefined
+        for (const reference of sessionRefs) {
+          try {
+            const session = await this.readSession(
+              reference.computerId,
+              reference.sessionId,
+            )
+            if (
+              session.computerId !== reference.computerId ||
+              session.id !== reference.sessionId
+            ) {
+              unavailableError = 'Execution session identity changed.'
+            } else {
+              sessions.push(session)
+            }
+          } catch (sessionError) {
+            unavailableError = `Execution session is unavailable: ${
+              sessionError instanceof Error ? sessionError.message : String(sessionError)
+            }`
+          }
+        }
+        const candidate = sessions
+          .map((session) => this.oracleCompletionCandidate(session, attempt.id))
+          .find((value) => value !== undefined)
+        if (candidate) {
+          status = 'review'
+          error = undefined
+        } else if (managerFailure) {
+          status = 'failed'
+          error = managerFailure
+        } else if (unavailableError) {
+          status = 'blocked'
+          error = unavailableError
+        } else if (sessions.some(({ status: state }) => state === 'error')) {
+          status = 'failed'
+          error = 'An execution session failed without verified completion.'
+        } else if (
+          sessions.some((session) =>
+            session.status === 'waiting' ||
+            session.pendingPermission !== undefined ||
+            session.pendingUserInput !== undefined
+          )
+        ) {
+          status = 'blocked'
+          error = 'Execution is waiting for user action.'
+        } else if (sessions.some(({ status: state }) => state === 'running')) {
+          status = 'running'
+          error = undefined
+        } else if (sessions.length > 0) {
+          status = 'blocked'
+          error = 'Execution stopped without verified completion.'
+        }
+      } else if (managerFailure) {
+        status = 'failed'
+        error = managerFailure
+      } else if (managerMessage?.state === 'running') {
+        status = 'running'
+      } else if (managerMessage?.state === 'done') {
+        status = 'blocked'
+        error = 'Oracle did not attach an execution session with verified results.'
+      }
+      const latest = this.taskStore.snapshot().tasks.find(({ id }) => id === task.id)
+      if (!latest) continue
+      task = await this.taskStore.reconcileAttempt({
+        revision: latest.revision,
+        taskId: latest.id,
+        attemptId: attempt.id,
+        status,
+        sessionRefs,
+        ...(error ? { error } : {}),
+        ...(status === 'running' && !attempt.startedAt
+          ? { startedAt: this.now().toISOString() }
+          : {}),
+        ...(
+          (status === 'failed' || status === 'blocked' || status === 'review') &&
+          (!attempt.finishedAt || attempt.status !== status)
+            ? { finishedAt: this.now().toISOString() }
+            : {}
+        ),
+      })
+    }
+  }
+
+  private async withTaskViews(snapshot: DreamerSnapshot): Promise<DreamerSnapshot> {
+    if (!snapshot.tasks?.length) return snapshot
+    const messages = this.managerMessages?.() ?? []
+    const views = await Promise.all(snapshot.tasks.map(async (task): Promise<OracleTaskView> => {
+      const attempt = task.attempts.at(-1)
+      if (!attempt) return task
+      const evidence: OracleTaskEvidence[] = messages
+        .filter((message) =>
+          message.replyTo === attempt.managerMessageId &&
+          message.role === 'activity'
+        )
+        .map((message) => ({
+          id: message.id,
+          kind: /\b(test|vitest|jest|pytest|rspec|cargo)\b/i.test(
+            `${message.tool ?? ''} ${message.content}`,
+          ) ? 'test' : 'tool',
+          label: message.tool ?? 'Oracle activity',
+          status: 'completed',
+          result: boundedText(message.content, 500),
+        }))
+      let completionCandidate: OracleTaskCompletionCandidate | undefined
+      if (this.readSession) {
+        for (const reference of attempt.sessionRefs) {
+          try {
+            const session = await this.readSession(
+              reference.computerId,
+              reference.sessionId,
+            )
+            const lastUserIndex = session.messages.findLastIndex(
+              ({ role }) => role === 'user',
+            )
+            for (const message of session.messages.slice(
+              lastUserIndex < 0 ? 0 : lastUserIndex,
+            )) {
+              if (message.role === 'activity') {
+                evidence.push({
+                  id: `${reference.computerId}:${reference.sessionId}:${message.id}`,
+                  kind: /\b(test|vitest|jest|pytest|rspec|cargo)\b/i.test(
+                    message.content,
+                  ) ? 'test' : 'tool',
+                  label: message.content,
+                  status: message.activityStatus === 'failed'
+                    ? 'failed'
+                    : message.activityStatus === 'running' ||
+                        message.activityStatus === 'pending'
+                      ? 'running'
+                      : 'completed',
+                  ...(message.activityResult
+                    ? { result: boundedText(message.activityResult, 500) }
+                    : {}),
+                  ...(message.activityDurationMs === undefined
+                    ? {}
+                    : { durationMs: message.activityDurationMs }),
+                })
+              }
+            }
+            completionCandidate ??= this.oracleCompletionCandidate(
+              session,
+              attempt.id,
+            )
+          } catch {
+            // Reconciliation exposes the unavailable session as a blocked reason.
+          }
+        }
+      }
+      if (completionCandidate) {
+        evidence.push({
+          id: `${completionCandidate.sessionId}:${completionCandidate.messageId}`,
+          kind: 'completion',
+          label: 'Verified task completion',
+          status: 'completed',
+          result: completionCandidate.summary,
+        })
+      }
+      return {
+        ...task,
+        ...(evidence.length ? { evidence: evidence.slice(-12) } : {}),
+        ...(completionCandidate ? { completionCandidate } : {}),
+        ...(attempt.error && task.status !== 'completed'
+          ? { blockedReason: attempt.error }
+          : {}),
+      }
+    }))
+    return { ...snapshot, tasks: views }
+  }
+
+  private oracleCompletionCandidate(
+    session: ManagedSession,
+    attemptId: string,
+    messageId?: string,
+  ): OracleTaskCompletionCandidate | undefined {
+    const candidate = this.completionCandidateFromSession(
+      session,
+      session.computerId,
+      session.id,
+      messageId,
+    )
+    return candidate ? { ...candidate, attemptId } : undefined
+  }
+
   private async reconcileStaleMemory(): Promise<void> {
     if (this.memoryReconciliation) return this.memoryReconciliation
     const operation = this.reconcileStaleMemoryInternal()
@@ -900,4 +1398,23 @@ export class DreamerService {
       (error: unknown) => this.markScheduledFailure(error),
     )
   }
+}
+
+function uniqueSessionRefs(
+  refs: OracleTaskAttempt['sessionRefs'],
+): OracleTaskAttempt['sessionRefs'] {
+  const seen = new Set<string>()
+  return refs.filter((reference) => {
+    const key = `${reference.computerId}\0${reference.sessionId}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function boundedText(value: string, maximum: number): string {
+  const trimmed = value.trim()
+  return trimmed.length > maximum
+    ? `${trimmed.slice(0, maximum - 1)}…`
+    : trimmed
 }

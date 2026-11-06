@@ -801,9 +801,29 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   MUST remain distinct and actionable. Background Tasks is the live provider
   task surface; the morning plan is durable review state. Review edits affect
   only the latter, while both participate in the same authoritative refresh.
-- Dreamer MUST NOT raise overnight notifications, send speech, execute work
-  or add model calls. Semantic planning, authoritative todo/history adapters
-  and optional morning delivery are separate follow-ups described in
+- A journal-derived plan item is a suggestion only. It MUST say that Oracle has
+  not investigated or assigned the work, MUST NOT expose a generic completion
+  action, and MUST NOT be treated as execution evidence. Asking Oracle to
+  investigate MUST create or reuse a durable task with an owner, next action,
+  status and replay-safe source identity before the suggestion is retired.
+- Durable Oracle tasks MAY be created from the existing proactive lifecycle
+  inbox or an explicit Morning Plan investigation. They MUST persist before
+  inbox acknowledgement or execution dispatch, use idempotent request IDs, and
+  retain attempt history, linked execution sessions, bounded tool/test evidence
+  and explicit failure or blocked reasons. A queued or running attempt MUST NOT
+  be duplicated by another dispatch. Refresh, startup, manager updates and
+  session updates MUST reconcile task state without polling or a second wake
+  endpoint.
+- An Oracle task MUST reach `completed` only after the user reviews and confirms
+  a successful root `task_complete` marker from the exact linked execution
+  session after its latest root user turn. Journal text, assistant prose, task
+  labels, idle state and failed tools MUST NOT imply completion. Late evidence
+  from an older attempt MAY update that attempt's history but MUST NOT replace
+  the current attempt's status.
+- Dreamer MUST NOT raise overnight notifications, send speech or automatically
+  dispatch work. Proactive analysis uses the existing hub lifecycle stream and
+  durable Oracle queue; execution begins only from an explicit task action.
+  Optional morning delivery remains a separate follow-up described in
   [Oracle Dreamer](design/oracle-dreamer.md).
 
 ## 4. Conversation timeline

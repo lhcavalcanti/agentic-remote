@@ -251,7 +251,8 @@ current task. User-owned tasks expose the requested action instead of dispatch.
 The same route with a new request ID retries only a failed or blocked Oracle
 attempt. Oracle first reads the linked session and continues it when safe;
 otherwise it creates a replacement execution session. The new attempt retains
-the previous attempt and evidence. A failed enqueue leaves the task unchanged.
+the previous attempt and evidence. A failed enqueue is recorded explicitly on
+the durable attempt so refresh and retry cannot present it as queued work.
 
 ### Reconciliation
 

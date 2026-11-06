@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDreamer, saveDreamerSettings, updateDreamerPlan } from './dreamer-api'
+import {
+  dispatchDreamerTask,
+  getDreamer,
+  saveDreamerSettings,
+  updateDreamerPlan,
+} from './dreamer-api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -19,6 +24,14 @@ describe('Dreamer API', () => {
     expect(fetch).toHaveBeenLastCalledWith('/api/manager/dreamer/plan', expect.objectContaining({
       method: 'PUT', body: JSON.stringify({ revision: 1, planId: 'plan', item: { id: 'item', status: 'done' } }),
     }))
+    await dispatchDreamerTask('task/a', { revision: 2, requestId: 'request-a' })
+    expect(fetch).toHaveBeenLastCalledWith(
+      '/api/manager/dreamer/tasks/task%2Fa/dispatch',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ revision: 2, requestId: 'request-a' }),
+      }),
+    )
   })
 
   it('preserves conflict status without leaking raw server exception text', async () => {

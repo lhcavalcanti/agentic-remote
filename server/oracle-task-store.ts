@@ -341,7 +341,7 @@ export class OracleTaskStore {
       const task = this.requireTask(candidate, input.taskId)
       const repeated = task.attempts.find(({ requestId }) => requestId === input.requestId)
       if (repeated) return { value: structuredClone(task), changed: false }
-      this.requireRevision(candidate, input.revision)
+      this.requireTaskRevision(task, input.revision)
       if (!isId(input.requestId) || !isId(input.managerMessageId)) {
         throw new OracleTaskConflictError('Oracle task attempt identity is invalid.')
       }
@@ -371,25 +371,36 @@ export class OracleTaskStore {
 
   reconcileAttempt(input: ReconcileOracleTaskAttemptInput): Promise<OracleTask> {
     return this.commit((candidate) => {
-      this.requireRevision(candidate, input.revision)
       const task = this.requireTask(candidate, input.taskId)
+      this.requireTaskRevision(task, input.revision)
       const attempt = task.attempts.find(({ id }) => id === input.attemptId)
-      if (!attempt || task.attempts.at(-1)?.id !== attempt.id) {
-        throw new OracleTaskConflictError('Oracle task attempt is stale.')
-      }
+      if (!attempt) throw new OracleTaskConflictError('Oracle task attempt was not found.')
       if (input.sessionRefs?.some((reference) => !validateSessionRef(reference))) {
         throw new OracleTaskConflictError('Oracle task session reference is invalid.')
       }
       if (input.error !== undefined && !isText(input.error, 1_000)) {
         throw new OracleTaskConflictError('Oracle task failure reason is invalid.')
       }
+      const sessionRefs = input.sessionRefs
+        ? structuredClone(input.sessionRefs)
+        : attempt.sessionRefs
+      const error = input.error?.trim()
+      const startedAt = input.startedAt ?? attempt.startedAt
+      const finishedAt = input.finishedAt ?? attempt.finishedAt
+      const changed =
+        attempt.status !== input.status ||
+        JSON.stringify(attempt.sessionRefs) !== JSON.stringify(sessionRefs) ||
+        attempt.error !== error ||
+        attempt.startedAt !== startedAt ||
+        attempt.finishedAt !== finishedAt
+      if (!changed) return { value: structuredClone(task), changed: false }
       attempt.status = input.status
-      if (input.sessionRefs) attempt.sessionRefs = structuredClone(input.sessionRefs)
-      if (input.error) attempt.error = input.error.trim()
+      attempt.sessionRefs = sessionRefs
+      if (error) attempt.error = error
       else delete attempt.error
-      if (input.startedAt) attempt.startedAt = input.startedAt
-      if (input.finishedAt) attempt.finishedAt = input.finishedAt
-      task.status = input.status
+      if (startedAt) attempt.startedAt = startedAt
+      if (finishedAt) attempt.finishedAt = finishedAt
+      if (task.attempts.at(-1)?.id === attempt.id) task.status = input.status
       task.revision += 1
       task.updatedAt = this.now().toISOString()
       return { value: structuredClone(task), changed: true }
@@ -398,8 +409,14 @@ export class OracleTaskStore {
 
   confirmCompletion(input: ConfirmOracleTaskCompletionInput): Promise<OracleTask> {
     return this.commit((candidate) => {
-      this.requireRevision(candidate, input.revision)
       const task = this.requireTask(candidate, input.taskId)
+      if (
+        task.status === 'completed' &&
+        JSON.stringify(task.completion) === JSON.stringify(input.completion)
+      ) {
+        return { value: structuredClone(task), changed: false }
+      }
+      this.requireTaskRevision(task, input.revision)
       if (!validateCompletion(input.completion)) {
         throw new OracleTaskConflictError('Oracle task completion evidence is invalid.')
       }
@@ -517,8 +534,8 @@ export class OracleTaskStore {
     }
   }
 
-  private requireRevision(state: OracleTaskStoreState, revision: number): void {
-    if (revision !== state.revision) throw new OracleTaskConflictError()
+  private requireTaskRevision(task: OracleTask, revision: number): void {
+    if (revision !== task.revision) throw new OracleTaskConflictError()
   }
 
   private requireTask(state: OracleTaskStoreState, id: string): OracleTask {

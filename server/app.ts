@@ -327,6 +327,8 @@ export async function buildApp(
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToProactive: ((event: HubEvent) => void) | undefined
+  let forwardHubToDreamer: (() => void) | undefined
+  let forwardManagerToDreamer: (() => void) | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -448,6 +450,8 @@ export async function buildApp(
           readSession: (computerId, sessionId) =>
             dreamerManager.readSession(computerId, sessionId),
           taskStore: oracleTaskStore,
+          enqueueManagerTask: (input) => managerAgent.enqueueInternal(input),
+          managerMessages: () => managerAgent.snapshot().messages,
           setProactiveEnabled: async (enabled) => {
             await proactiveCoordinator?.setEnabled(enabled)
           },
@@ -471,6 +475,14 @@ export async function buildApp(
         )
         forwardToProactive = (event) => proactiveCoordinator?.handle(event)
         manager.on('event', forwardToProactive)
+        forwardHubToDreamer = () => {
+          void dreamerService?.reconcileTasks().catch((error: unknown) => {
+            app.log.warn({ err: error }, 'Dreamer task reconciliation failed')
+          })
+        }
+        forwardManagerToDreamer = forwardHubToDreamer
+        manager.on('event', forwardHubToDreamer)
+        managerAgent.on('event', forwardManagerToDreamer)
       } catch (error) {
         app.log.error({ err: error }, 'Dreamer could not initialize')
         await proactiveCoordinator?.stop().catch(() => undefined)
@@ -597,6 +609,8 @@ export async function buildApp(
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
+    if (forwardHubToDreamer) manager?.off('event', forwardHubToDreamer)
+    if (forwardManagerToDreamer) managerAgent?.off('event', forwardManagerToDreamer)
     await voiceService?.stop()
     await proactiveCoordinator?.stop()
     await dreamerService?.stop()

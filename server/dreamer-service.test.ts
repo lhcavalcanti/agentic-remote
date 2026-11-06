@@ -10,6 +10,8 @@ import type { DreamerMemoryMetadataRecord } from './dreamer-planner.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { DreamerStore, dreamerRunKey } from './dreamer-store.js'
 import type { ManagedSession } from '../shared/contracts.js'
+import type { ManagerInternalSubmission, ManagerMessage } from '../shared/manager.js'
+import { OracleTaskStore } from './oracle-task-store.js'
 
 const directories: string[] = []
 
@@ -99,6 +101,272 @@ function completionSession(
 }
 
 describe('DreamerService', () => {
+  it('keeps journal suggestions separate from durable execution tasks', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const service = new DreamerService(directory, options(now))
+    await service.start()
+    await service.updateSettings({
+      revision: service.snapshot().revision,
+      enabled: true,
+      timeZone: 'UTC',
+    })
+
+    const snapshot = await service.snapshotForApi()
+    const suggestion = snapshot.plan!.items.find(({ source }) => source === 'session')
+    expect(suggestion?.taskId).toBeUndefined()
+    expect(snapshot.tasks).toEqual([])
+  })
+
+  it('dispatches once and reconciles only exact execution evidence', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['a'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The queue regression needs execution.',
+      nextAction: 'Start a session and run the focused queue test.',
+      owner: 'oracle',
+      executionPrompt: 'Reproduce the queue regression and run its focused test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    let execution = completionSession(false, 'Tests passed.', {
+      id: 'execution-a',
+      revision: 1,
+      status: 'idle',
+      messages: [{
+        id: 'plain-result',
+        role: 'assistant',
+        content: 'Tests passed.',
+        createdAt: '2026-10-29T03:20:00.000Z',
+      }],
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+      readSession: async () => execution,
+    }))
+    await service.initialize()
+    const requestId = 'd8f12b3f-d670-4ed8-bd61-c488f87a9a8f'
+
+    const first = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId,
+    })
+    const replay = await service.dispatchTask({
+      revision: first.tasks![0]!.revision,
+      taskId: task.id,
+      requestId,
+    })
+
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(replay.tasks![0]!.attempts).toHaveLength(1)
+    const attempt = replay.tasks![0]!.attempts[0]!
+    const managerMessage = managerMessages[0]!
+    managerMessage.state = 'done'
+    managerMessages.push({
+      id: 'activity-a',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessage.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-a',
+        title: 'Queue execution',
+      }],
+    })
+
+    await service.reconcileTasks()
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'blocked',
+      attempts: [expect.objectContaining({
+        id: attempt.id,
+        status: 'blocked',
+      })],
+    })
+
+    execution = completionSession(true, 'Focused queue test passed.', {
+      id: 'execution-a',
+      revision: 2,
+      status: 'idle',
+    })
+    managerMessage.state = 'failed'
+    managerMessage.error = 'Oracle turn ended after starting the execution session.'
+    const reviewed = await service.snapshotForApi()
+    expect(reviewed.tasks![0]).toMatchObject({
+      status: 'review',
+      completionCandidate: {
+        source: 'root-task-complete',
+        attemptId: attempt.id,
+        sessionId: 'execution-a',
+      },
+    })
+    const candidate = reviewed.tasks![0]!.completionCandidate!
+    const completed = await service.confirmTaskCompletion({
+      revision: reviewed.tasks![0]!.revision,
+      taskId: task.id,
+      attemptId: candidate.attemptId,
+      computerId: candidate.computerId,
+      sessionId: candidate.sessionId,
+      sessionRevision: candidate.sessionRevision,
+      messageId: candidate.messageId,
+      resultDigest: candidate.resultDigest,
+    })
+    expect(completed.tasks![0]).toMatchObject({
+      status: 'completed',
+      completion: {
+        source: 'root-task-complete',
+        attemptId: attempt.id,
+        messageId: candidate.messageId,
+      },
+    })
+    const replayedCompletion = await service.confirmTaskCompletion({
+      revision: reviewed.tasks![0]!.revision,
+      taskId: task.id,
+      attemptId: candidate.attemptId,
+      computerId: candidate.computerId,
+      sessionId: candidate.sessionId,
+      sessionRevision: candidate.sessionRevision,
+      messageId: candidate.messageId,
+      resultDigest: candidate.resultDigest,
+    })
+    expect(replayedCompletion.tasks![0]!.revision).toBe(completed.tasks![0]!.revision)
+  })
+
+  it('retries failed execution without allowing late older attempts to replace it', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['b'.repeat(64)],
+      title: 'Retry the failed queue test',
+      summary: 'The first execution could not start.',
+      nextAction: 'Retry execution.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+    }))
+    await service.initialize()
+    const first = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '3cf0f598-9f48-4f69-88b6-49c215aca1f9',
+    })
+    managerMessages[0]!.state = 'failed'
+    managerMessages[0]!.error = 'Execution backend unavailable.'
+    await service.reconcileTasks()
+    const failed = service.snapshot().tasks![0]!
+    expect(failed).toMatchObject({
+      status: 'failed',
+      attempts: [{ status: 'failed', error: 'Execution backend unavailable.' }],
+    })
+
+    await service.dispatchTask({
+      revision: failed.revision,
+      taskId: task.id,
+      requestId: '0ca3a2aa-e399-4e31-b809-13996c0f1dcb',
+    })
+    const retried = service.snapshot().tasks![0]!
+    expect(retried).toMatchObject({
+      status: 'queued',
+      attempts: [{ status: 'failed' }, { status: 'queued' }],
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
+
+    await taskStore.reconcileAttempt({
+      revision: retried.revision,
+      taskId: task.id,
+      attemptId: first.tasks![0]!.attempts[0]!.id,
+      status: 'failed',
+      error: 'Late failure from the old attempt.',
+    })
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [
+        { status: 'failed', error: 'Late failure from the old attempt.' },
+        { status: 'queued' },
+      ],
+    })
+  })
+
+  it('re-enqueues a persisted queued attempt once during reconciliation', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['c'.repeat(64)],
+      title: 'Recover queued investigation',
+      summary: 'The hub stopped after persisting dispatch intent.',
+      nextAction: 'Resume the queued Oracle turn.',
+      owner: 'oracle',
+      executionPrompt: 'Continue the queued investigation.',
+    })
+    await taskStore.beginAttempt({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '8ad2254d-8be8-4239-aa3a-a80dd862987d',
+      managerMessageId: 'task-attempt-recovery',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const existing = managerMessages.find(({ id }) => id === input.id)
+      if (existing) return existing
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+    }))
+    await service.initialize()
+
+    await service.reconcileTasks()
+    await service.reconcileTasks()
+
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(managerMessages).toHaveLength(1)
+    expect(service.snapshot().tasks![0]).toMatchObject({ status: 'queued' })
+  })
+
   it('offers only authoritative task completion evidence and confirms it idempotently', async () => {
     const directory = await root()
     let currentNow = new Date('2026-10-29T04:00:00.000Z')

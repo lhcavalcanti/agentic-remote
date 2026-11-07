@@ -22,7 +22,11 @@ import {
   oracleDockShortcutBinding,
   oracleShortcutBinding,
 } from './app-shortcuts'
-import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
+import {
+  OracleModelSettings,
+  OracleProactiveSettings,
+  OracleSettingsStatus,
+} from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import {
   coordinatedAuthoritativeRefresh,
@@ -4282,6 +4286,7 @@ function AppSettingsDialog({
             onRetryModels={retryHubCopilotModels}
             oracle={oracle}
           />
+          <OracleProactiveSettings oracle={oracle} />
           <DreamerSettings active={open} />
           {oracle.settings && !oracle.unavailable ? (
             <section className="app-settings-section" id="settings-oracle-style">
@@ -16360,13 +16365,13 @@ function App() {
                 </div>
               )}
             </div>
-            {!askingAside && composer && !composerStorageError ? (
+            {!askingAside && composer && composerDraftRecovered && !composerStorageError ? (
               <p
                 aria-label="Session draft status"
                 className="composer-draft-status"
                 role="status"
               >
-                {composerDraftRecovered ? 'Recovered saved draft' : 'Saved on this device'}
+                Recovered saved draft
               </p>
             ) : null}
             {(statusline.provider ||

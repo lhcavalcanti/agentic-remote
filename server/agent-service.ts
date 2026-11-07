@@ -504,6 +504,27 @@ interface ActivityToolStart {
   toolCallId: string
 }
 
+interface LiveTaskCompletion {
+  assistantMessageId?: string
+  canonicalSummary?: string
+  completionAccepted?: boolean
+  completedAt?: string
+  completionEventReceived?: boolean
+  fallbackSummary?: string
+  toolCallId: string
+}
+
+function taskCompletionAccepted(event: SessionEvent): boolean {
+  if (event.type !== 'session.task_complete') {
+    return false
+  }
+  return (
+    event.data.success !== false &&
+    event.data.outcome !== 'continue' &&
+    event.data.outcome !== 'blocked'
+  )
+}
+
 function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
   return kind === 'skill' || kind === 'agent'
 }
@@ -541,6 +562,17 @@ function activityGroupIdFor(
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
+  const pendingTaskCompletions = new Map<
+    string,
+    {
+      activityContent: string
+      completedAt: string
+      fallbackSummary?: string
+      message: ChatMessage
+      startedAt: string
+      toolCallId: string
+    }
+  >()
   const toolStartsByCallId = new Map<
     string,
     ActivityToolStart
@@ -587,12 +619,32 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     }
     runningActivities.clear()
   }
-
+  const renderTaskCompletion = (
+    message: ChatMessage,
+    toolCallId: string,
+    summary: string,
+    completedAt: string,
+    finishActivities = true,
+  ) => {
+    if (finishActivities) {
+      finishRunningActivities()
+    }
+    message.role = 'assistant'
+    message.content = summary
+    message.createdAt = completedAt
+    message.activityStatus = undefined
+    message.taskCompletion = {
+      source: 'root-task-complete',
+      toolCallId,
+      completedAt,
+    }
+  }
   for (const event of events) {
     if (event.type === 'user.message') {
       if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
         continue
       }
+      pendingTaskCompletions.clear()
       const content = visibleUserContent(event.data.content)
       if (content) {
         finishRunningActivities()
@@ -623,13 +675,11 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete' && !event.agentId) {
+      if (toolName === 'task_complete' && !eventAgentId(event)) {
         const summary = stringValue(
           recordValue(event.data.arguments).summary,
         )?.trim()
-        if (summary) {
-          taskCompletionSummaries.set(toolCallId, summary)
-        }
+        taskCompletionSummaries.set(toolCallId, summary || '')
       }
       append({
         id: `tool:${toolCallId}`,
@@ -656,24 +706,60 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
         if (duration !== undefined) {
           message.activityDurationMs = duration
         }
-        const taskResultContent = stringValue(
-          recordValue(recordValue(event.data).result).content,
-        )?.trim()
-        const taskCompletionSummary = taskCompletionSummaries.has(toolCallId)
-          ? taskResultContent || taskCompletionSummaries.get(toolCallId)
-          : undefined
-        if (event.data.success && taskCompletionSummary) {
-          finishRunningActivities()
-          message.role = 'assistant'
-          message.content = taskCompletionSummary
-          message.createdAt = event.timestamp
-          message.activityStatus = undefined
-          message.taskCompletion = {
-            source: 'root-task-complete',
-            toolCallId,
+        if (event.data.success && taskCompletionSummaries.has(toolCallId)) {
+          const fallbackSummary =
+            taskCompletionSummaries.get(toolCallId) || undefined
+          if (fallbackSummary) {
+            finishRunningActivities()
+          }
+          pendingTaskCompletions.set(event.id, {
+            activityContent: message.content,
             completedAt: event.timestamp,
+            fallbackSummary,
+            message,
+            startedAt: message.createdAt,
+            toolCallId,
+          })
+          if (fallbackSummary) {
+            renderTaskCompletion(
+              message,
+              toolCallId,
+              fallbackSummary,
+              event.timestamp,
+            )
           }
         }
+      }
+    }
+    if (event.type === 'session.task_complete' && !eventAgentId(event)) {
+      const completionEventId =
+        event.parentId && pendingTaskCompletions.has(event.parentId)
+          ? event.parentId
+        : pendingTaskCompletions.size === 1
+          ? pendingTaskCompletions.keys().next().value
+          : undefined
+      const completion = completionEventId
+        ? pendingTaskCompletions.get(completionEventId)
+        : undefined
+      const summary =
+        event.data.summary?.trim() || completion?.fallbackSummary
+      if (completion && summary && taskCompletionAccepted(event)) {
+        renderTaskCompletion(
+          completion.message,
+          completion.toolCallId,
+          summary,
+          completion.completedAt,
+          !completion.fallbackSummary,
+        )
+      } else if (completion?.fallbackSummary) {
+        completion.message.role = 'activity'
+        completion.message.content = completion.activityContent
+        completion.message.createdAt = completion.startedAt
+        completion.message.activityStatus = 'completed'
+        delete completion.message.taskCompletion
+      }
+      if (completionEventId) {
+        pendingTaskCompletions.delete(completionEventId)
       }
     }
     if (
@@ -683,6 +769,9 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       event.type === 'session.error' ||
       event.type === 'session.shutdown'
     ) {
+      if (!eventAgentId(event)) {
+        pendingTaskCompletions.clear()
+      }
       finishRunningActivities(
         event.type === 'abort' ||
           event.type === 'session.error' ||
@@ -2098,7 +2187,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly eventLogVersions = new Map<string, string>()
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
-  private readonly liveTaskCompletionSummaries = new Map<string, string>()
+  private readonly liveTaskCompletions = new Map<string, LiveTaskCompletion>()
+  private readonly completedTaskPromptMessages = new Set<string>()
   private readonly liveActivityEvents = new Map<
     string,
     Map<
@@ -10243,6 +10333,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private finishLiveTaskCompletion(
+    sessionId: string,
+    completion: LiveTaskCompletion,
+    summary: string,
+  ): void {
+    if (!completion.completedAt) {
+      return
+    }
+    if (completion.assistantMessageId) {
+      this.completedTaskPromptMessages.add(
+        `${sessionId}:${completion.assistantMessageId}`,
+      )
+    }
+    void this.store
+      .finishTaskCompletion(
+        sessionId,
+        completion.toolCallId,
+        summary,
+        completion.completedAt,
+        completion.assistantMessageId,
+      )
+      .then((stored) => this.publish(stored))
+      .catch((error: unknown) => this.publishError(sessionId, error))
+  }
+
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
@@ -10300,11 +10415,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete' && !event.agentId) {
-        this.liveTaskCompletionSummaries.set(
-          `${sessionId}:${event.data.toolCallId}`,
-          stringValue(recordValue(event.data.arguments).summary)?.trim() || '',
-        )
+      if (toolName === 'task_complete' && !eventAgentId(event)) {
+        this.liveTaskCompletions.set(sessionId, {
+          fallbackSummary:
+            stringValue(recordValue(event.data.arguments).summary)?.trim() ||
+            undefined,
+          toolCallId: event.data.toolCallId,
+        })
       }
       this.rememberLiveActivityEvent(
         sessionId,
@@ -10326,27 +10443,55 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
+    if (event.type === 'session.task_complete' && !eventAgentId(event)) {
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        this.liveTaskCompletions.delete(sessionId)
+        return
+      }
+      const completion = this.liveTaskCompletions.get(sessionId)
+      if (!completion) {
+        return
+      }
+      completion.completionEventReceived = true
+      completion.completionAccepted = taskCompletionAccepted(event)
+      completion.canonicalSummary = event.data.summary?.trim() || undefined
+      if (!completion.completedAt) {
+        return
+      }
+      this.liveTaskCompletions.delete(sessionId)
+      const summary =
+        completion.canonicalSummary || completion.fallbackSummary
+      if (!completion.completionAccepted || !summary) {
+        return
+      }
+      this.finishLiveTaskCompletion(sessionId, completion, summary)
+      return
+    }
+
     if (event.type === 'tool.execution_complete') {
       if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
-      const completionKey = `${sessionId}:${event.data.toolCallId}`
+      const completion = this.liveTaskCompletions.get(sessionId)
       const isTaskCompletion =
-        this.liveTaskCompletionSummaries.has(completionKey)
-      const fallbackSummary =
-        this.liveTaskCompletionSummaries.get(completionKey) || ''
-      this.liveTaskCompletionSummaries.delete(completionKey)
-      const resultContent =
-        stringValue(
-          recordValue(recordValue(event.data).result).content,
-        )?.trim() || fallbackSummary
+        completion?.toolCallId === event.data.toolCallId
+      if (isTaskCompletion) {
+        completion.completedAt = event.timestamp
+        completion.assistantMessageId = activePrompt?.assistantMessageId
+      }
+      const taskCompletionSummary =
+        completion?.canonicalSummary || completion?.fallbackSummary
       const presentationResult = activityResult(event.data, event.data.success)
       const update =
-        isTaskCompletion && event.data.success && resultContent
+        isTaskCompletion &&
+        event.data.success &&
+        completion.completionEventReceived &&
+        completion.completionAccepted &&
+        taskCompletionSummary
           ? this.store.finishTaskCompletion(
               sessionId,
               event.data.toolCallId,
-              resultContent,
+              taskCompletionSummary,
               event.timestamp,
               activePrompt?.assistantMessageId,
             )
@@ -10357,9 +10502,50 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               event.timestamp,
               presentationResult,
             )
+      if (
+        isTaskCompletion &&
+        event.data.success &&
+        completion.completionEventReceived &&
+        completion.completionAccepted &&
+        taskCompletionSummary &&
+        activePrompt?.assistantMessageId
+      ) {
+        this.completedTaskPromptMessages.add(
+          `${sessionId}:${activePrompt.assistantMessageId}`,
+        )
+      }
+      if (
+        isTaskCompletion &&
+        (!event.data.success || completion.completionEventReceived)
+      ) {
+        this.liveTaskCompletions.delete(sessionId)
+      }
       void update
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
+      return
+    }
+
+    if (
+      !eventAgentId(event) &&
+      (event.type === 'session.idle' ||
+        event.type === 'abort' ||
+        event.type === 'session.error' ||
+        event.type === 'session.shutdown')
+    ) {
+      const completion = this.liveTaskCompletions.get(sessionId)
+      this.liveTaskCompletions.delete(sessionId)
+      if (
+        event.type === 'session.idle' &&
+        completion?.completedAt &&
+        completion.fallbackSummary
+      ) {
+        this.finishLiveTaskCompletion(
+          sessionId,
+          completion,
+          completion.fallbackSummary,
+        )
+      }
     }
   }
 
@@ -10409,7 +10595,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? assistantMessageId
         : this.activePrompts.get(sessionId)?.assistantMessageId ||
           assistantMessageId
-      if (response?.data.content) {
+      if (
+        response?.data.content &&
+        !this.completedTaskPromptMessages.has(
+          `${sessionId}:${completionAssistantMessageId}`,
+        )
+      ) {
         this.store.setMessageContent(
           sessionId,
           completionAssistantMessageId,
@@ -10503,6 +10694,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.sdkTurnsAwaited.delete(sessionId)
       }
       this.retiredSdkPromptRuns.delete(assistantMessageId)
+      this.completedTaskPromptMessages.delete(
+        `${sessionId}:${assistantMessageId}`,
+      )
+      this.completedTaskPromptMessages.delete(
+        `${sessionId}:${completionAssistantMessageId}`,
+      )
       if (this.activePrompts.get(sessionId)?.assistantMessageId === completionAssistantMessageId) {
         this.activePrompts.delete(sessionId)
         if (!delivery || delivery.accepted) this.wakeSdkQueue(sessionId)

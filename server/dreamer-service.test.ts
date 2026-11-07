@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,8 @@ import type { DreamerMemoryMetadataRecord } from './dreamer-planner.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { DreamerStore, dreamerRunKey } from './dreamer-store.js'
 import type { ManagedSession } from '../shared/contracts.js'
+import type { ManagerInternalSubmission, ManagerMessage } from '../shared/manager.js'
+import { OracleTaskStore } from './oracle-task-store.js'
 
 const directories: string[] = []
 
@@ -99,6 +101,1196 @@ function completionSession(
 }
 
 describe('DreamerService', () => {
+  it('keeps journal suggestions separate from durable execution tasks', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const service = new DreamerService(directory, options(now))
+    await service.start()
+    await service.updateSettings({
+      revision: service.snapshot().revision,
+      enabled: true,
+      timeZone: 'UTC',
+    })
+
+    const snapshot = await service.snapshotForApi()
+    const suggestion = snapshot.plan!.items.find(({ source }) => source === 'session')
+    expect(suggestion?.taskId).toBeUndefined()
+    expect(snapshot.tasks).toEqual([])
+  })
+
+  it('dispatches once and reconciles only exact execution evidence', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['a'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The queue regression needs execution.',
+      nextAction: 'Start a session and run the focused queue test.',
+      owner: 'oracle',
+      executionPrompt: 'Reproduce the queue regression and run its focused test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    let execution = completionSession(true, 'Old tests passed.', {
+      id: 'execution-a',
+      revision: 1,
+      status: 'idle',
+      messages: [{
+        id: 'old-prompt',
+        role: 'user',
+        content: 'Earlier unrelated work.',
+        createdAt: '2026-10-29T03:00:00.000Z',
+      }, {
+        id: 'old-completion',
+        role: 'assistant',
+        content: 'Old tests passed.',
+        createdAt: '2026-10-29T03:20:00.000Z',
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'old-task-complete-call',
+          completedAt: '2026-10-29T03:20:00.000Z',
+        },
+      }],
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+      readSession: async () => execution,
+    }))
+    await service.initialize()
+    const requestId = 'd8f12b3f-d670-4ed8-bd61-c488f87a9a8f'
+
+    const first = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId,
+    })
+    const replay = await service.dispatchTask({
+      revision: first.tasks![0]!.revision,
+      taskId: task.id,
+      requestId,
+    })
+
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(replay.tasks![0]!.attempts).toHaveLength(1)
+    const attempt = replay.tasks![0]!.attempts[0]!
+    const managerMessage = managerMessages[0]!
+    managerMessage.state = 'done'
+    managerMessages.push({
+      id: 'activity-a',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessage.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-a',
+        title: 'Queue execution',
+        promptId: 'task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'blocked',
+      attempts: [expect.objectContaining({
+        id: attempt.id,
+        status: 'blocked',
+      })],
+    })
+
+    execution = completionSession(true, 'Focused queue test passed.', {
+      id: 'execution-a',
+      revision: 2,
+      status: 'idle',
+      messages: [{
+        id: 'task-prompt',
+        role: 'user',
+        content: 'Run the focused queue test.',
+        createdAt: '2026-10-29T04:00:00.000Z',
+      }, {
+        id: 'task-completion',
+        role: 'assistant',
+        content: 'Focused queue test passed.',
+        createdAt: '2026-10-29T04:01:00.000Z',
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-complete-call',
+          completedAt: '2026-10-29T04:01:00.000Z',
+        },
+      }],
+    })
+    managerMessage.state = 'failed'
+    managerMessage.error = 'Oracle turn ended after starting the execution session.'
+    const reviewed = await service.snapshotForApi()
+    expect(reviewed.tasks![0]).toMatchObject({
+      status: 'review',
+      completionCandidate: {
+        source: 'root-task-complete',
+        attemptId: attempt.id,
+        sessionId: 'execution-a',
+      },
+    })
+    const candidate = reviewed.tasks![0]!.completionCandidate!
+    const completed = await service.confirmTaskCompletion({
+      revision: reviewed.tasks![0]!.revision,
+      taskId: task.id,
+      attemptId: candidate.attemptId,
+      computerId: candidate.computerId,
+      sessionId: candidate.sessionId,
+      sessionRevision: candidate.sessionRevision,
+      messageId: candidate.messageId,
+      resultDigest: candidate.resultDigest,
+    })
+    expect(completed.tasks![0]).toMatchObject({
+      status: 'completed',
+      completion: {
+        source: 'root-task-complete',
+        attemptId: attempt.id,
+        messageId: candidate.messageId,
+      },
+    })
+    const replayedCompletion = await service.confirmTaskCompletion({
+      revision: reviewed.tasks![0]!.revision,
+      taskId: task.id,
+      attemptId: candidate.attemptId,
+      computerId: candidate.computerId,
+      sessionId: candidate.sessionId,
+      sessionRevision: candidate.sessionRevision,
+      messageId: candidate.messageId,
+      resultDigest: candidate.resultDigest,
+    })
+    expect(replayedCompletion.tasks![0]!.revision).toBe(completed.tasks![0]!.revision)
+  })
+
+  it('keeps a task running when its linked execution outlives a failed Oracle turn', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['e'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The execution session is still working.',
+      nextAction: 'Wait for the linked execution session.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, 'Still working.', {
+        id: 'execution-running',
+        status: 'running',
+        messages: [{
+          id: 'task-prompt',
+          role: 'user',
+          content: 'Run the focused queue test.',
+          createdAt: now().toISOString(),
+        }],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '9ee57a8b-43f5-4db4-b16d-b030585115f6',
+    })
+    const managerMessage = managerMessages[0]!
+    managerMessage.state = 'failed'
+    managerMessage.error = 'Oracle lost its own turn after dispatch.'
+    managerMessages.push({
+      id: 'running-session-link',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessage.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-running',
+        promptId: 'task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'running',
+      attempts: [{
+        id: dispatched.tasks![0]!.attempts[0]!.id,
+        status: 'running',
+      }],
+    })
+  })
+
+  it('keeps a newly linked idle execution running with its active Oracle turn', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['a'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'Oracle is still dispatching the linked execution.',
+      nextAction: 'Wait for the active Oracle turn.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, 'No result yet.', {
+        id: 'execution-linking',
+        status: 'idle',
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '1dc6cd0e-a913-444a-bbd6-a97145e102b1',
+    })
+    managerMessages[0]!.state = 'running'
+    managerMessages.push({
+      id: 'linking-session-link',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-linking',
+        promptId: 'task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'running',
+      attempts: [{
+        id: dispatched.tasks![0]!.attempts[0]!.id,
+        status: 'running',
+      }],
+    })
+  })
+
+  it('keeps a linked idle execution queued with its recovered Oracle turn', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['b'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The recovered Oracle turn is still queued.',
+      nextAction: 'Wait for the recovered Oracle queue.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, 'No result yet.', {
+        id: 'execution-recovered-queue',
+        status: 'idle',
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'ecda856c-4415-48ac-96fd-d44bfc2c05b6',
+    })
+    managerMessages.push({
+      id: 'recovered-queue-session-link',
+      role: 'activity',
+      content: 'Linked execution session before restart',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-recovered-queue',
+        promptId: 'task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [{
+        id: dispatched.tasks![0]!.attempts[0]!.id,
+        status: 'queued',
+      }],
+    })
+  })
+
+  it('keeps a task queued while its exact linked execution prompt awaits delivery', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['d'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The execution prompt is waiting for the linked session.',
+      nextAction: 'Wait for the linked session queue to drain.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, 'Earlier work completed.', {
+        id: 'execution-queued',
+        status: 'idle',
+        queuedCount: 1,
+        queuedPrompts: [{
+          id: 'queued-task-prompt',
+          content: 'Run the focused queue test.',
+          createdAt: now().toISOString(),
+        }],
+        queueState: {
+          state: 'waiting',
+          promptId: 'queued-task-prompt',
+          message: 'Waiting for the terminal composer. Delivery will retry automatically.',
+          updatedAt: now().toISOString(),
+        },
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'fef46906-87a8-4701-ab37-d98086d9bc8d',
+    })
+    managerMessages[0]!.state = 'done'
+    managerMessages.push({
+      id: 'queued-session-link',
+      role: 'activity',
+      content: 'Queued execution prompt',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-queued',
+        promptId: 'queued-task-prompt',
+      }],
+    })
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [{
+        id: dispatched.tasks![0]!.attempts[0]!.id,
+        status: 'queued',
+      }],
+    })
+  })
+
+  it('matches completion to the exact dispatched prompt despite clock skew', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['f'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The worker clock is behind the hub.',
+      nextAction: 'Review the exact execution result.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(true, 'Focused queue test passed.', {
+        id: 'execution-skewed',
+        status: 'idle',
+        messages: [{
+          id: 'task-prompt-skewed',
+          role: 'user',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-29T03:59:00.000Z',
+        }, {
+          id: 'task-completion-skewed',
+          role: 'assistant',
+          content: 'Focused queue test passed.',
+          createdAt: '2026-10-29T03:59:30.000Z',
+          taskCompletion: {
+            source: 'root-task-complete',
+            toolCallId: 'task-complete-skewed',
+            completedAt: '2026-10-29T03:59:30.000Z',
+          },
+        }],
+      }),
+    }))
+    await service.initialize()
+    const dispatched = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '98417852-7aca-4bfc-a131-8d16c10401bf',
+    })
+    managerMessages[0]!.state = 'done'
+    managerMessages.push({
+      id: 'skewed-session-reopened',
+      role: 'activity',
+      content: 'Reopened execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-skewed',
+      }],
+    }, {
+      id: 'skewed-session-link',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-skewed',
+        promptId: 'task-prompt-skewed',
+      }],
+    })
+
+    const snapshot = await service.snapshotForApi()
+
+    expect(snapshot.tasks![0]).toMatchObject({
+      status: 'review',
+      completionCandidate: {
+        attemptId: dispatched.tasks![0]!.attempts[0]!.id,
+        messageId: 'task-completion-skewed',
+      },
+    })
+  })
+
+  it('resolves a queued prompt receipt to its later root transcript message', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['9'.repeat(64)],
+      title: 'Run the queued focused test',
+      summary: 'The task prompt waited behind existing work.',
+      nextAction: 'Review the queued execution result.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(true, 'Queued focused test passed.', {
+        id: 'execution-queued',
+        status: 'idle',
+        messages: [{
+          id: 'previous-root',
+          role: 'user',
+          content: 'Finish the existing work.',
+          createdAt: '2026-10-29T03:55:00.000Z',
+        }, {
+          id: 'previous-reply',
+          role: 'assistant',
+          content: 'Existing work finished.',
+          createdAt: '2026-10-29T03:56:00.000Z',
+        }, {
+          id: 'earlier-queued-root',
+          role: 'user',
+          content: 'Run the earlier queued check.',
+          createdAt: '2026-10-29T03:57:00.000Z',
+        }, {
+          id: 'earlier-queued-reply',
+          role: 'assistant',
+          content: 'Earlier queued check passed.',
+          createdAt: '2026-10-29T03:58:00.000Z',
+        }, {
+          id: 'transcript-task-prompt',
+          role: 'user',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-29T03:59:00.000Z',
+        }, {
+          id: 'queued-task-completion',
+          role: 'assistant',
+          content: 'Queued focused test passed.',
+          createdAt: '2026-10-29T03:59:30.000Z',
+          taskCompletion: {
+            source: 'root-task-complete',
+            toolCallId: 'queued-task-complete',
+            completedAt: '2026-10-29T03:59:30.000Z',
+          },
+        }],
+      }),
+    }))
+    await service.initialize()
+    await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'f137172b-34e9-4cd7-81bf-b4c17660126a',
+    })
+    managerMessages[0]!.state = 'done'
+    managerMessages.push({
+      id: 'queued-session-link',
+      role: 'activity',
+      content: 'Queued execution prompt',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-queued',
+        promptId: 'queued-task-receipt',
+        promptAnchorId: 'previous-root',
+        promptQueuePosition: 2,
+        promptDigest: createHash('sha256')
+          .update('Run the focused queue test.')
+          .digest('hex'),
+      }],
+    })
+
+    const snapshot = await service.snapshotForApi()
+
+    expect(snapshot.tasks![0]).toMatchObject({
+      status: 'review',
+      completionCandidate: {
+        messageId: 'queued-task-completion',
+        sessionId: 'execution-queued',
+      },
+    })
+  })
+
+  it('does not use a later unrelated prompt completion for a task attempt', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['1'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'Only the dispatched task turn can complete this attempt.',
+      nextAction: 'Retry the task turn.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(true, 'Unrelated cleanup completed.', {
+        id: 'execution-unrelated',
+        status: 'idle',
+        messages: [{
+          id: 'task-prompt-exact',
+          role: 'user',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-29T04:00:00.000Z',
+        }, {
+          id: 'task-test-evidence',
+          role: 'activity',
+          content: 'vitest focused queue test passed',
+          createdAt: '2026-10-29T04:00:30.000Z',
+          activityStatus: 'completed',
+        }, {
+          id: 'unrelated-prompt',
+          role: 'user',
+          content: 'Clean up an unrelated file.',
+          createdAt: '2026-10-29T04:01:00.000Z',
+        }, {
+          id: 'unrelated-test-evidence',
+          role: 'activity',
+          content: 'vitest unrelated cleanup test passed',
+          createdAt: '2026-10-29T04:01:30.000Z',
+          activityStatus: 'completed',
+        }, {
+          id: 'unrelated-completion',
+          role: 'assistant',
+          content: 'Unrelated cleanup completed.',
+          createdAt: '2026-10-29T04:02:00.000Z',
+          taskCompletion: {
+            source: 'root-task-complete',
+            toolCallId: 'unrelated-task-complete',
+            completedAt: '2026-10-29T04:02:00.000Z',
+          },
+        }],
+      }),
+    }))
+    await service.initialize()
+    await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '6a47ec02-c52a-4abc-9968-f7f34a969dd7',
+    })
+    managerMessages[0]!.state = 'done'
+    managerMessages.push({
+      id: 'unrelated-session-link',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-unrelated',
+        promptId: 'task-prompt-exact',
+      }],
+    })
+
+    const snapshot = await service.snapshotForApi()
+
+    expect(snapshot.tasks![0]).toMatchObject({ status: 'blocked' })
+    expect(snapshot.tasks![0]!.completionCandidate).toBeUndefined()
+    expect(snapshot.tasks![0]!.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'computer-a:execution-unrelated:task-test-evidence',
+        kind: 'test',
+      }),
+    ]))
+    expect(snapshot.tasks![0]!.evidence).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'computer-a:execution-unrelated:unrelated-test-evidence',
+      }),
+    ]))
+  })
+
+  it('reconciles an exact durable manager message outside the public snapshot', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['2'.repeat(64)],
+      title: 'Recover the exact terminal Oracle turn',
+      summary: 'The manager transcript window no longer contains it.',
+      nextAction: 'Show the durable terminal failure.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const attempted = await taskStore.beginAttempt({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '32edc0f1-fc56-4937-9853-70cf891cebd6',
+      managerMessageId: 'task-message-outside-snapshot',
+    })
+    const exactMessage: ManagerMessage = {
+      id: 'task-message-outside-snapshot',
+      role: 'user',
+      content: 'Run the focused queue test.',
+      createdAt: now().toISOString(),
+      state: 'failed',
+      error: 'Oracle terminal failure retained durably.',
+      source: 'task',
+      automatic: { kind: 'task', taskId: task.id },
+    }
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      managerMessages: () => [],
+      ...({
+        managerMessage: (id: string) => id === exactMessage.id ? exactMessage : undefined,
+      } as Partial<DreamerServiceOptions>),
+    }))
+    await service.initialize()
+
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      revision: attempted.revision + 1,
+      status: 'failed',
+      attempts: [{
+        status: 'failed',
+        error: 'Oracle terminal failure retained durably.',
+      }],
+    })
+  })
+
+  it('retries failed execution without allowing late older attempts to replace it', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['b'.repeat(64)],
+      title: 'Retry the failed queue test',
+      summary: 'The first execution could not start.',
+      nextAction: 'Retry execution.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+    }))
+    await service.initialize()
+    const first = await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '3cf0f598-9f48-4f69-88b6-49c215aca1f9',
+    })
+    managerMessages[0]!.state = 'failed'
+    managerMessages[0]!.error = 'Execution backend unavailable.'
+    managerMessages.push({
+      id: 'failed-session-link',
+      role: 'activity',
+      content: 'Linked the failed execution session.',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-failed',
+      }],
+    })
+    await service.reconcileTasks()
+    const failed = service.snapshot().tasks![0]!
+    expect(failed).toMatchObject({
+      status: 'failed',
+      attempts: [{ status: 'failed', error: 'Execution backend unavailable.' }],
+    })
+
+    await service.dispatchTask({
+      revision: failed.revision,
+      taskId: task.id,
+      requestId: '0ca3a2aa-e399-4e31-b809-13996c0f1dcb',
+    })
+    const retried = service.snapshot().tasks![0]!
+    expect(retried).toMatchObject({
+      status: 'queued',
+      attempts: [{ status: 'failed' }, { status: 'queued' }],
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
+    expect(enqueueManagerTask.mock.calls[1]![0].content).toContain(
+      'Previous execution sessions: computer-a/execution-failed.',
+    )
+
+    await taskStore.reconcileAttempt({
+      revision: retried.revision,
+      taskId: task.id,
+      attemptId: first.tasks![0]!.attempts[0]!.id,
+      status: 'failed',
+      error: 'Late failure from the old attempt.',
+    })
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [
+        { status: 'failed', error: 'Late failure from the old attempt.' },
+        { status: 'queued' },
+      ],
+    })
+  })
+
+  it('keeps an enqueue failure failed until the user explicitly retries', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['d'.repeat(64)],
+      title: 'Retry the failed dispatch',
+      summary: 'Oracle could not persist its manager message.',
+      nextAction: 'Retry execution explicitly.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn()
+      .mockRejectedValueOnce(new Error('manager store unavailable'))
+      .mockImplementation(async (input: ManagerInternalSubmission) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+    }))
+    await service.initialize()
+
+    await expect(service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: 'fc088477-e2ef-41a3-a421-f235729e9a43',
+    })).rejects.toThrow('manager store unavailable')
+    await service.reconcileTasks()
+    await service.reconcileTasks()
+
+    const failed = service.snapshot().tasks![0]!
+    expect(failed).toMatchObject({
+      status: 'failed',
+      attempts: [{
+        status: 'failed',
+        error: 'Oracle could not queue this task: manager store unavailable',
+      }],
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+
+    await service.dispatchTask({
+      revision: failed.revision,
+      taskId: task.id,
+      requestId: 'e7744556-fb8f-49a7-b10b-28ee68fc07d5',
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'queued',
+      attempts: [{ status: 'failed' }, { status: 'queued' }],
+    })
+  })
+
+  it('re-enqueues a persisted queued attempt once during reconciliation', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['c'.repeat(64)],
+      title: 'Recover queued investigation',
+      summary: 'The hub stopped after persisting dispatch intent.',
+      nextAction: 'Resume the queued Oracle turn.',
+      owner: 'oracle',
+      executionPrompt: 'Continue the queued investigation.',
+    })
+    await taskStore.beginAttempt({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '8ad2254d-8be8-4239-aa3a-a80dd862987d',
+      managerMessageId: 'task-attempt-recovery',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const existing = managerMessages.find(({ id }) => id === input.id)
+      if (existing) return existing
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+    }))
+    await service.initialize()
+
+    await service.reconcileTasks()
+    await service.reconcileTasks()
+
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(managerMessages).toHaveLength(1)
+    expect(service.snapshot().tasks![0]).toMatchObject({ status: 'queued' })
+  })
+
+  it('links carried suggestions to one durable task and replays investigation idempotently', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const store = new DreamerStore(directory, { now, randomUUID: () => 'carry-claim' })
+    await store.initialize()
+    await store.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await store.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: store.snapshot().settings.generation,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected carried-plan claim')
+    await store.commitRun(claim.claim, {
+      id: 'carried-plan',
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      createdAt: '2026-10-29T02:00:00.000Z',
+      items: [{
+        id: 'carried-session-item',
+        label: 'Investigate the carried session',
+        reason: 'The prior plan still has unresolved session work.',
+        status: 'pending',
+        source: 'carry',
+        computerId: 'computer-a',
+        sessionId: 'session-error',
+      }],
+      coverage: ['carried-forward'],
+      omitted: 0,
+    }, [])
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const existing = managerMessages.find(({ id }) => id === input.id)
+      if (existing) return existing
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    const service = new DreamerService(directory, options(now, {
+      store,
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, '', {
+        status: 'running',
+        isOpen: true,
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    const original = service.snapshot()
+    const request = {
+      revision: original.revision,
+      planId: original.plan!.id,
+      investigate: {
+        itemId: 'carried-session-item',
+        requestId: '3d497b62-1df4-4c64-baf0-06fa2715df9a',
+      },
+    }
+
+    const first = await service.editPlan(request)
+    expect(first.plan!.items[0]).toMatchObject({
+      id: 'carried-session-item',
+      source: 'carry',
+      status: 'skipped',
+      taskId: expect.stringMatching(/^oracle-task-/),
+    })
+    expect(service.snapshot().plan!.items[0]).toMatchObject({
+      status: 'skipped',
+      taskId: first.plan!.items[0]!.taskId,
+    })
+    const replay = await service.editPlan(request)
+
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(replay.plan!.items[0]!.taskId).toBe(first.plan!.items[0]!.taskId)
+    expect(replay.tasks).toHaveLength(1)
+    expect(replay.tasks![0]).toMatchObject({
+      id: first.plan!.items[0]!.taskId,
+      sourcePlan: {
+        planId: 'carried-plan',
+        itemId: 'carried-session-item',
+      },
+      attempts: [{ requestId: request.investigate.requestId }],
+    })
+
+    await expect(service.editPlan({
+      revision: first.revision,
+      planId: first.plan!.id,
+      item: { id: 'carried-session-item', status: 'pending' },
+    })).rejects.toMatchObject({ statusCode: 409 })
+
+    const firstTask = taskStore.snapshot().tasks[0]!
+    const firstAttempt = firstTask.attempts[0]!
+    await taskStore.confirmCompletion({
+      revision: firstTask.revision,
+      taskId: firstTask.id,
+      completion: {
+        source: 'root-task-complete',
+        attemptId: firstAttempt.id,
+        computerId: 'computer-a',
+        sessionId: 'execution-a',
+        sessionRevision: 1,
+        messageId: 'completion-a',
+        toolCallId: 'task-complete-a',
+        resultDigest: 'f'.repeat(64),
+        completedAt: now().toISOString(),
+        confirmedAt: now().toISOString(),
+      },
+    })
+    const restored = await service.editPlan({
+      revision: first.revision,
+      planId: first.plan!.id,
+      item: { id: 'carried-session-item', status: 'pending' },
+    })
+    expect(restored.plan!.items[0]).toMatchObject({
+      status: 'pending',
+      taskId: undefined,
+    })
+
+    const reinvestigated = await service.editPlan({
+      revision: restored.revision,
+      planId: restored.plan!.id,
+      investigate: {
+        itemId: 'carried-session-item',
+        requestId: '5c02c9f5-c8c1-4d79-aab9-b84ee8a7f465',
+      },
+    })
+    expect(reinvestigated.plan!.items[0]!.taskId).not.toBe(firstTask.id)
+    expect(reinvestigated.tasks).toHaveLength(2)
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns reconciled task evidence after a plan mutation', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['3'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'Evidence should remain visible after plan edits.',
+      nextAction: 'Review the task activity.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    await taskStore.beginAttempt({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '58b25644-4ba7-437e-8ee8-115e939f1e4f',
+      managerMessageId: 'task-evidence-message',
+    })
+    const managerMessages: ManagerMessage[] = [{
+      id: 'task-evidence-message',
+      role: 'user',
+      content: 'Run the focused queue test.',
+      createdAt: now().toISOString(),
+      state: 'running',
+      source: 'task',
+      automatic: { kind: 'task', taskId: task.id },
+    }, {
+      id: 'task-evidence-activity',
+      role: 'activity',
+      content: 'vitest focused queue test passed',
+      createdAt: now().toISOString(),
+      replyTo: 'task-evidence-message',
+      tool: 'vitest',
+    }]
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      managerMessages: () => managerMessages,
+    }))
+    await service.start()
+    await service.updateSettings({
+      revision: service.snapshot().revision,
+      enabled: true,
+      timeZone: 'UTC',
+    })
+    const current = await service.snapshotForApi()
+
+    const mutated = await service.editPlan({
+      revision: current.revision,
+      planId: current.plan!.id,
+      item: { id: current.plan!.items[0]!.id, status: 'skipped' },
+    })
+
+    expect(mutated.tasks![0]).toMatchObject({
+      evidence: [{
+        id: 'task-evidence-activity',
+        kind: 'test',
+        status: 'completed',
+      }],
+    })
+  })
+
   it('offers only authoritative task completion evidence and confirms it idempotently', async () => {
     const directory = await root()
     let currentNow = new Date('2026-10-29T04:00:00.000Z')

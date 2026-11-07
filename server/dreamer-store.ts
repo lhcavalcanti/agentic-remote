@@ -474,12 +474,15 @@ function validatePlanItem(item: unknown, version: number): DreamerPlanItem {
     !isSafeString(value.label, 120) ||
     !isSafeString(value.reason, 240) ||
     !['pending', 'skipped', 'done'].includes(String(value.status)) ||
-    !['session', 'memory', 'carry'].includes(String(value.source)) ||
+    !['session', 'memory', 'carry', 'task'].includes(String(value.source)) ||
     (value.computerId !== undefined && !isSafeIdentifier(value.computerId)) ||
     (value.sessionId !== undefined && !isSafeIdentifier(value.sessionId)) ||
     (value.memoryId !== undefined && !isSafeIdentifier(value.memoryId)) ||
+    (value.taskId !== undefined && !isSafeIdentifier(value.taskId)) ||
     hasComputerId !== hasSessionId ||
-    (value.source === 'session' && (!hasComputerId || !hasSessionId))
+    (value.source === 'session' && (!hasComputerId || !hasSessionId)) ||
+    (value.source === 'task' && value.taskId === undefined) ||
+    (value.source === 'memory' && value.taskId !== undefined)
   ) {
     throw new DreamerRecoveryError('Dreamer state has an invalid plan item.')
   }
@@ -530,6 +533,7 @@ function validatePlanItem(item: unknown, version: number): DreamerPlanItem {
     ...(value.computerId ? { computerId: value.computerId as string } : {}),
     ...(value.sessionId ? { sessionId: value.sessionId as string } : {}),
     ...(value.memoryId ? { memoryId: value.memoryId as string } : {}),
+    ...(value.taskId ? { taskId: value.taskId as string } : {}),
     ...(completion ? { completion } : {}),
   }
 }
@@ -1166,6 +1170,10 @@ export class DreamerStore {
         itemId: string
         provenance: DreamerTaskCompletionProvenance
       }
+      task?: {
+        itemId: string
+        taskId: string
+      }
     },
   ): Promise<void> {
     const expectedRevision = revision
@@ -1179,6 +1187,7 @@ export class DreamerStore {
           provenance: { ...input.completion.provenance },
         },
       } : {}),
+      ...(input.task ? { task: { ...input.task } } : {}),
     }
     const activeMemoryIds = input.activeMemoryIds
       ? new Set(input.activeMemoryIds)
@@ -1195,14 +1204,26 @@ export class DreamerStore {
         ) {
           return { result: undefined, changed: false }
         }
+      } else if (edit.task && !edit.order && !edit.item) {
+        const existing = candidate.plan.items.find(({ id }) => id === edit.task!.itemId)
+        if (existing?.taskId === edit.task.taskId && existing.status === 'skipped') {
+          return { result: undefined, changed: false }
+        }
       } else if (edit.item && !edit.order) {
         const existing = candidate.plan.items.find(({ id }) => id === edit.item!.id)
-        if (existing?.status === edit.item.status) {
+        if (
+          existing?.status === edit.item.status &&
+          !(
+            edit.item.status === 'pending' &&
+            existing.taskId &&
+            ['session', 'carry'].includes(existing.source)
+          )
+        ) {
           return { result: undefined, changed: false }
         }
       }
       this.requireRevision(candidate, expectedRevision)
-      if (!edit.order && !edit.item && !edit.completion) {
+      if (!edit.order && !edit.item && !edit.completion && !edit.task) {
         throw Object.assign(new Error('Dreamer plan edit is empty.'), { statusCode: 400 })
       }
       if (edit.order && !sameIds(candidate.plan.items, edit.order)) {
@@ -1231,6 +1252,12 @@ export class DreamerStore {
         }
         item.status = edit.item.status
         if (edit.item.status !== 'done') item.completion = undefined
+        if (
+          edit.item.status === 'pending' &&
+          ['session', 'carry'].includes(item.source)
+        ) {
+          item.taskId = undefined
+        }
         const fingerprint = next.fingerprints[item.id]
         if (!fingerprint) {
           throw new DreamerRecoveryError('Dreamer plan item fingerprint is missing.')
@@ -1238,6 +1265,35 @@ export class DreamerStore {
         const history = new Map(candidate.history.map((entry) => [entry.fingerprint, entry.status]))
         if (edit.item.status === 'pending') history.delete(fingerprint)
         else history.set(fingerprint, edit.item.status)
+        if (history.size > DREAMER_MAX_HISTORY) throw new DreamerCapacityError()
+        candidate.history = [...history.entries()]
+          .map(([fingerprint, status]) => ({ fingerprint, status }))
+      }
+      if (edit.task) {
+        const item = next.items.find(({ id }) => id === edit.task!.itemId)
+        if (
+          !item ||
+          !hasDreamerSessionIdentity(item) ||
+          !['session', 'carry'].includes(item.source)
+        ) {
+          throw new DreamerConflictError(
+            'Dreamer session suggestion changed; refresh and retry.',
+          )
+        }
+        if (item.taskId && item.taskId !== edit.task.taskId) {
+          throw new DreamerConflictError(
+            'Dreamer suggestion is already linked to another task.',
+          )
+        }
+        item.taskId = edit.task.taskId
+        item.status = 'skipped'
+        item.completion = undefined
+        const fingerprint = next.fingerprints[item.id]
+        if (!fingerprint) {
+          throw new DreamerRecoveryError('Dreamer plan item fingerprint is missing.')
+        }
+        const history = new Map(candidate.history.map((entry) => [entry.fingerprint, entry.status]))
+        history.set(fingerprint, 'skipped')
         if (history.size > DREAMER_MAX_HISTORY) throw new DreamerCapacityError()
         candidate.history = [...history.entries()]
           .map(([fingerprint, status]) => ({ fingerprint, status }))

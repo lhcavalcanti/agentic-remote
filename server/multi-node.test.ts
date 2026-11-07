@@ -2710,6 +2710,8 @@ describe('multi-node hub', () => {
       })
       expect(registered.statusCode).toBe(201)
       const computerId = registered.json().computer.id as string
+      const firstLifecycleGeneration =
+        registered.json().computer.lifecycleGeneration as string
       const oldCreation = hub.app.inject({
         method: 'POST', url: '/api/knowledge/roots',
         payload: { computerId, path: '/home/tester/docs', name: 'Old validation' },
@@ -2724,6 +2726,8 @@ describe('multi-node hub', () => {
       })
       expect(repaired.statusCode).toBe(201)
       expect(repaired.json().computer.id).toBe(computerId)
+      expect(repaired.json().computer.lifecycleGeneration)
+        .not.toBe(firstLifecycleGeneration)
       const fresh = await hub.app.inject({
         method: 'POST', url: '/api/knowledge/roots',
         payload: { computerId, path: '/home/tester/docs', name: 'Fresh validation' },
@@ -3011,6 +3015,7 @@ async function remoteSnapshotFixture() {
     name: 'Workshop',
     baseUrl: 'http://127.0.0.1:1',
     token: 'review-test-token',
+    lifecycleGeneration: 'snapshot-pairing',
   }
   await registry.upsert(computer)
   const manager = new ComputerManager(new FakeSessionService(), identity, registry)

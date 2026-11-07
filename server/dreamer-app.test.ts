@@ -44,7 +44,22 @@ describe('Dreamer app integration', () => {
     expect(response.json()).toMatchObject({
       available: true,
       settings: { enabled: false, timeZone: 'UTC' },
+      tasks: [],
     })
+    expect(runtime.proactiveCoordinator?.isEnabled()).toBe(false)
+
+    const enabled = await runtime.app.inject({
+      method: 'PUT',
+      url: '/api/manager/dreamer/settings',
+      headers: trusted,
+      payload: {
+        revision: response.json().revision,
+        enabled: true,
+        timeZone: 'UTC',
+      },
+    })
+    expect(enabled.statusCode).toBe(200)
+    expect(runtime.proactiveCoordinator?.isEnabled()).toBe(true)
   })
 
   it('keeps the hub available when Oracle/Dreamer storage is unavailable', async () => {

@@ -3,10 +3,12 @@ import Fastify from 'fastify'
 import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { ManagerInternalSubmission, ManagerMessage } from '../shared/manager.js'
 import {
   DreamerService,
 } from './dreamer-service.js'
 import { registerDreamerRoutes } from './dreamer-routes.js'
+import { OracleTaskStore } from './oracle-task-store.js'
 
 const directories: string[] = []
 const apps: ReturnType<typeof Fastify>[] = []
@@ -15,8 +17,34 @@ async function setup() {
   const directory = path.join(process.cwd(), `.dreamer-routes-test-${randomUUID()}`)
   await mkdir(directory, { recursive: true })
   directories.push(directory)
+  const now = () => new Date('2026-10-29T04:00:00.000Z')
+  const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+  await taskStore.initialize()
+  const task = await taskStore.upsertFinding({
+    sourceEventIds: ['a'.repeat(64)],
+    title: 'Run the focused queue test',
+    summary: 'The queue regression needs execution.',
+    nextAction: 'Start a session and run the focused queue test.',
+    owner: 'oracle',
+    executionPrompt: 'Reproduce the queue regression and run its focused test.',
+  })
+  const managerMessages: ManagerMessage[] = []
+  const enqueueManagerTask = async (
+    input: ManagerInternalSubmission,
+  ): Promise<ManagerMessage> => {
+    const existing = managerMessages.find(({ id }) => id === input.id)
+    if (existing) return existing
+    const message: ManagerMessage = {
+      ...input,
+      role: 'user',
+      createdAt: now().toISOString(),
+      state: 'queued',
+    }
+    managerMessages.push(message)
+    return message
+  }
   const service = new DreamerService(directory, {
-    now: () => new Date('2026-10-29T04:00:00.000Z'),
+    now,
     registry: () => ({
       'computer-a:session-a': {
         computerId: 'computer-a',
@@ -39,17 +67,25 @@ async function setup() {
       updatedAt: '2026-10-29T03:30:00.000Z',
       status: 'waiting',
       messages: [{
+        id: 'task-prompt',
+        role: 'user',
+        content: 'Run the focused queue test.',
+        createdAt: '2026-10-29T04:00:00.000Z',
+      }, {
         id: 'completion-message',
         role: 'assistant',
         content: '**Done.** Verified result.',
-        createdAt: '2026-10-29T03:20:00.000Z',
+        createdAt: '2026-10-29T04:01:00.000Z',
         taskCompletion: {
           source: 'root-task-complete',
           toolCallId: 'task-complete-call',
-          completedAt: '2026-10-29T03:20:00.000Z',
+          completedAt: '2026-10-29T04:01:00.000Z',
         },
       }],
     }),
+    taskStore,
+    enqueueManagerTask,
+    managerMessages: () => managerMessages,
   })
   await service.initialize()
   const app = Fastify({ logger: false })
@@ -63,7 +99,7 @@ async function setup() {
   })
   await registerDreamerRoutes(app, service)
   apps.push(app)
-  return { app, service }
+  return { app, service, task, taskStore, managerMessages }
 }
 
 afterEach(async () => {
@@ -72,6 +108,211 @@ afterEach(async () => {
 })
 
 describe('Dreamer routes', () => {
+  it('dispatches durable tasks idempotently and validates task requests', async () => {
+    const { app, task, managerMessages } = await setup()
+    const payload = {
+      revision: task.revision,
+      requestId: 'd8f12b3f-d670-4ed8-bd61-c488f87a9a8f',
+    }
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/dispatch`,
+      payload,
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.headers['cache-control']).toBe('no-store')
+    expect(first.json().tasks[0]).toMatchObject({
+      id: task.id,
+      status: 'queued',
+      attempts: [{ requestId: payload.requestId }],
+    })
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/dispatch`,
+      payload: {
+        revision: first.json().tasks[0].revision,
+        requestId: payload.requestId,
+      },
+    })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().tasks[0].attempts).toHaveLength(1)
+    expect(managerMessages).toHaveLength(1)
+
+    const duplicateWhileQueued = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/dispatch`,
+      payload: {
+        revision: replay.json().tasks[0].revision,
+        requestId: '91340f86-a5b1-42ae-bd0e-805d5419cb91',
+      },
+    })
+    expect(duplicateWhileQueued.statusCode).toBe(200)
+    expect(duplicateWhileQueued.json().tasks[0].attempts).toHaveLength(1)
+    expect(managerMessages).toHaveLength(1)
+
+    const malformed = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/dispatch`,
+      payload: { revision: task.revision, requestId: 'not-a-uuid' },
+    })
+    expect(malformed.statusCode).toBe(400)
+  })
+
+  it('lets the user complete or dismiss user-owned tasks idempotently', async () => {
+    const { app, taskStore } = await setup()
+    const completeTask = await taskStore.upsertFinding({
+      sourceEventIds: ['d'.repeat(64)],
+      title: 'Choose the production window',
+      summary: 'Oracle needs an explicit user decision.',
+      nextAction: 'Choose the rollout window.',
+      owner: 'user',
+    })
+    const dismissTask = await taskStore.upsertFinding({
+      sourceEventIds: ['e'.repeat(64)],
+      title: 'Review optional cleanup',
+      summary: 'This follow-up is optional.',
+      nextAction: 'Dismiss it if it is no longer relevant.',
+      owner: 'user',
+    })
+
+    const completed = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${completeTask.id}/disposition`,
+      payload: { revision: completeTask.revision, status: 'completed' },
+    })
+    expect(completed.statusCode).toBe(200)
+    expect(completed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === completeTask.id,
+    )).toMatchObject({ status: 'completed' })
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${completeTask.id}/disposition`,
+      payload: { revision: completeTask.revision, status: 'completed' },
+    })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === completeTask.id,
+    )).toMatchObject({ status: 'completed' })
+
+    const dismissed = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${dismissTask.id}/disposition`,
+      payload: { revision: dismissTask.revision, status: 'dismissed' },
+    })
+    expect(dismissed.statusCode).toBe(200)
+    expect(dismissed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === dismissTask.id,
+    )).toMatchObject({ status: 'dismissed' })
+  })
+
+  it('turns a journal suggestion into durable assigned follow-up work', async () => {
+    const { app, managerMessages } = await setup()
+    const initial = await app.inject({ url: '/api/manager/dreamer' })
+    const enabled = await app.inject({
+      method: 'PUT',
+      url: '/api/manager/dreamer/settings',
+      payload: {
+        revision: initial.json().revision,
+        enabled: true,
+        timeZone: 'UTC',
+      },
+    })
+    const snapshot = enabled.json()
+    const suggestion = snapshot.plan.items.find(
+      (item: { source: string }) => item.source === 'session',
+    )
+    const investigated = await app.inject({
+      method: 'PUT',
+      url: '/api/manager/dreamer/plan',
+      payload: {
+        revision: snapshot.revision,
+        planId: snapshot.plan.id,
+        investigate: {
+          itemId: suggestion.id,
+          requestId: '4a166f61-022f-4b6a-9b77-ab856a84c4cf',
+        },
+      },
+    })
+
+    expect(investigated.statusCode).toBe(200)
+    expect(investigated.json().plan.items.find(
+      (item: { id: string }) => item.id === suggestion.id,
+    )).toMatchObject({ status: 'skipped' })
+    expect(investigated.json().tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        owner: 'oracle',
+        status: 'queued',
+        attempts: [expect.objectContaining({
+          requestId: '4a166f61-022f-4b6a-9b77-ab856a84c4cf',
+        })],
+      }),
+    ]))
+    expect(managerMessages.some(({ source }) => source === 'task')).toBe(true)
+  })
+
+  it('confirms a durable task without requiring a daily plan', async () => {
+    const { app, task, managerMessages } = await setup()
+    const dispatched = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/dispatch`,
+      payload: {
+        revision: task.revision,
+        requestId: '51e5ab4f-884a-44af-9de8-45e3701b0c41',
+      },
+    })
+    const managerMessage = managerMessages[0]!
+    managerMessage.state = 'done'
+    managerMessages.push({
+      id: 'task-session-link',
+      role: 'activity',
+      content: 'Started the focused execution session.',
+      createdAt: '2026-10-29T04:00:00.000Z',
+      replyTo: managerMessage.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'session-a',
+        promptId: 'task-prompt',
+      }],
+    })
+    const reviewed = await app.inject({ url: '/api/manager/dreamer' })
+    const reviewedTask = reviewed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === task.id,
+    )
+    expect(reviewedTask).toMatchObject({
+      status: 'review',
+      completionCandidate: {
+        attemptId: dispatched.json().tasks.find(
+          (candidate: { id: string }) => candidate.id === task.id,
+        ).attempts[0].id,
+      },
+    })
+
+    const completed = await app.inject({
+      method: 'POST',
+      url: `/api/manager/dreamer/tasks/${task.id}/complete`,
+      payload: {
+        revision: reviewedTask.revision,
+        attemptId: reviewedTask.completionCandidate.attemptId,
+        computerId: reviewedTask.completionCandidate.computerId,
+        sessionId: reviewedTask.completionCandidate.sessionId,
+        sessionRevision: reviewedTask.completionCandidate.sessionRevision,
+        messageId: reviewedTask.completionCandidate.messageId,
+        resultDigest: reviewedTask.completionCandidate.resultDigest,
+      },
+    })
+    expect(completed.statusCode).toBe(200)
+    expect(completed.json().tasks.find(
+      (candidate: { id: string }) => candidate.id === task.id,
+    )).toMatchObject({
+      status: 'completed',
+      completion: {
+        messageId: 'completion-message',
+      },
+    })
+  })
+
   it('validates and idempotently confirms authoritative completion evidence', async () => {
     const { app } = await setup()
     const initial = await app.inject({ url: '/api/manager/dreamer' })

@@ -79,6 +79,23 @@ describe('OracleNotifier', () => {
     expect(oracle.next(failed)).toBeDefined()
   })
 
+  it('suppresses a scheduled result completed during its quiet hours', () => {
+    const oracle = new OracleNotifier()
+    oracle.next(event({
+      id: 'a1',
+      role: 'assistant',
+      replyTo: 'scheduled-1',
+      content: 'Nothing needs attention.',
+    }))
+    expect(oracle.next(event({
+      id: 'scheduled-1',
+      role: 'user',
+      state: 'done',
+      source: 'scheduled',
+      suppressNotification: true,
+    }))).toBeUndefined()
+  })
+
   it('asks for your OK once, with high priority, when Oracle wants to close a session', () => {
     const oracle = new OracleNotifier()
     const pending = event({

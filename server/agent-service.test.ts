@@ -1568,7 +1568,67 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"task-call",
           "success":true,
-          "result":{"content":"**Done.** The requested work is live."}
+          "result":{
+            "content":"Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt"
+          }
+        }
+      },
+      {
+        "type":"session.idle",
+        "id":"child-idle",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.050Z",
+        "agentId":"child-agent",
+        "data":{}
+      },
+      {
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"child-idle",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{"summary":"**Done.** The complete authoritative summary is rendered."}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        role: 'assistant',
+        content: '**Done.** The complete authoritative summary is rendered.',
+        activityStatus: undefined,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+          completedAt: '2026-07-22T00:00:02.000Z',
+        },
+      }),
+    ])
+  })
+
+  it('falls back to task completion arguments when the completion event has no summary', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"**Done.** The complete argument summary is rendered."}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "success":true,
+          "result":{
+            "content":"Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt"
+          }
         }
       },
       {
@@ -1584,15 +1644,161 @@ describe('AgentService deletion', () => {
       expect.objectContaining({
         id: 'tool:task-call',
         role: 'assistant',
-        content: '**Done.** The requested work is live.',
-        activityStatus: undefined,
-        taskCompletion: {
-          source: 'root-task-complete',
-          toolCallId: 'task-call',
-          completedAt: '2026-07-22T00:00:02.000Z',
-        },
+        content: '**Done.** The complete argument summary is rendered.',
       }),
     ])
+  })
+
+  it('correlates completion event summaries with their task completion result', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-a-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-a",
+          "toolName":"task_complete",
+          "arguments":{"summary":"Task A argument summary"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-a-end",
+        "parentId":"task-a-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"toolCallId":"task-a","success":true}
+      },
+      {
+        "type":"assistant.turn_end",
+        "id":"turn-a-end",
+        "parentId":"task-a-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{}
+      },
+      {
+        "type":"user.message",
+        "id":"user-b",
+        "parentId":"turn-a-end",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{"content":"Run task B"}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"task-b-start",
+        "parentId":"user-b",
+        "timestamp":"2026-07-22T00:00:04.000Z",
+        "data":{
+          "toolCallId":"task-b",
+          "toolName":"task_complete",
+          "arguments":{"summary":"Task B argument summary"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-b-end",
+        "parentId":"task-b-start",
+        "timestamp":"2026-07-22T00:00:05.000Z",
+        "data":{"toolCallId":"task-b","success":true}
+      },
+      {
+        "type":"session.task_complete",
+        "id":"task-b-session-complete",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:05.100Z",
+        "data":{"summary":"Task B canonical summary"}
+      }
+    ]`) as SessionEvent[]
+
+    expect(
+      messagesFromHistory(events)
+        .filter((message) => message.taskCompletion)
+        .map((message) => message.content),
+    ).toEqual(['Task A argument summary', 'Task B canonical summary'])
+  })
+
+  it('uses the completion event summary when task completion arguments are absent', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "success":true,
+          "result":{"content":"Tool result is not the final summary."}
+        }
+      },
+      {
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{"summary":"**Done.** The event-only summary is rendered."}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        role: 'assistant',
+        content: '**Done.** The event-only summary is rendered.',
+      }),
+    ])
+  })
+
+  it.each([
+    { label: 'success false', data: { success: false } },
+    { label: 'continue outcome', data: { outcome: 'continue' } },
+    { label: 'blocked outcome', data: { outcome: 'blocked' } },
+  ])('does not render a rejected task completion with $label', ({ data }) => {
+    const events = JSON.parse(JSON.stringify([
+      {
+        type: 'tool.execution_start',
+        id: 'task-start',
+        parentId: null,
+        timestamp: '2026-07-22T00:00:01.000Z',
+        data: {
+          toolCallId: 'task-call',
+          toolName: 'task_complete',
+          arguments: { summary: 'Task argument summary' },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'task-end',
+        parentId: 'task-start',
+        timestamp: '2026-07-22T00:00:02.000Z',
+        data: { toolCallId: 'task-call', success: true },
+      },
+      {
+        type: 'session.task_complete',
+        id: 'session-complete',
+        parentId: 'task-end',
+        timestamp: '2026-07-22T00:00:02.100Z',
+        data: { ...data, summary: 'Rejected canonical summary' },
+      },
+    ])) as SessionEvent[]
+
+    const [message] = messagesFromHistory(events)
+    expect(message).toMatchObject({
+      id: 'tool:task-call',
+      role: 'activity',
+      activityStatus: 'completed',
+    })
+    expect(message.taskCompletion).toBeUndefined()
   })
 
   it('keeps failed task completion calls as failed activity', () => {
@@ -6912,7 +7118,7 @@ describe('AgentService deletion', () => {
     await service.sendMessage(created.id, 'finish the task')
     client.session.emit(
       start('task-call', 'task_complete', {
-        summary: '**Complete.** The live result is visible.',
+        summary: '**Complete.** The live argument fallback is visible.',
       }),
     )
     client.session.emit(
@@ -6926,8 +7132,22 @@ describe('AgentService deletion', () => {
             toolCallId: 'task-call',
             success: true,
             result: {
-              content: '**Complete.** The live result is visible.',
+              content:
+                'Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt',
             },
+          },
+        }),
+      ) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(
+        JSON.stringify({
+          type: 'session.task_complete',
+          id: 'session-complete-task-call',
+          parentId: 'complete-task-call',
+          timestamp: new Date().toISOString(),
+          data: {
+            summary: '**Complete.** The authoritative live summary is visible.',
           },
         }),
       ) as SessionEvent,
@@ -6935,7 +7155,7 @@ describe('AgentService deletion', () => {
     await vi.waitFor(() =>
       expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
         role: 'assistant',
-        content: '**Complete.** The live result is visible.',
+        content: '**Complete.** The authoritative live summary is visible.',
         streaming: false,
         taskCompletion: {
           source: 'root-task-complete',
@@ -6948,7 +7168,29 @@ describe('AgentService deletion', () => {
         .get(created.id)
         ?.messages.some((message) => message.id === 'tool:task-call'),
     ).toBe(false)
-    client.session.resolvePrompt()
+    client.session.resolvePrompt(
+      JSON.parse(`{
+        "type":"assistant.message",
+        "id":"late-assistant-event",
+        "parentId":"session-complete-task-call",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{
+          "messageId":"late-assistant-message",
+          "content":"This late provider response must not replace the canonical summary."
+        }
+      }`) as AssistantMessageEvent,
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.status).toBe('idle'),
+    )
+    expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: '**Complete.** The authoritative live summary is visible.',
+      taskCompletion: {
+        source: 'root-task-complete',
+        toolCallId: 'task-call',
+      },
+    })
 
     client.session.emit(
       JSON.parse(`{
@@ -7001,6 +7243,156 @@ describe('AgentService deletion', () => {
       }),
     )
     await new Promise((resolve) => setTimeout(resolve, 20))
+    await service.stop()
+  })
+
+  it('falls back to live task completion arguments instead of truncated results', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+
+    await service.sendMessage(created.id, 'finish with the complete summary')
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"**Complete.** The full argument summary is visible."}
+        }
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.idle",
+        "id":"child-idle",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:01.500Z",
+        "agentId":"child-agent",
+        "data":{}
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "success":true,
+          "result":{
+            "content":"Output too large to read at once. Saved to: /tmp/copilot-tool-output-summary.txt"
+          }
+        }
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{}
+      }`) as SessionEvent,
+    )
+
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '**Complete.** The full argument summary is visible.',
+        streaming: false,
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-call',
+        },
+      }),
+    )
+    expect(
+      service.store
+        .get(created.id)
+        ?.messages.some((message) =>
+          message.content.includes('Output too large to read at once'),
+        ),
+    ).toBe(false)
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('keeps rejected live task completions as completed activity', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+
+    await service.sendMessage(created.id, 'continue after review')
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"This fallback must not be completed."}
+        }
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"toolCallId":"task-call","success":true}
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{
+          "success":false,
+          "outcome":"continue",
+          "summary":"This canonical summary was rejected."
+        }
+      }`) as SessionEvent,
+    )
+
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+        id: 'tool:task-call',
+        role: 'activity',
+        activityStatus: 'completed',
+      }),
+    )
+    expect(
+      service.store.get(created.id)?.messages.at(-1)?.taskCompletion,
+    ).toBeUndefined()
+
+    client.session.resolvePrompt()
     await service.stop()
   })
 
@@ -9669,6 +10061,528 @@ describe('AgentService deletion', () => {
     })
     await service.stop()
   })
+
+  it('retries an idle terminal queue in FIFO order after its composer becomes ready', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    let eventVersion = 'events-v1'
+    let events = JSON.parse(JSON.stringify([{
+      type: 'session.idle',
+      id: 'old-idle',
+      parentId: null,
+      timestamp: new Date(Date.now() - 1_000).toISOString(),
+      data: {},
+    }])) as SessionEvent[]
+    let pane = 'Waiting for background shells'
+    const notReady = Object.assign(
+      new Error('The terminal is not ready for this input.'),
+      {
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      },
+    )
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn()
+        .mockRejectedValueOnce(notReady)
+        .mockResolvedValue(true),
+      capture: vi.fn(async () => pane),
+      cancel: vi.fn(async () => true),
+    }
+    const store = new SessionStore(path.join(directory, 'state'))
+    const claim = vi.spyOn(store, 'claimTerminalQueuedPrompt')
+    const service = new AgentService(
+      store,
+      client,
+      async () => [{
+        id: sessionId,
+        cwd: directory,
+        title: 'Active Copilot session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => events,
+      async () => eventVersion,
+      terminal,
+    )
+    const errors: string[] = []
+    let published = 0
+    service.on('event', (event) => {
+      if (event.type === 'error') errors.push(event.message)
+      if (event.type === 'session.upserted') published += 1
+    })
+    try {
+      await service.start()
+      const first = await service.sendMessage(sessionId, 'first queued prompt', true)
+      const second = await service.sendMessage(sessionId, 'second queued prompt', true)
+
+      expect(second.queuedPrompts?.map((prompt) => prompt.content)).toEqual([
+        'first queued prompt',
+        'second queued prompt',
+      ])
+      expect(first.queueState).toMatchObject({
+        state: 'waiting',
+        promptId: first.queuedPrompts?.[0]?.id,
+      })
+      expect(first.queueState?.message).toMatch(/retry automatically/i)
+      expect(errors).toEqual([])
+      expect(claim).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(800)
+      await Promise.all([service.refreshTranscripts(), service.refreshTranscripts()])
+      expect(claim).not.toHaveBeenCalled()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      const waitingPublications = published
+
+      await vi.advanceTimersByTimeAsync(800)
+      await Promise.all([service.refreshTranscripts(), service.refreshTranscripts()])
+      expect(published).toBe(waitingPublications)
+      expect(claim).not.toHaveBeenCalled()
+
+      pane = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'
+      await vi.advanceTimersByTimeAsync(1_600)
+      await Promise.all([service.refreshTranscripts(), service.refreshTranscripts()])
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([
+        [sessionId, 'first queued prompt'],
+      ])
+      expect(claim).toHaveBeenCalledOnce()
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'idle',
+        queueState: { state: 'waiting' },
+        queuedPrompts: [
+          { content: 'first queued prompt' },
+          { content: 'second queued prompt' },
+        ],
+      })
+
+      await vi.advanceTimersByTimeAsync(1_600)
+      await Promise.all([service.refreshTranscripts(), service.refreshTranscripts()])
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([
+        [sessionId, 'first queued prompt'],
+        [sessionId, 'first queued prompt'],
+      ])
+      expect(claim).toHaveBeenCalledTimes(2)
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'running',
+        queuedPrompts: [{ content: 'second queued prompt' }],
+      })
+
+      events = JSON.parse(JSON.stringify([
+        ...events,
+        {
+          type: 'assistant.turn_end',
+          id: 'fresh-completion',
+          parentId: null,
+          timestamp: new Date(Date.now() + 1_000).toISOString(),
+          data: {},
+        },
+      ])) as SessionEvent[]
+      eventVersion = 'events-v2'
+      await Promise.all([service.refreshTranscripts(), service.refreshTranscripts()])
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([
+        [sessionId, 'first queued prompt'],
+        [sessionId, 'first queued prompt'],
+        [sessionId, 'second queued prompt'],
+      ])
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'running',
+        queuedPrompts: [],
+        queuedCount: 0,
+      })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+      expect(errors).toEqual([])
+    } finally {
+      await service.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not assign an uncertain head failure to the untouched FIFO tail', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => {
+        throw Object.assign(new Error('Delivery confirmation was lost.'), {
+          statusCode: 500,
+          uncertainDelivery: true,
+        })
+      }),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: sessionId,
+        cwd: directory,
+        title: 'Active Copilot session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => [],
+      async () => 'events-v1',
+      terminal,
+    )
+    try {
+      await service.start()
+      await service.store.updateStatus(sessionId, 'running')
+      await service.sendMessage(sessionId, 'possibly delivered head', true)
+      await service.sendMessage(sessionId, 'untouched tail', true)
+      await service.store.updateStatus(sessionId, 'idle')
+
+      await service['drainTerminalQueue'](sessionId)
+
+      expect(terminal.sendWhenIdle).toHaveBeenCalledOnce()
+      expect(service.getSession(sessionId)).toMatchObject({
+        failedPrompt: {
+          content: 'possibly delivered head',
+          uncertain: true,
+        },
+        queuedPrompts: [{ content: 'untouched tail' }],
+      })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('clears composer retry state when the session is retained during refusal', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    const notReady = Object.assign(
+      new Error('The terminal is not ready for this input.'),
+      {
+        statusCode: 409,
+        uncertainDelivery: false,
+        reasonCode: 'terminal-not-ready.queue',
+      },
+    )
+    let service!: AgentService
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => {
+        await service.store.update(sessionId, (session) => {
+          session.isOpen = false
+          session.archivedAt = new Date().toISOString()
+        })
+        throw notReady
+      }),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: sessionId,
+        cwd: directory,
+        title: 'Active Copilot session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => [{
+        type: 'session.idle',
+        id: 'idle',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        data: {},
+        ephemeral: true,
+      }],
+      async () => 'events-v1',
+      terminal,
+    )
+    try {
+      await service.start()
+
+      const retained = await service.sendMessage(sessionId, 'keep this queued', true)
+
+      expect(retained).toMatchObject({
+        isOpen: false,
+        queuedPrompts: [{ content: 'keep this queued' }],
+        queueState: {
+          state: 'waiting',
+          message: expect.stringMatching(/Reopen/),
+        },
+      })
+      expect(retained.queueState?.retryAt).toBeUndefined()
+      expect(service['pendingTerminalQueueClaims'].has(sessionId)).toBe(false)
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('keeps a non-retryable terminal queue failure visible on the session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => {
+        throw Object.assign(new Error('The terminal owner disappeared.'), {
+          statusCode: 409,
+          uncertainDelivery: false,
+        })
+      }),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: sessionId,
+        cwd: directory,
+        title: 'Active Copilot session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => [{
+        type: 'session.idle',
+        id: 'idle',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        data: {},
+        ephemeral: true,
+      }],
+      async () => 'events-v1',
+      terminal,
+    )
+    try {
+      await service.start()
+      const queued = await service.sendMessage(sessionId, 'keep this queued', true)
+
+      expect(queued.queuedPrompts).toMatchObject([{ content: 'keep this queued' }])
+      expect(queued.queueState).toMatchObject({
+        state: 'error',
+        promptId: queued.queuedPrompts?.[0]?.id,
+        message: 'The terminal owner disappeared. The queued prompt was not sent.',
+      })
+      expect(terminal.sendWhenIdle).toHaveBeenCalledOnce()
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('keeps a non-retryable terminal queue failure blocked across restart', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    const sessionId = client.session.sessionId
+    const discover = async () => [{
+      id: sessionId,
+      cwd: directory,
+      title: 'Active Copilot session',
+      updatedAt: new Date().toISOString(),
+    }]
+    client.nextSessionList = Promise.resolve([{
+      sessionId,
+      startTime: new Date(),
+      modifiedTime: new Date(),
+      summary: 'External session',
+      isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    const failure = Object.assign(new Error('The terminal owner disappeared.'), {
+      statusCode: 409,
+      uncertainDelivery: false,
+    })
+    const firstTerminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => {
+        throw failure
+      }),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const first = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      discover,
+      async () => undefined,
+      async () => [{
+        type: 'session.idle',
+        id: 'idle',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        data: {},
+        ephemeral: true,
+      }],
+      async () => 'events-v1',
+      firstTerminal,
+    )
+    await first.start()
+    await first.sendMessage(sessionId, 'keep this blocked', true)
+    expect(first.getSession(sessionId)?.queueState).toMatchObject({
+      state: 'error',
+      message: expect.stringMatching(/was not sent/),
+    })
+    await first.stop()
+
+    const restartedClient = new FakeCopilotClient()
+    restartedClient.nextSessionList = client.nextSessionList
+    const restartedTerminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      sendWhenIdle: vi.fn(async () => true),
+      capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+      cancel: vi.fn(async () => true),
+    }
+    const restarted = new AgentService(
+      new SessionStore(stateDirectory),
+      restartedClient,
+      discover,
+      async () => undefined,
+      async () => [{
+        type: 'session.idle',
+        id: 'idle',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        data: {},
+        ephemeral: true,
+      }],
+      async () => 'events-v1',
+      restartedTerminal,
+    )
+    try {
+      await restarted.start()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(restartedTerminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(restarted.getSession(sessionId)).toMatchObject({
+        queuedPrompts: [{ content: 'keep this blocked' }],
+        queueState: {
+          state: 'error',
+          message: expect.stringMatching(/was not sent/),
+        },
+      })
+    } finally {
+      await restarted.stop()
+    }
+  })
+
+  it.each(['remove', 'edit', 'reorder'] as const)(
+    '%s resolves an errored queue head and wakes the next eligible delivery',
+    async (action) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      const sessionId = client.session.sessionId
+      client.nextSessionList = Promise.resolve([{
+        sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      }])
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        sendWhenIdle: vi.fn()
+          .mockRejectedValueOnce(Object.assign(new Error('The terminal owner disappeared.'), {
+            statusCode: 409,
+            uncertainDelivery: false,
+          }))
+          .mockResolvedValue(true),
+        capture: vi.fn(async () => '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'),
+        cancel: vi.fn(async () => true),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [{
+          id: sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => [],
+        async () => 'events-v1',
+        terminal,
+      )
+      try {
+        await service.start()
+        await service.store.updateStatus(sessionId, 'running')
+        await service.sendMessage(sessionId, 'errored head', true)
+        const queued = await service.sendMessage(sessionId, 'untouched tail', true)
+        const [head, tail] = queued.queuedPrompts!
+        await service.store.updateStatus(sessionId, 'idle')
+        await service['drainTerminalQueue'](sessionId)
+        expect(service.getSession(sessionId)?.queueState?.state).toBe('error')
+
+        if (action === 'remove') {
+          await service.removeQueuedPrompt(sessionId, head.id)
+        } else if (action === 'edit') {
+          await service.updateQueuedPrompt(sessionId, head.id, 'edited head')
+        } else {
+          await service.reorderQueuedPrompts(sessionId, [tail.id, head.id])
+        }
+
+        await vi.waitFor(() => expect(terminal.sendWhenIdle).toHaveBeenCalledTimes(2))
+        expect(terminal.sendWhenIdle.mock.calls[1]?.[1]).toBe(
+          action === 'remove'
+            ? 'untouched tail'
+            : action === 'edit'
+              ? 'edited head'
+              : 'untouched tail',
+        )
+        expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+      } finally {
+        await service.stop()
+      }
+    },
+  )
 
   it('surfaces the update the terminal CLI is offering', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-upd-'))

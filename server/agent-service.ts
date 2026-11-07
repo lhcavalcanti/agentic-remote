@@ -44,6 +44,7 @@ import type {
   PendingUserInput,
   ProviderRuntimeOptions,
   QueuedPrompt,
+  QueueState,
   QueuedPromptDispatchResult,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -219,11 +220,12 @@ interface PendingTerminalQueueSettlement {
   dispatchId: string
   outcome: TerminalQueueOutcome | { kind: 'feedback'; command: string; before: string | undefined }
   overlayOpen: boolean
+  failureReason?: string
   failureMessage?: string
   retryAt: number
   retryDelay: number
-  // A mid-turn steer refused before anything was typed goes back to the head
-  // of the queue and waits for the composer again, without an error.
+  // Input refused before anything was typed goes back to the head of the queue
+  // and waits for the composer again, without an error.
   quiet?: boolean
 }
 
@@ -376,12 +378,15 @@ function suspendedRuntimeConflict(): Error {
   )
 }
 
-/** A steer the terminal refused, before typing anything, for want of a composer. */
+/** Terminal input refused before typing anything for want of a composer. */
 function isTerminalNotReadyRefusal(error: unknown): boolean {
+  const reason = error && typeof error === 'object'
+    ? Reflect.get(error, 'reasonCode')
+    : undefined
   return Boolean(
     error &&
       typeof error === 'object' &&
-      Reflect.get(error, 'reasonCode') === 'terminal-not-ready.steer' &&
+      (reason === 'terminal-not-ready.steer' || reason === 'terminal-not-ready.queue') &&
       Reflect.get(error, 'uncertainDelivery') === false,
   )
 }
@@ -506,6 +511,27 @@ interface ActivityToolStart {
   toolCallId: string
 }
 
+interface LiveTaskCompletion {
+  assistantMessageId?: string
+  canonicalSummary?: string
+  completionAccepted?: boolean
+  completedAt?: string
+  completionEventReceived?: boolean
+  fallbackSummary?: string
+  toolCallId: string
+}
+
+function taskCompletionAccepted(event: SessionEvent): boolean {
+  if (event.type !== 'session.task_complete') {
+    return false
+  }
+  return (
+    event.data.success !== false &&
+    event.data.outcome !== 'continue' &&
+    event.data.outcome !== 'blocked'
+  )
+}
+
 function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
   return kind === 'skill' || kind === 'agent'
 }
@@ -543,6 +569,17 @@ function activityGroupIdFor(
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
+  const pendingTaskCompletions = new Map<
+    string,
+    {
+      activityContent: string
+      completedAt: string
+      fallbackSummary?: string
+      message: ChatMessage
+      startedAt: string
+      toolCallId: string
+    }
+  >()
   const toolStartsByCallId = new Map<
     string,
     ActivityToolStart
@@ -589,12 +626,32 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     }
     runningActivities.clear()
   }
-
+  const renderTaskCompletion = (
+    message: ChatMessage,
+    toolCallId: string,
+    summary: string,
+    completedAt: string,
+    finishActivities = true,
+  ) => {
+    if (finishActivities) {
+      finishRunningActivities()
+    }
+    message.role = 'assistant'
+    message.content = summary
+    message.createdAt = completedAt
+    message.activityStatus = undefined
+    message.taskCompletion = {
+      source: 'root-task-complete',
+      toolCallId,
+      completedAt,
+    }
+  }
   for (const event of events) {
     if (event.type === 'user.message') {
       if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
         continue
       }
+      pendingTaskCompletions.clear()
       const content = visibleUserContent(event.data.content)
       if (content) {
         finishRunningActivities()
@@ -625,13 +682,11 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete' && !event.agentId) {
+      if (toolName === 'task_complete' && !eventAgentId(event)) {
         const summary = stringValue(
           recordValue(event.data.arguments).summary,
         )?.trim()
-        if (summary) {
-          taskCompletionSummaries.set(toolCallId, summary)
-        }
+        taskCompletionSummaries.set(toolCallId, summary || '')
       }
       append({
         id: `tool:${toolCallId}`,
@@ -658,24 +713,60 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
         if (duration !== undefined) {
           message.activityDurationMs = duration
         }
-        const taskResultContent = stringValue(
-          recordValue(recordValue(event.data).result).content,
-        )?.trim()
-        const taskCompletionSummary = taskCompletionSummaries.has(toolCallId)
-          ? taskResultContent || taskCompletionSummaries.get(toolCallId)
-          : undefined
-        if (event.data.success && taskCompletionSummary) {
-          finishRunningActivities()
-          message.role = 'assistant'
-          message.content = taskCompletionSummary
-          message.createdAt = event.timestamp
-          message.activityStatus = undefined
-          message.taskCompletion = {
-            source: 'root-task-complete',
-            toolCallId,
+        if (event.data.success && taskCompletionSummaries.has(toolCallId)) {
+          const fallbackSummary =
+            taskCompletionSummaries.get(toolCallId) || undefined
+          if (fallbackSummary) {
+            finishRunningActivities()
+          }
+          pendingTaskCompletions.set(event.id, {
+            activityContent: message.content,
             completedAt: event.timestamp,
+            fallbackSummary,
+            message,
+            startedAt: message.createdAt,
+            toolCallId,
+          })
+          if (fallbackSummary) {
+            renderTaskCompletion(
+              message,
+              toolCallId,
+              fallbackSummary,
+              event.timestamp,
+            )
           }
         }
+      }
+    }
+    if (event.type === 'session.task_complete' && !eventAgentId(event)) {
+      const completionEventId =
+        event.parentId && pendingTaskCompletions.has(event.parentId)
+          ? event.parentId
+        : pendingTaskCompletions.size === 1
+          ? pendingTaskCompletions.keys().next().value
+          : undefined
+      const completion = completionEventId
+        ? pendingTaskCompletions.get(completionEventId)
+        : undefined
+      const summary =
+        event.data.summary?.trim() || completion?.fallbackSummary
+      if (completion && summary && taskCompletionAccepted(event)) {
+        renderTaskCompletion(
+          completion.message,
+          completion.toolCallId,
+          summary,
+          completion.completedAt,
+          !completion.fallbackSummary,
+        )
+      } else if (completion?.fallbackSummary) {
+        completion.message.role = 'activity'
+        completion.message.content = completion.activityContent
+        completion.message.createdAt = completion.startedAt
+        completion.message.activityStatus = 'completed'
+        delete completion.message.taskCompletion
+      }
+      if (completionEventId) {
+        pendingTaskCompletions.delete(completionEventId)
       }
     }
     if (
@@ -685,6 +776,9 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       event.type === 'session.error' ||
       event.type === 'session.shutdown'
     ) {
+      if (!eventAgentId(event)) {
+        pendingTaskCompletions.clear()
+      }
       finishRunningActivities(
         event.type === 'abort' ||
           event.type === 'session.error' ||
@@ -1878,6 +1972,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   private readonly pendingTerminalQueueSettlements = new Map<string, PendingTerminalQueueSettlement>()
   private readonly pendingTerminalQueueClaims = new Map<string, { retryAt: number; retryDelay: number }>()
+  private readonly terminalQueueStates = new Map<string, QueueState>()
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
   private startupRecoveryPending = false
@@ -1888,7 +1983,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly admissions = new SessionAdmissions(() => this.stopped)
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
+  private readonly rediscoveredTerminalQueues = new Map<string, 'resume' | 'reopen'>()
   private nativeStartupDiscoveryReady = false
+  private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
   private readonly sdkRecoveryRuns = new Map<string, Promise<void>>()
   private readonly recoveredPermissionReplies = new Map<
@@ -2097,7 +2194,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly eventLogVersions = new Map<string, string>()
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
-  private readonly liveTaskCompletionSummaries = new Map<string, string>()
+  private readonly liveTaskCompletions = new Map<string, LiveTaskCompletion>()
+  private readonly completedTaskPromptMessages = new Set<string>()
   private readonly liveActivityEvents = new Map<
     string,
     Map<
@@ -2497,6 +2595,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ))
     }
     this.startupRecoveryPending = false
+    this.dispatchRediscoveredTerminalQueues()
     if (![...this.terminalRecoveryStates.values()].includes('pending')) {
       this.terminalRecoveryStates = undefined
     }
@@ -2812,6 +2911,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.startupTerminalQueues.clear()
     this.pendingTerminalQueueSettlements.clear()
     this.pendingTerminalQueueClaims.clear()
+    this.terminalQueueStates.clear()
     for (const session of this.store.list()) {
       this.backgroundTaskTracker.remove(session.id)
     }
@@ -3735,6 +3835,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       suspended = true
       this.startupTerminalQueues.delete(id)
       this.pendingTerminalQueueClaims.delete(id)
+      this.terminalQueueStates.delete(id)
       this.terminalDrainRequested.delete(id)
       return result
     } finally {
@@ -5917,6 +6018,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertNotRetained(sessionId, 'changing its queue')
     if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+      const previousQueueState = this.getSession(sessionId)?.queueState
       const original = this.getSession(sessionId)?.queuedPrompts
         ?.find((prompt) => prompt.id === promptId)
       const discarded = await this.queuedDispatches.discard(sessionId, promptId, acknowledgesDispatch)
@@ -5928,6 +6030,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!prompt) {
         throw new Error('Queued prompt not found')
       }
+      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
       this.publish(session)
       return { session: this.publicSession(session), prompt }
     }))
@@ -5941,11 +6044,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertNotRetained(sessionId, 'changing its queue')
     const content = await this.normalizeQueuedContent(sessionId, rawContent)
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+      const previousQueueState = this.getSession(sessionId)?.queueState
       this.queuedDispatches.assertAvailable(sessionId)
       const { session, prompt } = await this.store.updateQueuedPrompt(
         sessionId, promptId, content,
       )
       if (!prompt) throw queueConflict('Queued prompt not found')
+      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
       this.publish(session)
       return { session: this.publicSession(session), prompt }
     }))
@@ -6002,11 +6107,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<SessionDetail> {
     this.assertNotRetained(sessionId, 'changing its queue')
     return this.admissions.run(sessionId, () => this.serializeQueue(sessionId, async () => {
+      const previousQueueState = this.getSession(sessionId)?.queueState
       this.queuedDispatches.assertAvailable(sessionId)
       const session = await this.store.reorderQueuedPrompts(sessionId, order)
+      this.resumeQueueAfterErrorResolution(sessionId, previousQueueState, session)
       this.publish(session)
       return this.publicSession(session)
     }))
+  }
+
+  private resumeQueueAfterErrorResolution(
+    sessionId: string,
+    previous: QueueState | undefined,
+    session: SessionDetail,
+  ): void {
+    if (previous?.state !== 'error' || session.queueState) return
+    this.terminalQueueStates.delete(sessionId)
+    if (session.queuedPrompts?.length && session.status === 'idle' && !session.suspended) {
+      this.wakeTerminalQueue(sessionId)
+    }
   }
 
   private async enqueuePrompt(
@@ -7491,6 +7610,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.queueOperations.delete(sessionId)
       this.pendingTerminalQueueSettlements.delete(sessionId)
       this.pendingTerminalQueueClaims.delete(sessionId)
+      this.terminalQueueStates.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
       this.transcriptTakeInCosts.delete(sessionId)
@@ -8982,6 +9102,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async discoverSessions(): Promise<boolean> {
     if (this.stopped) return false
+    const hadCompletedDiscovery = this.nativeDiscoveryCompleted
     this.nativeStartupDiscoveryReady = false
     let sessions: SessionMetadata[]
     let activeSessions: DiscoveredSession[]
@@ -9028,6 +9149,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     activeSessions = activeSessions.filter((session) => !excluded(session.id))
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
     const previouslyExternal = this.externalSessionIds
+    const rediscoveredTerminalQueues = hadCompletedDiscovery
+      ? activeSessions
+        .map((session) => session.id)
+        .filter((id) => !previouslyExternal.has(id))
+      : []
+    // Capture intent before syncBackends marks every observed owner open.
+    for (const id of rediscoveredTerminalQueues) {
+      if (!this.store.get(id)?.queuedPrompts?.length) continue
+      this.rediscoveredTerminalQueues.set(
+        id,
+        this.store.isManagedOpen(id) ? 'resume' : 'reopen',
+      )
+    }
     this.externalSessionIds = new Set(
       [
         ...activeSessions.map((session) => session.id),
@@ -9128,7 +9262,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     this.nativeStartupDiscoveryReady = isCurrent()
+    if (this.nativeStartupDiscoveryReady) {
+      this.nativeDiscoveryCompleted = true
+      for (const [id, recovery] of [...this.rediscoveredTerminalQueues]) {
+        if (!this.externalSessionIds.has(id) || !this.store.get(id)?.queuedPrompts?.length) {
+          this.rediscoveredTerminalQueues.delete(id)
+          continue
+        }
+        if (recovery !== 'reopen') continue
+        const interrupted = await this.store.markInterrupted(id)
+        if (!isCurrent()) {
+          this.nativeStartupDiscoveryReady = false
+          return false
+        }
+        this.rediscoveredTerminalQueues.delete(id)
+        this.publish(interrupted)
+        this.wakeTerminalQueue(id)
+      }
+      this.dispatchRediscoveredTerminalQueues()
+    }
     return this.nativeStartupDiscoveryReady
+  }
+
+  private dispatchRediscoveredTerminalQueues(): void {
+    if (this.startupRecoveryPending) return
+    for (const [id, recovery] of [...this.rediscoveredTerminalQueues]) {
+      if (!this.externalSessionIds.has(id) || !this.store.get(id)?.queuedPrompts?.length) {
+        this.rediscoveredTerminalQueues.delete(id)
+        continue
+      }
+      if (recovery !== 'resume') continue
+      if (!this.store.isManagedOpen(id)) continue
+      this.rediscoveredTerminalQueues.delete(id)
+      this.wakeTerminalQueue(id)
+    }
   }
 
   refreshDiscovery(): Promise<void> {
@@ -10183,6 +10350,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private finishLiveTaskCompletion(
+    sessionId: string,
+    completion: LiveTaskCompletion,
+    summary: string,
+  ): void {
+    if (!completion.completedAt) {
+      return
+    }
+    if (completion.assistantMessageId) {
+      this.completedTaskPromptMessages.add(
+        `${sessionId}:${completion.assistantMessageId}`,
+      )
+    }
+    void this.store
+      .finishTaskCompletion(
+        sessionId,
+        completion.toolCallId,
+        summary,
+        completion.completedAt,
+        completion.assistantMessageId,
+      )
+      .then((stored) => this.publish(stored))
+      .catch((error: unknown) => this.publishError(sessionId, error))
+  }
+
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
@@ -10240,11 +10432,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete' && !event.agentId) {
-        this.liveTaskCompletionSummaries.set(
-          `${sessionId}:${event.data.toolCallId}`,
-          stringValue(recordValue(event.data.arguments).summary)?.trim() || '',
-        )
+      if (toolName === 'task_complete' && !eventAgentId(event)) {
+        this.liveTaskCompletions.set(sessionId, {
+          fallbackSummary:
+            stringValue(recordValue(event.data.arguments).summary)?.trim() ||
+            undefined,
+          toolCallId: event.data.toolCallId,
+        })
       }
       this.rememberLiveActivityEvent(
         sessionId,
@@ -10266,27 +10460,55 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
+    if (event.type === 'session.task_complete' && !eventAgentId(event)) {
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        this.liveTaskCompletions.delete(sessionId)
+        return
+      }
+      const completion = this.liveTaskCompletions.get(sessionId)
+      if (!completion) {
+        return
+      }
+      completion.completionEventReceived = true
+      completion.completionAccepted = taskCompletionAccepted(event)
+      completion.canonicalSummary = event.data.summary?.trim() || undefined
+      if (!completion.completedAt) {
+        return
+      }
+      this.liveTaskCompletions.delete(sessionId)
+      const summary =
+        completion.canonicalSummary || completion.fallbackSummary
+      if (!completion.completionAccepted || !summary) {
+        return
+      }
+      this.finishLiveTaskCompletion(sessionId, completion, summary)
+      return
+    }
+
     if (event.type === 'tool.execution_complete') {
       if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
-      const completionKey = `${sessionId}:${event.data.toolCallId}`
+      const completion = this.liveTaskCompletions.get(sessionId)
       const isTaskCompletion =
-        this.liveTaskCompletionSummaries.has(completionKey)
-      const fallbackSummary =
-        this.liveTaskCompletionSummaries.get(completionKey) || ''
-      this.liveTaskCompletionSummaries.delete(completionKey)
-      const resultContent =
-        stringValue(
-          recordValue(recordValue(event.data).result).content,
-        )?.trim() || fallbackSummary
+        completion?.toolCallId === event.data.toolCallId
+      if (isTaskCompletion) {
+        completion.completedAt = event.timestamp
+        completion.assistantMessageId = activePrompt?.assistantMessageId
+      }
+      const taskCompletionSummary =
+        completion?.canonicalSummary || completion?.fallbackSummary
       const presentationResult = activityResult(event.data, event.data.success)
       const update =
-        isTaskCompletion && event.data.success && resultContent
+        isTaskCompletion &&
+        event.data.success &&
+        completion.completionEventReceived &&
+        completion.completionAccepted &&
+        taskCompletionSummary
           ? this.store.finishTaskCompletion(
               sessionId,
               event.data.toolCallId,
-              resultContent,
+              taskCompletionSummary,
               event.timestamp,
               activePrompt?.assistantMessageId,
             )
@@ -10297,9 +10519,50 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               event.timestamp,
               presentationResult,
             )
+      if (
+        isTaskCompletion &&
+        event.data.success &&
+        completion.completionEventReceived &&
+        completion.completionAccepted &&
+        taskCompletionSummary &&
+        activePrompt?.assistantMessageId
+      ) {
+        this.completedTaskPromptMessages.add(
+          `${sessionId}:${activePrompt.assistantMessageId}`,
+        )
+      }
+      if (
+        isTaskCompletion &&
+        (!event.data.success || completion.completionEventReceived)
+      ) {
+        this.liveTaskCompletions.delete(sessionId)
+      }
       void update
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
+      return
+    }
+
+    if (
+      !eventAgentId(event) &&
+      (event.type === 'session.idle' ||
+        event.type === 'abort' ||
+        event.type === 'session.error' ||
+        event.type === 'session.shutdown')
+    ) {
+      const completion = this.liveTaskCompletions.get(sessionId)
+      this.liveTaskCompletions.delete(sessionId)
+      if (
+        event.type === 'session.idle' &&
+        completion?.completedAt &&
+        completion.fallbackSummary
+      ) {
+        this.finishLiveTaskCompletion(
+          sessionId,
+          completion,
+          completion.fallbackSummary,
+        )
+      }
     }
   }
 
@@ -10349,7 +10612,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? assistantMessageId
         : this.activePrompts.get(sessionId)?.assistantMessageId ||
           assistantMessageId
-      if (response?.data.content) {
+      if (
+        response?.data.content &&
+        !this.completedTaskPromptMessages.has(
+          `${sessionId}:${completionAssistantMessageId}`,
+        )
+      ) {
         this.store.setMessageContent(
           sessionId,
           completionAssistantMessageId,
@@ -10443,6 +10711,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.sdkTurnsAwaited.delete(sessionId)
       }
       this.retiredSdkPromptRuns.delete(assistantMessageId)
+      this.completedTaskPromptMessages.delete(
+        `${sessionId}:${assistantMessageId}`,
+      )
+      this.completedTaskPromptMessages.delete(
+        `${sessionId}:${completionAssistantMessageId}`,
+      )
       if (this.activePrompts.get(sessionId)?.assistantMessageId === completionAssistantMessageId) {
         this.activePrompts.delete(sessionId)
         if (!delivery || delivery.accepted) this.wakeSdkQueue(sessionId)
@@ -10761,21 +11035,54 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const retry = this.pendingTerminalQueueClaims.get(sessionId)
       if (retry && Date.now() < retry.retryAt) return false
       const stored = await this.store.readAfterWrites(sessionId)
+      const next = stored.queuedPrompts?.[0]
       if (stored.interruption || stored.archivedAt) {
         // Retained work waits, untouched and unpolled, for Reopen to drain it.
         this.pendingTerminalQueueClaims.delete(sessionId)
         this.startupTerminalQueues.delete(sessionId)
+        const previous = this.terminalQueueStates.get(sessionId)
+        if (next) {
+          this.terminalQueueStates.set(sessionId, {
+            state: 'waiting',
+            promptId: next.id,
+            message: 'Reopen the session to resume queued delivery.',
+            updatedAt: new Date().toISOString(),
+          })
+          if (previous?.state !== 'waiting' || previous.promptId !== next.id ||
+              previous.message !== 'Reopen the session to resume queued delivery.') {
+            this.publish(stored)
+          }
+        } else {
+          this.terminalQueueStates.delete(sessionId)
+        }
         return false
       }
-      const next = stored.queuedPrompts?.[0]
       const terminalDispatch = this.store.terminalQueueDispatch(sessionId)
       const startup = this.startupTerminalQueues.has(sessionId)
+      if (!next) {
+        this.pendingTerminalQueueClaims.delete(sessionId)
+        this.startupTerminalQueues.delete(sessionId)
+        return false
+      }
       if (startup && !this.hasStartupQueueLifecycle(sessionId, stored)) {
         this.startupTerminalQueues.delete(sessionId)
         this.pendingTerminalQueueClaims.delete(sessionId)
+        const previous = this.terminalQueueStates.get(sessionId)
+        this.terminalQueueStates.set(sessionId, {
+          state: 'waiting',
+          promptId: next.id,
+          message: 'Reopen the session to resume queued delivery.',
+          updatedAt: new Date().toISOString(),
+        })
+        if (previous?.state !== 'waiting' || previous.promptId !== next.id ||
+            previous.message !== 'Reopen the session to resume queued delivery.') {
+          this.publish(stored)
+        }
         return false
       }
-      if (!next || stored.failedPrompt || terminalDispatch ||
+      if (stored.failedPrompt ||
+          (stored.queueState?.state === 'error' && stored.queueState.promptId === next.id) ||
+          terminalDispatch ||
           this.store.recoverySeed(sessionId) ||
           this.pendingTerminalPromptDispatches.has(sessionId)) {
         this.pendingTerminalQueueClaims.delete(sessionId)
@@ -10820,6 +11127,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.retryTerminalQueueClaim(sessionId, !before?.trim())
         return false
       }
+      const currentQueueState = this.terminalQueueStates.get(sessionId)
+      const composerKnownUnavailable = before !== undefined &&
+        !terminalInputReady(before) &&
+        (
+          !before.trim() ||
+          isTerminalOverlay(before) ||
+          isTerminalAgentWorking(before) ||
+          /waiting for background shells/i.test(before) ||
+          (currentQueueState?.state === 'waiting' && currentQueueState.promptId === next.id)
+        )
+      if (!midTurnSteer && composerKnownUnavailable) {
+        this.waitForTerminalQueueComposer(sessionId, stored, next.id)
+        return false
+      }
       if (next.command && !before?.trim()) {
         throw new Error('The terminal could not be read before command delivery; the command remains queued')
       }
@@ -10841,12 +11162,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const { session, dispatch } = claimed
       this.admissions.markCommitted(sessionId)
       this.pendingTerminalQueueClaims.delete(sessionId)
+      this.terminalQueueStates.delete(sessionId)
       if (this.stopped || this.deletingSessions.has(sessionId)) return false
       this.publish(session)
 
       // Once this claim is durable, neither a refused completion write nor a
       // process restart can put the externally delivered action back in FIFO.
       let outcome: PendingTerminalQueueSettlement['outcome']
+      let failureReason: string | undefined
       let failureMessage: string | undefined
       let quiet = false
       try {
@@ -10869,12 +11192,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           : { kind: 'accepted', startedTurn: !midTurnSteer }
       } catch (error) {
         const uncertain = isUncertainDelivery(error)
-        quiet = midTurnSteer && !uncertain && isTerminalNotReadyRefusal(error)
+        quiet = !uncertain && isTerminalNotReadyRefusal(error)
+        failureReason = error instanceof Error ? error.message : String(error)
         outcome = {
           kind: 'failed',
           uncertain,
+          ...(!uncertain && !quiet
+            ? {
+                queueState: {
+                  state: 'error' as const,
+                  promptId: next.id,
+                  message: `${failureReason}${failureReason.endsWith('.') ? '' : '.'} The queued prompt was not sent.`,
+                  updatedAt: new Date().toISOString(),
+                },
+              }
+            : {}),
         }
-        failureMessage = `${error instanceof Error ? error.message : String(error)}${
+        failureMessage = `${failureReason}${
           uncertain
             ? ''
             : ' The original queued message is unchanged; it was not sent.'
@@ -10884,6 +11218,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         dispatchId: dispatch.id,
         outcome,
         overlayOpen: false,
+        failureReason,
         failureMessage,
         retryAt: 0,
         retryDelay: 750,
@@ -10906,20 +11241,79 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !this.store.terminalQueueDispatch(sessionId) && claim?.accepted === true && claim.failedAt === token
   }
 
-  private retryTerminalQueueClaim(sessionId: string, failed = false): void {
+  private retryTerminalQueueClaim(sessionId: string, failed = false): boolean {
     const session = this.store.get(sessionId)
     if (!session?.queuedPrompts?.length || this.stopped || this.deletingSessions.has(sessionId) ||
         (this.startupTerminalQueues.has(sessionId) && !this.hasStartupQueueLifecycle(sessionId, session)) ||
         (session.failedPrompt && !this.awaitingAcceptedStartupRecovery(sessionId, session))) {
       this.pendingTerminalQueueClaims.delete(sessionId)
+      this.terminalQueueStates.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
-      return
+      return false
     }
     const delay = failed ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750 : 750
     this.pendingTerminalQueueClaims.set(sessionId, {
       retryAt: Date.now() + delay,
       retryDelay: failed ? Math.min(delay * 2, 60_000) : 750,
     })
+    return true
+  }
+
+  private waitForTerminalQueueComposer(
+    sessionId: string,
+    session: SessionDetail,
+    promptId: string,
+  ): void {
+    const previous = this.terminalQueueStates.get(sessionId)
+    if (session.interruption || session.archivedAt) {
+      this.pendingTerminalQueueClaims.delete(sessionId)
+      this.startupTerminalQueues.delete(sessionId)
+      this.terminalQueueStates.set(sessionId, {
+        state: 'waiting',
+        promptId,
+        message: 'Reopen the session to resume queued delivery.',
+        updatedAt: new Date().toISOString(),
+      })
+      if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
+          previous.message !== 'Reopen the session to resume queued delivery.') {
+        this.publish(session)
+      }
+      return
+    }
+    const startup = this.startupTerminalQueues.has(sessionId)
+    if (!this.retryTerminalQueueClaim(sessionId, true)) {
+      const current = this.store.get(sessionId)
+      if (!this.stopped && !this.deletingSessions.has(sessionId) &&
+          current?.queuedPrompts?.[0]?.id === promptId &&
+          (current.interruption || current.archivedAt ||
+            (startup && !this.hasStartupQueueLifecycle(sessionId, current)))) {
+        this.terminalQueueStates.set(sessionId, {
+          state: 'waiting',
+          promptId,
+          message: 'Reopen the session to resume queued delivery.',
+          updatedAt: new Date().toISOString(),
+        })
+        if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
+            previous.message !== 'Reopen the session to resume queued delivery.') {
+          this.publish(current)
+        }
+        return
+      }
+      if (previous) this.publish(session)
+      return
+    }
+    const retry = this.pendingTerminalQueueClaims.get(sessionId)
+    this.terminalQueueStates.set(sessionId, {
+      state: 'waiting',
+      promptId,
+      message: 'Waiting for the terminal composer. Delivery will retry automatically.',
+      updatedAt: new Date().toISOString(),
+      ...(retry ? { retryAt: new Date(retry.retryAt).toISOString() } : {}),
+    })
+    if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
+        previous.message !== 'Waiting for the terminal composer. Delivery will retry automatically.') {
+      this.publish(session)
+    }
   }
 
   private settleTerminalRecoveryForActivation(sessionId: string): void {
@@ -10931,6 +11325,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalRecoveryStates.set(sessionId, 'settled')
     this.startupTerminalQueues.delete(sessionId)
     this.pendingTerminalQueueClaims.delete(sessionId)
+    this.terminalQueueStates.delete(sessionId)
   }
 
   private async reconcileReopenedTerminalStatus(
@@ -11067,18 +11462,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return false
     }
     this.pendingTerminalQueueSettlements.delete(sessionId)
-    if (pending.outcome.kind === 'failed' ||
+    if ((pending.outcome.kind === 'failed' && !pending.quiet) ||
         (pending.outcome.kind === 'accepted' && pending.outcome.startedTurn) ||
         !settled.queuedPrompts?.length) {
       this.startupTerminalQueues.delete(sessionId)
     }
     if (this.stopped) return false
-    this.publish(settled)
     if (pending.outcome.kind === 'failed' && pending.quiet) {
-      this.retryTerminalQueueClaim(sessionId)
+      this.waitForTerminalQueueComposer(
+        sessionId,
+        settled,
+        settled.queuedPrompts?.[0]?.id || '',
+      )
+      return false
+    }
+    if (pending.outcome.kind === 'failed' && pending.outcome.uncertain) {
+      this.terminalQueueStates.delete(sessionId)
+      this.publish(settled)
+      this.emit('event', {
+        type: 'error',
+        sessionId,
+        message: pending.failureMessage || 'The queued prompt delivery could not be confirmed',
+        failedPrompt: settled.failedPrompt?.content,
+        failedPromptAt: settled.failedPrompt?.failedAt,
+      })
       return false
     }
     if (pending.outcome.kind === 'failed') {
+      this.terminalQueueStates.delete(sessionId)
+      this.publish(settled)
       this.emit('event', {
         type: 'error',
         sessionId,
@@ -11088,6 +11500,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       return false
     }
+    this.terminalQueueStates.delete(sessionId)
+    this.publish(settled)
     // A steer now at the head is polled for while the turn runs: the one this
     // delivery started, or the one a delivered steer joined.
     if (pending.overlayOpen || settled.queuedPrompts?.[0]?.steer) this.retryTerminalQueueClaim(sessionId)
@@ -11320,6 +11734,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publicSession(session: SessionDetail): SessionDetail {
     session = this.queuedDispatches.view(session)
+    const queued = session.queuedPrompts?.[0]
+    const retainedQueueState: QueueState | undefined =
+      queued && (session.interruption || session.archivedAt)
+        ? {
+          state: 'waiting',
+          promptId: queued.id,
+          message: 'Reopen the session to resume queued delivery.',
+          updatedAt: session.interruption?.detectedAt ?? session.archivedAt ?? session.updatedAt,
+        }
+        : undefined
+    const queueState =
+      retainedQueueState ?? this.terminalQueueStates.get(session.id) ?? session.queueState
+    session = queueState && session.queuedPrompts?.[0]?.id === queueState.promptId
+      ? { ...session, queueState }
+      : session.queueState
+        ? { ...session, queueState: undefined }
+        : session
     const failed = session.failedPrompt
     if (!failed) return session
     const current = this.store.failedPrompt(session.id)

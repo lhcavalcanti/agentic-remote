@@ -173,17 +173,21 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       name: input.name?.trim() || 'Remote computer',
       baseUrl,
       token,
+      lifecycleGeneration: 'pending',
     }
     const probe = new RemoteNodeClient(provisional)
     const info = await probe.getInfo()
     if (info.id === this.identity.info.id) {
       throw new Error('This computer is already the local hub')
     }
+    const previousPairing = this.registry.list().find(({ id }) => id === info.id)
     const computer: RegisteredComputer = {
       id: info.id,
       name: input.name?.trim() || info.name,
       baseUrl,
       token,
+      lifecycleGeneration:
+        previousPairing?.lifecycleGeneration ?? randomUUID(),
     }
     await this.registry.upsert(computer)
     const previous = this.clients.get(computer.id)
@@ -1319,6 +1323,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       name: this.identity.info.name,
       isLocal: true,
       online: true,
+      lifecycleGeneration: this.identity.lifecycleGeneration,
       registrationId: this.localRegistrationId,
       providers: this.localService.providers(),
     }
@@ -1331,6 +1336,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       isLocal: false,
       online: this.clients.get(computer.id)?.online ?? false,
       baseUrl: computer.baseUrl,
+      lifecycleGeneration: computer.lifecycleGeneration,
       registrationId: this.clients.get(computer.id)?.registrationId,
       providers: this.clients.get(computer.id)?.providers,
       voice: this.clients.get(computer.id)?.voice,

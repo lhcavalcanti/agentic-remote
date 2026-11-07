@@ -1,5 +1,7 @@
 export type DreamerPlanItemStatus = 'pending' | 'skipped' | 'done'
-export type DreamerPlanItemSource = 'session' | 'memory' | 'carry'
+import type { OracleTaskView } from './oracle-task.js'
+
+export type DreamerPlanItemSource = 'session' | 'memory' | 'carry' | 'task'
 
 export interface DreamerTaskCompletionProvenance {
   source: 'root-task-complete'
@@ -34,6 +36,7 @@ export interface DreamerPlanItem {
   computerId?: string
   sessionId?: string
   memoryId?: string
+  taskId?: string
   completion?: DreamerTaskCompletionProvenance
   /** Transient API projection; never persisted in Dreamer state. */
   completionCandidate?: DreamerCompletionCandidate
@@ -77,5 +80,6 @@ export interface DreamerSnapshot {
   revision: number
   settings: DreamerSettings
   plan?: DreamerPlan
+  tasks?: OracleTaskView[]
   lastError?: string
 }

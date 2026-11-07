@@ -367,6 +367,26 @@ describe('session presentation', () => {
     }, tasks)).toMatchObject({ state: 'question', needsAttention: true })
   })
 
+  it.each([
+    ['waiting', 'Waiting for the terminal composer.'],
+    ['error', 'The queued prompt was not sent.'],
+  ] as const)('keeps a queue %s state in Needs you', (state, message) => {
+    expect(sessionPresentation({
+      ...session,
+      queueState: {
+        state,
+        promptId: 'queue-1',
+        message,
+        updatedAt: '2026-11-04T00:00:00.000Z',
+      },
+    }, tasks)).toMatchObject({
+      state,
+      description: message,
+      needsAttention: true,
+      working: false,
+    })
+  })
+
   it('can search the current computer name without rewriting cached session metadata', () => {
     expect(matchesSessionSearch(session, 'renamed studio', 'Renamed Studio')).toBe(true)
     expect(session.computerName).toBe('Studio')

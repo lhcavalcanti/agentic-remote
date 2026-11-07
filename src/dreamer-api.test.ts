@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDreamer, saveDreamerSettings, updateDreamerPlan } from './dreamer-api'
+import {
+  completeDreamerTask,
+  dispatchDreamerTask,
+  getDreamer,
+  resolveDreamerTask,
+  saveDreamerSettings,
+  updateDreamerPlan,
+} from './dreamer-api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -19,6 +26,38 @@ describe('Dreamer API', () => {
     expect(fetch).toHaveBeenLastCalledWith('/api/manager/dreamer/plan', expect.objectContaining({
       method: 'PUT', body: JSON.stringify({ revision: 1, planId: 'plan', item: { id: 'item', status: 'done' } }),
     }))
+    await dispatchDreamerTask('task/a', { revision: 2, requestId: 'request-a' })
+    expect(fetch).toHaveBeenLastCalledWith(
+      '/api/manager/dreamer/tasks/task%2Fa/dispatch',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ revision: 2, requestId: 'request-a' }),
+      }),
+    )
+    await completeDreamerTask('task/a', {
+      revision: 3,
+      attemptId: 'attempt-a',
+      computerId: 'computer-a',
+      sessionId: 'session-a',
+      sessionRevision: 7,
+      messageId: 'completion-a',
+      resultDigest: 'a'.repeat(64),
+    })
+    expect(fetch).toHaveBeenLastCalledWith(
+      '/api/manager/dreamer/tasks/task%2Fa/complete',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    await resolveDreamerTask('task/a', {
+      revision: 4,
+      status: 'dismissed',
+    })
+    expect(fetch).toHaveBeenLastCalledWith(
+      '/api/manager/dreamer/tasks/task%2Fa/disposition',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ revision: 4, status: 'dismissed' }),
+      }),
+    )
   })
 
   it('preserves conflict status without leaking raw server exception text', async () => {

@@ -122,6 +122,10 @@ export class OracleNotifier {
       this.announced.delete(`${message.id}:failed`)
       return undefined
     }
+    if (message.suppressNotification) {
+      this.replies.delete(message.id)
+      return undefined
+    }
     if (message.state === 'failed') {
       return this.once(`${message.id}:failed`, {
         title: 'Oracle couldn’t answer',

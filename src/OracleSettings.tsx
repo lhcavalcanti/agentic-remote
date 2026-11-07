@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { RuntimeModelOption, RuntimeReasoningEffort } from '../shared/contracts'
 import type {
   ManagerCheckCadenceMinutes,
@@ -43,6 +43,7 @@ export function OracleModelSettings({
   onRetryModels?: () => void
 }) {
   const { settings, unavailable, loading, saving } = oracle
+  const closePolicyHint = useId()
   const chosen = settings?.model ?? ''
   const choices = models ?? []
   const selectedModel = choices.find((model) => model.id === chosen)
@@ -138,6 +139,28 @@ export function OracleModelSettings({
         </label>
       ) : null}
       <OracleSettingsStatus oracle={oracle} part="backend" />
+      {!loading && !unavailable && settings?.sessionClosePolicy ? (
+        <>
+          <label className="field">
+            <span>Closing Oracle&apos;s sessions</span>
+            <select
+              aria-describedby={closePolicyHint}
+              aria-label="Closing Oracle's sessions"
+              className="dialog-select"
+              disabled={saving}
+              onChange={(event) => void oracle.saveClosePolicy(event.target.value === 'oracle-started' ? 'oracle-started' : 'ask')}
+              value={settings.sessionClosePolicy}
+            >
+              <option value="ask">Ask me every time (default)</option>
+              <option value="oracle-started">Close idle sessions Oracle started without asking</option>
+            </select>
+          </label>
+          <p className="dialog-message" id={closePolicyHint}>
+            Only for a message you type. Oracle still asks for any other session, and for one that is busy, waiting, pinned, or used by an unfinished task.
+          </p>
+        </>
+      ) : null}
+      <OracleSettingsStatus oracle={oracle} part="close" />
     </section>
   )
 }

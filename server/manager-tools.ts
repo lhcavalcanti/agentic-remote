@@ -3,19 +3,23 @@ import { z } from 'zod'
 import type {
   AgentMode,
   AgentProvider,
+  BackgroundTaskSnapshot,
   ComputerSummary,
   CreateSessionInput,
   ManagedSession,
   PendingPermission,
   RuntimeReasoningEffort,
+  SessionStatus,
   UserInputField,
   UserInputReplyInput,
 } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
+  ManagerConfirmation,
   ManagerMessageSource,
   ManagerProactiveOutcome,
   ManagerSessionBackend,
+  ManagerSessionClosePolicy,
   ManagerSessionRef,
 } from '../shared/manager.js'
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
@@ -57,8 +61,29 @@ export interface ManagerToolHost {
   /** Resumes a suspended session, so it can be steered. */
   resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
-  /** Asks you, in the app, to confirm closing a session. Nothing is deleted until you do. */
-  requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void>
+  /**
+   * Asks you, in the app, to confirm closing a session. Nothing is deleted
+   * until you do. `why` says why Oracle asked when your setting would
+   * otherwise have let it close the session itself.
+   */
+  requestCloseConfirmation(session: ManagedSession, reason?: string, why?: string): Promise<void>
+  /** Whether Oracle asks before closing a session; absent always asks. */
+  sessionClosePolicy?(): ManagerSessionClosePolicy
+  /**
+   * Sessions an Oracle task that is not completed or dismissed still uses.
+   * Throws when the tasks cannot be read; absent counts as unreadable.
+   */
+  unfinishedTaskSessions?(): Array<{ computerId: string; sessionId: string }>
+  /** How many sessions Oracle has closed without asking while answering the current message. */
+  autonomousClosesThisTurn?(): number
+  /** Background work still running in a session; absent counts as unreadable. */
+  backgroundTasks?(computerId: string, sessionId: string): Promise<BackgroundTaskSnapshot>
+  /**
+   * Closes a session without asking, recorded in Oracle's transcript before
+   * anything is deleted. Counts toward `autonomousClosesThisTurn` before it
+   * awaits anything. Gives back how it ended: `confirmed` or `failed`.
+   */
+  closeWithoutAsking?(session: ManagedSession, reason?: string): Promise<ManagerConfirmation>
   discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]>
   markManaged(session: ManagedSession, task: string): Promise<void>
   registry(): ManagerRegistry
@@ -187,6 +212,28 @@ const proactiveOutcomesSchema = z.object({
 
 function failure(message: string): ManagerToolResult {
   return { textResultForLlm: `Error: ${message}`, resultType: 'failure', error: message }
+}
+
+/** At most this many sessions close without asking while Oracle answers one message. */
+const AUTONOMOUS_CLOSE_LIMIT = 5
+
+const BUSY_STATUS: Record<Exclude<SessionStatus, 'idle'>, string> = {
+  running: 'it is still running',
+  waiting: 'it is waiting for an answer',
+  error: 'it stopped with an error',
+}
+
+/** Why a session is not idle enough to close without asking, if it is not. */
+function busyReason(session: ManagedSession): string | undefined {
+  if (session.pendingPermission || session.pendingUserInput) return BUSY_STATUS.waiting
+  if (session.status !== 'idle') return BUSY_STATUS[session.status]
+  if (session.queuedCount || session.queuedPrompts?.length || session.queuedDispatch || session.queueState) {
+    return 'it has queued messages'
+  }
+  if (session.failedPrompt) return 'it holds a message that failed to send'
+  if (session.retention?.pinned) return 'it is pinned'
+  if (session.interruption || session.restartRecovery || session.recoverySeedState) return 'it is recovering from a restart'
+  return undefined
 }
 
 function errorMessage(error: unknown): string {
@@ -412,6 +459,56 @@ export function createManagerTools(
         reference.computerId === session.computerId &&
         reference.sessionId === session.id,
     )
+  }
+
+  /**
+   * Why closing this session must still ask the user, or undefined when
+   * their setting lets Oracle close it now. Each check fails closed: what
+   * cannot be read is a reason to ask.
+   */
+  async function whyCloseMustAsk(session: ManagedSession, named: string): Promise<string | undefined> {
+    if (host.messageSource() !== 'typed') return 'only a typed message lets Oracle close sessions without asking'
+    if (named !== session.id) return 'it was named by a shortened id'
+    const entry = host.registry()[registryKey(session.computerId, session.id)]
+    if (entry?.origin !== 'manager' || entry.removedAt || entry.replacedBy) return 'it was not started by Oracle'
+    // The roster may be stale, so decide on the session as it is now.
+    let live: ManagedSession
+    try {
+      live = await host.readSession(session.computerId, session.id)
+    } catch {
+      return 'its current state could not be read'
+    }
+    const busy = busyReason(live)
+    if (busy) return busy
+    let background: BackgroundTaskSnapshot
+    try {
+      if (!host.backgroundTasks) throw new Error('unavailable')
+      background = await host.backgroundTasks(session.computerId, session.id)
+    } catch {
+      return 'its background tasks could not be read'
+    }
+    // As suspending a session does: an empty list from a runtime that could
+    // not be asked is not the same as nothing running.
+    if (!background.supported) return 'its background tasks could not be read'
+    const active = background.tasks.filter((task) => task.status === 'running' || task.status === 'queued').length
+    if (active > 0) return `it has ${active} background task${active === 1 ? '' : 's'} running or queued`
+    let unfinished: Array<{ computerId: string; sessionId: string }>
+    try {
+      if (!host.unfinishedTaskSessions) throw new Error('unavailable')
+      unfinished = host.unfinishedTaskSessions()
+    } catch {
+      return 'Oracle tasks could not be read'
+    }
+    if (unfinished.some((reference) => reference.computerId === session.computerId && reference.sessionId === session.id)) {
+      return 'an unfinished Oracle task uses it'
+    }
+    return undefined
+  }
+
+  function closeCapReached(): string | undefined {
+    return (host.autonomousClosesThisTurn?.() ?? AUTONOMOUS_CLOSE_LIMIT) >= AUTONOMOUS_CLOSE_LIMIT
+      ? `Oracle already closed ${AUTONOMOUS_CLOSE_LIMIT} sessions without asking this turn`
+      : undefined
   }
 
   async function resolveSession(
@@ -1133,16 +1230,34 @@ export function createManagerTools(
     ),
     define(
       'close_session',
-      "Ask the user to close a session, which permanently deletes it and its history. This does not close anything itself: the user confirms or declines in the app, and the session stays open until they confirm. Only ask when the user wants that specific session closed.",
+      "Close a session, which permanently deletes it and its history. By default this only asks: the user confirms or declines in the app, and the session stays open until they confirm. When the context says the user lets you close idle sessions you started without asking, such a session named by its full id closes at once; any safety check that fails makes it ask instead, and the result says which happened and why. Only close a session the user wants closed, or one you started whose work is finished and reported.",
       z.object({
         sessionId: sessionIdField,
         computer: computerField.optional(),
-        reason: z.string().trim().max(300).optional().describe('One short line on why, shown to the user beside the request.'),
+        reason: z.string().trim().max(300).optional().describe('One short line on why, shown to the user beside the request or the close.'),
       }),
       async ({ sessionId, computer, reason }) => {
         const session = await resolveSession(sessionId, computer)
-        await host.requestCloseConfirmation(session, reason)
-        return `Asked the user to confirm closing ${link(session)} in the app. It stays open until they confirm; the outcome appears in your next turn.`
+        const policy = host.closeWithoutAsking && host.autonomousClosesThisTurn
+          ? host.sessionClosePolicy?.()
+          : undefined
+        if (policy !== 'oracle-started') {
+          await host.requestCloseConfirmation(session, reason)
+          return `Asked the user to confirm closing ${link(session)} in the app. It stays open until they confirm; the outcome appears in your next turn.`
+        }
+        // The cap is checked last, with nothing awaited before the close
+        // counts, so closes running side by side cannot all slip under it.
+        const why = (await whyCloseMustAsk(session, sessionId)) ?? closeCapReached()
+        if (why) {
+          await host.requestCloseConfirmation(session, reason, why)
+          return `Asked the user to confirm closing ${link(session)} in the app, because ${why}. It stays open until they confirm; the outcome appears in your next turn.`
+        }
+        const outcome = await host.closeWithoutAsking!(session, reason)
+        const name = `"${session.title}" (${session.id})`
+        if (outcome.state !== 'confirmed') {
+          throw new ToolFailure(`Could not close ${name}: ${outcome.error ?? 'it was not deleted'}. Tell the user; it may still be open.`)
+        }
+        return `Closed ${name} without asking, as the user's setting allows; it is permanently deleted.`
       },
       { actsOnSessions: true }
     ),

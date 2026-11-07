@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { OracleTask } from '../shared/oracle-task.js'
 import {
   ORACLE_TASK_MAX_ACTIVE,
   OracleTaskConflictError,
   OracleTaskStore,
+  unfinishedOracleTaskSessions,
 } from './oracle-task-store.js'
 
 const directories: string[] = []
@@ -262,5 +264,29 @@ describe('OracleTaskStore', () => {
       completion: { messageId: 'completion-a' },
       attempts: [{ status: 'completed' }],
     })
+  })
+
+  it('lists the sessions every unfinished task still uses', () => {
+    const task = (id: string, status: OracleTask['status'], sessionIds: string[], source?: string): OracleTask => ({
+      id, revision: 1, title: id, summary: '', nextAction: '', owner: 'oracle', status, sourceEventIds: [],
+      ...(source ? { sourceSession: { computerId: 'hub', sessionId: source, taskGeneration: 1 } } : {}),
+      attempts: [{
+        id: `${id}-attempt`, requestId: 'r', managerMessageId: 'm', status: 'running',
+        sessionRefs: sessionIds.map((sessionId) => ({ computerId: 'hub', sessionId })),
+      }],
+      createdAt: 't', updatedAt: 't',
+    })
+    expect(unfinishedOracleTaskSessions([
+      task('running', 'running', ['worker-a'], 'source-a'),
+      task('review', 'review', ['worker-b']),
+      task('failed', 'failed', ['worker-c']),
+      task('done', 'completed', ['worker-d'], 'source-d'),
+      task('dropped', 'dismissed', ['worker-e']),
+    ])).toEqual([
+      { computerId: 'hub', sessionId: 'source-a' },
+      { computerId: 'hub', sessionId: 'worker-a' },
+      { computerId: 'hub', sessionId: 'worker-b' },
+      { computerId: 'hub', sessionId: 'worker-c' },
+    ])
   })
 })

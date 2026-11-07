@@ -2005,6 +2005,150 @@ describe('ManagerAgent', () => {
     await expect(agent!.resolveConfirmation('c1', true)).rejects.toMatchObject({ statusCode: 409 })
   })
 
+  describe('closing the sessions it started without asking', () => {
+    async function startedByOracle(ids: string[]) {
+      await store.updateRegistry((registry) => {
+        for (const id of ids) {
+          registry[registryKey('hub', id)] = {
+            computerId: 'hub', sessionId: id, title: `Session ${id}`, origin: 'manager', firstSeenAt: '2026-10-15T11:00:00.000Z',
+          }
+        }
+      })
+      Object.assign(hub, { listBackgroundTasks: vi.fn(async () => ({ tasks: [], runningCount: 0, supported: true })) })
+    }
+
+    it('asks by default, and keeps your choice to let it close idle sessions it started', async () => {
+      await start()
+      expect(agent!.snapshot().settings?.sessionClosePolicy).toBe('ask')
+      sdk.behaviors.push(async (fakeSession, prompt) => {
+        expect(prompt).not.toContain('without asking')
+        reply('Okay.')(fakeSession, '')
+      })
+      await agent!.send('hello')
+      await settled()
+
+      const settings = await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      expect(settings.sessionClosePolicy).toBe('oracle-started')
+      expect(events.at(-1)).toMatchObject({ type: 'manager.settings', settings: { sessionClosePolicy: 'oracle-started' } })
+      // A change of model alone leaves it as it is.
+      expect(await agent!.updateSettings({ model: null })).toMatchObject({ sessionClosePolicy: 'oracle-started' })
+
+      await agent!.stop()
+      agent = undefined
+      store = await openStore()
+      await start()
+      expect(agent!.snapshot().settings?.sessionClosePolicy).toBe('oracle-started')
+      sdk.behaviors.push(async (fakeSession, prompt) => {
+        expect(prompt).toContain('The user lets you close idle sessions you started without asking')
+        reply('Okay.')(fakeSession, '')
+      })
+      await agent!.send('hello again')
+      await settled()
+
+      await agent!.updateSettings({ sessionClosePolicy: 'ask' })
+      expect(agent!.snapshot().settings?.sessionClosePolicy).toBe('ask')
+      // The default is not stored, so only the opt-in is ever on disk.
+      expect(store.state().sessionClosePolicy).toBeUndefined()
+    })
+
+    it('records the close before deleting, keeps it out of your hands, and tells Oracle in its tool result', async () => {
+      await startedByOracle(['existing'])
+      vi.mocked(hub.deleteSession).mockImplementation(async () => {
+        const recorded = store.messages().find((message) => message.confirmation)
+        expect(recorded?.confirmation).toMatchObject({ state: 'closing', decidedBy: 'oracle' })
+      })
+      let result: unknown
+      sdk.behaviors.push(async (fakeSession) => {
+        result = await fakeSession.tool('close_session')({ sessionId: 'existing', reason: 'Its PR merged.' })
+        reply('Closed it.')(fakeSession, '')
+      })
+      await start({ unfinishedTaskSessions: () => [] })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      const sent = await agent!.send('close the existing session, its PR merged')
+      await settled()
+
+      expect(String(result)).toContain('without asking')
+      expect(hub.deleteSession).toHaveBeenCalledTimes(1)
+      expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'existing')
+      const closed = agent!.snapshot().messages.find((message) => message.confirmation)!
+      expect(closed).toMatchObject({
+        role: 'activity', tool: 'close_session', replyTo: sent.id, content: 'Close "Session existing": Its PR merged.',
+        sessionRefs: [{ computerId: 'hub', sessionId: 'existing', title: 'Session existing' }],
+      })
+      expect(closed.confirmation).toEqual({
+        kind: 'close-session', computerId: 'hub', sessionId: 'existing', title: 'Session existing', state: 'confirmed', decidedBy: 'oracle',
+      })
+      const closedAt = events.findIndex((event) => event.type === 'manager.message' && event.message.confirmation?.state === 'confirmed')
+      expect(events.slice(closedAt).some((event) => event.type === 'manager.sessions')).toBe(true)
+      await expect(agent!.resolveConfirmation(closed.id, true)).rejects.toMatchObject({ statusCode: 409 })
+      expect(store.state().pendingNotes ?? []).toEqual([])
+    })
+
+    it('asks after five closes in one message, even when they run side by side, and counts afresh on the next', async () => {
+      const mine = Array.from({ length: 7 }, (_, index) => `mine-${index}`)
+      sessions = mine.map((id) => session(id))
+      await startedByOracle(mine)
+      const results: string[] = []
+      sdk.behaviors.push(async (fakeSession) => {
+        results.push(...await Promise.all(mine.slice(0, 6).map(async (id) =>
+          String(await fakeSession.tool('close_session')({ sessionId: id })))))
+        reply('Done.')(fakeSession, '')
+      })
+      await start({ unfinishedTaskSessions: () => [] })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      await agent!.send('close my finished sessions')
+      await settled()
+      expect(hub.deleteSession).toHaveBeenCalledTimes(5)
+      expect(results.filter((result) => result.includes('because Oracle already closed 5 sessions without asking this turn'))).toHaveLength(1)
+      const pending = agent!.snapshot().messages.filter((message) => message.confirmation?.state === 'pending')
+      expect(pending).toHaveLength(1)
+      expect(pending[0].content).toMatch(
+        /^Close "Session mine-[0-5]"\? This permanently deletes it and its history\. Asked because Oracle already closed 5 sessions without asking this turn\.$/,
+      )
+
+      sdk.behaviors.push(async (fakeSession) => {
+        results.push(String(await fakeSession.tool('close_session')({ sessionId: 'mine-6' })))
+        reply('Done.')(fakeSession, '')
+      })
+      await agent!.send('and the last one')
+      await settled()
+      expect(hub.deleteSession).toHaveBeenCalledTimes(6)
+      expect(results[6]).toContain('without asking')
+    })
+
+    it('asks when it cannot read which sessions Oracle tasks still use', async () => {
+      await startedByOracle(['existing'])
+      sdk.behaviors.push(async (fakeSession) => {
+        await fakeSession.tool('close_session')({ sessionId: 'existing' })
+        reply('Asked.')(fakeSession, '')
+      })
+      await start()
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      await agent!.send('close it')
+      await settled()
+      expect(hub.deleteSession).not.toHaveBeenCalled()
+      const request = agent!.snapshot().messages.find((message) => message.confirmation)!
+      expect(request.confirmation).toMatchObject({ state: 'pending' })
+      expect(request.confirmation).not.toHaveProperty('decidedBy')
+      expect(request.content).toContain('Asked because Oracle tasks could not be read.')
+    })
+
+    it('finishes a close Oracle decided when a restart interrupted it, and tells Oracle', async () => {
+      await store.upsertMessage({
+        id: 'c1', role: 'activity', content: 'Close "Mine"', createdAt: 't', tool: 'close_session',
+        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 'mine', title: 'Mine', state: 'closing', decidedBy: 'oracle' },
+      })
+      await start()
+      await vi.waitFor(() => {
+        expect(agent!.snapshot().messages[0].confirmation).toMatchObject({ state: 'confirmed', decidedBy: 'oracle' })
+      })
+      expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'mine')
+      expect(store.state().pendingNotes).toEqual([
+        'You closed "Mine" (mine) without asking, as the user\'s setting allows; it is deleted.',
+      ])
+    })
+  })
+
   it('does not repeat actions from a failed attempt', async () => {
     sdk.behaviors.push(async (fakeSession) => {
       await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })

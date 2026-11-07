@@ -118,6 +118,28 @@ export class OracleTaskUnavailableError extends Error {
   }
 }
 
+/**
+ * Every session a task that is not completed or dismissed still uses: where
+ * it came from and what its attempts ran in. They hold the task's evidence,
+ * so Oracle never closes one without asking.
+ */
+export function unfinishedOracleTaskSessions(
+  tasks: readonly OracleTask[],
+): Array<{ computerId: string; sessionId: string }> {
+  const sessions = new Map<string, { computerId: string; sessionId: string }>()
+  const add = (computerId: string, sessionId: string) => {
+    sessions.set(`${computerId}:${sessionId}`, { computerId, sessionId })
+  }
+  for (const task of tasks) {
+    if (task.status === 'completed' || task.status === 'dismissed') continue
+    if (task.sourceSession) add(task.sourceSession.computerId, task.sourceSession.sessionId)
+    for (const attempt of task.attempts) {
+      for (const reference of attempt.sessionRefs) add(reference.computerId, reference.sessionId)
+    }
+  }
+  return [...sessions.values()]
+}
+
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT'
 }

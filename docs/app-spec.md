@@ -773,10 +773,29 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   and told to check what already happened. A turn has a 15-minute watchdog.
 - Oracle's SDK conversations MUST NOT appear in session lists or history.
   Their IDs are recorded and excluded before they are created.
-- Oracle MUST NOT close a session itself. It can only ask, as a card with
+- Oracle MUST NOT close a session itself unless **Closing Oracle's sessions**
+  allows it (below). Otherwise it can only ask, as a card with
   **Close session** and **Keep it**, and the session stays open until you
   confirm there. Your answer, and any deletion, reach the agent on its next
   turn so it can update its memory.
+- **App settings → Oracle → Closing Oracle's sessions** is **Ask me every
+  time** by default. Only you can change it: no Oracle tool does. Set to
+  close idle sessions Oracle started, a close Oracle requests deletes the
+  session at once only when all of these hold; otherwise it asks as above,
+  and the card says why:
+  - the request answers a message you typed;
+  - it names the session by its full id;
+  - Oracle started the session, by the registry's origin;
+  - the session, read live, is idle, with nothing waiting, queued, failed to
+    send, pinned, or recovering;
+  - its background tasks can be read and none is running or queued;
+  - Oracle's tasks can be read and no unfinished one uses the session;
+  - Oracle has closed fewer than 5 sessions without asking for this message.
+
+  Such a close MUST be recorded as closing before the deletion, so a restart
+  finishes it, and its card MUST show that Oracle closed it, with no buttons.
+  Oracle learns the outcome from its tool result. A hub from before this
+  setting does not report it, so App settings MUST NOT offer it there.
 - Oracle's data lives in `<data>/manager/`: app-owned state, transcript,
   queue, journal, registry, and settings, plus the agent's Markdown memory under
   `memory/`, and optional `structured-memory.json` with its validated backup.

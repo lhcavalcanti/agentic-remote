@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type {
+  BackgroundTaskSnapshot,
   ComputerSummary,
   CreateSessionInput,
   ManagedSession,
@@ -17,6 +18,7 @@ import {
   MANAGER_SNAPSHOT_MESSAGES,
   type ManagerInternalSubmission,
   type ManagerClientDefaults,
+  type ManagerConfirmation,
   type ManagerEvent,
   type ManagerMessage,
   type ManagerMessageSource,
@@ -24,6 +26,7 @@ import {
   type ManagerSessionRef,
   type ManagerSubmissionOptions,
   type ManagerSessionBackend,
+  type ManagerSessionClosePolicy,
   type ManagerSettings,
   type ManagerSettingsSnapshot,
   type ManagerSnapshot,
@@ -88,6 +91,8 @@ export interface ManagerHub {
   resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
   deleteSession(computerId: string, sessionId: string): Promise<void>
+  /** Background work in a session; without it Oracle always asks before closing one. */
+  listBackgroundTasks?(computerId: string, sessionId: string): Promise<BackgroundTaskSnapshot>
 }
 
 /** An SDK event, narrowed to the fields the manager reads. */
@@ -173,6 +178,12 @@ export interface ManagerAgentOptions {
     message: ManagerMessage
     outcomes: ManagerProactiveOutcome[]
   }) => Promise<string>
+  /**
+   * Sessions an Oracle task that is not completed or dismissed still uses.
+   * Throws when the tasks cannot be read. Without it, Oracle always asks
+   * before closing a session.
+   */
+  unfinishedTaskSessions?: () => Array<{ computerId: string; sessionId: string }>
 }
 
 class TurnError extends Error {
@@ -358,6 +369,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private currentAnswerOnly = false
   /** Trusted hub-side provenance of the message being answered. */
   private currentMessageSource: ManagerMessageSource = 'typed'
+  /** Sessions closed without asking while answering the current message. */
+  private autonomousCloses = 0
+  private readonly unfinishedTaskSessions?: () => Array<{ computerId: string; sessionId: string }>
   private proactiveMessagesEnabled = true
   private pendingAcknowledgement?: { journalSeq: number; memoryHash?: string; notesShown: number }
   /** The turn being answered, settled once its outcome is stored. */
@@ -393,6 +407,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.now = options.now ?? (() => new Date())
     this.structuredMemory = options.structuredMemory
     this.recordProactiveOutcomes = options.recordProactiveOutcomes
+    this.unfinishedTaskSessions = options.unfinishedTaskSessions
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
   }
 
@@ -525,6 +540,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       ...(this.modelFallback() ? { modelUnavailable: true } : {}),
       ...(this.store.state().sessionFolders ? { sessionFolders: { ...this.store.state().sessionFolders } } : {}),
       sessionBackend: this.sessionBackend(),
+      sessionClosePolicy: this.sessionClosePolicy(),
       proactive: {
         ...proactiveSettings,
         ...(proactive?.nextCheckAt ? { nextCheckAt: proactive.nextCheckAt } : {}),
@@ -541,6 +557,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   /** How Oracle opens the sessions it starts. */
   sessionBackend(): ManagerSessionBackend {
     return this.store.state().sessionBackend === 'terminal' ? 'terminal' : 'sdk'
+  }
+
+  /** Whether Oracle asks before closing a session. */
+  sessionClosePolicy(): ManagerSessionClosePolicy {
+    return this.store.state().sessionClosePolicy === 'oracle-started' ? 'oracle-started' : 'ask'
   }
 
   /** Chooses Oracle's model and effort; it applies from the next answer. */
@@ -575,6 +596,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           // Only a terminal is kept, so the default stays the Copilot SDK.
           if (input.sessionBackend === 'terminal') state.sessionBackend = 'terminal'
           else if (input.sessionBackend === 'sdk') delete state.sessionBackend
+          // Only the opt-in is kept, so the default stays asking.
+          if (input.sessionClosePolicy === 'oracle-started') state.sessionClosePolicy = 'oracle-started'
+          else if (input.sessionClosePolicy === 'ask') delete state.sessionClosePolicy
           if (proactive) {
             state.proactive = {
               settings: proactive,
@@ -1158,8 +1182,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     return this.finishClosing(closing)
   }
 
-  /** Deletes a session you confirmed closing, and records how it went. */
-  private async finishClosing(message: ManagerMessage): Promise<ManagerMessage> {
+  /**
+   * Deletes a session you confirmed closing, or one Oracle closed without
+   * asking, and records how it went. `announce: false` leaves the note out
+   * when Oracle learns the outcome from its tool result instead.
+   */
+  private async finishClosing(message: ManagerMessage, { announce = true }: { announce?: boolean } = {}): Promise<ManagerMessage> {
     const confirmation = message.confirmation!
     const name = `"${confirmation.title}" (${confirmation.sessionId})`
     let next: ManagerMessage
@@ -1171,7 +1199,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         if (!isNotFound(error)) throw error
       })
       next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } }
-      note = `The user confirmed closing ${name}; it is deleted.`
+      note = confirmation.decidedBy === 'oracle'
+        ? `You closed ${name} without asking, as the user's setting allows; it is deleted.`
+        : `The user confirmed closing ${name}; it is deleted.`
     } catch (error) {
       next = {
         ...message,
@@ -1182,7 +1212,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }
     try {
       await this.updateMessage(next)
-      await this.addNote(note)
+      if (announce) await this.addNote(note)
     } catch (error) {
       console.warn('Could not record the outcome of closing a session:', error)
     }
@@ -1198,15 +1228,16 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     })
   }
 
-  private async requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void> {
+  private async requestCloseConfirmation(session: ManagedSession, reason?: string, why?: string): Promise<void> {
     this.attemptActivities.push(`Asked to close "${session.title}"`)
     this.flushDelta()
+    const question = reason?.trim()
+      ? `Close "${session.title}"? ${reason.trim()}`
+      : `Close "${session.title}"? This permanently deletes it and its history.`
     await this.updateMessage({
       id: randomUUID(),
       role: 'activity',
-      content: reason?.trim()
-        ? `Close "${session.title}"? ${reason.trim()}`
-        : `Close "${session.title}"? This permanently deletes it and its history.`,
+      content: why ? `${question} Asked because ${why}.` : question,
       createdAt: this.now().toISOString(),
       tool: 'close_session',
       ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
@@ -1219,6 +1250,44 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         state: 'pending',
       },
     })
+  }
+
+  /**
+   * Closes a session the user's setting lets Oracle close itself. Recorded
+   * as closing before anything is deleted, like a close you confirmed, so a
+   * restart finishes it rather than claiming it happened.
+   */
+  private async closeWithoutAsking(session: ManagedSession, reason?: string): Promise<ManagerConfirmation> {
+    // Counted before anything is awaited, so a close running alongside sees it.
+    this.autonomousCloses += 1
+    this.flushDelta()
+    const closing: ManagerMessage = {
+      id: randomUUID(),
+      role: 'activity',
+      content: reason?.trim()
+        ? `Close "${session.title}": ${reason.trim()}`
+        : `Close "${session.title}", an idle session Oracle started.`,
+      createdAt: this.now().toISOString(),
+      tool: 'close_session',
+      ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
+      sessionRefs: [{ computerId: session.computerId, sessionId: session.id, title: session.title }],
+      confirmation: {
+        kind: 'close-session',
+        computerId: session.computerId,
+        sessionId: session.id,
+        title: session.title,
+        state: 'closing',
+        decidedBy: 'oracle',
+      },
+    }
+    await this.updateMessage(closing)
+    const { confirmation } = await this.finishClosing(closing, { announce: false })
+    this.attemptActivities.push(
+      confirmation?.state === 'confirmed'
+        ? `Closed "${session.title}" without asking`
+        : `Tried to close "${session.title}" without asking, which failed`,
+    )
+    return confirmation!
   }
 
   private toolHost(): ManagerToolHost {
@@ -1241,7 +1310,18 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       reopenSession: (computerId, sessionId) => hub.activateSession(computerId, sessionId),
       resumeSession: (computerId, sessionId) => hub.resumeSession(computerId, sessionId),
       cancel: (computerId, sessionId) => hub.cancel(computerId, sessionId),
-      requestCloseConfirmation: (session, reason) => this.requestCloseConfirmation(session, reason),
+      requestCloseConfirmation: (session, reason, why) => this.requestCloseConfirmation(session, reason, why),
+      sessionClosePolicy: () => this.sessionClosePolicy(),
+      unfinishedTaskSessions: () => {
+        if (!this.unfinishedTaskSessions) throw new Error('Oracle tasks are not available here.')
+        return this.unfinishedTaskSessions()
+      },
+      autonomousClosesThisTurn: () => this.autonomousCloses,
+      backgroundTasks: async (computerId, sessionId) => {
+        if (!hub.listBackgroundTasks) throw new Error('This hub cannot list background tasks.')
+        return hub.listBackgroundTasks(computerId, sessionId)
+      },
+      closeWithoutAsking: (session, reason) => this.closeWithoutAsking(session, reason),
       discoverSkills: (projectPaths) => this.discoverSkills(projectPaths),
       markManaged: async (session, task) => {
         await this.recorder.markManaged(session, task)
@@ -1523,6 +1603,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       }
     }
     this.currentMessageSource = message.source ?? 'typed'
+    // Counted from the transcript, so retries and a restart share the cap.
+    this.autonomousCloses = this.store.messages().filter(
+      (candidate) => candidate.replyTo === message.id && candidate.confirmation?.decidedBy === 'oracle',
+    ).length
     this.currentTaskSessionRefs = message.source === 'task'
       ? uniqueManagerSessionRefs([
           ...(message.automatic?.kind === 'task'
@@ -1736,6 +1820,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       changes: contextChanges,
       sessionFolders: this.store.state().sessionFolders,
       sessionBackend: this.sessionBackend(),
+      sessionClosePolicy: this.sessionClosePolicy(),
       ...(showIndex && !this.needsBrief ? { memoryIndex: index } : {}),
       notes,
       // A preference must never stop an answer; unreadable answers Balanced.

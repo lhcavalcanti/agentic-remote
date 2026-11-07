@@ -1,4 +1,5 @@
-// Session and Oracle transcripts share these times, in the viewer's locale and timezone.
+// Session and Oracle transcripts share these times, in the viewer's locale,
+// calendar, and timezone.
 const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const dayTime = new Intl.DateTimeFormat(undefined, {
   month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -6,6 +7,15 @@ const dayTime = new Intl.DateTimeFormat(undefined, {
 const full = new Intl.DateTimeFormat(undefined, {
   year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
 })
+
+// Days and years as the labels count them, so a label gains its year when the
+// viewer's calendar turns (a Persian year at Nowruz), not each January.
+const yearFields = new Set(['era', 'year', 'relatedYear', 'yearName'])
+const dayFields = new Set([...yearFields, 'month', 'day'])
+const calendarKey = (date: Date, fields: Set<string>) => full.formatToParts(date)
+  .filter((part) => fields.has(part.type))
+  .map((part) => part.value)
+  .join(' ')
 
 /**
  * How a stored message's time reads: just the time today, the day too on
@@ -19,9 +29,9 @@ export function messageTimeParts(
   if (!value) return undefined
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return undefined
-  const label = date.toDateString() === now.toDateString()
+  const label = calendarKey(date, dayFields) === calendarKey(now, dayFields)
     ? time.format(date)
-    : date.getFullYear() === now.getFullYear()
+    : calendarKey(date, yearFields) === calendarKey(now, yearFields)
       ? dayTime.format(date)
       : full.format(date)
   return { label, title: full.format(date) }

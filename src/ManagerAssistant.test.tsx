@@ -1612,6 +1612,33 @@ describe('ManagerAssistant', () => {
     expect(times()).toEqual([...storedTimes, undefined, '2026-11-07T10:00:04.000Z'])
   })
 
+  it('keeps the stored time on every waiting prompt, including the one being edited', async () => {
+    const queued = [
+      { id: 'q1', role: 'user', content: 'typed while busy', createdAt: '2026-11-07T09:01:00.000Z', state: 'queued', source: 'typed' },
+      { id: 'q2', role: 'user', content: 'quick question', createdAt: '2026-11-07T09:02:00.000Z', state: 'queued', answerOnly: true },
+      { id: 'q3', role: 'user', content: 'spoken while busy', createdAt: '2026-11-07T09:03:00.000Z', state: 'queued', source: 'voice' },
+      { id: 'q4', role: 'user', content: 'Durable task: Ship docs', createdAt: '2026-11-07T09:04:00.000Z', state: 'queued', source: 'task' },
+      { id: 'q5', role: 'user', content: 'Docs finished', createdAt: '2026-11-07T09:05:00.000Z', state: 'queued', source: 'proactive' },
+      { id: 'q6', role: 'user', content: 'Review current work.', createdAt: '2026-11-07T10:00:00.000Z', state: 'queued', answerOnly: true, source: 'scheduled' },
+    ] satisfies ManagerMessage[]
+    setup({
+      ...empty,
+      status: 'working',
+      queued: queued.length,
+      messages: [{ id: 'r0', role: 'user', content: 'being answered', createdAt: '2026-11-07T09:00:00.000Z', state: 'running' }, ...queued],
+    })
+    await openPanel()
+    const queue = screen.getByRole('region', { name: 'Queued for Oracle' })
+    const times = () => within(queue).getAllByRole('listitem').map((item) => item.querySelector('time')?.getAttribute('datetime'))
+    expect(times()).toEqual(queued.map((message) => message.createdAt))
+
+    fireEvent.click(within(queue).getByRole('button', { name: 'Edit queued message: typed while busy' }))
+    const editor = within(queue).getByRole('textbox', { name: 'Edit queued message 1' })
+    expect(times()).toEqual(queued.map((message) => message.createdAt))
+    // The time stays out of the editor's description.
+    expect(editor).toHaveAccessibleDescription(/^Keeps its place/)
+  })
+
   it('closes a session only when you confirm the request', async () => {
     const request = {
       id: 'c1', role: 'activity' as const, content: 'Close "Docs"? It finished.', createdAt: 't', updatedAt: '2026-10-15T00:00:01.000Z',

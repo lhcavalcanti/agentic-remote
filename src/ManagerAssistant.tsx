@@ -1304,6 +1304,7 @@ export function ManagerAssistant({
                       ) : null}
                       {editError ? <p className="form-error" role="alert">{editError}</p> : null}
                       <div className="oracle-queue__editor-actions">
+                        <MessageTime value={message.createdAt} />
                         <span className="oracle-queue__editor-hint" id={`oracle-edit-hint-${message.id}`}>
                           Keeps its place
                           <span className="oracle-queue__editor-keys"> · Ctrl+Enter saves · Esc cancels</span>
@@ -1328,6 +1329,7 @@ export function ManagerAssistant({
                         <span className="visually-hidden">{`Number ${index + 1}: `}</span>
                         {message.content}
                       </p>
+                      <MessageTime value={message.createdAt} />
                       {message.source === 'scheduled' ? (
                         <span className="oracle-queue__tag">Scheduled check</span>
                       ) : (

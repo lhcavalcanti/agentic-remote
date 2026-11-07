@@ -289,6 +289,18 @@ Before creating a feature branch or worktree:
    `git pull --ff-only`. Confirm that it is clean and that `HEAD` equals
    `origin/main` before branching.
 
+### Owned work follow-through
+
+`.github/copilot-instructions.md` holds the canonical contract: terminal
+states, live exact-head evidence, merge eligibility, recovery, and reporting.
+Keep one concise evidence record per owned PR:
+
+- PR number, full head SHA, and the `main` SHA observed;
+- the Supervisor marker and verdict for that head;
+- hosted checks and the `agentic-remote/full-gate` state for that head;
+- GitHub mergeability and merge state; and
+- the next action and its owner.
+
 ### Versioning releases
 
 Treat `package.json` as the authoritative application version and apply one
@@ -338,10 +350,12 @@ and must still change on every build.
    one writable mount, `/tmp` is a fresh tmpfs per phase, and nothing inside
    that mount is ever a mount source or followed by the gate. It posts the `agentic-remote/full-gate` commit status; success needs passed
    and zero failed Vitest counts from both runs. A new push needs a new gate.
-6. **Merge only after Supervisor `APPROVE` and an `agentic-remote/full-gate`
-   `success` status for the current head.** A `main` ruleset requires that
-   status, with an administrator bypass. Follow the review loop below; delete
-   the branch after graduation.
+6. **Merge only when the exact head is eligible** under Owned work
+   follow-through in `.github/copilot-instructions.md`: Supervisor `APPROVE`,
+   every required check, an `agentic-remote/full-gate` `success`, and clean
+   mergeability. A `main` ruleset requires the full-gate status, with an
+   administrator bypass.
+   Follow the review loop below; delete the branch after graduation.
 7. **Deploy and verify on development**, then follow the promotion policy in
    `.github/copilot-instructions.md` (see Rolling out).
 8. **Close issues with evidence.** If a PR did not auto-close them, close each
@@ -352,11 +366,8 @@ and must still change on every build.
 ### PR review loop
 
 - Prefer small, single-purpose PRs. Split unrelated fixes into separate PRs.
-- Merge only after an explicit Supervisor `APPROVE` and an
-  `agentic-remote/full-gate` `success` status for the current PR head.
-  A signed verdict counts even when GitHub labels the review `COMMENTED`;
-  passing checks, local-agent reviews, and other comments are not substitutes.
-  Do not request GitHub Copilot as a reviewer.
+- Apply the owned-work contract in `.github/copilot-instructions.md`. Do not
+  request GitHub Copilot as a reviewer.
 - Keep fix comments minimal: one or two short sentences naming the actual fix
   and affected behavior. Do not paste long logs, review transcripts, or repeated
   status reports. For example: `Fixed startup queue recovery; pending messages
@@ -367,9 +378,9 @@ and must still change on every build.
 - Iterate quickly: address related findings together, validate the affected
   behavior, and push promptly for Supervisor re-review. If a finding is no
   longer valid, explain why briefly with evidence. Once approved and merge
-  prerequisites pass, merge promptly in dependency order without another
-  approval loop. Preserve the existing development-first rollout and rollback
-  rules.
+  prerequisites pass on the current exact head, merge promptly in dependency
+  order without another user-approval loop. Merging does not authorize a
+  production rollout.
 
 Notes:
 
@@ -430,14 +441,16 @@ close user work.
    `online`, sessions preserved, and **the behavior the change was made for
    actually exercised**. That last part is what makes development "stable"; a
    green deploy alone does not.
-4. **Once development is stable, continue to production without asking.** Run
-   the same `update` on the production host over the operator SSH path
-   configured for this machine. The host, account, and SSH options belong to the
-   local promotion profile, never to this repository.
-5. Ask first only when development could not prove the change — node-only
-   behavior that was never exercised through the hub, anything that migrates or
-   deletes stored state, inconclusive verification, or a rollout that
-   `rollback` cannot undo (`.github/copilot-instructions.md`).
+4. **Stop before production until the user explicitly authorizes that live
+   operation.** Merge authority and successful development validation do not
+   grant deployment or restart authority. After authorization, run the same
+   `update` on the production host over the operator SSH path configured for
+   this machine. The host, account, and SSH options belong to the local
+   promotion profile, never to this repository.
+5. Before requesting or acting on production authorization, state whether
+   development proved the behavior, whether the change touches node-only or
+   stored-state behavior, and whether `agentic-remote rollback` can reverse it
+   (`.github/copilot-instructions.md`).
 6. Verify production: runtime health, hub connectivity, and the affected
    behavior. Both roles answer `/health`; only a hub answers `/api/health`, and
    only `/api/` URLs are Host-allowlisted. A node answers `404` on `/`, so check

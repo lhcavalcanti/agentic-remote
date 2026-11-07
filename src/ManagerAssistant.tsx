@@ -40,6 +40,7 @@ import {
 } from './api'
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
+import { MessageTime } from './MessageTime'
 import { remarkSafeBreaks } from './remark-safe-breaks'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
@@ -164,8 +165,6 @@ function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnap
       const streaming = snapshot.streaming?.messageId === event.message.id ? undefined : snapshot.streaming
       return { ...snapshot, messages, streaming }
     }
-    case 'manager.reorder':
-      return { ...snapshot, messages: event.messages }
     case 'manager.delta':
       return { ...snapshot, streaming: { messageId: event.messageId, content: event.content } }
     case 'manager.sessions':
@@ -212,13 +211,18 @@ function ConfirmationCard({
   const outcome = {
     pending: undefined,
     closing: 'Closing…',
-    confirmed: 'Closed. It is permanently deleted.',
+    confirmed: confirmation.decidedBy === 'oracle'
+      ? 'Closed by Oracle without asking, as your setting allows. It is permanently deleted.'
+      : 'Closed. It is permanently deleted.',
     declined: 'Kept open.',
     failed: `Could not close it: ${confirmation.error ?? 'unknown error'}`,
   }[confirmation.state]
   return (
     <li className={`manager-confirmation manager-confirmation--${confirmation.state}`}>
-      <p className="manager-confirmation__question">{message.content}</p>
+      <div className="manager-confirmation__header">
+        <p className="manager-confirmation__question">{message.content}</p>
+        <MessageTime value={message.createdAt} />
+      </div>
       {confirmation.state === 'pending' ? (
         <div className="manager-confirmation__actions">
           <button
@@ -257,6 +261,7 @@ function ActivityRow({
     <li className="manager-activity">
       <span aria-hidden="true" className="manager-activity__mark" />
       <span className="manager-activity__text">{message.content}</span>
+      <MessageTime value={message.createdAt} />
       {message.sessionRefs?.map((ref) => (
         <button
           aria-label={`Open ${ref.title || 'session'}`}
@@ -295,12 +300,11 @@ function UserMessage({
           {expanded ? 'Show less' : 'Show all'}
         </button>
       ) : null}
-      {message.source === 'scheduled' ? (
-        <span className="manager-message__state">Scheduled check</span>
-      ) : message.answerOnly ? (
-        <span className="manager-message__state">Ask</span>
-      ) : null}
-      {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
+      <div className="manager-message__meta">
+        <MessageTime value={message.createdAt} />
+        {message.answerOnly ? <span className="manager-message__state">Ask</span> : null}
+        {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
+      </div>
       {message.state === 'failed' && message.error ? (
         <p className="manager-message__error" role="alert">{message.error}</p>
       ) : null}
@@ -1222,6 +1226,7 @@ export function ManagerAssistant({
                     {message.content}
                   </ReactMarkdown>
                 </div>
+                <MessageTime className="message__timestamp manager-message__time" value={message.createdAt} />
               </li>
             )
           })}
@@ -1295,6 +1300,7 @@ export function ManagerAssistant({
                       ) : null}
                       {editError ? <p className="form-error" role="alert">{editError}</p> : null}
                       <div className="oracle-queue__editor-actions">
+                        <MessageTime value={message.createdAt} />
                         <span className="oracle-queue__editor-hint" id={`oracle-edit-hint-${message.id}`}>
                           Keeps its place
                           <span className="oracle-queue__editor-keys"> · Ctrl+Enter saves · Esc cancels</span>
@@ -1319,37 +1325,32 @@ export function ManagerAssistant({
                         <span className="visually-hidden">{`Number ${index + 1}: `}</span>
                         {message.content}
                       </p>
-                      {message.source === 'scheduled' ? (
-                        <span className="oracle-queue__tag">Scheduled check</span>
-                      ) : (
-                        <>
-                          {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
-                          <button
-                            aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
-                            className="icon-button oracle-queue__edit"
-                            disabled={Boolean(editing) || busyMessage === message.id}
-                            onClick={() => startEdit(message)}
-                            ref={(element) => {
-                              if (element) editButtons.current.set(message.id, element)
-                              else editButtons.current.delete(message.id)
-                            }}
-                            title="Edit; it keeps its place in the queue"
-                            type="button"
-                          >
-                            <Pencil aria-hidden="true" size={14} />
-                          </button>
-                          <button
-                            aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
-                            className="icon-button oracle-queue__remove"
-                            disabled={busyMessage === message.id}
-                            onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
-                            title="Remove from the queue"
-                            type="button"
-                          >
-                            <X aria-hidden="true" size={15} />
-                          </button>
-                        </>
-                      )}
+                      <MessageTime value={message.createdAt} />
+                      {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
+                      <button
+                        aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
+                        className="icon-button oracle-queue__edit"
+                        disabled={Boolean(editing) || busyMessage === message.id}
+                        onClick={() => startEdit(message)}
+                        ref={(element) => {
+                          if (element) editButtons.current.set(message.id, element)
+                          else editButtons.current.delete(message.id)
+                        }}
+                        title="Edit; it keeps its place in the queue"
+                        type="button"
+                      >
+                        <Pencil aria-hidden="true" size={14} />
+                      </button>
+                      <button
+                        aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
+                        className="icon-button oracle-queue__remove"
+                        disabled={busyMessage === message.id}
+                        onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
+                        title="Remove from the queue"
+                        type="button"
+                      >
+                        <X aria-hidden="true" size={15} />
+                      </button>
                     </>
                   )}
                 </li>

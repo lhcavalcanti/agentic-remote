@@ -206,6 +206,8 @@ describe('refusal counting', () => {
 
   it('counts direct refusals from hub routes', async () => {
     const runtime = await start()
+    const validRoot = directories.at(-1)
+    if (!validRoot) throw new Error('The refusal fixture directory is missing')
     vi.spyOn(runtime.manager!, 'listKnowledge')
       .mockRejectedValue(Object.assign(new Error('Not Found'), { statusCode: 404 }))
 
@@ -213,7 +215,7 @@ describe('refusal counting', () => {
       method: 'POST',
       url: '/api/knowledge/roots',
       headers: trusted,
-      payload: { computerId: runtime.identity.info.id, path: '/srv/synthetic' },
+      payload: { computerId: runtime.identity.info.id, path: validRoot },
     })
     expect(conflict.statusCode).toBe(409)
     expect(conflict.body).toBe(

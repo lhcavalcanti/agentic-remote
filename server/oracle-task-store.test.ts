@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { ManagerMessage } from '../shared/manager.js'
+import type { OracleTask } from '../shared/oracle-task.js'
 import {
   ORACLE_TASK_MAX_ACTIVE,
   OracleTaskConflictError,
   OracleTaskStore,
+  unfinishedOracleTaskSessions,
 } from './oracle-task-store.js'
 
 const directories: string[] = []
@@ -262,5 +265,54 @@ describe('OracleTaskStore', () => {
       completion: { messageId: 'completion-a' },
       attempts: [{ status: 'completed' }],
     })
+  })
+
+  it('lists the sessions every unfinished task still uses', () => {
+    const task = (id: string, status: OracleTask['status'], sessionIds: string[], source?: string): OracleTask => ({
+      id, revision: 1, title: id, summary: '', nextAction: '', owner: 'oracle', status, sourceEventIds: [],
+      ...(source ? { sourceSession: { computerId: 'hub', sessionId: source, taskGeneration: 1 } } : {}),
+      attempts: [{
+        id: `${id}-attempt`, requestId: 'r', managerMessageId: 'm', status: 'running',
+        sessionRefs: sessionIds.map((sessionId) => ({ computerId: 'hub', sessionId })),
+      }],
+      createdAt: 't', updatedAt: 't',
+    })
+    expect(unfinishedOracleTaskSessions([
+      task('running', 'running', ['worker-a'], 'source-a'),
+      task('review', 'review', ['worker-b']),
+      task('failed', 'failed', ['worker-c']),
+      task('done', 'completed', ['worker-d'], 'source-d'),
+      task('dropped', 'dismissed', ['worker-e']),
+    ], [])).toEqual([
+      { computerId: 'hub', sessionId: 'source-a' },
+      { computerId: 'hub', sessionId: 'worker-a' },
+      { computerId: 'hub', sessionId: 'worker-b' },
+      { computerId: 'hub', sessionId: 'worker-c' },
+    ])
+  })
+
+  it('adds the sessions a task turn used before reconciliation records them', () => {
+    const ref = (sessionId: string) => ({ computerId: 'hub', sessionId })
+    const task = (id: string, status: OracleTask['status'], managerMessageIds: string[]): OracleTask => ({
+      id, revision: 1, title: id, summary: '', nextAction: '', owner: 'oracle', status, sourceEventIds: [],
+      attempts: managerMessageIds.map((managerMessageId, index) => ({
+        id: `${id}-attempt-${index}`, requestId: 'r', managerMessageId, status: 'running', sessionRefs: [],
+      })),
+      createdAt: 't', updatedAt: 't',
+    })
+    const messages: ManagerMessage[] = [
+      {
+        id: 'retry', role: 'user', content: 'Fix it.', createdAt: 't', source: 'task',
+        automatic: { kind: 'task', taskId: 'running', sessionRefs: [ref('earlier')] },
+      },
+      { id: 'a1', role: 'activity', content: 'Started', createdAt: 't', replyTo: 'first', sessionRefs: [ref('worker-a')] },
+      { id: 'a2', role: 'activity', content: 'Asked', createdAt: 't', replyTo: 'retry', sessionRefs: [ref('worker-b')] },
+      { id: 'a3', role: 'activity', content: 'Started', createdAt: 't', replyTo: 'finished', sessionRefs: [ref('worker-c')] },
+      { id: 'a4', role: 'activity', content: 'Started', createdAt: 't', replyTo: 'typed', sessionRefs: [ref('mine')] },
+    ]
+    expect(unfinishedOracleTaskSessions([
+      task('running', 'running', ['first', 'retry']),
+      task('done', 'completed', ['finished']),
+    ], messages)).toEqual([ref('earlier'), ref('worker-a'), ref('worker-b')])
   })
 })

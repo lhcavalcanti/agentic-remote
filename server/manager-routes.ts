@@ -32,12 +32,6 @@ export interface ManagerEventSource {
 }
 
 const effort = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
-const managerCadence = z.union([
-  z.literal(60),
-  z.literal(120),
-  z.literal(240),
-  z.literal(480),
-])
 
 const defaultsSchema = z.object({
   computerId: z.string().trim().min(1).max(200).optional(),
@@ -61,13 +55,7 @@ const settingsSchema = z.object({
   // Null clears a folder; a blank one is a mistake, not a way to clear it.
   sessionFolders: z.record(z.string().trim().min(1).max(200), z.string().trim().min(1).max(4096).nullable()).optional(),
   sessionBackend: z.enum(['sdk', 'terminal']).optional(),
-  proactive: z.object({
-    enabled: z.boolean(),
-    cadenceMinutes: managerCadence,
-    timeZone: z.string().trim().min(1).max(100),
-    quietStartHour: z.number().int().min(0).max(23),
-    quietEndHour: z.number().int().min(0).max(23),
-  }).strict().optional(),
+  sessionClosePolicy: z.enum(['ask', 'oracle-started']).optional(),
 })
 
 const messageParams = z.object({ messageId: z.string().trim().min(1).max(100) })

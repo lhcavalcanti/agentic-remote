@@ -2107,6 +2107,9 @@ describe('App', () => {
       if (input.expectedRevision !== previous.revision) {
         throw new SessionKnowledgeRequestError('Root changed in another client', 409, previous)
       }
+      if ('knowledgeBasePath' in input) {
+        throw new Error('The UI fixture uses catalog-root mode')
+      }
       const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
       if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
       const binding: SessionKnowledgeBinding = {
@@ -4157,6 +4160,28 @@ describe('App', () => {
     )
   })
 
+  it('dates a session message from another day and leaves out a time it cannot read', async () => {
+    const older = '2020-01-02T03:04:00.000Z'
+    const datedSession = {
+      ...session,
+      messages: [
+        { id: 'old-1', role: 'user' as const, content: 'From long ago', createdAt: older },
+        { id: 'bad-1', role: 'assistant' as const, content: 'No readable time', createdAt: 'not a time' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([datedSession])
+    vi.mocked(getSession).mockResolvedValue(datedSession)
+    render(<App />)
+
+    const full = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(new Date(older))
+    const oldTime = (await screen.findByText('From long ago')).closest('.message')?.querySelector('time')
+    expect(oldTime).toHaveTextContent(full)
+    expect(oldTime).toHaveAttribute('title', full)
+    expect(screen.getByText('No readable time').closest('.message')?.querySelector('time')).toBeNull()
+  })
+
   it('renders MCP activity as a compact, identifiable tool row', async () => {
     const mcpSession: ManagedSession = {
       ...session,
@@ -5166,6 +5191,38 @@ describe('App', () => {
         contextTier: 'default',
       }),
     )
+  })
+
+  it('keeps the default context size across a model change when the new model offers it', async () => {
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models: provider === 'copilot'
+          ? [
+              { id: 'fixture-model', name: 'Fixture Model', reasoningEfforts: ['high'], contextTiers: ['default', 'long_context'] },
+              { id: 'fixture-long', name: 'Long Model', reasoningEfforts: [], contextTiers: ['default', 'long_context'] },
+              { id: 'fixture-fast', name: 'Fast Model', reasoningEfforts: ['low'], contextTiers: ['default'] },
+            ]
+          : [],
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const model = await screen.findByLabelText('GitHub Copilot default model')
+    fireEvent.change(model, { target: { value: 'fixture-model' } })
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default context size'), {
+      target: { value: 'long_context' },
+    })
+
+    fireEvent.change(model, { target: { value: 'fixture-long' } })
+    expect(screen.getByLabelText('GitHub Copilot default context size')).toHaveValue('long_context')
+    expect(savedSetting('newSessionRuntimes')?.copilot).toEqual({
+      model: 'fixture-long', reasoningEffort: '', contextTier: 'long_context', mode: '',
+    })
+
+    fireEvent.change(model, { target: { value: 'fixture-fast' } })
+    expect(screen.getByLabelText('GitHub Copilot default context size')).toHaveValue('default')
+    expect(savedSetting('newSessionRuntimes')?.copilot).toMatchObject({ model: 'fixture-fast', contextTier: 'default' })
   })
 
   it('refreshes both provider catalogs every time app settings is reopened', async () => {

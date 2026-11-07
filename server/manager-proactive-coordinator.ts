@@ -138,6 +138,24 @@ export class ManagerProactiveCoordinator {
     })
   }
 
+  /**
+   * Observes the sessions a Dreamer refresh listed, so a lifecycle transition
+   * whose event never reached this hub is still admitted. The inbox ignores a
+   * revision it has already seen, so a sweep never admits a transition twice.
+   */
+  sweep(sessions: readonly ManagedSession[]): Promise<void> {
+    if (!this.initialized || this.stopped || !this.enabled) return Promise.resolve()
+    // Observation reads only session state, never the transcript.
+    const listed = sessions.map((session) => ({ ...session, messages: [] }))
+    return this.enqueue(async () => {
+      if (this.stopped || !this.enabled) return
+      // The listing predates any event still waiting out the debounce.
+      for (const session of listed) await this.observeSession(session)
+      await this.flushEvents()
+      await this.drainNow()
+    })
+  }
+
   recordProactiveOutcomes(input: {
     message: ManagerMessage
     outcomes: ManagerProactiveOutcome[]

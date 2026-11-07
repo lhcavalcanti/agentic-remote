@@ -796,6 +796,11 @@ export interface SessionKnowledgeBinding {
   rootId: string | null
   /** Relative folder within the saved root that acts as this session's root. */
   rootPath?: string
+  /**
+   * Canonical absolute folder represented by the retained root snapshot.
+   * Older hubs omit this additive field.
+   */
+  knowledgeBasePath?: string | null
   /** Zero means never linked; an explicit unlink retains a newer revision. */
   revision: number
   /** Retained metadata, including when the shared root has been removed. */
@@ -809,3 +814,13 @@ export interface UpdateSessionKnowledgeRootInput {
   rootPath?: string
   expectedRevision: number
 }
+
+export interface UpdateSessionKnowledgeBasePathInput {
+  knowledgeBasePath: string
+  create?: boolean
+  expectedRevision: number
+}
+
+export type SessionKnowledgeRootMutationInput =
+  | UpdateSessionKnowledgeRootInput
+  | UpdateSessionKnowledgeBasePathInput

@@ -29,7 +29,7 @@ import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtim
 import { ManagerStore } from './manager-store.js'
 import { ManagerProactiveCoordinator } from './manager-proactive-coordinator.js'
 import { ManagerProactiveInbox } from './manager-proactive-inbox.js'
-import { OracleTaskStore } from './oracle-task-store.js'
+import { OracleTaskStore, unfinishedOracleTaskSessions } from './oracle-task-store.js'
 import {
   initializeManagerStructuredMemory,
   ManagerStructuredMemoryRuntime,
@@ -327,7 +327,7 @@ export async function buildApp(
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToProactive: ((event: HubEvent) => void) | undefined
-  let forwardHubToDreamer: (() => void) | undefined
+  let forwardHubToDreamer: ((event: HubEvent) => void) | undefined
   let forwardManagerToDreamer: (() => void) | undefined
   if (role === 'hub') {
     manager =
@@ -343,6 +343,9 @@ export async function buildApp(
     sessionKnowledgeStore = options.sessionKnowledgeStore ??
       new SessionKnowledgeStore(dataDirectory, knowledgeStore)
     await sessionKnowledgeStore.initialize()
+    await knowledgeStore.recoverProvisionalRoots(
+      sessionKnowledgeStore.listBindings(),
+    )
     // Hub-only: a node serves no UI, so it has no ordering to remember.
     sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
     await sessionOrderStore.initialize()
@@ -418,6 +421,8 @@ export async function buildApp(
         reasoningEffort: managerSettings.reasoningEffort,
         // The synced settings profile on this same hub, read per turn.
         responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
+        // Unset until Dreamer starts, and while it is off.
+        progressContext: () => dreamerService?.progressView(),
         // App settings → Models, read as each Oracle session starts.
         newSessionRuntimes: () => settingsProfileStore?.snapshot().values.newSessionRuntimes,
         structuredMemory: managerStructuredMemory,
@@ -429,6 +434,11 @@ export async function buildApp(
             )
           }
           return proactiveCoordinator.recordProactiveOutcomes(input)
+        },
+        // Unreadable tasks throw, so Oracle asks before closing anything.
+        unfinishedTaskSessions: (messages) => {
+          if (!oracleTaskStore) throw new Error('Oracle tasks are unavailable.')
+          return unfinishedOracleTaskSessions(oracleTaskStore.snapshot().tasks, messages)
         },
       })
       // Before the session service starts, so its first discovery already
@@ -459,6 +469,12 @@ export async function buildApp(
           setProactiveEnabled: async (enabled) => {
             await proactiveCoordinator?.setEnabled(enabled)
           },
+          progressSource: dreamerManager,
+          sweepLifecycle: async (sessions) => {
+            await proactiveCoordinator?.sweep(sessions).catch((error: unknown) => {
+              app.log.warn({ err: error }, 'Dreamer lifecycle sweep failed')
+            })
+          },
         },
       )
       try {
@@ -477,12 +493,17 @@ export async function buildApp(
         )
         forwardToProactive = (event) => proactiveCoordinator?.handle(event)
         manager.on('event', forwardToProactive)
-        forwardHubToDreamer = () => {
+        forwardHubToDreamer = (event) => {
+          dreamerService?.handleHubEvent(event)
           void dreamerService?.reconcileTasks().catch((error: unknown) => {
             app.log.warn({ err: error }, 'Dreamer task reconciliation failed')
           })
         }
-        forwardManagerToDreamer = forwardHubToDreamer
+        forwardManagerToDreamer = () => {
+          void dreamerService?.reconcileTasks().catch((error: unknown) => {
+            app.log.warn({ err: error }, 'Dreamer task reconciliation failed')
+          })
+        }
         manager.on('event', forwardHubToDreamer)
         dreamerAgent.on('event', forwardManagerToDreamer)
       } catch (error) {

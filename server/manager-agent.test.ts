@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,6 +9,7 @@ import {
   MANAGER_SNAPSHOT_MESSAGES,
   type ManagerEvent,
 } from '../shared/manager.js'
+import type { OracleTask } from '../shared/oracle-task.js'
 import {
   ManagerAgent,
   type ManagerAgentOptions,
@@ -23,7 +24,7 @@ import { MANAGER_SYSTEM_PROMPT } from './manager-context.js'
 import { ManagerStore, registryKey } from './manager-store.js'
 import { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
-import { managerCheckDefaults, managerScheduledMessageId } from './manager-schedule.js'
+import { unfinishedOracleTaskSessions } from './oracle-task-store.js'
 
 type Behavior = (session: FakeSession, prompt: string) => void | Promise<void>
 
@@ -403,477 +404,6 @@ describe('ManagerAgent', () => {
     })
   })
 
-  it('enqueues one durable scheduled status check when its persisted time is due', async () => {
-    let now = new Date('2026-11-04T12:00:00.000Z')
-    await start({ now: () => now })
-    const settings = await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: true },
-    })
-    expect(settings.proactive).toMatchObject({
-      enabled: true,
-      nextCheckAt: '2026-11-04T14:00:00.000Z',
-    })
-
-    now = new Date('2026-11-04T14:00:00.000Z')
-    await agent!.runScheduledCheckIfDue()
-    await settled()
-
-    const scheduled = agent!.snapshot().messages.filter(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )
-    expect(scheduled).toHaveLength(1)
-    expect(scheduled[0]).toMatchObject({
-      id: managerScheduledMessageId('2026-11-04T14:00:00.000Z'),
-      role: 'user',
-      answerOnly: true,
-      state: 'done',
-    })
-    expect(agent!.snapshot().messages.find(
-      (message) => message.role === 'assistant' && message.replyTo === scheduled[0].id,
-    )).toMatchObject({ source: 'scheduled' })
-    expect(sdk.prompts[0]).toContain('<scheduled_status_check>')
-    expect(sdk.prompts[0]).not.toContain('<user_message>')
-    expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
-      .toBe('2026-11-04T16:00:00.000Z')
-  })
-
-  it('reports the latest scheduled turn after its reply is stored', async () => {
-    await start()
-    await store.upsertMessage({
-      id: 'scheduled-check',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T14:00:00.000Z',
-      state: 'done',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-    await store.upsertMessage({
-      id: 'scheduled-reply',
-      role: 'assistant',
-      content: 'Nothing needs attention.',
-      createdAt: '2026-11-04T14:05:00.000Z',
-      replyTo: 'scheduled-check',
-      source: 'scheduled',
-    })
-
-    expect(agent!.snapshot().settings?.proactive).toMatchObject({
-      latestCheckAt: '2026-11-04T14:00:00.000Z',
-      latestCheckState: 'done',
-    })
-  })
-
-  it('keeps already queued user work ahead of a due scheduled check', async () => {
-    const now = new Date('2026-11-04T14:00:00.000Z')
-    await store.upsertMessage({
-      id: 'queued-user',
-      role: 'user',
-      content: 'Answer me first.',
-      createdAt: '2026-11-04T13:59:00.000Z',
-      state: 'queued',
-      source: 'typed',
-    })
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: now.toISOString(),
-      }
-    })
-
-    await start({ now: () => now })
-    await settled()
-
-    expect(sdk.prompts).toHaveLength(2)
-    expect(sdk.prompts[0]).toContain('<user_message>\nAnswer me first.\n</user_message>')
-    expect(sdk.prompts[1]).toContain('<scheduled_status_check>')
-  })
-
-  it('refuses edits and removal of queued scheduled checks at the server boundary', async () => {
-    sdk.behaviors.push(async () => new Promise<void>(() => undefined))
-    await start()
-    const blocking = await agent!.send('Keep Oracle busy.')
-    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-      (message) => message.id === blocking.id,
-    )?.state).toBe('running'))
-    await store.upsertMessage({
-      id: 'scheduled-queued',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T14:00:00.000Z',
-      state: 'queued',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-
-    await expect(agent!.editQueued('scheduled-queued', 'Do something else.'))
-      .rejects.toMatchObject({ statusCode: 409 })
-    await expect(agent!.removeQueued('scheduled-queued'))
-      .rejects.toMatchObject({ statusCode: 409 })
-  })
-
-  it('coalesces later cadence ticks while a scheduled check is still waiting', async () => {
-    let now = new Date('2026-11-04T12:00:00.000Z')
-    sdk.behaviors.push(async () => new Promise<void>(() => undefined))
-    await start({ now: () => now })
-    await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: true },
-    })
-    const blocking = await agent!.send('Keep Oracle busy.')
-    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-      (message) => message.id === blocking.id,
-    )?.state).toBe('running'))
-
-    now = new Date('2026-11-04T14:00:00.000Z')
-    await agent!.runScheduledCheckIfDue()
-    now = new Date('2026-11-04T16:00:00.000Z')
-    await agent!.runScheduledCheckIfDue()
-
-    expect(agent!.snapshot().messages.filter(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )).toHaveLength(1)
-    expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
-      .toBe('2026-11-04T18:00:00.000Z')
-  })
-
-  it('does not start a queued scheduled check after quiet hours begin', async () => {
-    let now = new Date('2026-11-04T21:50:00.000Z')
-    let release!: () => void
-    sdk.behaviors.push((session) => new Promise<void>((resolve) => {
-      release = () => {
-        reply('Finished user work.')(session, '')
-        resolve()
-      }
-    }))
-    await store.upsertMessage({
-      id: 'queued-user',
-      role: 'user',
-      content: 'Finish this first.',
-      createdAt: '2026-11-04T21:49:00.000Z',
-      state: 'queued',
-      source: 'typed',
-    })
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: now.toISOString(),
-      }
-    })
-
-    await start({ now: () => now })
-    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-      (message) => message.id === 'queued-user',
-    )?.state).toBe('running'))
-    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
-    now = new Date('2026-11-04T22:05:00.000Z')
-    release()
-    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-      (message) => message.id === 'queued-user',
-    )?.state).toBe('done'))
-
-    expect(sdk.prompts).toHaveLength(1)
-    expect(agent!.snapshot().messages.find(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )?.state).toBe('queued')
-  })
-
-  it('lets user work pass a queued scheduled check during quiet hours', async () => {
-    const now = new Date('2026-11-04T22:05:00.000Z')
-    await store.upsertMessage({
-      id: 'scheduled-first',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T21:50:00.000Z',
-      state: 'queued',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-    await store.upsertMessage({
-      id: 'typed-second',
-      role: 'user',
-      content: 'Answer this now.',
-      createdAt: '2026-11-04T22:04:00.000Z',
-      state: 'queued',
-      source: 'typed',
-    })
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: '2026-11-05T07:00:00.000Z',
-      }
-    })
-
-    await start({ now: () => now })
-    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-      (message) => message.id === 'typed-second',
-    )?.state).toBe('done'))
-
-    expect(sdk.prompts).toHaveLength(1)
-    expect(sdk.prompts[0]).toContain('<user_message>\nAnswer this now.\n</user_message>')
-    expect(agent!.snapshot().messages.find(
-      (message) => message.id === 'scheduled-first',
-    )?.state).toBe('queued')
-    expect(store.messages().filter(
-      (message) => message.role === 'user',
-    ).map((message) => message.id)).toEqual([
-      'typed-second',
-      'scheduled-first',
-    ])
-    const reorder = events.find(
-      (event) => (event as { type: string }).type === 'manager.reorder',
-    ) as unknown as {
-      messages: Array<{ id: string; role: string }>
-    } | undefined
-    expect(reorder?.messages.filter(
-      (message) => message.role === 'user',
-    ).map((message) => message.id)).toEqual([
-      'typed-second',
-      'scheduled-first',
-    ])
-    const reopened = await openStore()
-    expect(reopened.messages().filter(
-      (message) => message.role === 'user',
-    ).map((message) => message.id)).toEqual([
-      'typed-second',
-      'scheduled-first',
-    ])
-  })
-
-  it.each(['edit', 'remove'] as const)(
-    'claims quiet-hour user work before a racing queue %s',
-    async (action) => {
-      const now = new Date('2026-11-04T22:05:00.000Z')
-      await store.upsertMessage({
-        id: 'scheduled-first',
-        role: 'user',
-        content: 'Review current work.',
-        createdAt: '2026-11-04T21:50:00.000Z',
-        state: 'queued',
-        answerOnly: true,
-        source: 'scheduled',
-      })
-      await store.upsertMessage({
-        id: 'typed-second',
-        role: 'user',
-        content: 'Original user text.',
-        createdAt: '2026-11-04T22:04:00.000Z',
-        state: 'queued',
-        source: 'typed',
-      })
-      await store.updateState((state) => {
-        state.proactive = {
-          settings: { ...managerCheckDefaults(), enabled: true },
-          nextCheckAt: '2026-11-05T07:00:00.000Z',
-        }
-      })
-      let release!: () => void
-      const gate = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      const originalMove = store.moveMessageToEnd.bind(store)
-      const move = vi.spyOn(store, 'moveMessageToEnd')
-      move.mockImplementation(async (id) => {
-        await gate
-        await originalMove(id)
-      })
-
-      await start({ now: () => now })
-      await vi.waitFor(() => expect(move).toHaveBeenCalledWith('scheduled-first'))
-      const mutation = action === 'edit'
-        ? agent!.editQueued('typed-second', 'Edited user text.')
-        : agent!.removeQueued('typed-second')
-      release()
-
-      await expect(mutation).rejects.toMatchObject({ statusCode: 409 })
-      await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-        (message) => message.id === 'typed-second',
-      )?.state).toBe('done'))
-      expect(sdk.prompts).toHaveLength(1)
-      expect(sdk.prompts[0]).toContain(
-        '<user_message>\nOriginal user text.\n</user_message>',
-      )
-      expect(sdk.prompts[0]).not.toContain('Edited user text.')
-    },
-  )
-
-  it('keeps queue order when a scheduled check is allowed to run', async () => {
-    const now = new Date('2026-11-04T20:05:00.000Z')
-    await store.upsertMessage({
-      id: 'scheduled-first',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T20:00:00.000Z',
-      state: 'queued',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-    await store.upsertMessage({
-      id: 'typed-second',
-      role: 'user',
-      content: 'Answer this second.',
-      createdAt: '2026-11-04T20:04:00.000Z',
-      state: 'queued',
-      source: 'typed',
-    })
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: '2026-11-04T22:05:00.000Z',
-      }
-    })
-
-    await start({ now: () => now })
-    await settled()
-
-    expect(sdk.prompts).toHaveLength(2)
-    expect(sdk.prompts[0]).toContain('<scheduled_status_check>')
-    expect(sdk.prompts[1]).toContain('<user_message>\nAnswer this second.\n</user_message>')
-  })
-
-  it('wakes a quiet queued scheduled check when quiet hours end before its cadence', async () => {
-    const now = new Date('2026-11-04T22:05:00.000Z')
-    await store.upsertMessage({
-      id: 'scheduled-quiet',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T21:50:00.000Z',
-      state: 'queued',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: '2026-11-05T09:00:00.000Z',
-      }
-    })
-
-    await start({ now: () => now })
-
-    await vi.waitFor(() => expect(
-      agent!.snapshot().settings?.proactive?.nextCheckAt,
-    ).toBe('2026-11-05T07:00:00.000Z'))
-    expect(agent!.scheduledCheckTimerActive()).toBe(true)
-  })
-
-  it('cancels a scheduled admission when periodic checks are paused during persistence', async () => {
-    let now = new Date('2026-11-04T12:00:00.000Z')
-    await start({ now: () => now })
-    await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: true },
-    })
-    now = new Date('2026-11-04T14:00:00.000Z')
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const originalUpsert = store.upsertMessage.bind(store)
-    vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
-      const persistence = originalUpsert(message)
-      if (message.source === 'scheduled' && message.state === 'queued') await gate
-      await persistence
-    })
-
-    const admission = agent!.runScheduledCheckIfDue()
-    await vi.waitFor(() => expect(store.messages().some(
-      (message) => message.source === 'scheduled' && message.state === 'queued',
-    )).toBe(true))
-    await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: false },
-    })
-    release()
-    await admission
-
-    expect(agent!.snapshot().messages.find(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )?.state).toBe('cancelled')
-    expect(sdk.prompts).toHaveLength(0)
-    expect(agent!.snapshot().settings?.proactive?.nextCheckAt).toBeUndefined()
-  })
-
-  it('cancels a scheduled claim that starts while pause persistence is pending', async () => {
-    await start()
-    await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: true },
-    })
-    await store.upsertMessage({
-      id: 'scheduled-queued',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T14:00:00.000Z',
-      state: 'queued',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let markWriteStarted!: () => void
-    const writeStarted = new Promise<void>((resolve) => {
-      markWriteStarted = resolve
-    })
-    const writer = store as unknown as {
-      writeJson(name: string, value: unknown): Promise<void>
-    }
-    const originalWrite = writer.writeJson.bind(store)
-    const write = vi.spyOn(writer, 'writeJson').mockImplementation(
-      async (name, value) => {
-        markWriteStarted()
-        await gate
-        await originalWrite(name, value)
-      },
-    )
-
-    const pausing = agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: false },
-    })
-    await writeStarted
-    const pumping = (agent as unknown as { pump(): Promise<void> }).pump()
-    release()
-    await pausing
-    await pumping
-
-    expect(sdk.prompts).toHaveLength(0)
-    expect(agent!.snapshot().messages.find(
-      (message) => message.id === 'scheduled-queued',
-    )?.state).toBe('cancelled')
-    write.mockRestore()
-  })
-
-  it('suppresses notification when a scheduled check completes after quiet hours begin', async () => {
-    let now = new Date('2026-11-04T21:59:00.000Z')
-    let release!: () => void
-    sdk.behaviors.push((session) => new Promise<void>((resolve) => {
-      release = () => {
-        reply('Nothing needs attention.')(session, '')
-        resolve()
-      }
-    }))
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: now.toISOString(),
-      }
-    })
-
-    await start({ now: () => now })
-    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )?.state).toBe('running'))
-    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
-    now = new Date('2026-11-04T22:01:00.000Z')
-    release()
-    await settled()
-
-    expect(agent!.snapshot().messages.find(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )).toMatchObject({
-      state: 'done',
-      suppressNotification: true,
-    })
-  })
-
   it('suppresses notification when automatic proactive analysis completes', async () => {
     await start()
 
@@ -895,229 +425,6 @@ describe('ManagerAgent', () => {
       state: 'done',
       suppressNotification: true,
     })
-  })
-
-  it('retries failed scheduled admission after one, five, and fifteen minutes', async () => {
-    vi.useFakeTimers()
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const now = new Date('2026-11-04T14:00:00.000Z')
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: now.toISOString(),
-      }
-    })
-
-    const originalUpsert = store.upsertMessage.bind(store)
-    let attempts = 0
-    vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
-      if (message.source === 'scheduled' && message.state === 'queued') {
-        attempts += 1
-        if (attempts < 4) throw new Error('disk busy')
-      }
-      await originalUpsert(message)
-    })
-
-    try {
-      await start({ now: () => now })
-      expect(attempts).toBe(1)
-      await vi.advanceTimersByTimeAsync(60_000)
-      expect(attempts).toBe(2)
-      await vi.advanceTimersByTimeAsync(5 * 60_000)
-      expect(attempts).toBe(3)
-      await vi.advanceTimersByTimeAsync(15 * 60_000)
-      expect(attempts).toBe(4)
-      await store.flush()
-      expect(store.messages().filter(
-        (message) => message.role === 'user' && message.source === 'scheduled',
-      )).toHaveLength(1)
-    } finally {
-      warn.mockRestore()
-      vi.useRealTimers()
-    }
-  })
-
-  it('retries a failed scheduled check manually while periodic checks are paused', async () => {
-    await store.upsertMessage({
-      id: 'scheduled-failed',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T14:00:00.000Z',
-      state: 'failed',
-      error: 'Oracle could not answer.',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: false },
-      }
-    })
-    await start()
-
-    await agent!.retry('scheduled-failed')
-    await settled()
-
-    expect(agent!.snapshot().messages.find(
-      (message) => message.id === 'scheduled-failed',
-    )?.state).toBe('done')
-    expect(sdk.prompts[0]).toContain('<scheduled_status_check>')
-  })
-
-  it('retries a scheduled append that failed after entering the in-memory queue', async () => {
-    let now = new Date('2026-11-04T12:00:00.000Z')
-    await start({ now: () => now })
-    await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: true },
-    })
-    now = new Date('2026-11-04T14:00:00.000Z')
-    const conversationPath = path.join(root, 'manager', 'conversation.jsonl')
-    await mkdir(conversationPath)
-
-    await expect(agent!.runScheduledCheckIfDue()).rejects.toThrow()
-    expect(store.message(managerScheduledMessageId(
-      '2026-11-04T14:00:00.000Z',
-    ))).toBeUndefined()
-    await rm(conversationPath, { recursive: true })
-    await agent!.runScheduledCheckIfDue()
-    await settled()
-    await agent!.stop()
-    agent = undefined
-    store = await openStore()
-
-    expect(store.messages().filter(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )).toHaveLength(1)
-  })
-
-  it('coalesces missed intervals to one catch-up after restart', async () => {
-    let now = new Date('2026-11-04T12:00:00.000Z')
-    await start({ now: () => now })
-    await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: true },
-    })
-    await agent!.stop()
-    agent = undefined
-
-    now = new Date('2026-11-04T20:00:00.000Z')
-    store = await openStore()
-    await start({ now: () => now })
-    await settled()
-
-    expect(agent!.snapshot().messages.filter(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )).toHaveLength(1)
-    expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
-      .toBe('2026-11-05T07:00:00.000Z')
-  })
-
-  it('does not duplicate a persisted scheduled message while recovering its schedule cursor', async () => {
-    const now = new Date('2026-11-04T14:00:00.000Z')
-    const scheduledFor = now.toISOString()
-    await store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: scheduledFor,
-      }
-    })
-    await store.upsertMessage({
-      id: managerScheduledMessageId(scheduledFor),
-      role: 'user',
-      content: 'Scheduled status check',
-      createdAt: scheduledFor,
-      state: 'done',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-
-    await start({ now: () => now })
-    await settled()
-
-    expect(agent!.snapshot().messages.filter(
-      (message) => message.role === 'user' && message.source === 'scheduled',
-    )).toHaveLength(1)
-    expect(agent!.snapshot().settings?.proactive?.nextCheckAt)
-      .toBe('2026-11-04T16:00:00.000Z')
-  })
-
-  it('defers checks through quiet hours and clears the next check when paused', async () => {
-    const now = new Date('2026-11-04T20:30:00.000Z')
-    await start({ now: () => now })
-    const enabled = await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: true },
-    })
-    expect(enabled.proactive?.nextCheckAt).toBe('2026-11-05T07:00:00.000Z')
-
-    const paused = await agent!.updateSettings({
-      proactive: { ...managerCheckDefaults(), enabled: false },
-    })
-    expect(paused.proactive).toMatchObject({ enabled: false })
-    expect(paused.proactive?.nextCheckAt).toBeUndefined()
-    expect(agent!.scheduledCheckTimerActive()).toBe(false)
-  })
-
-  it('does not let an old timer overwrite a new cadence while settings persist', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-11-04T12:00:00.000Z'))
-    try {
-      await start({ now: () => new Date(Date.now()) })
-      await agent!.updateSettings({
-        proactive: { ...managerCheckDefaults(), enabled: true },
-      })
-      await store.updateState((state) => {
-        if (state.proactive) {
-          state.proactive.nextCheckAt = '2026-11-04T12:01:00.000Z'
-        }
-      })
-      ;(agent as unknown as { armScheduledCheckTimer(): void })
-        .armScheduledCheckTimer()
-
-      let release!: () => void
-      const gate = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      let markWriteStarted!: () => void
-      const writeStarted = new Promise<void>((resolve) => {
-        markWriteStarted = resolve
-      })
-      const writer = store as unknown as {
-        writeJson(name: string, value: unknown): Promise<void>
-      }
-      const originalWrite = writer.writeJson.bind(store)
-      let persistedNextCheckAt: string | undefined
-      const write = vi.spyOn(writer, 'writeJson').mockImplementation(
-        async (name, value) => {
-          persistedNextCheckAt = (value as {
-            proactive?: { nextCheckAt?: string }
-          }).proactive?.nextCheckAt
-          markWriteStarted()
-          await gate
-          await originalWrite(name, value)
-        },
-      )
-      const run = vi.spyOn(agent!, 'runScheduledCheckIfDue')
-
-      const updating = agent!.updateSettings({
-        proactive: {
-          ...managerCheckDefaults(),
-          enabled: true,
-          cadenceMinutes: 240,
-        },
-      })
-      await writeStarted
-      await vi.advanceTimersByTimeAsync(60_000)
-      release()
-      await updating
-      await Promise.all(run.mock.results.map((result) => result.value))
-
-      expect(agent!.snapshot().settings?.proactive).toMatchObject({
-        cadenceMinutes: 240,
-        nextCheckAt: persistedNextCheckAt,
-      })
-      write.mockRestore()
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('keeps shadow prompts, system prompt, and tools identical to off while computing structured retrieval', async () => {
@@ -1736,6 +1043,41 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
   })
 
+  it("shows Dreamer's progress on the user's turns but never on a proactive observation", async () => {
+    await start({
+      now: () => new Date('2026-10-15T12:00:00.000Z'),
+      progressContext: () => ({
+        refreshedAt: '2026-10-15T11:58:00.000Z',
+        staleComputers: [],
+        entries: [],
+        followUps: [{ title: 'Review the release', owner: 'user', status: 'ready', nextAction: 'Approve the PR' }],
+      }),
+    })
+    await agent!.send('What needs me?')
+    await settled()
+    await agent!.enqueueInternal({
+      id: 'oracle-proactive-without-progress',
+      content: 'Inspect the bound session.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: { kind: 'proactive', eventIds: ['c'.repeat(64)] },
+    })
+    await settled()
+
+    expect(sdk.prompts[0]).toContain('Dreamer progress (refreshed 11:58 UTC).')
+    expect(sdk.prompts[0]).toContain('- "Review the release" · owner user · ready · next: "Approve the PR"')
+    expect(sdk.prompts[1]).toContain('<proactive_observation')
+    expect(sdk.prompts[1]).not.toContain('Dreamer progress')
+  })
+
+  it('keeps answering when Dreamer progress cannot be read', async () => {
+    await start({ progressContext: () => { throw new Error('progress unavailable') } })
+    await agent!.send('still there?')
+    await settled()
+    expect(sdk.prompts[0]).not.toContain('Dreamer progress')
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
   it('refuses only blank and oversized messages', async () => {
     await start()
     await expect(agent!.send('   ')).rejects.toMatchObject({ statusCode: 400 })
@@ -2051,6 +1393,337 @@ describe('ManagerAgent', () => {
     })
     expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'gone-now')
     await expect(agent!.resolveConfirmation('c1', true)).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  describe('closing the sessions it started without asking', () => {
+    const runningTask: OracleTask = {
+      id: 'oracle-task-a', revision: 1, title: 'Fix', summary: '', nextAction: '', owner: 'oracle', status: 'running',
+      sourceEventIds: [], createdAt: 't', updatedAt: 't',
+      attempts: [{ id: 'attempt-a', requestId: 'r', managerMessageId: 'task-attempt-a', status: 'running', sessionRefs: [] }],
+    }
+
+    async function startedByOracle(ids: string[]) {
+      await store.updateRegistry((registry) => {
+        for (const id of ids) {
+          registry[registryKey('hub', id)] = {
+            computerId: 'hub', sessionId: id, title: `Session ${id}`, origin: 'manager', firstSeenAt: '2026-10-15T11:00:00.000Z',
+          }
+        }
+      })
+      Object.assign(hub, { listBackgroundTasks: vi.fn(async () => ({ tasks: [], runningCount: 0, supported: true })) })
+    }
+
+    it('asks by default, and keeps your choice to let it close idle sessions it started', async () => {
+      await start()
+      expect(agent!.snapshot().settings?.sessionClosePolicy).toBe('ask')
+      sdk.behaviors.push(async (fakeSession, prompt) => {
+        expect(prompt).not.toContain('without asking')
+        reply('Okay.')(fakeSession, '')
+      })
+      await agent!.send('hello')
+      await settled()
+
+      const settings = await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      expect(settings.sessionClosePolicy).toBe('oracle-started')
+      expect(events.at(-1)).toMatchObject({ type: 'manager.settings', settings: { sessionClosePolicy: 'oracle-started' } })
+      // A change of model alone leaves it as it is.
+      expect(await agent!.updateSettings({ model: null })).toMatchObject({ sessionClosePolicy: 'oracle-started' })
+
+      await agent!.stop()
+      agent = undefined
+      store = await openStore()
+      await start()
+      expect(agent!.snapshot().settings?.sessionClosePolicy).toBe('oracle-started')
+      sdk.behaviors.push(async (fakeSession, prompt) => {
+        expect(prompt).toContain('The user lets you close idle sessions you started without asking')
+        reply('Okay.')(fakeSession, '')
+      })
+      await agent!.send('hello again')
+      await settled()
+
+      await agent!.updateSettings({ sessionClosePolicy: 'ask' })
+      expect(agent!.snapshot().settings?.sessionClosePolicy).toBe('ask')
+      // The default is not stored, so only the opt-in is ever on disk.
+      expect(store.state().sessionClosePolicy).toBeUndefined()
+    })
+
+    it('records the close before deleting, keeps it out of your hands, and tells Oracle in its tool result', async () => {
+      await startedByOracle(['existing'])
+      vi.mocked(hub.deleteSession).mockImplementation(async () => {
+        const recorded = store.messages().find((message) => message.confirmation)
+        expect(recorded?.confirmation).toMatchObject({ state: 'closing', decidedBy: 'oracle' })
+      })
+      let result: unknown
+      sdk.behaviors.push(async (fakeSession) => {
+        result = await fakeSession.tool('close_session')({ sessionId: 'existing', reason: 'Its PR merged.' })
+        reply('Closed it.')(fakeSession, '')
+      })
+      await start({ unfinishedTaskSessions: () => [] })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      const sent = await agent!.send('close the existing session, its PR merged')
+      await settled()
+
+      expect(String(result)).toContain('without asking')
+      expect(hub.deleteSession).toHaveBeenCalledTimes(1)
+      expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'existing')
+      const closed = agent!.snapshot().messages.find((message) => message.confirmation)!
+      expect(closed).toMatchObject({
+        role: 'activity', tool: 'close_session', replyTo: sent.id, content: 'Close "Session existing": Its PR merged.',
+        sessionRefs: [{ computerId: 'hub', sessionId: 'existing', title: 'Session existing' }],
+      })
+      expect(closed.confirmation).toEqual({
+        kind: 'close-session', computerId: 'hub', sessionId: 'existing', title: 'Session existing', state: 'confirmed', decidedBy: 'oracle',
+      })
+      const closedAt = events.findIndex((event) => event.type === 'manager.message' && event.message.confirmation?.state === 'confirmed')
+      expect(events.slice(closedAt).some((event) => event.type === 'manager.sessions')).toBe(true)
+      await expect(agent!.resolveConfirmation(closed.id, true)).rejects.toMatchObject({ statusCode: 409 })
+      expect(store.state().pendingNotes ?? []).toEqual([])
+    })
+
+    it('asks after five closes in one message, even when they run side by side, and counts afresh on the next', async () => {
+      const mine = Array.from({ length: 7 }, (_, index) => `mine-${index}`)
+      sessions = mine.map((id) => session(id))
+      await startedByOracle(mine)
+      const results: string[] = []
+      sdk.behaviors.push(async (fakeSession) => {
+        results.push(...await Promise.all(mine.slice(0, 6).map(async (id) =>
+          String(await fakeSession.tool('close_session')({ sessionId: id })))))
+        reply('Done.')(fakeSession, '')
+      })
+      await start({ unfinishedTaskSessions: () => [] })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      await agent!.send('close my finished sessions')
+      await settled()
+      expect(hub.deleteSession).toHaveBeenCalledTimes(5)
+      expect(results.filter((result) => result.includes('because Oracle already closed 5 sessions without asking this turn'))).toHaveLength(1)
+      const pending = agent!.snapshot().messages.filter((message) => message.confirmation?.state === 'pending')
+      expect(pending).toHaveLength(1)
+      expect(pending[0].content).toMatch(
+        /^Close "Session mine-[0-5]"\? This permanently deletes it and its history\. Asked because Oracle already closed 5 sessions without asking this turn\.$/,
+      )
+
+      sdk.behaviors.push(async (fakeSession) => {
+        results.push(String(await fakeSession.tool('close_session')({ sessionId: 'mine-6' })))
+        reply('Done.')(fakeSession, '')
+      })
+      await agent!.send('and the last one')
+      await settled()
+      expect(hub.deleteSession).toHaveBeenCalledTimes(6)
+      expect(results[6]).toContain('without asking')
+    })
+
+    it('asks when it cannot read which sessions Oracle tasks still use', async () => {
+      await startedByOracle(['existing'])
+      sdk.behaviors.push(async (fakeSession) => {
+        await fakeSession.tool('close_session')({ sessionId: 'existing' })
+        reply('Asked.')(fakeSession, '')
+      })
+      await start()
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      await agent!.send('close it')
+      await settled()
+      expect(hub.deleteSession).not.toHaveBeenCalled()
+      const request = agent!.snapshot().messages.find((message) => message.confirmation)!
+      expect(request.confirmation).toMatchObject({ state: 'pending' })
+      expect(request.confirmation).not.toHaveProperty('decidedBy')
+      expect(request.content).toContain('Asked because Oracle tasks could not be read.')
+    })
+
+    it('asks instead when the message that asked was stopped first, and files the request under it', async () => {
+      const mine = Array.from({ length: 6 }, (_, index) => `mine-${index}`)
+      sessions = mine.map((id) => session(id))
+      await startedByOracle(mine)
+      let resume!: (value: ManagedSession) => void
+      vi.mocked(hub.readSession).mockImplementation(async (_computerId, id) => id === 'mine-5'
+        ? new Promise<ManagedSession>((resolve) => { resume = resolve })
+        : session(id))
+      let late: Promise<unknown> | undefined
+      sdk.behaviors.push(async (fakeSession) => {
+        for (const id of mine.slice(0, 5)) await fakeSession.tool('close_session')({ sessionId: id })
+        late = fakeSession.tool('close_session')({ sessionId: 'mine-5' })
+      })
+      await start({ unfinishedTaskSessions: () => [] })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      const typed = await agent!.send('close my finished sessions')
+      await vi.waitFor(() => expect(hub.readSession).toHaveBeenCalledWith('hub', 'mine-5'))
+      await agent!.cancel()
+      await vi.waitFor(() => expect(agent!.message(typed.id)?.state).toBe('cancelled'))
+
+      // A spoken question is being answered when the stopped call finishes its checks.
+      let release!: () => void
+      const holding = new Promise<void>((resolve) => { release = resolve })
+      sdk.behaviors.push(async (fakeSession) => {
+        await holding
+        reply('Nothing else.')(fakeSession, '')
+      })
+      await agent!.send('anything else?', undefined, { source: 'voice' })
+      await vi.waitFor(() => expect(sdk.prompts.some((prompt) => prompt.includes('anything else?'))).toBe(true))
+      resume(session('mine-5'))
+      const result = String(await late)
+      release()
+      await settled()
+
+      expect(hub.deleteSession).toHaveBeenCalledTimes(5)
+      expect(hub.deleteSession).not.toHaveBeenCalledWith('hub', 'mine-5')
+      expect(result).toContain('because Oracle is no longer answering the message that asked for it')
+      const asked = agent!.snapshot().messages.find((message) => message.confirmation?.sessionId === 'mine-5')!
+      expect(asked).toMatchObject({ replyTo: typed.id, confirmation: { state: 'pending' } })
+      expect(asked.confirmation).not.toHaveProperty('decidedBy')
+    })
+
+    it('asks before closing a session an unfinished task started, before the task records it', async () => {
+      await startedByOracle([])
+      sdk.behaviors.push(async (fakeSession) => {
+        await fakeSession.tool('create_session')({ title: 'Fix', prompt: 'Fix the bug' })
+        reply('Started it.')(fakeSession, '')
+      })
+      let result: unknown
+      sdk.behaviors.push(async (fakeSession) => {
+        result = await fakeSession.tool('close_session')({ sessionId: 'worker-1' })
+        reply('Asked.')(fakeSession, '')
+      })
+      await start({ unfinishedTaskSessions: (messages) => unfinishedOracleTaskSessions([runningTask], messages) })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      await agent!.enqueueInternal({
+        id: 'task-attempt-a', content: 'Fix the bug.', source: 'task', answerOnly: false,
+        automatic: { kind: 'task', taskId: 'oracle-task-a' },
+      })
+      await settled()
+      expect(store.registry()[registryKey('hub', 'worker-1')]).toMatchObject({ origin: 'manager' })
+      await agent!.send('close worker-1, the task is done')
+      await settled()
+
+      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(String(result)).toContain('because an unfinished Oracle task uses it')
+    })
+
+    /**
+     * Stops a task turn while its create_session is still delivering the
+     * worker's task: the worker is already Oracle's, but nothing records yet
+     * that the task started it.
+     */
+    async function stopTaskWhileItStartsAWorker() {
+      await startedByOracle([])
+      let deliver!: () => void
+      const delivering = new Promise<void>((resolve) => { deliver = resolve })
+      vi.mocked(hub.sendMessage).mockImplementationOnce(async (_computerId, id) => {
+        await delivering
+        return session(id)
+      })
+      let late!: Promise<unknown>
+      sdk.behaviors.push(async (fakeSession) => {
+        late = fakeSession.tool('create_session')({ title: 'Fix', prompt: 'Fix the bug' })
+      })
+      await start({ unfinishedTaskSessions: (messages) => unfinishedOracleTaskSessions([runningTask], messages) })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      await agent!.enqueueInternal({
+        id: 'task-attempt-a', content: 'Fix the bug.', source: 'task', answerOnly: false,
+        automatic: { kind: 'task', taskId: 'oracle-task-a' },
+      })
+      await vi.waitFor(() => expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'worker-1', expect.anything()))
+      expect(store.registry()[registryKey('hub', 'worker-1')]).toMatchObject({ origin: 'manager' })
+      await agent!.cancel()
+      await vi.waitFor(() => expect(agent!.message('task-attempt-a')?.state).toBe('cancelled'))
+      return { deliver, late: () => late }
+    }
+
+    it('asks while a stopped task may still be starting a worker', async () => {
+      const { deliver, late } = await stopTaskWhileItStartsAWorker()
+      let result: unknown
+      sdk.behaviors.push(async (fakeSession) => {
+        result = await fakeSession.tool('close_session')({ sessionId: 'worker-1' })
+        reply('Asked.')(fakeSession, '')
+      })
+      await agent!.send('close worker-1')
+      await settled()
+      deliver()
+      await late()
+
+      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(String(result)).toContain('because Oracle may still be finishing work for an earlier message')
+    })
+
+    it('counts what a stopped task did once it is recorded, before it is written', async () => {
+      const { deliver, late } = await stopTaskWhileItStartsAWorker()
+      let write!: () => void
+      const writing = new Promise<void>((resolve) => { write = resolve })
+      const upsert = store.upsertMessage.bind(store)
+      vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
+        if (message.tool === 'create_session') await writing
+        return upsert(message)
+      })
+      let result: unknown
+      sdk.behaviors.push(async (fakeSession) => {
+        deliver()
+        await late()
+        result = await fakeSession.tool('close_session')({ sessionId: 'worker-1' })
+        reply('Asked.')(fakeSession, '')
+      })
+      await agent!.send('close worker-1')
+      await settled()
+      write()
+      await vi.waitFor(() => expect(store.messages().some((message) => message.tool === 'create_session')).toBe(true))
+
+      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(String(result)).toContain('because an unfinished Oracle task uses it')
+    })
+
+    it('finishes a close Oracle decided when a restart interrupted it, and tells Oracle', async () => {
+      await store.upsertMessage({
+        id: 'c1', role: 'activity', content: 'Close "Mine"', createdAt: 't', tool: 'close_session',
+        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 'mine', title: 'Mine', state: 'closing', decidedBy: 'oracle' },
+      })
+      await start()
+      await vi.waitFor(() => {
+        expect(agent!.snapshot().messages[0].confirmation).toMatchObject({ state: 'confirmed', decidedBy: 'oracle' })
+      })
+      expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'mine')
+      expect(store.state().pendingNotes).toEqual([
+        'You closed "Mine" (mine) without asking, as the user\'s setting allows; it is deleted.',
+      ])
+    })
+  })
+
+  it('files what a stopped turn did afterwards under the message it was answering', async () => {
+    let resume!: () => void
+    const creating = new Promise<void>((resolve) => { resume = resolve })
+    vi.mocked(hub.createSession).mockImplementationOnce(async () => {
+      await creating
+      const created = session('worker-1', { cwd: '/home/me/src/web' })
+      sessions = [...sessions, created]
+      return created
+    })
+    let late: Promise<unknown> | undefined
+    sdk.behaviors.push(async (fakeSession) => {
+      late = fakeSession.tool('create_session')({ title: 'Fix', prompt: 'Fix the bug' })
+    })
+    await start()
+    await agent!.enqueueInternal({
+      id: 'task-attempt-a', content: 'Fix the bug.', source: 'task', answerOnly: false,
+      automatic: { kind: 'task', taskId: 'oracle-task-a' },
+    })
+    await vi.waitFor(() => expect(hub.createSession).toHaveBeenCalled())
+    await agent!.cancel()
+    await vi.waitFor(() => expect(agent!.message('task-attempt-a')?.state).toBe('cancelled'))
+
+    let release!: () => void
+    const holding = new Promise<void>((resolve) => { release = resolve })
+    sdk.behaviors.push(async (fakeSession) => {
+      await holding
+      reply('Okay.')(fakeSession, '')
+    })
+    const next = await agent!.send('what else?')
+    await vi.waitFor(() => expect(sdk.prompts.some((prompt) => prompt.includes('what else?'))).toBe(true))
+    resume()
+    await late
+    release()
+    await settled()
+
+    const started = agent!.snapshot().messages.find((message) => message.tool === 'create_session')!
+    expect(started).toMatchObject({
+      replyTo: 'task-attempt-a', source: 'task', sessionRefs: [expect.objectContaining({ sessionId: 'worker-1' })],
+    })
+    expect(agent!.snapshot().messages.filter((message) => message.replyTo === next.id && message.role === 'activity')).toEqual([])
   })
 
   it('does not repeat actions from a failed attempt', async () => {

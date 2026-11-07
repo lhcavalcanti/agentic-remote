@@ -1,12 +1,30 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  rename,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   listWorkspace,
   readWorkspaceFile,
   searchWorkspace,
 } from './workspace-browser.js'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    realpath: vi.fn(actual.realpath),
+    stat: vi.fn(actual.stat),
+  }
+})
 
 const directories: string[] = []
 
@@ -15,6 +33,13 @@ afterEach(async () => {
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
+  )
+  const actual = await vi.importActual<typeof import('node:fs/promises')>(
+    'node:fs/promises',
+  )
+  vi.mocked(stat).mockImplementation(async (target) => actual.stat(target))
+  vi.mocked(realpath).mockImplementation(async (target) =>
+    actual.realpath(target),
   )
 })
 
@@ -65,6 +90,120 @@ describe('workspace browser', () => {
     await expect(readWorkspaceFile(root, 'outside.md')).rejects.toThrow(
       'restricted to the session folder',
     )
+  })
+
+  it('maps a deleted legacy unconfined root through folder validation', async () => {
+    const { root } = await fixture()
+    await rm(root, { recursive: true })
+
+    await expect(listWorkspace(root)).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining('does not exist'),
+    })
+  })
+
+  it('maps an unreadable legacy unconfined root through folder validation', async () => {
+    const { root } = await fixture()
+    const actual = await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    )
+    vi.mocked(realpath).mockImplementation(async (target) => {
+      if (String(target) === root) {
+        throw Object.assign(new Error('PRIVATE_REALPATH_IO'), {
+          code: 'EACCES',
+        })
+      }
+      return actual.realpath(target)
+    })
+
+    const error = await readWorkspaceFile(root, 'README.md').catch(
+      (caught: unknown) => caught,
+    )
+    expect(error).toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining('not readable'),
+    })
+    expect((error as Error).message).not.toContain('PRIVATE_REALPATH_IO')
+  })
+
+  it('refuses a confined read after the root is replaced by a symlink', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-read-race-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const root = path.join(cwd, 'knowledge')
+    const outside = path.join(parent, 'outside')
+    await mkdir(root, { recursive: true })
+    await mkdir(outside)
+    await writeFile(path.join(root, 'safe.md'), 'safe')
+    await writeFile(path.join(outside, 'private.md'), 'private')
+    await rename(root, `${root}-original`)
+    await symlink(outside, root)
+
+    await expect(
+      readWorkspaceFile(root, 'private.md', cwd),
+    ).rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('refuses a file replaced by an escaping symlink after resolution', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-file-race-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const root = path.join(cwd, 'knowledge')
+    const outside = path.join(parent, 'outside')
+    const file = path.join(root, 'safe.md')
+    const privateFile = path.join(outside, 'private.md')
+    await mkdir(root, { recursive: true })
+    await mkdir(outside)
+    await writeFile(file, 'safe')
+    await writeFile(privateFile, 'private')
+    const actual = await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    )
+    let replaced = false
+    vi.mocked(stat).mockImplementation(async (target) => {
+      const metadata = await actual.stat(target)
+      if (!replaced && String(target) === file) {
+        replaced = true
+        await rename(file, `${file}-original`)
+        await symlink(privateFile, file)
+      }
+      return metadata
+    })
+
+    await expect(
+      readWorkspaceFile(root, 'safe.md', cwd),
+    ).rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('refuses an escaping parent swapped after file resolution', async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), 'knowledge-parent-race-'))
+    directories.push(parent)
+    const cwd = path.join(parent, 'project')
+    const root = path.join(cwd, 'knowledge')
+    const folder = path.join(root, 'docs')
+    const outside = path.join(parent, 'outside')
+    const file = path.join(folder, 'safe.md')
+    await mkdir(folder, { recursive: true })
+    await mkdir(outside)
+    await writeFile(file, 'safe')
+    await writeFile(path.join(outside, 'safe.md'), 'private')
+    const actual = await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    )
+    let replaced = false
+    vi.mocked(realpath).mockImplementation(async (target) => {
+      const resolved = await actual.realpath(target)
+      if (!replaced && String(target) === file) {
+        replaced = true
+        await rename(folder, `${folder}-original`)
+        await symlink(outside, folder)
+      }
+      return resolved
+    })
+
+    await expect(
+      readWorkspaceFile(root, 'docs/safe.md', cwd),
+    ).rejects.toMatchObject({ statusCode: 403 })
   })
 
   it('searches names and bounded text while skipping hidden metadata', async () => {

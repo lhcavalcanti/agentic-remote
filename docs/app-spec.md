@@ -686,33 +686,6 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   from before this setting does not report it and still opens terminals, so
   App settings MUST say so instead of offering the choice, and MUST show an
   error rather than "Saved" when a hub's answer does not keep the choice.
-- **App settings → Oracle → Periodic checks** MAY opt Oracle into read-only
-  status reviews. It MUST be disabled by default and offer 1, 2, 4, or 8 hour
-  cadences, an IANA timezone, and local whole-hour quiet hours; equal quiet
-  start and end disables the quiet window. The default policy is every 2 hours
-  in UTC with quiet hours from 22:00 to 07:00. Settings, the next eligible
-  check, and the latest scheduled-check state are hub-owned and visible in App
-  settings. Pausing MUST clear the next check and timer, cancel a scheduled
-  check that is still waiting, and retain transcript history.
-- Periodic checks MUST reuse Oracle's single durable queue and runtime. Exactly
-  one timeout MAY wait for the next eligible instant; there MUST NOT be a
-  polling loop or second Oracle process. A due check appends one deterministic
-  **Scheduled check** after user work already waiting, advances the persisted
-  cursor only after the message is durable, and coalesces missed intervals
-  after restart or while a prior scheduled check is still queued/running into
-  at most one catch-up rather than replaying a backlog. Quiet hours MUST defer
-  inference itself, not only notification delivery. A scheduled result that
-  crosses into quiet hours MUST remain in the transcript without raising a
-  push or native notification.
-- A scheduled check MUST be answer-only and handler-enforced read-only. It MAY
-  inspect computers, sessions, history, and Oracle's read-only memory surfaces,
-  but MUST NOT start, steer, rename, stop, close, or answer for a session,
-  change settings, request confirmation, or mutate Markdown or structured
-  memory. Unclassified tools MUST fail closed. Model/runtime failures use
-  Oracle's normal recovery ladder and remain visible with **Retry**. Failure to
-  admit the durable check retries after 1, 5, then 15 minutes while enabled,
-  with only one retry timer. Replies use the existing Oracle unread and push
-  notification scope; quiet hours do not create delayed duplicate notices.
 - Every turn MUST start with a context block the hub generates: computers, open
   sessions (ID, computer, title, status, folder, origin, task, and activity),
   changes since the last completed turn, and `MEMORY.md` when it changed.
@@ -759,9 +732,7 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   Messages wait in a durable first-in, first-out queue and are answered one at
   a time. Waiting messages are shown above the message bar, numbered in the
   order they will be answered and marked **Ask** where chosen. User-created
-  messages can be edited or removed before Oracle starts on them; scheduled
-  checks are labelled **Scheduled check** and are not editable or removable.
-  **Edit** rewrites the
+  messages can be edited or removed before Oracle starts on them. **Edit** rewrites the
   message where it stands, keeping its identity and place in the queue rather
   than queueing a replacement, with **Save** and **Cancel** (Ctrl+Enter and
   Esc on a keyboard). Once Oracle has started on a message, including one a
@@ -780,10 +751,35 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   and told to check what already happened. A turn has a 15-minute watchdog.
 - Oracle's SDK conversations MUST NOT appear in session lists or history.
   Their IDs are recorded and excluded before they are created.
-- Oracle MUST NOT close a session itself. It can only ask, as a card with
+- Oracle MUST NOT close a session itself unless **Closing Oracle's sessions**
+  allows it (below). Otherwise it can only ask, as a card with
   **Close session** and **Keep it**, and the session stays open until you
   confirm there. Your answer, and any deletion, reach the agent on its next
   turn so it can update its memory.
+- **App settings → Oracle → Closing Oracle's sessions** is **Ask me every
+  time** by default. Only you can change it: no Oracle tool does. Set to
+  close idle sessions Oracle started, a close Oracle requests deletes the
+  session at once only when all of these hold; otherwise it asks as above,
+  and the card says why:
+  - the request answers a message you typed, and Oracle is still answering
+    it when the close would happen: a request that outlives a stopped or
+    finished turn asks, under the message that made it;
+  - it names the session by its full id;
+  - Oracle started the session, by the registry's origin;
+  - the session, read live, is idle, with nothing waiting, queued, failed to
+    send, pinned, or recovering;
+  - its background tasks can be read and none is running or queued;
+  - no tool call from an earlier message is still running, such as a stopped
+    task still starting a session;
+  - Oracle's tasks can be read and no unfinished one uses the session,
+    including a session one of its turns used that the task has not yet
+    recorded;
+  - Oracle has closed fewer than 5 sessions without asking for this message.
+
+  Such a close MUST be recorded as closing before the deletion, so a restart
+  finishes it, and its card MUST show that Oracle closed it, with no buttons.
+  Oracle learns the outcome from its tool result. A hub from before this
+  setting does not report it, so App settings MUST NOT offer it there.
 - Oracle's data lives in `<data>/manager/`: app-owned state, transcript,
   queue, journal, registry, and settings, plus the agent's Markdown memory under
   `memory/`, and optional `structured-memory.json` with its validated backup.
@@ -802,10 +798,15 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
      Copilot that is its `model` setting (`/config model`) or `COPILOT_MODEL`.
 - Copilot is the default provider. A configured default the provider lacks,
   or refuses before creating anything, gives way to the provider's own default
-  once, and Oracle tells you. Configured effort or context the model lacks or
-  refuses is dropped and the model kept. An effort you ask for is never
-  dropped: if it cannot run, as on Copilot without a model, nothing starts and
-  Oracle lists the models and asks.
+  once, and Oracle tells you. Configured effort applies only to the configured
+  model; the configured context size applies to whichever model runs, one you
+  name included, when that model offers it. Configured effort or context the
+  model lacks or refuses is dropped and the model kept; Oracle says when long
+  context does not apply. An effort or context size you ask for is never
+  dropped: if it cannot run, as on Copilot without a model or on a model
+  without long context, nothing starts and Oracle lists the models that offer
+  it and asks. The provider's own default carries no context size, so a
+  session with no model runs with default context.
 - When you name a model, Oracle MUST start a Copilot session with that model's
   exact ID from discovery, because Copilot hosts Claude and other model
   families; it uses the Claude Agent provider only when you ask for that
@@ -814,6 +815,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   never switching model or provider itself. A provider that refuses a listed
   model only once the task runs leaves that session with a failed first turn,
   which Oracle reports before asking the same way.
+- Oracle's transcript MUST show each stored prompt, answer, notice, action, and
+  close card with its persisted creation time, as in the conversation timeline
+  (§4); a waiting prompt keeps its time, including while it is edited. A reply
+  still streaming shows no time until it is stored.
 
 ### 3.8 Oracle Dreamer foundation
 
@@ -827,10 +832,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - This first slice MUST perform deterministic local metadata review:
   journal-observed session state and eligible structured-memory metadata, not
   prompts, titles, general transcript contents, memory contents or external
-  inference. Its only session-content adapter MAY passively read the exact
-  owning session to validate a successful root `task_complete` result carrying
-  the server's trusted marker. That result MUST remain transient and MUST NOT
-  become planning input.
+  inference. Only two adapters MAY passively read session content: completion
+  review MAY read the exact owning session to validate a successful root
+  `task_complete` result carrying the server's trusted marker, and the
+  progress refresh below MAY read changed open sessions. What they read MUST
+  remain transient and MUST NOT become planning input.
   Unavailable durable todos, incomplete history and source freshness limits
   MUST be visible rather than represented as a complete review. Session
   candidates MUST use the exact computer/session identity, deduplicate current
@@ -900,6 +906,40 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Every successful Dreamer or task mutation MUST return the reconciled
   authoritative plan, task, evidence and available action projection in that
   response; the UI MUST NOT temporarily lose task controls until refresh.
+- While enabled and available, Dreamer MUST refresh session progress at start,
+  on enablement and every 5 minutes, without a model call or a morning-plan
+  rewrite:
+  - A computer that answered the listing is authoritative: an open session it
+    omits from two consecutive answers becomes closed, and a lower revision
+    than the cached one starts that entry over. An unreachable computer keeps
+    its last-known sessions and MUST be named; unregistered computers' sessions
+    are dropped. A removal without a replacement closes rather than deletes.
+  - Otherwise events, listings and reads MUST merge monotonically by revision,
+    then update time. An event applied while a listing is in flight wins over
+    that listing, and a read MUST NOT reopen a session.
+  - A close MUST be dated by the session's archive time, else when observed
+    for a session cached open, else by its last update, never later than now.
+  - It MAY passively read at most 12 changed open sessions per refresh, keeping
+    only the latest assistant reply and a pending question or permission as
+    bounded single-line excerpts, in memory only, for at most 200 open sessions
+    and 20 closed ones for 24 h.
+  - Each refresh MUST then reconcile tasks and, after a successful listing,
+    sweep the proactive lifecycle inbox with it so a missed transition is
+    admitted once.
+  - A failed refresh MUST show a safe error, retry at the next interval and
+    leave the morning plan alone. Disable, stop and storage failure MUST stop
+    the refresh, fence any in-flight one and clear the cache.
+- While Dreamer is on, Oracle's user, voice and task turns MUST include that
+  progress: a roster session's cached last reply when it reports no current
+  activity and the listing carries no reply, its pending request while it
+  waits, the refresh time, unreachable computers, sessions closed in the last
+  24 h and open follow-up tasks. Live listing data wins over the cache. Quoted
+  text MUST be single-line, bounded, escaped and labelled untrusted data.
+  Proactive turns MUST NOT receive it, and an unreadable cache MUST NOT block
+  an answer.
+- Dreamer settings and the morning plan MUST show the last refresh time,
+  unreachable computers and any refresh error; settings also show the next
+  refresh. There is no manual refresh or extra setting.
 - Dreamer MUST NOT raise overnight notifications, send speech or automatically
   dispatch work. Proactive analysis uses the existing hub lifecycle stream and
   durable Oracle queue; execution begins only from an explicit task action.
@@ -911,7 +951,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - User messages, assistant messages, notices, and tool activity MUST remain in
   chronological order.
 - User and assistant messages MUST show their persisted creation time in the
-  viewer's local time alongside the sender label.
+  viewer's local time alongside the sender label, with the date for messages
+  from other days and the year for other years of the viewer's calendar. An
+  unreadable time MUST show nothing rather than break the transcript.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
 - Parallel tools MUST retain independent running/completed/failed states.
@@ -1596,8 +1638,48 @@ clear replacement IDs without losing, duplicating, or reordering content.
   Several sessions MAY link the same root while keeping separate reading
   positions. Linking MUST NOT copy files, mount a remote folder, activate an
   agent, or send a prompt.
+- The session Knowledge API MAY create or select a dedicated folder by a
+  relative path under the session's unchanged cwd. Path mode MUST resolve and
+  create the folder on the session's owning computer, MUST NOT accept an
+  absolute path or another computer, and MUST reject traversal, hidden or
+  sensitive segments, symbolic links, and resolved escapes. Creation MUST use
+  verified no-follow directory handles so a concurrent cwd or ancestor
+  replacement cannot redirect a new segment outside confinement. The response
+  MUST expose the canonical absolute Knowledge base path and persist the
+  canonical owner-returned session cwd as its confinement. Every later read
+  through a path-created root MUST atomically resolve and verify that the root
+  remains a non-symlinked descendant of that cwd before resolving the requested
+  entry.
+  File reads MUST open the resolved entry without following a replacement
+  symbolic link and verify the opened file identity before reading content.
+  Paired nodes MUST acknowledge that they applied this confinement; the hub
+  MUST reject a confined response from an older or rolled-back node that omits
+  that acknowledgment. Confined roots and their confinement metadata MUST
+  persist outside the catalog file earlier hub releases read, so a rolled-back
+  hub hides them instead of serving them unconfined, and upgrading again
+  restores them. A confinement added to an existing catalog root MUST be
+  recoverable across restart: retain it only when a path-mode binding for the
+  claimed root ID and root path exists at the exact committed revision,
+  otherwise roll it back. Finalization MUST promote only the claim token
+  associated with that binding commit. Before a later update advances the
+  binding revision, any pending claim proven by the current durable binding
+  MUST be finalized. Session replacement and deletion MUST also finalize a
+  matching committed claim before moving or removing its binding. Creation
+  rollback MUST NOT remove a pathname after only a prior identity check; when
+  identity-bound directory removal is unavailable, it MUST retain a randomized
+  quarantine rather than risk deleting a replacement.
+- Path-first updates MUST use the same persisted revision and replacement
+  lineage as catalog-root updates. Saving the same current folder MUST be a
+  no-op. Active, suspended, and historical sessions MUST be handled passively;
+  changing Knowledge MUST NOT open or resume them. Persisted reads MAY succeed
+  while the owner is offline, but path validation or creation MUST fail
+  explicitly until the owner is reachable. If catalog finalization fails after
+  the binding commit, the API MUST return `503` with the committed binding so
+  callers continue from its revision instead of retrying stale input.
 - A session MAY root its Knowledge tree at a nested folder inside a shared
   root. The nested path MUST persist with the hub-side session association and
+  MUST use the canonical path returned by the owning computer's listing, not a
+  caller-supplied symbolic-link alias. The nested path MUST
   become the true top of that session's tree: parent folders above it MUST NOT
   appear in scoped list, file, breadcrumb, or relative-link responses.
 - Choosing a shared root or the session folder MUST open a recursive subfolder
@@ -1615,9 +1697,15 @@ clear replacement IDs without losing, duplicating, or reordering content.
   from a session that has never had an association.
 - Choosing a root MUST allow any folder on the owning computer that the user can
   read, not only the home directory. Session working directories remain
-  confined; a root is read-only.
+  confined; a root is read-only. Legacy unconfined roots MUST still pass
+  through readable-directory validation so missing or unreadable roots return
+  mapped client errors. An older paired node that lacks the standalone
+  validation endpoint MAY use its legacy unconfined listing path; confined
+  roots MUST continue to fail closed without capability acknowledgment.
 - A root MUST be validated on its owning computer, and every path browsed under
-  it MUST stay inside it.
+  it MUST stay inside it. Catalog and session root snapshots MUST persist the
+  canonical path returned by the owning computer rather than an alias or
+  symbolic-link spelling supplied by the caller.
 - Validation and pending Knowledge responses MUST belong to the same pairing
   lifetime that requested them. Re-pairing the same computer ID MUST NOT revive
   old responses or make a stale validation create a root.

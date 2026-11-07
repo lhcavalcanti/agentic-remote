@@ -25,6 +25,7 @@ import type {
   SlashCommand,
   SideQuestionExchange,
 } from '../shared/contracts.js'
+import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import type { StartupPhases } from './startup-phases.js'
 
 export interface SessionService {
@@ -133,8 +134,25 @@ export interface SessionService {
     scope?: DirectoryScope,
   ): Promise<DirectoryListing>
   validateSessionDirectory(inputPath: string): Promise<string>
-  listKnowledge(root: string, path?: string): Promise<WorkspaceListing>
-  readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile>
+  validateKnowledgeRoot(
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string>
+  ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<SessionKnowledgeBaseLocation>
+  listKnowledge(
+    root: string,
+    path?: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceListing>
+  readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceFile>
   listWorkspace(
     sessionId: string,
     path?: string,

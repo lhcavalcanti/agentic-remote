@@ -10,6 +10,7 @@ const binding: SessionKnowledgeBinding = {
   computerId: 'computer/id',
   sessionId: 'session/id',
   rootId: null,
+  knowledgeBasePath: null,
   revision: 2,
   available: false,
 }
@@ -41,6 +42,36 @@ describe('session Knowledge API', () => {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ rootId, expectedRevision: 2 }),
+      },
+    )
+  })
+
+  it('creates a dedicated session Knowledge base by relative path', async () => {
+    const saved = {
+      ...binding,
+      rootId: 'knowledge-root',
+      knowledgeBasePath: '/srv/project/knowledge',
+      revision: 3,
+    }
+    const fetchMock = vi.fn(async () => Response.json({ binding: saved }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(updateSessionKnowledgeRoot('computer/id', 'session/id', {
+      knowledgeBasePath: 'knowledge',
+      create: true,
+      expectedRevision: 2,
+    })).resolves.toEqual(saved)
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      '/api/computers/computer%2Fid/sessions/session%2Fid/knowledge-root',
+      {
+        cache: 'no-store',
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          knowledgeBasePath: 'knowledge',
+          create: true,
+          expectedRevision: 2,
+        }),
       },
     )
   })

@@ -8,6 +8,7 @@ import type {
   CreateSessionInput,
   ManagedSession,
   PendingPermission,
+  RuntimeModelOption,
   RuntimeReasoningEffort,
   SessionStatus,
   UserInputField,
@@ -24,6 +25,7 @@ import type {
 } from '../shared/manager.js'
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
 import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH } from '../shared/oracle-task.js'
+import { DEFAULT_SESSION_PROVIDER, type NewSessionRuntime } from '../shared/settings-profile.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { rosterLine } from './manager-context.js'
 import { ManagerMemoryError, type ManagerMemory } from './manager-memory.js'
@@ -49,6 +51,8 @@ export interface ManagerToolHost {
   readSession(computerId: string, sessionId: string): Promise<ManagedSession>
   askSession(computerId: string, sessionId: string, question: string): Promise<string>
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
+  /** The models a provider offers on a computer, from that provider's own discovery. */
+  providerModels(computerId: string, provider: AgentProvider): Promise<RuntimeModelOption[]>
   renameSession(computerId: string, sessionId: string, title: string): Promise<ManagedSession>
   /** A steer is typed into the turn a busy session is running instead of waiting in its queue. */
   sendMessage(computerId: string, sessionId: string, content: string, options?: { steer?: boolean }): Promise<ManagedSession>
@@ -125,7 +129,13 @@ export interface ManagerToolHost {
   authorizeStructuredMemory?(
     operation: 'remember' | 'correct' | 'forget',
   ): { allowed: boolean; sourceManagerMessageId?: string }
+  /** The computer and folders the message being answered was sent with. */
   defaults(): ManagerClientDefaults
+  /**
+   * A provider's New-session model, effort, context, and mode from App
+   * settings, read from the hub's settings profile when a session starts.
+   */
+  configuredRuntime(provider: AgentProvider): NewSessionRuntime | undefined
   now(): Date
 }
 
@@ -173,6 +183,7 @@ export type ManagerToolMutability = 'read' | 'mutation'
 
 const VOICE_READ_ONLY_TOOLS = new Set([
   'list_computers',
+  'list_models',
   'list_sessions',
   'get_session',
   'ask_session',
@@ -265,6 +276,18 @@ function busyReason(session: ManagedSession): string | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+type CreationRefusal = 'model' | 'effort' | 'context' | 'model-required'
+
+// The runtime setting a provider refused while creating a session, which it
+// checks before creating anything.
+function creationRefusal(message: string): CreationRefusal | undefined {
+  if (/model is required when setting effort/i.test(message)) return 'model-required'
+  if (/reasoning effort is not supported/i.test(message)) return 'effort'
+  if (/context tier is not supported/i.test(message)) return 'context'
+  if (/model is not available/i.test(message)) return 'model'
+  return undefined
 }
 
 function link(session: Pick<ManagedSession, 'computerId' | 'id' | 'title'>): string {
@@ -889,6 +912,39 @@ export function createManagerTools(
     return session.isOpen === false ? `${line} · closed` : line
   }
 
+  // A provider recorded unavailable may have recovered since (logged in or
+  // installed), so its discovery is asked before refusing it. An answer
+  // refreshes the computer's record, and the catalog it returned is reused.
+  const availableProvider = async (computer: ComputerSummary, provider: AgentProvider) => {
+    const recorded = computer.providers?.find((candidate) => candidate.id === provider)
+    if (!recorded || recorded.available) return { capability: recorded }
+    let models: RuntimeModelOption[]
+    try {
+      models = await host.providerModels(computer.id, provider)
+    } catch (error) {
+      const reason = (errorMessage(error) || recorded.unavailableReason || '').trim().replace(/\.$/, '')
+      throw new ToolFailure(`${provider} is not available on ${computer.name}${reason ? `: ${reason}` : ''}.`)
+    }
+    const refreshed = host.findComputer(computer.id)?.providers?.find((candidate) => candidate.id === provider)
+    return { capability: refreshed?.available ? refreshed : { ...recorded, available: true }, models }
+  }
+
+  const modelEfforts = (model: RuntimeModelOption) =>
+    model.reasoningEfforts.length ? `effort ${model.reasoningEfforts.join('/')}` : undefined
+
+  const modelChoices = (models: RuntimeModelOption[], provider: AgentProvider) => models.length
+    ? `Available ${provider} models: ${models.slice(0, 60).map((option) => {
+        const efforts = modelEfforts(option)
+        return efforts ? `${option.id} (${efforts})` : option.id
+      }).join(', ')}.`
+    : `${provider} reported no models.`
+
+  // Nothing was created, so the choice goes back to the user rather than to
+  // another model or provider picked here.
+  const modelRefusal = (problem: string, choices: string) => new ToolFailure(
+    `No session was started: ${problem}. ${choices} Tell the user and ask which to use; do not switch model or provider on your own.`,
+  )
+
   const memoryTool = async <T>(work: () => Promise<T>) => {
     try {
       return await work()
@@ -924,6 +980,43 @@ export function createManagerTools(
           .join(', ') || 'none'
         return `- ${computer.name} (${computer.id}) · ${computer.online ? 'online' : 'offline'}${computer.isLocal ? ' · this hub' : ''} · providers: ${providers}`
       }).join('\n'),
+    ),
+    define(
+      'list_models',
+      "List the models a provider offers on a computer, by the exact id create_session's model takes, from the provider's own catalog.",
+      z.object({
+        computer: computerField.optional(),
+        provider: z.enum(['copilot', 'claude']).optional()
+          .describe('Unset is copilot, which hosts Claude, GPT, and other model families. claude is the separate Claude Agent provider.'),
+      }),
+      async ({ computer, provider }) => {
+        const defaults = host.defaults()
+        const target = requireComputer(computer ?? defaults.computerId ?? localComputer(host).id)
+        const chosen: AgentProvider = provider ?? DEFAULT_SESSION_PROVIDER
+        const { models: discovered } = await availableProvider(target, chosen)
+        const models = discovered ?? await host.providerModels(target.id, chosen)
+        if (!models.length) {
+          return `${chosen} on ${target.name} (${target.id}) reported no models; without a model, create_session uses its default.`
+        }
+        const configured = host.configuredRuntime(chosen)?.model.trim()
+        const ownDefault = `a session started without a model uses ${chosen}'s own default on ${target.name}.`
+        const footer = !configured
+          ? `No New-session model is configured for ${chosen}, so ${ownDefault}`
+          : models.some((model) => model.id === configured)
+            ? undefined
+            : `The configured default ${configured} is not offered here, so ${ownDefault}`
+        return [
+          `Models for ${chosen} on ${target.name} (${target.id}); pass the exact id as create_session's model with provider ${chosen}:`,
+          ...models.map((model) => {
+            const parts = [model.name && model.name !== model.id ? `${model.id} — ${model.name}` : model.id]
+            const efforts = modelEfforts(model)
+            if (efforts) parts.push(efforts)
+            if (model.id === configured) parts.push('the configured default')
+            return `- ${parts.join(' · ')}`
+          }),
+          ...(footer ? [footer] : []),
+        ].join('\n')
+      },
     ),
     define(
       'list_sessions',
@@ -1012,31 +1105,72 @@ export function createManagerTools(
     ),
     define(
       'create_session',
-      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer, mode, and model default to the user\'s settings. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately.',
+      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer and mode default to the user\'s settings. Without a model it runs the model configured for its provider in App settings, else that provider\'s own default on the computer. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately. The result names the model the session reports; a named model the provider lacks starts nothing and lists the models it has, a configured default it lacks gives way to the provider\'s own default, which the result says, and a refusal that comes only once the task runs shows as the session\'s failed turn.',
       z.object({
         title: z.string().trim().min(1).max(100).describe('Short descriptive name, at most 60 characters.'),
         prompt: z.string().trim().min(1).max(100_000).describe('The self-contained task: goal, context, constraints, acceptance criteria, what to report back, and which of the user\'s skills to use.'),
         cwd: z.string().trim().min(1).max(4096).optional().describe('Working folder on that computer, e.g. ~/src/<project>.'),
         computer: computerField.optional(),
-        provider: z.enum(['copilot', 'claude']).optional(),
+        provider: z.enum(['copilot', 'claude']).optional()
+          .describe('Unset is copilot, the default provider, which hosts Claude, GPT, and other model families. claude is the separate Claude Agent provider, only for when the user asks for that provider.'),
         mode: z.enum(['interactive', 'plan', 'autopilot']).optional().describe('autopilot works without stopping to ask; interactive may ask the user questions.'),
-        model: z.string().trim().min(1).max(200).optional(),
-        reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+        model: z.string().trim().min(1).max(200).optional()
+          .describe('Only when the user names a model: its exact id from list_models for this provider. Never choose one yourself; unset runs the configured default.'),
+        reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional()
+          .describe('Only when the user asks for one; unset uses the effort configured with the model.'),
       }),
       async (args) => {
         const defaults = host.defaults()
         const computer = requireComputer(args.computer ?? defaults.computerId ?? localComputer(host).id)
-        const provider: AgentProvider = args.provider ?? defaults.provider ?? 'copilot'
-        const capability = computer.providers?.find((candidate) => candidate.id === provider)
-        if (capability && !capability.available) {
-          throw new ToolFailure(capability.unavailableReason || `${provider} is not available on ${computer.name}.`)
+        const provider: AgentProvider = args.provider ?? DEFAULT_SESSION_PROVIDER
+        const { capability, models: discovered } = await availableProvider(computer, provider)
+        // Read as the session starts, so every turn, task, and device uses the
+        // same configured runtime rather than whatever a browser last sent.
+        const configured = host.configuredRuntime(provider)
+        const configuredModel = configured?.model.trim() || undefined
+        const mode: AgentMode | undefined = args.mode ?? (configured?.mode || undefined)
+        // A model the user names overrides the configured one, which keeps its
+        // effort and context only when it is that same model.
+        const requested = args.model
+        let model = requested ?? configuredModel
+        const asConfigured = Boolean(model) && model === configuredModel
+        let reasoningEffort: RuntimeReasoningEffort | undefined =
+          args.reasoningEffort ?? (asConfigured ? configured?.reasoningEffort || undefined : undefined)
+        let contextTier = asConfigured ? configured?.contextTier : undefined
+        let unavailableDefault: { model: string, reason?: string } | undefined
+        // A configured default the provider lacks gives way to the provider's
+        // own default on that computer, the next configured choice. An effort
+        // the user asked for stays.
+        const dropConfiguredDefault = (reason?: string) => {
+          unavailableDefault = { model: model!, ...(reason ? { reason } : {}) }
+          model = undefined
+          reasoningEffort = args.reasoningEffort
+          contextTier = undefined
         }
-        const sameProvider = (defaults.provider ?? 'copilot') === provider
-        const mode: AgentMode | undefined = args.mode ?? defaults.mode
-        const model = args.model ?? (sameProvider ? defaults.model : undefined)
-        const reasoningEffort: RuntimeReasoningEffort | undefined =
-          args.reasoningEffort ?? (sameProvider && !args.model ? defaults.reasoningEffort : undefined)
-        const input: CreateSessionInput = {
+        if (model) {
+          // Checked before anything is created, on any computer; a catalog that
+          // cannot be read leaves the decision to the provider itself.
+          const catalog = discovered ?? await host.providerModels(computer.id, provider).catch(() => undefined)
+          const listed = catalog?.find((option) => option.id === model)
+          if (catalog && !listed) {
+            if (requested) {
+              throw modelRefusal(`${model} is not available from ${provider} on ${computer.name}`, modelChoices(catalog, provider))
+            }
+            dropConfiguredDefault()
+          } else if (catalog && listed) {
+            if (reasoningEffort && !listed.reasoningEfforts.includes(reasoningEffort)) {
+              if (args.reasoningEffort) {
+                throw modelRefusal(
+                  `${model} from ${provider} on ${computer.name} does not offer effort ${reasoningEffort}`,
+                  modelChoices(catalog, provider),
+                )
+              }
+              reasoningEffort = undefined
+            }
+            if (contextTier && !listed.contextTiers.includes(contextTier)) contextTier = undefined
+          }
+        }
+        const input = (): CreateSessionInput => ({
           cwd: args.cwd ?? (host.sessionFolders()[computer.id] || defaults.folders?.[computer.id]?.trim() || '~'),
           provider,
           terminalBacked: capability?.terminalBacked === true && host.sessionBackend() === 'terminal',
@@ -1044,8 +1178,47 @@ export function createManagerTools(
           ...(mode ? { mode } : {}),
           ...(model ? { model } : {}),
           ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(model && contextTier ? { contextTier } : {}),
+        })
+        const readChoices = async () => {
+          try {
+            return modelChoices(await host.providerModels(computer.id, provider), provider)
+          } catch (listError) {
+            return `Its model list could not be read (${errorMessage(listError)}); call list_models.`
+          }
         }
-        const created = await host.createSession(computer.id, input)
+        let created: ManagedSession | undefined
+        while (!created) {
+          try {
+            created = await host.createSession(computer.id, input())
+          } catch (error) {
+            const message = errorMessage(error)
+            let refused = creationRefusal(message)
+            if (!refused) throw error
+            // Refusing a setting that was not sent refuses the model itself.
+            if ((refused === 'effort' && !reasoningEffort) || (refused === 'context' && !contextTier)) refused = 'model'
+            // Refused before anything was created, so another attempt cannot
+            // leave a second session behind. Each one gives up a configured
+            // setting the user did not ask for, which is never restored, so
+            // the attempts end; what the user asked for goes back to them.
+            if (refused === 'effort' && !args.reasoningEffort) reasoningEffort = undefined
+            else if (refused === 'context') contextTier = undefined
+            else if (refused === 'model' && model && !requested) dropConfiguredDefault(message)
+            else {
+              const named = model ?? `${provider}'s own default model`
+              throw modelRefusal(
+                refused === 'model-required'
+                  ? `effort ${reasoningEffort} needs a model from ${provider} on ${computer.name}${
+                    unavailableDefault ? `, and the configured default ${unavailableDefault.model} is not available there` : ''
+                  } (${message})`
+                  : refused === 'effort'
+                    ? `${named} from ${provider} on ${computer.name} does not offer effort ${reasoningEffort} (${message})`
+                    : `${named}${reasoningEffort ? ` with effort ${reasoningEffort}` : ''} is not available from ${provider} on ${computer.name} (${message})`,
+                await readChoices(),
+              )
+            }
+          }
+        }
         const title = sessionTitle(args.title)
         let named = created
         try {
@@ -1068,15 +1241,35 @@ export function createManagerTools(
             `Session ${session.id} (${link(session)}) was created on ${computer.name}, but its task was not delivered: ${errorMessage(error)}. Read it with get_session, answer anything it is waiting on with answer_session, then send the task with send_to_session using that id; do not create another session.`,
           )
         }
+        // The session's recorded model, newest read first, is the evidence: the
+        // catalog-checked model it was created with until the session's own
+        // start or model-change event replaces it.
+        const reported = [delivered, session, created]
+          .map((candidate) => candidate.runtime?.model?.trim())
+          .find(Boolean)
+        const asked = requested ? `the requested ${model}` : `the configured default ${model}`
+        const startedWith = reported && model && reported !== model ? `${reported}, not ${asked}` : reported
+        const modelNote = startedWith
+          ? `model ${startedWith}${model ? '' : `, ${provider}'s own default on ${computer.name}`}`
+          : model
+            ? `${requested ? '' : 'the configured default '}model ${model} requested; the session has not reported its model yet`
+            : `${provider}'s own default model on ${computer.name}; the session has not reported which yet`
         onActivity({
           tool: 'create_session',
-          content: `Started "${session.title}" on ${computer.name}`,
+          content: `Started "${session.title}" on ${computer.name} with ${startedWith ?? (model ? `${model} requested` : 'the default model')}${
+            unavailableDefault ? `; the configured default ${unavailableDefault.model} is not available` : ''
+          }`,
           sessionRefs: [ref(
             session,
             deliveredPromptIdentity(session, delivered, args.prompt),
           )],
         })
-        return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}. Its task was sent.`
+        const fallback = unavailableDefault
+          ? ` The configured default ${unavailableDefault.model} is not available from ${provider} on ${computer.name}${
+            unavailableDefault.reason ? ` (${unavailableDefault.reason})` : ''
+          }, so the session uses ${provider}'s own default; tell the user.`
+          : ''
+        return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}, ${modelNote}. Its task was sent.${fallback}`
       },
       { actsOnSessions: true }
     ),

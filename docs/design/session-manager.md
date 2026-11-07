@@ -115,7 +115,7 @@ Every prompt sent to the SDK is the user's text wrapped like this:
 ```
 <agentic_remote_context generated="ISO time">
 Computers: …
-Open sessions (N): one line each — id · computer · title · status · provider · cwd · updated · origin · activity
+Open sessions (N): one line each — id · computer · title · status · provider/mode · model (when reported) · cwd · updated · origin · activity
 Changes since your last turn: …
 Memory index (MEMORY.md): … (only when changed, after a new SDK session, or after compaction)
 Notes: … (an interrupted previous turn, or a recovery)
@@ -145,6 +145,21 @@ Earlier layers win. Ask mode is a note in layer 3 that the tools also enforce.
 Model and effort sit beside the prompt, not in it. Precedence: the
 **App settings → Oracle** choice, then `AGENTIC_REMOTE_MANAGER_MODEL` and
 `AGENTIC_REMOTE_MANAGER_REASONING_EFFORT`, then Copilot's default.
+
+### New-session model precedence
+
+Oracle never picks a model for the sessions it starts. `create_session` uses:
+
+| Order | Source | Fallback |
+|---|---|---|
+| 1 | A model the user names, on Copilot unless the Claude Agent provider is asked for | Unavailable: nothing starts; Oracle lists models and asks |
+| 2 | The provider's runtime in **App settings → Models** (`newSessionRuntimes` in the hub's settings profile), read as each session starts | Model not offered, or refused before creation: level 3 once, reported. Effort or context it refuses: the same model without that setting |
+| 3 | No model: the provider's own default on that computer. For Copilot, its `model` setting (`/config model`) or `COPILOT_MODEL` | — |
+
+Configured effort and context apply only to the configured model, and only
+where the model offers and accepts them. An effort the user asks for is kept:
+if it cannot run (Copilot needs a model for one), nothing starts and Oracle
+lists models and asks. Copilot is the default provider.
 
 ### Notifications
 
@@ -199,10 +214,11 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | Tool | Purpose |
 |---|---|
 | `list_computers` | Computers, online state, and providers |
+| `list_models` | A provider's models on a computer (Copilot unless asked), by the exact ID `create_session` takes, from that provider's own discovery. A provider recorded unavailable is asked again before it is refused, here and in `create_session`, so one that has recovered since is used. Read-only, so voice may use it |
 | `list_sessions` | Open sessions, or recent history with `includeClosed` |
 | `get_session` | Detail and the last N messages (default 6, maximum 30, each truncated), read as recorded: the session is never opened or resumed. A waiting session's request shows its `requestId`, options, choices, and form fields, so it can be answered |
 | `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
-| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK |
+| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK. Without a provider it starts on Copilot; without a model it uses the configured default (see New-session model precedence). The model and effort are checked against the provider's catalog before anything is created (an unreadable catalog leaves that to the provider). A named model it lacks starts nothing, and the failure lists that provider's models and tells Oracle to ask rather than switch model or provider; a configured default it lacks gives way to the provider's own default, which the result reports. A provider that refuses a listed model only once the task runs leaves the session with that failed turn, which Oracle reads and reports before asking. The result and activity name the session's recorded model: the catalog-checked one it was created with until the session reports its own |
 | `set_session_folder` | Change Oracle's session folder for a computer when you ask; checked on that computer, kept with Oracle's settings, and allowed in Ask mode since it touches no session |
 | `set_session_backend` | Change how Oracle opens new sessions (`sdk` or `terminal`) when you ask; kept with Oracle's settings and allowed in Ask mode |
 | `send_to_session` | Send a follow-up to any session. A busy session is steered: the message is typed into its running turn (a terminal that is not ready yet takes it as soon as its composer is back). Only a refusal that certainly sent nothing falls back to the session's queue; a possibly-delivered steer is never retried. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |
@@ -280,7 +296,8 @@ runtime makes after Stop has drained it belongs to the next turn.
   older waiting or running one), queue length,
   manager-created session keys, and the last error.
 - `POST /api/manager/messages` with `{ content, defaults? }`: `202`. `defaults`
-  carries your default mode, model, and per-computer folders.
+  carries your default computer and per-computer folders. Its legacy `mode`,
+  `provider`, `model`, and `reasoningEffort` fields are accepted and ignored.
 - `POST /api/manager/messages/:id/retry`, `POST /api/manager/cancel`,
   `POST /api/manager/reset` (new conversation; memory is kept).
 - `POST /api/manager/messages/:id/confirmation` with `{ accept }`: your answer to

@@ -204,6 +204,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+type CreationRefusal = 'model' | 'effort' | 'context' | 'model-required'
+
+// The runtime setting a provider refused while creating a session, which it
+// checks before creating anything.
+function creationRefusal(message: string): CreationRefusal | undefined {
+  if (/model is required when setting effort/i.test(message)) return 'model-required'
+  if (/reasoning effort is not supported/i.test(message)) return 'effort'
+  if (/context tier is not supported/i.test(message)) return 'context'
+  if (/model is not available/i.test(message)) return 'model'
+  return undefined
+}
+
 function link(session: Pick<ManagedSession, 'computerId' | 'id' | 'title'>): string {
   return `[${session.title.replaceAll(/[[\]]/g, '')}](?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)})`
 }
@@ -999,11 +1011,12 @@ export function createManagerTools(
         let contextTier = asConfigured ? configured?.contextTier : undefined
         let unavailableDefault: { model: string, reason?: string } | undefined
         // A configured default the provider lacks gives way to the provider's
-        // own default on that computer, the next configured choice.
+        // own default on that computer, the next configured choice. An effort
+        // the user asked for stays.
         const dropConfiguredDefault = (reason?: string) => {
           unavailableDefault = { model: model!, ...(reason ? { reason } : {}) }
           model = undefined
-          reasoningEffort = undefined
+          reasoningEffort = args.reasoningEffort
           contextTier = undefined
         }
         if (model) {
@@ -1039,28 +1052,43 @@ export function createManagerTools(
           ...(reasoningEffort ? { reasoningEffort } : {}),
           ...(model && contextTier ? { contextTier } : {}),
         })
-        let created: ManagedSession
-        try {
-          created = await host.createSession(computer.id, input())
-        } catch (error) {
-          const message = errorMessage(error)
-          if (!model || !/model is not available|not supported by this model/i.test(message)) throw error
-          if (!requested) {
-            // Refused before anything was created, so starting once without
-            // the configured model cannot leave a second session behind.
-            dropConfiguredDefault(message)
+        const readChoices = async () => {
+          try {
+            return modelChoices(await host.providerModels(computer.id, provider), provider)
+          } catch (listError) {
+            return `Its model list could not be read (${errorMessage(listError)}); call list_models.`
+          }
+        }
+        let created: ManagedSession | undefined
+        while (!created) {
+          try {
             created = await host.createSession(computer.id, input())
-          } else {
-            let choices: string
-            try {
-              choices = modelChoices(await host.providerModels(computer.id, provider), provider)
-            } catch (listError) {
-              choices = `Its model list could not be read (${errorMessage(listError)}); call list_models.`
+          } catch (error) {
+            const message = errorMessage(error)
+            let refused = creationRefusal(message)
+            if (!refused) throw error
+            // Refusing a setting that was not sent refuses the model itself.
+            if ((refused === 'effort' && !reasoningEffort) || (refused === 'context' && !contextTier)) refused = 'model'
+            // Refused before anything was created, so another attempt cannot
+            // leave a second session behind. Each one gives up a configured
+            // setting the user did not ask for, which is never restored, so
+            // the attempts end; what the user asked for goes back to them.
+            if (refused === 'effort' && !args.reasoningEffort) reasoningEffort = undefined
+            else if (refused === 'context') contextTier = undefined
+            else if (refused === 'model' && model && !requested) dropConfiguredDefault(message)
+            else {
+              const named = model ?? `${provider}'s own default model`
+              throw modelRefusal(
+                refused === 'model-required'
+                  ? `effort ${reasoningEffort} needs a model from ${provider} on ${computer.name}${
+                    unavailableDefault ? `, and the configured default ${unavailableDefault.model} is not available there` : ''
+                  } (${message})`
+                  : refused === 'effort'
+                    ? `${named} from ${provider} on ${computer.name} does not offer effort ${reasoningEffort} (${message})`
+                    : `${named}${reasoningEffort ? ` with effort ${reasoningEffort}` : ''} is not available from ${provider} on ${computer.name} (${message})`,
+                await readChoices(),
+              )
             }
-            throw modelRefusal(
-              `${model}${reasoningEffort ? ` with effort ${reasoningEffort}` : ''} is not available from ${provider} on ${computer.name} (${message})`,
-              choices,
-            )
           }
         }
         const title = sessionTitle(args.title)

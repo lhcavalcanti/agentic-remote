@@ -795,8 +795,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
      Copilot that is its `model` setting (`/config model`) or `COPILOT_MODEL`.
 - Copilot is the default provider. A configured default the provider lacks,
   or refuses before creating anything, gives way to the provider's own default
-  once, and Oracle tells you; configured effort or context the model lacks is
-  dropped.
+  once, and Oracle tells you. Configured effort or context the model lacks or
+  refuses is dropped and the model kept. An effort you ask for is never
+  dropped: if it cannot run, as on Copilot without a model, nothing starts and
+  Oracle lists the models and asks.
 - When you name a model, Oracle MUST start a Copilot session with that model's
   exact ID from discovery, because Copilot hosts Claude and other model
   families; it uses the Claude Agent provider only when you ask for that

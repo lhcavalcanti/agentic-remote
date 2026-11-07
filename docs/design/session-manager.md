@@ -153,11 +153,13 @@ Oracle never picks a model for the sessions it starts. `create_session` uses:
 | Order | Source | Fallback |
 |---|---|---|
 | 1 | A model the user names, on Copilot unless the Claude Agent provider is asked for | Unavailable: nothing starts; Oracle lists models and asks |
-| 2 | The provider's runtime in **App settings → Models** (`newSessionRuntimes` in the hub's settings profile), read as each session starts | Not offered, or refused before creation: retried once without it, and reported |
+| 2 | The provider's runtime in **App settings → Models** (`newSessionRuntimes` in the hub's settings profile), read as each session starts | Model not offered, or refused before creation: level 3 once, reported. Effort or context it refuses: the same model without that setting |
 | 3 | No model: the provider's own default on that computer. For Copilot, its `model` setting (`/config model`) or `COPILOT_MODEL` | — |
 
 Configured effort and context apply only to the configured model, and only
-where the catalog offers them. Copilot is the default provider.
+where the model offers and accepts them. An effort the user asks for is kept:
+if it cannot run (Copilot needs a model for one), nothing starts and Oracle
+lists models and asks. Copilot is the default provider.
 
 ### Notifications
 

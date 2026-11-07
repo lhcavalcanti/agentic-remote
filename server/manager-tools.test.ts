@@ -512,6 +512,61 @@ describe('manager tools', () => {
     expect(host.createSession).toHaveBeenCalledTimes(3)
   })
 
+  it('keeps a configured model the provider accepts when it refuses only its configured effort or context', async () => {
+    vi.mocked(host.providerModels).mockRejectedValue(new Error('catalog offline'))
+    runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'long_context', mode: '' }
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('Selected reasoning effort is not supported by this model'))
+      .mockRejectedValueOnce(new Error('Selected context tier is not supported by this model'))
+      .mockResolvedValueOnce(session('new1', { runtime: { model: 'model-a' } }))
+
+    const result = String(await call('create_session', { title: 'T', prompt: 'P' }))
+
+    const inputs = vi.mocked(host.createSession).mock.calls.map(([, input]) => input)
+    expect(inputs).toHaveLength(3)
+    expect(inputs[0]).toMatchObject({ model: 'model-a', reasoningEffort: 'high', contextTier: 'long_context' })
+    expect(inputs[1]).toMatchObject({ model: 'model-a', contextTier: 'long_context' })
+    expect(inputs[1]).not.toHaveProperty('reasoningEffort')
+    expect(inputs[2]).toMatchObject({ model: 'model-a' })
+    expect(inputs[2]).not.toHaveProperty('reasoningEffort')
+    expect(inputs[2]).not.toHaveProperty('contextTier')
+    expect(result).toContain('model model-a. Its task was sent.')
+    expect(result).not.toContain('not available')
+  })
+
+  it('returns the choices, not a raw error or another setting, when an effort the user asks for cannot run', async () => {
+    vi.mocked(host.providerModels).mockRejectedValueOnce(new Error('catalog offline'))
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('Selected reasoning effort is not supported by this model'))
+    const refused = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', reasoningEffort: 'max' }))
+    expect(refused).toContain('No session was started: model-a from copilot on development does not offer effort max (Selected reasoning effort is not supported by this model).')
+    expect(refused).toContain('Available copilot models: model-a (effort low/high), model-b.')
+    expect(host.createSession).toHaveBeenCalledOnce()
+
+    // Copilot takes an effort only with a model, and none is configured.
+    runtimes = {}
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('A model is required when setting effort or context'))
+    const unset = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', reasoningEffort: 'high' }))
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).toMatchObject({ reasoningEffort: 'high' })
+    expect(unset).toContain('No session was started: effort high needs a model from copilot on development (A model is required when setting effort or context).')
+    expect(unset).toContain('Available copilot models: model-a (effort low/high), model-b.')
+    expect(unset).toContain('do not switch model or provider on your own')
+
+    // The effort asked for outlives a configured default that is not offered.
+    runtimes.copilot = { model: 'model-z', reasoningEffort: 'low', contextTier: 'default', mode: '' }
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('A model is required when setting effort or context'))
+    const missing = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', reasoningEffort: 'high' }))
+    const input = vi.mocked(host.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ reasoningEffort: 'high' })
+    expect(input).not.toHaveProperty('model')
+    expect(missing).toContain('No session was started: effort high needs a model from copilot on development, and the configured default model-z is not available there (A model is required when setting effort or context).')
+    expect(host.createSession).toHaveBeenCalledTimes(3)
+    expect(host.sendMessage).not.toHaveBeenCalled()
+    expect(activities).toEqual([])
+  })
+
   it('starts nothing for a model or effort the provider lacks, and lists its models instead of switching', async () => {
     const missing = await call('create_session', { title: 'T', prompt: 'P', model: 'model-z' })
     expect(missing).toMatchObject({ resultType: 'failure' })

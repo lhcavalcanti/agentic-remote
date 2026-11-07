@@ -421,6 +421,8 @@ export async function buildApp(
         reasoningEffort: managerSettings.reasoningEffort,
         // The synced settings profile on this same hub, read per turn.
         responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
+        // App settings → Models, read as each Oracle session starts.
+        newSessionRuntimes: () => settingsProfileStore?.snapshot().values.newSessionRuntimes,
         structuredMemory: managerStructuredMemory,
         recordProactiveOutcomes: (input) => {
           if (!proactiveCoordinator) {

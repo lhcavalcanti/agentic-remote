@@ -260,6 +260,36 @@ describe('OracleSettings', () => {
     render(<OracleSettings models={models} />)
     expect(await screen.findByText("This hub opens Oracle's sessions in a terminal. Update it to choose the Copilot SDK.")).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'How Oracle opens sessions' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: "Closing Oracle's sessions" })).toBeNull()
+  })
+
+  it('asks before Oracle closes a session by default and lets you allow it for idle sessions Oracle started', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { sessionClosePolicy: 'ask' },
+    })
+    vi.mocked(updateManagerSettings)
+      .mockResolvedValueOnce({ sessionClosePolicy: 'oracle-started' })
+      .mockResolvedValueOnce({ sessionClosePolicy: 'ask' })
+      .mockResolvedValueOnce({})
+    render(<OracleSettings models={models} />)
+    const policy = await screen.findByRole('combobox', { name: "Closing Oracle's sessions" })
+    expect(policy).toHaveValue('ask')
+    expect(screen.getByRole('option', { name: 'Ask me every time (default)' })).toBeInTheDocument()
+    // Short enough for a phone to show the whole choice in the closed select.
+    expect(screen.getByRole('option', { name: 'Close idle ones without asking' })).toBeInTheDocument()
+    fireEvent.change(policy, { target: { value: 'oracle-started' } })
+    await waitFor(() => expect(updateManagerSettings).toHaveBeenCalledWith({ sessionClosePolicy: 'oracle-started' }))
+    expect(await screen.findByText('Saved. Oracle closes idle sessions it started without asking.')).toBeInTheDocument()
+    expect(policy).toHaveValue('oracle-started')
+    fireEvent.change(policy, { target: { value: 'ask' } })
+    await waitFor(() => expect(updateManagerSettings).toHaveBeenLastCalledWith({ sessionClosePolicy: 'ask' }))
+    expect(await screen.findByText('Saved. Oracle asks before closing any session.')).toBeInTheDocument()
+
+    // A hub rolled back mid-change answers without the setting.
+    fireEvent.change(policy, { target: { value: 'oracle-started' } })
+    expect(await screen.findByText('This hub did not keep that choice; update it to let Oracle close sessions without asking.')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: "Closing Oracle's sessions" })).toBeNull()
   })
 
   it('says so when the hub does not keep the choice, rather than that it saved', async () => {

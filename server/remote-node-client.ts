@@ -41,7 +41,12 @@ import {
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
 import { parseSubmissionReceipt } from '../shared/submission-error.js'
 import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
-import { RemoteNodeRedirectError, RemoteNodeRequestError } from './remote-node-errors.js'
+import {
+  RemoteNodeCapabilityError,
+  RemoteNodeRedirectError,
+  RemoteNodeRequestError,
+  RemoteNodeTransportError,
+} from './remote-node-errors.js'
 import {
   safeResourceError,
   sanitizeSkillsSnapshot,
@@ -49,6 +54,7 @@ import {
   SessionResourceError,
   ResourceReads,
 } from './session-resources.js'
+import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -183,19 +189,92 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.path
   }
 
-  async listKnowledge(root: string, path = '.'): Promise<WorkspaceListing> {
-    return this.request<WorkspaceListing>(
-      `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+  async validateKnowledgeRoot(
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    const response = await this.request<{ path: string }>(
+      '/node-api/knowledge/validate',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          path: inputPath,
+          ...(confinementPath ? { confinement: confinementPath } : {}),
+        }),
+      },
     )
+    return response.path
+  }
+
+  async ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<SessionKnowledgeBaseLocation> {
+    try {
+      const response = await this.request<SessionKnowledgeBaseLocation>(
+        `/node-api/sessions/${encodeURIComponent(sessionId)}/knowledge-base`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ path: relativePath, create }),
+        },
+      )
+      if (!response.confinementPath) {
+        throw new RemoteNodeCapabilityError(this.computer.name)
+      }
+      return response
+    } catch (error) {
+      if (
+        error instanceof RemoteNodeRequestError &&
+        error.statusCode >= 500
+      ) {
+        throw new RemoteNodeTransportError(this.computer.name, error)
+      }
+      if (typeof Reflect.get(error as object, 'statusCode') === 'number') {
+        throw error
+      }
+      throw new RemoteNodeTransportError(this.computer.name, error)
+    }
+  }
+
+  async listKnowledge(
+    root: string,
+    path = '.',
+    confinementPath?: string,
+  ): Promise<WorkspaceListing> {
+    const confinement = confinementPath
+      ? `&confinement=${encodeURIComponent(confinementPath)}`
+      : ''
+    const response = await this.request<
+      WorkspaceListing & { confinementApplied?: boolean }
+    >(
+      `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}${confinement}`,
+    )
+    if (confinementPath && response.confinementApplied !== true) {
+      throw new RemoteNodeCapabilityError(this.computer.name)
+    }
+    const { confinementApplied: _confinementApplied, ...listing } = response
+    return listing
   }
 
   async readKnowledgeFile(
     root: string,
     path: string,
+    confinementPath?: string,
   ): Promise<WorkspaceFile> {
-    return this.request<WorkspaceFile>(
-      `/node-api/knowledge/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+    const confinement = confinementPath
+      ? `&confinement=${encodeURIComponent(confinementPath)}`
+      : ''
+    const response = await this.request<
+      WorkspaceFile & { confinementApplied?: boolean }
+    >(
+      `/node-api/knowledge/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}${confinement}`,
     )
+    if (confinementPath && response.confinementApplied !== true) {
+      throw new RemoteNodeCapabilityError(this.computer.name)
+    }
+    const { confinementApplied: _confinementApplied, ...file } = response
+    return file
   }
 
   async listWorkspace(

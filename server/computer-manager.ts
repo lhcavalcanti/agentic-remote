@@ -33,6 +33,7 @@ import type {
   WorkspaceSearchResponse,
   SideQuestionExchange,
 } from '../shared/contracts.js'
+import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import {
   ComputerRegistry,
   type RegisteredComputer,
@@ -363,15 +364,54 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).validateSessionDirectory(inputPath)
   }
 
+  async validateKnowledgeRoot(
+    computerId: string,
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.validateKnowledgeRoot(inputPath, confinementPath)
+      : this.requireClient(computerId).validateKnowledgeRoot(
+          inputPath,
+          confinementPath,
+        )
+  }
+
+  async ensureSessionKnowledgeBase(
+    computerId: string,
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<SessionKnowledgeBaseLocation> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.ensureSessionKnowledgeBase(
+        sessionId,
+        relativePath,
+        create,
+      )
+      : this.requireClient(computerId).ensureSessionKnowledgeBase(
+        sessionId,
+        relativePath,
+        create,
+      )
+  }
+
   async listKnowledge(
     computerId: string,
     root: string,
     path?: string,
+    confinementPath?: string,
   ): Promise<WorkspaceListing> {
     this.requireComputer(computerId)
     return computerId === this.identity.info.id
-      ? this.localService.listKnowledge(root, path)
-      : this.requireClient(computerId).listKnowledge(root, path)
+      ? this.localService.listKnowledge(root, path, confinementPath)
+      : this.requireClient(computerId).listKnowledge(
+        root,
+        path,
+        confinementPath,
+      )
   }
 
   captureComputerRegistration(computerId: string): () => boolean {
@@ -387,11 +427,16 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     root: string,
     path: string,
+    confinementPath?: string,
   ): Promise<WorkspaceFile> {
     this.requireComputer(computerId)
     return computerId === this.identity.info.id
-      ? this.localService.readKnowledgeFile(root, path)
-      : this.requireClient(computerId).readKnowledgeFile(root, path)
+      ? this.localService.readKnowledgeFile(root, path, confinementPath)
+      : this.requireClient(computerId).readKnowledgeFile(
+        root,
+        path,
+        confinementPath,
+      )
   }
 
   async listWorkspace(

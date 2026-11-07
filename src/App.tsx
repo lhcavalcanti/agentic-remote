@@ -3254,7 +3254,9 @@ function DefaultRuntimeControls({
                 onChange({
                   model: model.id,
                   reasoningEffort: model.reasoningEfforts[0] || '',
-                  contextTier: 'default',
+                  contextTier: model.contextTiers.includes(selection.contextTier)
+                    ? selection.contextTier
+                    : 'default',
                   mode: selection.mode,
                 })
               }}
@@ -4164,8 +4166,10 @@ function AppSettingsDialog({
               <SettingScope synced />
             </div>
             <p className="dialog-message">
-              New sessions use these provider settings. Existing sessions keep
-              their current model, effort, context, and agent mode.
+              New sessions, including those Oracle starts, use these provider
+              settings. Oracle keeps the context size for a model you name when
+              that model offers it. Existing sessions keep their current model,
+              effort, context, and agent mode.
             </p>
             {(['copilot', 'claude'] as const).map((provider) => (
               <DefaultRuntimeControls

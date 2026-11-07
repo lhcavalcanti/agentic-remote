@@ -1657,6 +1657,22 @@ describe('ManagerAssistant', () => {
     expect(screen.queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
   })
 
+  it('shows a session Oracle closed without asking as done, with nothing to answer', async () => {
+    setup({
+      ...empty,
+      messages: [{
+        id: 'c1', role: 'activity', content: 'Close "Docs": Its PR merged.', createdAt: 't', tool: 'close_session',
+        sessionRefs: [{ computerId: 'hub', sessionId: 's1', title: 'Docs' }],
+        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 's1', title: 'Docs', state: 'confirmed', decidedBy: 'oracle' },
+      }],
+    })
+    await openPanel()
+    expect(screen.getByText('Close "Docs": Its PR merged.')).toBeInTheDocument()
+    expect(screen.getByText('Closed by Oracle without asking, as your setting allows. It is permanently deleted.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Keep it' })).not.toBeInTheDocument()
+  })
+
   it('stops the current reply', async () => {
     vi.mocked(cancelManager).mockResolvedValue()
     setup({ ...empty, status: 'working' })

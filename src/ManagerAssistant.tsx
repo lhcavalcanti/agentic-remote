@@ -213,7 +213,9 @@ function ConfirmationCard({
   const outcome = {
     pending: undefined,
     closing: 'Closing…',
-    confirmed: 'Closed. It is permanently deleted.',
+    confirmed: confirmation.decidedBy === 'oracle'
+      ? 'Closed by Oracle without asking, as your setting allows. It is permanently deleted.'
+      : 'Closed. It is permanently deleted.',
     declined: 'Kept open.',
     failed: `Could not close it: ${confirmation.error ?? 'unknown error'}`,
   }[confirmation.state]

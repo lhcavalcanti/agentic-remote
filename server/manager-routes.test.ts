@@ -500,6 +500,17 @@ describe('manager routes', () => {
     expect(savedBackend.statusCode).toBe(200)
     expect(backend).toHaveBeenLastCalledWith({ sessionBackend: 'terminal' })
     backend.mockRestore()
+    const badClosePolicy = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionClosePolicy: 'always' },
+    })
+    expect(badClosePolicy.statusCode).toBe(400)
+    const closePolicy = vi.spyOn(managerAgent!, 'updateSettings').mockResolvedValueOnce({ sessionClosePolicy: 'oracle-started' })
+    const savedClosePolicy = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionClosePolicy: 'oracle-started' },
+    })
+    expect(savedClosePolicy.statusCode).toBe(200)
+    expect(closePolicy).toHaveBeenLastCalledWith({ sessionClosePolicy: 'oracle-started' })
+    closePolicy.mockRestore()
     const badFolders = await app.inject({
       method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: 42 } },
     })

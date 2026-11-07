@@ -78,6 +78,8 @@ describe('Dreamer app integration', () => {
     runtimes.push(runtime)
     const initial = await runtime.app.inject({ url: '/api/manager/dreamer', headers: trusted })
     expect(initial.json().progress).toBeUndefined()
+    const oracle = runtime.managerAgent as unknown as { progressContext: () => unknown }
+    expect(oracle.progressContext()).toBeUndefined()
     const sweep = vi.spyOn(runtime.proactiveCoordinator!, 'sweep')
 
     await runtime.app.inject({
@@ -114,6 +116,8 @@ describe('Dreamer app integration', () => {
     expect(runtime.dreamerService?.progressView()?.entries).toContainEqual(
       expect.objectContaining({ sessionId: 'session-from-event', status: 'running' }),
     )
+    // What Oracle reads each turn is Dreamer's current view.
+    expect(oracle.progressContext()).toEqual(runtime.dreamerService!.progressView())
   })
 
   it('keeps the hub available when Oracle/Dreamer storage is unavailable', async () => {

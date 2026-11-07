@@ -30,6 +30,7 @@ import {
   type ManagerStatus,
   type UpdateManagerSettingsInput,
 } from '../shared/manager.js'
+import type { DreamerProgressView } from './dreamer-service.js'
 import {
   buildTurnContext,
   managerPrompt,
@@ -160,6 +161,8 @@ export interface ManagerAgentOptions {
   now?: () => Date
   /** The user's response style, read as each turn's prompt is built. */
   responseStyle?: () => OracleResponseStyle | undefined
+  /** Dreamer's session progress and open tasks, read as each turn's prompt is built. */
+  progressContext?: () => DreamerProgressView | undefined
   structuredMemory?: ManagerStructuredMemoryRuntime
   recordProactiveOutcomes?: (input: {
     message: ManagerMessage
@@ -308,6 +311,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly model?: string
   private readonly reasoningEffort?: RuntimeReasoningEffort
   private readonly responseStyle: () => OracleResponseStyle | undefined
+  private readonly progressContext: () => DreamerProgressView | undefined
   private readonly turnTimeoutMs: number
   private readonly retryDelaysMs: number[]
   private readonly idleStopMs: number
@@ -369,6 +373,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.model = options.model
     this.reasoningEffort = options.reasoningEffort
     this.responseStyle = options.responseStyle ?? (() => undefined)
+    this.progressContext = options.progressContext ?? (() => undefined)
     this.turnTimeoutMs = options.turnTimeoutMs ?? 15 * 60 * 1000
     this.retryDelaysMs = options.retryDelaysMs ?? [1000, 4000]
     this.idleStopMs = options.idleStopMs ?? 10 * 60 * 1000
@@ -1401,6 +1406,19 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     })
   }
 
+  /**
+   * Dreamer's progress, which never stops an answer. A proactive observation
+   * sees only the sessions bound to its events, so it gets none.
+   */
+  private dreamerProgress(message: ManagerMessage): DreamerProgressView | undefined {
+    if (message.source === 'proactive') return undefined
+    try {
+      return this.progressContext()
+    } catch {
+      return undefined
+    }
+  }
+
   private async buildPrompt(
     message: ManagerMessage,
     attempt: { interrupted: boolean; performed: string[]; failure?: string },
@@ -1478,6 +1496,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           return undefined
         }
       })(),
+      progress: this.dreamerProgress(message),
     })
     if (this.needsBrief) {
       context = `${recoveryBrief({

@@ -1037,6 +1037,41 @@ describe('ManagerAgent', () => {
     expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
   })
 
+  it("shows Dreamer's progress on the user's turns but never on a proactive observation", async () => {
+    await start({
+      now: () => new Date('2026-10-15T12:00:00.000Z'),
+      progressContext: () => ({
+        refreshedAt: '2026-10-15T11:58:00.000Z',
+        staleComputers: [],
+        entries: [],
+        followUps: [{ title: 'Review the release', owner: 'user', status: 'ready', nextAction: 'Approve the PR' }],
+      }),
+    })
+    await agent!.send('What needs me?')
+    await settled()
+    await agent!.enqueueInternal({
+      id: 'oracle-proactive-without-progress',
+      content: 'Inspect the bound session.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: { kind: 'proactive', eventIds: ['c'.repeat(64)] },
+    })
+    await settled()
+
+    expect(sdk.prompts[0]).toContain('Dreamer progress (refreshed 11:58 UTC).')
+    expect(sdk.prompts[0]).toContain('- "Review the release" · owner user · ready · next: "Approve the PR"')
+    expect(sdk.prompts[1]).toContain('<proactive_observation')
+    expect(sdk.prompts[1]).not.toContain('Dreamer progress')
+  })
+
+  it('keeps answering when Dreamer progress cannot be read', async () => {
+    await start({ progressContext: () => { throw new Error('progress unavailable') } })
+    await agent!.send('still there?')
+    await settled()
+    expect(sdk.prompts[0]).not.toContain('Dreamer progress')
+    expect(agent!.snapshot().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Okay.' })
+  })
+
   it('refuses only blank and oversized messages', async () => {
     await start()
     await expect(agent!.send('   ')).rejects.toMatchObject({ statusCode: 400 })

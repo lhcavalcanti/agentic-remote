@@ -418,6 +418,8 @@ export async function buildApp(
         reasoningEffort: managerSettings.reasoningEffort,
         // The synced settings profile on this same hub, read per turn.
         responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
+        // Unset until Dreamer starts, and while it is off.
+        progressContext: () => dreamerService?.progressView(),
         structuredMemory: managerStructuredMemory,
         recordProactiveOutcomes: (input) => {
           if (!proactiveCoordinator) {

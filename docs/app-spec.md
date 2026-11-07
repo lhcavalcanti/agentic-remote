@@ -795,10 +795,15 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
      Copilot that is its `model` setting (`/config model`) or `COPILOT_MODEL`.
 - Copilot is the default provider. A configured default the provider lacks,
   or refuses before creating anything, gives way to the provider's own default
-  once, and Oracle tells you. Configured effort or context the model lacks or
-  refuses is dropped and the model kept. An effort you ask for is never
-  dropped: if it cannot run, as on Copilot without a model, nothing starts and
-  Oracle lists the models and asks.
+  once, and Oracle tells you. Configured effort applies only to the configured
+  model; the configured context size applies to whichever model runs, one you
+  name included, when that model offers it. Configured effort or context the
+  model lacks or refuses is dropped and the model kept; Oracle says when long
+  context does not apply. An effort or context size you ask for is never
+  dropped: if it cannot run, as on Copilot without a model or on a model
+  without long context, nothing starts and Oracle lists the models that offer
+  it and asks. The provider's own default carries no context size, so a
+  session with no model runs with default context.
 - When you name a model, Oracle MUST start a Copilot session with that model's
   exact ID from discovery, because Copilot hosts Claude and other model
   families; it uses the Claude Agent provider only when you ask for that

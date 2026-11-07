@@ -95,7 +95,8 @@ export class RefusalCounter {
 }
 
 /**
- * A refusal is a 4xx answer from a matched route. An unmatched route has no
+ * A refusal is a 4xx answer from a matched route, or a 501 a route raised
+ * because this computer cannot do what was asked. An unmatched route has no
  * template, and a 401 or 403 that names no reason is a direct reply from the
  * node-token or Host/Origin check: both are mostly scanner noise rather than
  * a user being turned away. A 401 or 403 a route raised, such as a path
@@ -106,7 +107,9 @@ export function countsAsRefusal(
   route: string | undefined,
   reasonNoted: boolean,
 ): boolean {
-  if (status < 400 || status >= 500 || !route) return false
+  if (!route) return false
+  if (status === 501) return reasonNoted
+  if (status < 400 || status >= 500) return false
   return reasonNoted || (status !== 401 && status !== 403)
 }
 

@@ -793,7 +793,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   families; it uses the Claude Agent provider only when you ask for that
   provider. It reports the model the session started with. A model the
   provider lacks starts nothing: Oracle lists the available models and asks,
-  never switching model or provider itself.
+  never switching model or provider itself. A provider that refuses a listed
+  model only once the task runs leaves that session with a failed first turn,
+  which Oracle reports before asking the same way.
 
 ### 3.8 Oracle Dreamer foundation
 

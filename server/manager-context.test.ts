@@ -120,6 +120,8 @@ describe('manager turn context', () => {
     // Evidence, and a fallback that asks rather than switching.
     expect(rule).toMatch(/model the session started with/)
     expect(rule).toMatch(/not available[^\n]*ask/)
+    // A provider can refuse a listed model only once the turn runs.
+    expect(rule).toMatch(/first turn fails[^\n]*ask/)
     expect(rule).toMatch(/never switch to another model or provider on your own/)
     expect(MANAGER_SYSTEM_PROMPT).toContain('provider/mode · model')
   })

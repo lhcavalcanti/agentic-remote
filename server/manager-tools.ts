@@ -765,12 +765,21 @@ export function createManagerTools(
     return session.isOpen === false ? `${line} · closed` : line
   }
 
-  const requireProvider = (computer: ComputerSummary, provider: AgentProvider) => {
-    const capability = computer.providers?.find((candidate) => candidate.id === provider)
-    if (capability && !capability.available) {
-      throw new ToolFailure(capability.unavailableReason || `${provider} is not available on ${computer.name}.`)
+  // A provider recorded unavailable may have recovered since (logged in or
+  // installed), so its discovery is asked before refusing it. An answer
+  // refreshes the computer's record, and the catalog it returned is reused.
+  const availableProvider = async (computer: ComputerSummary, provider: AgentProvider) => {
+    const recorded = computer.providers?.find((candidate) => candidate.id === provider)
+    if (!recorded || recorded.available) return { capability: recorded }
+    let models: RuntimeModelOption[]
+    try {
+      models = await host.providerModels(computer.id, provider)
+    } catch (error) {
+      const reason = (errorMessage(error) || recorded.unavailableReason || '').trim().replace(/\.$/, '')
+      throw new ToolFailure(`${provider} is not available on ${computer.name}${reason ? `: ${reason}` : ''}.`)
     }
-    return capability
+    const refreshed = host.findComputer(computer.id)?.providers?.find((candidate) => candidate.id === provider)
+    return { capability: refreshed?.available ? refreshed : { ...recorded, available: true }, models }
   }
 
   const modelEfforts = (model: RuntimeModelOption) =>
@@ -837,8 +846,8 @@ export function createManagerTools(
         const defaults = host.defaults()
         const target = requireComputer(computer ?? defaults.computerId ?? localComputer(host).id)
         const chosen: AgentProvider = provider ?? 'copilot'
-        requireProvider(target, chosen)
-        const models = await host.providerModels(target.id, chosen)
+        const { models: discovered } = await availableProvider(target, chosen)
+        const models = discovered ?? await host.providerModels(target.id, chosen)
         if (!models.length) {
           return `${chosen} on ${target.name} (${target.id}) reported no models; without a model, create_session uses its default.`
         }
@@ -942,7 +951,7 @@ export function createManagerTools(
     ),
     define(
       'create_session',
-      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer, mode, and model default to the user\'s settings. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately. The result names the model the session reports; a model the provider lacks starts nothing and lists the models it has.',
+      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer, mode, and model default to the user\'s settings. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately. The result names the model the session reports; a model the provider lacks starts nothing and lists the models it has, and a refusal that comes only once the task runs shows as the session\'s failed turn.',
       z.object({
         title: z.string().trim().min(1).max(100).describe('Short descriptive name, at most 60 characters.'),
         prompt: z.string().trim().min(1).max(100_000).describe('The self-contained task: goal, context, constraints, acceptance criteria, what to report back, and which of the user\'s skills to use.'),
@@ -961,7 +970,7 @@ export function createManagerTools(
         // A named model stays on Copilot, which hosts every model family,
         // unless the Claude Agent provider itself is asked for.
         const provider: AgentProvider = args.provider ?? (args.model ? 'copilot' : defaults.provider ?? 'copilot')
-        const capability = requireProvider(computer, provider)
+        const { capability, models: discovered } = await availableProvider(computer, provider)
         const sameProvider = (defaults.provider ?? 'copilot') === provider
         const mode: AgentMode | undefined = args.mode ?? defaults.mode
         const model = args.model ?? (sameProvider ? defaults.model : undefined)
@@ -979,7 +988,7 @@ export function createManagerTools(
         if (model) {
           // Checked before anything is created, on any computer; a catalog that
           // cannot be read leaves the decision to the provider itself.
-          const catalog = await host.providerModels(computer.id, provider).catch(() => undefined)
+          const catalog = discovered ?? await host.providerModels(computer.id, provider).catch(() => undefined)
           const listed = catalog?.find((option) => option.id === model)
           if (catalog && !listed) {
             throw modelRefusal(`${model} is not available from ${provider} on ${computer.name}`, modelChoices(catalog, provider))
@@ -1036,14 +1045,17 @@ export function createManagerTools(
         const reported = [delivered, session, created]
           .map((candidate) => candidate.runtime?.model?.trim())
           .find(Boolean)
-        const modelNote = reported
-          ? model && reported !== model ? `model ${reported}, not the requested ${model}` : `model ${reported}`
+        const startedWith = reported && model && reported !== model
+          ? `${reported}, not the requested ${model}`
+          : reported
+        const modelNote = startedWith
+          ? `model ${startedWith}`
           : model
             ? `model ${model} requested; the session has not reported its model yet`
             : "the provider's default model; the session has not reported which yet"
         onActivity({
           tool: 'create_session',
-          content: `Started "${session.title}" on ${computer.name} with ${reported ?? (model ? `${model} requested` : 'the default model')}`,
+          content: `Started "${session.title}" on ${computer.name} with ${startedWith ?? (model ? `${model} requested` : 'the default model')}`,
           sessionRefs: [ref(
             session,
             deliveredPromptIdentity(session, delivered, args.prompt),

@@ -378,7 +378,7 @@ describe('manager tools', () => {
     const result = String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))
 
     expect(result).toContain('model model-a, not the requested model-b')
-    expect(activities.at(-1)).toMatchObject({ content: 'Started "T" on development with model-a' })
+    expect(activities.at(-1)).toMatchObject({ content: 'Started "T" on development with model-a, not the requested model-b' })
   })
 
   it('says when a session has not reported its model yet, or runs the default model', async () => {
@@ -447,6 +447,43 @@ describe('manager tools', () => {
 
     vi.mocked(host.createSession).mockRejectedValueOnce(new Error('disk full'))
     expect(JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))).toContain('disk full')
+  })
+
+  it('asks discovery about a provider last reported unavailable before refusing it', async () => {
+    let recordedAvailable = false
+    let loggedIn = false
+    const current = () => computers.map((computer) => computer.id !== 'hub' ? computer : {
+      ...computer,
+      providers: computer.providers?.map((provider) => provider.id !== 'claude' || recordedAvailable
+        ? provider
+        : { ...provider, available: false, unavailableReason: 'Run claude auth login on this computer' }),
+    })
+    host.computers = current
+    host.findComputer = (nameOrId) => current().find((computer) => computer.id === nameOrId || computer.name === nameOrId)
+    vi.mocked(host.providerModels).mockImplementation(async (_computerId, provider) => {
+      if (provider !== 'claude') return copilotModels
+      if (!loggedIn) throw new Error('Run claude auth login on this computer')
+      // As the hub does, an answer refreshes what the computer reports.
+      recordedAvailable = true
+      return claudeModels
+    })
+
+    const listRefused = await call('list_models', { provider: 'claude' })
+    expect(listRefused).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(listRefused)).toContain('claude is not available on development: Run claude auth login on this computer.')
+    const createRefused = await call('create_session', { title: 'T', prompt: 'P', provider: 'claude' })
+    expect(JSON.stringify(createRefused)).toContain('claude is not available on development: Run claude auth login on this computer.')
+    expect(host.createSession).not.toHaveBeenCalled()
+
+    loggedIn = true
+    expect(String(await call('list_models', { provider: 'claude' }))).toMatch(/^- claude-agent-model — Claude Agent model$/m)
+
+    recordedAvailable = false
+    const asked = vi.mocked(host.providerModels).mock.calls.length
+    await call('create_session', { title: 'T', prompt: 'P', provider: 'claude', model: 'claude-agent-model' })
+    expect(host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ provider: 'claude', model: 'claude-agent-model' }))
+    // The catalog that answered is the one the model is checked against.
+    expect(vi.mocked(host.providerModels).mock.calls.length - asked).toBe(1)
   })
 
   it('refuses an offline or unknown computer with a readable failure', async () => {
